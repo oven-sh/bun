@@ -3167,6 +3167,20 @@ impl<'a> Lexer<'a> {
         Ok(res)
     }
 
+    /// `Scanner.TokenValue`
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn token_value(&mut self) -> Result<Vec<u8>, Error> {
+        Ok(match self.token {
+            T::TStringLiteral => self.to_utf8_e_string()?.data.slice().to_vec(),
+            T::TNumericLiteral => bun_sema::atom::number_to_string(self.number).into_bytes(),
+            T::TBigIntegerLiteral => [self.identifier, b"n"].concat(),
+            T::TPrivateIdentifier => self.identifier.to_vec(),
+            _ if self.is_identifier_or_keyword() => self.identifier.to_vec(),
+            _ => self.raw().to_vec(),
+        })
+    }
+
     pub(crate) fn scan_reg_exp(&mut self) -> Result<(), Error> {
         let result = self.scan_reg_exp_strictly();
         if result.is_err() && self.tolerant && !self.is_log_disabled {

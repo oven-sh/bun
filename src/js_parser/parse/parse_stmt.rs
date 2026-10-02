@@ -2731,6 +2731,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         match suggestion {
             Some(suggestion) => p.lexer.ts_error_about(range, code, &suggestion),
+            // `parseErrorForInvalidName`
+            None if matches!(code, 2427 | 2457 | 2819) => {
+                let value = p.lexer.token_value()?;
+                p.lexer.ts_error_about(range, code, &value);
+            }
             None => p.lexer.ts_error(range, code),
         }
         p.lexer.put_up_with(before)?;
@@ -2821,7 +2826,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     let is_module = ts_stmt == js_lexer::TypescriptStmtKeyword::TsStmtModule;
                     return Ok(Some(
-                        p.parse_type_script_namespace_stmt(loc, opts, is_module)?,
+                        p.parse_type_script_namespace_stmt(loc, opts, false, is_module)?,
                     ));
                 }
             }

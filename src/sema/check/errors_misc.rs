@@ -141,7 +141,7 @@ impl Checker<'_> {
     }
 
     /// `SkipOuterExpressions`
-    fn skip_outer_expressions(&self, file: FileId, mut e: ExprId) -> ExprId {
+    pub(super) fn skip_outer_expressions(&self, file: FileId, mut e: ExprId) -> ExprId {
         let hir = self.hir(file);
         loop {
             e = match hir[e].kind {

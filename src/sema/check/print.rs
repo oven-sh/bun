@@ -442,11 +442,7 @@ fn with_printer<'p, T>(
     flags: u32,
     print: impl FnOnce(&mut Printer<'_, 'p>) -> T,
 ) -> T {
-    let saved = (
-        checker.relation_gave_up,
-        checker.relation_too_complex,
-        checker.union_too_complex,
-    );
+    let saved = (checker.relation_gave_up, checker.relation_too_complex);
     let is_barrier = !std::mem::take(&mut checker.printing_closes_circles);
     if is_barrier {
         checker.eager.push(checker.stack.len());
@@ -486,11 +482,7 @@ fn with_printer<'p, T>(
     if is_barrier {
         checker.eager.pop();
     }
-    (
-        checker.relation_gave_up,
-        checker.relation_too_complex,
-        checker.union_too_complex,
-    ) = saved;
+    (checker.relation_gave_up, checker.relation_too_complex) = saved;
     result
 }
 
@@ -1052,9 +1044,11 @@ impl<'p> Printer<'_, 'p> {
         match self.c.data(ty) {
             TypeData::Intrinsic(intrinsic) => {
                 let (text, length): (&[u8], usize) = match intrinsic {
-                    Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error | Intrinsic::Auto => {
-                        (b"any", 3)
-                    }
+                    Intrinsic::Unresolved
+                    | Intrinsic::Any
+                    | Intrinsic::Error
+                    | Intrinsic::Auto
+                    | Intrinsic::Wildcard => (b"any", 3),
                     Intrinsic::IntrinsicMarker => (b"intrinsic", 3),
                     Intrinsic::Unknown => (b"unknown", 0),
                     Intrinsic::Never
@@ -1183,6 +1177,7 @@ impl<'p> Printer<'_, 'p> {
                 self.tuple_to_node(elems, flags, *readonly)
             }
             TypeData::TypeParam(..) => self.type_parameter_to_node(ty),
+            TypeData::Marker(Marker::Restrictive(of)) => self.type_to_node(*of),
             TypeData::Marker(marker) => Node::simple(self.name_of_marker(*marker)),
             TypeData::Union(_) => self.union_to_node(ty),
             TypeData::Intersection(members) => self.intersection_to_node(members),
@@ -1305,11 +1300,11 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// The name of a type parameter that has no symbol.
-    fn name_of_marker(&self, marker: u8) -> Vec<u8> {
+    fn name_of_marker(&self, marker: Marker) -> Vec<u8> {
         let parameter = VARIANCE_TYPE_PARAMETER.with(std::cell::Cell::get);
         match marker {
-            3 if parameter.is_some() => cat!(b"super-", self.text(parameter)),
-            4 if parameter.is_some() => cat!(b"sub-", self.text(parameter)),
+            Marker::SuperForCheck if parameter.is_some() => cat!(b"super-", self.text(parameter)),
+            Marker::SubForCheck if parameter.is_some() => cat!(b"sub-", self.text(parameter)),
             _ => b"?".to_vec(),
         }
     }

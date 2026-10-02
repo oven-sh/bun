@@ -40,6 +40,10 @@ pub(super) struct SpecifierSite {
     /// `import type .. from`
     pub(super) is_type_only_import: bool,
     pub(super) is_ambient: bool,
+    /// `isForAugmentation`
+    pub(super) is_for_augmentation: bool,
+    /// `moduleNotFoundError == nil`: the name of an augmentation that is written where everything is only declared.
+    pub(super) is_not_validated: bool,
 }
 
 impl Checker<'_> {
@@ -327,7 +331,7 @@ impl Checker<'_> {
     }
 
     /// `c.error(..)`, and `addTypeOnlyDeclarationRelatedInfo`. With `type_only`: whether it counts as an export.
-    fn xa_error_about_type_only(
+    pub(super) fn xa_error_about_type_only(
         &mut self,
         at: (FileId, u32, u32),
         code: u32,
@@ -523,7 +527,7 @@ impl Checker<'_> {
                     if is_type
                         && matches!(decl, Decl::ImportEquals(x) if hir[x].flags.contains(Flags::EXPORT))
                     {
-                        self.error_at(at, 1269, &[Arg::Text(&flag_name)]);
+                        self.error_at(at, 1269, &[Arg::Bytes(flag_name)]);
                     }
                 }
                 // What says `type` in this very file can be seen to go away without looking at any other.
@@ -532,9 +536,9 @@ impl Checker<'_> {
                         || type_only_alias.is_none_or(|type_only| type_only.file() != file) =>
                 {
                     if is_type {
-                        self.error_at(at, 1205, &[Arg::Text(&flag_name)]);
+                        self.error_at(at, 1205, &[Arg::Bytes(flag_name)]);
                     } else {
-                        let args = [Arg::Atom(name), Arg::Text(&flag_name)];
+                        let args = [Arg::Atom(name), Arg::Bytes(flag_name)];
                         self.xa_error_about_type_only(at, 1448, &args, related, name);
                     }
                 }
@@ -555,7 +559,7 @@ impl Checker<'_> {
             && let AliasTarget::Symbol(target) = target
             && self.xa_is_ambient_const_enum(target)
         {
-            self.error_at(at, 2748, &[Arg::Text(&flag_name)]);
+            self.error_at(at, 2748, &[Arg::Bytes(flag_name)]);
         }
     }
 
@@ -568,7 +572,7 @@ impl Checker<'_> {
     ) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let names: Vec<Atom> = hir.texts(names).collect();
+        let (reference, names) = (hir.node(names), hir.texts(names).collect::<Vec<Atom>>());
         for end in (1..=names.len()).rev() {
             // `getTypeOnlyDeclarationOfEntityName`
             let scope = bound.import_equals_scope[x.idx()];
@@ -582,19 +586,14 @@ impl Checker<'_> {
             let Some(type_only) = files.alias_links(symbol).type_only_declaration else {
                 continue;
             };
-            // Where what follows the `=` starts.
-            let after_name = hir[x].name_pos as usize + files.atoms.bytes(hir[x].name).len();
-            let Some(after_equals) = eat(&hir.text, after_name, b'=') else {
-                return;
-            };
             // `NodeKindIs(typeOnlyDeclaration, KindExportSpecifier, KindExportDeclaration)`
             let is_export = matches!(
                 type_only,
                 TypeOnlyDeclaration::Alias(_, _, Decl::ExportSpec(_))
                     | TypeOnlyDeclaration::ExportStar(..)
             );
-            let start = skip_trivia(&hir.text, after_equals);
-            let at = (file, start as u32, entity_name_end(&hir.text, start) as u32);
+            let (start, end) = self.get_error_range_for_node(file, reference);
+            let at = (file, start, end);
             let name = match type_only {
                 // An `export type *` has no name.
                 TypeOnlyDeclaration::ExportStar(..) => files.atoms.intern(b"*"),
@@ -607,7 +606,7 @@ impl Checker<'_> {
     }
 
     /// A `const enum` whose first declaration is only declared.
-    fn xa_is_ambient_const_enum(&self, sym: Sym) -> bool {
+    pub(super) fn xa_is_ambient_const_enum(&self, sym: Sym) -> bool {
         let files = self.files();
         files.flags(sym).intersects(SymFlags::ENUM)
             && files
@@ -633,14 +632,9 @@ impl Checker<'_> {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`. `IsExternalOrCommonJSModule`
-        if !files.options.isolated_modules_said
-            || bound.alias_idents.is_empty()
-            || !files.module(file).is_module()
-        {
+        if !files.options.isolated_modules_said || !files.module(file).is_module() {
             return;
         }
-        let locals = bound.scopes[0].locals;
-        let mut seen: Vec<SymbolId> = Vec::new();
         for &(e, scope) in &bound.alias_idents {
             let ExprKind::Ident(name) = hir[e].kind else {
                 continue;
@@ -658,18 +652,14 @@ impl Checker<'_> {
                 continue;
             }
             // `getSymbol(lastLocation.Locals(), name, ^SymbolFlagsValue)`
-            let Some(local) = bound.lookup(locals, name) else {
+            let Some(id) = bound.lookup(bound.scopes[0].locals, name) else {
                 continue;
             };
-            if seen.contains(&local) {
-                continue;
-            }
             let found = files.resolve_name(file, scope, name, SymFlags::VALUE);
             if found.is_none() || found != files.global(name, SymFlags::VALUE) {
                 continue;
             }
-            seen.push(local);
-            let import = bound.symbols[local.idx()].decls.iter().copied().find(|d| {
+            let import = bound.symbols[id.idx()].decls.iter().copied().find(|d| {
                 matches!(
                     d,
                     Decl::ImportDefault(_)
@@ -678,29 +668,13 @@ impl Checker<'_> {
                         | Decl::ImportEquals(_)
                 )
             });
-            let Some(import) = import else { continue };
             // `IsTypeOnlyImportDeclaration`
-            if files.is_type_only_import_or_export_declaration(file, import) {
-                continue;
+            if let Some(import) = import
+                && !files.is_type_only_import_or_export_declaration(file, import)
+                && let Some(at) = self.place_of_alias_declaration(Sym { file, id }, import)
+            {
+                self.error_at(at, 2866, &[Arg::Atom(name)]);
             }
-            let start = match import {
-                Decl::ImportDefault(x) => hir[x].default_pos,
-                Decl::ImportNamespace(x) => hir[x].namespace_pos,
-                Decl::ImportSpec(s) => hir[s].imported_pos,
-                Decl::ImportEquals(x) => hir[hir[x].stmt].start,
-                _ => continue,
-            };
-            let end = match import {
-                Decl::ImportDefault(x) => self
-                    .xa_specifier_pos(file, start, hir[x].spec)
-                    .map_or(0, |at| {
-                        super::errors_x_modules::import_clause_end(&hir.text, at)
-                    }),
-                Decl::ImportSpec(s) => self.end_of_import_spec(file, s),
-                Decl::ImportEquals(x) => self.end_of_stmt(file, hir[x].stmt),
-                _ => 0,
-            };
-            self.error_at((file, start, end), 2866, &[Arg::Atom(name)]);
         }
     }
 
@@ -1017,7 +991,7 @@ impl Checker<'_> {
                 }
             }
             if !target.is_module() {
-                if !is_side_effect {
+                if !is_side_effect && !site.is_not_validated {
                     let mut redirected = importing.redirected_imports.iter();
                     let path = match redirected.find(|r| (r.0, r.1) == key) {
                         Some(r) => Arg::Atom(r.2),
@@ -1030,7 +1004,6 @@ impl Checker<'_> {
             // `require` cannot load an ECMAScript module. Only what has code in it is of either kind.
             let is_sync_import = !importing.is_esm && kind != SpecifierKind::ImportCall
                 || kind == SpecifierKind::Require;
-            let source = &self.hir(file).text[..];
             if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18)
                 && is_sync_import
                 && target.is_esm
@@ -1039,9 +1012,7 @@ impl Checker<'_> {
                 && !(matches!(
                     kind,
                     SpecifierKind::SideEffect | SpecifierKind::Import | SpecifierKind::ImportType
-                ) && string_literal(source, start as usize).is_some_and(|(_, end)| {
-                    has_resolution_mode_override(source, end, kind == SpecifierKind::ImportType)
-                }))
+                ) && self.has_resolution_mode_override(file, written))
             {
                 let (code, details) = match kind {
                     SpecifierKind::Require => (1471, None),
@@ -1066,10 +1037,16 @@ impl Checker<'_> {
             return false;
         }
         // The specifier resolves to JavaScript that is not in the program.
-        if importing.untyped_imports.contains(&key) {
-            if options.no_implicit_any && !is_side_effect {
+        if let Some(index) = importing.untyped_imports.iter().position(|&u| u == key) {
+            if site.is_for_augmentation {
+                let path = importing.untyped_import_files[index].0;
+                self.error_at(at, 2665, &[Arg::Atom(spec), Arg::Atom(path)]);
+            } else if options.no_implicit_any && !is_side_effect {
                 self.error_on_implicit_any_module(file, spec, mode, at);
             }
+            return false;
+        }
+        if site.is_not_validated {
             return false;
         }
         let mut extensionless = importing.extensionless_imports.iter();
@@ -1077,18 +1054,18 @@ impl Checker<'_> {
             self.error_at(at, 2732, &[Arg::Atom(spec)]);
         } else if options.resolves_like_node
             && mode == ResolutionMode::Import
-            && let Some(&(_, is_there)) = extensionless.find(|e| e.0 == spec)
+            && let Some(&(_, extension)) = extensionless.find(|e| e.0 == spec)
         {
             // Only of what is not found is it said that Node's `import` wants the extension written.
-            let extension =
-                super::errors_x_modules::suggested_import_extension(files, &importing.path, &text);
-            match extension.filter(|_| is_there) {
+            match extension {
                 Some(extension) => {
-                    let suggested = [text.as_bytes(), extension.as_bytes()].concat();
+                    let suggested = [files.atoms.bytes(spec), extension].concat();
                     self.error_at(at, 2835, &[Arg::Bytes(&suggested)])
                 }
-                None => self.error_at(at, if is_there { 2835 } else { 2834 }, &[]),
+                None => self.error_at(at, 2834, &[]),
             };
+        } else if site.is_for_augmentation {
+            self.error_at(at, 2664, &[Arg::Atom(spec)]);
         } else if is_side_effect {
             self.error_at(at, 2882, &[Arg::Atom(spec)]);
         // `getCannotResolveModuleNameErrorForSpecificModule`: only for a string literal, not for a template.
@@ -1140,46 +1117,15 @@ impl Checker<'_> {
     // ───────────────────────────── expressions ─────────────────────────────
 
     fn xa_expressions(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if !self.files().options.isolated_modules {
-            let index = self.exprs_by_kind(file);
-            for tag in [
-                ExprTag::ImportCall,
-                ExprTag::ImportMeta,
-                ExprTag::Missing,
-                ExprTag::NewTarget,
-            ] {
-                for &e in index.of(tag) {
-                    self.xa_import_call_or_meta_property(file, e);
-                }
-            }
-            return;
-        }
-        // Names and what is in namespaces are looked at as well, all in the order they have in the file.
-        for i in 0..hir.exprs.len() {
-            let e = ExprId(i as u32);
-            match hir.exprs[i].kind {
-                ExprKind::Ident(_) => {
-                    let local = bound.expr_symbol[i];
-                    if (local.is_none()
-                        || bound.symbols[local.idx()]
-                            .flags
-                            .intersects(SymFlags::ENUM | SymFlags::ALIAS))
-                        && !bound.is_unchecked(i)
-                    {
-                        self.xa_const_enum_access(file, e);
-                    }
-                }
-                ExprKind::Dot { .. } => {
-                    if !bound.is_unchecked(i) {
-                        self.xa_const_enum_access(file, e);
-                    }
-                }
-                ExprKind::ImportCall { .. }
-                | ExprKind::ImportMeta
-                | ExprKind::Missing
-                | ExprKind::NewTarget(_) => self.xa_import_call_or_meta_property(file, e),
-                _ => {}
+        let index = self.exprs_by_kind(file);
+        for tag in [
+            ExprTag::ImportCall,
+            ExprTag::ImportMeta,
+            ExprTag::Missing,
+            ExprTag::NewTarget,
+        ] {
+            for &e in index.of(tag) {
+                self.xa_import_call_or_meta_property(file, e);
             }
         }
     }
@@ -1238,96 +1184,6 @@ impl Checker<'_> {
                 }
             }
             _ => {}
-        }
-    }
-
-    /// `checkConstEnumAccess`, as far as 2748 goes: `e` is a name, or a name in a namespace.
-    fn xa_const_enum_access(&mut self, file: FileId, e: ExprId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let ty = self.type_of_expr(file, e);
-        let TypeData::Anon {
-            origin: Origin::EnumObject(sym),
-            ..
-        } = *self.data(ty)
-        else {
-            return;
-        };
-        if !self.xa_is_ambient_const_enum(sym) {
-            return;
-        }
-        // Under `verbatimModuleSyntax` alone an import is where it is said, and what is misused has been told so.
-        if !self.p.files.options.isolated_modules_said {
-            let is_accessed = matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if p.is_some() && matches!(hir[p].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e));
-            let first = first_identifier(hir, e);
-            let local = bound.expr_symbol[first.idx()];
-            if !is_accessed
-                || local.is_some() && bound.symbols[local.idx()].flags.contains(SymFlags::ALIAS)
-            {
-                return;
-            }
-        }
-        // `IsValidTypeOnlyAliasUseSite`
-        // Nothing leads to it: nothing is said of it.
-        let node = self.hir(file).node(e);
-        if bound.is_in_type_query(e)
-            || self.hir(file).parent(node).is_none()
-            || self.hir(file).is_ambient(node)
-        {
-            return;
-        }
-        let mut top = e;
-        let around = loop {
-            match bound.expr_parent[top.idx()] {
-                Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Dot { obj, .. } if obj == top) => {
-                    top = p
-                }
-                other => break other,
-            }
-        };
-        match around {
-            // The name of a member that is not there when the program runs.
-            Parent::MemberKey(_) | Parent::MethodKey(_) => {
-                if let Some(m) = hir
-                    .members
-                    .iter()
-                    .position(|m| m.key == PropKey::Computed(top))
-                    && (hir.members[m].flags.contains(Flags::ABSTRACT)
-                        || !matches!(bound.member_owner[m], MemberOwner::Class(_)))
-                {
-                    return;
-                }
-            }
-            // `export default E`, `export = E`: a name by itself there is no expression. `E.A` is one, and so is `(E)`.
-            Parent::Stmt(s)
-                if top == e
-                    && s.is_some()
-                    && matches!(hir[e].kind, ExprKind::Ident(_))
-                    && matches!(
-                        hir[s].kind,
-                        StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
-                    )
-                    && !is_parenthesized(hir, e) =>
-            {
-                return;
-            }
-            _ => {}
-        }
-        let flag_name = super::errors_x_modules::isolated_modules_like_flag_name(self.files());
-        let start = self.start_inside_parentheses(file, e);
-        self.error_at(
-            (file, start, self.end_inside_parentheses(file, e)),
-            2748,
-            &[Arg::Text(&flag_name)],
-        );
-        // Parentheses around it are an expression of the same type.
-        if self.p.files.options.isolated_modules_said
-            && let Some(start) = open_parenthesis(hir, e)
-        {
-            self.error_at(
-                (file, start, self.end_of_expr_from(file, e, start)),
-                2748,
-                &[Arg::Text(&flag_name)],
-            );
         }
     }
 
@@ -1403,7 +1259,7 @@ impl Checker<'_> {
                 .filter(|&pos| pos >= line_end)
                 .min()
                 .unwrap_or(end);
-            if self.xa_is_all_known(file, from, to) && !self.timed_out() {
+            if self.xa_is_all_known(file, from, to) {
                 let end = directives
                     .iter()
                     .find(|directive| directive.start == start)
@@ -1483,31 +1339,6 @@ fn string_literal(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
         end += if text[end] == b'\\' { 2 } else { 1 };
     }
     (end < text.len()).then(|| (&text[at + 1..end], end + 1))
-}
-
-/// `HasResolutionModeOverride`: `with { "resolution-mode": "import" }` after the specifier, which ends at `at`; in a type,
-/// `, { with: { "resolution-mode": "import" } }`.
-fn has_resolution_mode_override(text: &[u8], at: usize, is_import_type: bool) -> bool {
-    let attempt = || -> Option<usize> {
-        let mut at = at;
-        if is_import_type {
-            at = eat(text, eat(text, at, b',')?, b'{')?;
-        }
-        at = skip_trivia(text, at);
-        at = eat_word(text, at, b"with").or_else(|| eat_word(text, at, b"assert"))?;
-        if is_import_type {
-            at = eat(text, at, b':')?;
-        }
-        at = eat(text, at, b'{')?;
-        let (name, end) = string_literal(text, skip_trivia(text, at))?;
-        at = eat(text, end, b':')?;
-        let (value, end) = string_literal(text, skip_trivia(text, at))?;
-        if name != b"resolution-mode" || value != b"import" && value != b"require" {
-            return None;
-        }
-        eat(text, eat(text, end, b',').unwrap_or(end), b'}')
-    };
-    attempt().is_some()
 }
 
 /// `PathIsRelative`

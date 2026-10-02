@@ -754,6 +754,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && p.lexer.tolerant
                     {
                         p.note_loc(&mut key.loc, crate::sema::Mark::PostfixToken, p.lexer.loc());
+                        if p.lexer.token == T::TQuestion {
+                            p.note_loc(&mut key.loc, crate::sema::Mark::Optional, p.lexer.loc());
+                        }
                         p.lexer.next()?;
                         has_postfix_token = true;
                     }
@@ -840,7 +843,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.token == T::TQuestion {
                         // "class X { foo?: number }"
                         // "class X { foo!: number }"
-                        p.note_flag(&mut key.loc, crate::sema::Mark::Optional);
+                        p.note_loc(&mut key.loc, crate::sema::Mark::Optional, p.lexer.loc());
                         p.lexer.next()?;
                     } else if p.lexer.token == T::TExclamation
                         && !p.lexer.has_newline_before
@@ -860,6 +863,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // `parseObjectLiteralElement`, after a name that is a literal, computed or missing.
                     p.note_loc(&mut key.loc, crate::sema::Mark::PostfixToken, p.lexer.loc());
+                    if p.lexer.token == T::TQuestion {
+                        p.note_loc(&mut key.loc, crate::sema::Mark::Optional, p.lexer.loc());
+                    }
                     p.lexer.next()?;
                 }
 

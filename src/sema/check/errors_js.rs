@@ -1,12 +1,9 @@
-//! JavaScript files: which diagnostics apply to them, and the syntax that only TypeScript files may use: 1206 8002 8003 8004 8005 8006
-//! 8008 8009 8010 8011 8012 8013 8016 8017 8037.
+//! JavaScript files: which diagnostics apply to them.
 //!
 //! A port of `canIncludeBindAndCheckDiagnostics`, `getBindAndCheckDiagnosticsWithChecker` and `getAdditionalJSSyntacticDiagnostics`
-//! (TypeScript 7.0.2, compiler/program.go), and of `checkJSSyntax` (parser/parser.go).
+//! (TypeScript 7.0.2, compiler/program.go). `checkJSSyntax` (parser/parser.go) is in the lowering: `hir::File::js_diagnostics`.
 
-use super::sink::held;
 use super::*;
-use crate::bind::{FnOwner, MemberOwner};
 
 /// `plainJSErrors` (compiler/program.go): what is said of JavaScript nobody asked to have checked. In order.
 pub(super) const PLAIN_JS_ERRORS: [u32; 91] = [
@@ -100,62 +97,6 @@ impl Checker<'_> {
     }
 }
 
-/// The end of the string or template literal that starts at `start`.
-fn quoted_end(text: &[u8], start: usize) -> Option<usize> {
-    let quote = *text.get(start)?;
-    let mut i = start + 1;
-    loop {
-        match *text.get(i)? {
-            b'\\' => i += 2,
-            b if b == quote => return Some(i + 1),
-            _ => i += 1,
-        }
-    }
-}
-
-/// The end of the property name or binding pattern that starts at `start`.
-fn name_end(text: &[u8], start: usize) -> Option<usize> {
-    match *text.get(start)? {
-        b'"' | b'\'' => quoted_end(text, start),
-        b'[' | b'{' => end_of_brackets(text, start),
-        b'#' => Some(start + 1 + word_at(text, start + 1).len()),
-        _ => Some(start + word_at(text, start).len()),
-    }
-}
-
-/// The modifiers of `list` that are written and are not of `ModifierFlagsJavaScript`: where each is, and `TokenToString` of it.
-fn typescript_modifiers(
-    hir: &hir::File,
-    list: Span<ModifierId>,
-) -> impl Iterator<Item = (u32, &'static str)> {
-    // What a tag of a comment makes is `REPARSED` besides.
-    const JAVASCRIPT: Flags = Flags::EXPORT
-        .union(Flags::STATIC)
-        .union(Flags::ACCESSOR)
-        .union(Flags::ASYNC)
-        .union(Flags::DEFAULT)
-        .union(Flags::REPARSED);
-    let list = hir.modifier_list(list).iter();
-    list.filter_map(|modifier| match modifier.kind {
-        ModifierKind::Keyword(flag) if !JAVASCRIPT.intersects(flag) => Some((
-            modifier.pos,
-            super::errors_grammar_modifiers::modifier_text(flag),
-        )),
-        _ => None,
-    })
-}
-
-/// `namespace` or `module`: the keyword of the declaration one of whose names is at `name`, as in `namespace a.b`.
-fn module_keyword(text: &[u8], name: u32) -> &[u8] {
-    let mut end = skip_trivia_back(text, (name as usize).min(text.len()));
-    while end > 0 && text[end - 1] == b'.' {
-        let outer_end = skip_trivia_back(text, end - 1);
-        let outer = word_before(text, outer_end);
-        end = skip_trivia_back(text, outer_end - outer.len());
-    }
-    word_before(text, end)
-}
-
 impl Checker<'_> {
     /// `checkGrammarSourceFile`: 1046. At the top of a declaration file, what declares a value says `declare` or `export`. Only the
     /// first that does not is objected to.
@@ -212,267 +153,21 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkJSSyntax`, `checkJSDecoratorSyntax` and `getAdditionalJSSyntacticDiagnostics`. tsgo's parser calls `checkJSSyntax` when it
-    /// finishes a declaration, a class element, a parameter or an expression, but not for a node that is part of a type: the members
-    /// of an interface get no diagnostics of their own.
-    pub(super) fn check_js_syntax(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if !hir.is_js || hir.text.is_empty() {
+    /// `getAdditionalJSSyntacticDiagnostics`: the first decorator of each parameter, in a file the checker does not look at.
+    pub(super) fn get_additional_js_syntactic_diagnostics(&mut self, file: FileId) {
+        let hir = self.hir(file);
+        if !hir.is_js || hir.legacy_decorators || self.is_check_js(file) {
             return;
         }
-        let text = &hir.text[..];
-        // `jsErrorAtRange`. What is made from a tag of a comment is not written in the file. An end of 0: that of the token at the start.
-        let error = |c: &mut Self, (start, end): (u32, u32), code: u32, argument: &str| {
-            if !hir.is_in_jsdoc(start) {
-                let argument = (!argument.is_empty()).then(|| argument.to_owned());
-                c.add_diagnostic(Reported::new(
-                    (file, start, end),
-                    code,
-                    held(argument.into_iter().collect()),
-                ));
-            }
-        };
-        let type_loc = |c: &Self, ty: TypeNodeId| (hir[ty].pos, c.end_of_type_node(file, ty));
-        let type_argument_list_loc = |c: &Self, list: IdList<TypeNodeId>| {
-            let first = hir[hir.id_at(list, 0)].pos;
-            (first, c.end_of_type_args(file, list))
-        };
-        let type_parameter_list_loc = |c: &Self, list: Span<TypeParamId>| {
-            let last = list.iter().next_back()?;
-            Some((hir[list.at(0)].pos, c.end_of_type_param(file, last)))
-        };
-        // The start of the `?` token that follows the property name or binding pattern at `start`.
-        let question_token = |start: u32| {
-            let at = skip_trivia(text, name_end(text, start as usize)?);
-            (text.get(at) == Some(&b'?')).then_some(at as u32)
-        };
-        // The same for the property name `key` at `start`. `None` for a computed name whose `[` was not located.
-        let question_token_after_key = |key: PropKey, start: u32| {
-            let is_located =
-                !matches!(key, PropKey::Computed(_)) || text.get(start as usize) == Some(&b'[');
-            if is_located {
-                question_token(start)
-            } else {
-                None
-            }
-        };
-
-        // `ParseFlagsType`: the signatures that are types, or members of types.
-        let is_part_of_a_type = |func: FnId| match (hir[func].kind, bound.fns[func.idx()].owner) {
-            (FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::StaticBlock, _) => false,
-            (
-                FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor,
-                FnOwner::Member(m),
-            ) => !matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)),
-            (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => false,
-            _ => true,
-        };
-        for (index, param) in hir.params.iter().enumerate() {
-            if is_part_of_a_type(bound.param_fn[index]) {
-                continue;
-            }
-            if param.flags.contains(Flags::OPTIONAL)
-                && let Some(at) = question_token(hir[param.pat].pos)
-            {
-                error(self, (at, 0), 8009, "?");
-            }
-            if param.ty.is_some() {
-                error(self, type_loc(self, param.ty), 8010, "");
-            }
-            // `node.Modifiers().Loc`
-            let modifiers = hir.modifier_list(hir.param_modifiers(ParamId(index as u32)));
-            let is_modifier = |it: &Modifier| matches!(it.kind, ModifierKind::Keyword(_));
-            if let Some(last) = modifiers.last()
-                && modifiers.iter().any(is_modifier)
-            {
-                let end = match last.kind {
-                    ModifierKind::Keyword(flag) => {
-                        last.pos + super::errors_grammar_modifiers::modifier_text(flag).len() as u32
-                    }
-                    ModifierKind::Decorator(it) => self.end_of_expr(file, it),
-                };
-                error(self, (param.pos, end), 8012, "");
-            }
-        }
-        for decl in hir.var_decls.iter().filter(|decl| decl.ty.is_some()) {
-            error(self, type_loc(self, decl.ty), 8010, "");
-        }
-        for (index, func) in hir.fns.iter().enumerate() {
-            let id = FnId(index as u32);
-            // `node.ModifierNodes()`
-            let modifiers = match (func.kind, bound.fns[index].owner) {
-                // `parseClassElement`: the one signature that is asked about.
-                (FnKind::IndexSignature, FnOwner::Member(m))
-                    if matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)) =>
-                {
-                    error(self, (hir[m].start, hir[m].loc.end), 8017, "");
-                    continue;
-                }
-                _ if is_part_of_a_type(id) || func.kind == FnKind::StaticBlock => continue,
-                (FnKind::Decl, FnOwner::Stmt(s)) => hir[s].modifiers,
-                (_, FnOwner::Member(m)) => hir[m].modifiers,
-                _ => Span::default(),
-            };
-            if matches!(func.body, FnBody::None) {
-                error(self, (func.start, self.end_of_fn(file, id)), 8017, "");
-            } else if func.ret.is_some() {
-                error(self, type_loc(self, func.ret), 8010, "");
-            }
-            if let Some(loc) = type_parameter_list_loc(self, func.type_params) {
-                error(self, loc, 8004, "");
-            }
-            for (at, token) in typescript_modifiers(hir, modifiers) {
-                error(self, (at, 0), 8009, token);
-            }
-        }
-        for (index, member) in hir.members.iter().enumerate() {
-            if !matches!(bound.member_owner[index], MemberOwner::Class(_)) {
-                continue;
-            }
-            if matches!(member.kind, MemberKind::Property | MemberKind::Method)
-                && member.flags.contains(Flags::OPTIONAL)
-                && let Some(at) = question_token_after_key(member.key, member.name_pos)
-            {
-                error(self, (at, 0), 8009, "?");
-            }
-            if member.kind == MemberKind::Property {
-                if member.ty.is_some() {
-                    error(self, type_loc(self, member.ty), 8010, "");
-                }
-                for (at, token) in typescript_modifiers(hir, member.modifiers) {
-                    error(self, (at, 0), 8009, token);
-                }
-            }
-        }
-        // `parseObjectLiteralElement` passes the `?` after the name on to `parseMethodDeclaration`.
-        for prop in &hir.props {
-            if prop.kind == PropKind::Method
-                && let Some(at) = question_token_after_key(prop.key, prop.pos)
-            {
-                error(self, (at, 0), 8009, "?");
-            }
-        }
-        // `hir.decorators` keeps the decorators of one owner together, in source order. Only the first one is reported.
-        let reports_parameter_decorators = !self.is_check_js(file) && !hir.legacy_decorators;
         let mut previous_owner = None;
         for &(owner, decorator) in &hir.decorators {
-            if previous_owner.replace(owner) == Some(owner) {
-                continue;
+            if previous_owner.replace(owner) != Some(owner)
+                && let DecoratorOwner::Param(p) = owner
+            {
+                // `decorator.Loc`, which starts where the token before it ends.
+                let at = (file, hir[p].loc.pos, end_of_expr(hir, decorator));
+                self.add_diagnostic(Reported::bare(at, 1206));
             }
-            match owner {
-                // `checkJSDecoratorSyntax`: `CanHaveIllegalDecorators` holds for a constructor.
-                DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Constructor => {
-                    let expression_start =
-                        (self.start_of(file, decorator) as usize).min(text.len());
-                    if let Some(at_sign) = text[..expression_start].iter().rposition(|&b| b == b'@')
-                    {
-                        error(
-                            self,
-                            (at_sign as u32, self.end_of_expr(file, decorator)),
-                            1206,
-                            "",
-                        );
-                    }
-                }
-                // `getAdditionalJSSyntacticDiagnostics` reports `decorator.Loc`, which starts where the previous token ends.
-                DecoratorOwner::Param(p) if reports_parameter_decorators => {
-                    let start = skip_trivia_back(text, hir[p].pos as usize) as u32;
-                    error(self, (start, self.end_of_expr(file, decorator)), 1206, "");
-                }
-                _ => {}
-            }
-        }
-        for class in &hir.classes {
-            if let Some(loc) = type_parameter_list_loc(self, class.type_params) {
-                error(self, loc, 8004, "");
-            }
-            for (at, token) in typescript_modifiers(hir, class.modifiers) {
-                error(self, (at, 0), 8009, token);
-            }
-            if !class.implements.is_empty() {
-                let first = hir[hir.id_at(class.implements, 0)].pos as usize;
-                let end = skip_trivia_back(text, first);
-                if word_before(text, end) == b"implements" {
-                    let start = (end - b"implements".len()) as u32;
-                    error(
-                        self,
-                        (start, self.end_of_type_args(file, class.implements)),
-                        8005,
-                        "",
-                    );
-                }
-            }
-            if !class.extends_args.is_empty() {
-                error(
-                    self,
-                    type_argument_list_loc(self, class.extends_args),
-                    8011,
-                    "",
-                );
-            }
-        }
-        for (index, stmt) in hir.stmts.iter().enumerate() {
-            let to_its_end =
-                |c: &Self, start: u32| (start, c.end_of_stmt(file, StmtId(index as u32)));
-            match stmt.kind {
-                StmtKind::Var(_) => {
-                    for (at, token) in typescript_modifiers(hir, stmt.modifiers) {
-                        error(self, (at, 0), 8009, token);
-                    }
-                }
-                StmtKind::Import(i) if hir[i].type_only => {
-                    error(self, to_its_end(self, stmt.start), 8006, "import type")
-                }
-                StmtKind::ExportNamed(e) if hir[e].type_only => {
-                    error(self, to_its_end(self, stmt.start), 8006, "export type")
-                }
-                StmtKind::ExportStar {
-                    type_only: true, ..
-                } => error(self, to_its_end(self, stmt.start), 8006, "export type"),
-                StmtKind::ImportEquals(_) => error(self, to_its_end(self, stmt.start), 8002, ""),
-                StmtKind::ExportAssign(_) => error(self, to_its_end(self, stmt.start), 8003, ""),
-                StmtKind::Interface(i) => error(self, (hir[i].name_pos, 0), 8006, "interface"),
-                // `parseAmbientExternalModuleDeclaration` (`module "m"`, `global`) does not call `checkJSSyntax`.
-                StmtKind::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)) => {
-                    let keyword = match module_keyword(text, hir[m].name_pos) {
-                        b"namespace" => "namespace",
-                        _ => "module",
-                    };
-                    error(self, (hir[m].name_pos, 0), 8006, keyword);
-                }
-                StmtKind::Enum(e) => error(self, (hir[e].name_pos, 0), 8006, "enum"),
-                StmtKind::TypeAlias(a) => error(self, (hir[a].name_pos, 0), 8008, ""),
-                _ => {}
-            }
-        }
-        for (index, spec) in hir.import_specs.iter().enumerate() {
-            if spec.type_only {
-                let end = self.end_of_import_spec(file, ImportSpecId(index as u32));
-                error(self, (spec.start, end), 8006, "import...type");
-            }
-        }
-        for (index, spec) in hir.export_specs.iter().enumerate() {
-            if spec.type_only {
-                let end = self.end_of_export_spec(file, ExportSpecId(index as u32));
-                error(self, (spec.start, end), 8006, "export...type");
-            }
-        }
-        for (index, e) in hir.exprs.iter().enumerate() {
-            let id = ExprId(index as u32);
-            match e.kind {
-                ExprKind::NonNull(_) => error(
-                    self,
-                    (self.start_of(file, id), self.end_of_expr(file, id)),
-                    8013,
-                    "",
-                ),
-                ExprKind::As { ty, .. } => error(self, type_loc(self, ty), 8016, ""),
-                ExprKind::Satisfies { ty, .. } => error(self, type_loc(self, ty), 8037, ""),
-                _ => {}
-            }
-        }
-        for call in hir.calls.iter().filter(|call| !call.type_args.is_empty()) {
-            error(self, type_argument_list_loc(self, call.type_args), 8011, "");
         }
     }
 }

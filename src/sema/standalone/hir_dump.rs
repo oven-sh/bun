@@ -71,6 +71,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         early_errors,
         error_arguments: _,
         error_ends: _,
+        js_diagnostics,
         syntax_errors,
         error_pos: _,
         opening_brackets: _,
@@ -301,6 +302,9 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
             Some(expr) => put!(d, 0, "", "jsdoc_modifiers pos={} {flags:?}", expr.pos),
             None => put!(d, 0, "", "jsdoc_modifiers {NO_SUCH_NODE} {flags:?}"),
         }
+    }
+    for &(start, end, code, _) in js_diagnostics {
+        put!(d, 0, "", "js_diagnostic {start}..{end} {code}");
     }
     for &(func, pos, code) in jsdoc_param_errors {
         match file.fns.get(func.idx()) {
@@ -1258,6 +1262,7 @@ impl Dump<'_> {
             flags,
             body,
             has_body,
+            says_module: _,
             stmt: _,
         } = node!(self, depth, label, modules, id);
         let name = match name {

@@ -3,10 +3,9 @@
 //! Follows `checkUnusedIdentifiers` and what it calls in TypeScript 7.0.2's checker.go. They note what is referred to while
 //! checking; here a file is gone through once for that.
 
-use super::sink::held;
 use super::*;
 use crate::bind::{
-    Bound, ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
+    Bound, ClassOwner, Decl, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
 };
 use crate::program::SymbolTable;
 
@@ -32,30 +31,12 @@ struct Unused<'a> {
     reads_unknown_members: bool,
     /// By scope: the function, class, interface, enum, alias or namespace declared whose scope it is.
     owner_of_scope: Vec<SymbolId>,
-    stmt_of_import: Vec<StmtId>,
-    /// The scopes of ambient type aliases, and of the signatures and `infer` type parameters in the types of ambient variables and
-    /// properties. Sorted. Filled only under `noUnusedParameters`.
-    ambient_type_scopes: Vec<ScopeId>,
     /// The file has a `return` whose expression is never checked: see `is_in_unchecked_return`.
     has_unchecked_returns: bool,
     /// The starts of the parser's and the scanner's errors. Sorted. Empty for a file that parses.
     syntax_errors: Vec<u32>,
     locals: bool,
     parameters: bool,
-    /// The errors that are reported on more than an identifier: start, code, node.
-    reported_on: std::cell::RefCell<Vec<(u32, u32, Reported)>>,
-}
-
-/// The node an error is reported on.
-#[derive(Copy, Clone)]
-enum Reported {
-    Statement(StmtId),
-    VariableDeclarationList(Span<VarDeclId>),
-    Pattern(PatId),
-    TypeParameter(TypeParamId),
-    /// `rangeOfTypeParameters`
-    TypeParameters(Span<TypeParamId>),
-    MemberName(MemberId),
 }
 
 impl Checker<'_> {
@@ -92,20 +73,11 @@ impl Checker<'_> {
             read_parameter_properties: Vec::new(),
             reads_unknown_members: false,
             owner_of_scope: vec![SymbolId::NONE; bound.scopes.len()],
-            stmt_of_import: vec![StmtId::NONE; hir.imports.len()],
-            ambient_type_scopes: Vec::new(),
             has_unchecked_returns: false,
             syntax_errors,
             locals,
             parameters,
-            reported_on: Default::default(),
         };
-        for (i, s) in hir.stmts.iter().enumerate() {
-            match s.kind {
-                StmtKind::Import(id) => u.stmt_of_import[id.idx()] = StmtId(i as u32),
-                _ => {}
-            }
-        }
         for (i, s) in bound.scopes.iter().enumerate() {
             u.owner_of_scope[i] = match s.kind {
                 ScopeKind::Fn(f) if hir[f].kind == FnKind::Decl => bound.fn_symbol[f.idx()],
@@ -153,42 +125,13 @@ impl Checker<'_> {
             }
         }
         self.note_jsdoc_links(file, &mut u);
-        if parameters {
-            u.collect_ambient_type_scopes();
-        }
         if !hir.jsx.is_empty() {
             self.note_jsx_factories(file, &index, &mut u);
         }
         if locals {
             self.note_private_reads(file, &mut u);
         }
-        u.report(&mut self.reported);
-        for (start, code, node) in u.reported_on.take() {
-            let mut args = Vec::new();
-            let end = match node {
-                Reported::Statement(s) => self.end_of_stmt(file, s),
-                Reported::VariableDeclarationList(decls) => self.end_of_var_decl_list(file, decls),
-                Reported::Pattern(pat) => self.end_of_pat(file, pat),
-                Reported::TypeParameter(p) => {
-                    args.push(self.atom_text(hir[p].name));
-                    self.end_of_type_param(file, p)
-                }
-                Reported::TypeParameters(params) => {
-                    let last = self.end_of_type_param(file, params.at(params.len() - 1));
-                    let mut close = skip_trivia(&hir.text, last as usize);
-                    if hir.text.get(close) == Some(&b',') {
-                        close = skip_trivia(&hir.text, close + 1);
-                    }
-                    close as u32 + 1
-                }
-                Reported::MemberName(m) => {
-                    let end = self.end_of_member_name(file, m);
-                    args.push(self.source_text(file, start, end));
-                    end
-                }
-            };
-            self.note_printed(start, end, code, held(args));
-        }
+        self.check_unused_identifiers(&u);
     }
 
     /// `markJsxAliasReferenced`: a tag is a call of the factory, which has to be in scope where the tag is, unless a module that is there
@@ -284,14 +227,27 @@ impl Checker<'_> {
     /// The private members that are read: wherever `markPropertyAsReferenced` is called.
     fn note_private_reads(&mut self, file: FileId, u: &mut Unused) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !hir
+        // Only the private members of the file are marked: what goes by another name is not looked up. A computed name is not known ahead.
+        let private = hir
             .members
             .iter()
-            .any(|m| m.flags.contains(Flags::PRIVATE) || matches!(m.key, PropKey::Private(_)))
-            && !hir.params.iter().any(|p| p.flags.contains(Flags::PRIVATE))
-        {
+            .filter(|m| m.flags.contains(Flags::PRIVATE) || matches!(m.key, PropKey::Private(_)));
+        let may_be_any = private.clone().any(|m| m.key.name().is_none());
+        let parameters = hir
+            .params
+            .iter()
+            .filter(|p| p.flags.contains(Flags::PRIVATE));
+        let names: crate::util::FxHashSet<Atom> = private
+            .filter_map(|m| m.key.name())
+            .chain(parameters.filter_map(|p| match hir[p.pat].kind {
+                PatKind::Ident(name) => Some(name),
+                _ => None,
+            }))
+            .collect();
+        if names.is_empty() && !may_be_any {
             return;
         }
+        let is_private = |name: Atom| may_be_any || names.contains(&name);
         for i in 0..hir.exprs.len() {
             let e = ExprId(i as u32);
             if !matches!(
@@ -306,7 +262,7 @@ impl Checker<'_> {
                 continue;
             }
             match hir.exprs[i].kind {
-                ExprKind::Dot { obj, name, .. } => {
+                ExprKind::Dot { obj, name, .. } if is_private(name) => {
                     let receiver = self.type_of_expr(file, obj);
                     let receiver = self.non_nullable(receiver);
                     self.note_property(file, u, receiver, name, Some(e), None);
@@ -324,7 +280,8 @@ impl Checker<'_> {
                     let receiver = self.non_nullable(receiver);
                     // `getIndexedAccessTypeOrUndefined`: each member of a union of keys names a property.
                     for &k in self.parts(key) {
-                        if let Some(name) = self.property_name_of_type(k) {
+                        if let Some(name) = self.property_name_of_type(k).filter(|&n| is_private(n))
+                        {
                             self.note_property(file, u, receiver, name, Some(e), None);
                         }
                     }
@@ -395,7 +352,7 @@ impl Checker<'_> {
                             PatKind::Ident(name) if hir[p].is_rest => Some(name),
                             _ => self.member_name(file, hir[p].key),
                         };
-                        if let Some(name) = name {
+                        if let Some(name) = name.filter(|&n| is_private(n)) {
                             self.note_property(file, u, whole, name, None, None);
                         }
                     }
@@ -403,7 +360,9 @@ impl Checker<'_> {
                 PatKind::Array(elems) => {
                     let whole = self.type_of_pat(file, PatId(i as u32));
                     for element in elems.iter() {
-                        if let PatKind::Ident(name) = hir[hir[element].pat].kind {
+                        if let PatKind::Ident(name) = hir[hir[element].pat].kind
+                            && is_private(name)
+                        {
                             self.note_property(file, u, whole, name, None, None);
                         }
                     }
@@ -472,7 +431,7 @@ impl Checker<'_> {
                         _ => (item, false),
                     };
                     if is_pattern(item) {
-                        let element = self.element_of_destructured(source, i, is_rest);
+                        let element = self.element_of_destructured(source, i, is_rest, None);
                         self.note_destructured(file, u, item, element, None);
                     }
                 }
@@ -822,89 +781,6 @@ fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
     }
 }
 
-/// Adds the scope of every signature and every `infer` type parameter in the type `node` to `scopes`.
-fn collect_type_scopes(
-    hir: &hir::File,
-    bound: &Bound,
-    node: TypeNodeId,
-    scopes: &mut Vec<ScopeId>,
-) {
-    if node.is_none() {
-        return;
-    }
-    match hir[node].kind {
-        TypeNodeKind::Fn(f) => collect_signature_scopes(hir, bound, f, scopes),
-        TypeNodeKind::Object(members) => {
-            for m in members.iter() {
-                collect_type_scopes(hir, bound, hir[m].ty, scopes);
-                if hir[m].func.is_some() {
-                    collect_signature_scopes(hir, bound, hir[m].func, scopes);
-                }
-            }
-        }
-        TypeNodeKind::Infer(p) => {
-            scopes.push(bound.type_param_scope[p.idx()]);
-            collect_type_scopes(hir, bound, hir[p].constraint, scopes);
-        }
-        TypeNodeKind::Ref { args: types, .. }
-        | TypeNodeKind::Typeof { args: types, .. }
-        | TypeNodeKind::Import { args: types, .. }
-        | TypeNodeKind::Template { types, .. }
-        | TypeNodeKind::Union(types)
-        | TypeNodeKind::Intersection(types) => {
-            for t in hir.ids(types) {
-                collect_type_scopes(hir, bound, t, scopes);
-            }
-        }
-        TypeNodeKind::Array(t)
-        | TypeNodeKind::Keyof(t)
-        | TypeNodeKind::Readonly(t)
-        | TypeNodeKind::Predicate { ty: t, .. } => {
-            collect_type_scopes(hir, bound, t, scopes);
-        }
-        TypeNodeKind::Tuple(elems) => {
-            for e in elems.iter() {
-                collect_type_scopes(hir, bound, hir[e].ty, scopes);
-            }
-        }
-        TypeNodeKind::Cond {
-            check,
-            extends,
-            yes,
-            no,
-        } => {
-            for t in [check, extends, yes, no] {
-                collect_type_scopes(hir, bound, t, scopes);
-            }
-        }
-        TypeNodeKind::IndexedAccess { obj, index } => {
-            collect_type_scopes(hir, bound, obj, scopes);
-            collect_type_scopes(hir, bound, index, scopes);
-        }
-        TypeNodeKind::Mapped(m) => {
-            for t in [hir[hir[m].param].constraint, hir[m].name_ty, hir[m].ty] {
-                collect_type_scopes(hir, bound, t, scopes);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The same for the signature `f`: its own scope, and those in the types of its type parameters, its parameters and its return type.
-fn collect_signature_scopes(hir: &hir::File, bound: &Bound, f: FnId, scopes: &mut Vec<ScopeId>) {
-    scopes.push(bound.fns[f.idx()].scope);
-    let f = &hir[f];
-    for p in f.type_params.iter() {
-        collect_type_scopes(hir, bound, hir[p].constraint, scopes);
-        collect_type_scopes(hir, bound, hir[p].default, scopes);
-    }
-    collect_type_scopes(hir, bound, f.this_ty(hir), scopes);
-    for p in f.params.iter() {
-        collect_type_scopes(hir, bound, hir[p].ty, scopes);
-    }
-    collect_type_scopes(hir, bound, f.ret, scopes);
-}
-
 impl Unused<'_> {
     // ───────────────────────────── what is referred to ─────────────────────────────
 
@@ -1148,8 +1024,9 @@ impl Unused<'_> {
             }
             held.filter(|&sym| files.means(sym, meaning))
         };
+        let start = self.bound.scope_to_resolve_from(from, name);
         let found = files
-            .resolve_with(self.file, from, name, meaning, false, lookup)
+            .resolve_with(self.file, start, name, meaning, false, lookup)
             .ok()??;
         let found = files
             .parts(found)
@@ -1173,50 +1050,7 @@ impl Unused<'_> {
 
     /// `IsWriteOnlyAccess`
     fn is_write_only(&self, e: ExprId) -> bool {
-        self.access_kind(e) == 1
-    }
-
-    /// `accessKind`: 0 for read, 1 for write, 2 for both.
-    fn access_kind(&self, e: ExprId) -> u8 {
-        let (hir, bound) = (self.hir, self.bound);
-        match bound.expr_parent[e.idx()] {
-            Parent::Expr(parent) => match hir[parent].kind {
-                ExprKind::Unary {
-                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                    ..
-                } => 2,
-                ExprKind::Assign { op, target, .. } if target == e => {
-                    if op.is_none() {
-                        1
-                    } else {
-                        2
-                    }
-                }
-                ExprKind::Array(_) => self.access_kind(parent),
-                _ => 0,
-            },
-            // What is spread into counts as read.
-            Parent::Prop(p) => {
-                let owner = bound.prop_owner[p.idx()];
-                let is_target = hir[p].kind != PropKind::Spread
-                    && owner.is_some()
-                    && matches!(hir[owner].kind, ExprKind::Object(_));
-                if is_target {
-                    self.access_kind(owner)
-                } else {
-                    0
-                }
-            }
-            Parent::Stmt(s) if s.is_some() => match bound.stmt_parent[s.idx()] {
-                // `for (x of xs)`
-                Parent::Stmt(outer) if outer.is_some() => match hir[outer].kind {
-                    StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s => 1,
-                    _ => 0,
-                },
-                _ => 0,
-            },
-            _ => 0,
-        }
+        self.bound.is_write_only_access(self.hir, e)
     }
 
     /// Whether `e` is written in a function, class, enum or namespace declaration of `symbol`: `isSelfReferenceLocation`.
@@ -1272,317 +1106,12 @@ impl Unused<'_> {
         static_block.is_some() || in_return
     }
 
-    // ───────────────────────────── what is said ─────────────────────────────
-
-    fn report(&self, out: &mut Vec<super::sink::Reported>) {
-        let (hir, bound) = (self.hir, self.bound);
-        for (i, scope) in bound.scopes.iter().enumerate() {
-            let checks_locals = match scope.kind {
-                // `checkSourceFile`: `IsExternalOrCommonJSModule`
-                ScopeKind::File => hir.has_module_syntax || bound.commonjs_indicator.is_some(),
-                ScopeKind::Module(_) | ScopeKind::Block => true,
-                // Of overloads only the implementation.
-                ScopeKind::Fn(f) => {
-                    !matches!(hir[f].body, FnBody::None)
-                        && matches!(
-                            hir[f].kind,
-                            FnKind::Decl
-                                | FnKind::Expr
-                                | FnKind::Arrow
-                                | FnKind::Method
-                                | FnKind::Getter
-                                | FnKind::Setter
-                                | FnKind::Constructor
-                        )
-                }
-                _ => false,
-            };
-            if checks_locals && !self.is_ambient_scope(ScopeId(i as u32)) {
-                self.report_locals_and_parameters(ScopeId(i as u32), out);
-            }
-        }
-        if self.parameters {
-            for (i, f) in hir.fns.iter().enumerate() {
-                // Set for function declarations and named function expressions only. A method that several files declare in one
-                // interface is one symbol too, which is not tracked.
-                let symbol = bound.fn_symbol[i];
-                if !f.type_params.is_empty()
-                    && !f.flags.contains(Flags::AMBIENT)
-                    && !self.is_ambient_scope(bound.fns[i].scope)
-                    && (symbol.is_none() || self.is_declared_in_one_file(symbol))
-                {
-                    self.report_type_parameters(f.type_params, out);
-                }
-            }
-            for (i, c) in hir.classes.iter().enumerate() {
-                if !c.flags.contains(Flags::AMBIENT)
-                    && self.is_declared_in_one_file(bound.class_symbol[i])
-                {
-                    self.report_type_parameters(c.type_params, out);
-                }
-            }
-            for a in &hir.aliases {
-                if !a.flags.contains(Flags::AMBIENT) {
-                    self.report_type_parameters(a.type_params, out);
-                }
-            }
-            for (i, id) in hir.interfaces.iter().enumerate() {
-                if !id.flags.contains(Flags::AMBIENT)
-                    && self.is_declared_in_one_file(bound.interface_symbol[i])
-                {
-                    self.report_type_parameters(id.type_params, out);
-                }
-            }
-            for t in &hir.types {
-                if let TypeNodeKind::Infer(param) = t.kind
-                    && hir[param].name != known::empty
-                    && self.is_unreferenced_type_parameter(param)
-                    && !self.is_ambient_scope(bound.type_param_scope[param.idx()])
-                {
-                    out.push(super::sink::Reported::bare(
-                        (self.file, hir[param].pos, 0),
-                        6196,
-                    ));
-                }
-            }
-        }
-        if self.locals {
-            self.report_class_members(out);
-        }
-    }
-
     /// `allDeclarationsInSameSourceFile`
     fn is_declared_in_one_file(&self, symbol: SymbolId) -> bool {
         symbol.is_some()
             && !self.bound.symbols[symbol.idx()]
                 .flags
                 .contains(SymFlags::MERGED)
-    }
-
-    /// `reportUnused` reports nothing for a node that has `NodeFlagsAmbient`. That is a context flag of the parser: every node under a
-    /// `declare` has it, down to the signatures and `infer` types in the type of a variable.
-    fn is_ambient_scope(&self, mut scope: ScopeId) -> bool {
-        while scope.is_some() {
-            let s = &self.bound.scopes[scope.idx()];
-            let ambient = match s.kind {
-                ScopeKind::Module(m) => self.hir[m].flags.contains(Flags::AMBIENT),
-                ScopeKind::Fn(f) => self.hir[f].flags.contains(Flags::AMBIENT),
-                ScopeKind::Class(c) => self.hir[c].flags.contains(Flags::AMBIENT),
-                ScopeKind::Interface(i) => self.hir[i].flags.contains(Flags::AMBIENT),
-                _ => false,
-            };
-            if ambient || self.ambient_type_scopes.binary_search(&scope).is_ok() {
-                return true;
-            }
-            scope = s.parent;
-        }
-        false
-    }
-
-    /// Fills `ambient_type_scopes`.
-    fn collect_ambient_type_scopes(&mut self) {
-        let (hir, bound) = (self.hir, self.bound);
-        let scopes = &mut self.ambient_type_scopes;
-        for (i, alias) in hir.aliases.iter().enumerate() {
-            if alias.flags.contains(Flags::AMBIENT) {
-                scopes.push(bound.alias_scope[i]);
-            }
-        }
-        for d in &hir.var_decls {
-            if d.flags.contains(Flags::AMBIENT) {
-                collect_type_scopes(hir, bound, d.ty, scopes);
-            }
-        }
-        for member in &hir.members {
-            if member.flags.contains(Flags::AMBIENT) {
-                collect_type_scopes(hir, bound, member.ty, scopes);
-            }
-        }
-        scopes.sort_unstable();
-    }
-
-    /// `checkUnusedLocalsAndParameters`
-    fn report_locals_and_parameters(&self, scope: ScopeId, out: &mut Vec<super::sink::Reported>) {
-        let (hir, bound) = (self.hir, self.bound);
-        let s = &bound.scopes[scope.idx()];
-        let mut var_stmts: Vec<StmtId> = Vec::new();
-        let mut fns: Vec<FnId> = Vec::new();
-        let mut imports: Vec<(ImportId, u32)> = Vec::new();
-        for &(name, local) in bound.table(s.locals) {
-            // A missing name is a syntax error inside its declaration, so `reportUnused` drops what is reported for it.
-            if name == known::empty || name.is_none() {
-                continue;
-            }
-            let symbol = &bound.symbols[local.idx()];
-            let kinds = self.referenced[local.idx()];
-            let is_type_parameter = symbol.flags.contains(SymFlags::TYPE_PARAMETER);
-            if is_type_parameter
-                && (!symbol.flags.intersects(SymFlags::VARIABLE) || kinds & VALUE != 0)
-            {
-                continue;
-            }
-            if !is_type_parameter
-                && (kinds != 0
-                    || symbol.export_symbol.is_some()
-                    || symbol.flags.contains(SymFlags::MODULE_EXPORTS))
-            {
-                continue;
-            }
-            let starts_with_underscore = self.starts_with_underscore(name);
-            for &decl in &symbol.decls {
-                match decl {
-                    // The declaration of a `require` alias is its variable declaration or binding element.
-                    Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
-                        match self.root_of(pat) {
-                            PatParent::Var(d) => {
-                                let stmt = bound.var_stmt[d.idx()];
-                                if stmt.is_some()
-                                    && matches!(hir[stmt].kind, StmtKind::Var(_))
-                                    && !var_stmts.contains(&stmt)
-                                {
-                                    var_stmts.push(stmt);
-                                }
-                            }
-                            PatParent::Param(p) => {
-                                let f = bound.param_fn[p.idx()];
-                                if !fns.contains(&f) {
-                                    fns.push(f);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    Decl::ImportDefault(id) if !starts_with_underscore => {
-                        imports.push((id, hir[id].default_pos))
-                    }
-                    Decl::ImportNamespace(id) if !starts_with_underscore => {
-                        imports.push((id, hir[id].namespace_pos))
-                    }
-                    Decl::ImportSpec(spec) if !starts_with_underscore => {
-                        imports.push((hir[spec].import, hir[spec].pos))
-                    }
-                    Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => {}
-                    _ if self.declaration_has_syntax_error(decl) => {}
-                    // The name of a function or class expression is nobody's local.
-                    Decl::Fn(f) if hir[f].kind != FnKind::Decl => {}
-                    // `export default function f() {}`
-                    Decl::Fn(f)
-                        if !hir[f]
-                            .flags
-                            .intersects(Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT) =>
-                    {
-                        self.local(hir[f].name_pos, 6133, out)
-                    }
-                    Decl::Class(c) if matches!(bound.class_owner[c.idx()], ClassOwner::Expr(_)) => {
-                    }
-                    Decl::Class(c)
-                        if !hir[c]
-                            .flags
-                            .intersects(Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT) =>
-                    {
-                        self.local(hir[c].name_pos, 6196, out)
-                    }
-                    Decl::Interface(id)
-                        if !hir[id]
-                            .flags
-                            .intersects(Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT) =>
-                    {
-                        self.local(hir[id].name_pos, 6196, out)
-                    }
-                    Decl::Alias(a) if !hir[a].flags.contains(Flags::AMBIENT) => {
-                        self.local(hir[a].name_pos, 6196, out)
-                    }
-                    Decl::Enum(e) if !hir[e].flags.contains(Flags::AMBIENT) => {
-                        self.local(hir[e].name_pos, 6196, out)
-                    }
-                    Decl::Module(m) if !hir[m].flags.contains(Flags::AMBIENT) => {
-                        self.local(hir[m].name_pos, 6133, out)
-                    }
-                    Decl::ImportEquals(id) => self.local(hir[id].name_pos, 6133, out),
-                    _ => {}
-                }
-            }
-        }
-        for stmt in var_stmts {
-            let StmtKind::Var(decls) = hir[stmt].kind else {
-                continue;
-            };
-            if decls.iter().any(|d| hir[d].flags.contains(Flags::AMBIENT)) {
-                continue;
-            }
-            // `reportUnusedVariables`
-            if decls.len() > 1 && decls.iter().all(|d| self.is_unreferenced(hir[d].pat)) {
-                if !(0..decls.len()).any(|i| self.variable_has_syntax_error(stmt, decls, i)) {
-                    self.local(hir[stmt].start, 6199, out);
-                    self.reported_on.borrow_mut().push((
-                        hir[stmt].start,
-                        6199,
-                        Reported::VariableDeclarationList(decls),
-                    ));
-                }
-            } else {
-                for (i, d) in decls.iter().enumerate() {
-                    if !self.variable_has_syntax_error(stmt, decls, i) {
-                        self.report_variable_declaration(hir[d].pat, false, out);
-                    }
-                }
-            }
-        }
-        for f in fns {
-            for p in hir[f].params.iter() {
-                // `reportUnusedVariableDeclarations`: not a parameter property, and not a parameter named `this`.
-                if !hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
-                    && !matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this))
-                    && !self.parameter_has_syntax_error(p)
-                {
-                    self.report_variable_declaration(hir[p].pat, true, out);
-                }
-            }
-        }
-        // `reportUnusedImports`
-        imports.sort_unstable_by_key(|i| (i.0.0, i.1));
-        let mut i = 0;
-        while i < imports.len() {
-            let id = imports[i].0;
-            let end = i + imports[i..].iter().take_while(|x| x.0 == id).count();
-            let import = &hir[id];
-            let declared = usize::from(import.default.is_some())
-                + usize::from(import.namespace.is_some())
-                + import.named.len();
-            let stmt = self.stmt_of_import[id.idx()];
-            if stmt.is_some() && self.statement_has_syntax_error(stmt) {
-                // The error may be in another part of the import than the one that is unused: node ends are not kept.
-            } else if declared > 1 && declared == end - i && stmt.is_some() {
-                self.local(hir[stmt].start, 6192, out);
-                self.reported_on.borrow_mut().push((
-                    hir[stmt].start,
-                    6192,
-                    Reported::Statement(stmt),
-                ));
-            } else {
-                // What `import type` brings in are types. (Not so `import { type T }`.)
-                for unused in &imports[i..end] {
-                    let is_namespace =
-                        import.namespace.is_some() && unused.1 == import.namespace_pos;
-                    self.local(
-                        unused.1,
-                        if import.type_only && !is_namespace {
-                            6196
-                        } else {
-                            6133
-                        },
-                        out,
-                    );
-                }
-            }
-            i = end;
-        }
-    }
-
-    fn local(&self, start: u32, code: u32, out: &mut Vec<super::sink::Reported>) {
-        if self.locals {
-            out.push(super::sink::Reported::bare((self.file, start, 0), code));
-        }
     }
 
     fn starts_with_underscore(&self, name: Atom) -> bool {
@@ -1592,6 +1121,44 @@ impl Unused<'_> {
     // `reportUnused` drops what is reported for a node that has `NodeFlagsThisNodeOrAnySubNodesHasError`. The parser flags the first
     // node it finishes after an error (`finishNodeWithEnd`), and the binder flags the ancestors. Node ends are not kept, so the
     // `*_has_syntax_error` functions take a node to reach as far as the start of what follows it.
+
+    /// `NodeFlagsThisNodeOrAnySubNodesHasError`
+    fn has_syntax_error(&self, location: Node) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let variable = |d: VarDeclId| {
+            let stmt = bound.var_stmt[d.idx()];
+            match hir.stmts.get(stmt.idx()).map(|s| s.kind) {
+                Some(StmtKind::Var(decls)) => {
+                    let i = decls.iter().position(|other| other == d);
+                    i.is_some_and(|i| self.variable_has_syntax_error(stmt, decls, i))
+                }
+                _ => false,
+            }
+        };
+        match hir.data(location) {
+            NodeData::Stmt(s) => self.statement_has_syntax_error(s),
+            NodeData::VarDecl(d) => variable(d),
+            NodeData::Param(p) => self.parameter_has_syntax_error(p),
+            NodeData::Member(m) => match bound.member_owner[m.idx()] {
+                MemberOwner::Class(class) => self.member_has_syntax_error(class, m),
+                _ => false,
+            },
+            // The error may be in another part of the import than the one that is unused: node ends are not kept.
+            NodeData::ImportSpec(_)
+            | NodeData::Part(Part::ImportClause | Part::NamedBindings, _) => {
+                let is_statement = |n: Node| matches!(hir.data(n), NodeData::Stmt(_));
+                self.has_syntax_error(hir.find_ancestor(location, is_statement))
+            }
+            NodeData::Part(Part::DeclarationList, row) => match hir.data(row) {
+                NodeData::Stmt(s) => match hir[s].kind {
+                    StmtKind::Var(decls) => decls.iter().any(variable),
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 
     /// Whether a syntax error starts in `start..=end`.
     fn has_syntax_error_in(&self, start: u32, end: u32) -> bool {
@@ -1671,31 +1238,6 @@ impl Unused<'_> {
         end >= start && self.has_syntax_error_in(start, end)
     }
 
-    /// For a declaration that is a statement.
-    fn declaration_has_syntax_error(&self, decl: Decl) -> bool {
-        if self.syntax_errors.is_empty() {
-            return false;
-        }
-        let (hir, bound) = (self.hir, self.bound);
-        let stmt = match decl {
-            Decl::Fn(f) => match bound.fns[f.idx()].owner {
-                FnOwner::Stmt(s) => s,
-                _ => StmtId::NONE,
-            },
-            Decl::Class(c) => match bound.class_owner[c.idx()] {
-                ClassOwner::Stmt(s) => s,
-                ClassOwner::Expr(_) => StmtId::NONE,
-            },
-            Decl::Enum(e) => hir[e].stmt,
-            Decl::Module(m) => hir[m].stmt,
-            Decl::Interface(id) => hir[id].stmt,
-            Decl::Alias(id) => hir[id].stmt,
-            Decl::ImportEquals(id) => hir[id].stmt,
-            _ => StmtId::NONE,
-        };
-        stmt.is_some() && self.statement_has_syntax_error(stmt)
-    }
-
     /// For declaration `i` of `decls`, the declarations of the variable statement `stmt`.
     fn variable_has_syntax_error(&self, stmt: StmtId, decls: Span<VarDeclId>, i: usize) -> bool {
         let hir = self.hir;
@@ -1752,61 +1294,6 @@ impl Unused<'_> {
         self.has_syntax_error_in(start, closing_bracket_after(&hir.text, start as usize))
     }
 
-    /// The variable declaration or the parameter `pat` is (part of) the name of.
-    fn root_of(&self, mut pat: PatId) -> PatParent {
-        loop {
-            match self.bound.pat_parent[pat.idx()] {
-                PatParent::Prop(parent, _) | PatParent::Elem(parent, _) => pat = parent,
-                root => return root,
-            }
-        }
-    }
-
-    /// `reportUnusedVariableDeclarations`, for one of them.
-    fn report_variable_declaration(
-        &self,
-        pat: PatId,
-        is_parameter: bool,
-        out: &mut Vec<super::sink::Reported>,
-    ) {
-        let hir = self.hir;
-        let wanted = if is_parameter {
-            self.parameters
-        } else {
-            self.locals
-        };
-        let elements: Vec<PatId> = match hir[pat].kind {
-            PatKind::Missing => return,
-            PatKind::Ident(_) => {
-                if wanted && self.is_unreferenced(pat) {
-                    out.push(super::sink::Reported::bare(
-                        (self.file, hir[pat].pos, 0),
-                        6133,
-                    ));
-                }
-                return;
-            }
-            PatKind::Object(props) => props.iter().map(|p| hir[p].value).collect(),
-            PatKind::Array(elems) => elems.iter().map(|e| hir[e].pat).collect(),
-        };
-        // `reportUnusedBindingElements`
-        if elements.len() > 1 && elements.iter().all(|&e| self.is_unreferenced(e)) {
-            if wanted {
-                out.push(super::sink::Reported::bare(
-                    (self.file, hir[pat].pos, 0),
-                    6198,
-                ));
-                self.reported_on
-                    .borrow_mut()
-                    .push((hir[pat].pos, 6198, Reported::Pattern(pat)));
-            }
-        } else {
-            for e in elements {
-                self.report_variable_declaration(e, is_parameter, out);
-            }
-        }
-    }
-
     /// `isUnreferencedVariableDeclaration`
     fn is_unreferenced(&self, pat: PatId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
@@ -1849,26 +1336,277 @@ impl Unused<'_> {
         !(excuses_underscore && self.starts_with_underscore(name))
     }
 
-    /// `checkUnusedTypeParameters`
-    fn report_type_parameters(
-        &self,
-        params: Span<TypeParamId>,
-        out: &mut Vec<super::sink::Reported>,
+    fn is_unreferenced_type_parameter(&self, p: TypeParamId) -> bool {
+        let symbol = self.bound.type_param_symbol[p.idx()];
+        symbol.is_some()
+            && self.referenced[symbol.idx()] & TYPE == 0
+            && !self.starts_with_underscore(self.hir[p].name)
+    }
+}
+
+impl Checker<'_> {
+    /// `checkUnusedIdentifiers`. What `registerForUnusedIdentifiersCheck` collects there is gone through by kind here.
+    fn check_unused_identifiers(&mut self, u: &Unused<'_>) {
+        let (hir, bound) = (u.hir, u.bound);
+        for (i, scope) in bound.scopes.iter().enumerate() {
+            let checks_locals = match scope.kind {
+                // `checkSourceFile`: `IsExternalOrCommonJSModule`
+                ScopeKind::File => hir.has_module_syntax || bound.commonjs_indicator.is_some(),
+                ScopeKind::Module(_) | ScopeKind::Block => true,
+                // Of overloads only the implementation.
+                ScopeKind::Fn(f) => {
+                    !matches!(hir[f].body, FnBody::None)
+                        && hir.kind(hir.node(f)).is_function_like_declaration()
+                }
+                _ => false,
+            };
+            if checks_locals {
+                self.check_unused_locals_and_parameters(u, ScopeId(i as u32));
+            }
+        }
+        if u.parameters {
+            for (i, f) in hir.fns.iter().enumerate() {
+                // Set for function declarations and named function expressions only. A method that several files declare in one
+                // interface is one symbol too, which is not tracked.
+                let symbol = bound.fn_symbol[i];
+                if symbol.is_none() || u.is_declared_in_one_file(symbol) {
+                    self.check_unused_type_parameters(u, hir.node(FnId(i as u32)), f.type_params);
+                }
+            }
+            for (i, c) in hir.classes.iter().enumerate() {
+                if u.is_declared_in_one_file(bound.class_symbol[i]) {
+                    let node = hir.node(ClassId(i as u32));
+                    self.check_unused_type_parameters(u, node, c.type_params);
+                }
+            }
+            for (i, a) in hir.aliases.iter().enumerate() {
+                self.check_unused_type_parameters(u, hir.node(AliasId(i as u32)), a.type_params);
+            }
+            for (i, id) in hir.interfaces.iter().enumerate() {
+                if u.is_declared_in_one_file(bound.interface_symbol[i]) {
+                    let node = hir.node(InterfaceId(i as u32));
+                    self.check_unused_type_parameters(u, node, id.type_params);
+                }
+            }
+            // `checkUnusedInferTypeParameter`
+            for (i, t) in hir.types.iter().enumerate() {
+                if let TypeNodeKind::Infer(param) = t.kind
+                    && hir[param].name != known::empty
+                    && u.is_unreferenced_type_parameter(param)
+                {
+                    let at = self.place_of_token(u.file, hir[param].pos);
+                    let args = [Arg::Atom(hir[param].name)];
+                    self.report_unused(u, hir.node(TypeNodeId(i as u32)), true, at, 6196, &args);
+                }
+            }
+        }
+        if u.locals && !u.reads_unknown_members {
+            self.check_unused_class_members(u);
+        }
+    }
+
+    /// `reportUnused`
+    fn report_unused(
+        &mut self,
+        u: &Unused<'_>,
+        location: Node,
+        is_parameter: bool,
+        at: (FileId, u32, u32),
+        code: u32,
+        args: &[Arg<'_>],
     ) {
+        let is_error = if is_parameter { u.parameters } else { u.locals };
+        if is_error && !u.hir.is_ambient(location) && !u.has_syntax_error(location) {
+            self.error_at(at, code, args);
+        }
+    }
+
+    /// `checkUnusedLocalsAndParameters`
+    fn check_unused_locals_and_parameters(&mut self, u: &Unused<'_>, scope: ScopeId) {
+        let (hir, bound, file) = (u.hir, u.bound, u.file);
+        let mut variable_parents: Vec<Node> = Vec::new();
+        let mut import_clauses: Vec<(Node, Node)> = Vec::new();
+        for &(name, local) in bound.table(bound.scopes[scope.idx()].locals) {
+            // A missing name is a syntax error inside its declaration, so `reportUnused` drops what is reported for it.
+            if name == known::empty || name.is_none() {
+                continue;
+            }
+            let symbol = &bound.symbols[local.idx()];
+            let kinds = u.referenced[local.idx()];
+            if if symbol.flags.contains(SymFlags::TYPE_PARAMETER) {
+                !symbol.flags.intersects(SymFlags::VARIABLE) || kinds & VALUE != 0
+            } else {
+                kinds != 0
+                    || symbol.export_symbol.is_some()
+                    || symbol.flags.contains(SymFlags::MODULE_EXPORTS)
+            } {
+                continue;
+            }
+            for &decl in &symbol.decls {
+                let declaration = hir.node(decl);
+                match hir.kind(declaration) {
+                    Kind::VariableDeclaration | Kind::Parameter | Kind::BindingElement => {
+                        let parent = hir.parent(hir.get_root_declaration(declaration));
+                        if !variable_parents.contains(&parent) {
+                            variable_parents.push(parent);
+                        }
+                    }
+                    Kind::ImportClause | Kind::ImportSpecifier | Kind::NamespaceImport => {
+                        if !u.starts_with_underscore(name) {
+                            // `importClauseFromImported`
+                            let is_clause = |n: Node| hir.kind(n) == Kind::ImportClause;
+                            import_clauses
+                                .push((hir.find_ancestor(declaration, is_clause), declaration));
+                        }
+                    }
+                    // `export default function f() {}`. `IsAmbientModule`
+                    Kind::FunctionDeclaration
+                    | Kind::ClassDeclaration
+                    | Kind::InterfaceDeclaration
+                    | Kind::TypeAliasDeclaration
+                    | Kind::JSTypeAliasDeclaration
+                    | Kind::EnumDeclaration
+                    | Kind::ModuleDeclaration
+                    | Kind::ImportEqualsDeclaration
+                        if !hir
+                            .flags(declaration)
+                            .intersects(Flags::EXPORT | Flags::DEFAULT)
+                            || matches!(
+                                decl,
+                                Decl::Alias(_)
+                                    | Decl::Enum(_)
+                                    | Decl::Module(_)
+                                    | Decl::ImportEquals(_)
+                            ) =>
+                    {
+                        self.report_unused_local(u, declaration, name)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for parent in variable_parents {
+            let list = match hir.data(parent) {
+                NodeData::Part(Part::DeclarationList, row) => hir.data(row),
+                _ => NodeData::None,
+            };
+            if let NodeData::Stmt(stmt) = list
+                && let StmtKind::Var(decls) = hir[stmt].kind
+            {
+                // `reportUnusedVariables`
+                if decls.len() > 1 && decls.iter().all(|d| u.is_unreferenced(hir[d].pat)) {
+                    let start = self.start_after_modifiers(file, stmt);
+                    let at = (file, start, self.end_of_var_decl_list(file, decls));
+                    self.report_unused(u, parent, false, at, 6199, &[]);
+                } else {
+                    for d in decls.iter() {
+                        self.report_unused_variable_declaration(u, hir.node(d), hir[d].pat);
+                    }
+                }
+            } else if let Some(function) = hir.fns.get(hir.function_of(parent).idx()) {
+                // `reportUnusedParameters`, `reportUnusedVariableDeclarations`: not a parameter property, and not a parameter named `this`.
+                for p in function.params.iter() {
+                    if !hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
+                        && !matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this))
+                    {
+                        self.report_unused_variable_declaration(u, hir.node(p), hir[p].pat);
+                    }
+                }
+            }
+        }
+        // `reportUnusedImports`
+        import_clauses.sort_unstable();
+        for unuseds in import_clauses.chunk_by(|a, b| a.0 == b.0) {
+            let clause = unuseds[0].0;
+            let NodeData::Stmt(stmt) = hir.data(clause.row()) else {
+                continue;
+            };
+            let StmtKind::Import(import) = hir[stmt].kind else {
+                continue;
+            };
+            let import = &hir[import];
+            let declaration_count = usize::from(import.default.is_some())
+                + usize::from(import.namespace.is_some())
+                + import.named.len();
+            if declaration_count > 1 && declaration_count == unuseds.len() {
+                let at = (file, hir[stmt].start, self.end_of_stmt(file, stmt));
+                self.report_unused(u, clause, false, at, 6192, &[]);
+            } else {
+                for &(_, unused) in unuseds {
+                    self.report_unused_local(u, unused, hir.text(hir.name(unused)));
+                }
+            }
+        }
+    }
+
+    /// `reportUnusedLocal`
+    fn report_unused_local(&mut self, u: &Unused<'_>, node: Node, name: Atom) {
+        let hir = u.hir;
+        // `IsTypeDeclaration`: what `import type` brings in are types. (Not so `import { type T }`, nor `* as ns`.)
+        let is_type_declaration = match hir.kind(node) {
+            Kind::ClassDeclaration
+            | Kind::InterfaceDeclaration
+            | Kind::TypeAliasDeclaration
+            | Kind::JSTypeAliasDeclaration
+            | Kind::EnumDeclaration => true,
+            Kind::ImportClause | Kind::ImportSpecifier => {
+                let is_statement = |n: Node| matches!(hir.data(n), NodeData::Stmt(_));
+                matches!(hir.data(hir.find_ancestor(node, is_statement)), NodeData::Stmt(s)
+                    if matches!(hir[s].kind, StmtKind::Import(i) if hir[i].type_only))
+            }
+            _ => false,
+        };
+        let at = self.place_of_token(u.file, hir.start(hir.name(node)));
+        let code = if is_type_declaration { 6196 } else { 6133 };
+        self.report_unused(u, node, false, at, code, &[Arg::Atom(name)]);
+    }
+
+    /// `reportUnusedVariableDeclarations`, for one of them. `root`: the variable declaration or the parameter `pat` is (part of) the name
+    /// of, which is what `reportUnusedVariable` goes up to.
+    fn report_unused_variable_declaration(&mut self, u: &Unused<'_>, root: Node, pat: PatId) {
+        let (hir, file) = (u.hir, u.file);
+        let is_parameter = hir.kind(root) == Kind::Parameter;
+        let elements: Vec<PatId> = match hir[pat].kind {
+            PatKind::Missing => return,
+            PatKind::Ident(name) => {
+                if u.is_unreferenced(pat) {
+                    let at = self.place_of_token(file, hir[pat].pos);
+                    self.report_unused(u, root, is_parameter, at, 6133, &[Arg::Atom(name)]);
+                }
+                return;
+            }
+            PatKind::Object(props) => props.iter().map(|p| hir[p].value).collect(),
+            PatKind::Array(elems) => elems.iter().map(|e| hir[e].pat).collect(),
+        };
+        // `reportUnusedBindingElements`
+        if elements.len() > 1 && elements.iter().all(|&e| u.is_unreferenced(e)) {
+            let at = (file, hir[pat].pos, self.end_of_pat(file, pat));
+            self.report_unused(u, root, is_parameter, at, 6198, &[]);
+        } else {
+            for e in elements {
+                self.report_unused_variable_declaration(u, root, e);
+            }
+        }
+    }
+
+    /// `checkUnusedTypeParameters`, of the declaration `node`.
+    fn check_unused_type_parameters(
+        &mut self,
+        u: &Unused<'_>,
+        node: Node,
+        params: Span<TypeParamId>,
+    ) {
+        let (hir, file) = (u.hir, u.file);
         // `reportUnused` is given the declaration they belong to, which contains the syntax error of a missing name.
-        if params.iter().any(|p| self.hir[p].name == known::empty) {
+        if params.iter().any(|p| hir[p].name == known::empty) {
             return;
         }
-        if params.len() > 1
-            && params
-                .iter()
-                .all(|p| self.is_unreferenced_type_parameter(p))
-        {
+        if params.len() > 1 && params.iter().all(|p| u.is_unreferenced_type_parameter(p)) {
             // `rangeOfTypeParameters`: from the `<`. A list made of `@template` tags begins at the `@` of the first
             // (`gatherTypeParameters`), so it is from one before that.
-            let first = self.hir[params.at(0)].start;
-            let before = self.hir.text.get(..first as usize).unwrap_or_default();
-            let open = if self.hir[params.at(0)].flags.contains(Flags::REPARSED) {
+            let first = hir[params.at(0)].start;
+            let before = hir.text.get(..first as usize).unwrap_or_default();
+            let open = if hir[params.at(0)].flags.contains(Flags::REPARSED) {
                 before
                     .windows(b"@template".len())
                     .rposition(|tag| tag == b"@template")
@@ -1877,44 +1615,29 @@ impl Unused<'_> {
                 before.iter().rposition(|&c| c == b'<')
             };
             let start = open.map_or(first.saturating_sub(1), |at| at as u32);
-            out.push(super::sink::Reported::bare((self.file, start, 0), 6205));
-            self.reported_on
-                .borrow_mut()
-                .push((start, 6205, Reported::TypeParameters(params)));
-            return;
+            let last = self.end_of_type_param(file, params.at(params.len() - 1));
+            let mut close = skip_trivia(&hir.text, last as usize);
+            if hir.text.get(close) == Some(&b',') {
+                close = skip_trivia(&hir.text, close + 1);
+            }
+            return self.report_unused(u, node, true, (file, start, close as u32 + 1), 6205, &[]);
         }
         for p in params.iter() {
-            if self.is_unreferenced_type_parameter(p) {
-                let start = self.hir[p].start;
-                out.push(super::sink::Reported::bare((self.file, start, 0), 6196));
-                self.reported_on
-                    .borrow_mut()
-                    .push((start, 6196, Reported::TypeParameter(p)));
+            if u.is_unreferenced_type_parameter(p) {
+                let at = (file, hir[p].start, self.end_of_type_param(file, p));
+                self.report_unused(u, node, true, at, 6196, &[Arg::Atom(hir[p].name)]);
             }
         }
     }
 
-    fn is_unreferenced_type_parameter(&self, p: TypeParamId) -> bool {
-        let symbol = self.bound.type_param_symbol[p.idx()];
-        symbol.is_some()
-            && self.referenced[symbol.idx()] & TYPE == 0
-            && !self.starts_with_underscore(self.hir[p].name)
-    }
-
     /// `checkUnusedClassMembers`
-    fn report_class_members(&self, out: &mut Vec<super::sink::Reported>) {
-        let (hir, bound) = (self.hir, self.bound);
-        if self.reads_unknown_members {
-            return;
-        }
+    fn check_unused_class_members(&mut self, u: &Unused<'_>) {
+        let (hir, bound, file) = (u.hir, u.bound, u.file);
         for (i, member) in hir.members.iter().enumerate() {
             let m = MemberId(i as u32);
             let MemberOwner::Class(class) = bound.member_owner[i] else {
                 continue;
             };
-            if hir[class].flags.contains(Flags::AMBIENT) || member.flags.contains(Flags::AMBIENT) {
-                continue;
-            }
             match member.kind {
                 MemberKind::Property
                 | MemberKind::Method
@@ -1934,44 +1657,32 @@ impl Unused<'_> {
                                 _ => false,
                             }
                     };
+                    let mut others = hir[class].members.iter();
                     // It would have been said of the getter.
                     if member.kind == MemberKind::Setter
-                        && hir[class]
-                            .members
-                            .iter()
-                            .any(|o| hir[o].kind == MemberKind::Getter && same_name(o))
+                        && others.any(|o| hir[o].kind == MemberKind::Getter && same_name(o))
                     {
                         continue;
                     }
-                    if !hir[class]
-                        .members
-                        .iter()
-                        .any(|o| same_name(o) && self.read_members.contains(&o))
-                        && !self.read_members.contains(&m)
-                        && !self.member_has_syntax_error(class, m)
+                    let mut others = hir[class].members.iter();
+                    if !others.any(|o| same_name(o) && u.read_members.contains(&o))
+                        && !u.read_members.contains(&m)
                     {
-                        out.push(super::sink::Reported::bare(
-                            (self.file, member.name_pos, 0),
-                            6133,
-                        ));
-                        self.reported_on.borrow_mut().push((
-                            member.name_pos,
-                            6133,
-                            Reported::MemberName(m),
-                        ));
+                        let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
+                        let name = hir.text.get(start as usize..end as usize);
+                        let (at, name) = ((file, start, end), Arg::Bytes(name.unwrap_or_default()));
+                        self.report_unused(u, hir.node(m), false, at, 6133, &[name]);
                     }
                 }
                 MemberKind::Constructor => {
                     for p in hir[member.func].params.iter() {
                         // The property, that is. The parameter may well be.
                         if hir[p].flags.contains(Flags::PRIVATE)
-                            && !self.read_parameter_properties.contains(&p)
-                            && !self.parameter_has_syntax_error(p)
+                            && !u.read_parameter_properties.contains(&p)
                         {
-                            out.push(super::sink::Reported::bare(
-                                (self.file, hir[hir[p].pat].pos, 0),
-                                6138,
-                            ));
+                            let at = self.place_of_token(file, hir[hir[p].pat].pos);
+                            let name = hir.text(hir.node(hir[p].pat));
+                            self.report_unused(u, hir.node(p), false, at, 6138, &[Arg::Atom(name)]);
                         }
                     }
                 }

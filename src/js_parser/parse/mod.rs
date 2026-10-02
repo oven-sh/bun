@@ -486,6 +486,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             p.lexer.list_contexts = saved_elements;
+            if !is_extends {
+                p.note_loc(class_keyword, Mark::ImplementsClause, keyword.loc);
+                p.note_loc(class_keyword, Mark::ImplementsClause, p.lexer.full_start());
+            }
 
             // `checkGrammarHeritageClause`
             if !stop_checking {
@@ -842,7 +846,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Likewise.
         let mut item_starts: Vec<(bun_ast::Loc, bun_ast::Loc)> = Vec::new();
         // Whether each item has a "?" after it, and its type. Likewise.
-        let mut item_types: Vec<(bool, bun_ast::ts_syntax::TypeId)> = Vec::new();
+        let mut item_types: Vec<bun_ast::ts_syntax::TypeId> = Vec::new();
         // Where the dots before each item are. Likewise.
         let mut item_dots: Vec<bun_ast::Loc> = Vec::new();
         let mut first_modifier: Option<(bun_ast::Loc, bun_ast::Loc)> = None;
@@ -993,10 +997,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            // "(a?) => {}"
-            let is_optional = errors.invalid_expr_after_question.map(|r| r.loc.start)
-                != question_before.map(|r| r.loc.start);
-
             if is_spread {
                 // The type checker goes by where an argument of a call of "async" starts (`parseSpreadElement`).
                 let dots = if p.lexer.tolerant {
@@ -1049,7 +1049,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             items_list.push(item);
             if p.keeps_type_syntax() {
                 item_ends.push(p.lexer.full_start());
-                item_types.push((is_optional, item_type));
+                item_types.push(item_type);
                 item_starts.push(
                     first_modifier
                         .take()
@@ -1466,7 +1466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         args: &mut [G::Arg],
         starts: &[(bun_ast::Loc, bun_ast::Loc)],
         ends: &[bun_ast::Loc],
-        types: &[(bool, bun_ast::ts_syntax::TypeId)],
+        types: &[bun_ast::ts_syntax::TypeId],
         dots: &[bun_ast::Loc],
     ) {
         for (i, arg) in args.iter_mut().enumerate() {
@@ -1479,12 +1479,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.note_loc(at, Mark::DeclarationStart, start);
             }
             self.note_range(at, full_start, ends[i]);
-            let (is_optional, ty) = types[i];
-            if is_optional {
-                self.note_flag(at, Mark::Optional);
-            }
-            if ty.is_some() {
-                self.note_kept_type(at, Mark::Annotation, ty);
+            if types[i].is_some() {
+                self.note_kept_type(at, Mark::Annotation, types[i]);
             }
         }
     }

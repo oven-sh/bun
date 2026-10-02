@@ -209,7 +209,6 @@ fn main() {
                     .unwrap_or(0),
                 lib_dir: lib_dir.as_deref(),
                 global_node_modules: None,
-                file_time_limit: std::time::Duration::from_secs(10),
                 progress: progress.as_deref(),
                 only: args.iter().find_map(|a| a.strip_prefix("--only=")),
                 ends_the_process: true,

@@ -241,11 +241,7 @@ impl<'p> Checker<'p> {
             return;
         }
         // All this is asked once everything is checked: a circle that goes through here is nobody's error.
-        let saved = (
-            self.relation_gave_up,
-            self.relation_too_complex,
-            self.union_too_complex,
-        );
+        let saved = (self.relation_gave_up, self.relation_too_complex);
         self.eager.push(self.stack.len());
         let (found, isolated_declarations) = {
             let mut emit = DeclarationEmit::new(self, file);
@@ -257,11 +253,7 @@ impl<'p> Checker<'p> {
             (emit.tracker.diagnostics, emit.tracker.isolated_declarations)
         };
         self.eager.pop();
-        (
-            self.relation_gave_up,
-            self.relation_too_complex,
-            self.union_too_complex,
-        ) = saved;
+        (self.relation_gave_up, self.relation_too_complex) = saved;
         if let Some(isolated_declarations) = isolated_declarations {
             self.finish_isolated_declarations(isolated_declarations);
         }

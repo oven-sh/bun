@@ -73,6 +73,10 @@ impl<'p> Checker<'p> {
         if second == MapperId::IDENTITY {
             return first;
         }
+        if let Some(kept) = self.p.composed.get(&(first, second)) {
+            return kept;
+        }
+        let cycles_before = self.cycles;
         let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
         for &(param, value) in self.p.types.mapping(first) {
             pairs.push((param, self.instantiate(value, second)));
@@ -82,7 +86,11 @@ impl<'p> Checker<'p> {
                 pairs.push((param, value));
             }
         }
-        self.p.types.mapper(pairs)
+        let composed = self.p.types.mapper(pairs);
+        if self.cycles == cycles_before {
+            self.p.composed.insert((first, second), composed);
+        }
+        composed
     }
 
     /// `first`, then `second`, for the parameters `first` is about.
@@ -117,6 +125,76 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `instantiateType(t, c.restrictiveMapper)`, `instantiateType(t, c.permissiveMapper)`: `map` is the mapper. What is deferred says
+    /// what each type parameter around it stands for, so a mapper reaches the type parameters `any_type_in` finds and no other.
+    /// `getObjectTypeInstantiation` maps the outer type parameters: those a signature in `t` declares stay.
+    fn instantiate_type_parameters(
+        &mut self,
+        t: TypeId,
+        map: fn(&Self, TypeId) -> TypeId,
+    ) -> TypeId {
+        if self.flags(t) & (tf::PRIMITIVE | tf::ANY | tf::UNKNOWN | tf::NEVER) != 0 {
+            return t;
+        }
+        let (mut pairs, mut own) = (Vec::new(), Vec::new());
+        self.any_type_in(t, true, |part| {
+            if self.flags(part) & tf::TYPE_PARAMETER != 0 {
+                pairs.push((part, map(self, part)));
+            } else if let TypeData::Synth(shape) = self.data(part) {
+                for &sig in shape.call.iter().chain(&shape.construct) {
+                    if let SigData::Synth { type_params, .. } = self.p.types.sig(sig) {
+                        own.extend_from_slice(type_params);
+                    }
+                }
+            }
+            false
+        });
+        pairs.retain(|pair| pair.0 != pair.1 && !own.contains(&pair.0));
+        let mapper = self.p.types.mapper(pairs);
+        self.instantiate(t, mapper)
+    }
+
+    /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. A restrictive instantiation is known by having one.
+    pub(super) fn restrictive_instantiation(&mut self, t: TypeId) -> TypeId {
+        self.instantiate_type_parameters(t, |c, param| match c.data(param) {
+            TypeData::Marker(
+                Marker::Super | Marker::Other | Marker::SuperForCheck | Marker::Restrictive(_),
+            ) => param,
+            // `getConstraintDeclaration(tp) == nil`
+            // A clone may have been given something to extend (`tp.constraint == nil`): `syntheticParam` of `reportErrorResults`.
+            TypeData::TypeParam(file, tp, MapperId::IDENTITY)
+                if c.hir(*file)[*tp].constraint.is_none() =>
+            {
+                param
+            }
+            _ => c.intern(TypeData::Marker(Marker::Restrictive(param))),
+        })
+    }
+
+    /// `getPermissiveInstantiation`
+    pub(super) fn permissive_instantiation(&mut self, t: TypeId) -> TypeId {
+        self.instantiate_type_parameters(t, |_, _| TypeId::WILDCARD)
+    }
+
+    pub(super) fn is_assignable_restrictive(&mut self, source: TypeId, target: TypeId) -> bool {
+        let (source, target) = (
+            self.restrictive_instantiation(source),
+            self.restrictive_instantiation(target),
+        );
+        self.restrictive_operands.push((source, target));
+        let result = self.is_assignable(source, target);
+        self.restrictive_operands.pop();
+        result
+    }
+
+    pub(super) fn is_assignable_permissive(&mut self, source: TypeId, target: TypeId) -> bool {
+        let (source, target) = (
+            self.permissive_instantiation(source),
+            self.permissive_instantiation(target),
+        );
+        self.is_assignable(source, target)
+    }
+
     /// `instantiateTypeWithAlias`
     pub fn instantiate(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         if mapper == MapperId::IDENTITY {
@@ -126,11 +204,10 @@ impl<'p> Checker<'p> {
         if !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES) {
             return ty;
         }
-        if let TypeData::TypeParam(..) | TypeData::ThisParam(_) = data {
+        if let TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) = data {
             return self.p.types.map(mapper, ty).unwrap_or(ty);
         }
         if let Some(known) = self.recent_instantiations.get(ty.0, mapper.0) {
-            self.note_depth(Deep::Instantiation(ty, mapper), None);
             return TypeId(known);
         }
         self.instantiate_kept(ty, mapper)
@@ -139,10 +216,18 @@ impl<'p> Checker<'p> {
     /// `instantiate`, of a type that mentions type parameters, is none itself and was not asked about lately.
     #[inline(never)]
     fn instantiate_kept(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
-        let key = Deep::Instantiation(ty, mapper);
         if let Some(known) = self.p.instantiations.get(&(ty, mapper)) {
             self.recent_instantiations.put(ty.0, mapper.0, known.0);
-            self.note_depth(key, None);
+            return known;
+        }
+        let outermost = self.frames.first().map_or(0, |frame| frame.serial);
+        if self.limits != 0
+            && let Some(&(under, known)) = self.instantiations_up_to_a_limit.get(&(ty, mapper))
+            && under == outermost
+        {
+            // Reading it leaves the marks that working it out again would.
+            self.limits += 1;
+            self.mark_tainted_from(0);
             return known;
         }
         // `instantiationDepth == 100`: 2589 and the error type, which is cached like any other result.
@@ -150,12 +235,17 @@ impl<'p> Checker<'p> {
             return self.instantiation_too_deep();
         }
         self.instantiation_depth += 1;
-        let (cycles_before, events_before) = (self.cycles, self.deep_events);
+        let (cycles_before, limits_before) = (self.cycles, self.limits);
         let result = self.instantiate_uncached(ty, mapper);
         let result = self.with_new_alias(ty, mapper, result, None);
         self.instantiation_depth -= 1;
-        if self.cycles == cycles_before {
-            self.note_depth(key, Some(events_before));
+        if self.cycles != cycles_before {
+            return result;
+        }
+        if self.limits != limits_before {
+            self.instantiations_up_to_a_limit
+                .insert((ty, mapper), (outermost, result));
+        } else {
             let kept = self.p.instantiations.insert((ty, mapper), result);
             // The table keeps nothing local under a key that is shared.
             if ty.is_local() || mapper.is_local() || !result.is_local() {
@@ -389,7 +479,7 @@ impl<'p> Checker<'p> {
                 }
                 if self.is_any(constraint)
                     || constraint == TypeId::UNKNOWN
-                    || self.related(base, constraint, super::relate::Relation::Restrictive)
+                    || self.is_assignable_restrictive(base, constraint)
                 {
                     return base;
                 }
@@ -422,28 +512,18 @@ impl<'p> Checker<'p> {
             return self.tuple(elems, flags, readonly);
         }
         // An alias is what it stands for.
-        let elems: Vec<TypeId> = elems
-            .iter()
-            .zip(flags)
-            .map(|(&elem, flag)| {
-                if flag.contains(ElemFlags::VARIADIC) {
-                    elem
-                } else {
-                    elem
-                }
-            })
-            .collect();
         let is_spread = |i: usize| flags[i].contains(ElemFlags::VARIADIC);
         // `[A, ...(X | Y)]` is `[A, ...X] | [A, ...Y]`, and `[A, ...never]` is `never`.
         if let Some(i) = (0..elems.len())
             .find(|&i| is_spread(i) && (elems[i].is_never() || self.is_union(elems[i])))
         {
-            // `checkCrossProductUnion`: from 100,000 on it is too complex to represent (2590), and what is spread is taken for an array.
-            let size = (0..elems.len())
+            // What is too complex to represent is taken for an array.
+            let spread: Vec<TypeId> = (0..elems.len())
                 .filter(|&j| is_spread(j))
-                .fold(1usize, |n, j| n.saturating_mul(self.parts(elems[j]).len()));
-            if size < 100_000 {
-                let mut with = elems.clone();
+                .map(|j| elems[j])
+                .collect();
+            if self.check_cross_product_union(&spread) {
+                let mut with = elems.to_vec();
                 return self.map_type(elems[i], |c, member| {
                     with[i] = member;
                     c.normalized_tuple(&with, flags, readonly)
@@ -490,16 +570,10 @@ impl<'p> Checker<'p> {
                 let inner = self.type_arguments(elem);
                 // Too large to represent (2799, 2800): the error type.
                 if inner.len() + out_elems.len() >= 10_000 {
-                    // `c.error(c.currentNode, ..)`: 2799 is reported at the innermost type node being resolved. Inside an
-                    // expression the error is 2800, which is not recorded here.
-                    if let Some(&Query::TypeNode(file, node)) = self
-                        .stack
-                        .iter()
-                        .rev()
-                        .find(|q| matches!(q, Query::TypeNode(..) | Query::Expr(..)))
-                    {
-                        self.p.too_large_tuples.insert((file, node), ());
-                    }
+                    // `IsPartOfTypeNode(c.currentNode)`
+                    let is_type_node =
+                        matches!(self.current_node(), Some(CurrentNode::TypeNode(..)));
+                    self.error_at_current_node(if is_type_node { 2799 } else { 2800 });
                     return TypeId::ERROR;
                 }
                 out_elems.extend_from_slice(inner);
@@ -513,7 +587,7 @@ impl<'p> Checker<'p> {
                 None => {
                     // `isArrayLikeType`, `getIndexTypeOfType(t, numberType)`. What is not like an array is an error.
                     let found = if self.is_array_like(elem) {
-                        self.number_index_type(elem)
+                        self.index_type_of_type(elem, TypeId::NUMBER)
                     } else {
                         None
                     };

@@ -16,7 +16,7 @@ use std::borrow::Cow;
 
 impl Checker<'_> {
     /// `checkRegularExpressionLiteral`, `checkGrammarRegularExpressionLiteral`
-    pub(super) fn check_x_regexp_scanner(&mut self, file: FileId) {
+    pub(super) fn check_grammar_regular_expression_literal(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         if has_parse_diagnostics(hir) {
             return;
@@ -27,20 +27,16 @@ impl Checker<'_> {
             target => target,
         };
         let mut noted: Vec<Noted> = Vec::new();
-        let index = self.exprs_by_kind(file);
-        for &e in index.of(ExprTag::Regex) {
-            check_regular_expression_literal(&hir.text, hir[e].pos as usize, target, &mut noted);
-        }
-        let mut said_last = 0;
+        check_regular_expression_literal(&hir.text, hir[e].pos as usize, target, &mut noted);
         for (start, end, code, args) in noted {
             // `Did_you_mean_0` goes with the error before it, and is in no file.
-            if code == 1369 {
-                self.relate(start, said_last, |_| {
-                    vec![Reported::new(NOWHERE, code, held(args))]
-                });
-            } else {
-                said_last = code;
-                self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
+            match self.reported.last_mut() {
+                Some(last) if code == 1369 => {
+                    last.add_related_info(Reported::new(NOWHERE, code, held(args)));
+                }
+                _ => {
+                    self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
+                }
             }
         }
     }

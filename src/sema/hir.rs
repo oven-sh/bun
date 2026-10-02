@@ -745,6 +745,31 @@ pub enum ModifierKind {
     Decorator(ExprId),
 }
 
+/// `scanner.TokenToString(modifier.Kind)`
+pub fn modifier_text(modifier: Flags) -> &'static str {
+    const TEXTS: [(Flags, &str); 15] = [
+        (Flags::ABSTRACT, "abstract"),
+        (Flags::ACCESSOR, "accessor"),
+        (Flags::ASYNC, "async"),
+        (Flags::CONST, "const"),
+        (Flags::AMBIENT, "declare"),
+        (Flags::DEFAULT, "default"),
+        (Flags::EXPORT, "export"),
+        (Flags::IN, "in"),
+        (Flags::OUT, "out"),
+        (Flags::OVERRIDE, "override"),
+        (Flags::PRIVATE, "private"),
+        (Flags::PROTECTED, "protected"),
+        (Flags::PUBLIC, "public"),
+        (Flags::READONLY, "readonly"),
+        (Flags::STATIC, "static"),
+    ];
+    TEXTS
+        .iter()
+        .find(|text| text.0 == modifier)
+        .map_or("", |text| text.1)
+}
+
 /// One of a `ModifierList`, which is in source order.
 #[derive(Copy, Clone, Debug)]
 pub struct Modifier {
@@ -1064,6 +1089,8 @@ pub struct Module {
     pub body: IdList<StmtId>,
     /// `declare module "m";` has none.
     pub has_body: bool,
+    /// `ModuleDeclaration.Keyword` is `module`. What holds for the `a` of `module a.b` holds for `b`.
+    pub says_module: bool,
     /// The statement it is.
     pub stmt: StmtId,
 }
@@ -1455,6 +1482,9 @@ pub struct File {
     /// Where the errors of the parser end that say what was expected: start, code and end. `parseErrorAtCurrentToken` reports the token
     /// the parser is at, as its scanner sees it there, and `parseErrorAt` what it is given, which can be nothing at all.
     pub error_ends: Few<(u32, u32, u32)>,
+    /// `SourceFile.JSDiagnostics()`: start, end (0: that of the token at the start), code and `{0}`, if the message has one.
+    /// `hasParseDiagnostics` does not count them.
+    pub js_diagnostics: Few<(u32, u32, u32, &'static [u8])>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of
     /// reserved names then report nothing.
     pub has_parse_diagnostics: bool,
@@ -1718,7 +1748,12 @@ impl File {
     }
     /// The same, and the message names `args`.
     pub fn error_about(&mut self, start: u32, end: u32, code: u32, args: &[&[u8]]) {
-        self.error(start, end, code);
+        self.early_errors.push((start, code));
+        self.explain_error(start, end, code, args);
+    }
+    /// Where the error `code` at `start` ends and what its message names, of an error that is kept in a list of its own.
+    pub fn explain_error(&mut self, start: u32, end: u32, code: u32, args: &[&[u8]]) {
+        self.error_ends.push((start, code, end));
         let args = args.iter().map(|&arg| arg.into()).collect();
         self.error_arguments.push((start, code, args));
     }
@@ -1844,6 +1879,7 @@ impl File {
             jsdoc_types,
             jsdoc_modifiers,
             jsdoc_param_errors,
+            js_diagnostics,
             decorators,
             directives,
             comment_directives
@@ -1937,6 +1973,13 @@ pub fn parentheses_around(hir: &File, e: ExprId) -> &[(ExprId, u32, u32)] {
     let first = hir.parens.partition_point(|p| p.0.0 < e.0);
     let count = hir.parens[first..].partition_point(|p| p.0 == e);
     &hir.parens[first..first + count]
+}
+
+/// `node.End()` of `e` as it is written: after the parentheses around it.
+pub fn end_of_expr(hir: &File, e: ExprId) -> u32 {
+    parentheses_around(hir, e)
+        .last()
+        .map_or(hir[e].end, |outermost| outermost.2)
 }
 
 /// From where to where the `JsxExpression` goes that `e` is all there is in.

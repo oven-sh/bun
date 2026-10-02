@@ -1,6 +1,7 @@
 //! The types of values that have names: variables, parameters, functions, classes, imports; and what functions return.
 
 use super::decl::declarations_of;
+use super::mapped::AccessNode;
 use super::related::Place;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, UNREACHABLE};
@@ -515,8 +516,7 @@ impl<'p> Checker<'p> {
                     return AliasTarget::Property(object, name, property);
                 }
                 // `getPropertyOfTypeEx` also finds the members of `Object` and `Function`, except on a `const enum` object.
-                let apparent = self.apparent_type(object);
-                let apparent = self.reduced(apparent);
+                let apparent = self.reduced_apparent_type(object);
                 if !self.is_union(apparent)
                     && !self.is_const_enum_object(apparent)
                     && let Some(members) = self.members(apparent)
@@ -582,6 +582,7 @@ impl<'p> Checker<'p> {
         reports_errors: bool,
     ) -> Result<Option<Sym>, (u32, MemberId)> {
         let files = self.files();
+        let scope = self.bound(file).scope_to_resolve_from(scope, name);
         files.resolve_with(
             file,
             scope,
@@ -592,7 +593,7 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `resolveEntityName`, `dontResolveAlias`
+    /// `resolveEntityName`, `ignoreErrors`, `dontResolveAlias`
     pub(super) fn resolve_entity(
         &mut self,
         file: FileId,
@@ -601,9 +602,27 @@ impl<'p> Checker<'p> {
         meaning: SymFlags,
     ) -> Option<Sym> {
         let files = self.files();
-        files.resolve_entity_with(file, scope, names, meaning, &mut |_, held, meaning| {
-            self.get_symbol(held, meaning)
-        })
+        let lookup = &mut |_, held, meaning| self.get_symbol(held, meaning);
+        files.resolve_entity_with(file, scope, names, meaning, false, lookup)
+    }
+
+    /// `resolveEntityName`, `dontResolveAlias`
+    pub(super) fn resolve_entity_name(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        names: Span<NameId>,
+        meaning: SymFlags,
+        ignore_errors: bool,
+    ) -> Option<Sym> {
+        let files = self.files();
+        let texts: SmallVec<[Atom; 4]> = self.hir(file).texts(names).collect();
+        let lookup = &mut |_, held, meaning| self.get_symbol(held, meaning);
+        let found = files.resolve_entity_with(file, scope, &texts, meaning, !ignore_errors, lookup);
+        if found.is_none() && !ignore_errors {
+            self.report_unresolved_entity_name(file, scope, names, meaning);
+        }
+        found
     }
 
     /// `resolveAlias` of `sym`, where it ends at a property.
@@ -612,8 +631,7 @@ impl<'p> Checker<'p> {
             return None;
         };
         // `getReducedApparentType`
-        let apparent = self.apparent_type(object);
-        let apparent = self.reduced(apparent);
+        let apparent = self.reduced_apparent_type(object);
         Some(self.prop_ref(apparent, name)?.0)
     }
 
@@ -705,8 +723,7 @@ impl<'p> Checker<'p> {
         let value = files.module_value(module);
         let resolve_export_by_name = &mut |name| {
             let ty = self.type_of_symbol(value);
-            let apparent = self.apparent_type(ty);
-            let apparent = self.reduced(apparent);
+            let apparent = self.reduced_apparent_type(ty);
             let (prop, _) = self.prop_ref(apparent, name)?;
             Some(
                 matches!(prop.source, PropSource::Symbol(symbol) if files.has_syntactic_default(symbol)),
@@ -768,12 +785,7 @@ impl<'p> Checker<'p> {
         if self.is_any(ty) {
             return None;
         }
-        let apparent = self.apparent_type(ty);
-        let apparent = self.reduced(apparent);
-        if self.is_union(apparent) {
-            return Some(self.declared_property(apparent, name)?.0);
-        }
-        let (prop, mapper) = self.prop_ref(apparent, name)?;
+        let (prop, mapper) = self.get_property_of_type_ex(ty, name, true)?;
         Some(self.type_of_prop(prop, mapper))
     }
 
@@ -1501,6 +1513,15 @@ impl<'p> Checker<'p> {
         ty
     }
 
+    /// What is reported on the way round a circle is dropped with the answers that rest on it, and `pat` has been given its answer
+    /// (`reportCircularityError`) without being asked again. tsgo goes round with `any` and says what it finds: so the walk asks once more.
+    pub(super) fn report_on_circular_pat(&mut self, file: FileId, pat: PatId) {
+        if self.p.circular_pats.get(&(file, pat)).is_some() && self.enter(Query::Pat(file, pat)) {
+            self.type_of_pat_uncached(file, pat);
+            self.leave();
+        }
+    }
+
     /// `checkDeclarationInitializer`, `getTypeOfExpression`: `getQuickTypeOfExpression` comes first. A call or a `new` of the only
     /// signature there is, if that is not generic, is what the signature returns. Its arguments are not looked at, so nothing in them
     /// can lead back here.
@@ -1643,7 +1664,7 @@ impl<'p> Checker<'p> {
             PatParent::Param(p) => self.type_of_param_uncached(file, p),
             PatParent::Prop(parent, _) | PatParent::Elem(parent, _) => {
                 let parent_ty = self.type_for_binding_element_parent(file, pat, parent);
-                let ty = self.type_of_binding_element(file, pat, parent_ty);
+                let ty = self.type_of_binding_element(file, pat, parent_ty, false);
                 // What is taken apart is not widened; what comes out of it, once it has a name, is.
                 if !matches!(hir[pat].kind, PatKind::Ident(_)) {
                     return ty;
@@ -1774,6 +1795,7 @@ impl<'p> Checker<'p> {
         file: FileId,
         pat: PatId,
         parent_ty: TypeId,
+        no_tuple_bounds_check: bool,
     ) -> TypeId {
         // Out of anything comes anything, and nothing else is looked at: no default either.
         if self.is_any(parent_ty) {
@@ -1788,8 +1810,8 @@ impl<'p> Checker<'p> {
         };
         match self.bound(file).pat_parent[pat.idx()] {
             PatParent::None | PatParent::Var(_) | PatParent::Param(_) => TypeId::UNRESOLVED,
-            PatParent::Prop(parent, prop) => {
-                let prop = &hir[prop];
+            PatParent::Prop(parent, id) => {
+                let prop = &hir[id];
                 if prop.is_rest {
                     let PatKind::Object(props) = hir[parent].kind else {
                         return TypeId::UNRESOLVED;
@@ -1834,73 +1856,31 @@ impl<'p> Checker<'p> {
                     let ty = self.rest_of_object(parent_ty, &omitted, keys, symbol);
                     return self.with_default(file, pat, ty, prop.default);
                 }
-                // `AccessFlagsAllowMissing`: with a default, what an object literal does not mention is `undefined`.
-                let allows_missing =
-                    prop.default.is_some() && self.is_object_literal_type(parent_ty);
-                let missing = self.undefined_as_declared();
-                let ty = match self.member_name(file, prop.key) {
-                    Some(name) => {
-                        // `getPropertyTypeForIndexType`: a numeric name of a tuple is an element, `undefined` past the end of a
-                        // fixed tuple, and never what the number index signature gives.
-                        let is_tuple_element = self.is_numeric_name(name)
-                            && self.every_type(parent_ty, |c, m| c.is_tuple(m));
-                        let property = if is_tuple_element {
-                            None
-                        } else {
-                            self.type_of_property(parent_ty, name)
-                        };
-                        match property {
-                            Some(ty) => ty,
-                            None => {
-                                let key = self.string_literal(name, false);
-                                match self.indexed_access_if_any(parent_ty, key, true) {
-                                    Some(ty) => ty,
-                                    None if allows_missing => missing,
-                                    // `getIndexedAccessTypeEx`
-                                    None if self.is_known(parent_ty) => TypeId::ERROR,
-                                    None => TypeId::UNRESOLVED,
-                                }
-                            }
-                        }
+                let mut access_flags = AccessFlags::EXPRESSION_POSITION;
+                let allow_missing = no_tuple_bounds_check || prop.default.is_some();
+                access_flags.set(AccessFlags::ALLOW_MISSING, allow_missing);
+                // `getLiteralTypeFromPropertyName`
+                let index_type = match prop.key {
+                    PropKey::Name(name) => self.string_literal(name, false),
+                    PropKey::Computed(e) => {
+                        let key = self.type_of_expr(file, e);
+                        self.regular(key)
                     }
-                    None => match prop.key {
-                        PropKey::Computed(e) => {
-                            let key = self.type_of_expr(file, e);
-                            let key = self.regular(key);
-                            match self.indexed_access_if_any(parent_ty, key, true) {
-                                // `getPropertyTypeForIndexType`: that a key of type `any` finds anything comes after what may be missing.
-                                Some(found)
-                                    if found.is_any()
-                                        && allows_missing
-                                        && self.has_any_flag(key)
-                                        && self
-                                            .members(parent_ty)
-                                            .is_some_and(|m| m.shape().index.is_empty()) =>
-                                {
-                                    missing
-                                }
-                                Some(ty) => ty,
-                                // Each member of the key is looked up by itself.
-                                None if allows_missing => {
-                                    let mut types = Vec::new();
-                                    for &k in self.parts(key) {
-                                        types.push(
-                                            self.indexed_access_if_any(parent_ty, k, true)
-                                                .unwrap_or(missing),
-                                        );
-                                    }
-                                    self.union(&types)
-                                }
-                                // `getIndexedAccessTypeEx`
-                                None if self.is_known(parent_ty) && self.is_known(key) => {
-                                    TypeId::ERROR
-                                }
-                                None => TypeId::UNRESOLVED,
-                            }
-                        }
-                        _ => TypeId::UNRESOLVED,
-                    },
+                    PropKey::Private(_) | PropKey::None => return TypeId::UNRESOLVED,
                 };
+                // An identifier directly in the pattern of `const { a } = require("m")` is an alias (`getTypeOfAlias`): tsgo never looks
+                // it up in the initializer, so nothing is said.
+                let is_alias = hir.is_js
+                    && matches!(hir[pat].kind, PatKind::Ident(_))
+                    && matches!(self.bound(file).pat_parent[parent.idx()], PatParent::Var(d) if self.external_module_require_argument(file, d).is_some());
+                let name = if is_alias {
+                    AccessNode::Other
+                } else {
+                    AccessNode::PropertyName(file, id)
+                };
+                let ty = self
+                    .indexed_access_of_binding_element(parent_ty, index_type, access_flags, name)
+                    .unwrap_or(TypeId::ERROR);
                 let ty = self.narrow_destructured(file, pat, ty);
                 self.with_default(file, pat, ty, prop.default)
             }
@@ -1910,7 +1890,9 @@ impl<'p> Checker<'p> {
                 };
                 let index = (elem.0 - elems.start) as usize;
                 let e = &hir[elem];
-                let ty = self.element_of_destructured(parent_ty, index, e.is_rest);
+                let allow_missing = no_tuple_bounds_check || e.default.is_some();
+                let nodes = Some((parent, AccessNode::BindingName(file, pat), allow_missing));
+                let ty = self.element_of_destructured(parent_ty, index, e.is_rest, nodes);
                 let ty = self.narrow_destructured(file, pat, ty);
                 self.with_default(file, pat, ty, e.default)
             }
@@ -1930,9 +1912,28 @@ impl<'p> Checker<'p> {
     }
 
     /// `getBindingElementTypeFromParentType`, for an array pattern: element `index` of what is destructured; from `index` on if `rest`.
-    pub fn element_of_destructured(&mut self, ty: TypeId, index: usize, rest: bool) -> TypeId {
+    /// `nodes`: the pattern, the name of the element and `AccessFlagsAllowMissing`, for whoever reports.
+    pub(super) fn element_of_destructured(
+        &mut self,
+        ty: TypeId,
+        index: usize,
+        rest: bool,
+        nodes: Option<(PatId, AccessNode, bool)>,
+    ) -> TypeId {
         if self.is_any(ty) {
             return ty;
+        }
+        // "This call also checks that the parentType is in fact an iterable or array". An array or a tuple is: not asked.
+        if let Some((pattern, AccessNode::BindingName(file, _), _)) = nodes
+            && !self.is_array_or_tuple(ty)
+        {
+            let pattern = (
+                file,
+                self.hir(file)[pattern].pos,
+                self.end_of_pat(file, pattern),
+            );
+            let usage = IterationUse::Destructuring;
+            self.iterated_type_or_element_type(usage, ty, TypeId::UNDEFINED, Some(pattern));
         }
         // `getReducedType`: an intersection nothing can be is `never`, and drops out of a union.
         let ty = self.reduced(ty);
@@ -1975,8 +1976,11 @@ impl<'p> Checker<'p> {
         // Only of a list are elements looked up by number: `interface RegExpExecArray extends Array<string> { 0: string }`.
         if self.is_array_like(ty) {
             let key = self.number_literal(index as f64, false);
+            let (_, name, allow_missing) = nodes.unwrap_or((PatId::NONE, AccessNode::Other, false));
+            let mut access_flags = AccessFlags::EXPRESSION_POSITION;
+            access_flags.set(AccessFlags::ALLOW_MISSING, allow_missing);
             return self
-                .indexed_access_if_any(ty, key, true)
+                .indexed_access_of_binding_element(ty, key, access_flags, name)
                 .unwrap_or(TypeId::ERROR);
         }
         // Of anything else it is what the whole yields, if it gets that far (`includeUndefinedInIndexSignature`).
@@ -2038,8 +2042,7 @@ impl<'p> Checker<'p> {
             });
         }
         // `getPropertiesOfType`: a type parameter has what it extends has.
-        let apparent = self.apparent_type(ty);
-        let apparent = self.reduced(apparent);
+        let apparent = self.reduced_apparent_type(ty);
         let members = self.members(apparent);
         // Which properties go into the rest, and the names of the others.
         let (mut kept, mut left_out): (Vec<usize>, Vec<TypeId>) = (Vec::new(), Vec::new());
@@ -2166,9 +2169,7 @@ impl<'p> Checker<'p> {
                     is_await,
                     ..
                 } if left == stmt => {
-                    let iterable = self.type_of_expr(file, expr);
-                    let iterable = self.non_null_type(iterable);
-                    let element = self.iterated_type(iterable, is_await);
+                    let element = self.check_right_hand_side_of_for_of(file, expr, is_await);
                     return if is_name {
                         self.widened_for_declaration(element, Some((file, decl.pat)))
                     } else {
@@ -3164,13 +3165,11 @@ impl<'p> Checker<'p> {
         if self.what_only_holds_for_now() == before
             // What goes by one of these is not kept, and `what_only_holds_for_now` does not always say so.
             && self.inference_contexts.is_empty()
-            && self.jsx_resolving.is_empty()
             && self.held_for_now.is_empty()
             // These are raised for whoever asked, each time.
             && !(self.relation_gave_up
                 || self.relation_too_complex
-                || !self.relations_too_deep.is_empty()
-                || self.union_too_complex)
+                || !self.relations_too_deep.is_empty())
             && self.reliability == 0
             && awaited.is_none_or(|awaited| self.is_known(awaited))
         {
@@ -3301,29 +3300,8 @@ impl<'p> Checker<'p> {
     }
 
     /// `getPropertyOfType`, and `getTypeOfSymbol` of that: the type of the property `name` of `ty`, and whether it may be left out.
-    /// No index signature stands in for a property. For names that neither `Object` nor `Function` has.
     fn declared_property(&mut self, ty: TypeId, name: Atom) -> Option<(TypeId, bool)> {
-        // `getReducedApparentType`
-        let apparent = self.apparent_type(ty);
-        let apparent = self.reduced(apparent);
-        // `createUnionOrIntersectionProperty`: some member has to declare it. It may be left out if it may in any of them.
-        if self.is_union(apparent) {
-            let (mut is_declared, mut is_optional) = (false, false);
-            for &part in self.parts(apparent) {
-                let part = self.apparent_type(part);
-                if let Some((prop, _)) = self.prop_ref(part, name) {
-                    is_declared = true;
-                    is_optional |= prop.flags.contains(PropFlags::OPTIONAL);
-                }
-            }
-            if !is_declared {
-                return None;
-            }
-            return self
-                .type_of_property(apparent, name)
-                .map(|found| (found, is_optional));
-        }
-        let (prop, mapper) = self.prop_ref(apparent, name)?;
+        let (prop, mapper) = self.get_property_of_type(ty, name)?;
         let found = self.type_of_prop(prop, mapper);
         let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
         Some((
@@ -3523,7 +3501,7 @@ impl<'p> Checker<'p> {
             }
             return has_string.then_some(TypeId::STRING);
         }
-        let element = self.number_index_type(arrays)?;
+        let element = self.index_type_of_type(arrays, TypeId::NUMBER)?;
         Some(if has_string {
             self.union_reduced(&[element, TypeId::STRING])
         } else {
@@ -3560,28 +3538,7 @@ impl<'p> Checker<'p> {
         diagnostic
     }
 
-    /// `getIndexTypeOfType(ty, numberType)`
-    pub(super) fn number_index_type(&mut self, ty: TypeId) -> Option<TypeId> {
-        let mut elements = Vec::new();
-        for &part in self.parts(ty) {
-            let apparent = self.apparent_type(part);
-            let members = self.members(apparent)?;
-            let info = members
-                .shape()
-                .index
-                .iter()
-                .find(|info| info.key == TypeId::NUMBER)?;
-            elements.push(self.instantiate(info.value, members.mapper));
-        }
-        if elements.is_empty() {
-            None
-        } else {
-            Some(self.union(&elements))
-        }
-    }
-
-    /// `checkYieldExpression`: what `yield value` evaluates to, which is what the caller passes to `next`. For `yield*`, what the
-    /// other iterator returns.
+    /// `checkYieldExpression`
     pub(super) fn type_of_yield(
         &mut self,
         file: FileId,
@@ -3594,26 +3551,81 @@ impl<'p> Checker<'p> {
         };
         let f = &self.hir(file)[func];
         let is_async = f.flags.contains(Flags::ASYNC);
-        if star {
-            let ty = self.type_of_expr(file, value);
-            return self
-                .iterable_types(ty, true, is_async, false, None)
-                .r
-                .unwrap_or(TypeId::ANY);
+        // "There is no point in doing an assignability check if the function has no explicit return type"
+        let mut return_type = f.ret.is_some().then(|| self.type_from_node(file, f.ret));
+        if let Some(declared) = return_type
+            && self.is_union(declared)
+        {
+            return_type = Some(self.filter(declared, |c, t| {
+                c.check_generator_instantiation_assignability_to_return_type(t, is_async, None)
+            }));
         }
-        let Some(declared) =
-            self.declared_or_contextual_return_type(file, func, ContextFlags::empty())
-        else {
-            return TypeId::ANY;
+        let iteration_types = match return_type {
+            Some(declared) if !self.is_any(declared) => {
+                self.generator_return_types(declared, is_async)
+            }
+            _ => Iter3::default(),
         };
-        let mut declared = declared;
-        // Of the alternatives it says it returns, those that a generator is.
-        if f.ret.is_some() && self.is_union(declared) {
-            declared = self.filter(declared, |c, t| c.is_what_a_generator_is(t, is_async));
+        let yield_expression_type = if value.is_some() {
+            self.type_of_expr(file, value)
+        } else {
+            TypeId::UNDEFINED
+        };
+        // `getYieldedTypeOfYieldExpression`
+        let error_node = |c: &Self| {
+            if value.is_some() {
+                (
+                    file,
+                    c.error_start_of(file, value),
+                    c.error_end_of(file, value),
+                )
+            } else {
+                c.place_of_token(file, c.hir(file)[e].pos)
+            }
+        };
+        let mut yielded_type = Some(yield_expression_type);
+        if star && !self.is_any(yield_expression_type) {
+            let usage = if is_async {
+                IterationUse::AsyncYieldStar
+            } else {
+                IterationUse::YieldStar
+            };
+            let sent = iteration_types.n.unwrap_or(TypeId::ANY);
+            let error_node = Some(error_node(self));
+            yielded_type =
+                self.iterated_type_or_element_type(usage, yield_expression_type, sent, error_node);
         }
-        self.generator_return_types(declared, is_async)
-            .n
-            .unwrap_or(TypeId::ANY)
+        if is_async {
+            yielded_type = yielded_type.map(|yielded| self.awaited(yielded));
+        }
+        if return_type.is_some()
+            && let Some(yielded_type) = yielded_type
+        {
+            self.check_type_assignable_to_and_optionally_elaborate(
+                yielded_type,
+                iteration_types.y.unwrap_or(TypeId::ANY),
+                Some(error_node(self)),
+                (value.is_some() && !star).then_some((file, value)),
+                false,
+                None,
+                None,
+            );
+        }
+        if star {
+            let types = self.iterable_types(yield_expression_type, true, is_async, false, None);
+            return types.r.unwrap_or(TypeId::ANY);
+        }
+        if return_type.is_some() {
+            return iteration_types.n.unwrap_or(TypeId::ANY);
+        }
+        // `getContextualIterationType`
+        match self.declared_or_contextual_return_type(file, func, ContextFlags::empty()) {
+            Some(contextual) => {
+                let types = self.generator_return_types(contextual, is_async);
+                types.n.unwrap_or(TypeId::ANY)
+            }
+            None => TypeId::ANY,
+        }
     }
 
     /// The generator that `e`, a `yield`, is written in. Where there is none `checkYieldExpression` returns `any` at once.
@@ -3622,14 +3634,18 @@ impl<'p> Checker<'p> {
             .filter(|&func| self.hir(file)[func].flags.contains(Flags::GENERATOR))
     }
 
-    /// `checkGeneratorInstantiationAssignabilityToReturnType`: whether the generator that yields, returns and is sent what a `ty`
-    /// does is a `ty`.
-    fn is_what_a_generator_is(&mut self, ty: TypeId, is_async: bool) -> bool {
+    /// `checkGeneratorInstantiationAssignabilityToReturnType`
+    pub(super) fn check_generator_instantiation_assignability_to_return_type(
+        &mut self,
+        return_type: TypeId,
+        is_async: bool,
+        error_node: Option<Place>,
+    ) -> bool {
         // `getIterationTypeOfGeneratorFunctionReturnType`: `any` says nothing.
-        let types = if self.is_any(ty) {
+        let types = if self.is_any(return_type) {
             Iter3::default()
         } else {
-            self.generator_return_types(ty, is_async)
+            self.generator_return_types(return_type, is_async)
         };
         let yielded = types.y.unwrap_or(TypeId::ANY);
         let generator = self.generator_of(
@@ -3638,7 +3654,7 @@ impl<'p> Checker<'p> {
             types.n.unwrap_or(TypeId::UNKNOWN),
             is_async,
         );
-        self.is_assignable(generator, ty)
+        self.check_type_assignable_to(generator, return_type, error_node, None)
     }
 
     /// `getIterationTypesOfGeneratorFunctionReturnType`: what a generator function that says it returns a `ty` is to yield, to return

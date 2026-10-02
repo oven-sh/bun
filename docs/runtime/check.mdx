@@ -28,13 +28,29 @@ The `typescript` package ships the `lib.*.d.ts` files that declare `Array`, `Pro
 bun add -d typescript @types/bun
 ```
 
-[`@types/bun`](/typescript) declares what Bun provides: `console`, `fetch`, `Bun`, and modules such as `bun:test`.
+A project made with [`bun init`](/runtime/templating/init) has both, and a `typecheck` script that runs `bun check`.
 
 Bun looks for `typescript` in these places, in order:
 
 1. `node_modules` in the project directory
 2. `node_modules` in each parent directory
 3. Packages installed with `bun add -g`
+
+### Bun's own types
+
+[`@types/bun`](/typescript) declares what Bun provides: `console`, `fetch`, `Bun`, and modules such as `bun:test`.
+
+Since TypeScript 6.0, nothing in `node_modules/@types` is included unless `types` asks for it. `bun init` writes that line for you. In an older project, add it yourself:
+
+```json tsconfig.json icon="file-json"
+{
+  "compilerOptions": {
+    "types": ["bun"]
+  }
+}
+```
+
+Your editor reads the same line. Without a `tsconfig.json`, `bun check` includes `@types/bun` if it is installed.
 
 ## Choose what to check
 
@@ -52,7 +68,7 @@ Pass files or directories to check only those and what they import. The compiler
 bun check src/index.ts
 ```
 
-Without a `tsconfig.json`, `bun check` uses the compiler options that [`bun init`](/runtime/templating/init) writes:
+Without a `tsconfig.json`, `bun check` uses the compiler options that [`bun init`](/runtime/templating/init) writes, apart from the stricter rules that are a matter of taste (`noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch`):
 
 ```json
 {
@@ -91,6 +107,14 @@ bun test --check
 src/index.ts(3,25): error TS2322: Type 'string' is not assignable to type 'number'.
 Found 1 error in 1 file, checked 2 files [14ms]
 ```
+
+With a `package.json` script there is no entry point to start from, so Bun checks the whole project, like `bun check`, before the script runs.
+
+```bash terminal icon="terminal"
+bun run --check dev
+```
+
+A JavaScript entry point is read for what it imports, whether or not `allowJs` is on. Errors in the JavaScript file itself are only reported with `checkJs`.
 
 ## Output
 
@@ -177,6 +201,7 @@ If `bun check` and `tsc` 7 disagree about an error, that is a bug in Bun. [Open 
 
 These differences are intended:
 
+- The errors do not depend on the order of the files. `tsc` collects the errors of a file right after it checks that file, so it loses an error that a later file raises in an earlier one.
 - `bun check` only checks. It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, whatever `noEmit`, `declaration`, or `incremental` say. Use [`bun build`](/bundler) to produce JavaScript, and `tsc` to produce declaration files.
 - There is no `--watch` mode.
 - `bun check` does not load language service plugins from the `plugins` compiler option.

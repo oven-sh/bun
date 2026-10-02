@@ -12,26 +12,21 @@ impl Checker<'_> {
     /// `GetIncludeProcessorDiagnostics`
     pub(super) fn include_processor_diagnostics(&mut self, file: FileId) {
         for &(start, code) in &self.files().module(file).missing_references {
-            let code = self.note_missing_reference(file, start, code);
-            self.error_at((file, start, 0), code, &[]);
+            self.report_missing_reference(file, start, code);
         }
         for (_, start, end, problem) in self.files().include_problems_in(file) {
-            self.add_diagnostic(Reported::new(
-                (file, *start, *end),
-                problem.code,
-                held(problem.args.clone()),
-            ));
-            self.explain_chain(*start, problem.code, |_| {
-                problem
-                    .chain
-                    .iter()
-                    .map(|(level, code, args)| super::explain::Line {
-                        code: *code,
-                        args: held(args.clone()),
-                        level: *level,
-                    })
-                    .collect()
-            });
+            let at = (file, *start, *end);
+            let mut diagnostic = Reported::new(at, problem.code, held(problem.args.clone()));
+            let lines = problem
+                .chain
+                .iter()
+                .map(|(level, code, args)| super::explain::Line {
+                    code: *code,
+                    args: held(args.clone()),
+                    level: *level,
+                });
+            super::explain::add_lines(&mut diagnostic.message_chain, lines.collect());
+            self.add_diagnostic(diagnostic);
         }
     }
 
@@ -44,7 +39,6 @@ impl Checker<'_> {
         // `grammarErrorOnNode` and its like say nothing of a file the parser objected to, nor does `checkContextualIdentifier`.
         let parses = !has_parse_diagnostics(hir);
         if parses {
-            self.check_module_syntax(file);
             self.check_yield_in_property_initializers(file);
         }
         let said_before = self.reported.len();
@@ -70,11 +64,12 @@ impl Checker<'_> {
     }
 
     /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: what is said of the `/// <reference>` whose value is written at
-    /// `start`. Returns the code of what is said: 2727 for 2726 where a library has nearly that name.
-    fn note_missing_reference(&mut self, file: FileId, start: u32, mut code: u32) -> u32 {
+    /// `start`: 2727 for 2726 where a library has nearly that name.
+    fn report_missing_reference(&mut self, file: FileId, start: u32, mut code: u32) {
         let references = &self.hir(file).references;
         let Some(&(_, value, ..)) = references.iter().find(|r| r.2 == start) else {
-            return code;
+            self.error_at((file, start, 0), code, &[]);
+            return;
         };
         let name = self.atom_text(value);
         let end = start + self.files().atoms.bytes(value).len() as u32;
@@ -106,126 +101,98 @@ impl Checker<'_> {
             6054 | 6231 => vec![name.replace('\\', "/"), extensions.to_owned()],
             _ => vec![name.replace('\\', "/")],
         };
-        self.note_printed(start, end, code, held(args));
-        code
+        self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
     }
 
-    /// 1202 1203 1218 1392, 1323 1324 1325 18060
-    fn check_module_syntax(&mut self, file: FileId) {
+    /// From `checkImportEqualsDeclaration`, past `checkGrammarModuleElementContext`: 1202 1392.
+    pub(super) fn check_grammar_import_equals_declaration(&mut self, file: FileId, s: StmtId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let kind = self.p.files.options.module;
-        let is_declaration_file = hir.kind == FileKind::Declaration;
-        for (i, s) in hir.stmts.iter().enumerate() {
-            if !matches!(
-                s.kind,
-                StmtKind::ImportEquals(_) | StmtKind::ExportAssign(_)
-            ) || matches!(bound.stmt_parent[i], Parent::None)
-            {
-                continue;
-            }
-            match s.kind {
-                StmtKind::ImportEquals(id) => {
-                    let import = &hir[id];
-                    // In a namespace it is out of place to begin with.
-                    if matches!(import.target, ImportEqualsTarget::Require(_))
-                        && matches!(bound.stmt_parent[i], Parent::File)
-                        && (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&kind)
-                        && !import.flags.intersects(Flags::TYPE_ONLY | Flags::AMBIENT)
-                        && !is_declaration_file
-                    {
-                        let end = self.end_of_stmt(file, StmtId(i as u32));
-                        self.error_at((file, s.start, end), 1202, &[]);
-                    }
-                    // `checkImportEqualsDeclaration`
-                    if matches!(import.target, ImportEqualsTarget::Entity(_))
-                        && import.flags.contains(Flags::TYPE_ONLY)
-                        && matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_))
-                    {
-                        let end = self.end_of_stmt(file, StmtId(i as u32));
-                        self.error_at((file, s.start, end), 1392, &[]);
-                    }
-                }
-                StmtKind::ExportAssign(_) => {
-                    // `checkExportAssignment`: where it is out of place, in a block or in a namespace, no more is said of it.
-                    match bound.stmt_parent[i] {
-                        Parent::File => {}
-                        Parent::Module(m) if !matches!(hir[m].name, ModuleName::Ident(_)) => {}
-                        _ => continue,
-                    }
-                    let is_ambient = is_declaration_file
-                        || matches!(bound.stmt_parent[i], Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
-                    let format = self.files().module(file).implied_format;
-                    if kind >= ModuleKind::Es2015
-                        && kind != ModuleKind::Preserve
-                        && (is_ambient && format == ResolutionMode::Import
-                            || !is_ambient && format != ResolutionMode::Require)
-                    {
-                        let end = self.end_of_stmt(file, StmtId(i as u32));
-                        self.error_at((file, s.start, end), 1203, &[]);
-                    } else if kind == ModuleKind::System && !is_ambient {
-                        let end = self.end_of_stmt(file, StmtId(i as u32));
-                        self.error_at((file, s.start, end), 1218, &[]);
-                    }
-                }
-                _ => {}
-            }
-        }
-        // `checkGrammarImportCallExpression`: the first error of a call is the only one. `xm_import_calls_and_types` reports 1286 and
-        // 1295, `check_commas_of_import_calls` 1009, the parser 1326.
-        if self.p.files.options.verbatim_module_syntax && kind == ModuleKind::CommonJs {
+        let StmtKind::ImportEquals(id) = hir[s].kind else {
             return;
+        };
+        let (import, kind) = (&hir[id], self.p.files.options.module);
+        // In a namespace it is out of place to begin with.
+        if matches!(import.target, ImportEqualsTarget::Require(_))
+            && matches!(bound.stmt_parent[s.idx()], Parent::File)
+            && (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&kind)
+            && !import.flags.intersects(Flags::TYPE_ONLY | Flags::AMBIENT)
+            && hir.kind != FileKind::Declaration
+        {
+            self.grammar_error_on_node(file, s, 1202, &[]);
         }
+        if matches!(import.target, ImportEqualsTarget::Entity(_))
+            && import.flags.contains(Flags::TYPE_ONLY)
+        {
+            self.grammar_error_on_node(file, s, 1392, &[]);
+        }
+    }
+
+    /// From `checkExportAssignment`, of an `export =` that is in its place: 1203 1218.
+    pub(super) fn check_grammar_export_equals(&mut self, file: FileId, s: StmtId) {
+        let (hir, kind) = (self.hir(file), self.p.files.options.module);
+        let is_ambient = hir.is_ambient(hir.node(s));
+        let format = self.files().module(file).implied_format;
+        if kind >= ModuleKind::Es2015
+            && kind != ModuleKind::Preserve
+            && (is_ambient && format == ResolutionMode::Import
+                || !is_ambient && format != ResolutionMode::Require)
+        {
+            self.grammar_error_on_node(file, s, 1203, &[]);
+        } else if kind == ModuleKind::System && !is_ambient {
+            self.grammar_error_on_node(file, s, 1218, &[]);
+        }
+    }
+
+    /// `checkGrammarImportCallExpression`: the first error of a call is the only one. `xm_import_calls_and_types` reports 1286 and 1295,
+    /// `check_commas_of_import_calls` 1009, the parser 1326.
+    pub(super) fn check_grammar_import_call_expression(&mut self, file: FileId, e: ExprId) -> bool {
+        let (hir, kind) = (self.hir(file), self.p.files.options.module);
+        let ExprKind::ImportCall { args, .. } = hir[e].kind else {
+            return false;
+        };
+        if self.p.files.options.verbatim_module_syntax && kind == ModuleKind::CommonJs {
+            return false;
+        }
+        let after_keyword = skip_trivia(&hir.text, hir[e].pos as usize + b"import".len());
+        let after_keyword = hir.text.get(after_keyword).copied();
+        if after_keyword == Some(b'.') {
+            // `import.defer(..)`
+            if !matches!(kind, ModuleKind::EsNext | ModuleKind::Preserve) {
+                return self.grammar_error_on_node(file, e, 18060, &[]);
+            }
+        } else if kind == ModuleKind::Es2015 {
+            let start = hir[e].pos;
+            self.reported.retain(|d| d.code != 1326 || d.start != start);
+            return self.grammar_error_on_node(file, e, 1323, &[]);
+        }
+        if after_keyword == Some(b'<') {
+            return false;
+        }
+        let (specifier, options) = (hir.id_at(args, 0), hir.ids(args).nth(1));
         let has_import_attributes =
             kind.is_node() || matches!(kind, ModuleKind::EsNext | ModuleKind::Preserve);
-        let index = self.exprs_by_kind(file);
-        for &id in index.of(ExprTag::ImportCall) {
-            let (i, e) = (id.idx(), &hir[id]);
-            let ExprKind::ImportCall { args, .. } = e.kind else {
-                continue;
-            };
-            let specifier = hir.id_at(args, 0);
-            if bound.is_unchecked(i) {
-                continue;
+        if !has_import_attributes && let Some(options) = options {
+            let at = (
+                file,
+                self.start_of(file, options),
+                self.error_end_of(file, options),
+            );
+            return self.grammar_error_at(at, 1324, &[]);
+        }
+        if args.len() > 2 || matches!(hir[specifier].kind, ExprKind::Missing) {
+            return self.grammar_error_on_node(file, e, 1450, &[]);
+        }
+        let is_spread = |a: &ExprId| matches!(hir[*a].kind, ExprKind::Spread(_));
+        match [Some(specifier), options]
+            .into_iter()
+            .flatten()
+            .find(is_spread)
+        {
+            Some(spread) => {
+                let at = (file, hir[spread].pos, self.end_of_expr(file, spread));
+                self.grammar_error_at(at, 1325, &[])
             }
-            let after_keyword = hir
-                .text
-                .get(skip_trivia(&hir.text, e.pos as usize + b"import".len()))
-                .copied();
-            if after_keyword == Some(b'.') {
-                // `import.defer(..)`
-                if !matches!(kind, ModuleKind::EsNext | ModuleKind::Preserve) {
-                    let end = self.end_inside_parentheses(file, ExprId(i as u32));
-                    self.error_at((file, e.pos, end), 18060, &[]);
-                    continue;
-                }
-            } else if kind == ModuleKind::Es2015 {
-                self.reported.retain(|d| d.code != 1326 || d.start != e.pos);
-                let end = self.end_inside_parentheses(file, ExprId(i as u32));
-                self.error_at((file, e.pos, end), 1323, &[]);
-                continue;
-            }
-            if after_keyword == Some(b'<') {
-                continue;
-            }
-            let options = hir.ids(args).nth(1);
-            if !has_import_attributes && let Some(options) = options {
-                let start = self.start_of(file, options);
-                self.error_at((file, start, self.error_end_of(file, options)), 1324, &[]);
-                continue;
-            }
-            if args.len() > 2 || matches!(hir[specifier].kind, ExprKind::Missing) {
-                let end = self.end_inside_parentheses(file, id);
-                self.error_at((file, e.pos, end), 1450, &[]);
-                continue;
-            }
-            if let Some(spread) = [Some(specifier), options]
-                .into_iter()
-                .flatten()
-                .find(|&a| matches!(hir[a].kind, ExprKind::Spread(_)))
-            {
-                let end = self.end_of_expr(file, spread);
-                self.error_at((file, hir[spread].pos, end), 1325, &[]);
-            }
+            None => false,
         }
     }
 

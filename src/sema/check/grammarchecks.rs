@@ -3,7 +3,6 @@
 //!
 //! A token is no node yet: where a `?`, `!`, `...`, `*` or `=` is, is read off the text next to a node, once it is known to be there.
 
-use super::errors_grammar_modifiers::HasModifiers;
 use super::errors_x_operators::language_version;
 use super::errors_x_signatures::start_of_written_type;
 use super::related::Place;
@@ -90,8 +89,9 @@ impl Checker<'_> {
     }
 
     /// `checkGrammarModifiers`, as far as whether it reports goes. `check_grammar_modifiers` and `report_decorators` do the reporting.
-    pub(super) fn has_grammar_error_in_modifiers(&self, file: FileId, node: HasModifiers) -> bool {
+    pub(super) fn has_grammar_error_in_modifiers(&self, file: FileId, node: impl ToNode) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let node = hir.node(node);
         if has_parse_diagnostics(hir) {
             return false;
         }
@@ -100,7 +100,7 @@ impl Checker<'_> {
                 && (hir.decorators.iter())
                     .any(|&(of, e)| of == owner && bound.refused_decorators.contains(&e))
         };
-        matches!(node, HasModifiers::Member(m) if is_decorator_refused(DecoratorOwner::Member(m)))
+        matches!(hir.data(node), NodeData::Member(m) if is_decorator_refused(DecoratorOwner::Member(m)))
             || self.grammar_error_in_modifiers(file, node).is_some()
     }
 
@@ -112,12 +112,8 @@ impl Checker<'_> {
     ) -> bool {
         let hir = self.hir(file);
         let has_modifier_error = match self.bound(file).fns[func.idx()].owner {
-            FnOwner::Stmt(s) => {
-                self.has_grammar_error_in_modifiers(file, HasModifiers::Statement(s))
-            }
-            FnOwner::Member(m) => {
-                self.has_grammar_error_in_modifiers(file, HasModifiers::Member(m))
-            }
+            FnOwner::Stmt(s) => self.has_grammar_error_in_modifiers(file, s),
+            FnOwner::Member(m) => self.has_grammar_error_in_modifiers(file, m),
             // Those of a member of an object literal are no list yet: the parser objects to them.
             _ => {
                 !hir.early_errors.is_empty()

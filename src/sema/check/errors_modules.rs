@@ -8,7 +8,7 @@
 
 use super::errors::is_close;
 use super::*;
-use crate::bind::{Decl, MemberOwner, Parent, PatParent, ScopeId};
+use crate::bind::{Decl, Parent, PatParent, ScopeId};
 
 impl Checker<'_> {
     pub(super) fn check_names_and_exports(&mut self, file: FileId) {
@@ -79,22 +79,21 @@ impl Checker<'_> {
     }
 
     /// `resolveQualifiedName`: each name after the first has to be exported by what the names before it come to.
-    /// `start`: where the first is written.
     pub(super) fn check_qualified_name(
         &mut self,
         file: FileId,
         scope: ScopeId,
-        names: &[Atom],
-        start: u32,
+        names: Span<NameId>,
         meaning: SymFlags,
     ) {
         let (files, hir) = (self.files(), self.hir(file));
-        let Some(mut namespace) = files.resolve_name(file, scope, names[0], SymFlags::NAMESPACE)
+        let first = hir[names.at(0)].text;
+        let Some(mut namespace) = files.resolve_name(file, scope, first, SymFlags::NAMESPACE)
         else {
             return;
         };
-        let mut at = next_name(&hir.text, start + files.atoms.bytes(names[0]).len() as u32);
-        for (i, &name) in names.iter().enumerate().skip(1) {
+        for (i, right) in names.iter().enumerate().skip(1) {
+            let name = hir[right].text;
             // `NodeIsMissing(right)`: the parser has reported the missing name.
             if name == known::empty {
                 return;
@@ -104,7 +103,7 @@ impl Checker<'_> {
                 return;
             };
             // What has whatever is asked of it.
-            if files.symbol(resolved).exports.is_none()
+            if files.symbol(resolved).exports.is_none() && resolved != files.global_this_symbol
                 || !files.flags(resolved).intersects(SymFlags::NAMESPACE)
             {
                 return;
@@ -116,7 +115,6 @@ impl Checker<'_> {
                 SymFlags::NAMESPACE
             };
             let text = files.atoms.bytes(name);
-            let next = next_name(&hir.text, at + text.len() as u32);
             let exported = files.namespace_member(resolved, name);
             // `getSymbol`: an alias goes by what it stands for.
             let found = self.get_symbol(exported, wanted).or_else(|| {
@@ -135,7 +133,6 @@ impl Checker<'_> {
             });
             if let Some(member) = found {
                 namespace = member;
-                at = next;
                 continue;
             }
             // `getSuggestedSymbolForNonexistentModule`: neither a member of an enum nor `export default 1` nor `export =` is what was meant.
@@ -157,40 +154,22 @@ impl Checker<'_> {
                     let suggested =
                         get_spelling_suggestion(text, candidates, get_name, |a, b| a.1.cmp(&b.1));
                     let arg0 = fully_qualified_name(self, resolved);
-                    let arg1 = suggested.map_or_else(String::new, |s| self.symbol_to_string(s.1));
-                    self.error_at(
-                        (file, at, 0),
-                        2724,
-                        &[Arg::Text(&arg0), Arg::Atom(name), Arg::Text(&arg1)],
-                    );
+                    let arg1 = suggested.map_or(Arg::Bytes(b""), |s| Arg::Sym(s.1));
+                    let args = [Arg::Text(&arg0), Arg::Atom(name), arg1];
+                    self.error(file, right, 2724, &args);
                 }
                 return;
             }
             // After `implements`, and after the `extends` of an interface, the names are a property access and no `QualifiedName`.
-            let is_heritage = hir
-                .classes
-                .iter()
-                .any(|c| hir.ids(c.implements).any(|t| hir[t].pos == start))
-                || hir
-                    .interfaces
-                    .iter()
-                    .any(|x| hir.ids(x.extends).any(|t| hir[t].pos == start));
-            if !is_heritage {
+            if hir.kind(hir.node(names)) == Kind::QualifiedName {
                 if wanted.intersects(SymFlags::TYPE) {
-                    match self.is_qualified_name_a_value(file, scope, names) {
+                    let texts: smallvec::SmallVec<[Atom; 8]> = hir.texts(names).collect();
+                    match self.is_qualified_name_a_value(file, scope, &texts) {
                         Some(true) => {
-                            self.error_at((file, start, 0), 2749, &[]);
-                            // `getContainingQualifiedNameNode`: all of the names.
-                            let mut end = at + text.len() as u32;
-                            for &later in &names[i + 1..] {
-                                end = next_name(&hir.text, end)
-                                    + files.atoms.bytes(later).len() as u32;
-                            }
-                            self.explain_to(start, end, 2749, |c| {
-                                let written: Vec<String> =
-                                    names.iter().map(|&n| c.atom_text(n)).collect();
-                                vec![written.join(".")]
-                            });
+                            // `getContainingQualifiedNameNode`: all of the names. `entityNameToString`
+                            let written: Vec<&[u8]> =
+                                texts.iter().map(|&n| files.atoms.bytes(n)).collect();
+                            self.error(file, names, 2749, &[Arg::Bytes(&written.join(&b'.'))]);
                             return;
                         }
                         Some(false) => {}
@@ -198,28 +177,17 @@ impl Checker<'_> {
                     }
                 }
                 // A type where a namespace goes: it is the name after it that cannot be got at.
-                if !is_last && exported.is_some_and(|m| files.means(m, SymFlags::TYPE)) {
-                    // A missing name starts right after the dot.
-                    let dot = skip_trivia(&hir.text, at as usize + text.len());
-                    let is_missing =
-                        names[i + 1] == known::empty && hir.text.get(dot) == Some(&b'.');
-                    let right = if is_missing { dot as u32 + 1 } else { next };
-                    let right_name = names[i + 1];
-                    {
-                        let arg0 = exported.map_or_else(String::new, |m| self.symbol_to_string(m));
-                        self.error_at(
-                            (file, right, 0),
-                            2713,
-                            &[Arg::Text(&arg0), Arg::Atom(right_name)],
-                        );
-                    }
+                if !is_last
+                    && let Some(exported) = exported.filter(|&m| files.means(m, SymFlags::TYPE))
+                {
+                    let after = names.at(i + 1);
+                    let args = [Arg::Sym(exported), Arg::Atom(hir[after].text)];
+                    self.error(file, after, 2713, &args);
                     return;
                 }
             }
-            {
-                let arg0 = fully_qualified_name(self, resolved);
-                self.error_at((file, at, 0), 2694, &[Arg::Text(&arg0), Arg::Atom(name)]);
-            }
+            let arg0 = fully_qualified_name(self, resolved);
+            self.error(file, right, 2694, &[Arg::Text(&arg0), Arg::Atom(name)]);
             return;
         }
     }
@@ -264,85 +232,22 @@ impl Checker<'_> {
         Some(true)
     }
 
-    /// `IsGlobalSourceFile(GetDeclarationContainer(symbol.Declarations[0]))`
-    fn is_first_declared_in_global_source_file(&self, sym: Sym) -> bool {
+    /// `isGlobalSourceFile(GetDeclarationContainer(symbol.Declarations[0]))`
+    pub(super) fn is_first_declared_in_global_source_file(&self, sym: Sym) -> bool {
         let files = self.files();
-        let Some(part) = files
-            .parts(sym)
-            .iter()
-            .copied()
-            .find(|&part| !files.symbol(part).decls.is_empty())
-        else {
-            return false;
-        };
-        let (hir, bound) = (files.hir(part.file), files.bound(part.file));
-        let symbol = files.symbol(part);
-        // The locals of a script: what is declared at its top, not in a `global` block, a namespace or an ambient module.
-        if files.module(part.file).is_module()
-            || bound.lookup(bound.scopes[0].locals, symbol.name) != Some(part.id)
-        {
-            return false;
-        }
-        // A `var` is among them wherever it is written.
-        let Decl::Var(pat) = symbol.decls[0] else {
-            return true;
-        };
-        let PatParent::Var(declaration) = root_declaration(bound, pat) else {
-            return false;
-        };
-        let statement = bound.var_stmt[declaration.idx()];
-        if statement.is_none() {
-            return false;
-        }
-        // The declarations in the head of a loop are in what the loop is in.
-        let container = match bound.stmt_parent[statement.idx()] {
-            Parent::Stmt(around)
-                if matches!(
-                    hir[around].kind,
-                    StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. }
-                ) =>
-            {
-                bound.stmt_parent[around.idx()]
-            }
-            container => container,
-        };
-        container == Parent::File
+        files
+            .decls_of(sym)
+            .first()
+            .is_some_and(|&(file, declaration)| {
+                let hir = files.hir(file);
+                !files.module(file).is_module()
+                    && hir.kind(hir.get_declaration_container(hir.node(declaration)))
+                        == Kind::SourceFile
+            })
     }
 
     fn check_exports(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // What is exported by name, without saying from where, has to be the module's own.
-        for (x, export) in hir.exports.iter().enumerate() {
-            if export.spec.is_some() || bound.export_scope[x].is_none() {
-                continue;
-            }
-            for s in export.items.iter() {
-                let name = hir[s].local;
-                let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE | SymFlags::ALIAS;
-                let is_global = self
-                    .files()
-                    .resolve_name(file, bound.export_scope[x], name, all)
-                    .is_some_and(|found| {
-                        found == self.files().undefined_symbol
-                            || found == self.files().global_this_symbol
-                            || self.is_first_declared_in_global_source_file(found)
-                    });
-                let text = self.files().atoms.bytes(name);
-                let is_primitive = matches!(
-                    text,
-                    b"any" | b"string" | b"number" | b"boolean" | b"never" | b"unknown"
-                );
-                if is_global
-                    || is_primitive
-                        && self
-                            .files()
-                            .resolve_name(file, bound.export_scope[x], name, all)
-                            .is_none()
-                {
-                    self.error_at((file, hir[s].local_pos, 0), 2661, &[]);
-                }
-            }
-        }
         // And `export =` all by itself.
         if self.files().module(file).is_module() {
             self.check_export_equals_alone(file, self.files().file_symbol(file));
@@ -465,132 +370,80 @@ impl Checker<'_> {
         })
     }
 
-    /// The end of `onSuccessfullyResolvedSymbol`: 1361, 1362.
+    /// `onSuccessfullyResolvedSymbol`: 1361, 1362.
     fn check_type_only_names_used_as_values(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.kind == FileKind::Declaration
-            // In JavaScript `const a = require("m")` declares an alias too.
-            || hir.imports.is_empty() && hir.import_equals.is_empty() && !hir.is_js
-        {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        if hir.kind == FileKind::Declaration {
             return;
         }
-        // What is said of each name where it is used as a value. It is looked into once, however often it is used.
-        // By symbol, once there is a name to ask about. 0: nothing is said.
-        const NOT_LOOKED_INTO: u32 = u32::MAX;
-        let mut codes: Vec<u32> = Vec::new();
+        // By symbol, once there is a name to ask about: it is looked into once, however often it is used. 0: not yet. 1: nothing is said.
+        let mut looked_into: Vec<u8> = Vec::new();
         for &(e, _) in &bound.alias_idents {
-            let i = e.idx();
-            let local = bound.expr_symbol[i];
-            if local.is_none() || bound.is_unchecked(i) {
+            let local = bound.expr_symbol[e.idx()];
+            if local.is_none() || bound.is_unchecked(e.idx()) {
                 continue;
             }
-            let flags = bound.symbols[local.idx()].flags;
-            if !flags.contains(SymFlags::ALIAS)
-                || flags.intersects(SymFlags::VALUE)
-                || bound.is_in_type_query(e)
-            {
+            let symbol = &bound.symbols[local.idx()];
+            if !symbol.flags.contains(SymFlags::ALIAS) || symbol.flags.intersects(SymFlags::VALUE) {
                 continue;
             }
-            if codes.is_empty() {
-                codes.resize(bound.symbols.len(), NOT_LOOKED_INTO);
+            if looked_into.is_empty() {
+                looked_into.resize(bound.symbols.len(), 0);
             }
-            if codes[local.idx()] == NOT_LOOKED_INTO {
-                let sym = self.files().sym(file, local);
-                // `getSymbol`: an alias that leads nowhere goes for a value as for anything else.
-                let flags = self.files().symbol_flags(sym);
-                let is_value = flags.intersects(SymFlags::VALUE);
-                let type_only = self
-                    .files()
-                    .type_only_alias_declaration_ex(sym, SymFlags::VALUE);
-                codes[local.idx()] = match is_value.then(|| type_only.map(|t| t.is_export())) {
-                    Some(Some(true)) => 1362,
-                    Some(Some(false)) => 1361,
-                    _ => 0,
-                };
-            }
-            let code = codes[local.idx()];
-            if code == 0 {
+            if looked_into[local.idx()] == 1 {
                 continue;
             }
-            // `IsValidTypeOnlyAliasUseSite`. `top`: all of `a.b.c`, as far as there are no parentheses in it.
-            let mut top = e;
-            let root = loop {
-                match bound.expr_parent[top.idx()] {
-                    Parent::Expr(p)
-                        if !is_parenthesized(hir, top)
-                            && matches!(hir[p].kind, ExprKind::Dot { obj, .. } if obj == top) =>
-                    {
-                        top = p
-                    }
-                    other => break other,
-                }
+            let sym = files.sym(file, local);
+            // `getSymbol`: it is found as a value. An alias that leads nowhere goes for one as for anything else.
+            let type_only = files
+                .type_only_alias_declaration_ex(sym, SymFlags::VALUE)
+                .filter(|_| files.symbol_flags(sym).intersects(SymFlags::VALUE));
+            looked_into[local.idx()] = 1 + u8::from(type_only.is_some());
+            let Some(type_only) = type_only else {
+                continue;
             };
-            match root {
-                // `isPartOfPossiblyValidTypeOrAbstractComputedPropertyName`
-                Parent::MemberKey(_) | Parent::MethodKey(_)
-                    if !is_parenthesized(hir, top)
-                        && hir
-                            .members
-                            .iter()
-                            .position(|m| m.key == PropKey::Computed(top))
-                            .is_some_and(|m| {
-                                hir.members[m].flags.contains(Flags::ABSTRACT)
-                                    || !matches!(bound.member_owner[m], MemberOwner::Class(_))
-                            }) =>
-                {
-                    continue;
-                }
-                // `IsInExpressionContext`: a name that is exported as it stands is no expression.
-                Parent::Stmt(s)
-                    if top == e
-                        && !is_parenthesized(hir, e)
-                        && s.is_some()
-                        && matches!(
-                            hir[s].kind,
-                            StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
-                        ) =>
-                {
-                    continue;
-                }
-                _ => {}
-            }
-            if self.is_only_declared(file, e) {
+            if is_valid_type_only_alias_use_site(hir, hir.node(e)) {
                 continue;
             }
-            self.error_at((file, hir[e].pos, 0), code, &[]);
-            self.relate(hir[e].pos, code, |c| {
-                let name = c.atom_text(bound.symbols[local.idx()].name);
-                c.type_only_declaration_related(c.files().sym(file, local), name)
-            });
+            let is_export = type_only.is_export();
+            let at = self.place_of_token(file, hir[e].pos);
+            self.xa_error_about_type_only(
+                at,
+                if is_export { 1362 } else { 1361 },
+                &[Arg::Atom(symbol.name)],
+                Some((type_only, is_export)),
+                symbol.name,
+            );
         }
     }
+}
 
-    /// `NodeFlagsAmbient`: whether `e` is written in what is only declared. The same goes for what `checkVariableLikeDeclaration` does not
-    /// look at in a signature without a body: the defaults of its parameters, and a property that is given another name there,
-    /// `({ [a]: b }) => void`.
-    fn is_only_declared(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        let is_left_out = |n: Node| {
-            let declaration = hir.parent(n);
-            let is_renamed = |p: PatPropId| {
-                let value = &hir[hir[p].value];
-                matches!(value.kind, PatKind::Ident(_)) && value.pos != hir[p].pos
-            };
-            let is_part = match hir.data(declaration) {
-                NodeData::Param(_) | NodeData::PatElem(_) => hir.initializer(declaration) == n,
-                NodeData::PatProp(p) => {
-                    hir.initializer(declaration) == n
-                        || hir.property_name(declaration) == n && is_renamed(p)
-                }
-                _ => false,
-            };
-            let root = hir.get_root_declaration(declaration);
-            is_part
-                && hir.kind(root) == Kind::Parameter
-                && matches!(hir.fns.get(hir.function_of(hir.parent(root)).idx()), Some(function) if matches!(function.body, FnBody::None))
-        };
-        hir.is_ambient(hir.node(e)) || hir.find_ancestor(hir.node(e), is_left_out).is_some()
+/// `IsValidTypeOnlyAliasUseSite`, of a name or an access that is an `ExprId`. The same goes for what `checkVariableLikeDeclaration` does not
+/// look at: what is written in a parameter of a signature without a body.
+pub(super) fn is_valid_type_only_alias_use_site(hir: &hir::File, use_site: Node) -> bool {
+    // `isPartOfPossiblyValidTypeOrAbstractComputedPropertyName`
+    let mut name = use_site;
+    while matches!(
+        hir.kind(name),
+        Kind::Identifier | Kind::PropertyAccessExpression
+    ) {
+        name = hir.parent(name);
     }
+    let named = hir.parent(name);
+    let parameter = hir.find_ancestor_kind(use_site, Kind::Parameter);
+    let function = hir.fns.get(hir.function_of(hir.parent(parameter)).idx());
+    hir.is_ambient(use_site)
+        || hir.is_in_type_query(use_site)
+        || hir.kind(name) == Kind::ComputedPropertyName
+            && (hir.flags(named).contains(Flags::ABSTRACT)
+                || matches!(
+                    hir.kind(hir.parent(named)),
+                    Kind::InterfaceDeclaration | Kind::TypeLiteral
+                ))
+        // `IsInExpressionContext`: a name that is exported as it stands is no expression.
+        || hir.kind(use_site) == Kind::Identifier
+            && hir.kind(hir.parent(use_site)) == Kind::ExportAssignment
+        || function.is_some_and(|function| matches!(function.body, FnBody::None))
 }
 
 /// `getFullyQualifiedName`
@@ -613,15 +466,4 @@ pub(super) fn root_pattern(bound: &Bound, mut pat: PatId) -> PatId {
         pat = outer;
     }
     pat
-}
-
-/// Where the name after the one that ends at `end` is written: past the dot and what is around it. The text of a declaration file is not
-/// kept: there, nothing but the dot is taken to be between them.
-fn next_name(text: &[u8], end: u32) -> u32 {
-    let dot = skip_trivia(text, end as usize);
-    if text.get(dot) == Some(&b'.') {
-        skip_trivia(text, dot + 1) as u32
-    } else {
-        end + 1
-    }
 }

@@ -472,6 +472,14 @@ pub enum ModuleInstanceState {
     ConstEnumOnly,
 }
 
+/// `AccessKind`
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum AccessKind {
+    Read,
+    Write,
+    ReadWrite,
+}
+
 /// `AssignmentKind`
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AssignmentKind {
@@ -702,6 +710,9 @@ pub struct Bound {
     pub entries: Vec<(Atom, SymbolId)>,
     /// Where in `entries` each name of a table with more than `SCANNED` names is.
     pub large_tables: FxHashMap<(TableId, Atom), u32>,
+    /// A Bloom filter, of one hash, of the names in the `locals` of the scopes that have no `symbol` and are not the file's. A power of
+    /// two of words, or none where they declare nothing. `scope_to_resolve_from`
+    pub nested_names: Box<[u64]>,
     pub ids: Vec<u32>,
 
     /// The file as a module. Its exports are what other files can import.
@@ -908,7 +919,18 @@ impl Bound {
     }
 
     /// `GetAssignmentTarget`: what gives `e` a value, if `e` is what it is given to or part of a pattern that is.
-    pub fn get_assignment_target(&self, hir: &File, mut e: ExprId) -> Option<AssignmentTarget> {
+    #[inline]
+    pub fn get_assignment_target(&self, hir: &File, e: ExprId) -> Option<AssignmentTarget> {
+        self.assignment_target(hir, e, true)
+    }
+
+    /// `GetAssignmentTarget` and `accessKind` go up the same way, but that the second sees through neither `!` nor `...`.
+    fn assignment_target(
+        &self,
+        hir: &File,
+        mut e: ExprId,
+        sees_through_spread: bool,
+    ) -> Option<AssignmentTarget> {
         loop {
             match self.expr_parent[e.idx()] {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
@@ -919,7 +941,8 @@ impl Bound {
                         op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
                         ..
                     } => return Some(AssignmentTarget::Unary),
-                    ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::NonNull(_) => e = parent,
+                    ExprKind::Array(_) => e = parent,
+                    ExprKind::Spread(_) | ExprKind::NonNull(_) if sees_through_spread => e = parent,
                     _ => return None,
                 },
                 // The value of `name: value` and of `...value`, and the assignment `{ name = value }` is kept as.
@@ -927,6 +950,7 @@ impl Bound {
                     let owner = self.prop_owner[p.idx()];
                     if owner.is_none()
                         || !matches!(hir[owner].kind, ExprKind::Object(_))
+                        || hir[p].kind == PropKind::Spread && !sees_through_spread
                         || !matches!(
                             hir[p].kind,
                             PropKind::Init | PropKind::Shorthand | PropKind::Spread
@@ -956,6 +980,25 @@ impl Bound {
             ) => AssignmentKind::Definite,
             Some(_) => AssignmentKind::Compound,
         }
+    }
+
+    /// `accessKind`
+    pub fn access_kind(&self, hir: &File, e: ExprId) -> AccessKind {
+        match self.assignment_target(hir, e, false) {
+            None => AccessKind::Read,
+            Some(AssignmentTarget::Assign(None) | AssignmentTarget::ForInOrOf) => AccessKind::Write,
+            Some(_) => AccessKind::ReadWrite,
+        }
+    }
+
+    /// `IsWriteAccess`
+    pub fn is_write_access(&self, hir: &File, e: ExprId) -> bool {
+        self.access_kind(hir, e) != AccessKind::Read
+    }
+
+    /// `IsWriteOnlyAccess`
+    pub fn is_write_only_access(&self, hir: &File, e: ExprId) -> bool {
+        self.access_kind(hir, e) == AccessKind::Write
     }
 
     /// `isSymbolAssignedDefinitely`: `+=` and `++` change a value, they do not give one.
@@ -1340,6 +1383,34 @@ impl Bound {
             }
         }
         seen
+    }
+
+    /// The word and the bit of a `nested_names` of `words` words that stand for `name`.
+    #[inline]
+    pub(super) fn bit_of_nested_name(words: usize, name: Atom) -> (usize, u64) {
+        // Atoms are numbered as they come: Fibonacci hashing spreads them.
+        let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
+        ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
+    }
+
+    /// Where `NameResolver.Resolve` may as well start to look for `name` from `scope`. If no scope in between declares the name, that
+    /// is the nearest around whose symbol has exports, which may come from elsewhere, or the file's. For a `lookup` that is `getSymbol`.
+    #[inline]
+    pub fn scope_to_resolve_from(&self, mut scope: ScopeId, name: Atom) -> ScopeId {
+        if !self.nested_names.is_empty() {
+            let (word, bit) = Self::bit_of_nested_name(self.nested_names.len(), name);
+            if self.nested_names[word] & bit != 0 {
+                return scope;
+            }
+        }
+        while scope.is_some() {
+            let s = &self.scopes[scope.idx()];
+            if s.symbol.is_some() || s.parent.is_none() {
+                break;
+            }
+            scope = s.parent;
+        }
+        scope
     }
 
     /// `NameResolver.Resolve`, at a class or an interface come to from a static member (`IsStatic(lastLocation)`), at

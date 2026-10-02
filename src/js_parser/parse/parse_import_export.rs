@@ -188,7 +188,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer
                 .ts_grammar_expected(bun_ast::Range { loc: end, len: 0 }, "(");
         } else if is_callee {
-            p.lexer.ts_grammar_error(name, 18061);
+            p.lexer.ts_grammar_error_about(name, 18061, word);
         } else {
             let named = [word, b"import", b"meta"].join(&0);
             p.lexer.ts_grammar_error_about(name, 17012, &named);

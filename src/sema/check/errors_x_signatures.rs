@@ -18,7 +18,7 @@
 //! `?` or a modifier is. That is read from the text, from a place the summary does have.
 
 use super::*;
-use crate::bind::{FnOwner, MemberOwner, Parent};
+use crate::bind::{FnOwner, MemberOwner};
 use crate::util::FxHashSet;
 
 // ───────────────────────────── the text ─────────────────────────────
@@ -76,22 +76,6 @@ impl Checker<'_> {
             }
         }
         self.check_promise_constructor_is_there(file);
-        // `NodeFlagsAmbient`: all there is in a declaration file has it.
-        if hir.kind != FileKind::Declaration {
-            self.check_erasable_syntax(file);
-        }
-    }
-
-    /// Whether `source` is known not to fit `target`.
-    fn is_known_not_to_fit(&mut self, source: TypeId, target: TypeId) -> bool {
-        if !self.is_known(source) || !self.is_known(target) {
-            return false;
-        }
-        let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
-        let fits = self.is_assignable(source, target);
-        let is_sure = !self.relation_gave_up;
-        self.relation_gave_up |= gave_up_before;
-        !fits && is_sure
     }
 
     // ───────────────────────────── type parameters ─────────────────────────────
@@ -132,15 +116,12 @@ impl Checker<'_> {
                         let constraint = self.instantiate(constraint, mapper);
                         let constraint = self.type_with_this_argument(constraint, default);
                         self.relations_too_deep.clear();
-                        if self.is_known_not_to_fit(default, constraint) {
-                            let end = self.end_of_type_node_from(file, decl.default, start);
-                            self.check_type_assignable_to(
-                                default,
-                                constraint,
-                                Some((file, start, end)),
-                                Some(2344),
-                            );
-                        }
+                        let at = (
+                            file,
+                            start,
+                            self.end_of_type_node_from(file, decl.default, start),
+                        );
+                        self.check_type_assignable_to(default, constraint, Some(at), Some(2344));
                         // `checkTypeRelatedToEx`: a comparison without an error node reports at `currentNode`, the declaration.
                         let too_deep = std::mem::take(&mut self.relations_too_deep);
                         if let Some(start) = name_of_type_parameter_owner(hir, tp) {
@@ -322,27 +303,12 @@ impl Checker<'_> {
             };
             // `reportUnreliableWorker` ignores these markers. `report_unreliable` fires on every marker, so its flags are dropped.
             let reliability = self.reliability;
-            let is_wrong = self.is_known_not_to_fit(source, target);
+            // `c.varianceTypeParameter`: the markers go by its name for as long as this is put into words.
+            self.set_variance_type_parameter(Some(own));
+            let at = (file, start, self.end_of_type_param(file, tp));
+            self.check_type_assignable_to(source, target, Some(at), Some(2636));
+            self.set_variance_type_parameter(None);
             self.reliability = reliability;
-            if is_wrong {
-                let end = self.end_of_type_param(file, tp);
-                // `c.varianceTypeParameter`: the markers go by its name for as long as this is put into words.
-                {
-                    self.set_variance_type_parameter(Some(own));
-                    let (source, target) = self.type_names_for_error_display(source, target);
-                    self.error_at(
-                        (file, start, end),
-                        2636,
-                        &[Arg::Text(&source), Arg::Text(&target)],
-                    );
-                }
-                self.explain_chain(start, 2636, |c| {
-                    let relation = super::relate::Relation::Assignable;
-                    let lines = c.relation_chain_under(source, target, relation, 2636);
-                    c.set_variance_type_parameter(None);
-                    lines
-                });
-            }
         }
     }
 
@@ -428,14 +394,12 @@ impl Checker<'_> {
             self.prepare_fn(file, parent);
         }
         let (narrowed, declared) = (self.type_from_node(file, ty), self.type_of_param(file, p));
-        if self.is_known_not_to_fit(narrowed, declared) {
-            let start = start_of_written_type(text, hir[ty].pos);
-            let end = self.end_of_type_node_from(file, ty, start);
-            self.error_at((file, start, end), 2677, &[]);
-            self.explain_chain(start, 2677, |c| {
-                c.assignability_lines(narrowed, declared, 1)
-            });
-            self.relate(start, 2677, |c| c.assignability_related(narrowed, declared));
+        let start = start_of_written_type(text, hir[ty].pos);
+        let at = (file, start, self.end_of_type_node_from(file, ty, start));
+        let mut diags = Vec::new();
+        if !self.check_type_assignable_to_ex(narrowed, declared, Some(at), None, Some(&mut diags)) {
+            let diagnostic = self.new_diagnostic_chain(diags.pop(), at, 2677, &[]);
+            self.add_diagnostic(diagnostic);
         }
     }
 
@@ -550,100 +514,6 @@ impl Checker<'_> {
                 let (start, end) = self.error_range_of_fn(file, f);
                 self.error_at((file, start, end), 2705, &[]);
                 self.report_global_error(2468, vec!["Promise".to_owned()]);
-            }
-        }
-    }
-
-    // ───────────────────────────── erasableSyntaxOnly ─────────────────────────────
-
-    /// 1294, from `checkEnumDeclaration`, `checkModuleDeclaration`, `checkImportEqualsDeclaration`, `checkExportAssignment` and
-    /// `checkAssertion`. (`checkParameter` has its own.)
-    fn check_erasable_syntax(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `shouldCheckErasableSyntax`
-        if !self.p.files.options.erasable_syntax_only || hir.is_js {
-            return;
-        }
-        let text = &hir.text[..];
-        // `ShouldPreserveConstEnums`
-        let preserves_const_enums =
-            self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
-        for (i, s) in hir.stmts.iter().enumerate() {
-            let parent = bound.stmt_parent[i];
-            // `checkGrammarModuleElementContext`: elsewhere something else is wrong, and that is all that is said.
-            let is_module_element = matches!(parent, Parent::File | Parent::Module(_));
-            let start = match s.kind {
-                StmtKind::Enum(e)
-                    if !matches!(parent, Parent::None)
-                        && !hir[e].flags.contains(Flags::AMBIENT) =>
-                {
-                    hir[e].name_pos
-                }
-                StmtKind::Module(m)
-                    if is_module_element
-                        && !hir[m].flags.contains(Flags::AMBIENT)
-                        && matches!(hir[m].name, ModuleName::Ident(_)) =>
-                {
-                    if !bound.is_instantiated_module(m, preserves_const_enums) {
-                        continue;
-                    }
-                    hir[m].name_pos
-                }
-                StmtKind::ImportEquals(x)
-                    if is_module_element && !hir[x].flags.contains(Flags::AMBIENT) =>
-                {
-                    s.start
-                }
-                // `NodeFlagsAmbient`: in an ambient module or anywhere in a declaration file.
-                StmtKind::ExportAssign(_)
-                    if is_module_element
-                        && hir.kind != FileKind::Declaration
-                        && !matches!(parent, Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT)) =>
-                {
-                    s.start
-                }
-                _ => continue,
-            };
-            self.error_at((file, start, 0), 1294, &[]);
-            // An enum and a namespace are pointed at by their names.
-            if matches!(
-                s.kind,
-                StmtKind::ImportEquals(_) | StmtKind::ExportAssign(_)
-            ) {
-                let end = self.end_of_stmt(file, StmtId(i as u32));
-                self.note(start, end, 1294, &[]);
-            }
-        }
-        // `<T>e`, from the `<`.
-        let by_kind = self.exprs_by_kind(file);
-        let assertions = by_kind.of(ExprTag::As).iter();
-        for &id in assertions.chain(by_kind.of(ExprTag::AsConst)) {
-            let e = &hir[id];
-            if bound.is_unchecked(id.idx()) {
-                continue;
-            }
-            // Where the `<` ends, and the `>`.
-            let (less_than, close) = match e.kind {
-                // The type comes before the operand. In `x as T` it comes after.
-                ExprKind::As { expr, ty } if hir[ty].pos < hir[expr].pos => (
-                    skip_trivia_back(text, start_of_written_type(text, hir[ty].pos) as usize),
-                    skip_trivia_back(text, self.start_of(file, expr) as usize),
-                ),
-                ExprKind::AsConst(operand) => {
-                    let close = skip_trivia_back(text, self.start_of(file, operand) as usize);
-                    if !text[..close].ends_with(b">") {
-                        continue;
-                    }
-                    let word = skip_trivia_back(text, close - 1);
-                    if word_before(text, word) != b"const" {
-                        continue;
-                    }
-                    (skip_trivia_back(text, word - 5), close)
-                }
-                _ => continue,
-            };
-            if text[..less_than].ends_with(b"<") {
-                self.error_at((file, less_than as u32 - 1, close as u32), 1294, &[]);
             }
         }
     }

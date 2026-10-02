@@ -38,13 +38,11 @@ impl Checker<'_> {
         if !matches!(self.hir(file)[operand].kind, ExprKind::Missing)
             && !self.is_valid_const_assertion_argument(file, operand)
         {
-            let start = start_of_const_asserted(self, file, operand);
-            let end = if start < self.start_inside_parentheses(file, operand) {
-                self.end_of_expr_from(file, operand, start)
-            } else {
-                self.error_end_inside_parentheses(file, operand)
+            let hir = self.hir(file);
+            match is_parenthesized(hir, operand) {
+                true => self.error(file, hir.node(operand).with(Part::Paren), 1355, &[]),
+                false => self.error(file, operand, 1355, &[]),
             };
-            self.error_at((file, start, end), 1355, &[]);
         }
     }
 
@@ -105,7 +103,7 @@ fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
 }
 
 /// Where the `=` right before `value` is.
-fn start_of_equals_before(c: &Checker<'_>, file: FileId, value: ExprId) -> Option<u32> {
+pub(super) fn start_of_equals_before(c: &Checker<'_>, file: FileId, value: ExprId) -> Option<u32> {
     let text = &c.hir(file).text;
     let start = (c.start_of(file, value) as usize).min(text.len());
     let end = skip_trivia_back(text, start);
@@ -113,89 +111,11 @@ fn start_of_equals_before(c: &Checker<'_>, file: FileId, value: ExprId) -> Optio
 }
 
 /// Where the `...` right before `operand` is.
-fn start_of_dots_before(c: &Checker<'_>, file: FileId, operand: ExprId) -> Option<u32> {
+pub(super) fn start_of_dots_before(c: &Checker<'_>, file: FileId, operand: ExprId) -> Option<u32> {
     let text = &c.hir(file).text;
     let start = (c.start_of(file, operand) as usize).min(text.len());
     let end = skip_trivia_back(text, start);
     text[..end].ends_with(b"...").then(|| end as u32 - 3)
-}
-
-/// From `from`, right before which `open` parentheses open: how many of them have closed by the time `as const` is written outside
-/// every bracket opened since. The first `skip` times it is written do not count.
-fn closed_before_const_assertion(text: &[u8], from: usize, open: usize, mut skip: usize) -> usize {
-    let (mut i, mut depth, mut closed) = (from, 0usize, 0usize);
-    while i < text.len() && closed < open {
-        let b = text[i];
-        match b {
-            b'"' | b'\'' | b'`' => {
-                i += 1;
-                while i < text.len() && text[i] != b {
-                    i += if text[i] == b'\\' { 2 } else { 1 };
-                }
-            }
-            b'/' if matches!(text.get(i + 1), Some(b'/' | b'*')) => {
-                i = skip_trivia(text, i);
-                continue;
-            }
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' if depth == 0 => closed += 1,
-            b')' | b']' | b'}' => depth -= 1,
-            _ if !word_at(text, i).is_empty() => {
-                let word = word_at(text, i);
-                i += word.len();
-                if depth == 0 && word == b"as" && is_word_at(text, skip_trivia(text, i), b"const") {
-                    if skip == 0 {
-                        return closed;
-                    }
-                    skip -= 1;
-                }
-                continue;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    closed
-}
-
-/// Where the operand of `operand as const` starts. Parentheses are noted on the outermost assertion made of an expression, whether
-/// they are around the assertion or around what is asserted: the text tells which.
-fn start_of_const_asserted(c: &Checker<'_>, file: FileId, operand: ExprId) -> u32 {
-    let hir = c.hir(file);
-    let inside = c.start_inside_parentheses(file, operand);
-    let text = &hir.text;
-    // The parentheses that open right before it, from the inside out.
-    let mut open = Vec::new();
-    let mut at = (inside as usize).min(text.len());
-    loop {
-        let end = skip_trivia_back(text, at);
-        if end == 0 || text[end - 1] != b'(' {
-            break;
-        }
-        at = end - 1;
-        open.push(at as u32);
-    }
-    if open.is_empty() {
-        return c.error_start_inside_parentheses(file, operand);
-    }
-    // The `as const` that are part of the operand.
-    let (mut within, mut x) = (0, operand);
-    loop {
-        x = match hir[x].kind {
-            ExprKind::AsConst(inner) => {
-                within += 1;
-                inner
-            }
-            ExprKind::As { expr, .. }
-            | ExprKind::Satisfies { expr, .. }
-            | ExprKind::NonNull(expr) => expr,
-            _ => break,
-        };
-    }
-    match closed_before_const_assertion(text, inside as usize, open.len(), within) {
-        0 => c.error_start_inside_parentheses(file, operand),
-        closed => open[closed - 1],
-    }
 }
 
 // ───────────────────────────── kinds of types ─────────────────────────────
@@ -214,35 +134,6 @@ fn operand_types(
 ) -> Option<(TypeId, TypeId)> {
     let (l, r) = (c.type_of_expr(file, left), c.type_of_expr(file, right));
     (c.is_known(l) && c.is_known(r)).then_some((l, r))
-}
-
-/// `getTypeOfPropertyOfType`, of a type that is not a union: index signatures do not count.
-fn type_of_declared_property(c: &mut Checker<'_>, ty: TypeId, name: Atom) -> Option<TypeId> {
-    let apparent = c.apparent_type(ty);
-    let members = c.members(apparent)?;
-    let (prop, mapper) = c.property_of_type(&members, name)?;
-    Some(c.type_of_prop(&prop, mapper))
-}
-
-/// `getTypeOfPropertyOfType`. In a union, a member that lacks what another declares may make up for it with an index signature.
-pub(super) fn type_of_property_of_type(
-    c: &mut Checker<'_>,
-    ty: TypeId,
-    name: Atom,
-) -> Option<TypeId> {
-    let ty = c.reduced(ty);
-    if !c.is_union(ty) {
-        return type_of_declared_property(c, ty, name);
-    }
-    let mut is_declared = false;
-    for &part in c.parts(ty) {
-        is_declared |= type_of_declared_property(c, part, name).is_some();
-    }
-    if is_declared {
-        c.type_of_property(ty, name)
-    } else {
-        None
-    }
 }
 
 // ───────────────────────────── binary operators ─────────────────────────────
@@ -296,84 +187,14 @@ pub(super) fn why_no_reference(
     }
 }
 
-/// `a = b`, as `checkBinaryLikeExpression` has it.
+/// `a = b`, as `checkBinaryLikeExpression` has it. A pattern is `checkDestructuringAssignment`'s.
 fn check_plain_assignment(c: &mut Checker<'_>, file: FileId, target: ExprId, value: ExprId) {
     let hir = c.hir(file);
     if !matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
         || is_parenthesized(hir, target)
     {
-        return check_assignment_operator(c, file, target, value);
+        check_assignment_operator(c, file, target, value);
     }
-    check_assignment_pattern(c, file, target);
-}
-
-/// `checkObjectLiteralAssignment`, `checkArrayLiteralAssignment`, for what they say of the targets themselves.
-pub(super) fn check_assignment_pattern(c: &mut Checker<'_>, file: FileId, pattern: ExprId) {
-    let hir = c.hir(file);
-    match hir[pattern].kind {
-        ExprKind::Object(props) => {
-            for (i, p) in props.iter().enumerate() {
-                let prop = &hir[p];
-                let is_rest = prop.kind == PropKind::Spread;
-                if prop.value.is_none() {
-                    continue;
-                }
-                // Nothing else is checked of a rest that is not the last, nor of a member that is no property.
-                if is_rest && i + 1 < props.len() {
-                    if let Some(start) = start_of_dots_before(c, file, prop.value) {
-                        c.error_at((file, start, c.end_of_prop(file, p)), 2462, &[]);
-                    }
-                } else if is_rest || matches!(prop.kind, PropKind::Init | PropKind::Shorthand) {
-                    check_assignment_element(c, file, prop.value, is_rest);
-                }
-            }
-        }
-        ExprKind::Array(items) => {
-            for (i, item) in hir.ids(items).enumerate() {
-                match hir[item].kind {
-                    ExprKind::Missing => {}
-                    ExprKind::Spread(_) if i + 1 < items.len() => {
-                        let start = hir[item].pos;
-                        c.error_at((file, start, c.end_of_expr(file, item)), 2462, &[]);
-                    }
-                    ExprKind::Spread(rest) => match hir[rest].kind {
-                        ExprKind::Assign {
-                            op: None, value, ..
-                        } if !is_parenthesized(hir, rest) => {
-                            if let Some(start) = start_of_equals_before(c, file, value) {
-                                c.error_at((file, start, 0), 1186, &[]);
-                            }
-                        }
-                        _ => check_assignment_element(c, file, rest, false),
-                    },
-                    _ => check_assignment_element(c, file, item, false),
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-/// `checkDestructuringAssignment`, of what stands in a pattern. `is_object_rest`: it is what follows the dots in `{ ...x }`.
-fn check_assignment_element(c: &mut Checker<'_>, file: FileId, e: ExprId, is_object_rest: bool) {
-    let hir = c.hir(file);
-    if !is_parenthesized(hir, e) {
-        match hir[e].kind {
-            // With a default it is an assignment, and is looked at as the assignment it is.
-            ExprKind::Assign { op: None, .. } => return,
-            ExprKind::Object(_) | ExprKind::Array(_) => {
-                return check_assignment_pattern(c, file, e);
-            }
-            _ => {}
-        }
-    }
-    // `checkReferenceAssignment`
-    let (invalid, optional_chain) = if is_object_rest {
-        (2701, 2778)
-    } else {
-        (2364, 2779)
-    };
-    check_reference_expression(c, file, e, invalid, optional_chain);
 }
 
 /// `checkAssignmentOperator`. `value`: what is assigned, or `NONE` where the operator makes something else of it first.
@@ -408,7 +229,7 @@ fn check_assignment_operator(c: &mut Checker<'_>, file: FileId, target: ExprId, 
     // up in the type of `obj` itself: an object that is possibly `undefined` or `null` has no such property.
     let is_mismatch = !is_parenthesized(hir, target)
         && c.maybe_type_of_kind(source, is_undefined)
-        && type_of_property_of_type(c, object, name)
+        && c.type_of_property_of_type(object, name)
             .is_some_and(|declared| c.contains_missing_type(declared));
     let at = c.start_of(file, target);
     if !c.check_assignable_with_end(

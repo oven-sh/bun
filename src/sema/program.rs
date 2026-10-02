@@ -103,8 +103,8 @@ pub struct Module {
     /// For each of `arbitrary_extension_imports`: the file it resolves to.
     pub arbitrary_extension_files: Few<Atom>,
     /// The relative specifiers without an extension, when modules are resolved like Node does, which wants one of `import`; and
-    /// whether there is a file that could be meant.
-    pub extensionless_imports: Few<(Atom, bool)>,
+    /// `getSuggestedImportExtension`, if there is a file that could be meant.
+    pub extensionless_imports: Few<(Atom, Option<&'static [u8]>)>,
     /// `ResolvedFileName`, of those of `imports` that resolve to a copy of a file of a package that is in the program under another path.
     pub redirected_imports: Few<(Atom, ResolutionMode, Atom)>,
     /// Those of `imports` that resolve to a declaration file of a referenced project, for which its source is loaded.
@@ -2310,12 +2310,25 @@ impl Files {
             {
                 let stem = join(parent_dir(path), &text);
                 // `getSuggestedImportExtension`
-                let is_there = [
-                    ".mts", ".ts", ".cts", ".mjs", ".js", ".cjs", ".tsx", ".jsx", ".json",
+                let for_tsx: &[u8] = if options.jsx == JsxEmit::Preserve {
+                    b".jsx"
+                } else {
+                    b".js"
+                };
+                let suggested = [
+                    (".mts", &b".mjs"[..]),
+                    (".ts", b".js"),
+                    (".cts", b".cjs"),
+                    (".mjs", b".mjs"),
+                    (".js", b".js"),
+                    (".cjs", b".cjs"),
+                    (".tsx", for_tsx),
+                    (".jsx", b".jsx"),
+                    (".json", b".json"),
                 ]
-                .iter()
-                .any(|e| host.is_file(&format!("{stem}{e}")));
-                extensionless_imports.push((spec, is_there));
+                .into_iter()
+                .find(|(e, _)| host.is_file(&format!("{stem}{e}")));
+                extensionless_imports.push((spec, suggested.map(|found| found.1)));
             }
             // It is looked for in each way something in the file asks for it, in the order they do, calls last.
             let uses = || hir.specifier_uses.iter().filter(move |u| u.spec == spec);
@@ -3621,20 +3634,8 @@ impl Files {
             .unwrap_or(None)
     }
 
-    /// `NameResolver.Resolve`. `Err`: the error it reports where it returns nil for a reason of its own, which takes the place of
-    /// the one for a name that is not found.
-    pub fn resolve_name_or_error(
-        &self,
-        file: FileId,
-        scope: ScopeId,
-        name: Atom,
-        meaning: SymFlags,
-    ) -> Result<Option<Sym>, u32> {
-        self.resolve(file, scope, name, meaning, true)
-            .map_err(|error| error.0)
-    }
-
-    /// The same, with `propertyWithInvalidInitializer` next to 2301 and 2844. `reports_errors`: `nameNotFoundMessage != nil`.
+    /// `NameResolver.Resolve`. `reports_errors`: `nameNotFoundMessage != nil`. `Err`: the error it reports where it returns nil for a reason of
+    /// its own, which takes the place of the one for a name that is not found, with `propertyWithInvalidInitializer` next to 2301 and 2844.
     pub fn resolve(
         &self,
         file: FileId,
@@ -3643,6 +3644,7 @@ impl Files {
         meaning: SymFlags,
         reports_errors: bool,
     ) -> Result<Option<Sym>, (u32, MemberId)> {
+        let scope = self.bound(file).scope_to_resolve_from(scope, name);
         // `getSymbol`
         let lookup = &mut |_: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
             held.filter(|&sym| self.means(sym, meaning))
@@ -4178,26 +4180,35 @@ impl Files {
         let lookup = &mut |_: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
             held.filter(|&sym| self.means(sym, meaning))
         };
-        self.resolve_entity_with(file, scope, names, meaning, lookup)
+        self.resolve_entity_with(file, scope, names, meaning, false, lookup)
     }
 
-    /// `lookup`: `getSymbol`, as for `resolve_with`.
+    /// `lookup`: `getSymbol`, as for `resolve_with`. `reports_errors`: `!ignoreErrors`.
     pub fn resolve_entity_with(
         &self,
         file: FileId,
         scope: ScopeId,
         names: &[Atom],
         meaning: SymFlags,
+        reports_errors: bool,
         lookup: &mut dyn FnMut(SymbolTable, Option<Sym>, SymFlags) -> Option<Sym>,
     ) -> Option<Sym> {
         let (&last, qualifiers) = names.split_last()?;
+        let scope = self.bound(file).scope_to_resolve_from(scope, names[0]);
         if qualifiers.is_empty() {
-            let found = self.resolve_with(file, scope, last, meaning, false, lookup);
+            let found = self.resolve_with(file, scope, last, meaning, reports_errors, lookup);
             return found.unwrap_or(None);
         }
         let mut qualifiers = qualifiers;
         let namespace = SymFlags::NAMESPACE;
-        let first = self.resolve_with(file, scope, qualifiers[0], namespace, false, lookup);
+        let first = self.resolve_with(
+            file,
+            scope,
+            qualifiers[0],
+            namespace,
+            reports_errors,
+            lookup,
+        );
         let first = match first.unwrap_or(None) {
             Some(found) => found,
             // `globalThis.A.B`

@@ -305,7 +305,13 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// The type parameters that are the payload `kept` of a note.
     fn type_params_at(&mut self, kept: u32) -> Span<TypeParamId> {
         let parameters = ts::Span::from_parts(self.noted.range(kept));
-        self.b.clone_type_params(parameters)
+        let list = self.b.clone_type_params(parameters);
+        // `jsErrorAtRange(list.Loc, ..)`
+        if let Some(last) = list.iter().next_back() {
+            let at = (self.b.file[list.at(0)].start, self.b.file[last].end);
+            self.b.js_error_at_range(at, 8004, b"");
+        }
+        list
     }
 
     /// The expression that is the payload `kept` of a note.
@@ -316,9 +322,83 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     fn annotation(&mut self, binding: ast::Loc) -> TypeNodeId {
         match self.note(binding, Mark::Annotation) {
-            Some(at) => self.type_at(at),
+            Some(at) => self.ts_type_at(at, 8010),
             None => TypeNodeId::NONE,
         }
+    }
+
+    /// `type_at`, of a type that `checkJSSyntax` says `code` of.
+    fn ts_type_at(&mut self, kept: u32, code: u32) -> TypeNodeId {
+        let ty = self.type_at(kept);
+        self.js_error_at_types(ty, ty, code);
+        ty
+    }
+
+    /// `jsErrorAtRange`, of a type or of a list of types.
+    fn js_error_at_types(&mut self, first: TypeNodeId, last: TypeNodeId, code: u32) {
+        if first.is_some() {
+            let at = (self.b.file[first].pos, self.b.file[last].end);
+            self.b.js_error_at_range(at, code, b"");
+        }
+    }
+
+    /// `checkJSSyntax`, of type arguments.
+    fn check_js_type_arguments(&mut self, list: IdList<TypeNodeId>) {
+        if !list.is_empty() {
+            let last = self.b.file.id_at(list, list.len() - 1);
+            self.js_error_at_types(self.b.file.id_at(list, 0), last, 8011);
+        }
+    }
+
+    /// `checkJSSyntax`: the modifiers that are written and are not of `ModifierFlagsJavaScript`. `checkJSDecoratorSyntax`, with
+    /// `decorators`: the first decorator, of what `CanHaveIllegalDecorators`.
+    fn check_js_modifiers(&mut self, list: Span<ModifierId>, mut decorators: bool) {
+        const JAVASCRIPT: Flags = Flags::EXPORT
+            .union(Flags::STATIC)
+            .union(Flags::ACCESSOR)
+            .union(Flags::ASYNC)
+            .union(Flags::DEFAULT)
+            .union(Flags::REPARSED);
+        for index in 0..list.len() {
+            let Modifier { kind, pos } = self.b.file.modifier_list(list)[index];
+            match kind {
+                ModifierKind::Keyword(flag) if !JAVASCRIPT.intersects(flag) => {
+                    let text = hir::modifier_text(flag).as_bytes();
+                    self.b.js_error_at_range((pos, 0), 8009, text);
+                }
+                ModifierKind::Decorator(e) if std::mem::take(&mut decorators) => {
+                    let end = hir::end_of_expr(&self.b.file, e);
+                    self.b.js_error_at_range((pos, end), 1206, b"");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// `checkJSSyntax`, of the statement `id`, which has its range and its modifiers and nothing of its comments yet.
+    fn check_js_syntax(&mut self, id: StmtId) {
+        let stmt = self.b.file[id];
+        if let StmtKind::Fn(_) | StmtKind::Var(_) | StmtKind::Class(_) = stmt.kind {
+            self.check_js_modifiers(stmt.modifiers, false);
+        }
+        let (file, whole) = (&self.b.file, (stmt.start, stmt.loc.end));
+        let (at, code, what): (_, _, &[u8]) = match stmt.kind {
+            StmtKind::Fn(f) if matches!(file[f].body, FnBody::None) => (whole, 8017, b""),
+            StmtKind::Import(i) if file[i].type_only => (whole, 8006, b"import type"),
+            StmtKind::ExportNamed(e) if file[e].type_only => (whole, 8006, b"export type"),
+            StmtKind::ExportStar { type_only, .. } if type_only => (whole, 8006, b"export type"),
+            StmtKind::ImportEquals(_) => (whole, 8002, b""),
+            StmtKind::ExportAssign(_) => (whole, 8003, b""),
+            StmtKind::Interface(i) => ((file[i].name_pos, 0), 8006, b"interface"),
+            // `parseAmbientExternalModuleDeclaration` does not ask.
+            StmtKind::Module(m) if !matches!(file[m].name, ModuleName::Ident(_)) => return,
+            StmtKind::Module(m) if file[m].says_module => ((file[m].name_pos, 0), 8006, b"module"),
+            StmtKind::Module(m) => ((file[m].name_pos, 0), 8006, b"namespace"),
+            StmtKind::Enum(e) => ((file[e].name_pos, 0), 8006, b"enum"),
+            StmtKind::TypeAlias(a) => ((file[a].name_pos, 0), 8008, b""),
+            _ => return,
+        };
+        self.b.js_error_at_range(at, code, what);
     }
 
     fn name(&self, r: ast::Ref) -> Atom {
@@ -574,6 +654,9 @@ impl<'p, 'a> Lower<'p, 'a> {
         if let Some(id) = id {
             self.finish_stmt(id, stmt.loc);
             self.statement_modifiers(stmt.loc, id);
+            if self.b.is_js {
+                self.check_js_syntax(id);
+            }
         }
         // `S::Comment`, a comment kept for the printer, is no node. The parser puts it where the next statement starts.
         if !self.jsdoc.list.is_empty() && !matches!(stmt.data, StmtData::SComment(_)) {
@@ -942,6 +1025,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     flags,
                     body,
                     has_body: self.note(s.name.loc, Mark::NoBody).is_none(),
+                    says_module: self.note(s.name.loc, Mark::ModuleKeyword).is_some(),
                     stmt: StmtId::NONE,
                 }))
             }
@@ -1166,8 +1250,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             if self.note(arg.binding.loc, Mark::DotDotDot).is_some() {
                 flags |= Flags::REST;
             }
-            if self.note(arg.binding.loc, Mark::Optional).is_some() {
+            if let Some(question) = self.note(arg.binding.loc, Mark::Optional) {
                 flags |= Flags::OPTIONAL;
+                self.b.js_error_at_range((question, 0), 8009, b"?");
             }
             let pos = self.declaration_start(arg.binding.loc);
             let mut modifiers: Vec<(Flags, u32)> = Vec::new();
@@ -1219,6 +1304,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                     .collect();
                 let list = self.b.modifiers_with_decorators(keywords, &of_parameter);
                 modifier_lists.push((i, list));
+                // `node.Modifiers().Loc`
+                if let Some(&(flag, at)) = modifiers.last() {
+                    let end = of_parameter
+                        .last()
+                        .map_or(0, |d| hir::end_of_expr(&self.b.file, d.0));
+                    let end = end.max(at + hir::modifier_text(flag).len() as u32);
+                    self.b.js_error_at_range((pos, end), 8012, b"");
+                }
             }
         }
         let params = self.b.file.add_params(&self.list_params[base..]);
@@ -1261,7 +1354,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             None => Span::EMPTY,
         };
         let this_param = match self.note(open, Mark::ThisParameter) {
-            Some(kept) => self.b.clone_param(ts::Id::from_index(kept)),
+            Some(kept) => {
+                let this = self.b.clone_param(ts::Id::from_index(kept));
+                let ty = self.b.file[this].ty;
+                self.js_error_at_types(ty, ty, 8010);
+                this
+            }
             None => ParamId::NONE,
         };
         let params = self.params(func.args.slice());
@@ -1276,6 +1374,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         {
             FnBody::None
         } else {
+            self.js_error_at_types(ret, ret, 8010);
             // `checkGrammarStatementInAmbientContext`, `checkGrammarAccessor`: of whatever has a body in an ambient context.
             if self.is_ambient || flags.contains(Flags::AMBIENT) {
                 self.b
@@ -1326,7 +1425,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         let params = self.params(arrow.args.slice());
         let (this_param, params) = self.b.file.split_this_parameter(params);
         let ret = match self.note(loc, Mark::ReturnType) {
-            Some(at) => self.type_at(at),
+            Some(at) => self.ts_type_at(at, 8010),
             None => TypeNodeId::NONE,
         };
         let stmts = arrow.body.stmts.slice();
@@ -1395,6 +1494,10 @@ impl<'p, 'a> Lower<'p, 'a> {
             extends = expr;
             extends_args = type_args;
         }
+        self.check_js_type_arguments(extends_args);
+        for clause in self.notes(keyword, Mark::ImplementsClause).chunks_exact(2) {
+            self.b.js_error_at_range((clause[0], clause[1]), 8005, b"");
+        }
         let other_extends: Vec<ExprId> = self
             .notes(keyword, Mark::OtherExtends)
             .into_iter()
@@ -1440,6 +1543,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             member.modifiers = self
                 .b
                 .modifiers_with_decorators(member.modifiers, &decorators);
+            self.check_js_syntax_of_member(&member, named_at);
             of_members.extend(decorators.into_iter().map(|(e, _)| (member.name_pos, e)));
             members.push(member);
         }
@@ -1454,7 +1558,9 @@ impl<'p, 'a> Lower<'p, 'a> {
         for member in self.notes(keyword, Mark::IndexSignature) {
             let is_ambient = self.is_ambient;
             let member = ts::MemberId::from_index(member);
-            members.push(self.b.clone_class_index_signature(member, is_ambient));
+            let member = self.b.clone_class_index_signature(member, is_ambient);
+            self.check_js_syntax_of_member(&member, None);
+            members.push(member);
         }
         self.b.classes_around -= 1;
         // Overloads go before what implements them.
@@ -1492,6 +1598,25 @@ impl<'p, 'a> Lower<'p, 'a> {
             self.b.file.decorators.push((DecoratorOwner::Class(id), e));
         }
         id
+    }
+
+    /// `checkJSSyntax`, of a member of a class, whose name is at `name`.
+    fn check_js_syntax_of_member(&mut self, member: &Member, name: Option<ast::Loc>) {
+        if !self.b.is_js || member.kind == MemberKind::StaticBlock {
+            return;
+        }
+        if matches!(member.kind, MemberKind::Property | MemberKind::Method)
+            && let Some(question) = name.and_then(|name| self.note(name, Mark::Optional))
+        {
+            self.b.js_error_at_range((question, 0), 8009, b"?");
+        }
+        if member.func.is_some() && matches!(self.b.file[member.func].body, FnBody::None) {
+            self.b
+                .js_error_at_range((member.start, member.loc.end), 8017, b"");
+        }
+        if member.kind != MemberKind::IndexSignature {
+            self.check_js_modifiers(member.modifiers, member.kind == MemberKind::Constructor);
+        }
     }
 
     fn class_member(&mut self, property: &G::Property) -> Member {
@@ -1757,14 +1882,17 @@ impl<'p, 'a> Lower<'p, 'a> {
                         self.b.file.parens.push((id, open, end));
                         continue;
                     }
-                    Mark::NonNull => ExprKind::NonNull(id),
+                    Mark::NonNull => {
+                        self.b.js_error_at_range((pos, end), 8013, b"");
+                        ExprKind::NonNull(id)
+                    }
                     Mark::Instantiation => ExprKind::Instantiation {
                         expr: id,
                         type_args: self.type_args_at(kept),
                     },
                     Mark::Satisfies => ExprKind::Satisfies {
                         expr: id,
-                        ty: self.type_at(kept),
+                        ty: self.ts_type_at(kept, 8037),
                     },
                     // `parseTypeAssertion`: `<T>e` starts at its `<`, and so does what is made of it afterwards.
                     Mark::LessThan => {
@@ -1773,7 +1901,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     }
                     Mark::As | Mark::AsTypeParameter => {
                         let ty = if what == Mark::As {
-                            self.type_at(kept)
+                            self.ts_type_at(kept, 8016)
                         } else {
                             match self.cast_type_from_type_params(kept) {
                                 Some(ty) => ty,
@@ -1818,6 +1946,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 None => IdList::EMPTY,
             },
         };
+        self.check_js_type_arguments(type_args);
         let close = self.noted.real_loc(close);
         let close_pos = if close.start < 0 || close == ast::Loc::EMPTY {
             u32::MAX
@@ -1966,6 +2095,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                             Some(at) => self.type_args_at(at),
                             None => IdList::EMPTY,
                         };
+                        self.check_js_type_arguments(type_args);
                         let callee = self.expr(tag);
                         pos = pos.min(self.written_start);
                         // `callIsIncomplete`: the checker takes a `close_pos` where no `)` is for an incomplete call.
@@ -2418,6 +2548,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                     .unwrap_or(self.written_end),
                 postfix_token: self.note(written_key.loc, Mark::PostfixToken).unwrap_or(0),
             };
+            if kind == PropKind::Method
+                && let Some(question) = self.note(written_key.loc, Mark::Optional)
+            {
+                self.b.js_error_at_range((question, 0), 8009, b"?");
+            }
             // `parseJsxAttributeValue`: the attribute ends with its `JsxExpression`.
             if !is_literal
                 && let Some(inside) = &property.value

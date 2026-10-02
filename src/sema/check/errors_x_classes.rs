@@ -8,8 +8,7 @@
 //! `checkConstructorDeclaration` and `checkPropertyAccessibilityAtLocation` of TypeScript 7.0.2's checker.go.
 
 use super::*;
-use crate::bind::{FnOwner, MemberOwner, Parent};
-use smallvec::SmallVec;
+use crate::bind::MemberOwner;
 
 /// What `getBaseConstructorTypeOfClass` and `getBaseTypes` come to for a class with an `extends` clause.
 #[derive(Copy, Clone)]
@@ -33,67 +32,6 @@ struct Overrider {
     param: ParamId,
 }
 
-/// The modifier that ends right before `pos`, and its start. Whitespace and `/* .. */` comments in between are skipped.
-fn modifier_before(text: &[u8], pos: u32) -> Option<(u32, &[u8])> {
-    let mut before = text.get(..pos as usize)?.trim_ascii_end();
-    // `public /* .. */ constructor`
-    while before.ends_with(b"*/")
-        && let Some(open) = before[..before.len() - 2]
-            .windows(2)
-            .rposition(|w| w == b"/*")
-    {
-        before = before[..open].trim_ascii_end();
-    }
-    let word = before
-        .iter()
-        .rposition(|b| !b.is_ascii_alphabetic())
-        .map_or(0, |i| i + 1);
-    let is_modifier = matches!(
-        &before[word..],
-        b"public"
-            | b"private"
-            | b"protected"
-            | b"static"
-            | b"readonly"
-            | b"abstract"
-            | b"declare"
-            | b"override"
-            | b"async"
-            | b"accessor"
-    );
-    // Not the end of a longer name, nor the name of a property.
-    if !is_modifier
-        || word > 0
-            && matches!(before[word - 1], b'_' | b'$' | b'.' | b'#' | b'0'..=b'9' | 0x80..=0xff)
-    {
-        return None;
-    }
-    // `nextTokenCanFollowModifier`: but for `static`, a word only modifies what follows it on the same line.
-    if &before[word..] != b"static" && text[before.len()..pos as usize].contains(&b'\n') {
-        return None;
-    }
-    // Not the last word of a `//` comment.
-    let line = before[..word]
-        .iter()
-        .rposition(|&b| b == b'\n')
-        .map_or(0, |i| i + 1);
-    if before[line..word].windows(2).any(|w| w == b"//") {
-        return None;
-    }
-    Some((word as u32, &before[word..]))
-}
-
-/// Whether `declare` is one of the modifiers before the member name at `pos`.
-fn has_declare_modifier(text: &[u8], mut pos: u32) -> bool {
-    while let Some((start, modifier)) = modifier_before(text, pos) {
-        if modifier == b"declare" {
-            return true;
-        }
-        pos = start;
-    }
-    false
-}
-
 /// The code `checkMemberForOverrideModifier` reports in a JavaScript file in place of `code`: the message names the `@override`
 /// tag instead of the modifier. 4116 has no such variant.
 fn js_override_code(code: u32) -> u32 {
@@ -109,26 +47,6 @@ fn js_override_code(code: u32) -> u32 {
 }
 
 impl Checker<'_> {
-    pub(super) fn check_x_classes(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // Of a file that could not be made sense of only parts are there: what is missing from them may well be written.
-        if hir.has_errors {
-            return;
-        }
-        for i in 0..hir.interfaces.len() {
-            if bound.interface_symbol[i].is_some() {
-                self.check_bases_of_interface(file, InterfaceId(i as u32));
-            }
-        }
-        self.check_super_call_placement(file);
-        // The rest is about `this`.
-        let index = self.exprs_by_kind(file);
-        if index.of(ExprTag::This).is_empty() {
-            return;
-        }
-        self.check_abstract_properties_in_constructors(file, &index);
-    }
-
     // ───────────────────────────── what a class extends and implements ─────────────────────────────
 
     /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses, and `checkClassNameCollisionWithObject`.
@@ -352,7 +270,7 @@ impl Checker<'_> {
     // ───────────────────────────── what an interface extends ─────────────────────────────
 
     /// The end of `checkInterfaceDeclaration`: 2499.
-    fn check_bases_of_interface(&mut self, file: FileId, i: InterfaceId) {
+    pub(super) fn check_bases_of_interface(&mut self, file: FileId, i: InterfaceId) {
         let hir = self.hir(file);
         for node in hir.ids(hir[i].extends) {
             if matches!(
@@ -395,11 +313,10 @@ impl Checker<'_> {
             {
                 continue;
             }
-            // `HasAmbientModifier`: `declare` is written on the member itself. Every member of an ambient class has
-            // `Flags::AMBIENT`, so there the source text decides.
-            if member.flags.contains(Flags::AMBIENT)
-                && (!class.flags.contains(Flags::AMBIENT)
-                    || has_declare_modifier(&hir.text, member.name_pos))
+            // `HasAmbientModifier`: `declare` is written on the member itself. Every member of an ambient class has `Flags::AMBIENT`.
+            if hir
+                .find_modifier(member.modifiers, Flags::AMBIENT)
+                .is_some()
             {
                 continue;
             }
@@ -654,104 +571,69 @@ impl Checker<'_> {
     /// Where fields are set up by assignments put in the constructor, they
     /// go right after the call of `super`, which therefore has to be a statement of the constructor itself, and the first
     /// that has to do with `this`.
-    fn check_super_call_placement(&mut self, file: FileId) {
+    pub(super) fn check_super_call_in_constructor(&mut self, file: FileId, m: MemberId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_super_call = |e: ExprId| matches!(hir[e].kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Super));
-        for f in 0..hir.fns.len() {
-            let func = &hir.fns[f];
-            let FnBody::Block(body) = func.body else {
-                continue;
-            };
-            if func.kind != FnKind::Constructor {
-                continue;
+        let func = &hir[hir[m].func];
+        let (FnBody::Block(body), MemberOwner::Class(c)) = (func.body, bound.member_owner[m.idx()])
+        else {
+            return;
+        };
+        if hir[c].extends.is_none() {
+            return;
+        }
+        let class_extends_null = self.class_declaration_extends_null(self.class_sym(file, c));
+        let block = hir.node(hir[m].func).with(Part::Body);
+        let NodeData::Expr(first) = hir.data(self.find_first_super_call(hir, block)) else {
+            if !class_extends_null {
+                self.error(file, m, 2377, &[]);
             }
-            let FnOwner::Member(m) = bound.fns[f].owner else {
-                continue;
-            };
-            let MemberOwner::Class(c) = bound.member_owner[m.idx()] else {
-                continue;
-            };
-            if hir[c].extends.is_none() {
-                continue;
-            }
-            let class_extends_null = self.class_declaration_extends_null(self.class_sym(file, c));
-            // `findFirstSuperCall`
-            let block = hir.node(FnId(f as u32)).with(Part::Body);
-            let NodeData::Expr(first) = hir.data(self.find_first_super_call(hir, block)) else {
-                if !class_extends_null {
-                    // `GetErrorRangeForNode`: up to the keyword.
-                    let end = self.end_of_name_at(file, hir[m].name_pos);
-                    self.error_at((file, hir[m].start, end), 2377, &[]);
+            return;
+        };
+        if class_extends_null {
+            self.error(file, first, 17005, &[]);
+        }
+        if self.p.files.options.emit_standard_class_fields {
+            return;
+        }
+        // `isInstancePropertyWithInitializerOrPrivateIdentifierProperty`, or a parameter that declares a property.
+        let has_to_be_at_root_level = hir[c].members.iter().any(|x| {
+            let member = &hir[x];
+            match member.kind {
+                MemberKind::Property => {
+                    matches!(member.key, PropKey::Private(_))
+                        || !member.flags.contains(Flags::STATIC) && member.init.is_some()
                 }
-                continue;
-            };
-            if class_extends_null && let ExprKind::Call(call) = hir[first].kind {
-                let end = self.end_inside_parentheses(file, first);
-                self.error_at((file, hir[hir[call].callee].pos, end), 17005, &[]);
-            }
-            if self.p.files.options.emit_standard_class_fields {
-                continue;
-            }
-            // `isInstancePropertyWithInitializerOrPrivateIdentifierProperty`, or a parameter that declares a property.
-            let has_to_be_at_root_level = hir[c].members.iter().any(|x| {
-                let member = &hir[x];
-                match member.kind {
-                    MemberKind::Property => {
-                        matches!(member.key, PropKey::Private(_))
-                            || !member.flags.contains(Flags::STATIC) && member.init.is_some()
-                    }
-                    MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-                        matches!(member.key, PropKey::Private(_))
-                    }
-                    _ => false,
+                MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
+                    matches!(member.key, PropKey::Private(_))
                 }
-            }) || func
-                .params
-                .iter()
-                .any(|p| hir[p].flags.contains(Flags::PARAMETER_PROPERTY));
-            if !has_to_be_at_root_level {
-                continue;
+                _ => false,
             }
-            // `superCallIsRootLevelInConstructor`
-            if !hir
-                .ids(body)
-                .any(|s| matches!(hir[s].kind, StmtKind::Expr(x) if x == first))
+        }) || func
+            .params
+            .iter()
+            .any(|p| hir[p].flags.contains(Flags::PARAMETER_PROPERTY));
+        if !has_to_be_at_root_level {
+            return;
+        }
+        // `superCallIsRootLevelInConstructor`
+        if !hir
+            .ids(body)
+            .any(|s| matches!(hir[s].kind, StmtKind::Expr(x) if x == first))
+        {
+            self.error(file, first, 2401, &[]);
+            return;
+        }
+        for s in hir.ids(body) {
+            if matches!(hir[s].kind, StmtKind::Expr(x) if is_super_call(self.skip_outer_expressions(file, x)))
             {
-                if let ExprKind::Call(call) = hir[first].kind {
-                    let end = self.end_inside_parentheses(file, first);
-                    self.error_at((file, hir[hir[call].callee].pos, end), 2401, &[]);
-                }
-                continue;
+                return;
             }
-            let mut is_first = false;
-            for s in hir.ids(body) {
-                if let StmtKind::Expr(mut x) = hir[s].kind {
-                    // `SkipOuterExpressions`
-                    while let ExprKind::As { expr: inner, .. }
-                    | ExprKind::Satisfies { expr: inner, .. }
-                    | ExprKind::AsConst(inner)
-                    | ExprKind::NonNull(inner) = hir[x].kind
-                    {
-                        x = inner;
-                    }
-                    if is_super_call(x) {
-                        is_first = true;
-                        break;
-                    }
-                }
-                if self.node_immediately_references_super_or_this(hir, hir.node(s)) {
-                    break;
-                }
-            }
-            if !is_first {
-                let start = hir[m].start;
-                self.error_at(
-                    (file, start, self.end_of_name_at(file, hir[m].name_pos)),
-                    2376,
-                    &[],
-                );
+            if self.node_immediately_references_super_or_this(hir, hir.node(s)) {
+                break;
             }
         }
+        self.error(file, m, 2376, &[]);
     }
 
     /// `findFirstSuperCall`
@@ -796,224 +678,5 @@ impl Checker<'_> {
             && hir.for_each_child(node, &mut |child| {
                 self.node_immediately_references_super_or_this(hir, child)
             })
-    }
-
-    // ───────────────────────────── abstract properties while the instance is set up ─────────────────────────────
-
-    /// 2715, of `checkPropertyAccessibilityAtLocation`: `this.p`, `const { p } = this` and `({ p } = this)` in a constructor or
-    /// in the initializer of a property, where `p` is declared `abstract`: nothing has given it a value by then.
-    fn check_abstract_properties_in_constructors(&mut self, file: FileId, index: &ExprsByKind) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_this =
-            |e: ExprId| matches!(hir[e].kind, ExprKind::This) && !is_parenthesized(hir, e);
-        let mut looked_at: SmallVec<[ExprId; 16]> = SmallVec::new();
-        // `isThisProperty`
-        for &e in index.of(ExprTag::Dot) {
-            if let ExprKind::Dot { obj, .. } = hir[e].kind
-                && is_this(obj)
-                && !bound.is_unchecked(e.idx())
-                && !bound.is_in_type_query(e)
-                && self.is_used_during_class_initialization(file, bound.expr_parent[e.idx()])
-            {
-                looked_at.push(e);
-            }
-        }
-        // `isThisInitializedObjectBindingExpression`
-        for &e in index.of(ExprTag::Assign) {
-            if let ExprKind::Assign {
-                op: None,
-                target,
-                value,
-            } = hir[e].kind
-                && is_this(value)
-                && !bound.is_unchecked(e.idx())
-                && matches!(hir[target].kind, ExprKind::Object(_))
-                && !is_parenthesized(hir, target)
-                && self.is_used_during_class_initialization(file, bound.expr_parent[e.idx()])
-            {
-                looked_at.push(e);
-            }
-        }
-        // In the order they have in the file, whichever of the two they are.
-        looked_at.sort_unstable();
-        for e in looked_at {
-            let parent = bound.expr_parent[e.idx()];
-            match hir[e].kind {
-                ExprKind::Dot {
-                    obj,
-                    name,
-                    name_pos,
-                    ..
-                } => {
-                    // `IsWriteAccess`
-                    let is_written = self.is_assignment_target(file, e)
-                        || matches!(parent, Parent::Expr(p) if match hir[p].kind {
-                            ExprKind::Assign { op: Some(_), target, .. } => target == e,
-                            ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => true,
-                            _ => false,
-                        });
-                    if self.is_abstract_property_of_class(file, obj, name, is_written) {
-                        self.error_at((file, name_pos, 0), 2715, &[]);
-                        self.explain_abstract_property_access(file, name_pos, obj, name);
-                    }
-                }
-                ExprKind::Assign { target, value, .. } => {
-                    let ExprKind::Object(props) = hir[target].kind else {
-                        continue;
-                    };
-                    for p in props.iter() {
-                        let prop = &hir[p];
-                        if matches!(prop.kind, PropKind::Init | PropKind::Shorthand)
-                            && let Some(name) = self.member_name(file, prop.key)
-                            && self.is_abstract_property_of_class(file, value, name, true)
-                        {
-                            self.error_at((file, prop.pos, 0), 2715, &[]);
-                            self.explain_abstract_property_access(file, prop.pos, value, name);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        // `isThisInitializedDeclaration`
-        for d in 0..hir.var_decls.len() {
-            let decl = &hir.var_decls[d];
-            if decl.init.is_none() || !is_this(decl.init) || bound.is_unchecked(decl.init.idx()) {
-                continue;
-            }
-            let PatKind::Object(props) = hir[decl.pat].kind else {
-                continue;
-            };
-            if !self.is_used_during_class_initialization(file, Parent::VarInit(VarDeclId(d as u32)))
-            {
-                continue;
-            }
-            for p in props.iter() {
-                let prop = &hir[p];
-                // `PropertyNameOrName`: of `...rest`, the name that is bound is taken for that of a property.
-                let (name, start) = match hir[prop.value].kind {
-                    PatKind::Ident(bound_name) if prop.is_rest => {
-                        (Some(bound_name), hir[prop.value].pos)
-                    }
-                    _ => (self.member_name(file, prop.key), prop.pos),
-                };
-                if let Some(name) = name
-                    && self.is_abstract_property_of_class(file, decl.init, name, false)
-                {
-                    self.error_at((file, start, 0), 2715, &[]);
-                    self.explain_abstract_property_access(file, start, decl.init, name);
-                }
-            }
-        }
-    }
-
-    /// The arguments of 2715, which is reported on the name at `start`: the property `name` of what `this` is, and the class that
-    /// declares it.
-    fn explain_abstract_property_access(
-        &mut self,
-        file: FileId,
-        start: u32,
-        this: ExprId,
-        name: Atom,
-    ) {
-        let end = self.end_of_name_at(file, start);
-        self.explain_to(start, end, 2715, |c| {
-            let object = c.type_of_expr(file, this);
-            let apparent = c.apparent_type(object);
-            let Some((prop, _)) = c.prop_of(apparent, name) else {
-                return Vec::new();
-            };
-            let mut class_name = String::new();
-            if let PropSource::Members(members) = &prop.source
-                && let Some(&(f, m)) = members.first()
-                && let MemberOwner::Class(class) = c.bound(f).member_owner[m.idx()]
-            {
-                let class = c.class_sym(f, class);
-                class_name = c.symbol_to_string(class);
-            }
-            vec![c.prop_to_string(&prop), class_name]
-        });
-    }
-
-    /// `isNodeUsedDuringClassInitialization`, of what has `parent`: going outwards, a constructor with a body or the declaration
-    /// of a property comes before any other function and before any class.
-    fn is_used_during_class_initialization(&self, file: FileId, mut parent: Parent) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_constructor =
-            |f: FnId| hir[f].kind == FnKind::Constructor && !matches!(hir[f].body, FnBody::None);
-        loop {
-            match parent {
-                Parent::FnBody(f) => return is_constructor(f),
-                Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                    return is_constructor(bound.param_fn[p.idx()]);
-                }
-                Parent::MemberInit(m) => {
-                    return matches!(bound.member_owner[m.idx()], MemberOwner::Class(_));
-                }
-                Parent::Decorator(_, DecoratorOwner::Member(m)) => {
-                    return hir[m].kind == MemberKind::Property;
-                }
-                // The name of a property of an object literal is worked out where the literal is.
-                Parent::PropKey(literal, _) if literal.is_some() => {
-                    parent = bound.expr_parent[literal.idx()]
-                }
-                Parent::Decorator(_, DecoratorOwner::Class(_))
-                | Parent::ClassExtends(_)
-                | Parent::PropKey(..)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_)
-                | Parent::EnumInit(_)
-                | Parent::Module(_)
-                | Parent::File
-                | Parent::None => return false,
-                Parent::Stmt(s) if s.is_none() => return false,
-                Parent::Expr(x) => parent = bound.expr_parent[x.idx()],
-                other => parent = self.outward(file, other),
-            }
-        }
-    }
-
-    /// Whether the property `name` of what `this` is at `this` is declared `abstract` in a class, and is no method.
-    fn is_abstract_property_of_class(
-        &mut self,
-        file: FileId,
-        this: ExprId,
-        name: Atom,
-        is_written: bool,
-    ) -> bool {
-        let object = self.type_of_expr(file, this);
-        if !self.is_known(object) {
-            return false;
-        }
-        let apparent = self.apparent_type(object);
-        let Some((prop, _)) = self.prop_ref(apparent, name) else {
-            return false;
-        };
-        let PropSource::Members(members) = &prop.source else {
-            return false;
-        };
-        // `getDeclarationModifierFlagsFromSymbolEx`: of accessors, the one that is used has the say.
-        let of_kind = |kind: MemberKind| {
-            members
-                .iter()
-                .copied()
-                .find(|&(f, m)| self.hir(f)[m].kind == kind)
-        };
-        let setter = if is_written {
-            of_kind(MemberKind::Setter)
-        } else {
-            None
-        };
-        let Some((f, m)) = setter
-            .or_else(|| of_kind(MemberKind::Getter))
-            .or_else(|| members.first().copied())
-        else {
-            return false;
-        };
-        self.hir(f)[m].flags.contains(Flags::ABSTRACT)
-            // `symbolHasNonMethodDeclaration`
-            && !prop.flags.contains(PropFlags::METHOD)
-            && matches!(self.bound(f).member_owner[m.idx()], MemberOwner::Class(_))
     }
 }

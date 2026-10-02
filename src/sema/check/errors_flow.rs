@@ -266,32 +266,13 @@ impl Checker<'_> {
             return;
         }
         let is_async = f.flags.contains(Flags::ASYNC);
-        // `getIterationTypeOfGeneratorFunctionReturnType`: `any` has no iteration types.
-        let mut types = [None; 3];
-        if !self.is_any(declared) {
-            // `getIterationTypesOfGeneratorFunctionReturnType`
-            let mut found = self.iterable_types(declared, !is_async, is_async, false, None);
-            if !found.has_types() {
-                found = self.iterator_types(declared, is_async, None, None);
-            }
-            types = [found.y, found.r, found.n];
-        }
-        // An unresolved iteration type must not cause an error. The defaults give a generator that fits every generator type.
-        if types.iter().flatten().any(|&t| !self.is_known(t)) {
-            types = [None; 3];
-        }
-        let [yielded, returned, next] = types;
-        // A missing return type defaults to the yield type.
-        let yielded = yielded.unwrap_or(TypeId::ANY);
-        let generator = self.generator_of(
-            yielded,
-            returned.unwrap_or(yielded),
-            next.unwrap_or(TypeId::UNKNOWN),
-            is_async,
-        );
         let start = start_of_return_type(hir, f.ret);
-        let end = self.end_of_type_node_from(file, f.ret, start);
-        self.check_type_assignable_to(generator, declared, Some((file, start, end)), None);
+        let error_node = (file, start, self.end_of_type_node_from(file, f.ret, start));
+        self.check_generator_instantiation_assignability_to_return_type(
+            declared,
+            is_async,
+            Some(error_node),
+        );
     }
 
     /// `checkGrammarBreakOrContinueStatement`, and one label inside another of the same name.

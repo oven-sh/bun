@@ -23,7 +23,7 @@ impl Checker<'_> {
         target: TypeId,
         name: Atom,
     ) -> Option<Reported> {
-        let property = self.first_declaration_of_property(target, name, 0);
+        let property = self.first_declaration_of_property(target, name);
         if property.is_none()
             && let Some(signature) = self.declaration_of_applicable_index_signature(target, name)
             && !self.files().module(signature.0).is_lib
@@ -68,45 +68,9 @@ impl Checker<'_> {
 
     /// `GetErrorRangeForNode` of `getPropertyOfType(ty, name).Declarations[0]`. `None`: there is no such property. `Some(None)`:
     /// nothing declares it.
-    fn first_declaration_of_property(
-        &mut self,
-        ty: TypeId,
-        name: Atom,
-        depth: u32,
-    ) -> Option<Option<Place>> {
-        if depth > 8 {
-            return None;
-        }
-        let ty = self.reduced_apparent_type(ty);
-        if self.is_union(ty) {
-            // `createUnionOrIntersectionProperty`: the declarations of what the members have, one member after the other.
-            let is_late_bound = self.files().atoms.is_symbol_name(name);
-            let mut found: Option<Option<Place>> = None;
-            for &part in self.parts(ty) {
-                let part = self.apparent_type(part);
-                if part.is_never() || !self.is_known(part) {
-                    continue;
-                }
-                if let Some(place) = self.first_declaration_of_property(part, name, depth + 1) {
-                    found = Some(found.flatten().or(place));
-                    continue;
-                }
-                // `CheckFlagsReadPartial`: nothing stands in for it in a member that lacks it, so the union does not have it.
-                let has_stand_in = match self.members(part) {
-                    Some(members) if !is_late_bound => self
-                        .applicable_index_type_for_name(&members, name)
-                        .is_some(),
-                    _ => false,
-                };
-                if !has_stand_in && !self.is_closed_object_literal_type(part) {
-                    return None;
-                }
-            }
-            return found;
-        }
-        let members = self.members(ty)?;
-        let (prop, _) = self.property_of_type(&members, name)?;
-        Some(self.first_declaration_of_prop(&prop, depth))
+    fn first_declaration_of_property(&mut self, ty: TypeId, name: Atom) -> Option<Option<Place>> {
+        let (prop, _) = self.get_property_of_type(ty, name)?;
+        Some(self.first_declaration_of_prop(prop, 0))
     }
 
     /// `GetErrorRangeForNode` of `prop.Declarations[0]`
@@ -202,7 +166,7 @@ impl Checker<'_> {
         let ty = self.reduced_apparent_type(target);
         let members = self.members(ty)?;
         let key_type = self.key_type_of_name(name)?;
-        let info = self.applicable_index(&members, key_type, Some(name))?;
+        let info = self.applicable_index_info(&members, key_type)?;
         let (file, m) = info.declaration?;
         let start = self.hir(file)[m].start;
         Some(self.place_in_file(file, start, |c| c.error_range_of_member(file, m)))

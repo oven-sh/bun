@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // `lib.*.d.ts` come from the `typescript` package a project has installed.
@@ -56,8 +56,8 @@ async function run(cwd: string, cmd: string[], extra: Record<string, string | un
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const clean = (text: string) =>
     text
-      .replaceAll(cwd, "<dir>")
       .replaceAll("\\", "/")
+      .replaceAll(cwd.replaceAll("\\", "/"), "<dir>")
       .replace(/\[\d+(\.\d+)?m?s\]/g, "[time]")
       .trim();
   return { stdout: clean(stdout), stderr: clean(stderr), exitCode };
@@ -397,7 +397,7 @@ describe.concurrent("bun check", () => {
       "hint: Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun
       Found 2 errors in 1 file, checked 1 file [time]"
     `);
-    expect(plain.stderr).not.toContain("hint");
+    expect(plain.stderr).toBe(pretty.stderr);
   });
 
   describe("what is checked", () => {
@@ -1067,7 +1067,101 @@ export {};
   });
 });
 
+// Stands in for `@types/bun`, which brings all of `@types/node` with it.
+const bunTypes = {
+  "node_modules/@types/bun/package.json": `{ "name": "@types/bun", "version": "1.0.0", "types": "index.d.ts" }`,
+  "node_modules/@types/bun/index.d.ts": `declare var Bun: { version: string };\ndeclare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
+  "index.ts": `import { test } from "bun:test";\ntest(Bun.version, () => {});\n`,
+};
+const withoutTypes = JSON.stringify({
+  compilerOptions: { strict: true, lib: ["esnext"], moduleResolution: "bundler", skipLibCheck: true },
+});
+
+describe.concurrent("the types of what Bun provides", () => {
+  test("are included where there is no tsconfig.json", async () => {
+    using dir = project(bunTypes);
+    rmSync(join(String(dir), "tsconfig.json"));
+    const { stdout, exitCode } = await check(dir, ["index.ts"]);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // As `tsc` does since TypeScript 6.0, and as the editor does.
+  test.each([
+    ["says nothing about types", withoutTypes],
+    ["leaves them out of types", tsconfig],
+  ])("are left out where tsconfig.json %s, and the hint says what to add", async (_, config) => {
+    using dir = project({ ...bunTypes, "tsconfig.json": config });
+    const { stdout, stderr, exitCode } = await check(dir);
+    expect(stdout).toContain("error TS2307: Cannot find module 'bun:test' or its corresponding type declarations.");
+    expect(stderr).toMatchInlineSnapshot(`
+      "hint: Bun's type definitions (console, fetch, Bun, bun:test) are installed, but tsconfig.json does not include them. Add to compilerOptions: "types": ["bun"]
+      Found 2 errors in 1 file, checked 1 file [time]"
+    `);
+    expect(exitCode).toBe(1);
+  });
+});
+
+test("TypeScript 7 under an isolated install: the lib files are beside the real package", async () => {
+  using dir = project({ "index.ts": `export const first: string = [1].at(0);\n` }, { withTypeScript: false });
+  const store = join(String(dir), "node_modules", ".bun", "typescript@7.0.0", "node_modules");
+  mkdirSync(join(store, "typescript"), { recursive: true });
+  mkdirSync(join(store, "@typescript", "typescript-any-platform"), { recursive: true });
+  await Bun.write(join(store, "typescript", "package.json"), `{ "name": "typescript", "version": "7.0.0" }`);
+  symlinkSync(join(typescript, "lib"), join(store, "@typescript", "typescript-any-platform", "lib"), "junction");
+  symlinkSync(join(store, "typescript"), join(String(dir), "node_modules", "typescript"), "junction");
+  const { stdout, exitCode } = await check(dir);
+  expect(stdout).toMatchInlineSnapshot(`
+    "index.ts(1,14): error TS2322: Type 'number | undefined' is not assignable to type 'string'.
+      Type 'undefined' is not assignable to type 'string'."
+  `);
+  expect(exitCode).toBe(1);
+});
+
 describe.concurrent("--check", () => {
+  test("a JavaScript entry point is read for what it imports, whatever allowJs says", async () => {
+    using dir = project({
+      "good.js": `import { n } from "./n";\nconsole.log("ran", n);\n`,
+      "n.ts": `export const n: number = 1;\n`,
+      "bad.js": `import "./s";\nconsole.log("ran");\n`,
+      "s.ts": `export const s: string = 1;\n`,
+    });
+    const [good, bad] = await Promise.all([
+      run(String(dir), ["--check", "good.js"]),
+      run(String(dir), ["--check", "bad.js"]),
+    ]);
+    expect(good.stderr).toBe("");
+    expect(good.stdout).toBe("ran 1");
+    expect(good.exitCode).toBe(0);
+    expect(bad.stdout).toBe("");
+    expect(bad.stderr).toContain("s.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.");
+    expect(bad.exitCode).toBe(1);
+  });
+
+  test("bun run --check <script> type checks the project before the script runs", async () => {
+    const scripts = JSON.stringify({ scripts: { hello: "echo ran" } });
+    using good = project({ "package.json": scripts, "a.ts": `export const a: number = 1;\n` });
+    using bad = project({ "package.json": scripts, "a.ts": `export const a: number = "1";\n` });
+    const [ran, stopped] = await Promise.all([
+      run(String(good), ["run", "--check", "hello"]),
+      run(String(bad), ["run", "--check", "hello"]),
+    ]);
+    expect(ran.stdout).toBe("ran");
+    expect(ran.exitCode).toBe(0);
+    expect(stopped.stdout).toBe("");
+    expect(stopped.stderr).toMatchInlineSnapshot(`
+      "a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
+      Found 1 error in 1 file, checked 1 file [time]"
+    `);
+    expect(stopped.exitCode).toBe(1);
+  });
+
+  test("bun test --help says that there is --check", async () => {
+    using dir = project({});
+    const { stdout, stderr } = await run(String(dir), ["test", "--help"]);
+    expect(stdout + stderr).toContain("bun test --check");
+  });
+
   test("bun --check runs a file that type checks", async () => {
     using dir = project({ "a.ts": `const n: number = 1;\nconsole.log("ran", n);\n` });
     const { stdout, stderr, exitCode } = await run(String(dir), ["--check", "a.ts"]);

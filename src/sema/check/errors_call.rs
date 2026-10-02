@@ -294,8 +294,7 @@ impl Checker<'_> {
         let mut related = Vec::new();
         // `invocationErrorDetails`
         if let Some(awaited) = self.awaited_or_none(apparent) {
-            let awaited = self.apparent_type(awaited);
-            let awaited = self.reduced(awaited);
+            let awaited = self.reduced_apparent_type(awaited);
             if self.is_known(awaited) && !self.signatures(awaited, construct).is_empty() {
                 related.push(here(2773));
             }
@@ -381,8 +380,7 @@ impl Checker<'_> {
         // The first constituent without signatures.
         let mut without = None;
         for &part in self.parts(apparent) {
-            let reduced = self.apparent_type(part);
-            let reduced = self.reduced(reduced);
+            let reduced = self.reduced_apparent_type(part);
             if !self.signatures(reduced, construct).is_empty() {
                 has_signatures = true;
                 if without.is_some() {
@@ -768,7 +766,7 @@ impl Checker<'_> {
             CallLike::Call(c) => hir[c].callee,
             CallLike::Decorator(_) if hir.legacy_decorators => return None,
             CallLike::Decorator(_) => e,
-            CallLike::Jsx { .. } => return None,
+            CallLike::Jsx(_) => return None,
         };
         // `SkipOuterExpressions(expression, OEKAll)`
         loop {
@@ -815,6 +813,11 @@ impl Checker<'_> {
     ) {
         let (file, node, type_args) = (s.file, s.node, s.type_args);
         let hir = self.hir(file);
+        let type_argument_list = match node {
+            CallLike::Call(c) => Some(hir[c].type_args),
+            CallLike::Jsx(j) if hir[j].tag.is_some() => Some(hir[j].type_args),
+            _ => None,
+        };
         if let Some(&last) = s.candidates_for_argument_error.last() {
             let from = self.reported.len();
             self.is_signature_applicable(s, last, Relation::Assignable, CheckMode::empty(), true);
@@ -844,14 +847,14 @@ impl Checker<'_> {
             }
         } else if let Some(sig) = s.candidate_for_argument_arity_error {
             self.report_argument_arity(s, &[sig], head);
-        } else if let (Some(candidate), CallLike::Call(c)) =
-            (s.candidate_for_type_argument_error, node)
+        } else if let (Some(candidate), Some(list)) =
+            (s.candidate_for_type_argument_error, type_argument_list)
         {
             let type_params = self.sig_type_params(candidate);
             if let Ok(Some((index, given, constraint))) =
                 self.failing_type_argument(candidate, &type_params, type_args)
             {
-                let node = hir.ids(hir[c].type_args).nth(index).unwrap();
+                let node = hir.ids(list).nth(index).unwrap();
                 let end = self.end_of_type_node(file, node);
                 // 2344, or what says more.
                 self.report_not_assignable_with_end(given, constraint, hir[node].pos, end, 2344);
@@ -866,8 +869,8 @@ impl Checker<'_> {
             }
             if !fitting.is_empty() {
                 self.report_argument_arity(s, &fitting, head);
-            } else if let CallLike::Call(c) = node {
-                self.report_type_argument_arity(file, hir[c].type_args, sigs);
+            } else if let Some(list) = type_argument_list {
+                self.report_type_argument_arity(file, list, sigs);
             }
         }
     }
@@ -1012,8 +1015,16 @@ impl Checker<'_> {
         report: bool,
     ) -> bool {
         let in_doubt = relation != Relation::Subtype;
-        if let CallLike::Jsx { construct } = s.node {
-            return self.jsx_fits(s.file, s.call, sig, construct, relation, check_mode);
+        if let CallLike::Jsx(_) = s.node {
+            return self.check_applicable_signature_for_jsx_call_like_element(
+                s.file,
+                s.call,
+                sig,
+                relation,
+                check_mode,
+                s.checks_arguments_once,
+                report,
+            );
         }
         let (file, e, node, args, this_arg) = (s.file, s.call, s.node, s.args, s.this_arg);
         let hir = self.hir(file);

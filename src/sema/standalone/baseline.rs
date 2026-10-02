@@ -1273,7 +1273,6 @@ fn run_one(
         threads: 1,
         lib_dir: Some(setup.lib_dir),
         global_node_modules: None,
-        file_time_limit: std::time::Duration::from_secs(20),
         progress: None,
         only: None,
         ends_the_process: false,
@@ -1396,6 +1395,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                         let name = format!("{}/{configured}", suite.name);
                         let types = setup.types_out.map(|_| Mutex::new(String::new()));
                         let symbols = setup.symbols_out.map(|_| Mutex::new(String::new()));
+                        let _watched = Watched::new(&name);
                         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             run_one(
                                 setup,
@@ -1445,11 +1445,6 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                 note: "panicked".to_owned(),
                             },
                             Ok(None) => continue,
-                            Ok(Some((report, _))) if !report.gave_up.is_empty() => Outcome {
-                                name,
-                                level: Level::Broken,
-                                note: "took too long".to_owned(),
-                            },
                             Ok(Some((mut report, inputs))) => {
                                 let expected = std::fs::read(format!(
                                     "{}/{configured}.errors.txt",
@@ -1513,4 +1508,47 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
     let mut outcomes = outcomes.into_inner().unwrap();
     outcomes.sort_by(|a, b| a.name.cmp(&b.name));
     outcomes
+}
+
+/// A test that is under way. The checker has no time limit, so one that does not end would hold up the whole run without a word: after
+/// ten minutes the run ends, and says which it was.
+struct Watched(usize);
+
+static UNDER_WAY: Mutex<Vec<Option<(String, std::time::Instant)>>> = Mutex::new(Vec::new());
+
+impl Watched {
+    fn new(name: &str) -> Watched {
+        static WATCHDOG: std::sync::Once = std::sync::Once::new();
+        WATCHDOG.call_once(|| {
+            std::thread::spawn(|| {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    for (name, since) in UNDER_WAY.lock().unwrap().iter().flatten() {
+                        if since.elapsed() > std::time::Duration::from_secs(600) {
+                            eprintln!("STUCK: {name} has been under way for ten minutes. The run ends here.");
+                            std::process::exit(3);
+                        }
+                    }
+                }
+            });
+        });
+        let mut under_way = UNDER_WAY.lock().unwrap();
+        let entry = Some((name.to_owned(), std::time::Instant::now()));
+        match under_way.iter().position(Option::is_none) {
+            Some(free) => {
+                under_way[free] = entry;
+                Watched(free)
+            }
+            None => {
+                under_way.push(entry);
+                Watched(under_way.len() - 1)
+            }
+        }
+    }
+}
+
+impl Drop for Watched {
+    fn drop(&mut self) {
+        UNDER_WAY.lock().unwrap()[self.0] = None;
+    }
 }

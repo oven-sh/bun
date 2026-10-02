@@ -694,7 +694,7 @@ impl Builder<'_> {
             ret: self.clone_type(return_type),
             body: FnBody::None,
             anchor: pos(open_paren_loc),
-            start: start.unwrap_or(pos(loc)),
+            start: start.unwrap_or_else(|| pos(loc)),
         };
         let func = self.file.add_fn(func);
         if let Some(body) = body {
@@ -714,7 +714,7 @@ impl Builder<'_> {
         for modifier in modifiers.iter() {
             let ts::Modifier { flag, loc, .. } = self.ts[modifier];
             if flag == ts::Flags::EXPORT {
-                export_pos.get_or_insert(pos(loc));
+                export_pos.get_or_insert_with(|| pos(loc));
             }
             all |= flags(flag);
         }

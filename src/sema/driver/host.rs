@@ -23,16 +23,24 @@ pub fn find_lib_dir(
         if host.is_file(&format!("{plain}/lib.es5.d.ts")) {
             return Some(plain);
         }
-        let scope = format!("{node_modules}/@typescript");
-        let (_, mut packages) = host.entries(&scope);
-        // The package for the platform goes with `typescript` itself. Others may be older versions under another name.
-        packages.sort_by_key(|name| {
-            !(name.starts_with("typescript-") || name.starts_with("native-preview-"))
-        });
-        packages
-            .into_iter()
-            .map(|package| format!("{scope}/{package}/lib"))
-            .find(|lib| host.is_file(&format!("{lib}/lib.es5.d.ts")))
+        let for_the_platform = |node_modules: &str| -> Option<String> {
+            let scope = format!("{node_modules}/@typescript");
+            let (_, mut packages) = host.entries(&scope);
+            // The package for the platform goes with `typescript` itself. Others may be older versions under another name.
+            packages.sort_by_key(|name| {
+                !(name.starts_with("typescript-") || name.starts_with("native-preview-"))
+            });
+            packages
+                .into_iter()
+                .map(|package| format!("{scope}/{package}/lib"))
+                .find(|lib| host.is_file(&format!("{lib}/lib.es5.d.ts")))
+        };
+        for_the_platform(node_modules).or_else(|| {
+            // An isolated install keeps what a package depends on beside the package, and `node_modules/typescript` is a link to it.
+            let package = format!("{node_modules}/typescript");
+            let real = host.realpath(&package);
+            (real != package).then(|| for_the_platform(bun_sema::resolve::parent_dir(&real)))?
+        })
     };
     let mut dir = dir;
     loop {

@@ -628,9 +628,11 @@ impl<'a> Parser<'a> {
             file.early_errors.clear();
         } else {
             file.early_errors.extend(syntactic);
-            if !file.has_parse_diagnostics {
-                file.early_errors.extend(grammar);
-            }
+            // `checkJSDecoratorSyntax` says these two, whatever else is wrong with the file.
+            let is_js = p.lexer.is_javascript_file();
+            let has_errors = file.has_parse_diagnostics;
+            grammar.retain(|error| !has_errors || is_js && matches!(error.1, 1206 | 8038));
+            file.early_errors.extend(grammar);
             file.checker_errors.extend(checker);
         }
         (file, awaited)

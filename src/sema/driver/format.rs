@@ -891,17 +891,8 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
         }
     }
     let files_with_errors = by_file.len();
-    for path in &report.gave_up {
-        paint.put(out, &[YELLOW], "warning");
-        paint.put(out, &[DIM], ": ");
-        let _ = writeln!(
-            out,
-            "gave up on {}, which took too long to check. This is a bug in Bun: nothing is reported for this file.",
-            relative_path(path, style.cwd)
-        );
-    }
     for path in &report.incomplete {
-        paint.put(out, &[YELLOW], "warning");
+        paint.put(out, &[RED], "error");
         paint.put(out, &[DIM], ": ");
         let _ = writeln!(
             out,
@@ -909,13 +900,20 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
             relative_path(path, style.cwd)
         );
     }
-    if style.layout != Layout::Plain && is_missing_bun_types(report) {
+    if is_missing_bun_types(report) {
         paint.put(out, &[BLUE], "hint");
         paint.put(out, &[DIM], ": ");
-        out.push_str(
-            "Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: ",
-        );
-        paint.put(out, &[CYAN], "bun add -d @types/bun");
+        if report.has_bun_types_installed {
+            out.push_str(
+                "Bun's type definitions (console, fetch, Bun, bun:test) are installed, but tsconfig.json does not include them. Add to compilerOptions: ",
+            );
+            paint.put(out, &[CYAN], "\"types\": [\"bun\"]");
+        } else {
+            out.push_str(
+                "Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: ",
+            );
+            paint.put(out, &[CYAN], "bun add -d @types/bun");
+        }
         out.push('\n');
     }
     let errors = report.error_count();
@@ -924,6 +922,26 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
         0 => String::new(),
         n => format!(" across {}", plural(n, "project", "projects")),
     };
+    if errors == 0 && !report.incomplete.is_empty() {
+        paint.put(
+            out,
+            &[BOLD, RED],
+            &format!(
+                "Could not finish checking {}",
+                plural(report.incomplete.len(), "file", "files")
+            ),
+        );
+        paint.put(
+            out,
+            &[DIM],
+            &format!(
+                ", checked {}{projects}{took}",
+                plural(report.files_checked, "file", "files")
+            ),
+        );
+        out.push('\n');
+        return;
+    }
     if errors == 0 {
         paint.put(out, &[GREEN], "\u{2713}");
         out.push_str(" No type errors");

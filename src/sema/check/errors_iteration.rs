@@ -5,166 +5,115 @@
 //! calls, `checkVariableLikeDeclaration` as far as patterns go, `checkYieldExpression`, and `checkSignatureDeclaration` for what a
 //! generator says it returns, of TypeScript 7.0.2's checker.go.
 
-use super::sink::held;
+use super::errors_x_operators::{start_of_dots_before, start_of_equals_before, why_no_reference};
+use super::mapped::AccessNode;
 use super::symbols::IterationUse;
 use super::*;
 use crate::bind::{FnOwner, Parent, PatParent};
-use smallvec::SmallVec;
 
 impl Checker<'_> {
-    pub(super) fn check_iteration(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let strict = self.p.files.options.strict_null_checks;
-        // Without `Iterable` other things are said of what is gone through, in other words.
-        let has_iterable = self.global_type_of_arity(known::Iterable, 3).is_some();
-        for s in 0..hir.stmts.len() {
-            let kind = hir.stmts[s].kind;
-            if !matches!(kind, StmtKind::ForOf { .. } | StmtKind::ForIn { .. })
-                || matches!(bound.stmt_parent[s], Parent::None)
-            {
-                continue;
-            }
-            match kind {
-                StmtKind::ForOf {
-                    left,
-                    expr,
-                    is_await,
-                    ..
-                } => {
-                    let given = self.type_of_expr(file, expr);
-                    let mut iterated = None;
-                    if self.is_known(given) {
-                        // `checkRightHandSideOfForOf`: `checkNonNullExpression` comes first.
-                        let given = self.check_non_null_type(file, expr, given);
-                        // Where `null` and `undefined` are not told apart nothing has been said of them, or taken out.
-                        if !self.is_nothing_but_nullish(given) {
-                            let usage = if is_await {
-                                IterationUse::ForAwaitOf
-                            } else {
-                                IterationUse::ForOf
-                            };
-                            let error_node = self.place_of_written_expr(file, expr);
-                            iterated =
-                                self.check_iterated(usage, given, TypeId::UNDEFINED, error_node);
-                        }
-                    }
-                    let StmtKind::Expr(target) = hir[left].kind else {
-                        continue;
-                    };
-                    if self.is_assignment_pattern(file, target) {
-                        // What is on the left is looked at whatever is gone through: on with the error type.
-                        self.check_destructuring_assignment(
-                            file,
-                            target,
-                            iterated.unwrap_or(TypeId::UNRESOLVED),
-                        );
-                    } else if let Some(iterated) = iterated
-                        // What a literal in parentheses comes to is not looked into.
-                        && !matches!(hir[target].kind, ExprKind::Array(_) | ExprKind::Object(_))
-                    {
-                        // Whatever else is written there is held against what comes out, whatever is wrong with it: 2487, 2781.
-                        let wanted = self.type_of_assignment_target(file, target);
-                        let at = self.error_start_of(file, target);
-                        let end = self.error_end_of(file, target);
-                        self.check_type_assignable_to_and_optionally_elaborate(
-                            iterated,
-                            wanted,
-                            Some((file, at, end)),
-                            expr.some().map(|e| (file, e)),
-                            false,
-                            None,
-                            None,
-                        );
-                    }
-                }
-                StmtKind::ForIn { left, expr, .. } => {
-                    let given = self.type_of_expr(file, expr);
-                    if !self.is_known(given) {
-                        continue;
-                    }
-                    // `getNonNullableTypeIfNeeded`
-                    let given = self.non_nullable_type_if_needed(given);
-                    // A literal as it stands is a pattern, which is another matter: 2491.
-                    if let StmtKind::Expr(target) = hir[left].kind
-                        && !self.is_assignment_pattern(file, target)
-                    {
-                        let wanted = self.type_of_assignment_target(file, target);
-                        let keys = self.index_type_or_string(given);
-                        if self.is_known(wanted)
-                            && self.is_known(keys)
-                            && !self.is_assignable(keys, wanted)
-                        {
-                            self.error(file, self.hir(file).child(target), 2405, &[]);
-                        }
-                    }
-                    // `isTypeAssignableToKind(rightType, NonPrimitive | InstantiableNonPrimitive)`. `keyof T` is an instantiable
-                    // primitive. Without strictNullChecks `null` and `undefined` are assignable to `object`.
-                    let is_object = given == TypeId::OBJECT
-                        || !strict && self.is_nothing_but_nullish(given)
-                        || self.is_deferred(given)
-                            && !matches!(self.data(given), TypeData::Keyof(_))
-                        || self.is_assignable(given, TypeId::OBJECT);
-                    if given.is_never() || !is_object {
-                        self.error(file, self.hir(file).child(expr), 2407, &[Arg::Type(given)]);
-                    }
-                }
-                _ => {}
+    /// `checkRightHandSideOfForOf`
+    pub(super) fn check_right_hand_side_of_for_of(
+        &mut self,
+        file: FileId,
+        expr: ExprId,
+        is_await: bool,
+    ) -> TypeId {
+        let usage = if is_await {
+            IterationUse::ForAwaitOf
+        } else {
+            IterationUse::ForOf
+        };
+        let input_type = self.type_of_expr(file, expr);
+        let input_type = self.check_non_null_type(file, expr, input_type);
+        // `checkIteratedTypeOrElementType`
+        if self.is_any(input_type) {
+            return input_type;
+        }
+        // An array or a tuple can be gone through: where it is written is not looked for.
+        let error_node =
+            (!self.is_array_or_tuple(input_type)).then(|| self.place_of_written_expr(file, expr));
+        self.iterated_type_or_element_type(usage, input_type, TypeId::UNDEFINED, error_node)
+            .unwrap_or(TypeId::ANY)
+    }
+
+    /// `checkForOfStatement`, where `var_expr` is written in the place of a declaration.
+    pub(super) fn check_for_of_initializer(
+        &mut self,
+        file: FileId,
+        var_expr: ExprId,
+        expr: ExprId,
+        is_await: bool,
+    ) {
+        let iterated_type = self.check_right_hand_side_of_for_of(file, expr, is_await);
+        if self.is_assignment_pattern(file, var_expr) {
+            return self.check_destructuring_assignment(file, var_expr, iterated_type);
+        }
+        let left_type = self.type_of_expr(file, var_expr);
+        self.check_reference_expression(file, var_expr, 2487, 2781);
+        let error_node = Some(self.error_range_of(file, var_expr));
+        self.check_type_assignable_to_and_optionally_elaborate(
+            iterated_type,
+            left_type,
+            error_node,
+            Some((file, expr)),
+            false,
+            None,
+            None,
+        );
+    }
+
+    /// `checkForInStatement`: 2405 2406 2780 2407. `left`: what is written before `in`.
+    pub(super) fn check_for_in_statement(&mut self, file: FileId, left: StmtId, expr: ExprId) {
+        let right_type = self.type_of_expr(file, expr);
+        let right_type = self.non_nullable_type_if_needed(right_type);
+        // A literal as it stands is a pattern, which is another matter: 2491.
+        if let StmtKind::Expr(var_expr) = self.hir(file)[left].kind
+            && !self.is_assignment_pattern(file, var_expr)
+        {
+            let left_type = self.type_of_expr(file, var_expr);
+            let keys = self.index_type_or_string(right_type);
+            if !self.is_assignable(keys, left_type) {
+                self.error_at(self.error_range_of(file, var_expr), 2405, &[]);
+            } else {
+                // "run check only former check succeeded to avoid cascading errors"
+                self.check_reference_expression(file, var_expr, 2406, 2780);
             }
         }
+        // `isTypeAssignableToKind(rightType, NonPrimitive | InstantiableNonPrimitive)`. Without strictNullChecks `null` and
+        // `undefined` are assignable to `object`.
+        let is_object = self.flags(right_type)
+            & (tf::NON_PRIMITIVE | tf::INSTANTIABLE_NON_PRIMITIVE)
+            != 0
+            || !self.p.files.options.strict_null_checks && self.is_nothing_but_nullish(right_type)
+            || self.is_assignable(right_type, TypeId::OBJECT);
+        if right_type.is_never() || !is_object {
+            self.error_at(
+                self.error_range_of(file, expr),
+                2407,
+                &[Arg::Type(right_type)],
+            );
+        }
+    }
+
+    pub(super) fn check_iteration(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let index = self.exprs_by_kind(file);
-        let mut looked_at: SmallVec<[ExprId; 8]> = SmallVec::new();
         // `[...x]`, `f(...x)`
         for &e in index.of(ExprTag::Spread) {
+            let ExprKind::Spread(inner) = hir[e].kind else {
+                continue;
+            };
             if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_) | ExprKind::Call(_) | ExprKind::New(_)))
                 && !self.is_assignment_target(file, e)
             {
-                looked_at.push(e);
-            }
-        }
-        // One that is a default in a pattern is looked at with the pattern.
-        for &e in index.of(ExprTag::Assign) {
-            if let ExprKind::Assign {
-                op: None, target, ..
-            } = hir[e].kind
-                && !bound.is_unchecked(e.idx())
-                && self.is_assignment_pattern(file, target)
-                && !self.is_assignment_target(file, e)
-            {
-                looked_at.push(e);
-            }
-        }
-        for &e in index.of(ExprTag::Yield) {
-            // Without `Iterable` only what `yield*` goes through is looked at.
-            if !bound.is_unchecked(e.idx())
-                && (has_iterable || matches!(hir[e].kind, ExprKind::Yield { star: true, .. }))
-            {
-                looked_at.push(e);
-            }
-        }
-        // In the order they have in the file, whatever their kind.
-        looked_at.sort_unstable();
-        for e in looked_at {
-            match hir[e].kind {
-                ExprKind::Spread(inner) => {
-                    let given = self.type_of_expr(file, inner);
-                    if !self.is_nothing_but_nullish(given)
-                        && !self.is_spread_taken_whole(file, e, given)
-                    {
-                        let error_node = self.place_of_written_expr(file, inner);
-                        self.check_iterated(
-                            IterationUse::Spread,
-                            given,
-                            TypeId::UNDEFINED,
-                            error_node,
-                        );
-                    }
+                let given = self.type_of_expr(file, inner);
+                if !self.is_nothing_but_nullish(given)
+                    && !self.is_spread_taken_whole(file, e, given)
+                {
+                    let error_node = self.place_of_written_expr(file, inner);
+                    self.check_iterated(IterationUse::Spread, given, TypeId::UNDEFINED, error_node);
                 }
-                ExprKind::Assign { target, value, .. } => {
-                    let given = self.type_of_expr(file, value);
-                    self.check_destructuring_assignment(file, target, given);
-                }
-                ExprKind::Yield { value, star } => self.check_yield(file, e, value, star),
-                _ => {}
             }
         }
         // `createGeneratorType`, which a generator that does not say what it returns is always asked for: that there is neither a `Generator`
@@ -187,158 +136,6 @@ impl Checker<'_> {
                 && self.global_type_symbol(iterator).is_none()
             {
                 self.report_global_error(2318, vec![self.atom_text(iterator)]);
-            }
-        }
-        // `checkSignatureDeclaration`: a generator gives a `Generator`, which what it says it returns has to have room for.
-        for i in 0..hir.fns.len() {
-            let f = &hir.fns[i];
-            if !has_iterable
-                || !f.flags.contains(Flags::GENERATOR)
-                || f.ret.is_none()
-                || matches!(f.body, FnBody::None)
-                || matches!(bound.fns[i].owner, FnOwner::None)
-            {
-                continue;
-            }
-            let declared = self.type_from_node(file, f.ret);
-            // `void` has words of its own: 2505.
-            if declared == TypeId::VOID || !self.is_known(declared) {
-                continue;
-            }
-            let generator = self.generator_instantiation(declared, f.flags.contains(Flags::ASYNC));
-            let end = self.end_of_type_node(file, f.ret);
-            self.check_type_assignable_to(
-                generator,
-                declared,
-                Some((file, hir[f.ret].pos, end)),
-                None,
-            );
-        }
-        for p in 0..hir.pats.len() {
-            let pat = PatId(p as u32);
-            if matches!(hir.pats[p].kind, PatKind::Ident(_) | PatKind::Missing)
-                || matches!(bound.pat_parent[p], PatParent::None)
-            {
-                continue;
-            }
-            if Self::pattern_binds_nothing(self.hir(file), pat) {
-                self.check_pattern_without_names(file, pat);
-                continue;
-            }
-            let PatKind::Array(elems) = hir.pats[p].kind else {
-                continue;
-            };
-            let mut given = self.type_of_pat(file, pat);
-            let initializer = match bound.pat_parent[p] {
-                PatParent::None => continue,
-                PatParent::Var(d) => hir[d].init,
-                PatParent::Prop(_, prop) => hir[prop].default,
-                PatParent::Elem(_, elem) => hir[elem].default,
-                PatParent::Param(param) => {
-                    let decl = &hir[param];
-                    if decl.ty.is_some() {
-                        // `getTypeForBindingElementParent`: without the `undefined` that `?` stands for.
-                        if decl.flags.contains(Flags::OPTIONAL) {
-                            given = self.type_from_node(file, decl.ty);
-                        }
-                    } else {
-                        let func = bound.param_fn[param.idx()];
-                        match self.contextual_param_type(
-                            file,
-                            func,
-                            (param.0 - hir[func].params.start) as usize,
-                        ) {
-                            // `assignParameterType`: where nothing but `unknown` is expected the pattern says what it is.
-                            Some(TypeId::UNKNOWN) => continue,
-                            // `assignContextualParameterTypes` weighs what is expected against the default: not looked into.
-                            Some(_) if decl.default.is_some() => continue,
-                            // What is expected is what is taken apart. In terms of type parameters it is not looked into.
-                            Some(expected) if !self.has_type_variables(expected) => {
-                                given = expected
-                            }
-                            Some(_) => continue,
-                            // What nothing types is what the pattern makes of it.
-                            None if decl.default.is_none() => continue,
-                            None => {
-                                // `getTypeForBindingElementParent`: a default is taken apart as it is, `null` and `undefined` not yet
-                                // being `any`. `assignParameterType` widens it first for a function that is an expression.
-                                if !matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)) {
-                                    let raw = self.type_of_expr(file, decl.default);
-                                    if self.is_nothing_but_nullish(raw) {
-                                        given = raw;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    decl.default
-                }
-            };
-            // What has an initializer that cannot be `undefined` is not `undefined`: whether it can has to be known.
-            if strict && initializer.is_some() && self.some_type(given, |_, m| m.is_undefined()) {
-                let ty = self.type_of_expr(file, initializer);
-                if !self.is_known(ty) {
-                    continue;
-                }
-            }
-            let given = self.type_pattern_takes_apart(file, pat, given);
-            if !self.is_known(given) || self.is_any(given) {
-                continue;
-            }
-            // `getBindingElementTypeFromParentType` asks for the sake of an element: of `[]` nothing is asked. Without `Iterable` a list
-            // is taken apart as it is.
-            if elems
-                .iter()
-                .any(|elem| !matches!(hir[hir[elem].pat].kind, PatKind::Missing))
-            {
-                let error_node = (file, hir[pat].pos, self.end_of_pat(file, pat));
-                let usage = IterationUse::Destructuring;
-                let iterated = self.check_iterated(usage, given, TypeId::UNDEFINED, error_node);
-                if has_iterable && iterated.is_none() {
-                    continue;
-                }
-            }
-            // `getBindingElementTypeFromParentType`: the elements of a list are looked up by number, 2339 where it has none.
-            if !self.every_type(given, |c, m| c.is_tuple(m)) {
-                if self.is_array_like(given) {
-                    for (index, elem) in elems.iter().enumerate() {
-                        let elem = &hir[elem];
-                        if !elem.is_rest && !matches!(hir[elem.pat].kind, PatKind::Missing) {
-                            let key = self.number_literal(index as f64, false);
-                            // `AccessFlagsAllowMissing`
-                            let allows_missing =
-                                elem.default.is_some() && self.is_object_literal_type(given);
-                            let name = elem.pat;
-                            self.destructured_property(
-                                file,
-                                given,
-                                key,
-                                allows_missing,
-                                hir[name].pos,
-                                |c| c.end_of_pat(file, name),
-                            );
-                        }
-                    }
-                }
-                continue;
-            }
-            // `getPropertyTypeForIndexType`: past the end of a tuple there is nothing.
-            for (index, elem) in elems.iter().enumerate() {
-                let elem = &hir[elem];
-                if !elem.is_rest
-                    && elem.default.is_none()
-                    && !matches!(hir[elem.pat].kind, PatKind::Missing)
-                    && let Some(code) =
-                        self.past_the_end_of_tuples(given, self.number_name(index as f64))
-                {
-                    let start = hir[elem.pat].pos;
-                    let end = self.end_of_pat(file, elem.pat);
-                    let name = self.number_name(index as f64);
-                    {
-                        let args = past_the_end_arguments(self, code, given, name);
-                        self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
-                    }
-                }
             }
         }
     }
@@ -378,14 +175,19 @@ impl Checker<'_> {
         ) && !is_parenthesized(self.hir(file), e)
     }
 
-    /// `checkGeneratorInstantiationAssignabilityToReturnType`: the generator that yields, returns and takes what `declared`, which a
-    /// generator function says it returns, does.
-    fn generator_instantiation(&mut self, declared: TypeId, is_async: bool) -> TypeId {
-        let types = self.iteration_types(declared, is_async);
-        let yielded = types.map_or(TypeId::ANY, |t| t.yielded);
-        let returned = types.map_or(yielded, |t| t.returned);
-        let next = types.map_or(TypeId::UNKNOWN, |t| t.next);
-        self.generator_of(yielded, returned, next, is_async)
+    /// `checkSpreadExpression`, as far as the type goes. `given`: the type of what is spread. `never` where it is not asked:
+    /// `checkArrayLiteral` and `getSpreadArgumentType` look at what is spread instead.
+    pub(super) fn type_of_spread_expression(
+        &mut self,
+        file: FileId,
+        spread: ExprId,
+        given: TypeId,
+    ) -> TypeId {
+        if self.is_nothing_but_nullish(given) || self.is_spread_taken_whole(file, spread, given) {
+            return TypeId::NEVER;
+        }
+        self.iterated_type_or_element_type(IterationUse::Spread, given, TypeId::UNDEFINED, None)
+            .unwrap_or(TypeId::ERROR)
     }
 
     /// Whether `isArrayLikeType` keeps `spread`, which spreads a `given`, from `checkIteratedTypeOrElementType`: what is like an array
@@ -461,706 +263,401 @@ impl Checker<'_> {
             .then_some(iterated)
     }
 
-    /// `checkDestructuringAssignment`: `source` is taken apart into `target`, or assigned to it.
-    fn check_destructuring_assignment(&mut self, file: FileId, mut target: ExprId, source: TypeId) {
+    /// `checkDestructuringAssignment`
+    pub(super) fn check_destructuring_assignment(
+        &mut self,
+        file: FileId,
+        node: ExprId,
+        mut source_type: TypeId,
+    ) {
         let hir = self.hir(file);
-        let strict = self.p.files.options.strict_null_checks;
-        let mut source = source;
-        // A default, which is an assignment like any other, sees to it that it is not missing. In parentheses it is no default.
+        let mut target = node;
+        // A default. In parentheses it is none.
         if let ExprKind::Assign {
             op: None,
-            target: inner,
+            target: left,
             value,
-        } = hir[target].kind
-            && !is_parenthesized(self.hir(file), target)
+        } = hir[node].kind
+            && !is_parenthesized(hir, node)
         {
-            let default = self.type_of_expr(file, value);
-            if self.is_assignment_pattern(file, inner) {
-                self.check_destructuring_assignment(file, inner, default);
-            } else {
-                self.check_reference_assignment(file, inner, default, value);
+            // `checkBinaryExpression`. What is wrong with `left` as a reference is said with the operators.
+            let initializer = self.type_of_expr(file, value);
+            if self.is_assignment_pattern(file, left) {
+                self.check_destructuring_assignment(file, left, initializer);
+            } else if why_no_reference(hir, left, 2364, 2779).is_none() {
+                let left_type = self.type_of_expr(file, left);
+                let error_node = Some(self.error_range_of(file, left));
+                let right = Some((file, value));
+                self.check_type_assignable_to_and_optionally_elaborate(
+                    initializer,
+                    left_type,
+                    error_node,
+                    right,
+                    false,
+                    None,
+                    None,
+                );
             }
-            // That of `{ a = d }` sees to it only if it cannot be `undefined` itself.
-            let is_shorthand = matches!(self.bound(file).expr_parent[target.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand);
-            target = inner;
-            if strict && !(is_shorthand && self.is_possibly_undefined(default)) {
-                source = self.type_with_ne_undefined(source);
+            // That of `{ a = d }` sees to it that nothing is missing only if it cannot be `undefined` itself.
+            let is_shorthand = matches!(self.bound(file).expr_parent[node.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand);
+            if self.p.files.options.strict_null_checks
+                && !(is_shorthand && self.is_possibly_undefined(initializer))
+            {
+                source_type = self.type_with_ne_undefined(source_type);
             }
-        }
-        // On with the error type: the defaults in a pattern are assignments whatever is taken apart.
-        if !self.is_known(source) {
-            source = TypeId::UNRESOLVED;
-        }
-        if !self.is_assignment_pattern(file, target) {
-            self.check_reference_assignment(file, target, source, ExprId::NONE);
-            return;
+            target = left;
         }
         match hir[target].kind {
-            ExprKind::Object(props) => {
-                // `checkObjectLiteralAssignment`: one that takes nothing out still needs something to be there.
-                if props.is_empty() {
-                    if strict {
-                        self.check_non_null_type(file, target, source);
-                    }
-                    return;
-                }
-                let object = self.apparent_type(source);
-                // Of what is `any`, or not known, nothing is said: what comes out of it is that again.
-                let is_told = !self.is_any(source) && self.is_known(object);
-                // `isObjectLiteralType`. Once the type of an object literal, always one, as far as leaving things out goes.
-                let is_literal = source == TypeId::EMPTY_OBJECT
-                    || self.is_object_literal_type(source)
-                    || matches!(
-                        self.data(source),
-                        TypeData::Anon {
-                            origin: Origin::WidenedLiteral(..),
-                            ..
-                        }
-                    );
-                let (mut named, mut keys) = (Vec::new(), Vec::new());
-                for (i, p) in props.iter().enumerate() {
-                    let prop = &hir[p];
-                    if prop.kind == PropKind::Spread {
-                        // One that is not the last is refused as a whole: 2462.
-                        if i + 1 == props.len() && prop.value.is_some() {
-                            // `getRestType`
-                            let omitted = self.union(&keys);
-                            let rest = self.rest_of_object(source, &named, omitted, None);
-                            self.check_destructuring_assignment(file, prop.value, rest);
-                        }
-                        continue;
-                    }
-                    // `getLiteralTypeFromPropertyName`
-                    let name = self.member_name(file, prop.key);
-                    let key = match (name, prop.key) {
-                        (Some(name), _) => {
-                            named.push(name);
-                            self.string_literal(name, false)
-                        }
-                        (None, PropKey::Computed(k)) => {
-                            let key = self.type_of_expr(file, k);
-                            let key = self.regular(key);
-                            keys.push(key);
-                            key
-                        }
-                        _ => continue,
-                    };
-                    // What is no property assignment is refused: 1136.
-                    if !matches!(prop.kind, PropKind::Init | PropKind::Shorthand)
-                        || prop.value.is_none()
-                    {
-                        continue;
-                    }
-                    let is_sure = is_told && self.is_known(key);
-                    let ty = if !is_sure {
-                        if self.is_any(source) {
-                            source
-                        } else {
-                            TypeId::UNRESOLVED
-                        }
-                    } else {
-                        // `AccessFlagsAllowMissing`
-                        let has_default =
-                            matches!(hir[prop.value].kind, ExprKind::Assign { op: None, .. })
-                                && !is_parenthesized(self.hir(file), prop.value);
-                        // A number is looked up in a tuple as an element is.
-                        let past_the_end =
-                            name.and_then(|name| self.past_the_end_of_tuples(object, name));
-                        let found = match name {
-                            Some(name) if past_the_end.is_none() => {
-                                self.type_of_property(object, name)
-                            }
-                            _ => None,
-                        };
-                        let ty = match (found, name) {
-                            _ if past_the_end.is_some() => {
-                                if !has_default && let Some(code) = past_the_end {
-                                    let start = self.start_of_index_node(file, prop.key, prop.pos);
-                                    self.error_at((file, start, 0), code, &[]);
-                                    if let Some(name) = name {
-                                        let end = self.end_of_index_node(file, prop.key);
-                                        self.explain_to(start, end, code, |c| {
-                                            past_the_end_arguments(c, code, object, name)
-                                        });
-                                    }
-                                }
-                                TypeId::UNDEFINED
-                            }
-                            (Some(ty), Some(name)) => {
-                                // `checkPropertyAccessibility`, of what is written to. Said at the name as it is written.
-                                if let Some(code) = self.why_not_accessible(
-                                    file,
-                                    Parent::Expr(target),
-                                    false,
-                                    true,
-                                    object,
-                                    name,
-                                ) {
-                                    let end = self.end_of_prop_name(file, p);
-                                    {
-                                        let args = accessibility_arguments(
-                                            self, file, target, code, object, name,
-                                        );
-                                        self.add_diagnostic(Reported::new(
-                                            (file, prop.pos, end),
-                                            code,
-                                            held(args),
-                                        ));
-                                    }
-                                }
-                                ty
-                            }
-                            // Symbols are not looked into.
-                            (_, Some(name)) if self.files().atoms.is_symbol_name(name) => {
-                                TypeId::UNRESOLVED
-                            }
-                            _ => {
-                                let at = self.start_of_index_node(file, prop.key, prop.pos);
-                                self.destructured_property(
-                                    file,
-                                    source,
-                                    key,
-                                    has_default && is_literal,
-                                    at,
-                                    |c| c.end_of_index_node(file, prop.key),
-                                )
-                            }
-                        };
-                        // `getFlowTypeOfDestructuring`
-                        if self.is_known(ty) {
-                            self.narrow_destructured_assignment(file, prop.value, ty)
-                        } else {
-                            ty
-                        }
-                    };
-                    self.check_destructuring_assignment(file, prop.value, ty);
-                }
+            ExprKind::Object(_) if !is_parenthesized(hir, target) => {
+                self.check_object_literal_assignment(file, target, source_type)
             }
-            ExprKind::Array(items) => {
-                // `checkArrayLiteralAssignment`. `None`: it cannot be gone through (2488), or is not known: on with the error type.
-                let error_node = (file, hir[target].pos, self.end_of_expr(file, target));
-                let usage = IterationUse::Destructuring;
-                let iterated = self.check_iterated(usage, source, TypeId::UNDEFINED, error_node);
-                let is_tuples = iterated.is_some() && self.every_type(source, |c, m| c.is_tuple(m));
-                let has_default = |c: &Self, e: ExprId| {
-                    matches!(hir[e].kind, ExprKind::Assign { op: None, .. })
-                        && !is_parenthesized(c.hir(file), e)
-                };
-                for (index, item) in hir.ids(items).enumerate() {
-                    match hir[item].kind {
-                        ExprKind::Missing => {}
-                        ExprKind::Spread(rest) => {
-                            // One that is not the last (2462), or that has a default (1186), is refused as a whole.
-                            if index + 1 < items.len() || has_default(self, rest) {
-                                continue;
-                            }
-                            let ty = match iterated {
-                                None => TypeId::UNRESOLVED,
-                                // `sliceTupleType`
-                                Some(_) if is_tuples => {
-                                    self.element_of_destructured(source, index, true)
-                                }
-                                Some(iterated) => self.array_of(iterated),
-                            };
-                            self.check_destructuring_assignment(file, rest, ty);
-                        }
-                        // `checkArrayLiteralDestructuringElementAssignment`
-                        _ => {
-                            let ty = if iterated.is_none() {
-                                TypeId::UNRESOLVED
-                            } else {
-                                let has_default = has_default(self, item);
-                                if !has_default
-                                    && is_tuples
-                                    && let Some(code) = self.past_the_end_of_tuples(
-                                        source,
-                                        self.number_name(index as f64),
-                                    )
-                                {
-                                    let start = self.start_of(file, item);
-                                    let end = self.end_of_expr(file, item);
-                                    let name = self.number_name(index as f64);
-                                    {
-                                        let args = past_the_end_arguments(self, code, source, name);
-                                        self.add_diagnostic(Reported::new(
-                                            (file, start, end),
-                                            code,
-                                            held(args),
-                                        ));
-                                    }
-                                }
-                                let ty = self.element_of_destructured(source, index, false);
-                                let ty = if has_default {
-                                    self.type_with_ne_undefined(ty)
-                                } else {
-                                    ty
-                                };
-                                // `getFlowTypeOfDestructuring`
-                                if self.is_known(ty) {
-                                    self.narrow_destructured_assignment(file, item, ty)
-                                } else {
-                                    ty
-                                }
-                            };
-                            self.check_destructuring_assignment(file, item, ty);
-                        }
-                    }
-                }
+            ExprKind::Array(_) if !is_parenthesized(hir, target) => {
+                self.check_array_literal_assignment(file, target, source_type)
             }
-            _ => {}
+            _ => self.check_reference_assignment(file, target, source_type),
         }
     }
 
-    /// `checkReferenceAssignment`, and what `checkAssignmentOperator` does for a default: `source` is assigned to `target`, which is
-    /// no pattern. `value`: what is assigned, if it is written.
-    fn check_reference_assignment(
-        &mut self,
-        file: FileId,
-        target: ExprId,
-        source: TypeId,
-        value: ExprId,
-    ) {
-        // What cannot be assigned to is told off for that with the operators (2364 2701 2778 2779), and no more is said.
-        if !self.is_reference(file, target) {
+    /// `GetErrorRangeForNode`
+    fn error_range_of(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
+        (
+            file,
+            self.error_start_of(file, e),
+            self.error_end_of(file, e),
+        )
+    }
+
+    /// `hasDefaultValue`
+    fn has_default_value(&self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        matches!(hir[e].kind, ExprKind::Assign { op: None, .. }) && !is_parenthesized(hir, e)
+    }
+
+    /// `checkObjectLiteralAssignment`
+    fn check_object_literal_assignment(&mut self, file: FileId, node: ExprId, source_type: TypeId) {
+        let ExprKind::Object(properties) = self.hir(file)[node].kind else {
+            return;
+        };
+        if properties.is_empty() {
+            if self.p.files.options.strict_null_checks {
+                self.check_non_null_type(file, node, source_type);
+            }
             return;
         }
-        let wanted = self.type_of_assignment_target(file, target);
-        let at = self.error_start_of(file, target);
-        let end = self.error_end_of(file, target);
-        self.check_type_assignable_to_and_optionally_elaborate(
-            source,
-            wanted,
-            Some((file, at, end)),
-            value.some().map(|e| (file, e)),
-            false,
-            None,
-            None,
-        );
-    }
-
-    /// `checkReferenceExpression`: a name or a property access, whatever is asserted of it, that is no optional chain.
-    fn is_reference(&self, file: FileId, mut e: ExprId) -> bool {
-        let hir = self.hir(file);
-        loop {
-            e = match hir[e].kind {
-                ExprKind::As { expr, .. }
-                | ExprKind::Satisfies { expr, .. }
-                | ExprKind::AsConst(expr)
-                | ExprKind::NonNull(expr) => expr,
-                // What is not there is a name without letters.
-                ExprKind::Ident(_) | ExprKind::Missing => return true,
-                ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
-                    return chain == Chain::No;
-                }
-                _ => return false,
-            };
+        for property in properties.iter() {
+            self.check_object_literal_destructuring_property_assignment(
+                file,
+                node,
+                source_type,
+                property,
+                properties,
+            );
         }
     }
 
-    /// `checkExpression`, of what is written where something is assigned to.
-    fn type_of_assignment_target(&mut self, file: FileId, target: ExprId) -> TypeId {
-        let ty = self.type_of_expr(file, target);
-        // What cannot be written to (2588, 2540, 2476 ..) has the error type, which takes anything.
-        if self.is_error_type(ty) {
-            return ty;
-        }
-        match self.hir(file)[target].kind {
-            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => ty,
-            // Whatever else is written there is what it is.
-            _ => ty,
-        }
-    }
-
-    /// `getIndexNodeForAccessExpression`: where an error about looking up the name `key`, written at `pos`, goes: of `[k]`, at what is
-    /// in the brackets.
-    fn start_of_index_node(&self, file: FileId, key: PropKey, pos: u32) -> u32 {
-        if let PropKey::Computed(k) = key {
-            return self.start_of(file, k);
-        }
-        // `["a"]` is kept as the name `a`.
-        let text = &self.hir(file).text;
-        if text.get(pos as usize) != Some(&b'[') {
-            return pos;
-        }
-        let mut at = pos as usize + 1;
-        while text.get(at).is_some_and(|b| b.is_ascii_whitespace()) {
-            at += 1;
-        }
-        at as u32
-    }
-
-    /// Where that node ends. 0: it is one token.
-    fn end_of_index_node(&self, file: FileId, key: PropKey) -> u32 {
+    /// `getLiteralTypeFromPropertyName`
+    fn literal_type_from_property_name(&mut self, file: FileId, key: PropKey) -> Option<TypeId> {
         match key {
-            PropKey::Computed(k) => self.end_of_expr(file, k),
-            _ => 0,
+            PropKey::Name(name) => Some(self.string_literal(name, false)),
+            PropKey::Computed(k) => {
+                let key = self.type_of_expr(file, k);
+                Some(self.regular(key))
+            }
+            PropKey::Private(_) | PropKey::None => None,
         }
     }
 
-    /// `getIndexedAccessTypeOrUndefined`, asked by a name in a pattern for which `source` has no property: what `source` has under
-    /// `key`. For each member of `key` that finds nothing, from `at` to `end`: 2339 if it is a literal, 2537 if it is `string` or
-    /// `number`, else 2538; what comes out is then the error type. Both types are known, and `source` is not `any`.
-    #[allow(clippy::too_many_arguments)]
-    fn destructured_property(
+    /// `checkObjectLiteralDestructuringPropertyAssignment`. 1136, of what is no property assignment, is said with the grammar.
+    fn check_object_literal_destructuring_property_assignment(
         &mut self,
         file: FileId,
-        source: TypeId,
-        key: TypeId,
-        allows_missing: bool,
-        at: u32,
-        end: impl Fn(&Self) -> u32,
-    ) -> TypeId {
-        // `getReducedApparentType`: what is generic is looked into as what it extends. What is generic even so is put off.
-        let object = self.apparent_type(source);
-        if self.is_generic(object) || self.is_generic(key) {
-            return TypeId::UNRESOLVED;
+        node: ExprId,
+        object_literal_type: TypeId,
+        p: PropId,
+        all_properties: Span<PropId>,
+    ) {
+        let hir = self.hir(file);
+        let property = &hir[p];
+        if property.value.is_none() {
+            return;
         }
-        let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
-        let mut is_missing = false;
-        for &part in self.parts(key) {
-            // `getPropertyTypeForIndexType`. Any index signature takes `any`; without one it is no index type.
-            let found = if self.has_any_flag(part)
-                && !self.is_union(object)
-                && self
-                    .members(object)
-                    .is_some_and(|m| m.shape().index.is_empty())
+        if property.kind == PropKind::Spread {
+            if p.0 + 1 < all_properties.start + all_properties.len() as u32 {
+                let start =
+                    start_of_dots_before(self, file, property.value).unwrap_or(property.pos);
+                self.error_at((file, start, self.end_of_prop(file, p)), 2462, &[]);
+                return;
+            }
+            let (mut names, mut keys) = (Vec::new(), Vec::new());
+            for other in all_properties
+                .iter()
+                .filter(|&other| hir[other].kind != PropKind::Spread)
             {
-                None
-            } else {
-                self.indexed_access_if_any(object, part, true)
-            };
-            match found {
-                Some(ty) => types.push(ty),
-                None if allows_missing => types.push(TypeId::UNDEFINED),
-                None => {
-                    let code = if matches!(
-                        self.data(part),
-                        TypeData::StringLit { .. }
-                            | TypeData::NumberLit { .. }
-                            | TypeData::EnumLit { .. }
-                    ) {
-                        2339
-                    } else if part == TypeId::STRING || part == TypeId::NUMBER {
-                        2537
-                    } else {
-                        2538
-                    };
-                    let until = end(&*self);
-                    {
-                        let object = self.reduced(object);
-                        let args = match code {
-                            2339 => {
-                                vec![literal_value_text(self, part), self.type_to_string(object)]
-                            }
-                            2537 => vec![self.type_to_string(object), self.type_to_string(part)],
-                            // `indexNode.Kind == KindBigIntLiteral`
-                            _ if matches!(self.data(part), TypeData::BigIntLit { .. })
-                                && self
-                                    .hir(file)
-                                    .text
-                                    .get(at as usize)
-                                    .is_some_and(|b| b.is_ascii_digit()) =>
-                            {
-                                vec!["bigint".to_owned()]
-                            }
-                            _ => vec![self.type_to_string(part)],
-                        };
-                        self.add_diagnostic(Reported::new((file, at, until), code, held(args)));
-                    }
-                    is_missing = true;
+                match self.member_name(file, hir[other].key) {
+                    Some(name) => names.push(name),
+                    None => keys.extend(self.literal_type_from_property_name(file, hir[other].key)),
                 }
             }
+            let keys = self.union(&keys);
+            let rest = self.rest_of_object(object_literal_type, &names, keys, None);
+            return self.check_destructuring_assignment(file, property.value, rest);
         }
-        if is_missing {
-            TypeId::UNRESOLVED
+        if !matches!(property.kind, PropKind::Init | PropKind::Shorthand) {
+            return;
+        }
+        let Some(expr_type) = self.literal_type_from_property_name(file, property.key) else {
+            return;
+        };
+        if let Some(text) = self.property_name_of_type(expr_type)
+            && self
+                .get_property_of_type(object_literal_type, text)
+                .is_some()
+        {
+            let name = (file, property.pos, self.end_of_prop_name(file, p));
+            let at = Parent::Expr(node);
+            self.check_property_accessibility_at_location(
+                file,
+                hir.node(p),
+                at,
+                false,
+                true,
+                object_literal_type,
+                text,
+                Some(&|_| name),
+            );
+        }
+        // `getIndexNodeForAccessExpression`: of `[k]`, what is in the brackets. `["a"]` is kept as the name `a`.
+        let name = match property.key {
+            PropKey::Computed(k) => (file, self.start_of(file, k), self.end_of_expr(file, k)),
+            _ => {
+                let mut at = property.pos;
+                if hir.text.get(at as usize) == Some(&b'[') {
+                    let inside = &hir.text[at as usize + 1..];
+                    at += 1 + (inside.len() - inside.trim_ascii_start().len()) as u32;
+                }
+                (file, at, self.end_of_name_at(file, at))
+            }
+        };
+        let mut access_flags = AccessFlags::EXPRESSION_POSITION;
+        access_flags.set(
+            AccessFlags::ALLOW_MISSING,
+            self.has_default_value(file, property.value),
+        );
+        let element_type = self
+            .indexed_access_of_binding_element(
+                object_literal_type,
+                expr_type,
+                access_flags,
+                AccessNode::Name(name),
+            )
+            .unwrap_or(TypeId::ERROR);
+        let ty = self.narrow_destructured_assignment(file, property.value, element_type);
+        self.check_destructuring_assignment(file, property.value, ty)
+    }
+
+    /// `checkArrayLiteralAssignment`
+    fn check_array_literal_assignment(&mut self, file: FileId, node: ExprId, source_type: TypeId) {
+        let hir = self.hir(file);
+        let ExprKind::Array(elements) = hir[node].kind else {
+            return;
+        };
+        let error_node = (file, hir[node].pos, self.end_of_expr(file, node));
+        let usage = IterationUse::Destructuring;
+        let in_bounds_type = if self.is_any(source_type) {
+            source_type
         } else {
-            self.union(&types)
+            self.iterated_type_or_element_type(
+                usage,
+                source_type,
+                TypeId::UNDEFINED,
+                Some(error_node),
+            )
+            .unwrap_or(TypeId::ERROR)
+        };
+        // `IterationUsePossiblyOutOfBounds`
+        let possibly_out_of_bounds_type = if self.p.files.options.no_unchecked_indexed_access {
+            self.optional(in_bounds_type)
+        } else {
+            in_bounds_type
+        };
+        for (index, element) in hir.ids(elements).enumerate() {
+            let is_last = index + 1 == elements.len();
+            let element_type = match hir[element].kind {
+                ExprKind::Spread(_) => in_bounds_type,
+                _ => possibly_out_of_bounds_type,
+            };
+            self.check_array_literal_destructuring_element_assignment(
+                file,
+                source_type,
+                (index, is_last),
+                element,
+                element_type,
+            );
         }
     }
 
-    /// `checkVariableLikeDeclaration`, of a declaration whose name is a pattern in which nothing has a name: no element asks what is
-    /// taken apart, so it is asked here. 2531 2532 2533 2571, 2488.
-    fn check_pattern_without_names(&mut self, file: FileId, pat: PatId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let initializer = match bound.pat_parent[pat.idx()] {
-            PatParent::None => return,
-            PatParent::Var(d) => {
-                // The initializer of the variable of a `for`-`in` is an error already.
-                let s = bound.var_stmt[d.idx()];
-                let is_of_for_in = s.is_some()
-                    && matches!(bound.stmt_parent[s.idx()], Parent::Stmt(l) if matches!(hir[l].kind, StmtKind::ForIn { left, .. } if left == s));
-                if is_of_for_in {
-                    ExprId::NONE
+    /// `checkArrayLiteralDestructuringElementAssignment`
+    fn check_array_literal_destructuring_element_assignment(
+        &mut self,
+        file: FileId,
+        source_type: TypeId,
+        (element_index, is_last): (usize, bool),
+        element: ExprId,
+        element_type: TypeId,
+    ) {
+        let hir = self.hir(file);
+        match hir[element].kind {
+            ExprKind::Missing => {}
+            ExprKind::Spread(_) if !is_last => {
+                self.error_at(
+                    (file, hir[element].pos, self.end_of_expr(file, element)),
+                    2462,
+                    &[],
+                );
+            }
+            ExprKind::Spread(rest_expression) => {
+                if let ExprKind::Assign {
+                    op: None, value, ..
+                } = hir[rest_expression].kind
+                    && !is_parenthesized(hir, rest_expression)
+                {
+                    if let Some(start) = start_of_equals_before(self, file, value) {
+                        self.error_at((file, start, start + 1), 1186, &[]);
+                    }
+                    return;
+                }
+                let ty = if self.every_type(source_type, |c, t| c.is_tuple(t)) {
+                    self.element_of_destructured(source_type, element_index, true, None)
                 } else {
-                    hir[d].init
-                }
+                    self.array_of(element_type)
+                };
+                self.check_destructuring_assignment(file, rest_expression, ty)
             }
-            PatParent::Param(q) => hir[q].default,
-            PatParent::Prop(_, prop) => hir[prop].default,
-            PatParent::Elem(_, elem) => hir[elem].default,
+            _ if self.is_array_like(source_type) => {
+                let index_type = self.number_literal(element_index as f64, false);
+                let has_default_value = self.has_default_value(file, element);
+                let mut access_flags = AccessFlags::EXPRESSION_POSITION;
+                access_flags.set(AccessFlags::ALLOW_MISSING, has_default_value);
+                let at = (
+                    file,
+                    self.start_of(file, element),
+                    self.end_of_expr(file, element),
+                );
+                let mut assigned_type = self
+                    .indexed_access_of_binding_element(
+                        source_type,
+                        index_type,
+                        access_flags,
+                        AccessNode::Name(at),
+                    )
+                    .unwrap_or(TypeId::ERROR);
+                if has_default_value {
+                    assigned_type = self.type_with_ne_undefined(assigned_type);
+                }
+                let ty = self.narrow_destructured_assignment(file, element, assigned_type);
+                self.check_destructuring_assignment(file, element, ty)
+            }
+            _ => self.check_destructuring_assignment(file, element, element_type),
+        }
+    }
+
+    /// `checkReferenceAssignment`
+    fn check_reference_assignment(&mut self, file: FileId, target: ExprId, source_type: TypeId) {
+        let target_type = self.type_of_expr(file, target);
+        // `IsSpreadAssignment(target.Parent)`
+        let is_rest = matches!(self.bound(file).expr_parent[target.idx()], Parent::Prop(p) if self.hir(file)[p].kind == PropKind::Spread);
+        let (message, optional_message) = if is_rest { (2701, 2778) } else { (2364, 2779) };
+        if self.check_reference_expression(file, target, message, optional_message) {
+            let error_node = Some(self.error_range_of(file, target));
+            self.check_type_assignable_to(source_type, target_type, error_node, None);
+        }
+    }
+
+    /// `checkVariableLikeDeclaration`, "For a binding pattern, validate the initializer and exit", where `needCheckWidenedType`: nothing in
+    /// `pat` has a name, so no element asks what is taken apart.
+    pub(super) fn check_empty_binding_pattern(&mut self, file: FileId, pat: PatId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if !Self::pattern_binds_nothing(hir, pat) {
+            return;
+        }
+        let (node, mut initializer) = match bound.pat_parent[pat.idx()] {
+            PatParent::None => return,
+            PatParent::Var(d) => (hir.node(d), hir[d].init),
+            PatParent::Param(q) => (hir.node(q), hir[q].default),
+            PatParent::Prop(_, prop) => (hir.node(prop), hir[prop].default),
+            PatParent::Elem(_, elem) => (hir.node(elem), hir[elem].default),
         };
-        let root = root_pattern(bound, pat);
-        let mut at = hir[pat].pos;
-        // The parameter, if the error is about the whole of it. A variable or a binding element is pointed at by its name.
-        let mut parameter = ParamId::NONE;
-        let mut is_put_off = false;
-        let is_annotated = match bound.pat_parent[root.idx()] {
-            PatParent::Var(d) => {
-                if hir[d].flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration {
-                    return;
-                }
-                hir[d].ty.is_some()
-            }
-            PatParent::Param(q) => {
-                let func = bound.param_fn[q.idx()];
-                // An initializer where there is no body is 2371, and no more is said.
-                if initializer.is_some() && matches!(hir[func].body, FnBody::None) {
-                    return;
-                }
-                // `isInAmbientOrTypeNode`
-                if hir.is_in_ambient_or_type_node(hir.node(q)) {
-                    return;
-                }
-                if root == pat {
-                    // An error about a parameter starts where the parameter does.
-                    at = hir[q].pos;
-                    parameter = q;
-                    // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` looks at the parameters of an argument while the call
-                    // is being resolved, when what is expected is still in terms of the type parameters of what is called.
-                    let index = (q.0 - hir[func].params.start) as usize;
-                    is_put_off = hir[q].ty.is_none()
-                        && self.iife_param_type(file, func, index).is_none()
-                        && self.contextual_param_type(file, func, index).is_some();
-                }
-                hir[q].ty.is_some()
-            }
-            _ => return,
-        };
-        let end = move |c: &Self| {
-            if parameter.is_some() {
-                c.end_of_param(file, parameter)
-            } else {
-                c.end_of_pat(file, pat)
-            }
-        };
+        let root = bound.pat_parent[root_pattern(bound, pat).idx()];
+        // An initializer where there is no body is 2371, and no more is said.
+        if let PatParent::Param(q) = root
+            && initializer.is_some()
+            && matches!(hir[bound.param_fn[q.idx()]].body, FnBody::None)
+        {
+            return;
+        }
+        if hir.is_in_ambient_or_type_node(node) {
+            return;
+        }
+        // "Don't validate for-in initializer as it is already an error"
+        if hir.kind(hir.parent(hir.parent(node))) == Kind::ForInStatement {
+            initializer = ExprId::NONE;
+        }
+        let (start, end) = self.get_error_range_for_node(file, node);
+        let error_node = (file, start, end);
         let strict = self.p.files.options.strict_null_checks;
         if strict && initializer.is_some() {
-            let ty = self.type_of_expr(file, initializer);
-            self.check_not_null_nor_void(ty, at, end);
+            let initializer_type = self.type_of_expr(file, initializer);
+            self.check_non_null_non_void_type(initializer_type, error_node);
         }
-        if is_put_off {
-            return;
+        // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` looks at the parameters of an argument while the call is being
+        // resolved, when what is expected is still in terms of the type parameters of what is called.
+        if let PatParent::Param(q) = bound.pat_parent[pat.idx()] {
+            let func = bound.param_fn[q.idx()];
+            let index = (q.0 - hir[func].params.start) as usize;
+            if hir[q].ty.is_none()
+                && self.iife_param_type(file, func, index).is_none()
+                && self.contextual_param_type(file, func, index).is_some()
+            {
+                return;
+            }
         }
         // `getWidenedTypeForVariableLikeDeclaration`. What is written out is not widened.
-        let mut widened = self.type_of_pat(file, pat);
-        if !is_annotated {
-            widened = self.regular_object(widened);
-        }
-        match hir[pat].kind {
-            PatKind::Array(_) => {
-                let error_node = (file, at, end(&*self));
-                let usage = IterationUse::Destructuring;
-                self.check_iterated(usage, widened, TypeId::UNDEFINED, error_node);
-            }
-            _ if strict => self.check_not_null_nor_void(widened, at, end),
-            _ => {}
-        }
-    }
-
-    /// `checkNonNullNonVoidType`, said of a declaration, which is no entity name, where `null` and `undefined` are told apart:
-    /// 2571, 2531 to 2533.
-    fn check_not_null_nor_void(&mut self, ty: TypeId, at: u32, end: impl FnOnce(&Self) -> u32) {
-        if !self.is_known(ty) || self.is_any(ty) {
-            return;
-        }
-        let (mut undefined, mut null) = (false, false);
-        for &m in self.parts(ty) {
-            // `getTypeFacts`: what is generic can be what it extends can be.
-            let m = if self.is_deferred(m) {
-                self.base_constraint(m)
-            } else {
-                m
-            };
-            undefined |= self.some_type(m, |_, p| p.is_undefined());
-            null |= self.some_type(m, |_, p| p.is_null());
-        }
-        let code = match (undefined, null) {
-            _ if ty == TypeId::UNKNOWN => 2571,
-            (true, true) => 2533,
-            (true, false) => 2532,
-            (false, true) => 2531,
-            // Only `void` itself: in a union it goes unnoticed, or goes with the `null`.
-            _ if ty == TypeId::VOID => 2532,
+        let mut widened_type = self.type_of_pat(file, pat);
+        let is_annotated = match root {
+            PatParent::Var(d) => hir[d].ty.is_some(),
+            PatParent::Param(q) => hir[q].ty.is_some(),
             _ => return,
         };
-        let end = end(&*self);
-        self.error_at((self.checking.unwrap(), at, end), code, &[]);
+        if !is_annotated {
+            widened_type = self.regular_object(widened_type);
+        }
+        if matches!(hir[pat].kind, PatKind::Array(_)) {
+            let usage = IterationUse::Destructuring;
+            self.check_iterated(usage, widened_type, TypeId::UNDEFINED, error_node);
+        } else if strict {
+            self.check_non_null_non_void_type(widened_type, error_node);
+        }
     }
 
-    /// `checkYieldExpression`: what is yielded against what the generator says it yields.
-    fn check_yield(&mut self, file: FileId, e: ExprId, value: ExprId, star: bool) {
-        let hir = self.hir(file);
-        let Some(func) = self.containing_generator(file, e) else {
-            return;
-        };
-        let f = &hir[func];
-        let is_async = f.flags.contains(Flags::ASYNC);
-        let mut yielded = if value.is_some() {
-            self.type_of_expr(file, value)
-        } else {
-            TypeId::UNDEFINED
-        };
-        let at = if value.is_some() {
-            self.error_start_of(file, value)
-        } else {
-            hir[e].pos
-        };
-        // An error about a `yield` as a whole is put on the keyword.
-        let end = move |c: &Self| {
-            if value.is_some() {
-                c.error_end_of(file, value)
-            } else {
-                c.error_end_inside_parentheses(file, e)
-            }
-        };
-        if star {
-            // What the generator says it is sent. Which member of a union it goes by is not looked into.
-            let mut sent = TypeId::ANY;
-            if f.ret.is_some() {
-                let declared = self.type_from_node(file, f.ret);
-                if !self.is_known(declared) {
-                    return;
-                }
-                if !self.is_union(declared)
-                    && let Some(types) = self.iteration_types(declared, is_async)
-                {
-                    sent = types.next;
-                }
-            }
-            let usage = if is_async {
-                IterationUse::AsyncYieldStar
-            } else {
-                IterationUse::YieldStar
+    /// `checkNonNullNonVoidType`, of a declaration, which is no entity name.
+    fn check_non_null_non_void_type(&mut self, ty: TypeId, error_node: (FileId, u32, u32)) {
+        use super::flow::NonNullError;
+        let non_null_type = self.check_non_null_type_with_reporter(ty, |c, error| {
+            let code = match error {
+                NonNullError::IsUnknown => 2571,
+                NonNullError::IsPossibly {
+                    undefined: true,
+                    null: true,
+                } => 2533,
+                NonNullError::IsPossibly {
+                    undefined: true, ..
+                } => 2532,
+                NonNullError::IsPossibly { .. } => 2531,
             };
-            match self.check_iterated(usage, yielded, sent, (file, at, end(&*self))) {
-                Some(iterated) => yielded = iterated,
-                None => return,
-            }
-        }
-        if f.ret.is_none() {
-            return;
-        }
-        let mut declared = self.type_from_node(file, f.ret);
-        if !self.is_known(declared) || self.is_any(declared) {
-            return;
-        }
-        // Of the alternatives, those that a generator can be.
-        if self.is_union(declared) {
-            declared = self.filter(declared, |c, m| {
-                let generator = c.generator_instantiation(m, is_async);
-                c.is_assignable(generator, m)
-            });
-        }
-        let Some(wanted) = self.iteration_types(declared, is_async).map(|t| t.yielded) else {
-            return;
-        };
-        if is_async {
-            yielded = self.awaited(yielded);
-        }
-        let end = end(&*self);
-        self.check_type_assignable_to_and_optionally_elaborate(
-            yielded,
-            wanted,
-            Some((file, at, end)),
-            value.some().filter(|_| !star).map(|e| (file, e)),
-            false,
-            None,
-            None,
-        );
-    }
-}
-
-/// The arguments of what `past_the_end_of_tuples` says of the element `name` of `object`: 2493, or 2339 of a union.
-fn past_the_end_arguments(
-    c: &mut Checker<'_>,
-    code: u32,
-    object: TypeId,
-    name: Atom,
-) -> Vec<String> {
-    let printed = c.type_to_string(object);
-    if code != 2493 {
-        return vec![c.atom_text(name), printed];
-    }
-    // `getTypeReferenceArity`
-    let length = match c.data(object) {
-        TypeData::Tuple { flags, .. } => flags.len(),
-        _ => 0,
-    };
-    vec![printed, length.to_string(), c.atom_text(name)]
-}
-
-/// `LiteralType.value` of a string or number literal type or of a member of an enum, as it is put in a message.
-fn literal_value_text(c: &Checker<'_>, ty: TypeId) -> String {
-    match *c.data(ty) {
-        TypeData::StringLit { value, .. }
-        | TypeData::EnumLit {
-            value: EnumValue::String(value),
-            ..
-        } => c.atom_text(value),
-        TypeData::NumberLit { bits, .. }
-        | TypeData::EnumLit {
-            value: EnumValue::Number(bits),
-            ..
-        } => crate::atom::number_to_string(f64::from_bits(bits)),
-        _ => String::new(),
-    }
-}
-
-/// The arguments of what `checkPropertyAccessibilityAtLocation` says of the property `name` of `containing`, asked for by `e`:
-/// 2341 2445 2446.
-fn accessibility_arguments(
-    c: &mut Checker<'_>,
-    file: FileId,
-    e: ExprId,
-    code: u32,
-    containing: TypeId,
-    name: Atom,
-) -> Vec<String> {
-    let first = c.parts(containing).first().copied().unwrap_or(containing);
-    let first = c.apparent_type(first);
-    // `getDeclaringClass`
-    let declaring = match c.prop_of(first, name) {
-        Some((prop, _)) => c.declaring_class(&prop),
-        None => None,
-    };
-    let property = c.atom_text(name);
-    if code != 2446 {
-        let class = match declaring {
-            Some(class) => c.declared_type(class),
-            None => containing,
-        };
-        return vec![property, c.type_to_string(class)];
-    }
-    // The innermost class around that is, or derives from, the one that declares it.
-    let mut enclosing = None;
-    for class in c.enclosing_classes(file, e) {
-        let class = c.class_sym(file, class);
-        let declared = c.declared_type(class);
-        if let Some(declaring) = declaring
-            && c.has_base(declared, declaring, 0)
-        {
-            enclosing = Some(declared);
-            break;
+            c.error_at(error_node, code, &[]);
+        });
+        if non_null_type == TypeId::VOID {
+            self.error_at(error_node, 2532, &[]);
         }
     }
-    let through = if c.is_deferred(containing) {
-        c.base_constraint(containing)
-    } else {
-        containing
-    };
-    let enclosing = match enclosing {
-        Some(class) => c.type_to_string(class),
-        None => String::new(),
-    };
-    vec![property, enclosing, c.type_to_string(through)]
 }

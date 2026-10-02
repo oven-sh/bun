@@ -23,7 +23,7 @@ bun init my-app
  + CLAUDE.md
  + .cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc -> CLAUDE.md
  + index.ts
- + tsconfig.json (for editor autocomplete)
+ + tsconfig.json (for bun check and editor autocomplete)
  + README.md
 ```
 
@@ -39,7 +39,7 @@ Press `enter` to accept the default answer for each prompt, or pass the `-y` fla
 
 It creates:
 
-- a `package.json` file with a name that defaults to the current directory name
+- a `package.json` file with a name that defaults to the current directory name, and a `typecheck` script that runs [`bun check`](/runtime/check)
 - a `tsconfig.json` or `jsconfig.json` file, depending on whether the entry point is a TypeScript file
 - an entry point, which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
 - a `README.md` file
@@ -51,7 +51,7 @@ AI Agent rules (disable with `$BUN_AGENT_RULE_DISABLED=1`):
 
 Pass `-y` or `--yes` to accept the defaults without prompting.
 
-At the end, it runs `bun install` to install `@types/bun`.
+At the end, it runs `bun install` to install `@types/bun` and `typescript`, which is all [`bun check`](/runtime/check) needs.
 
 ---
 

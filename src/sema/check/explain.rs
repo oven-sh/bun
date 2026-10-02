@@ -41,7 +41,7 @@ pub(super) fn lines_of(chain: Vec<Reported>) -> Vec<Line> {
 }
 
 /// `lines_of`, the other way.
-fn add_lines(chain: &mut Vec<Reported>, lines: Vec<Line>) {
+pub(super) fn add_lines(chain: &mut Vec<Reported>, lines: Vec<Line>) {
     for line in lines {
         let mut under = &mut *chain;
         for _ in 1..line.level {
@@ -329,10 +329,6 @@ fn args_from_source(text: &[u8], start: u32, end: u32, code: u32) -> Args {
         .iter()
         .map(|source| match source {
             Source::Name => token.into(),
-            Source::StringContents => match token {
-                [q @ (b'"' | b'\'' | b'`'), inner @ .., last] if last == q => inner.into(),
-                _ => token.into(),
-            },
         })
         .collect()
 }

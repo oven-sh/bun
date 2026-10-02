@@ -1,8 +1,8 @@
 //! `checkGrammarModifiers` (TypeScript 7.0.2, grammarchecks.go), on `node.Modifiers()` as the tree has it.
 
-use super::sink::held;
 use super::*;
 use crate::bind::{MemberOwner, Parent};
+use smallvec::SmallVec;
 
 /// What `grammarErrorOnNode` is given: where the node is, the code of the message, and its arguments. `""`: no argument. An `end` of 0:
 /// that of the token at `start`.
@@ -25,157 +25,78 @@ impl GrammarError {
     }
 }
 
-/// `node`, of `checkGrammarModifiers(node)`.
-#[derive(Copy, Clone)]
-pub(super) enum HasModifiers {
-    Statement(StmtId),
-    Member(MemberId),
-    Parameter(ParamId),
-    TypeParameter(TypeParamId),
-}
-
-/// `node.Kind`
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Kind {
-    PropertyDeclaration,
-    PropertySignature,
-    MethodDeclaration,
-    MethodSignature,
-    /// `KindGetAccessor`, `KindSetAccessor`
-    Accessor,
-    Constructor,
-    IndexSignature,
-    Parameter,
-    TypeParameter,
-    FunctionDeclaration,
-    ClassDeclaration,
-    EnumDeclaration,
-    InterfaceDeclaration,
-    TypeAliasDeclaration,
-    VariableStatement,
-    ModuleDeclaration,
-    ImportDeclaration,
-    ImportEqualsDeclaration,
-    ExportDeclaration,
-    ExportAssignment,
-}
-
 const ACCESSIBILITY: Flags = Flags::PUBLIC.union(Flags::PRIVATE).union(Flags::PROTECTED);
 
-/// `scanner.TokenToString(modifier.Kind)`
-pub(super) fn modifier_text(modifier: Flags) -> &'static str {
-    const TEXTS: [(Flags, &str); 15] = [
-        (Flags::ABSTRACT, "abstract"),
-        (Flags::ACCESSOR, "accessor"),
-        (Flags::ASYNC, "async"),
-        (Flags::CONST, "const"),
-        (Flags::AMBIENT, "declare"),
-        (Flags::DEFAULT, "default"),
-        (Flags::EXPORT, "export"),
-        (Flags::IN, "in"),
-        (Flags::OUT, "out"),
-        (Flags::OVERRIDE, "override"),
-        (Flags::PRIVATE, "private"),
-        (Flags::PROTECTED, "protected"),
-        (Flags::PUBLIC, "public"),
-        (Flags::READONLY, "readonly"),
-        (Flags::STATIC, "static"),
-    ];
-    TEXTS
-        .iter()
-        .find(|text| text.0 == modifier)
-        .map_or("", |text| text.1)
-}
-
 impl Checker<'_> {
-    /// `checkGrammarModifiers`, of every statement, member, parameter and type parameter that has modifiers.
-    pub(super) fn check_grammar_modifiers(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    /// `checkGrammarModifiers`
+    pub(super) fn check_grammar_modifiers(&mut self, file: FileId, node: impl ToNode) -> bool {
         // `grammarErrorOnNode`
+        if has_parse_diagnostics(self.hir(file)) {
+            return false;
+        }
+        let error = self.grammar_error_in_modifiers(file, node);
+        error.is_some_and(|error| self.report_grammar_error(file, error))
+    }
+
+    fn report_grammar_error(&mut self, file: FileId, error: GrammarError) -> bool {
+        let args = error.args.iter().filter(|arg| !arg.is_empty());
+        let args: SmallVec<[Arg<'_>; 2]> = args.map(|&arg| Arg::Text(arg)).collect();
+        self.error_at((file, error.start, error.end), error.code, &args);
+        true
+    }
+
+    /// The same, of a statement that has modifiers, with what hangs on it.
+    pub(super) fn check_grammar_modifiers_of_statement(&mut self, file: FileId, s: StmtId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
         if has_parse_diagnostics(hir) {
             return;
         }
-        let report = |c: &mut Self, error: GrammarError| {
-            let (start, code) = (error.start, error.code);
-            let args = error.args.iter().filter(|arg| !arg.is_empty());
-            c.add_diagnostic(Reported::new(
-                (file, start, error.end),
-                code,
-                held(args.map(|&arg| arg.to_owned()).collect()),
-            ));
-        };
-        for (s, statement) in hir.stmts.iter().enumerate() {
-            if statement.modifiers.is_empty() || matches!(bound.stmt_parent[s], Parent::None) {
-                continue;
-            }
-            let node = HasModifiers::Statement(StmtId(s as u32));
-            let error = self.grammar_error_in_modifiers(file, node);
-            // `checkGrammarClassDeclarationHeritageClauses`, `checkInterfaceDeclaration`: `!c.checkGrammarModifiers(node) && ..`. The
-            // front end reports the clauses.
-            if error.is_some() {
-                let members = match statement.kind {
-                    StmtKind::Class(c) => hir[c].members,
-                    StmtKind::Interface(i) => hir[i].members,
-                    _ => Span::EMPTY,
-                };
-                let first_member = members.iter().next().map(|m| hir[m].start);
-                let header = statement.start..first_member.unwrap_or(statement.loc.end);
-                self.reported.retain(|d| {
-                    !matches!(d.code, 1097 | 1172..=1176) || !header.contains(&d.start)
-                });
-            }
-            // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these take none.
-            let takes_none = match (statement.kind, bound.stmt_parent[s]) {
-                (StmtKind::Import(_), Parent::File | Parent::Module(_)) => 1191,
-                (
-                    StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
-                    Parent::File | Parent::Module(_),
-                ) => 1193,
-                (StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_), Parent::File) => 1120,
-                (StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_), Parent::Module(m))
-                    if !matches!(hir[m].name, ModuleName::Ident(_)) =>
-                {
-                    1120
-                }
-                _ => 0,
+        let statement = &hir[s];
+        let error = self.grammar_error_in_modifiers(file, s);
+        // `checkGrammarClassDeclarationHeritageClauses`, `checkInterfaceDeclaration`: `!c.checkGrammarModifiers(node) && ..`. The
+        // front end reports the clauses.
+        if error.is_some() {
+            let members = match statement.kind {
+                StmtKind::Class(c) => hir[c].members,
+                StmtKind::Interface(i) => hir[i].members,
+                _ => Span::EMPTY,
             };
-            let takes_none = GrammarError::some(statement.start, 0, takes_none, ["", ""]);
-            if let Some(error) = error.or(takes_none.filter(|error| error.code != 0)) {
-                report(self, error);
-            }
+            let first_member = members.iter().next().map(|m| hir[m].start);
+            let header = statement.start..first_member.unwrap_or(statement.loc.end);
+            self.reported
+                .retain(|d| !matches!(d.code, 1097 | 1172..=1176) || !header.contains(&d.start));
         }
-        for (m, member) in hir.members.iter().enumerate() {
-            if member.modifiers.is_empty() || bound.member_owner[m] == MemberOwner::None {
-                continue;
-            }
-            let node = HasModifiers::Member(MemberId(m as u32));
-            let Some(error) = self.grammar_error_in_modifiers(file, node) else {
-                continue;
-            };
-            // `checkGrammarIndexSignature`: `c.checkGrammarModifiers(node) || c.checkGrammarIndexSignatureParameters(node)`. The front
-            // end reports the parameters.
-            if member.kind == MemberKind::IndexSignature {
-                let signature = member.start..member.loc.end;
-                self.reported.retain(|d| {
-                    !matches!(d.code, 1017..=1020 | 1022 | 1025 | 1096)
-                        || !signature.contains(&d.start)
-                });
-            }
-            report(self, error);
-        }
-        for p in 0..hir.modifiers_of_params.len() {
-            if bound.param_fn[p].is_some()
-                && let Some(error) = self
-                    .grammar_error_in_modifiers(file, HasModifiers::Parameter(ParamId(p as u32)))
+        // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these take none.
+        let takes_none = match (statement.kind, bound.stmt_parent[s.idx()]) {
+            (StmtKind::Import(_), Parent::File | Parent::Module(_)) => 1191,
+            (
+                StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
+                Parent::File | Parent::Module(_),
+            ) => 1193,
+            (StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_), Parent::File) => 1120,
+            (StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_), Parent::Module(m))
+                if !matches!(hir[m].name, ModuleName::Ident(_)) =>
             {
-                report(self, error);
+                1120
             }
+            _ => 0,
+        };
+        let takes_none = GrammarError::some(statement.start, 0, takes_none, ["", ""]);
+        if let Some(error) = error.or(takes_none.filter(|error| error.code != 0)) {
+            self.report_grammar_error(file, error);
         }
-        for p in 0..hir.type_params.len() {
-            let node = HasModifiers::TypeParameter(TypeParamId(p as u32));
-            if let Some(error) = self.grammar_error_in_modifiers(file, node) {
-                report(self, error);
-            }
+    }
+
+    /// The same, of a member that has modifiers.
+    pub(super) fn check_grammar_modifiers_of_member(&mut self, file: FileId, m: MemberId) {
+        let member = &self.hir(file)[m];
+        // `checkGrammarIndexSignature`: `c.checkGrammarModifiers(node) || c.checkGrammarIndexSignatureParameters(node)`. The front
+        // end reports the parameters.
+        if self.check_grammar_modifiers(file, m) && member.kind == MemberKind::IndexSignature {
+            let signature = member.start..member.loc.end;
+            self.reported.retain(|d| {
+                !matches!(d.code, 1017..=1020 | 1022 | 1025 | 1096) || !signature.contains(&d.start)
+            });
         }
     }
 
@@ -183,81 +104,50 @@ impl Checker<'_> {
     pub(super) fn grammar_error_in_modifiers(
         &self,
         file: FileId,
-        node: HasModifiers,
+        node: impl ToNode,
     ) -> Option<GrammarError> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (kind, modifiers) = match node {
-            HasModifiers::Statement(s) if s.is_none() => return None,
-            HasModifiers::Statement(s) => {
-                let kind = match hir[s].kind {
-                    StmtKind::Fn(_) => Kind::FunctionDeclaration,
-                    StmtKind::Class(_) => Kind::ClassDeclaration,
-                    StmtKind::Enum(_) => Kind::EnumDeclaration,
-                    StmtKind::Interface(_) => Kind::InterfaceDeclaration,
-                    StmtKind::TypeAlias(_) => Kind::TypeAliasDeclaration,
-                    StmtKind::Var(_) => Kind::VariableStatement,
-                    StmtKind::Module(_) => Kind::ModuleDeclaration,
-                    StmtKind::Import(_) => Kind::ImportDeclaration,
-                    StmtKind::ImportEquals(_) => Kind::ImportEqualsDeclaration,
-                    StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
-                        Kind::ExportDeclaration
-                    }
-                    StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) => {
-                        Kind::ExportAssignment
-                    }
-                    // The binder objects to those of `export as namespace N`. Nothing else has any.
-                    _ => return None,
-                };
-                (kind, hir[s].modifiers)
-            }
-            HasModifiers::Member(m) => {
-                let is_in_class = matches!(bound.member_owner[m.idx()], MemberOwner::Class(_));
-                let kind = match hir[m].kind {
-                    MemberKind::Property if is_in_class => Kind::PropertyDeclaration,
-                    MemberKind::Property => Kind::PropertySignature,
-                    MemberKind::Method if is_in_class => Kind::MethodDeclaration,
-                    MemberKind::Method => Kind::MethodSignature,
-                    MemberKind::Getter | MemberKind::Setter => Kind::Accessor,
-                    MemberKind::Constructor => Kind::Constructor,
-                    MemberKind::IndexSignature => Kind::IndexSignature,
-                    // `parseTypeMember` reads no modifiers before a signature without a name. Those of a static block are the front
-                    // end's (`findFirstIllegalModifier`).
-                    MemberKind::CallSignature
-                    | MemberKind::ConstructSignature
-                    | MemberKind::StaticBlock => return None,
-                };
-                (kind, hir[m].modifiers)
-            }
-            HasModifiers::Parameter(p) => (Kind::Parameter, hir.param_modifiers(p)),
-            HasModifiers::TypeParameter(p) => (Kind::TypeParameter, hir[p].modifiers),
+        let location = hir.node(node);
+        let (kind, node) = (hir.kind(location), hir.data(location));
+        let modifiers = match node {
+            NodeData::Stmt(s) => hir[s].modifiers,
+            NodeData::Member(m) => hir[m].modifiers,
+            NodeData::Param(p) => hir.param_modifiers(p),
+            NodeData::TypeParam(p) => hir[p].modifiers,
+            _ => return None,
         };
-        if modifiers.is_empty() {
+        // The binder objects to those of `export as namespace N`. `parseTypeMember` reads none before a signature without a name. Those
+        // of a static block are the front end's (`findFirstIllegalModifier`).
+        if modifiers.is_empty()
+            || matches!(
+                kind,
+                Kind::NamespaceExportDeclaration
+                    | Kind::CallSignature
+                    | Kind::ConstructSignature
+                    | Kind::ClassStaticBlockDeclaration
+            )
+        {
             return None;
         }
-        // `node.Parent`, of a type parameter: a class, or an interface or a type alias.
-        let is_type_parameter_of = |list: Span<TypeParamId>| matches!(node, HasModifiers::TypeParameter(p) if list.iter().any(|it| it == p));
+        // `node.Parent`, of a type parameter
         let is_type_parameter = kind == Kind::TypeParameter;
-        let is_of_class = is_type_parameter
-            && hir
-                .classes
-                .iter()
-                .any(|it| is_type_parameter_of(it.type_params));
-        let is_of_interface_or_alias = is_type_parameter
-            && (hir
-                .interfaces
-                .iter()
-                .any(|it| is_type_parameter_of(it.type_params))
-                || hir
-                    .aliases
-                    .iter()
-                    .any(|it| is_type_parameter_of(it.type_params)));
+        let around = if is_type_parameter {
+            hir.kind(hir.parent(location))
+        } else {
+            Kind::Unknown
+        };
+        let is_of_class = around.is_class_like();
+        let is_of_interface_or_alias = matches!(
+            around,
+            Kind::InterfaceDeclaration | Kind::TypeAliasDeclaration | Kind::JSTypeAliasDeclaration
+        );
         let parent = match node {
-            HasModifiers::Statement(s) => bound.stmt_parent[s.idx()],
+            NodeData::Stmt(s) => bound.stmt_parent[s.idx()],
             _ => Parent::None,
         };
         // `IsClassLike(node.Parent)`
         let class = match node {
-            HasModifiers::Member(m) => match bound.member_owner[m.idx()] {
+            NodeData::Member(m) => match bound.member_owner[m.idx()] {
                 MemberOwner::Class(class) => Some(class),
                 _ => None,
             },
@@ -265,14 +155,12 @@ impl Checker<'_> {
         };
         // `IsPrivateIdentifier(node.Name())`
         let has_private_name =
-            matches!(node, HasModifiers::Member(m) if matches!(hir[m].key, PropKey::Private(_)));
+            matches!(node, NodeData::Member(m) if matches!(hir[m].key, PropKey::Private(_)));
         // `grammarErrorOnNode(node, ..)`
         let error_on_node = |code: u32, args: [&'static str; 2]| {
             let (start, end) = match node {
-                HasModifiers::Statement(s) => (hir[s].start, 0),
-                HasModifiers::Member(m) => self.error_range_of_member(file, m),
-                HasModifiers::Parameter(p) => (hir[p].pos, self.end_of_param(file, p)),
-                HasModifiers::TypeParameter(p) => (hir[p].start, hir[p].end),
+                NodeData::Stmt(s) => (hir[s].start, 0),
+                _ => self.get_error_range_for_node(file, location),
             };
             GrammarError::some(start, end, code, args)
         };
@@ -315,7 +203,7 @@ impl Checker<'_> {
         // `reportObviousDecoratorErrors`, `CanHaveIllegalDecorators`
         let is_decorator =
             |modifier: &&Modifier| matches!(modifier.kind, ModifierKind::Decorator(_));
-        if matches!(node, HasModifiers::Statement(_))
+        if matches!(node, NodeData::Stmt(_))
             && kind != Kind::ClassDeclaration
             && let Some(decorator) = hir.modifier_list(modifiers).iter().find(is_decorator)
         {
@@ -327,7 +215,7 @@ impl Checker<'_> {
             return GrammarError::some(start, 0, 1184, ["", ""]);
         }
         let statement = match node {
-            HasModifiers::Statement(s) => hir[s].kind,
+            NodeData::Stmt(s) => hir[s].kind,
             _ => StmtKind::Empty,
         };
         // `node.Flags&NodeFlagsAmbient`
@@ -342,10 +230,10 @@ impl Checker<'_> {
         .contains(Flags::AMBIENT);
         // `node.Parent.Flags&NodeFlagsAmbient`
         let is_parent_ambient = match (node, parent) {
-            (HasModifiers::Member(_), _) => {
+            (NodeData::Member(_), _) => {
                 class.is_some_and(|class| hir[class].flags.contains(Flags::AMBIENT))
             }
-            (HasModifiers::Parameter(p), _) => hir
+            (NodeData::Param(p), _) => hir
                 .fns
                 .get(bound.param_fn[p.idx()].idx())
                 .is_some_and(|function| function.flags.contains(Flags::AMBIENT)),
@@ -536,7 +424,10 @@ impl Checker<'_> {
                 if kind != Kind::ClassDeclaration {
                     if !matches!(
                         kind,
-                        Kind::MethodDeclaration | Kind::PropertyDeclaration | Kind::Accessor
+                        Kind::MethodDeclaration
+                            | Kind::PropertyDeclaration
+                            | Kind::GetAccessor
+                            | Kind::SetAccessor
                     ) {
                         return error(1242, ["", ""]);
                     }
@@ -604,7 +495,7 @@ impl Checker<'_> {
             return error_at(last_declare, 1079, "declare");
         }
         // `ModifierFlagsParameterPropertyModifier`
-        if let HasModifiers::Parameter(p) = node
+        if let NodeData::Param(p) = node
             && seen.intersects(ACCESSIBILITY | Flags::READONLY | Flags::OVERRIDE)
         {
             let is_binding_pattern =

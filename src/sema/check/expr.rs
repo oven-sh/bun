@@ -3,7 +3,6 @@
 use super::errors::{both_are_bigint_like, can_be_equal, can_be_ordered, may_be_added};
 use super::errors_x_operators::{is_literal_expression_of_object, language_version};
 use super::infer::Inference;
-use super::relate::Relation;
 use super::shape::{Access, Found};
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
@@ -208,7 +207,7 @@ impl<'p> Checker<'p> {
             );
             let source =
                 c.instantiate_signature_in_inference_context(n, contextual_signature, &read, true);
-            c.instantiate_sig_in_context_under(signature, source, false, None)
+            c.instantiate_sig_in_context(signature, source, false)
         });
         match instantiated {
             Some(instantiated) => self.type_of_signature(instantiated, construct),
@@ -386,8 +385,7 @@ impl<'p> Checker<'p> {
                 | ExprKind::False
                 | ExprKind::Number(_)
                 | ExprKind::String(_)
-        ) || self.timed_out
-            || self.stack.len() >= MAX_DEPTH
+        ) || self.stack.len() >= MAX_DEPTH
             || self.is_stack_low()
         {
             return None;
@@ -948,8 +946,7 @@ impl<'p> Checker<'p> {
                 .map(|ty| (ty, Found::Property)),
             found => found,
         };
-        let apparent = self.apparent_type(receiver);
-        let apparent = self.reduced(apparent);
+        let apparent = self.reduced_apparent_type(receiver);
         let Some((declared, how)) = found else {
             if !self.is_certainly_missing(receiver, cycles_before) {
                 return (TypeId::UNRESOLVED, stops);
@@ -1051,8 +1048,14 @@ impl<'p> Checker<'p> {
             }
             self.check_property_accessibility(file, e, is_super, apparent, name, name_pos);
         }
-        // 2540
-        if target.written && self.is_assignment_to_readonly_property(file, e, obj, name) {
+        if target.written
+            && self
+                .readonly_entity_assigned_to(file, e, obj, name)
+                .is_some()
+        {
+            let right = self.place_of_token(file, name_pos);
+            let text = self.source_text(file, right.1, right.2);
+            self.error_at(right, 2540, &[Arg::Text(&text)]);
             return (TypeId::ERROR, stops);
         }
         let prop = match how {
@@ -1271,7 +1274,7 @@ impl<'p> Checker<'p> {
             return (TypeId::UNRESOLVED, false);
         };
         let (object, stops) = self.chain_receiver(file, obj, chain);
-        let receiver = self.non_null_type(object);
+        let receiver = self.check_non_null_type(file, obj, object);
         let target = self.target_kind(file, e);
         // `getWidenedType(exprType)`: what is written to or called is looked up in what a variable holding the object would be.
         let receiver = if target.written || self.is_called(file, e) {
@@ -1284,8 +1287,11 @@ impl<'p> Checker<'p> {
         if self.is_error_type(receiver) || receiver == TypeId::SILENT_NEVER {
             return (receiver, stops);
         }
-        // A `const` enum is only looked into by a name that is written out (2476).
+        // A `const` enum is only looked into by a name that is written out.
         if !is_string_literal_like(hir, index) && self.is_const_enum_object(receiver) {
+            if !hir.has_errors {
+                self.error_at(self.place_of_written_expr(file, index), 2476, &[]);
+            }
             return (TypeId::ERROR, stops);
         }
         // `isForInVariableForNumericPropertyNames`: the variable of a `for..in` over what has numbers for names is a number here.
@@ -1299,39 +1305,6 @@ impl<'p> Checker<'p> {
             && self.is_generic_object_type(receiver)
             && !matches!(self.data(receiver), TypeData::ThisParam(_));
         let cycles_before = self.cycles;
-        // `getIndexedAccessTypeOrUndefined`: in an expression only the key can put the answer off. `t[0]` of a `T` is what
-        // is at `0` in what `T` extends; it is the type `T[0]` that waits for `T`.
-        let receiver = if self.has_type_variables(receiver) && !self.is_generic(key) {
-            let strict_null_checks = self.p.files.options.strict_null_checks;
-            self.map_type(receiver, |c, m| {
-                if !c.is_generic(m) || c.is_tuple(m) {
-                    return m;
-                }
-                // Of `T & { a: 1 }`, what `T` extends and `{ a: 1 }`.
-                if let TypeData::Intersection(parts) = c.data(m) {
-                    let parts: Vec<TypeId> = parts
-                        .iter()
-                        .map(|&p| {
-                            if c.is_deferred(p) {
-                                c.base_constraint(p)
-                            } else {
-                                p
-                            }
-                        })
-                        .collect();
-                    let whole = c.intersection(&parts);
-                    return c.apparent_type(whole);
-                }
-                // `getApparentType`: what extends nothing extends `unknown`, which has nothing.
-                if strict_null_checks && c.is_deferred(m) && c.base_constraint(m) == TypeId::UNKNOWN
-                {
-                    return TypeId::UNKNOWN;
-                }
-                c.apparent_type(m)
-            })
-        } else {
-            receiver
-        };
         // `getPropertyTypeForIndexType`: `isThisPropertyAccessInConstructor` makes the property `autoType`.
         if hir.is_js
             && let Some(name) = self.property_name_of_type(key)
@@ -1344,16 +1317,28 @@ impl<'p> Checker<'p> {
         }
         // `getPropertyTypeForIndexType`: 2540 and nil for a key that names a read-only property.
         if target.written {
+            let mut was_missing_prop = false;
             for &k in self.parts(key) {
                 if let Some(name) = self.property_name_of_type(k)
-                    && self.is_assignment_to_readonly_property(file, e, obj, name)
+                    && let Some(prop) = self.readonly_entity_assigned_to(file, e, obj, name)
                 {
-                    return (TypeId::ERROR, stops);
+                    let at = (
+                        file,
+                        self.error_start_of(file, index),
+                        self.error_end_of(file, index),
+                    );
+                    self.error_at(at, 2540, &[Arg::Prop(prop)]);
+                    was_missing_prop = true;
                 }
             }
+            if was_missing_prop {
+                return (TypeId::ERROR, stops);
+            }
         }
-        // `AccessFlagsExpressionPosition`
-        let is_read = !target.definite;
+        let mut access_flags = AccessFlags::empty();
+        access_flags.set(AccessFlags::WRITING, target.written);
+        access_flags.set(AccessFlags::EXPRESSION_POSITION, !target.definite);
+        access_flags.set(AccessFlags::NO_INDEX_SIGNATURES, no_index_signatures);
         let of_super = if matches!(hir[obj].kind, ExprKind::Super) {
             self.property_name_of_type(key)
         } else {
@@ -1363,37 +1348,7 @@ impl<'p> Checker<'p> {
             Some(name) => self
                 .type_of_super_property(file, obj, receiver, name)
                 .map(|(ty, _)| ty),
-            None => {
-                let read = self.indexed_access_of_element_access(receiver, key, is_read);
-                // `AssignmentKindCompound` has `AccessFlagsExpressionPosition` as well: an index signature gives what it gives a read.
-                let mut is_writing = target.written;
-                if is_writing && !target.definite {
-                    for &k in self.parts(key) {
-                        is_writing = is_writing
-                            && match self.property_name_of_type(k) {
-                                Some(name) => self.finds_property(receiver, name),
-                                None => false,
-                            };
-                    }
-                }
-                // `AccessFlagsWriting`: `getWriteTypeOfSymbol`, and the intersection over a union of keys.
-                match read {
-                    Some(ty)
-                        if is_writing
-                            && !matches!(self.data(ty), TypeData::IndexedAccess { .. }) =>
-                    {
-                        let written =
-                            self.indexed_access_for_writing(receiver, key, no_index_signatures);
-                        match written {
-                            Some(written) if written != ty => Some(written),
-                            // 2862 and nil
-                            None if no_index_signatures => None,
-                            _ => read,
-                        }
-                    }
-                    _ => read,
-                }
-            }
+            None => self.indexed_access_of_element_access(receiver, key, access_flags, (file, e)),
         };
         let declared = match found {
             Some(found) => found,
@@ -1429,18 +1384,35 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// `checkIndexedAccessIndexType`: `T[K]` where `K` cannot be used to look into `T` is an error (2536, 4105), and `errorType`.
-    fn checked_indexed_access_index_type(&mut self, ty: TypeId) -> TypeId {
+    /// `checkIndexedAccessIndexType`
+    pub(super) fn check_indexed_access_index_type(
+        &mut self,
+        ty: TypeId,
+        access_node: (FileId, u32, u32),
+        e: Option<ExprId>,
+    ) -> TypeId {
         let TypeData::IndexedAccess { obj, index, .. } = *self.data(ty) else {
             return ty;
         };
-        let cycles_before = self.cycles;
-        let is_refused = self.is_generic(index) && self.why_not_a_key_of(obj, index).is_some();
-        if is_refused && self.cycles == cycles_before {
-            TypeId::ERROR
-        } else {
-            ty
+        match self.why_not_a_key_of(obj, index) {
+            Some(4105) => {
+                let name = self.property_name_of_type(index).unwrap_or(Atom::NONE);
+                self.error_at(access_node, 4105, &[Arg::Atom(name)]);
+            }
+            Some(code) => {
+                self.error_at(access_node, code, &[Arg::Type(index), Arg::Type(obj)]);
+            }
+            None => {
+                if e.is_some_and(|e| self.is_written(access_node.0, e))
+                    && let Some((of, node, _)) = self.mapped_origin(obj)
+                    && self.mapped_decl(of, node).readonly == MappedModifier::Add
+                {
+                    self.error_at(access_node, 2542, &[Arg::Type(obj)]);
+                }
+                return ty;
+            }
         }
+        TypeId::ERROR
     }
 
     /// The type of `a.b`, `a[b]` or `a()` when it is got to, and whether an optional chain it is part of may stop before.
@@ -1450,7 +1422,15 @@ impl<'p> Checker<'p> {
             ExprKind::Dot { .. } => self.type_of_property_access(file, e),
             ExprKind::Index { .. } => {
                 let (ty, stops) = self.type_of_element_access_unchecked(file, e);
-                (self.checked_indexed_access_index_type(ty), stops)
+                // Where it is written is only looked for where there is something to check.
+                if !matches!(self.data(ty), TypeData::IndexedAccess { .. }) {
+                    return (ty, stops);
+                }
+                let access_node = self.place_inside_parentheses(file, e);
+                (
+                    self.check_indexed_access_index_type(ty, access_node, Some(e)),
+                    stops,
+                )
             }
             // `checkCallExpression`: what is required is the module. `resolveExternalModuleTypeByLiteral`
             ExprKind::Call(_) if self.is_commonjs_require(file, e) => {
@@ -1654,14 +1634,7 @@ impl<'p> Checker<'p> {
                 let ty = self.type_of_expr(file, x);
                 self.check_awaited_type(ty, true, self.place_of_expr(file, e), 1320)
             }
-            ExprKind::Yield { value, star } => {
-                let ty = self.type_of_yield(file, e, value, star);
-                // `checkYieldExpression` looks at what is yielded whatever comes of it, in a generator.
-                if value.is_some() && self.containing_generator(file, e).is_some() {
-                    self.look_at(file, value);
-                }
-                ty
-            }
+            ExprKind::Yield { value, star } => self.type_of_yield(file, e, value, star),
             ExprKind::As { expr, ty } => {
                 // `checkAssertion` looks at the operand first. `getQuickTypeOfExpression`: not where the assertion is all there is
                 // to an initializer, or to what is assigned, which the flow of control asks the type of.
@@ -1892,7 +1865,7 @@ impl<'p> Checker<'p> {
             .unwrap_or(None)
     }
 
-    /// `resolveEntityName` with `SymbolFlagsValue`, of an identifier that is an expression. `Err`: as `Files::resolve_name_or_error`.
+    /// `resolveEntityName` with `SymbolFlagsValue`, of an identifier that is an expression. `Err`: the code `Files::resolve` ends with.
     pub fn resolve_identifier(
         &self,
         file: FileId,
@@ -1940,6 +1913,7 @@ impl<'p> Checker<'p> {
     fn type_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> TypeId {
         // `Err`: `Resolve` has returned nil, `getResolvedSymbol` is `unknownSymbol`.
         let Ok(found) = self.resolve_identifier(file, e, name, false) else {
+            self.unresolved_identifiers.push((file, e, name));
             return TypeId::ERROR;
         };
         let Some(sym) = found else {
@@ -1965,9 +1939,20 @@ impl<'p> Checker<'p> {
                     TypeId::UNRESOLVED
                 }
                 // `getResolvedSymbol` gives `unknownSymbol`.
-                _ => TypeId::ERROR,
+                _ => {
+                    self.unresolved_identifiers.push((file, e, name));
+                    TypeId::ERROR
+                }
             };
         };
+        // `getSymbol`: an alias that stands for no value is not there where a value is wanted. It is all `resolve_identifier` has to go by.
+        let own = self.files().flags(sym);
+        if own.contains(SymFlags::ALIAS)
+            && !own.intersects(SymFlags::VALUE)
+            && !self.files().means(sym, SymFlags::VALUE)
+        {
+            self.unresolved_identifiers.push((file, e, name));
+        }
         if !self.contextual_binding_patterns.is_empty()
             && self.is_reference_within_contextual_pattern(file, e, sym)
         {
@@ -1989,10 +1974,27 @@ impl<'p> Checker<'p> {
         };
         let flags = self.files().flags(sym);
         let target = self.target_kind(file, e);
-        // Only a variable that is no constant is given a value (2588, 2628 to 2632, 2539). What is in error can be anything.
+        // Only a variable that is no constant is given a value.
         if (!flags.intersects(SymFlags::VARIABLE) || flags.contains(SymFlags::CONST))
             && target.written
         {
+            let assignment_error = if flags.intersects(SymFlags::VARIABLE) {
+                2588
+            } else if flags.intersects(SymFlags::ENUM) {
+                2628
+            } else if flags.contains(SymFlags::CLASS) {
+                2629
+            } else if flags.intersects(SymFlags::MODULE) {
+                2631
+            } else if flags.contains(SymFlags::FUNCTION) {
+                2630
+            } else if flags.contains(SymFlags::ALIAS) {
+                2632
+            } else {
+                2539
+            };
+            let node = self.place_of_token(file, self.hir(file)[e].pos);
+            self.error_at(node, assignment_error, &[Arg::Atom(name)]);
             return TypeId::ERROR;
         }
         // What is imported is narrowed like a variable.
@@ -2080,11 +2082,6 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent)
             if matches!(hir[parent].kind, ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee == e))
-    }
-
-    /// `getAssignmentTargetKind(e) != AssignmentKindNone || isMethodAccessForCall(e)`
-    pub(super) fn is_written_or_called(&self, file: FileId, e: ExprId) -> bool {
-        self.is_called(file, e) || self.is_written(file, e)
     }
 
     /// The class whose member `func` is, and whether the member is static.
@@ -2802,22 +2799,13 @@ impl<'p> Checker<'p> {
         base: TypeId,
         name: Atom,
     ) -> Option<(TypeId, Found)> {
-        let container = self.super_container(file, sup);
-        if let TypeData::Ref { target, .. } = *self.data(base)
-            && let Some((class, false)) = container
-            && let Some((prop, mapper)) = self.prop_of(base, name)
-        {
-            let base_this = self.intern(TypeData::ThisParam(target));
-            let this = self.intern(TypeData::ThisParam(self.class_sym(file, class)));
-            let mut pairs = self.p.types.mapping(mapper).to_vec();
-            for pair in &mut pairs {
-                if pair.0 == base_this {
-                    pair.1 = this;
-                }
+        let base = match self.super_container(file, sup) {
+            Some((class, false)) => {
+                let this = self.intern(TypeData::ThisParam(self.class_sym(file, class)));
+                self.type_with_this_argument(base, this)
             }
-            let mapper = self.p.types.mapper(pairs);
-            return Some((self.type_of_prop(&prop, mapper), Found::Property));
-        }
+            _ => base,
+        };
         self.property_type(base, name, Access::Read)
     }
 
@@ -3007,7 +2995,7 @@ impl<'p> Checker<'p> {
     /// What `...c` in the target of a destructuring assignment stands for, where `c` is a `target`, which is not like an array
     /// (`checkArrayLiteral`): what it has under a number, else what it yields, else `unknown`. That it is neither is no error here.
     fn rest_element_of_target(&mut self, target: TypeId) -> TypeId {
-        if let Some(element) = self.number_index_type(target) {
+        if let Some(element) = self.index_type_of_type(target, TypeId::NUMBER) {
             return element;
         }
         self.iterated_type_if_any(target, false)
@@ -3116,7 +3104,7 @@ impl<'p> Checker<'p> {
         self.check_spread_overrides(file, props);
         if !props.iter().any(|p| hir[p].kind == PropKind::Spread) {
             let scope = self.scope_of_expr(file, e);
-            let mapper = self.identity_mapper(file, scope);
+            let mapper = self.identity_mapper_with_adopted(file, scope);
             let is_js_literal = self.is_js_literal(file, e);
             let kept = self.intern(TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e, is_js_literal, false, true),
@@ -3130,7 +3118,7 @@ impl<'p> Checker<'p> {
         }
         // With spreads, what is in it depends on what is spread: work it out now.
         let scope = self.scope_of_expr(file, e);
-        let literal_mapper = self.identity_mapper(file, scope);
+        let literal_mapper = self.identity_mapper_with_adopted(file, scope);
         let is_const = self.is_const_context(file, e);
         let mut result = TypeId::EMPTY_OBJECT;
         let mut pending = Shape::default();
@@ -3293,7 +3281,7 @@ impl<'p> Checker<'p> {
         );
         let scope = self.bound(file).fns[func.idx()].scope;
         let parent = self.bound(file).scopes[scope.idx()].parent;
-        let mapper = self.identity_mapper(file, parent);
+        let mapper = self.identity_mapper_with_adopted(file, parent);
         self.intern(TypeData::Fns {
             decls: Box::new([(file, func)]),
             mapper,
@@ -4444,248 +4432,5 @@ impl<'p> Checker<'p> {
     /// `getJsxElementTypeAt`: without a `JSX.Element` it is the error type, which can be anything.
     pub(super) fn jsx_element_type(&mut self, file: FileId) -> TypeId {
         self.jsx_type(file, known::Element).unwrap_or(TypeId::ERROR)
-    }
-
-    /// What the attributes of the JSX element `e` are expected to be, together.
-    pub(super) fn jsx_props_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        // What `checkExpressionWithContextualType(node.Attributes(), ..)` has pushed.
-        if let Some(&(_, _, ty)) = self
-            .jsx_resolving
-            .iter()
-            .rev()
-            .find(|r| r.0 == file && r.1 == e)
-        {
-            return Some(ty);
-        }
-        if let Some(known) = self.p.calls.get(&(file, e)) {
-            return (known.ret != TypeId::UNRESOLVED).then_some(known.ret);
-        }
-        // `resolvingSignature`
-        if self.stack.contains(&Query::Call(file, e)) || !self.enter(Query::Call(file, e)) {
-            return None;
-        }
-        let props = self.jsx_props_type_uncached(file, e);
-        if self.leave() {
-            self.p.calls.insert(
-                (file, e),
-                ResolvedCall {
-                    sig: None,
-                    ret: props.unwrap_or(TypeId::UNRESOLVED),
-                },
-            );
-        }
-        props
-    }
-
-    /// What each of `sigs` takes. Asked as part of the question what the element takes, so that what is found out about the
-    /// attributes on the way, with type parameters still open, is not kept.
-    pub(super) fn jsx_props_of_each(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        sigs: &[SigId],
-        construct: bool,
-    ) -> Option<Vec<TypeId>> {
-        // Which of them it is comes first, with none of the attributes under way: they are read with that one in mind.
-        self.jsx_props_type(file, e);
-        if !self.enter(Query::Call(file, e)) {
-            return None;
-        }
-        let props: Option<Vec<TypeId>> = sigs
-            .iter()
-            .map(|&sig| self.jsx_props_of_sig(file, e, sig, construct))
-            .collect();
-        self.leave();
-        props
-    }
-
-    /// What `sig`, a signature of the component of the JSX element `e`, takes for properties.
-    fn jsx_props_of_sig(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        sig: SigId,
-        construct: bool,
-    ) -> Option<TypeId> {
-        let sig = self.jsx_instantiated_sig(file, e, sig, construct)?;
-        Some(self.jsx_effective_first_argument(file, e, sig, construct))
-    }
-
-    /// `sig`, a signature of the component of the JSX element `e`, with what the element says or lets infer for its type parameters:
-    /// the `checkCandidate` of `chooseOverload`.
-    pub(super) fn jsx_instantiated_sig(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        sig: SigId,
-        construct: bool,
-    ) -> Option<SigId> {
-        let hir = self.hir(file);
-        let ExprKind::Jsx(j) = hir[e].kind else {
-            return None;
-        };
-        let type_params = self.sig_type_params(sig);
-        if type_params.is_empty() {
-            return Some(sig);
-        }
-        if !hir[j].type_args.is_empty() {
-            let type_args = self.types_from_nodes(file, hir[j].type_args);
-            let filled = self.fill_sig_type_args(sig, &type_params, &type_args);
-            let mapper = self.mapper_from(&type_params, &filled);
-            return Some(self.instantiate_sig(sig, mapper));
-        }
-        let mut context = super::infer::Inference::for_params(&type_params, Some(sig));
-        context.any_default = hir.is_js;
-        let mut check_mode = if self.jsx_parts_that_wait(file, e).is_empty() {
-            CheckMode::empty()
-        } else {
-            CheckMode::SKIP_CONTEXT_SENSITIVE
-        };
-        let first_round = check_mode | CheckMode::SKIP_GENERIC_FUNCTIONS;
-        let mut mapper =
-            self.infer_jsx_type_arguments(file, e, sig, construct, first_round, &mut context);
-        if context.skipped_generic_function {
-            check_mode |= CheckMode::SKIP_GENERIC_FUNCTIONS;
-        }
-        if !check_mode.is_empty() {
-            let early = self.instantiate_sig(sig, mapper);
-            if !self.jsx_fits(file, e, early, construct, Relation::Assignable, check_mode) {
-                return Some(early);
-            }
-            mapper = self.infer_jsx_type_arguments(
-                file,
-                e,
-                sig,
-                construct,
-                CheckMode::empty(),
-                &mut context,
-            );
-        }
-        Some(self.instantiate_sig(sig, mapper))
-    }
-
-    /// `inferJsxTypeArguments`
-    pub(super) fn infer_jsx_type_arguments(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        signature: SigId,
-        construct: bool,
-        check_mode: CheckMode,
-        context: &mut super::infer::Inference,
-    ) -> MapperId {
-        let param_type = self.jsx_effective_first_argument(file, e, signature, construct);
-        let check_attr_type = self.check_jsx_attributes_with_contextual_type(
-            file,
-            e,
-            param_type,
-            Some(context),
-            check_mode,
-        );
-        self.infer(context, check_attr_type, param_type, 0);
-        self.inference_mapper(context)
-    }
-
-    /// `checkApplicableSignatureForJsxCallLikeElement`, without its errors
-    pub(super) fn jsx_fits(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        signature: SigId,
-        construct: bool,
-        relation: Relation,
-        check_mode: CheckMode,
-    ) -> bool {
-        let param_type = self.jsx_effective_first_argument(file, e, signature, construct);
-        let attributes_type =
-            self.check_jsx_attributes_with_contextual_type(file, e, param_type, None, check_mode);
-        let check_attributes_type = if check_mode.contains(CheckMode::SKIP_CONTEXT_SENSITIVE) {
-            self.regular_type_of_object_literal(attributes_type)
-        } else {
-            attributes_type
-        };
-        if !self.is_known(check_attributes_type) || !self.is_known(param_type) {
-            return relation != Relation::Subtype;
-        }
-        self.related(check_attributes_type, param_type, relation)
-    }
-
-    /// `checkExpressionWithContextualType(node.Attributes(), ..)`. The attributes have no node of their own: `jsx_resolving` is
-    /// where what is expected of them is pushed.
-    fn check_jsx_attributes_with_contextual_type(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        contextual_type: TypeId,
-        inference_context: Option<&mut super::infer::Inference>,
-        check_mode: CheckMode,
-    ) -> TypeId {
-        self.jsx_resolving.push((file, e, contextual_type));
-        let ty = self.check_with_inference_context(
-            file,
-            e,
-            contextual_type,
-            inference_context,
-            check_mode,
-            |c, _| c.jsx_attributes_type(file, e),
-        );
-        self.jsx_resolving.pop();
-        ty
-    }
-
-    fn jsx_props_type_uncached(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        let hir = self.hir(file);
-        let ExprKind::Jsx(j) = hir[e].kind else {
-            return None;
-        };
-        let tag = hir[j].tag;
-        if tag.is_none() {
-            return None;
-        }
-        if let Some(name) = self.jsx_intrinsic_tag_name(file, tag) {
-            return self.jsx_intrinsic_attributes(file, name);
-        }
-        let component = self.type_of_expr(file, tag);
-        if self.is_any(component) {
-            return None;
-        }
-        let (sigs, construct) = self.uninstantiated_jsx_signatures_of_type(file, component, e)?;
-        if sigs.is_empty() {
-            return None;
-        }
-        // FOR SPEED: of one candidate `resolveCall` gives that one, applicable or not, and nothing is reported from here.
-        if let [sig] = sigs[..] {
-            return self.jsx_props_of_sig(file, e, sig, construct);
-        }
-        let type_args = self.types_from_nodes(file, hir[j].type_args);
-        // The attributes and the children are one argument, if there are any.
-        let args: &[super::call::Arg] = if hir[j].attrs.is_empty() && hir[j].children.is_empty() {
-            &[]
-        } else {
-            &[super::call::Arg::Expr(e)]
-        };
-        let node = super::call::CallLike::Jsx { construct };
-        let resolved = self.resolve_call(
-            file, e, node, &sigs, &type_args, args, None, false, false, None,
-        );
-        Some(self.jsx_effective_first_argument(file, e, resolved.sig?, construct))
-    }
-
-    /// `isContextSensitive`: the values of the attributes of the JSX element `e`, what is spread among them, and the children that
-    /// wait for what is expected of them.
-    pub(super) fn jsx_parts_that_wait(&self, file: FileId, e: ExprId) -> Vec<ExprId> {
-        let hir = self.hir(file);
-        let ExprKind::Jsx(j) = hir[e].kind else {
-            return Vec::new();
-        };
-        let values = hir[j]
-            .attrs
-            .iter()
-            .map(|p| hir[p].value)
-            .filter(|value| value.is_some());
-        values
-            .chain(hir.ids(hir[j].children))
-            .filter(|&part| self.is_context_sensitive(file, part))
-            .collect()
     }
 }

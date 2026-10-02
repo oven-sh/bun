@@ -2,59 +2,8 @@
 //! * 17019: `checkJSDocTypeIsInJsFile`
 
 use super::*;
-use crate::bind::Parent;
 
 impl Checker<'_> {
-    /// `checkGrammarTypeOnlyNamedImportsOrExports`: `type` on the statement and again on a name in it. Said of the first.
-    pub(super) fn check_type_modifier_in_type_only_clauses(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if has_parse_diagnostics(hir) {
-            return;
-        }
-        if !hir.import_specs.iter().any(|s| s.type_only)
-            && !hir.export_specs.iter().any(|s| s.type_only)
-        {
-            return;
-        }
-        for (i, s) in hir.stmts.iter().enumerate() {
-            let (start, code) = match s.kind {
-                // `checkGrammarModuleElementContext`
-                StmtKind::ExportNamed(x)
-                    if hir[x].type_only
-                        && matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_)) =>
-                {
-                    (
-                        hir[x]
-                            .items
-                            .iter()
-                            .find(|&item| hir[item].type_only)
-                            .map(|item| hir[item].start),
-                        2207,
-                    )
-                }
-                // With a default import as well it is 1363. In a namespace other things are said first.
-                StmtKind::Import(x)
-                    if hir[x].type_only
-                        && hir[x].default.is_none()
-                        && matches!(bound.stmt_parent[i], Parent::File) =>
-                {
-                    (
-                        hir[x]
-                            .named
-                            .iter()
-                            .find(|&item| hir[item].type_only)
-                            .map(|item| hir[item].start),
-                        2206,
-                    )
-                }
-                _ => continue,
-            };
-            if let Some(start) = start {
-                self.error_at((file, start, 0), code, &[]);
-            }
-        }
-    }
-
     /// `checkJSDocTypeIsInJsFile`, where the syntax tree keeps a `?` after a type that makes nothing optional: `[...T?]`.
     pub(super) fn check_nullable_rest_element(&mut self, file: FileId, elem: TupleElemId) {
         let hir = self.hir(file);

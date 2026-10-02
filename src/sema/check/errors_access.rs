@@ -10,7 +10,7 @@ use super::explain::Line;
 use super::sink::held;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, PatParent};
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 
 /// What a type of the standard library got with each version of it: `(lib, properties)`.
 type Features = &'static [(&'static str, &'static [&'static str])];
@@ -151,24 +151,11 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ("Date", &[("esnext", &["toTemporalInstant"])]),
 ];
 
-/// What `checkPropertyAccessibilityAtLocation` objects to.
-struct Inaccessible {
-    code: u32,
-    /// The property, or the first of those it is made of.
-    prop: Prop,
-    /// The class the message names: the one that declares the property; for 2446, the one around.
-    class: Option<Sym>,
-    /// What the property was asked of.
-    containing: TypeId,
-}
-
 impl Checker<'_> {
     /// `a[k]`, what patterns and types look up by name, and private names out of place. What is wrong with `a.b` is reported where
     /// its type is worked out (`type_of_property_access`).
     pub(super) fn check_property_accesses(&mut self, file: FileId) {
         self.check_private_names(file);
-        self.check_lookups_by_name(file);
-        self.check_element_accesses(file);
     }
 
     /// `checkAndReportErrorForExtendingInterface`
@@ -294,313 +281,65 @@ impl Checker<'_> {
         }
     }
 
-    /// `a[k]`: 18046 to 18050, 2531 to 2533, 2571; 2493 2339 2537 2538, 2542, 7015 7052 7053 2551 2576.
-    /// `checkIndexedAccess`, `checkElementAccessExpression`, `getIndexedAccessTypeOrUndefined`, and `getPropertyTypeForIndexType`
-    /// where an expression does the looking up.
-    fn check_element_accesses(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let no_implicit_any = self.p.files.options.no_implicit_any;
-        let by_kind = self.exprs_by_kind(file);
-        for &e in by_kind.of(ExprTag::Index) {
-            let ExprKind::Index { obj, index, chain } = hir[e].kind else {
-                continue;
-            };
-            let i = e.idx();
-            if bound.is_unchecked(i) {
-                continue;
-            }
-            // `checkNonNullExpression`: that the object is there comes first, whatever the key.
-            let (receiver, _) = self.chain_receiver(file, obj, chain);
-            if !self.is_known(receiver) {
-                continue;
-            }
-            let object = self.check_non_null_type(file, obj, receiver);
-            // `getWidenedType`: what is assigned to, or called, is looked up in the type a variable would get.
-            let object = if self.is_written_or_called(file, e) {
-                self.regular_object(object)
-            } else {
-                object
-            };
-            // `checkIdentifier`: the missing argument of `a[]` is `errorType`, a key of type `any`.
-            let mut keys = self.type_of_expr(file, index);
-            if !self.is_known(keys) {
-                continue;
-            }
-            // `getIndexedAccessTypeOrUndefined`: before it is asked whether the key puts the answer off.
-            let reduced = self.reduced(object);
-            keys = self.key_into_string_index_only(reduced, keys);
-            // What is in error is not looked into, which what is nothing but `null` or `undefined` is whatever the options
-            // (`checkNonNullType`). A key that waits for its type parameters puts the answer off.
-            if self.is_error_type(object)
-                || object.is_null()
-                || object.is_undefined()
-                || self.is_generic(keys)
-            {
-                continue;
-            }
-            let apparent = if object.is_any() {
-                Some(object)
-            } else {
-                self.type_looked_into(object)
-            };
-            let Some(apparent) = apparent else {
-                continue;
-            };
-            if self.is_for_in_variable_for_numeric_names(file, index) {
-                keys = TypeId::NUMBER;
-            }
-            // A `const enum` is looked into with a string literal. Anything else is 2476, and in error.
-            let is_const_enum = matches!(*self.data(apparent), TypeData::Anon { origin: Origin::EnumObject(sym), .. }
-                if self.files().decls_of(sym).iter().any(|&(f, d)| matches!(d, crate::bind::Decl::Enum(id) if self.hir(f)[id].flags.contains(Flags::CONST))));
-            if is_const_enum && !is_string_literal_like(hir, index) {
-                continue;
-            }
-            // `IsAssignmentTarget`
-            let is_target = self.is_written(file, e);
-            // `isDeleteTarget`
-            let is_written = is_target
-                || matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
-            // `AccessFlagsNoIndexSignatures`: what waits for its type parameters is not written to through a signature of what it extends.
-            let no_index_signatures = is_target
-                && self.is_generic_object_type(object)
-                && !matches!(self.data(object), TypeData::ThisParam(_));
-            let (at_access, at_index) = (
-                self.start_inside_parentheses(file, e),
-                self.start_of(file, index),
-            );
-            let infos = self.index_signatures_of(apparent);
-            // What is missing for one member of a union of keys is `any`, which is not said again of the members after it.
-            let mut was_missing = false;
-            let mut parts: SmallVec<[TypeId; 8]> = if self.is_boolean(keys) {
-                smallvec![keys]
-            } else {
-                SmallVec::from_slice(self.parts(keys))
-            };
-            parts.sort_by(|&a, &b| self.compare_types(a, b));
-            for key in parts {
-                let name = self.property_name_of_type(key);
-                if let Some(name) = name {
-                    // Whether it can be written to is asked of the property (2540), not of a signature.
-                    if self.has_property_of_type(apparent, name) {
-                        continue;
-                    }
-                    // A number for a name, and nothing but tuples to look it up in.
-                    if self.is_numeric_name(name) && self.every_type(apparent, |c, m| c.is_tuple(m))
-                    {
-                        let place: f64 = self.files().atoms.text(name).parse().unwrap_or(f64::NAN);
-                        if let Some(code) = self.past_the_end_of_tuples(apparent, name) {
-                            let end = self.end_of_expr(file, index);
-                            {
-                                let args = self.names_in_no_lookup(code, apparent, key);
-                                self.add_diagnostic(Reported::new(
-                                    (file, at_index, end),
-                                    code,
-                                    held(args),
-                                ));
-                            }
-                        }
-                        // Below zero in a tuple that ends: 2514, and `undefined`.
-                        if place < 0.0
-                            && matches!(self.data(apparent), TypeData::Tuple { flags, .. } if !flags.iter().any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC)))
-                        {
-                            continue;
-                        }
-                        if place >= 0.0 {
-                            // `errorIfWritingToReadonlyIndex`
-                            if is_written
-                                && infos.iter().any(|info| info.0 == TypeId::NUMBER && info.1)
-                            {
-                                let end = self.end_inside_parentheses(file, e);
-                                self.error_at((file, at_access, end), 2542, &[Arg::Type(apparent)]);
-                            }
-                            continue;
-                        }
-                    }
-                }
-                let plain = self.constraint_for_operator(key);
-                let is_key_like = self.is_key_like(key);
-                let is_literal_key =
-                    self.is_literal(key) && (self.is_string_like(key) || self.is_number_like(key));
-                // `objectType.flags&(TypeFlagsAny|TypeFlagsNever) != 0`: they have every key that is string-, number- or symbol-like.
-                if is_key_like && (apparent.is_never() || apparent.is_any()) {
-                    continue;
-                }
-                if is_key_like
-                    && let Some((by, is_readonly)) = self.index_signature_for_key(&infos, key)
-                {
-                    if no_index_signatures && by != TypeId::NUMBER {
-                        // 2862, which is said with what else there is to say of keys.
-                        was_missing = true;
-                    } else if by == TypeId::STRING
-                        && !self.is_any(key)
-                        && !self
-                            .every_type(plain, |c, m| c.is_string_like(m) || c.is_number_like(m))
-                    {
-                        // The signature for strings stands in for symbols, which is an error all the same.
-                        let end = self.end_of_expr(file, index);
-                        self.error_at((file, at_index, end), 2538, &[Arg::Type(key)]);
-                    } else if is_written && is_readonly {
-                        let end = self.end_inside_parentheses(file, e);
-                        self.error_at((file, at_access, end), 2542, &[Arg::Type(apparent)]);
-                    }
-                    continue;
-                }
-                // `isJSLiteralType(objectType)`: a key that finds nothing in a JS literal type gives `any`.
-                if self.is_js_literal_type(apparent) {
-                    continue;
-                }
-                // Nothing about `any` is said of a `const enum`: the member is missing, whatever the options.
-                if is_key_like && !is_const_enum {
-                    if self.is_object_literal_type(apparent) {
-                        if no_implicit_any && is_literal_key {
-                            let end = self.end_inside_parentheses(file, e);
-                            {
-                                let args = self.names_in_no_lookup(2339, apparent, key);
-                                self.add_diagnostic(Reported::new(
-                                    (file, at_access, end),
-                                    2339,
-                                    held(args),
-                                ));
-                            }
-                            continue;
-                        }
-                        if key == TypeId::STRING || key == TypeId::NUMBER {
-                            continue;
-                        }
-                    }
-                    if matches!(
-                        self.data(apparent),
-                        TypeData::Anon {
-                            origin: Origin::GlobalThis,
-                            ..
-                        }
-                    ) && name.is_some_and(|n| self.is_block_scoped_global(n))
-                    {
-                        let end = self.end_inside_parentheses(file, e);
-                        {
-                            let args = self.names_in_no_lookup(2339, apparent, key);
-                            self.add_diagnostic(Reported::new(
-                                (file, at_access, end),
-                                2339,
-                                held(args),
-                            ));
-                        }
-                        was_missing = true;
-                        continue;
-                    }
-                    let is_said = no_implicit_any && !was_missing;
-                    was_missing = true;
-                    if !is_said {
-                        continue;
-                    }
-                    let (end_of_access, end_of_index) = (
-                        self.end_inside_parentheses(file, e),
-                        self.end_of_expr(file, index),
-                    );
-                    if let Some(name) = name
-                        && self.static_side_has(apparent, name)
-                    {
-                        {
-                            let container = self.type_to_string(apparent);
-                            let written = self.source_text(file, at_index, end_of_index);
-                            let member = format!("{container}[{written}]");
-                            self.error_at(
-                                (file, at_access, end_of_access),
-                                2576,
-                                &[Arg::Atom(name), Arg::Text(&container), Arg::Text(&member)],
-                            );
-                        }
-                    } else if infos.iter().any(|info| info.0 == TypeId::NUMBER) {
-                        self.error_at((file, at_index, end_of_index), 7015, &[]);
-                    } else if name.is_some_and(|n| self.is_property_misspelt(apparent, n, None)) {
-                        {
-                            let mut names = self.names_in_no_lookup(2339, apparent, key);
-                            names.push(
-                                match name
-                                    .and_then(|n| self.property_meant(apparent, n, None, true))
-                                {
-                                    Some(meant) => self.name_of_unread_property(meant),
-                                    None => String::new(),
-                                },
-                            );
-                            self.add_diagnostic(Reported::new(
-                                (file, at_index, end_of_index),
-                                2551,
-                                held(names),
-                            ));
-                        }
-                    } else if self.has_accessor_method_for(apparent, key, is_target) {
-                        {
-                            let method = if is_target { "set" } else { "get" };
-                            let call = match self.access_to_string(file, obj) {
-                                Some(receiver) => format!("{receiver}.{method}"),
-                                None => method.to_owned(),
-                            };
-                            self.error_at(
-                                (file, at_access, end_of_access),
-                                7052,
-                                &[Arg::Type(apparent), Arg::Text(&call)],
-                            );
-                        }
-                    } else {
-                        self.error_at(
-                            (file, at_access, end_of_access),
-                            7053,
-                            &[Arg::Type(keys), Arg::Type(apparent)],
-                        );
-                        self.explain_chain(at_access, 7053, |c| {
-                            c.lines_under_implicit_any_element(apparent, key)
-                        });
-                    }
-                    continue;
-                }
-                let code = if is_literal_key {
-                    2339
-                } else if key == TypeId::STRING || key == TypeId::NUMBER {
-                    2537
-                } else {
-                    2538
-                };
-                self.error_at((file, at_index, 0), code, &[]);
-                let end = self.end_of_expr(file, index);
-                self.explain_to(at_index, end, code, |c| {
-                    // `indexNode.Kind == KindBigIntLiteral`
-                    if matches!(hir[index].kind, ExprKind::BigInt(_))
-                        && !is_parenthesized(c.hir(file), index)
-                    {
-                        return vec!["bigint".to_owned()];
-                    }
-                    c.names_in_no_lookup(code, apparent, key)
-                });
-                was_missing = true;
-            }
-        }
+    /// Where an error points at the expression `e`.
+    pub(super) fn place_inside_parentheses(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
+        (
+            file,
+            self.start_inside_parentheses(file, e),
+            self.end_inside_parentheses(file, e),
+        )
     }
 
-    /// What goes into the message `getPropertyTypeForIndexType` has for `key`, which finds nothing in `object`: 2339 2493 2537 2538.
-    pub(super) fn names_in_no_lookup(
+    /// `getPropertyTypeForIndexType`, where `noImplicitAny` has something to say of `a[k]`, written at `e`, that finds nothing: 2576 7015
+    /// 2551 7052 7053. `keys`: `indexType` and `fullIndexType`.
+    pub(super) fn report_implicit_any_element(
         &mut self,
-        code: u32,
+        (file, e): (FileId, ExprId),
         object: TypeId,
-        key: TypeId,
-    ) -> Vec<String> {
-        let name = match self.property_name_of_type(key) {
-            Some(name) => self.atom_text(name),
-            None => String::new(),
+        (key, keys): (TypeId, TypeId),
+        name: Option<Atom>,
+    ) {
+        let ExprKind::Index { obj, index, .. } = self.hir(file)[e].kind else {
+            return;
         };
-        match code {
-            2339 => vec![name, self.type_to_string(object)],
-            2493 => {
-                // `getTypeReferenceArity`
-                let length = match self.data(object) {
-                    TypeData::Tuple { flags, .. } => flags.len(),
-                    _ => 0,
-                };
-                vec![self.type_to_string(object), length.to_string(), name]
-            }
-            2537 => vec![self.type_to_string(object), self.type_to_string(key)],
-            2538 => vec![self.type_to_string(key)],
-            _ => Vec::new(),
+        let at_access = self.place_inside_parentheses(file, e);
+        let at_index = (
+            file,
+            self.start_of(file, index),
+            self.end_of_expr(file, index),
+        );
+        let is_target = self.is_written(file, e);
+        if let Some(name) = name
+            && self.static_side_has(object, name)
+        {
+            let container = self.type_to_string(object);
+            let member = format!(
+                "{container}[{}]",
+                self.source_text(file, at_index.1, at_index.2)
+            );
+            let args = [Arg::Atom(name), Arg::Text(&container), Arg::Text(&member)];
+            self.error_at(at_access, 2576, &args);
+        } else if self.index_type_of_type(object, TypeId::NUMBER).is_some() {
+            self.error_at(at_index, 7015, &[]);
+        } else if let Some(name) = name
+            && let Some(meant) = self.property_meant(object, name, None, true)
+        {
+            let meant = self.name_of_unread_property(meant);
+            let args = [Arg::Atom(name), Arg::Type(object), Arg::Text(&meant)];
+            self.error_at(at_index, 2551, &args);
+        } else if self.has_accessor_method_for(object, key, is_target) {
+            let method = if is_target { "set" } else { "get" };
+            let call = match self.access_to_string(file, obj) {
+                Some(receiver) => format!("{receiver}.{method}"),
+                None => method.to_owned(),
+            };
+            self.error_at(at_access, 7052, &[Arg::Type(object), Arg::Text(&call)]);
+        } else {
+            let under = self.lines_under_implicit_any_element(object, key).pop();
+            let under = under.map(|line| Reported::new(at_access, line.code, line.args));
+            let args = [Arg::Type(keys), Arg::Type(object)];
+            let diagnostic = self.new_diagnostic_chain(under, at_access, 7053, &args);
+            self.add_diagnostic(diagnostic);
         }
     }
 
@@ -651,54 +390,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `getReducedApparentType`, of what an expression or a pattern looks into. `None`: it is `any`, or the answer is put off.
-    fn type_looked_into(&mut self, object: TypeId) -> Option<TypeId> {
-        // What waits for its type parameters is looked into through what it extends.
-        let looked_into = if self.has_type_variables(object) {
-            self.map_type(object, |c, m| {
-                // Of `T & { a: 1 }`, what `T` extends and `{ a: 1 }`.
-                if let TypeData::Intersection(parts) = c.data(m) {
-                    let parts: Vec<TypeId> = parts
-                        .iter()
-                        .map(|&p| {
-                            if c.is_deferred(p) {
-                                c.base_constraint(p)
-                            } else {
-                                p
-                            }
-                        })
-                        .collect();
-                    let whole = c.intersection(&parts);
-                    return c.apparent_type(whole);
-                }
-                // What extends nothing extends `unknown`.
-                if c.is_deferred(m) && c.base_constraint(m) == TypeId::UNKNOWN {
-                    return TypeId::UNKNOWN;
-                }
-                c.apparent_type(m)
-            })
-        } else {
-            object
-        };
-        let apparent = self.reduced_apparent_type(looked_into);
-        // `getApparentType`: without strictNullChecks `unknown` is `{}`. With them it has nothing at all.
-        let apparent = if apparent == TypeId::UNKNOWN && !self.p.files.options.strict_null_checks {
-            TypeId::EMPTY_OBJECT
-        } else {
-            apparent
-        };
-        // `shouldDeferIndexedAccessType`: of the objects only a tuple with `...T` in it puts the answer off.
-        if !self.is_known(apparent)
-            || self.is_any(apparent)
-            || self.some_type(apparent, |c, m| {
-                c.is_deferred(m) || c.is_generic_tuple_type(m)
-            })
-        {
-            return None;
-        }
-        Some(apparent)
-    }
-
     /// `getReducedApparentType`
     pub(super) fn reduced_apparent_type(&mut self, ty: TypeId) -> TypeId {
         let ty = self.reduced(ty);
@@ -713,38 +404,6 @@ impl Checker<'_> {
                 .flags(global)
                 .intersects(SymFlags::BLOCK_SCOPED_VARIABLE | SymFlags::CLASS | SymFlags::ENUM)
         })
-    }
-
-    /// Whether `getPropertyOfType` finds `name` in `ty`, which is an apparent type. In a union (`createUnionOrIntersectionProperty`)
-    /// a member declares it, and each of the others has a signature for the name, which the name of a symbol never has, or is an
-    /// object literal that leaves it out. What is private or protected in a member, and not the same declaration in all, is not there.
-    pub(super) fn has_property_of_type(&mut self, ty: TypeId, name: Atom) -> bool {
-        let is_late_bound = self.files().atoms.is_symbol_name(name);
-        let mut is_declared = false;
-        for &part in self.parts(ty) {
-            let part = self.apparent_type(part);
-            let Some(members) = self.members(part) else {
-                return false;
-            };
-            if !self.is_type_only_member(part, name) && self.property_in(&members, name).is_some() {
-                is_declared = true;
-                continue;
-            }
-            // `getApplicableIndexInfoForName`
-            let literal = self.string_literal(name, false);
-            if !(!is_late_bound
-                && members
-                    .shape()
-                    .index
-                    .iter()
-                    .any(|info| self.is_applicable_index_type(literal, info.key)))
-                && !self.is_closed_object_literal_type(part)
-            {
-                return false;
-            }
-        }
-        let parts = self.parts(ty);
-        is_declared && !(parts.len() > 1 && self.is_hidden_in_union(parts, name))
     }
 
     /// `getIndexInfosOfType`: the key of each index signature of `ty`, which is an apparent type, and whether it is readonly.
@@ -799,44 +458,6 @@ impl Checker<'_> {
         let key = self.string_literal(name, false);
         self.index_signature_for_key(&infos, key)
             .is_some_and(|(_, is_readonly)| is_readonly)
-    }
-
-    /// `isApplicableIndexType`: whether a signature for `target` covers the key `source`.
-    pub(super) fn is_applicable_index_type(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.is_assignable(source, target)
-            || target == TypeId::STRING && self.is_assignable(source, TypeId::NUMBER)
-            || target == TypeId::NUMBER
-                && (self.is_numeric_string_type(source)
-                    || matches!(*self.data(source), TypeData::StringLit { value, .. } | TypeData::EnumLit { value: EnumValue::String(value), .. }
-                        if self.is_numeric_name(value)))
-    }
-
-    /// `getPropertyTypeForIndexType`: what is said of the numeric name `name` where `object` is a tuple, or a union of tuples, that
-    /// all end, and none has an element by that name: 2493 of a tuple, 2339 of a union. (Below zero in a tuple is 2514, which is
-    /// said of `a[k]` and `T[K]` with what else there is to say of keys, and of a pattern by `why_no_lookup`.)
-    pub(super) fn past_the_end_of_tuples(&self, object: TypeId, name: Atom) -> Option<u32> {
-        if !self.is_numeric_name(name)
-            || !self.every_type(object, |c, m| {
-                matches!(c.data(m), TypeData::Tuple { flags, .. } if !flags.iter().any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC)))
-            })
-        {
-            return None;
-        }
-        let place: f64 = self.files().atoms.text(name).parse().ok()?;
-        // `createUnionOrIntersectionProperty`: what one member has is a property of the union.
-        if place >= 0.0
-            && place.fract() == 0.0
-            && self.some_type(object, |c, m| matches!(c.data(m), TypeData::Tuple { flags, .. } if (place as usize) < flags.len()))
-        {
-            return None;
-        }
-        if self.is_union(object) {
-            Some(2339)
-        } else if place < 0.0 {
-            None
-        } else {
-            Some(2493)
-        }
     }
 
     /// `isForInVariableForNumericPropertyNames`: `i` in `for (i in a) a[i]`, where `a` has numbers for names.
@@ -898,18 +519,6 @@ impl Checker<'_> {
             .is_some_and(|(prop, _)| matches!(prop.source, PropSource::Members(_)))
     }
 
-    /// `getSuggestionForNonexistentProperty`, `getSuggestedSymbolForNonexistentProperty`: whether whoever wrote `name` may have meant
-    /// a property of `object`, which is an apparent type. Given the `a.b` it is written in, only what is within reach there counts
-    /// (`isValidPropertyAccessForCompletions`).
-    fn is_property_misspelt(
-        &mut self,
-        object: TypeId,
-        name: Atom,
-        access: Option<(FileId, ExprId)>,
-    ) -> bool {
-        self.property_meant(object, name, access, false).is_some()
-    }
-
     /// The property that may have been meant. `closest`: the one `GetSpellingSuggestion` settles on, and not the first that will do.
     fn property_meant(
         &mut self,
@@ -935,7 +544,8 @@ impl Checker<'_> {
                 let candidate = as_written(self.files().atoms.bytes(prop.name));
                 if candidate.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
                     || !is_close(text, candidate)
-                    || self.is_union(object) && !self.has_property_of_type(object, prop.name)
+                    || self.is_union(object)
+                        && !self.get_property_of_type(object, prop.name).is_some()
                 {
                     continue;
                 }
@@ -954,15 +564,16 @@ impl Checker<'_> {
                                 })
                         } else {
                             let is_super = matches!(self.hir(file)[obj].kind, ExprKind::Super);
-                            self.why_not_accessible(
+                            self.check_property_accessibility_at_location(
                                 file,
+                                self.hir(file).node(e),
                                 Parent::Expr(e),
                                 is_super,
                                 false,
                                 object,
                                 prop.name,
+                                None,
                             )
-                            .is_none()
                         }
                     }
                 };
@@ -1120,133 +731,41 @@ impl Checker<'_> {
                 .is_some_and(|p| self.is_assignable(key, p))
     }
 
-    /// What a pattern takes out of something has to be within reach: 2341 2445 2446. What an object pattern takes out, and what a type
-    /// looks up in another, has to be there: 2339 2493 2514 2537 2538.
-    fn check_lookups_by_name(&mut self, file: FileId) {
+    /// `checkVariableLikeDeclaration`, of the binding element whose name is `element`, in `pattern`: "check private/protected variable
+    /// access".
+    pub(super) fn check_binding_element_accessibility(
+        &mut self,
+        file: FileId,
+        pattern: PatId,
+        element: PatId,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for p in 0..hir.pats.len() {
-            if matches!(hir.pats[p].kind, PatKind::Object(_) | PatKind::Array(_)) {
-                self.check_lookups_of_pattern(file, PatId(p as u32));
-            }
-        }
-        // `getTypeFromIndexedAccessTypeNode`
-        for t in 0..hir.types.len() {
-            let TypeNodeKind::IndexedAccess { obj, index } = hir.types[t].kind else {
-                continue;
-            };
-            if bound.is_unchecked_type(t) {
-                continue;
-            }
-            let (object, keys) = (
-                self.type_from_node(file, obj),
-                self.type_from_node(file, index),
-            );
-            // `shouldDeferIndexedAccessType`
-            if !self.is_known(object)
-                || !self.is_known(keys)
-                || self.is_generic(object)
-                || self.is_generic(keys)
-            {
-                continue;
-            }
-            let apparent = self.reduced_apparent_type(object);
-            // Each member of a union of keys is answered for by itself, whatever is wrong with the others.
-            for &key in self.parts(keys) {
-                let Some(code) = self.why_no_lookup(apparent, key, false) else {
-                    continue;
-                };
-                // Below zero in a tuple is said with what else there is to say of keys.
-                if code == 2514 {
-                    continue;
-                }
-                // `boolean` is not taken apart (`getIndexedAccessTypeOrUndefined`).
-                let key = if self.is_boolean(keys) { keys } else { key };
-                let end = self.end_of_type_node(file, index);
-                {
-                    let args = self.names_in_no_lookup(code, apparent, key);
-                    self.add_diagnostic(Reported::new(
-                        (file, hir[index].pos, end),
-                        code,
-                        held(args),
-                    ));
-                }
-            }
-        }
-    }
-
-    /// `checkVariableLikeDeclaration` and `getBindingElementTypeFromParentType`, of the elements of `pattern`.
-    fn check_lookups_of_pattern(&mut self, file: FileId, pattern: PatId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let first = match hir[pattern].kind {
-            PatKind::Object(props) if !props.is_empty() => hir[props.at(0)].value,
-            PatKind::Array(elems) if !elems.is_empty() => hir[elems.at(0)].pat,
-            _ => return,
+        // `PropertyNameOrName`, if that is no pattern, and `getLiteralTypeFromPropertyName` of it.
+        let own_name = match hir[element].kind {
+            PatKind::Ident(name) => Some((self.string_literal(name, false), hir[element].pos)),
+            _ => None,
         };
-        // `GetRootDeclaration`: the variable or the parameter it is part of, which is where it is asked from.
-        let root = root_pattern(bound, pattern);
-        let around = match bound.pat_parent[root.idx()] {
-            PatParent::Var(d) => Parent::VarInit(d),
-            PatParent::Param(param) => Parent::ParamDefault(param),
-            _ => return,
-        };
-        // Whether that is a parameter of what has no body; one that nothing types, so that it is what its pattern makes of it
-        // (`getTypeFromBindingPattern`); one that was widened before its pattern was looked at.
-        let (mut has_no_body, mut is_implied, mut is_widened) = (false, false, false);
-
-        if let Parent::ParamDefault(param) = around {
-            let func = bound.param_fn[param.idx()];
-            let owner = bound.fns[func.idx()].owner;
-            if matches!(owner, FnOwner::None) {
-                return;
-            }
-            has_no_body = matches!(hir[func].body, FnBody::None);
-            if hir[param].ty.is_none() {
-                // Of a setter the getter says.
-                if hir[func].kind == FnKind::Setter {
-                    return;
+        let name = match bound.pat_parent[element.idx()] {
+            PatParent::Prop(_, p) if !hir[p].is_rest => match hir[p].key {
+                PropKey::Name(name) => Some((self.string_literal(name, false), hir[p].pos)),
+                PropKey::Computed(k) => {
+                    let key = self.type_of_expr(file, k);
+                    Some((self.regular(key), hir[p].pos))
                 }
-                match self.contextual_param_type(
-                    file,
-                    func,
-                    (param.0 - hir[func].params.start) as usize,
-                ) {
-                    // `assignParameterType`: where nothing but `unknown` is expected the pattern says what it is.
-                    Some(TypeId::UNKNOWN) => is_implied = true,
-                    // `assignContextualParameterTypes` weighs what is expected against the default: not looked into. Nor is what is
-                    // expected in terms of type parameters.
-                    Some(expected)
-                        if hir[param].default.is_some() || self.has_type_variables(expected) =>
-                    {
-                        return;
-                    }
-                    Some(_) => {}
-                    None => {
-                        if let FnOwner::Expr(function) = owner {
-                            // Nothing is expected of the function, as far as can be told.
-                            if !self.is_context_known(file, function) {
-                                return;
-                            }
-                            // `assignParameterType`: its parameters get their types, widened, before their patterns are looked at.
-                            is_widened = true;
-                        }
-                        is_implied = hir[param].default.is_none();
-                    }
-                }
-            }
-        }
-        // `getTypeForBindingElementParent`
-        let given = if is_implied && pattern == root {
-            self.implied_by_pattern(file, pattern, false, false)
-                .unwrap_or(TypeId::ANY)
-        } else {
-            self.type_for_binding_element_parent(file, first, pattern)
+                PropKey::Private(_) | PropKey::None => None,
+            },
+            _ => own_name,
         };
-        if !self.is_known(given) || self.is_any(given) {
-            return;
-        }
-        let Some(declared) = self.type_looked_into(given) else {
+        let Some((expr_type, at_name)) = name else {
             return;
         };
+        let Some(name_text) = self.property_name_of_type(expr_type) else {
+            return;
+        };
+        let parent_type = self.type_for_binding_element_parent(file, element, pattern);
+        if self.get_property_of_type(parent_type, name_text).is_none() {
+            return;
+        }
         let initializer = match bound.pat_parent[pattern.idx()] {
             PatParent::Var(d) => hir[d].init,
             PatParent::Param(param) => hir[param].default,
@@ -1255,202 +774,23 @@ impl Checker<'_> {
             PatParent::None => ExprId::NONE,
         };
         let is_super = initializer.is_some() && matches!(hir[initializer].kind, ExprKind::Super);
-        let props = match hir[pattern].kind {
-            PatKind::Object(props) => props,
-            PatKind::Array(elems) => {
-                for elem in elems.iter() {
-                    // `PropertyNameOrName`: what an element is bound to passes for the name of a property.
-                    let binding = hir[elem].pat;
-                    if let PatKind::Ident(name) = hir[binding].kind
-                        && self.has_property_of_type(declared, name)
-                        && let Some(code) =
-                            self.why_not_accessible(file, around, is_super, false, declared, name)
-                    {
-                        {
-                            let args = self.names_in_inaccessibility(
-                                file, around, is_super, false, declared, name,
-                            );
-                            self.add_diagnostic(Reported::new(
-                                (file, hir[binding].pos, 0),
-                                code,
-                                held(args),
-                            ));
-                        }
-                    }
-                }
-                return;
-            }
+        // `GetRootDeclaration`: where it is asked from.
+        let at = match bound.pat_parent[root_pattern(bound, pattern).idx()] {
+            PatParent::Var(d) => Parent::VarInit(d),
+            PatParent::Param(param) => Parent::ParamDefault(param),
             _ => return,
         };
-        // What has an initializer that cannot be `undefined` is not `undefined`: whether it can has to be known.
-        if self.p.files.options.strict_null_checks
-            && initializer.is_some()
-            && self.some_type(given, |_, m| m.is_undefined())
-        {
-            let ty = self.type_of_expr(file, initializer);
-            if !self.is_known(ty) {
-                return;
-            }
-        }
-        // What is within reach is asked of what is taken apart as it is declared, what is there of what is left of it.
-        let taken_apart = self.type_pattern_takes_apart(file, pattern, given);
-        let looked_into = if taken_apart == given {
-            Some(declared)
-        } else {
-            self.type_looked_into(taken_apart)
-        };
-        let Some(looked_into) = looked_into else {
-            return;
-        };
-        // An identifier directly in the pattern of `const { a } = require("m")` is an alias (`getTypeOfAlias`), so
-        // `getBindingElementTypeFromParentType` never looks it up in the initializer.
-        let binds_aliases = matches!(bound.pat_parent[pattern.idx()], PatParent::Var(d) if self.external_module_require_argument(file, d).is_some());
-        for prop in props.iter() {
-            let prop = &hir[prop];
-            // A renamed element in a parameter of what has no body is told off for that (2842), and not looked at.
-            if has_no_body
-                && !prop.is_rest
-                && prop.pos != hir[prop.value].pos
-                && matches!(hir[prop.value].kind, PatKind::Ident(_))
-            {
-                continue;
-            }
-            // `getLiteralTypeFromPropertyName` of `PropertyNameOrName`, and where that is written. `...rest` goes by its own name.
-            let (keys, at_name) = match prop.key {
-                _ if prop.is_rest => match hir[prop.value].kind {
-                    PatKind::Ident(name) => (self.string_literal(name, false), hir[prop.value].pos),
-                    _ => continue,
-                },
-                PropKey::Name(name) => (self.string_literal(name, false), prop.pos),
-                PropKey::Computed(k) => {
-                    let keys = self.type_of_expr(file, k);
-                    if !self.is_known(keys) {
-                        continue;
-                    }
-                    (self.regular(keys), prop.pos)
-                }
-                PropKey::Private(_) | PropKey::None => continue,
-            };
-            let name = self.property_name_of_type(keys);
-            let is_declared = name.is_some_and(|name| self.has_property_of_type(declared, name));
-            if is_declared
-                && let Some(name) = name
-                && let Some(code) =
-                    self.why_not_accessible(file, around, is_super, false, declared, name)
-            {
-                let end = self.end_of_name_at(file, at_name);
-                {
-                    let args = self
-                        .names_in_inaccessibility(file, around, is_super, false, declared, name);
-                    self.add_diagnostic(Reported::new((file, at_name, end), code, held(args)));
-                }
-            }
-            // What a pattern implies is the type of an object literal until it is widened: it may lack what has a default.
-            if prop.is_rest || is_declared || is_implied && !is_widened && prop.default.is_some() {
-                continue;
-            }
-            if binds_aliases && matches!(hir[prop.value].kind, PatKind::Ident(_)) {
-                continue;
-            }
-            // `shouldDeferIndexedAccessType`
-            if self.is_generic(keys) {
-                continue;
-            }
-            // `getIndexNodeForAccessExpression`: of a computed name, what is in the brackets. `["a"]` is kept as the name `a`.
-            let at = match prop.key {
-                PropKey::Computed(k) => self.start_of(file, k),
-                _ if hir.text.get(prop.pos as usize) == Some(&b'[') => {
-                    let inside = &hir.text[prop.pos as usize + 1..];
-                    prop.pos + 1 + (inside.len() - inside.trim_ascii_start().len()) as u32
-                }
-                _ => prop.pos,
-            };
-            for &key in self.parts(keys) {
-                let Some(code) = self.why_no_lookup(looked_into, key, prop.default.is_some())
-                else {
-                    continue;
-                };
-                // A bigint is no name for a property, whatever it reads as.
-                let is_bigint = code == 2339
-                    && matches!(prop.key, PropKey::Name(_))
-                    && is_bigint_literal_at(hir, at);
-                let code = if is_bigint { 2538 } else { code };
-                let end = match prop.key {
-                    PropKey::Computed(k) => self.end_of_expr(file, k),
-                    _ => self.end_of_name_at(file, at),
-                };
-                // `boolean` is not taken apart (`getIndexedAccessTypeOrUndefined`).
-                let key = if self.is_boolean(keys) { keys } else { key };
-                {
-                    let args = if is_bigint {
-                        vec!["bigint".to_owned()]
-                    } else {
-                        self.names_in_no_lookup(code, looked_into, key)
-                    };
-                    self.add_diagnostic(Reported::new((file, at, end), code, held(args)));
-                }
-            }
-        }
-    }
-
-    /// `getPropertyTypeForIndexType`, where it is not an expression that does the looking up: what is wrong with looking `key`, which
-    /// is no union, up in `object`, which is an apparent type. `allows_missing`: what is looked for has a default.
-    pub(super) fn why_no_lookup(
-        &mut self,
-        object: TypeId,
-        key: TypeId,
-        allows_missing: bool,
-    ) -> Option<u32> {
-        if let Some(name) = self.property_name_of_type(key) {
-            if self.has_property_of_type(object, name) {
-                return None;
-            }
-            // A number for a name, and nothing but tuples to look it up in.
-            if self.is_numeric_name(name) && self.every_type(object, |c, m| c.is_tuple(m)) {
-                if !allows_missing && let Some(code) = self.past_the_end_of_tuples(object, name) {
-                    return Some(code);
-                }
-                if !self.files().atoms.bytes(name).starts_with(b"-") {
-                    return None;
-                }
-                // Below zero in a tuple that ends. In any other the signature for numbers answers.
-                if !allows_missing
-                    && matches!(self.data(object), TypeData::Tuple { flags, .. } if !flags.iter().any(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC)))
-                {
-                    return Some(2514);
-                }
-            }
-        }
-        if self.is_key_like(key) {
-            // `any` and `never` have whatever can be a key at all.
-            if self.is_any(object) || object.is_never() {
-                return None;
-            }
-            let infos = self.index_signatures_of(object);
-            if let Some((by, _)) = self.index_signature_for_key(&infos, key) {
-                // The signature for strings stands in for symbols, which is an error all the same.
-                let stands_in = by == TypeId::STRING
-                    && !self.is_assignable(key, TypeId::NUMBER)
-                    && !self.is_assignable(key, TypeId::STRING);
-                return stands_in.then_some(2538);
-            }
-        }
-        if allows_missing && self.is_object_literal_type(object) {
-            return None;
-        }
-        // `isJSLiteralType(objectType)`: a key that finds nothing in a JS literal type gives `any`.
-        if self.is_js_literal_type(object) {
-            return None;
-        }
-        Some(
-            if self.is_literal(key) && (self.is_string_like(key) || self.is_number_like(key)) {
-                2339
-            } else if key == TypeId::STRING || key == TypeId::NUMBER {
-                2537
-            } else {
-                2538
-            },
-        )
+        let error_node = |c: &Self| (file, at_name, c.end_of_name_at(file, at_name));
+        self.check_property_accessibility_at_location(
+            file,
+            hir.parent(hir.node(element)),
+            at,
+            is_super,
+            false,
+            parent_type,
+            name_text,
+            Some(&error_node),
+        );
     }
 
     /// `reportNonexistentProperty`. `e`: the `a.b` whose name is written at `start`, or the `#b` that is.
@@ -1614,7 +954,7 @@ impl Checker<'_> {
         match promised {
             Some(promised) => {
                 let promised = self.apparent_type(promised);
-                self.has_property_of_type(promised, name)
+                self.get_property_of_type(promised, name).is_some()
             }
             None => false,
         }
@@ -1808,35 +1148,9 @@ impl Checker<'_> {
         )
     }
 
-    /// `IsWriteAccess`: the left of `=` or of an operator that assigns, the operand of `++` or `--`, the variable of `for..in/of`, or
-    /// an element, or the value of a property, of a literal that is one of these. Neither `!` nor `...` is seen through (`accessKind`).
+    /// `IsWriteAccess`
     pub(super) fn is_write_access(&self, file: FileId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = e;
-        loop {
-            match bound.expr_parent[at.idx()] {
-                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
-                    ExprKind::Assign { target, .. } => return target == at,
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    } => return true,
-                    ExprKind::Array(_) => at = parent,
-                    _ => return false,
-                },
-                Parent::Prop(p)
-                    if hir[p].kind == PropKind::Init
-                        && matches!(hir[bound.prop_owner[p.idx()]].kind, ExprKind::Object(_)) =>
-                {
-                    at = bound.prop_owner[p.idx()];
-                }
-                Parent::Stmt(s) if s.is_some() => {
-                    return matches!(bound.stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
-                        && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s));
-                }
-                _ => return false,
-            }
-        }
+        self.bound(file).is_write_access(self.hir(file), e)
     }
 
     /// `getDeclarationModifierFlagsFromSymbolEx`, of a property that is declared in one place: what is written on its setter if it is
@@ -1887,21 +1201,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkPropertyAccessibilityAtLocation`, for the property `name` of `containing`, asked for in what `at` stands for
-    /// (`Parent::Expr(e)`: by `e` itself), which writes to it if `writing`.
-    pub(super) fn why_not_accessible(
-        &mut self,
-        file: FileId,
-        at: Parent,
-        is_super: bool,
-        writing: bool,
-        containing: TypeId,
-        name: Atom,
-    ) -> Option<u32> {
-        self.inaccessibility(file, at, is_super, writing, containing, name)
-            .map(|found| found.code)
-    }
-
     /// `checkPropertyAccessibility`, of the `a.b` at `e`, whose name is written at `name_pos`.
     pub(super) fn check_property_accessibility(
         &mut self,
@@ -1913,68 +1212,44 @@ impl Checker<'_> {
         name_pos: u32,
     ) {
         let (at, writing) = (Parent::Expr(e), self.is_write_access(file, e));
-        if let Some(found) = self.inaccessibility(file, at, is_super, writing, containing, name) {
-            let names = self.names_of_inaccessible(&found);
-            let args: Vec<Arg> = names.iter().map(|name| Arg::Text(name)).collect();
-            self.error_at(self.place_of_token(file, name_pos), found.code, &args);
-        }
+        let error_node = |c: &Self| c.place_of_token(file, name_pos);
+        self.check_property_accessibility_at_location(
+            file,
+            self.hir(file).node(e),
+            at,
+            is_super,
+            writing,
+            containing,
+            name,
+            Some(&error_node),
+        );
     }
 
-    /// What goes into the message `why_not_accessible` chose.
-    pub(super) fn names_in_inaccessibility(
+    /// `checkPropertyAccessibilityAtLocation`, for the property `name` of `containing`, asked for at `location`, in what `at` stands
+    /// for (`Parent::Expr(e)`: by `e` itself), which writes to it if `writing`. `error_node`: asked where it is only if there is an
+    /// error.
+    pub(super) fn check_property_accessibility_at_location(
         &mut self,
         file: FileId,
+        location: Node,
         at: Parent,
         is_super: bool,
         writing: bool,
         containing: TypeId,
         name: Atom,
-    ) -> Vec<String> {
-        match self.inaccessibility(file, at, is_super, writing, containing, name) {
-            Some(found) => self.names_of_inaccessible(&found),
-            None => Vec::new(),
-        }
-    }
-
-    fn names_of_inaccessible(&mut self, found: &Inaccessible) -> Vec<String> {
-        let mut names = vec![self.prop_to_string(&found.prop)];
-        match found.class {
-            Some(class) => {
-                let class = self.declared_type(class);
-                names.push(self.type_to_string(class));
-            }
-            None if found.code == 2445 => names.push(self.type_to_string(found.containing)),
-            None => {}
-        }
-        if found.code == 2446 {
-            names.push(self.type_to_string(found.containing));
-        }
-        names
-    }
-
-    /// `why_not_accessible`, with what the message names.
-    fn inaccessibility(
-        &mut self,
-        file: FileId,
-        at: Parent,
-        is_super: bool,
-        writing: bool,
-        containing: TypeId,
-        name: Atom,
-    ) -> Option<Inaccessible> {
+        error_node: Option<&dyn Fn(&Self) -> (FileId, u32, u32)>,
+    ) -> bool {
         // `forEachProperty`: a property of a union or of an intersection is made of those of the members.
         let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
         for &member in self.parts(containing) {
             let member = self.apparent_type(member);
-            let (prop, _) = self.prop_ref(member, name)?;
+            let Some((prop, _)) = self.prop_ref(member, name) else {
+                return true;
+            };
             super::relate::for_each_property(prop, &mut |p| parts.push(p));
         }
-        let first = *parts.first()?;
-        let found = |code: u32, class: Option<Sym>, containing: TypeId| Inaccessible {
-            code,
-            prop: first.clone(),
-            class,
-            containing,
+        let Some(&first) = parts.first() else {
+            return true;
         };
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
         // With one declaration for all of them it goes by that (`createUnionOrIntersectionProperty`). Otherwise it is private if one of
@@ -2001,7 +1276,10 @@ impl Checker<'_> {
         let is_static = flags.contains(Flags::STATIC);
         if is_super {
             if flags.contains(Flags::ABSTRACT) {
-                return Some(found(2513, self.declaring_class(first), containing));
+                let class = self
+                    .declaring_class(first)
+                    .map(|class| self.declared_type(class));
+                return self.report_inaccessible(error_node, 2513, first, class.as_slice());
             }
             // `isClassInstanceProperty`: a field is set on the instance, there is nothing of it in the parent's prototype. An
             // `accessor` is there.
@@ -2025,11 +1303,24 @@ impl Checker<'_> {
                     _ => false,
                 })
             {
-                return Some(found(2855, None, containing));
+                return self.report_inaccessible(error_node, 2855, first, &[]);
             }
         }
+        // "Referencing abstract properties within their own constructors is not allowed"
+        if flags.contains(Flags::ABSTRACT)
+            // `symbolHasNonMethodDeclaration`
+            && !first.flags.contains(PropFlags::METHOD)
+            && is_this_property_or_initialized_by_this(self.hir(file), self.bound(file), location)
+            && let Some(class) = self.declaring_class(first)
+            && is_node_used_during_class_initialization(self.hir(file), location)
+        {
+            if let Some(error_node) = error_node {
+                self.error_at(error_node(self), 2715, &[Arg::Prop(first), Arg::Sym(class)]);
+            }
+            return false;
+        }
         if !flags.intersects(hidden) {
-            return None;
+            return true;
         }
         let classes = match at {
             Parent::Expr(e) if e.is_some() => self.enclosing_classes(file, e),
@@ -2041,15 +1332,16 @@ impl Checker<'_> {
             .collect();
         if flags.contains(Flags::PRIVATE) {
             // Declared in several places, it makes `never` of an intersection and is no property of a union.
-            if !is_declared_once {
-                return None;
-            }
-            let declaring = self.declaring_class(first)?;
-            return (!enclosing.contains(&declaring))
-                .then(|| found(2341, Some(declaring), containing));
+            let declaring = self.declaring_class(first).filter(|_| is_declared_once);
+            let Some(declaring) = declaring.filter(|declaring| !enclosing.contains(declaring))
+            else {
+                return true;
+            };
+            let class = self.declared_type(declaring);
+            return self.report_inaccessible(error_node, 2341, first, &[class]);
         }
         if is_super {
-            return None;
+            return true;
         }
         // `isClassDerivedFromDeclaringClasses`: the classes that declare those of them that are protected.
         let mut declaring: Vec<Sym> = Vec::new();
@@ -2058,7 +1350,10 @@ impl Checker<'_> {
                 .modifiers_of_property(part, writing)
                 .contains(Flags::PROTECTED)
             {
-                declaring.push(self.declaring_class(part)?);
+                let Some(class) = self.declaring_class(part) else {
+                    return true;
+                };
+                declaring.push(class);
             }
         }
         // The innermost class around that is, or derives from, each of them.
@@ -2100,15 +1395,12 @@ impl Checker<'_> {
         }
         let Some(enclosing_class) = enclosing_class else {
             // `getDeclaringClass`: what is put together from several declarations has no parent.
-            let class = if is_declared_once {
-                self.declaring_class(first)
-            } else {
-                None
-            };
-            return Some(found(2445, class, containing));
+            let class = self.declaring_class(first).filter(|_| is_declared_once);
+            let class = class.map_or(containing, |class| self.declared_type(class));
+            return self.report_inaccessible(error_node, 2445, first, &[class]);
         };
         if is_static {
-            return None;
+            return true;
         }
         // And only through an instance of that class, which a union is not (`hasBaseType`).
         let through = if self.is_deferred(containing) {
@@ -2116,9 +1408,68 @@ impl Checker<'_> {
         } else {
             containing
         };
-        (!self.has_base(through, enclosing_class, 0))
-            .then(|| found(2446, Some(enclosing_class), through))
+        if self.has_base(through, enclosing_class, 0) {
+            return true;
+        }
+        let class = self.declared_type(enclosing_class);
+        self.report_inaccessible(error_node, 2446, first, &[class, through])
     }
+
+    /// `if errorNode != nil { c.error_at(errorNode, .., c.symbolToString(prop), ..) }; return false`
+    fn report_inaccessible(
+        &mut self,
+        error_node: Option<&dyn Fn(&Self) -> (FileId, u32, u32)>,
+        code: u32,
+        prop: &Prop,
+        types: &[TypeId],
+    ) -> bool {
+        if let Some(error_node) = error_node {
+            let mut args: SmallVec<[Arg; 3]> = smallvec::smallvec![Arg::Prop(prop)];
+            args.extend(types.iter().map(|&ty| Arg::Type(ty)));
+            self.error_at(error_node(self), code, &args);
+        }
+        false
+    }
+}
+
+/// `isThisProperty(location) || isThisInitializedObjectBindingExpression(location) || IsObjectBindingPattern(location.Parent) &&
+/// isThisInitializedDeclaration(location.Parent.Parent)`
+fn is_this_property_or_initialized_by_this(hir: &File, bound: &Bound, location: Node) -> bool {
+    let is_this = |node: Node| hir.kind(node) == Kind::ThisKeyword;
+    let around = hir.parent(hir.parent(location));
+    match hir.kind(location) {
+        Kind::PropertyAccessExpression | Kind::ElementAccessExpression => {
+            // In `typeof this.a` it is a qualified name.
+            is_this(hir.expression(location))
+                && !matches!(hir.data(location), NodeData::Expr(e) if bound.is_in_type_query(e))
+        }
+        Kind::ShorthandPropertyAssignment | Kind::PropertyAssignment => {
+            matches!(hir.data(around), NodeData::Expr(e)
+                if matches!(hir[e].kind, ExprKind::Assign { op: None, value, .. } if is_this(hir.node(value))))
+        }
+        _ => {
+            hir.kind(hir.parent(location)) == Kind::ObjectBindingPattern
+                && hir.kind(around) == Kind::VariableDeclaration
+                && is_this(hir.initializer(around))
+        }
+    }
+}
+
+/// `isNodeUsedDuringClassInitialization`
+fn is_node_used_during_class_initialization(hir: &File, node: Node) -> bool {
+    use std::ops::ControlFlow;
+    let found = hir.find_ancestor_or_quit(node, |element| {
+        let kind = hir.kind(element);
+        let has_body = || !matches!(hir[hir.function_of(element)].body, FnBody::None);
+        if kind == Kind::Constructor && has_body() || kind == Kind::PropertyDeclaration {
+            ControlFlow::Break(true)
+        } else if kind.is_class_like() || kind.is_function_like_declaration() {
+            ControlFlow::Break(false)
+        } else {
+            ControlFlow::Continue(())
+        }
+    });
+    found.is_some()
 }
 
 /// Whether the private name written at `pos` is `#constructor`.

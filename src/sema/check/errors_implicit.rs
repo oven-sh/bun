@@ -248,7 +248,7 @@ impl Checker<'_> {
                             }
                         }
                         return self
-                            .jsx_props_type(file, parent)
+                            .contextual_jsx_element_attributes_type(file, parent)
                             .is_none_or(|props| self.is_known(props));
                     }
                     _ => return true,

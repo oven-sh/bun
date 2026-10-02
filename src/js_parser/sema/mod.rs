@@ -29,7 +29,7 @@ use bun_ast::{Expr, Loc};
 pub(crate) enum Mark {
     /// Of a binding, or of the name of a member of a class: its type (`ts::TypeId`).
     Annotation,
-    /// Of the same: `?` follows it.
+    /// Of the same, or of the name of a method of an object literal: `?` follows it, and where.
     Optional,
     /// Of the same: `!` follows it.
     Definite,
@@ -59,6 +59,8 @@ pub(crate) enum Mark {
     ExtendsArguments,
     /// Of the `class` keyword: an element of an `extends` clause that is not the first (`ts::Id<Expr>`). As many as there are.
     OtherExtends,
+    /// Of the `class` keyword: where an `implements` clause starts, and again: where it ends. Two for each clause.
+    ImplementsClause,
     /// Of the `class` keyword: an element of its first `implements` clause (`ts::TypeId`). As many as there are.
     Implements,
     /// Of the `class` keyword: an element of an `implements` clause that is not the first (`ts::TypeId`). As many as there are.
@@ -104,6 +106,8 @@ pub(crate) enum Mark {
     StringName,
     /// Of the name of a module: it is `global` (`NodeFlagsGlobalAugmentation`).
     GlobalName,
+    /// Of the name of a module: `ModuleDeclaration.Keyword` is `module`.
+    ModuleKeyword,
     /// Of the name of a module: `declare module "a";`.
     NoBody,
     /// Of where the `(` of a function's parameters was expected: where the token before ends (`createMissingList`).
@@ -210,8 +214,9 @@ pub(crate) fn error_arguments(
     source: &[u8],
 ) -> Option<Box<[Box<[u8]>]>> {
     let text = &said.text[..];
-    // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `parseErrorForInvalidName`: these name the token they are reported at.
-    if matches!(code, 1359 | 1389 | 1390 | 2819) {
+    // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `checkGrammarObjectLiteralExpression`: these name the token they are
+    // reported at.
+    if matches!(code, 1042 | 1359 | 1389 | 1390) {
         let at = said.location.as_ref()?;
         let token = source.get(at.offset..at.offset + at.length)?;
         return Some(Box::new([token.into()]));

@@ -605,6 +605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if level.gte(Level::Conditional) {
             return Ok(Continuation::Done);
         }
+        let question = p.lexer.loc();
         p.lexer.next()?;
 
         // Stop now if we're parsing one of these:
@@ -621,6 +622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             if let Some(errors) = errors {
                 errors.invalid_expr_after_question = Some(p.lexer.range());
+                p.note_loc(&mut left.loc, Mark::Optional, question);
                 return Ok(Continuation::Done);
             }
             // `parseConditionalExpressionRest`: a conditional expression like any other, with nothing after its `?`.

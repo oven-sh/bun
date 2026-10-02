@@ -2443,6 +2443,13 @@ impl RunCommand {
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
 
+                        // A script has no entry point to start from: the project is checked, as by `bun check`.
+                        if ctx.runtime_options.check
+                            && !crate::cli::check_command::check_project_before()
+                        {
+                            Global::exit(1);
+                        }
+
                         if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
                             Self::run_package_script_foreground_with_shell_path(
                                 ctx,

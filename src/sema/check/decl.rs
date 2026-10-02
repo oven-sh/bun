@@ -455,6 +455,49 @@ impl<'p> Checker<'p> {
         self.p.identity_mappers.insert((file, scope), mapper)
     }
 
+    /// `getOuterTypeParameters`: those too that a context sensitive function around `scope` has adopted.
+    pub(super) fn identity_mapper_with_adopted(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+    ) -> MapperId {
+        let declared = self.identity_mapper(file, scope);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // For speed: only a function that something is expected of adopts anything.
+        let mut at = scope;
+        loop {
+            if at.is_none() {
+                return declared;
+            }
+            let s = &bound.scopes[at.idx()];
+            if let ScopeKind::Fn(f) = s.kind
+                && hir[f].type_params.is_empty()
+                && self.takes_context(file, f).is_some()
+            {
+                break;
+            }
+            at = s.parent;
+        }
+        if let Some(kept) = self.p.identity_mappers_with_adopted.get(&(file, scope)) {
+            return kept;
+        }
+        let before = self.what_only_holds_for_now();
+        let adopted = self.adopted_type_params_in_scope(file, scope, u32::MAX);
+        let mapper = if adopted.is_empty() {
+            declared
+        } else {
+            let mut pairs = self.p.types.mapping(declared).to_vec();
+            pairs.extend(adopted.into_iter().map(|param| (param, param)));
+            self.p.types.mapper(pairs)
+        };
+        if self.what_only_holds_for_now() == before {
+            self.p
+                .identity_mappers_with_adopted
+                .insert((file, scope), mapper);
+        }
+        mapper
+    }
+
     /// `isTypeParameterPossiblyReferenced`: the type parameters in scope that `mentioned` has, or that count as mentioned for where
     /// they are declared, standing for themselves. A type that is written inside a generic declaration without referring to its
     /// parameters is not generic. `pos`: where it is written.
@@ -2245,7 +2288,13 @@ impl<'p> Checker<'p> {
                 Keyword::Symbol => TypeId::SYMBOL,
                 Keyword::Object => TypeId::OBJECT,
                 Keyword::Intrinsic => TypeId::INTRINSIC_MARKER,
-                Keyword::This => self.this_type_at(file, node, scope),
+                Keyword::This => {
+                    let this = self.this_type_at(file, node, scope);
+                    if this == TypeId::ERROR {
+                        self.error_at(self.place_of_token(file, hir[node].pos), 2526, &[]);
+                    }
+                    this
+                }
             },
             TypeNodeKind::StringLit(value) => self.string_literal(value, false),
             TypeNodeKind::NumberLit(n) => self.number_literal(hir.numbers[n as usize], false),
@@ -2356,30 +2405,13 @@ impl<'p> Checker<'p> {
                     self.type_from_node(file, obj),
                     self.type_from_node(file, index),
                 );
-                // `getIndexedAccessTypeEx`: with an access node, what `getIndexedAccessTypeOrUndefined` does not find is the error type.
-                // Without one, in an instantiation, it is `unknown`.
-                if self.is_known(obj)
-                    && self.is_known(index)
-                    && !index.is_never()
-                    && !self.is_generic(obj)
-                    && !self.is_generic(index)
-                    && self.parts(index).iter().any(|&key| {
-                        self.indexed_access_if_any(obj, key, false).is_none()
-                            && !self.property_name_of_type(key).is_some_and(|name| {
-                                let apparent = self.apparent_type(obj);
-                                self.type_of_property(apparent, name).is_some()
-                            })
-                    })
-                {
-                    return TypeId::ERROR;
-                }
                 let alias = self.alias_for_type_node(file, scope, node);
                 let alias = alias
                     .as_ref()
                     .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
                 let ty = self
-                    .indexed_access_of_type_node(obj, index, alias)
-                    .unwrap_or(TypeId::UNKNOWN);
+                    .indexed_access_of_type_node(obj, index, (file, node), alias)
+                    .unwrap_or(TypeId::ERROR);
                 // `getPropertyTypeForIndexType`: written as `T["p"]`, what may be missing reads as `undefined`.
                 if self.contains_missing_type(ty) {
                     self.union(&[ty, TypeId::UNDEFINED])
@@ -2571,26 +2603,7 @@ impl<'p> Checker<'p> {
                 if !flags.intersects(SymFlags::TYPE) {
                     return TypeId::ERROR;
                 }
-                let (least, most) = self.type_argument_arity(sym);
-                // `getTypeFromClassOrInterfaceReference`: `isJs`, as for a type reference.
-                let is_js_reference = hir.is_js
-                    && flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-                    && most != 0;
-                if !is_js_reference && (args.len() < least || args.len() > most) {
-                    return TypeId::ERROR;
-                }
-                let mut args = self.types_from_nodes(file, args);
-                if is_js_reference {
-                    let params = self.local_type_params_of_symbol(sym);
-                    args = self.fill_type_args_as(&params, &args, true);
-                }
-                if most != 0
-                    && flags.contains(SymFlags::TYPE_ALIAS)
-                    && !flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-                {
-                    return self.type_from_type_alias_reference(file, node, sym, &args);
-                }
-                self.written_type_reference(sym, &args)
+                self.type_reference_type_of_node(file, scope, node, sym, args)
             }
             TypeNodeKind::Ref { name, args } => {
                 if let Some(intended) = self.get_intended_type_from_jsdoc_type_reference(file, node)
@@ -2599,7 +2612,10 @@ impl<'p> Checker<'p> {
                 }
                 let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                 // `resolveTypeReferenceName`: `getUnresolvedSymbolForEntityName`
-                let Some(found) = self.resolve_entity(file, scope, &names, SymFlags::TYPE) else {
+                let ignore_errors = self.bound(file).is_unchecked_type(node.idx());
+                let found =
+                    self.resolve_entity_name(file, scope, name, SymFlags::TYPE, ignore_errors);
+                let Some(found) = found else {
                     let args = self.types_from_nodes(file, args);
                     return self.unresolved_name_type(&names, &args);
                 };
@@ -2618,40 +2634,139 @@ impl<'p> Checker<'p> {
                     let args = self.types_from_nodes(file, args);
                     return self.unresolved_name_type(&names, &args);
                 }
-                let is_class_or_interface = flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
-                let (least, most) = self.type_argument_arity(sym);
-                // `getTypeFromClassOrInterfaceReference`: in a JavaScript file a generic class or interface takes any number of type
-                // arguments. Everywhere else the wrong number gives the error type.
-                let is_js_reference = hir.is_js && is_class_or_interface && most != 0;
-                if !is_js_reference && (args.len() < least || args.len() > most) {
-                    // `getTypeFromTypeAliasReference` asks for the declared type before it counts.
-                    if !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) {
-                        self.declared_type(sym);
-                    }
-                    return TypeId::ERROR;
-                }
-                if is_class_or_interface
-                    && most != 0
-                    && self.is_deferred_type_reference_node(file, scope, node, args.len() != most)
-                {
-                    let reference = TypeData::Ref {
-                        target: sym,
-                        args: self.deferred_type_arguments_of_node(file, scope, node),
-                    };
-                    return self.deferred_type_reference_of_node(file, scope, node, reference);
-                }
-                let mut args = self.types_from_nodes(file, args);
-                if is_js_reference {
-                    let params = self.local_type_params_of_symbol(sym);
-                    args = self.fill_type_args_as(&params, &args, true);
-                }
-                if most != 0 && !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) {
-                    self.type_from_type_alias_reference(file, node, sym, &args)
-                } else {
-                    self.written_type_reference(sym, &args)
-                }
+                self.type_reference_type_of_node(file, scope, node, sym, args)
             }
         }
+    }
+
+    /// `getTypeReferenceType`, of the reference to the type `sym` that is written at `node` with the type arguments `args`.
+    fn type_reference_type_of_node(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+        sym: Sym,
+        args: IdList<TypeNodeId>,
+    ) -> TypeId {
+        let hir = self.hir(file);
+        let flags = self.files().flags(sym);
+        let is_class_or_interface = flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
+        let Some(most) = self.check_type_argument_count(sym, args.len(), file, Ok(node)) else {
+            return TypeId::ERROR;
+        };
+        if is_class_or_interface
+            && most != 0
+            && matches!(hir[node].kind, TypeNodeKind::Ref { .. })
+            && self.is_deferred_type_reference_node(file, scope, node, args.len() != most)
+        {
+            let reference = TypeData::Ref {
+                target: sym,
+                args: self.deferred_type_arguments_of_node(file, scope, node),
+            };
+            return self.deferred_type_reference_of_node(file, scope, node, reference);
+        }
+        let mut args = self.types_from_nodes(file, args);
+        // In a JavaScript file a generic class or interface takes any number of type arguments.
+        if hir.is_js && is_class_or_interface && most != 0 {
+            let params = self.local_type_params_of_symbol(sym);
+            args = self.fill_type_args_as(&params, &args, true);
+        }
+        if most != 0 && !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) {
+            self.type_from_type_alias_reference(file, node, sym, &args)
+        } else {
+            self.written_type_reference(sym, &args)
+        }
+    }
+
+    /// `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference` and `checkNoTypeArguments`, as far as they count: how many
+    /// type parameters `sym` has. `None`: `given` is no number of type arguments it takes, and the reference is the error type.
+    /// `node`: the reference, or the class in `file` that has it after `extends`.
+    pub(super) fn check_type_argument_count(
+        &mut self,
+        sym: Sym,
+        given: usize,
+        file: FileId,
+        node: Result<TypeNodeId, ClassId>,
+    ) -> Option<usize> {
+        let flags = self.files().flags(sym);
+        let is_class_or_interface = flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
+        // `getDeclaredTypeOfTypeAlias`: an alias that is a circle (2456) never gets its type parameters.
+        let is_circle = !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) && {
+            self.declared_type(sym);
+            self.p.circular_aliases.get(&sym).is_some()
+        };
+        let (least, most) = if is_circle {
+            (0, 0)
+        } else {
+            self.type_argument_arity(sym)
+        };
+        if (least..=most).contains(&given) {
+            return Some(most);
+        }
+        let hir = self.hir(file);
+        let is_js = hir.is_js && is_class_or_interface && most != 0;
+        // `isJsImplicitAny`
+        if is_js && !self.p.files.options.no_implicit_any {
+            return Some(most);
+        }
+        let at = match node {
+            Ok(node) => (file, hir[node].pos, self.end_of_type_node(file, node)),
+            // Type arguments that `@extends` gives are written somewhere else.
+            Err(class) => {
+                let start = self.start_of(file, hir[class].extends);
+                let end = super::errors::end_of_extends(self, file, &hir[class]);
+                (
+                    file,
+                    start,
+                    end.max(self.end_of_expr(file, hir[class].extends)),
+                )
+            }
+        };
+        if most == 0 {
+            self.error_at(at, 2315, &[Arg::Sym(sym)]);
+            return None;
+        }
+        // `missingAugmentsTag`, `IsExpressionWithTypeArguments`
+        let is_heritage_element = is_js
+            && match node {
+                Ok(node) => {
+                    let mut lists = hir.classes.iter().map(|c| c.implements);
+                    lists.any(|list| hir.ids(list).any(|t| t == node))
+                        || hir
+                            .interfaces
+                            .iter()
+                            .any(|x| hir.ids(x.extends).any(|t| t == node))
+                }
+                Err(_) => true,
+            };
+        let code = match (least == most, is_heritage_element) {
+            (true, false) => 2314,
+            (false, false) => 2707,
+            (true, true) => 8026,
+            (false, true) => 8027,
+        };
+        let name = if is_class_or_interface {
+            let declared = self.declared_type(sym);
+            // `TypeFormatFlagsWriteArrayAsGenericType`
+            match self.array_element(declared) {
+                Some(element) => {
+                    format!(
+                        "{}<{}>",
+                        self.symbol_to_string(sym),
+                        self.type_to_string(element)
+                    )
+                }
+                None => self.type_to_string(declared),
+            }
+        } else {
+            self.symbol_to_string(sym)
+        };
+        self.error_at(
+            at,
+            code,
+            &[Arg::Text(&name), Arg::Number(least), Arg::Number(most)],
+        );
+        is_js.then_some(most)
     }
 
     /// `getIntendedTypeFromJSDocTypeReference`
@@ -3160,7 +3275,7 @@ impl<'p> Checker<'p> {
         } else {
             ScopeId::NONE
         };
-        let mapper = self.identity_mapper(file, parent);
+        let mapper = self.identity_mapper_with_adopted(file, parent);
         self.p
             .types
             .intern_sig(SigData::Decl { file, func, mapper })

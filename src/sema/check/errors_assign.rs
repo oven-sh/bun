@@ -233,8 +233,6 @@ impl Checker<'_> {
         self.check_assertions(file);
         self.check_literals_against_patterns(file);
         self.check_redeclared_variables(file);
-        self.check_type_argument_constraints(file);
-        self.check_mapped_type_keys(file);
         // `checkExportAssignment`: what is exported is held against the type of its `@type` tag.
         for &(owner, node) in &hir.jsdoc_types {
             let JsDocTypeOwner::Export(s) = owner else {
@@ -921,204 +919,133 @@ impl Checker<'_> {
         Some(sym)
     }
 
-    /// `checkTypeArgumentConstraints`, of the type arguments of a type reference: 2344, or what says more.
-    fn check_type_argument_constraints(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.types.len() {
-            let scope = bound.type_scope[i];
-            if bound.is_unchecked_type(i) {
-                continue;
-            }
-            let (args, sym) = match hir.types[i].kind {
-                TypeNodeKind::Ref { name, args } => {
-                    let mut names = [Atom::NONE; 8];
-                    let node = TypeNodeId(i as u32);
-                    if args.is_empty()
-                        || name.len() > names.len()
-                        || self
-                            .get_intended_type_from_jsdoc_type_reference(file, node)
-                            .is_some()
-                    {
-                        continue;
-                    }
-                    for (slot, part) in names.iter_mut().zip(hir.texts(name)) {
-                        *slot = part;
-                    }
-                    let Some(sym) = self.files().resolve_entity(
-                        file,
-                        scope,
-                        &names[..name.len()],
-                        SymFlags::TYPE,
-                    ) else {
-                        continue;
-                    };
-                    let Some(sym) = self.files().resolve_alias_if_needed(sym) else {
-                        continue;
-                    };
-                    (args, sym)
+    /// `checkTypeReferenceOrImport`
+    pub(super) fn check_type_reference_or_import(&mut self, file: FileId, node: TypeNodeId) {
+        let hir = self.hir(file);
+        let referenced = self.type_from_node(file, node);
+        // `getTypeParametersForTypeReferenceOrImport`
+        let (args, sym) = match hir[node].kind {
+            TypeNodeKind::Ref { name, args } if !args.is_empty() => {
+                if self
+                    .get_intended_type_from_jsdoc_type_reference(file, node)
+                    .is_some()
+                {
+                    return;
                 }
-                // `checkImportType`: `import("m").A<T>` is held to the same.
-                TypeNodeKind::Import {
-                    spec,
-                    name,
+                let names: smallvec::SmallVec<[Atom; 4]> = hir.texts(name).collect();
+                let scope = self.bound(file).type_scope[node.idx()];
+                let found = self
+                    .files()
+                    .resolve_entity(file, scope, &names, SymFlags::TYPE);
+                (
                     args,
-                    is_typeof: false,
-                    mode,
-                } if !args.is_empty() => {
-                    let Some(sym) = self.import_type_symbol(file, spec, name, mode) else {
-                        continue;
-                    };
-                    (args, sym)
-                }
-                _ => continue,
+                    found.and_then(|sym| self.files().resolve_alias_if_needed(sym)),
+                )
+            }
+            TypeNodeKind::Import {
+                spec,
+                name,
+                args,
+                is_typeof: false,
+                mode,
+            } if !args.is_empty() => (args, self.import_type_symbol(file, spec, name, mode)),
+            _ => return,
+        };
+        if let Some(sym) = sym
+            && !self.is_error_type(referenced)
+        {
+            let type_parameters = self.type_params_of_symbol(sym);
+            self.check_type_argument_constraints(file, args, &type_parameters);
+        }
+    }
+
+    /// `checkTypeArgumentConstraints`: 2344, or what says more.
+    fn check_type_argument_constraints(
+        &mut self,
+        file: FileId,
+        nodes: IdList<TypeNodeId>,
+        type_parameters: &[TypeId],
+    ) {
+        if !type_parameters
+            .iter()
+            .any(|&p| self.constraint_of_type_param(p).is_some())
+        {
+            return;
+        }
+        let hir = self.hir(file);
+        // `getEffectiveTypeArguments`
+        let given = self.types_from_nodes(file, nodes);
+        let type_arguments = self.fill_type_args(type_parameters, &given);
+        let mapper = self.mapper_from(type_parameters, &type_arguments);
+        for (i, node) in hir.ids(nodes).enumerate().take(type_parameters.len()) {
+            let Some(constraint) = self.constraint_of_type_param(type_parameters[i]) else {
+                continue;
             };
-            let (least, most) = self.type_argument_arity(sym);
-            if args.len() < least || args.len() > most {
+            // What is inferred where a constraint holds is inferred to satisfy it.
+            if matches!(hir[node].kind, TypeNodeKind::Infer(_)) {
                 continue;
             }
-            let params = self.type_params_of_symbol(sym);
-            if params.len() != most
-                || !params
-                    .iter()
-                    .any(|&p| self.constraint_of_type_param(p).is_some())
-            {
-                continue;
-            }
-            // `checkTypeReferenceOrImport`
-            let referenced = self.type_from_node(file, TypeNodeId(i as u32));
-            if self.is_error_type(referenced) {
-                continue;
-            }
-            let given = self.types_from_nodes(file, args);
-            let filled = self.fill_type_args(&params, &given);
-            let mapper = self.mapper_from(&params, &filled);
-            for (k, node) in hir.ids(args).enumerate() {
-                let Some(constraint) = self.constraint_of_type_param(params[k]) else {
-                    continue;
-                };
-                // What is inferred where a constraint holds is inferred to satisfy it.
-                if matches!(hir[node].kind, TypeNodeKind::Infer(_)) {
-                    continue;
-                }
-                let constraint = self.instantiate(constraint, mapper);
-                let argument = filled[k];
-                if !self.is_known(argument) || !self.is_known(constraint) {
-                    continue;
-                }
-                let fits = self.answer_if_sure(|c| c.is_assignable(argument, constraint));
-                if fits != Some(false) {
-                    continue;
-                }
-                let (at, end) = (hir[node].pos, self.end_of_type_node(file, node));
+            let constraint = self.instantiate(constraint, mapper);
+            // Where the node ends is read from the text: only for an error.
+            if !self.is_assignable(type_arguments[i], constraint) {
+                let error_node = (file, hir[node].pos, self.end_of_type_node(file, node));
                 self.check_type_assignable_to(
-                    argument,
+                    type_arguments[i],
                     constraint,
-                    Some((file, at, end)),
+                    Some(error_node),
                     Some(2344),
                 );
-                break;
+                return;
             }
         }
-        // `checkClassLikeDeclaration`: those of `extends Base<Args>`, against each way to make a `Base` that takes as many.
-        for c in 0..hir.classes.len() {
-            let class = &hir.classes[c];
-            if class.extends.is_none()
-                || class.extends_args.is_empty()
-                || bound.class_symbol[c].is_none()
-                || bound.is_unchecked(class.extends.idx())
+    }
+
+    /// `checkClassLikeDeclaration`: the type arguments of `extends Base<Args>`, against each way to make a `Base` that takes as many.
+    pub(super) fn check_type_arguments_of_base(&mut self, file: FileId, class: ClassId, sym: Sym) {
+        let hir = self.hir(file);
+        let nodes = hir[class].extends_args;
+        if nodes.is_empty() || self.base_types(sym).is_empty() {
+            return;
+        }
+        let constructor = self.base_constructor_type_of_class(sym);
+        let apparent = self.apparent_type(constructor);
+        let given = self.types_from_nodes(file, nodes);
+        // `getConstructorsForTypeArguments`
+        for sig in self.signatures(apparent, true) {
+            let type_parameters = self.sig_type_params(sig);
+            if given.len() < self.min_type_argument_count(&type_parameters)
+                || given.len() > type_parameters.len()
             {
                 continue;
             }
-            let sym = self.files().sym(file, bound.class_symbol[c]);
-            if self.base_types(sym).is_empty() {
-                continue;
-            }
-            let constructor = self.base_constructor_type_of_class(sym);
-            if !self.is_known(constructor) {
-                continue;
-            }
-            // `getConstructorsForTypeArguments`
-            let apparent = self.apparent_type(constructor);
-            let given = self.types_from_nodes(file, class.extends_args);
-            'signatures: for sig in self.signatures(apparent, true) {
-                let params = self.sig_type_params(sig);
-                // `getMinTypeArgumentCount`
-                let least = (0..params.len())
-                    .rev()
-                    .find(|&i| self.default_of_type_param(params[i]).is_none())
-                    .map_or(0, |i| i + 1);
-                if given.len() < least || given.len() > params.len() {
-                    continue;
-                }
-                let outer = self
-                    .sig_decl(sig)
-                    .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
-                let filled = self.fill_sig_type_args(sig, &params, &given);
-                let mapper = self.mapper_from(&params, &filled);
-                for k in 0..params.len() {
-                    let Some(mut constraint) = self.constraint_of_type_param(params[k]) else {
-                        continue;
-                    };
-                    // What it mentions of what the signature was found in. A fresh parameter comes with that filled in.
-                    if matches!(*self.data(params[k]), TypeData::TypeParam(_, _, around) if around == MapperId::IDENTITY)
-                    {
-                        constraint = self.instantiate(constraint, outer);
-                    }
-                    let constraint = self.instantiate(constraint, mapper);
-                    let argument = filled[k];
-                    if !self.is_known(argument)
-                        || !self.is_known(constraint)
-                        || self.answer_if_sure(|c| c.is_assignable(argument, constraint))
-                            != Some(false)
-                    {
-                        continue;
-                    }
-                    // A default that does not do is not written here: there is nowhere to say so.
-                    if k < given.len() {
-                        let node: TypeNodeId = hir.id_at(class.extends_args, k);
-                        let (at, end) = (hir[node].pos, self.end_of_type_node(file, node));
-                        self.check_type_assignable_to(
-                            argument,
-                            constraint,
-                            Some((file, at, end)),
-                            Some(2344),
-                        );
-                    }
-                    break 'signatures;
-                }
+            if let Ok(Some((i, argument, constraint))) =
+                self.failing_type_argument(sig, &type_parameters, &given)
+            {
+                let node: TypeNodeId = hir.id_at(nodes, i);
+                let error_node = (file, hir[node].pos, self.end_of_type_node(file, node));
+                self.check_type_assignable_to(argument, constraint, Some(error_node), Some(2344));
+                return;
             }
         }
     }
 
     /// `checkMappedType`: what is mapped over, or what it is renamed to, has to be a key. 2322.
-    fn check_mapped_type_keys(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    pub(super) fn check_mapped_type_keys(&mut self, file: FileId, m: MappedId) {
+        let hir = self.hir(file);
+        let (at, ty) = if hir[m].name_ty.is_some() {
+            (hir[m].name_ty, self.type_from_node(file, hir[m].name_ty))
+        } else {
+            // `getConstraintTypeFromMappedType`: one that goes round in a circle is in error, which is said elsewhere.
+            let param = self.type_param(file, hir[m].param);
+            let Some(constraint) = self.constraint_of_type_param(param) else {
+                return;
+            };
+            (hir[hir[m].param].constraint, constraint)
+        };
         let keys = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
-        for t in 0..hir.types.len() {
-            let TypeNodeKind::Mapped(m) = hir.types[t].kind else {
-                continue;
-            };
-            if bound.is_unchecked_type(t) {
-                continue;
-            }
-            let (at, ty) = if hir[m].name_ty.is_some() {
-                (hir[m].name_ty, self.type_from_node(file, hir[m].name_ty))
-            } else {
-                // `getConstraintTypeFromMappedType`: one that goes round in a circle is in error, which is said elsewhere.
-                let param = self.type_param(file, hir[m].param);
-                let Some(constraint) = self.constraint_of_type_param(param) else {
-                    continue;
-                };
-                (hir[hir[m].param].constraint, constraint)
-            };
-            if at.is_none() || !self.is_known(ty) {
-                continue;
-            }
-            let fits = self.answer_if_sure(|c| c.is_assignable(ty, keys));
-            if fits == Some(false) {
-                let place = (file, hir[at].pos, self.end_of_type_node(file, at));
-                self.check_type_assignable_to(ty, keys, Some(place), None);
-            }
+        if at.is_some() && !self.is_assignable(ty, keys) {
+            let error_node = (file, hir[at].pos, self.end_of_type_node(file, at));
+            self.check_type_assignable_to(ty, keys, Some(error_node), None);
         }
     }
 

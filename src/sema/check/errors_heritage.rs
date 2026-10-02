@@ -10,46 +10,33 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner};
 use smallvec::SmallVec;
 
-/// The node an error of `checkIndexConstraints` is reported on.
-#[derive(Copy, Clone)]
-enum Reported {
-    Member(MemberId),
-    Param(ParamId),
-    /// The name of the interface.
-    Name,
+/// What `checkIndexConstraints` hands on.
+struct IndexConstraints<'a> {
+    file: FileId,
+    /// `getIndexInfosOfType(t)`
+    infos: &'a [IndexInfo],
+    /// The members that the declarations of `t` itself list.
+    locals: &'a [(FileId, Span<MemberId>)],
+    /// `interfaceDeclaration`, for a property and an index signature that come from different interfaces it extends.
+    interface: Option<(Node, Sym)>,
+}
+
+impl IndexConstraints<'_> {
+    /// `getParentOfSymbol(getSymbolOfDeclaration(m)) == t.symbol`
+    fn is_local(&self, f: FileId, m: MemberId) -> bool {
+        let mut locals = self.locals.iter();
+        locals.any(|&(local, span)| local == f && span.range().contains(&m.idx()))
+    }
+
+    /// `localIndexDeclaration`
+    fn local_index(&self, c: &Checker<'_>, info: &IndexInfo) -> Option<(FileId, Node)> {
+        let (f, m) = info.declaration?;
+        self.is_local(f, m).then(|| (f, c.hir(f).node(m)))
+    }
 }
 
 impl Checker<'_> {
-    pub(super) fn check_heritage(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for c in 0..hir.classes.len() {
-            let is_bound = match bound.class_owner[c] {
-                ClassOwner::Expr(x) => x.is_some() && !bound.is_unchecked(x.idx()),
-                ClassOwner::Stmt(s) => s.is_some(),
-            };
-            if is_bound && bound.class_symbol[c].is_some() {
-                self.check_class_heritage(file, ClassId(c as u32));
-            }
-        }
-        for i in 0..hir.interfaces.len() {
-            if bound.interface_symbol[i].is_some() {
-                self.check_interface_heritage(file, InterfaceId(i as u32));
-            }
-        }
-        for t in 0..hir.types.len() {
-            if let TypeNodeKind::Object(members) = hir.types[t].kind
-                && !bound.is_unchecked_type(t)
-                && members
-                    .iter()
-                    .any(|m| hir[m].kind == MemberKind::IndexSignature)
-            {
-                let ty = self.type_from_node(file, TypeNodeId(t as u32));
-                self.check_index_constraints(file, ty, &[(file, members)], false, None);
-            }
-        }
-    }
-
-    fn check_class_heritage(&mut self, file: FileId, c: ClassId) {
+    pub(super) fn check_class_heritage(&mut self, file: FileId, c: ClassId) {
         let hir = self.hir(file);
         let class = &hir[c];
         let sym = self.class_sym(file, c);
@@ -574,7 +561,7 @@ impl Checker<'_> {
         });
     }
 
-    fn check_interface_heritage(&mut self, file: FileId, i: InterfaceId) {
+    pub(super) fn check_interface_heritage(&mut self, file: FileId, i: InterfaceId) {
         let sym = self
             .files()
             .sym(file, self.bound(file).interface_symbol[i.idx()]);
@@ -629,7 +616,7 @@ impl Checker<'_> {
         let is_class = self.files().flags(sym).contains(SymFlags::CLASS);
         let fallback = first
             .filter(|&(f, _)| f == file && is_first && !is_class)
-            .map(|_| (name_pos, sym));
+            .map(|_| (self.hir(file).node(i), sym));
         if is_first || first.is_some_and(|(f, _)| f != file) {
             self.check_index_constraints(file, ty, &locals, false, fallback);
         }
@@ -726,15 +713,14 @@ impl Checker<'_> {
         identical
     }
 
-    /// `checkIndexConstraints`. `locals`: the members that the declarations of `ty` itself list. `fallback`: for an interface,
-    /// where it is named, for a property and an index signature that come from different interfaces it extends.
-    fn check_index_constraints(
+    /// `checkIndexConstraints`. `locals`, `interface`: see `IndexConstraints`.
+    pub(super) fn check_index_constraints(
         &mut self,
         file: FileId,
         ty: TypeId,
         locals: &[(FileId, Span<MemberId>)],
         is_static: bool,
-        fallback: Option<(u32, Sym)>,
+        interface: Option<(Node, Sym)>,
     ) {
         let Some(members) = self.members(ty) else {
             return;
@@ -742,115 +728,26 @@ impl Checker<'_> {
         if members.shape().index.is_empty() {
             return;
         }
-        let infos: Vec<IndexInfo> = members
-            .shape()
-            .index
-            .iter()
+        let infos: Vec<IndexInfo> = (members.shape().index.iter())
             .map(|i| IndexInfo {
                 value: self.instantiate(i.value, members.mapper),
                 ..*i
             })
             .collect();
-        // `localIndexDeclaration`
-        let local_index = |c: &Self, info: &IndexInfo| -> Option<(FileId, u32, Reported)> {
-            let (f, m) = info.declaration?;
-            locals
-                .iter()
-                .any(|&(local, span)| local == f && span.range().contains(&m.idx()))
-                .then(|| (f, c.hir(f)[m].start, Reported::Member(m)))
+        let cx = IndexConstraints {
+            file,
+            infos: &infos,
+            locals,
+            interface,
         };
         for prop in &members.shape().props {
-            let text = self.files().atoms.bytes(prop.name);
-            if text.first() == Some(&b'#') || is_static && prop.name == known::prototype {
-                continue;
-            }
-            let is_local = |f: FileId, m: MemberId| {
-                locals
-                    .iter()
-                    .any(|&(lf, span)| lf == f && span.range().contains(&m.idx()))
-            };
-            let local_prop = match &prop.source {
-                // An error about a parameter goes to where it starts, modifiers included (`GetErrorRangeForNode`).
-                PropSource::Parameter(f, p) => {
-                    let bound = self.bound(*f);
-                    matches!(bound.fns[bound.param_fn[p.idx()].idx()].owner, FnOwner::Member(m) if is_local(*f, m)).then(|| (*f, self.hir(*f)[*p].pos, Reported::Param(*p)))
-                }
-                _ => self
-                    .declarations_of_prop(prop)
-                    .iter()
-                    .find(|&&(f, m)| is_local(f, m))
-                    .map(|&(f, m)| (f, self.hir(f)[m].name_pos, Reported::Member(m))),
-            };
-            let prop_type = self.type_of_prop_as_read(prop, members.mapper);
-            if !self.is_known(prop_type) {
-                continue;
-            }
-            for info in &infos {
-                if !self.is_name_applicable_to_index(prop.name, info.key)
-                    || !self.is_known(info.value)
-                {
-                    continue;
-                }
-                let mut at = local_prop.or_else(|| local_index(self, info));
-                if at.is_none()
-                    && let Some((name_pos, sym)) = fallback
-                {
-                    let has_both = self.base_types(sym).iter().any(|&base| {
-                        self.prop_of(base, prop.name).is_some()
-                            && self
-                                .members(base)
-                                .is_some_and(|m| m.shape().index.iter().any(|i| i.key == info.key))
-                    });
-                    if !has_both {
-                        at = Some((file, name_pos, Reported::Name));
-                    }
-                }
-                if let Some((f, start, node)) = at
-                    && f == file
-                    && !self.is_assignable(prop_type, info.value)
-                {
-                    let end = self.end_of_reported(file, node);
-                    {
-                        let arg0 = self.prop_to_string(prop);
-                        self.error_at(
-                            (file, start, end),
-                            2411,
-                            &[
-                                Arg::Text(&arg0),
-                                Arg::Type(prop_type),
-                                Arg::Type(info.key),
-                                Arg::Type(info.value),
-                            ],
-                        );
-                    }
-                    // `propDeclaration`
-                    if local_prop.is_none()
-                        && let Some(&(of, m)) = self.declarations_of_prop(prop).first()
-                    {
-                        let (text, member) = (&self.hir(of).text, &self.hir(of)[m]);
-                        if matches!(member.key, PropKey::Computed(_))
-                            || text.get(member.name_pos as usize) == Some(&b'[')
-                        {
-                            self.relate(start, 2411, |c| {
-                                let place = if text.is_empty() {
-                                    c.place_of_token(of, member.name_pos)
-                                } else {
-                                    let (from, to) = c.error_range_of_member(of, m);
-                                    (of, from, to)
-                                };
-                                let name = c.prop_to_string(prop);
-                                vec![c.declared_here(place, name)]
-                            });
-                        }
-                    }
-                }
+            if !(is_static && prop.name == known::prototype) {
+                let prop_type = self.type_of_prop_as_read(prop, members.mapper);
+                self.check_index_constraint_for_property(&cx, prop, None, prop_type);
             }
         }
         // The members of a class whose names are only known when it runs (`hasBindableName`): each is a property of its own.
-        for &(f, span) in locals {
-            if f != file {
-                continue;
-            }
+        for &(f, span) in locals.iter().filter(|local| local.0 == file) {
             for m in span.iter() {
                 let member = self.hir(f)[m];
                 let PropKey::Computed(key) = member.key else {
@@ -882,96 +779,140 @@ impl Checker<'_> {
                     mapper: MapperId::IDENTITY,
                 };
                 let prop_type = self.type_of_prop_as_read(&prop, members.mapper);
-                if !self.is_known(name_type) || !self.is_known(prop_type) {
-                    continue;
-                }
-                for info in &infos {
-                    if self.is_known(info.value)
-                        && self.is_applicable_index_type(name_type, info.key)
-                        && !self.is_assignable(prop_type, info.value)
-                    {
-                        let end = self.end_of_member_name(f, m);
-                        self.error_at(
-                            (file, member.name_pos, end),
-                            2411,
-                            &[
-                                Arg::Text(&self.source_text(f, member.name_pos, end)),
-                                Arg::Type(prop_type),
-                                Arg::Type(info.key),
-                                Arg::Type(info.value),
-                            ],
-                        );
-                    }
+                if self.is_known(name_type) {
+                    self.check_index_constraint_for_property(
+                        &cx,
+                        &prop,
+                        Some(name_type),
+                        prop_type,
+                    );
                 }
             }
         }
-        // `checkIndexConstraintForIndexSignature`
         if infos.len() > 1 {
             for check in &infos {
-                for info in &infos {
-                    if info.key == check.key || !self.is_applicable_index_type(check.key, info.key)
-                    {
-                        continue;
-                    }
-                    let mut at = local_index(self, check).or_else(|| local_index(self, info));
-                    if at.is_none()
-                        && let Some((name_pos, sym)) = fallback
-                    {
-                        let has_both = self.base_types(sym).iter().any(|&base| {
-                            self.members(base).is_some_and(|m| {
-                                let index = &m.shape().index;
-                                index.iter().any(|i| i.key == check.key)
-                                    && index.iter().any(|i| i.key == info.key)
-                            })
-                        });
-                        if !has_both {
-                            at = Some((file, name_pos, Reported::Name));
-                        }
-                    }
-                    if let Some((f, start, node)) = at
-                        && f == file
-                        && self.is_known(check.value)
-                        && self.is_known(info.value)
-                        && !self.is_assignable(check.value, info.value)
-                    {
-                        let end = self.end_of_reported(file, node);
-                        self.error_at(
-                            (file, start, end),
-                            2413,
-                            &[
-                                Arg::Type(check.key),
-                                Arg::Type(check.value),
-                                Arg::Type(info.key),
-                                Arg::Type(info.value),
-                            ],
-                        );
-                    }
-                }
+                self.check_index_constraint_for_index_signature(&cx, check);
             }
         }
     }
 
-    fn end_of_reported(&self, file: FileId, node: Reported) -> u32 {
-        match node {
-            Reported::Member(m) => self.error_end_of_member(file, m),
-            Reported::Param(p) => self.end_of_param(file, p),
-            Reported::Name => 0,
+    /// `checkIndexConstraintForProperty`. `name_type`: `propNameType`, of a name that is only known when it runs.
+    fn check_index_constraint_for_property(
+        &mut self,
+        cx: &IndexConstraints<'_>,
+        prop: &Prop,
+        name_type: Option<TypeId>,
+        prop_type: TypeId,
+    ) {
+        let is_private = name_type.is_none() && self.is_private_name(prop.name);
+        if is_private || !self.is_known(prop_type) {
+            return;
+        }
+        let declarations = self.declarations_of_prop(prop);
+        // `localPropDeclaration`
+        let local_prop = match prop.source {
+            PropSource::Parameter(f, p) => {
+                let bound = self.bound(f);
+                matches!(bound.fns[bound.param_fn[p.idx()].idx()].owner, FnOwner::Member(m) if cx.is_local(f, m))
+                    .then(|| (f, self.hir(f).node(p)))
+            }
+            _ => (declarations.iter().find(|&&(f, m)| cx.is_local(f, m)))
+                .map(|&(f, m)| (f, self.hir(f).node(m))),
+        };
+        for info in cx.infos {
+            let applies = match name_type {
+                Some(name_type) => self.is_applicable_index_type(name_type, info.key),
+                None => self.is_name_applicable_to_index(prop.name, info.key),
+            };
+            if !applies || !self.is_known(info.value) {
+                continue;
+            }
+            let mut error_node = local_prop.or_else(|| cx.local_index(self, info));
+            if error_node.is_none()
+                && let Some((interface, sym)) = cx.interface
+                && !self.base_types(sym).iter().any(|&base| {
+                    self.prop_of(base, prop.name).is_some()
+                        && (self.members(base))
+                            .is_some_and(|m| m.shape().index.iter().any(|i| i.key == info.key))
+                })
+            {
+                error_node = Some((cx.file, interface));
+            }
+            let Some((_, error_node)) = error_node.filter(|at| at.0 == cx.file) else {
+                continue;
+            };
+            if self.is_assignable(prop_type, info.value) {
+                continue;
+            }
+            // `propDeclaration`
+            let mut related = None;
+            if local_prop.is_none()
+                && let Some(&(of, m)) = declarations.first()
+                && let (text, member) = (&self.hir(of).text, &self.hir(of)[m])
+                && (matches!(member.key, PropKey::Computed(_))
+                    || text.get(member.name_pos as usize) == Some(&b'['))
+            {
+                let place = if text.is_empty() {
+                    self.place_of_token(of, member.name_pos)
+                } else {
+                    let (from, to) = self.error_range_of_member(of, m);
+                    (of, from, to)
+                };
+                let name = self.prop_to_string(prop);
+                related = Some(self.declared_here(place, name));
+            }
+            let (start, end) = self.get_error_range_for_node(cx.file, error_node);
+            // `symbolToString`: a name that is only known when it runs is as it is written.
+            let name = match name_type {
+                Some(_) => self.source_text(cx.file, start, end),
+                None => self.prop_to_string(prop),
+            };
+            let (key, value) = (Arg::Type(info.key), Arg::Type(info.value));
+            let args = [Arg::Text(&name), Arg::Type(prop_type), key, value];
+            let diagnostic = self.error_at((cx.file, start, end), 2411, &args);
+            diagnostic.related_information.extend(related);
         }
     }
 
-    /// The end of `GetErrorRangeForNode` of a member: that of its name. A signature in a type that is no property is reported on as
-    /// a whole.
-    pub(super) fn error_end_of_member(&self, file: FileId, m: MemberId) -> u32 {
-        let is_in_class = matches!(
-            self.bound(file).member_owner[m.idx()],
-            MemberOwner::Class(_)
-        );
-        match self.hir(file)[m].kind {
-            MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {
-                self.end_of_member_name(file, m)
+    /// `checkIndexConstraintForIndexSignature`
+    fn check_index_constraint_for_index_signature(
+        &mut self,
+        cx: &IndexConstraints<'_>,
+        check: &IndexInfo,
+    ) {
+        for info in cx.infos {
+            if info.key == check.key || !self.is_applicable_index_type(check.key, info.key) {
+                continue;
             }
-            MemberKind::Method if is_in_class => self.end_of_member_name(file, m),
-            _ => self.hir(file)[m].loc.end,
+            let mut error_node = cx
+                .local_index(self, check)
+                .or_else(|| cx.local_index(self, info));
+            if error_node.is_none()
+                && let Some((interface, sym)) = cx.interface
+                && !self.base_types(sym).iter().any(|&base| {
+                    self.members(base).is_some_and(|m| {
+                        let index = &m.shape().index;
+                        index.iter().any(|i| i.key == check.key)
+                            && index.iter().any(|i| i.key == info.key)
+                    })
+                })
+            {
+                error_node = Some((cx.file, interface));
+            }
+            if let Some((_, error_node)) = error_node.filter(|at| at.0 == cx.file)
+                && self.is_known(check.value)
+                && self.is_known(info.value)
+                && !self.is_assignable(check.value, info.value)
+            {
+                let (checked, applicable) = (Arg::Type(check.value), Arg::Type(info.value));
+                let args = [
+                    Arg::Type(check.key),
+                    checked,
+                    Arg::Type(info.key),
+                    applicable,
+                ];
+                self.error(cx.file, error_node, 2413, &args);
+            }
         }
     }
 }

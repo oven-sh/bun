@@ -76,8 +76,6 @@ pub(super) struct FlowMemo {
     /// The `Flow::Call` nodes of the file `idle_calls_of` for whose calls `effects_signatures` has `None`: a bit for each flow node.
     idle_calls: Vec<u64>,
     idle_calls_of: Option<FileId>,
-    /// `getKeyPropertyName` and its map, by union and property name.
-    key_properties: FxHashMap<(TypeId, Atom), Option<std::rc::Rc<FxHashMap<TypeId, TypeId>>>>,
     /// What each test of the file `tests_of` is about, by the flow node of the test.
     tests: Vec<About>,
     tests_of: Option<FileId>,
@@ -496,17 +494,14 @@ impl<'p> Checker<'p> {
         let before = self.what_only_holds_for_now();
         let gave_up = std::mem::take(&mut self.relation_gave_up);
         let too_complex = std::mem::take(&mut self.relation_too_complex);
-        let union_too_complex = std::mem::take(&mut self.union_too_complex);
         let reliability = std::mem::take(&mut self.reliability);
         let result = work(self);
         let is_memoizable = self.what_only_holds_for_now() == before
             && !self.relation_gave_up
             && !self.relation_too_complex
-            && !self.union_too_complex
             && self.reliability == 0;
         self.relation_gave_up |= gave_up;
         self.relation_too_complex |= too_complex;
-        self.union_too_complex |= union_too_complex;
         self.reliability |= reliability;
         (result, is_memoizable)
     }
@@ -1203,61 +1198,16 @@ impl<'p> Checker<'p> {
             .then_some(access)
     }
 
-    /// Whether the members of the union `ty` have different types for `name`, one of them at least made of single values.
+    /// `isDiscriminantProperty`
     pub(super) fn is_discriminant_property(&mut self, ty: TypeId, name: Atom) -> bool {
-        if let Some(&known) = self.discriminants.get(&(ty, name)) {
-            return known;
-        }
-        let is_shared = !ty.is_local();
-        if is_shared && let Some(known) = self.p.discriminants.get(&(ty, name)) {
-            self.discriminants.insert((ty, name), known);
-            return known;
-        }
-        let held = self.what_only_holds_for_now();
-        let result = self.is_discriminant_property_uncached(ty, name);
-        if self.cycles == held.0 {
-            self.discriminants.insert((ty, name), result);
-        }
-        if is_shared && self.what_only_holds_for_now() == held {
-            self.p.discriminants.insert((ty, name), result);
-        }
-        result
-    }
-
-    /// `isDiscriminantProperty`, of what `createUnionOrIntersectionProperty` makes of the properties the members have.
-    fn is_discriminant_property_uncached(&mut self, ty: TypeId, name: Atom) -> bool {
-        let parts = self.parts(ty);
-        let mut types: SmallVec<[TypeId; 8]> = SmallVec::new();
-        let (mut literal, mut is_restricted) = (false, false);
-        for &m in parts {
-            let apparent = self.apparent_type(m);
-            // `getPropertyOfType` reduces first: what nothing can be has no properties.
-            if self.is_never_intersection(apparent) {
-                continue;
-            }
-            // What a type parameter extends is a union: `getPropertyOfType` makes the property of that in turn.
-            let apparent = if self.is_union(apparent) {
-                self.union_as_object(apparent)
-            } else {
-                apparent
-            };
-            let Some((prop, mapper)) = self.prop_ref(apparent, name) else {
-                continue;
-            };
-            is_restricted |= prop
-                .flags
-                .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED);
-            let t = self.type_of_prop(prop, mapper);
-            literal |= self.is_boolean(t)
-                || !t.is_never() && self.every_type(t, |c, p| c.is_unit(p))
-                || self.is_pattern_literal(t);
-            types.push(t);
-        }
-        literal
-            && types.iter().any(|&t| t != types[0])
-            && !types.iter().any(|&t| self.is_generic(t))
-            // What is private or protected in one member, and missing or declared elsewhere in another, is no property of the union.
-            && !(is_restricted && self.is_hidden_in_union(parts, name))
+        let both = PropFlags::HAS_NON_UNIFORM_TYPE | PropFlags::HAS_LITERAL_TYPE;
+        self.is_union(ty)
+            && self.union_property(ty, name).is_some_and(|prop| {
+                prop.flags.contains(both) && {
+                    let ty = self.type_of_prop(prop, MapperId::IDENTITY);
+                    !self.is_generic(ty)
+                }
+            })
     }
 
     /// `getCandidateDiscriminantPropertyAccess`: `x.kind`, `x["kind"]` or a name that stands for one. `x.kind!` is none of them.
@@ -1654,7 +1604,7 @@ impl<'p> Checker<'p> {
             if narrowed.is_never() {
                 break 'checked TypeId::NEVER;
             }
-            self.type_of_binding_element(file, pat, narrowed)
+            self.type_of_binding_element(file, pat, narrowed, true)
         };
         self.in_check_identifier.pop();
         ty
@@ -1718,8 +1668,7 @@ impl<'p> Checker<'p> {
             })
             .unwrap_or(declared_rest);
         // `getReducedApparentType`
-        let rest_ty = self.apparent_type(instantiated);
-        let rest_ty = self.reduced(rest_ty);
+        let rest_ty = self.reduced_apparent_type(instantiated);
         if !self.is_union(rest_ty) || !self.every_type(rest_ty, |c, m| c.is_tuple(m)) {
             return declared;
         }
@@ -1901,7 +1850,7 @@ impl<'p> Checker<'p> {
         let (left, is_memoizable) = self.run_memoizable(|c| {
             c.filter(ty, |c, m| {
                 let discriminant = c
-                    .type_of_property_or_index_signature(m, name)
+                    .type_of_property_or_index_signature_of_type(m, name)
                     .unwrap_or(TypeId::UNKNOWN);
                 !discriminant.is_never()
                     && !narrowed.is_never()
@@ -1912,19 +1861,6 @@ impl<'p> Checker<'p> {
             self.flow_memo.discriminated_types.insert(key, left);
         }
         left
-    }
-
-    /// `getTypeOfPropertyOrIndexSignatureOfType`: what only an index signature gives may be missing.
-    fn type_of_property_or_index_signature(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
-        if self.is_nullish(ty) {
-            return None;
-        }
-        let found = self.type_of_property(ty, name)?;
-        Some(if self.finds_property(ty, name) {
-            found
-        } else {
-            self.optional_property(found)
-        })
     }
 
     // ───────────────────────────── tests ─────────────────────────────
@@ -2421,7 +2357,8 @@ impl<'p> Checker<'p> {
         sense: bool,
     ) -> TypeId {
         if matches!(op, BinOp::EqEqEq | BinOp::NotEqEq)
-            && let Some(constituents) = self.constituents_by_key_property(ty, access.name)
+            && let Some((name, constituents)) = self.key_property(ty)
+            && *name == access.name
         {
             let key = self.type_of_compared(file, value);
             let key = self.regular(key);
@@ -2447,36 +2384,31 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getKeyPropertyName` and the map that goes with it (`computeKeyPropertyNameAndMap`): the member of the union `ty` that each
-    /// value of the property `name` stands for, UNKNOWN for a value several members have. `None` unless `ty` has ten object types
-    /// or more and `name` is the property they are told apart by.
-    fn constituents_by_key_property(
+    /// `getKeyPropertyName` and the map that goes with it (`computeKeyPropertyNameAndMap`): the property the members of the union `ty`
+    /// are told apart by, and the member that each of its values stands for, UNKNOWN for a value several members have. `None` unless
+    /// `ty` has ten object types or more.
+    pub(super) fn key_property(
         &mut self,
         ty: TypeId,
-        name: Atom,
-    ) -> Option<std::rc::Rc<FxHashMap<TypeId, TypeId>>> {
+    ) -> Option<&'p (Atom, FxHashMap<TypeId, TypeId>)> {
         if !self.is_union(ty) || self.parts(ty).len() < 10 {
             return None;
         }
-        if let Some(known) = self.flow_memo.key_properties.get(&(ty, name)) {
-            return known.clone();
+        let kept = &self.p.key_properties;
+        if let Some(known) = kept.get_ref(&ty) {
+            return known.as_ref();
         }
-        let (constituents, is_memoizable) =
-            self.run_memoizable(|c| c.constituents_by_key_property_uncached(ty, name));
-        let constituents = constituents.map(std::rc::Rc::new);
-        if is_memoizable {
-            self.flow_memo
-                .key_properties
-                .insert((ty, name), constituents.clone());
-        }
-        constituents
+        let (found, is_memoizable) =
+            self.run_memoizable(|c| c.compute_key_property_name_and_map(ty));
+        // What does not hold for everybody is not gone by: there is the long way.
+        is_memoizable.then(|| kept.insert_ref(ty, found).1.as_ref())?
     }
 
-    fn constituents_by_key_property_uncached(
+    /// `computeKeyPropertyNameAndMap`
+    fn compute_key_property_name_and_map(
         &mut self,
         ty: TypeId,
-        name: Atom,
-    ) -> Option<FxHashMap<TypeId, TypeId>> {
+    ) -> Option<(Atom, FxHashMap<TypeId, TypeId>)> {
         let parts = self.parts(ty);
         // `TypeFlagsObject | TypeFlagsInstantiableNonPrimitive`
         let counts = |c: &Self, m: TypeId| {
@@ -2485,25 +2417,47 @@ impl<'p> Checker<'p> {
         if parts.len() < 10 || parts.iter().filter(|&&m| counts(self, m)).count() < 10 {
             return None;
         }
-        // `getKeyPropertyCandidateName`: the first property met that holds one value.
-        let mut candidate = None;
-        'members: for &m in parts {
-            if !counts(self, m) {
-                continue;
-            }
-            let apparent = self.apparent_type(m);
-            let Some(members) = self.members(apparent) else {
-                continue;
-            };
-            for prop in &members.shape().props {
-                let held = self.type_of_prop(prop, members.mapper);
-                if self.is_unit(held) {
-                    candidate = Some(prop.name);
-                    break 'members;
+        // `getKeyPropertyCandidateName`: the first property met that holds one value. `only_viable` is ours, for speed:
+        // `mapTypesByKeyProperty` gives up unless every member has a literal type under the name, so from the second member on only
+        // the names are looked at under which all before had one. The types of the other properties are not worked out.
+        let candidate = |c: &mut Self, only_viable: bool| {
+            let mut viable: Option<SmallVec<[Atom; 16]>> = None;
+            for &m in parts {
+                if !counts(c, m) {
+                    continue;
+                }
+                let apparent = c.apparent_type(m);
+                let Some(members) = c.members(apparent) else {
+                    continue;
+                };
+                let mut literal = SmallVec::new();
+                for prop in &members.shape().props {
+                    if viable
+                        .as_ref()
+                        .is_some_and(|names| !names.contains(&prop.name))
+                    {
+                        continue;
+                    }
+                    let held = c.type_of_prop(prop, members.mapper);
+                    if c.is_unit(held) {
+                        return Some(prop.name);
+                    }
+                    if only_viable && c.every_type(held, |c, d| c.is_unit(d)) {
+                        literal.push(prop.name);
+                    }
+                }
+                if only_viable {
+                    if literal.is_empty() {
+                        return None;
+                    }
+                    viable = Some(literal);
                 }
             }
-        }
-        if candidate != Some(name) {
+            None
+        };
+        let name = candidate(self, true)?;
+        // tsgo takes the first of all, and no map comes of one that was passed over.
+        if candidate(self, false) != Some(name) {
             return None;
         }
         // `mapTypesByKeyProperty`
@@ -2536,7 +2490,7 @@ impl<'p> Checker<'p> {
                 count += 1;
             }
         }
-        (count >= 10 && count * 2 >= parts.len()).then_some(constituents)
+        (count >= 10 && count * 2 >= parts.len()).then_some((name, constituents))
     }
 
     /// `isMatchingConstructorReference`
@@ -3077,7 +3031,8 @@ impl<'p> Checker<'p> {
         let narrowed = self.map_type(candidate, |c, n| {
             // Of two that have to do with each other, the more specific. If it goes both ways: what is asserted for a type guard;
             // what was there for `instanceof`, since a prototype knows nothing of type arguments.
-            let directly_related = c.map_type(ty, |c, t| {
+            let matching = c.matching_union_constituent_for_type(ty, n).unwrap_or(ty);
+            let directly_related = c.map_type(matching, |c, t| {
                 if check_derived {
                     if c.is_type_derived_from(t, n) {
                         t
@@ -3219,7 +3174,12 @@ impl<'p> Checker<'p> {
             };
             match c.property_in(&members, name) {
                 Some((prop, _)) => present || prop.flags.contains(PropFlags::OPTIONAL),
-                None => c.applicable_index_type_for_name(&members, name).is_some() || !present,
+                None => {
+                    c.applicable_index_info_for_name(&members, name)
+                        .map(|info| info.value)
+                        .is_some()
+                        || !present
+                }
             }
         };
         if self.parts(ty).iter().any(|&m| may_be(self, m, true)) {
@@ -3261,7 +3221,8 @@ impl<'p> Checker<'p> {
                 is_optional |= prop.flags.contains(PropFlags::OPTIONAL);
             } else if !is_late_bound
                 && self
-                    .applicable_index_type_for_name(&members, name)
+                    .applicable_index_info_for_name(&members, name)
+                    .map(|info| info.value)
                     .is_some()
                 || self.is_closed_object_literal_type(part)
             {
@@ -3270,7 +3231,7 @@ impl<'p> Checker<'p> {
                 is_read_partial = true;
             }
         }
-        if is_declared && !is_read_partial && !self.is_hidden_in_union(parts, name) {
+        if is_declared && !is_read_partial && self.union_property(apparent, name).is_some() {
             return is_optional || is_write_partial || assume_true;
         }
         let key = if is_late_bound {
@@ -3642,7 +3603,8 @@ impl<'p> Checker<'p> {
         to: usize,
     ) -> TypeId {
         if from < to
-            && let Some(constituents) = self.constituents_by_key_property(ty, access.name)
+            && let Some((name, constituents)) = self.key_property(ty)
+            && *name == access.name
         {
             let hir = self.hir(file);
             let mut candidates = Vec::with_capacity(to - from);
@@ -5737,6 +5699,7 @@ impl<'p> Checker<'p> {
                         parent_ty,
                         (elem.0 - elems.start) as usize,
                         hir[elem].is_rest,
+                        None,
                     ),
                     hir[elem].default,
                 )
@@ -6487,21 +6450,6 @@ impl<'p> Checker<'p> {
     /// `getBaseTypeOfLiteralType`
     pub(super) fn base_type_of_literal_type(&mut self, ty: TypeId) -> TypeId {
         self.map_type(ty, |c, m| c.base_of_literal(m))
-    }
-
-    /// `isAssignmentToReadonlyEntity`, of the property `name` of `obj`, which `target` writes to.
-    pub(super) fn is_assignment_to_readonly_property(
-        &mut self,
-        file: FileId,
-        target: ExprId,
-        obj: ExprId,
-        name: Atom,
-    ) -> bool {
-        let from = self.reported.len();
-        self.check_property_write(file, target, obj, name, 0);
-        // What is asked on the way may report too, and that stays.
-        let said = (self.reported[from..].iter()).rposition(|d| d.code == 2540 && d.start == 0);
-        said.map(|i| self.reported.remove(from + i)).is_some()
     }
 
     /// Whether `getPropertyOfType` finds `name` in what `ty` is seen as: what an index signature stands in for is not found.

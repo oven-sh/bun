@@ -124,6 +124,10 @@ impl<'p> Checker<'p> {
         }
         members.sort_unstable();
         members.dedup();
+        // `TypeFlagsIncludesWildcard`
+        if members.contains(&TypeId::WILDCARD) {
+            return (TypeId::WILDCARD, true);
+        }
         // `TypeFlagsIncludesError`: `any` and `unknown` give way to the error type.
         if members.first() != Some(&TypeId::UNRESOLVED)
             && members.iter().any(|&member| self.is_error_type(member))
@@ -547,9 +551,9 @@ impl<'p> Checker<'p> {
                 }
                 let target = members[j];
                 if count == 100_000 {
-                    // At this rate more than a million comparisons in all: too complex to represent (2590), the error type.
+                    // At this rate more than a million comparisons in all: too complex to represent, the error type.
                     if (count / (len - i)) * len > 1_000_000 {
-                        self.union_too_complex = true;
+                        self.error_at_current_node(2590);
                         return TypeId::ERROR;
                     }
                     // TypeScript goes on. Here it is as with the many above.
@@ -858,6 +862,9 @@ impl<'p> Checker<'p> {
                 if self.is_error_type(ty) {
                     includes |= tf::INCLUDES_ERROR;
                 }
+                if ty == TypeId::WILDCARD {
+                    includes |= tf::INCLUDES_WILDCARD;
+                }
             } else if self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0 {
                 let ty = if ty == TypeId::MISSING {
                     includes |= tf::INCLUDES_MISSING_TYPE;
@@ -956,7 +963,9 @@ impl<'p> Checker<'p> {
             return (TypeId::NEVER, false);
         }
         if includes & tf::ANY != 0 {
-            let any = if includes & tf::INCLUDES_ERROR != 0 {
+            let any = if includes & tf::INCLUDES_WILDCARD != 0 {
+                TypeId::WILDCARD
+            } else if includes & tf::INCLUDES_ERROR != 0 {
                 TypeId::ERROR
             } else {
                 TypeId::ANY
@@ -1043,14 +1052,25 @@ impl<'p> Checker<'p> {
             return known;
         }
         let before = self.what_only_holds_for_now();
-        let was_too_complex = std::mem::take(&mut self.union_too_complex);
         let result = self.distribute_intersection(types.len(), set, no_constraint_reduction);
-        // Whoever asks for one that is too complex is to be told so each time.
-        if !self.union_too_complex && self.what_only_holds_for_now() == before {
+        if self.what_only_holds_for_now() == before {
             self.p.distributed_intersections.insert(key, result);
         }
-        self.union_too_complex |= was_too_complex;
         result
+    }
+
+    /// `checkCrossProductUnion`
+    pub(super) fn check_cross_product_union(&mut self, types: &[TypeId]) -> bool {
+        let is_representable = self.get_cross_product_union_size(types) < 100_000;
+        if !is_representable {
+            self.error_at_current_node(2590);
+        }
+        is_representable
+    }
+
+    /// `getCrossProductUnionSize`
+    fn get_cross_product_union_size(&self, types: &[TypeId]) -> usize {
+        (types.iter()).fold(1, |size, &t| size.saturating_mul(self.parts(t).len()))
     }
 
     /// `getIntersectionType`, of types some of which are unions. `given`: how many types were asked for.
@@ -1100,18 +1120,10 @@ impl<'p> Checker<'p> {
             return self.intersection_worker(&[left, right], no_constraint_reduction);
         }
         // `X & (A | B) & (C | D)` is `X & A & C | X & A & D | X & B & C | X & B & D`.
-        // `checkCrossProductUnion`: from 100,000 on it is too complex to represent (2590), the error type.
-        let size = set.iter().fold(1usize, |n, &t| {
-            if self.is_union(t) {
-                n.saturating_mul(self.parts(t).len())
-            } else {
-                n
-            }
-        });
-        if size >= 100_000 {
-            self.union_too_complex = true;
+        if !self.check_cross_product_union(&set) {
             return (TypeId::ERROR, false);
         }
+        let size = self.get_cross_product_union_size(&set);
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
         let mut constituents = set.clone();
@@ -1601,6 +1613,10 @@ impl<'p> Checker<'p> {
                     |text: Atom| atoms.bytes(text).iter().all(|&c| c == b'0' || c == b'n');
                 is_zero(*y).cmp(&is_zero(*x))
             }
+            (
+                TypeData::Marker(Marker::Restrictive(x)),
+                TypeData::Marker(Marker::Restrictive(y)),
+            ) => types(*x, *y),
             (TypeData::Marker(x), TypeData::Marker(y)) => x.cmp(y),
             // By name, then by id. They are made with the checker, in this order.
             (TypeData::Intrinsic(_), TypeData::Intrinsic(_)) => a.cmp(&b),

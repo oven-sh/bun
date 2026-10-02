@@ -561,6 +561,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 },
                 body: self.b.file.list(&[statement]),
                 has_body: true,
+                says_module: false,
                 stmt: StmtId::NONE,
             };
             let module = self.b.file.add_module(module);
@@ -1307,26 +1308,39 @@ impl<'p, 'a> Lower<'p, 'a> {
             is_pattern.get(index) == Some(&true)
                 || matches!(property.name[..], [name] if names.contains(&this.name_atom(name)))
         };
-        let mut errors = Vec::new();
+        let mut errors: Vec<(&[Name], u32)> = Vec::new();
         // If the function refers to `arguments`, the last tag can be about that.
-        if let [name] = last.name[..]
+        if let [_] = last.name[..]
             && !is_matched(&*self, tags.len() - 1, last)
             && !matches!(last.ty, TagType::None)
             && !self.is_array_type(&last.ty)
         {
-            errors.push((func, name.start, 8029));
+            errors.push((&last.name, 8029));
         }
         for (index, &property) in tags.iter().enumerate() {
             if is_matched(&*self, index, property) {
                 continue;
             }
             match property.name[..] {
-                [name] if !property.is_name_first => errors.push((func, name.start, 8024)),
+                [_] if !property.is_name_first => errors.push((&property.name, 8024)),
                 [_] | [] => {}
-                [first, ..] => errors.push((func, first.start, 8032)),
+                [..] => errors.push((&property.name, 8032)),
             }
         }
-        self.b.file.jsdoc_param_errors.extend(errors);
+        for (name, code) in errors {
+            // `entityNameToString`, of the name and, of a qualified one, of what is left of its last dot.
+            let parts: Vec<&[u8]> = name.iter().map(|part| part.text.slice()).collect();
+            let whole = jsdoc::unescaped_name(&parts.join(&b'.'));
+            let left = jsdoc::unescaped_name(&parts[..parts.len() - 1].join(&b'.'));
+            let args: &[&[u8]] = if code == 8032 {
+                &[&whole, &left]
+            } else {
+                &[&whole]
+            };
+            let (start, end) = (name[0].start, name[name.len() - 1].end);
+            self.b.file.jsdoc_param_errors.push((func, start, code));
+            self.b.file.explain_error(start, end, code, args);
+        }
     }
 
     /// `isArrayType`, of a type as it is written.

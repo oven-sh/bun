@@ -140,8 +140,6 @@ pub struct Request<'a> {
     pub lib_dir: Option<&'a str>,
     /// The `node_modules` of what is installed globally, where they are looked for last.
     pub global_node_modules: Option<&'a str>,
-    /// How long a single file may take. One that takes longer has run into a bug, and nothing is said about it but that.
-    pub file_time_limit: Duration,
     /// Kept up to date on the way, for whoever shows how far it has got.
     pub progress: Option<&'a Progress>,
     /// Of all that is loaded, only the files with this in their path are checked. For looking into one file of a big project.
@@ -192,10 +190,10 @@ pub struct Diagnostic {
 pub struct Report {
     /// Sorted as TypeScript sorts them: what has no file first, then by path and position.
     pub diagnostics: Vec<Diagnostic>,
-    /// Files whose check was given up on.
-    pub gave_up: Vec<String>,
     /// Files in which something went unanswered for want of stack: errors may be missing.
     pub incomplete: Vec<String>,
+    /// Whether `@types/bun` is where a project that was checked would find it.
+    pub has_bun_types_installed: bool,
     /// The configuration file that was used. Empty if there is none.
     pub config_path: String,
     pub files_loaded: usize,
@@ -211,6 +209,11 @@ pub struct Report {
 }
 
 impl Report {
+    /// Whether the exit code is 0: nothing is wrong, and nothing went unlooked at.
+    pub fn is_ok(&self) -> bool {
+        self.error_count() == 0 && self.incomplete.is_empty()
+    }
+
     pub fn error_count(&self) -> usize {
         self.diagnostics
             .iter()
@@ -221,8 +224,8 @@ impl Report {
     /// Adds the result of checking another project. The diagnostics are left unsorted.
     fn merge(&mut self, other: Report) {
         self.diagnostics.extend(other.diagnostics);
-        self.gave_up.extend(other.gave_up);
         self.incomplete.extend(other.incomplete);
+        self.has_bun_types_installed |= other.has_bun_types_installed;
         self.files_loaded += other.files_loaded;
         self.files_checked += other.files_checked;
         self.check_time += other.check_time;
@@ -700,6 +703,19 @@ fn check_what_is_named(
             return report;
         }
     }
+    report.has_bun_types_installed = project
+        .options
+        .effective_type_roots()
+        .iter()
+        .any(|root| host.is_file(&format!("{root}/bun/package.json")));
+    // `"types": ["bun"]` is among what `bun init` writes, and so among what goes where there is no configuration file. It is left out
+    // of `default_compiler_options` because what is not installed cannot be asked for (TS2688).
+    if report.has_bun_types_installed
+        && project.config_path.is_empty()
+        && project.options.types.is_none()
+    {
+        project.options.types = Some(vec!["bun".to_owned()]);
+    }
     let (skip_lib_check, skip_default_lib_check) = (
         project.options.skip_lib_check,
         project.options.skip_default_lib_check,
@@ -792,7 +808,6 @@ fn check_what_is_named(
         progress.to_check.store(to_check.len(), Ordering::Relaxed);
     }
     let found: Mutex<Vec<Diagnostic>> = Mutex::new(Vec::new());
-    let gave_up: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let incomplete: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
     // Files that ask a lot of the same types tend to be next to each other. When a small file turns out to take long, what else is in its
@@ -878,7 +893,6 @@ fn check_what_is_named(
         checker.set_only_syntax(only_syntax);
         // What the thread really has left, whatever thread it is and however it was built.
         checker.set_stack_limit(bun_core::StackCheck::init().remaining());
-        checker.set_time_limit(request.file_time_limit);
         checker
     };
     // What was found in the files that the checker of another file may still report in.
@@ -891,15 +905,10 @@ fn check_what_is_named(
         let checked = checker.check_file(file);
         if let Some(after_file) = request.after_file
             && !only_syntax
-            && !checker.timed_out()
         {
             after_file(&mut checker, file);
         }
         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
-        if checker.timed_out() {
-            gave_up.lock().unwrap().push(module.path.clone());
-            return;
-        }
         // What was found stands. What was not may be missing, and that is said.
         if checker.ran_out_of_stack() {
             incomplete.lock().unwrap().push(module.path.clone());
@@ -1018,14 +1027,11 @@ fn check_what_is_named(
                 let _at_hand = program.files.bring_in(host, file);
                 let mut checker = program.checker();
                 checker.set_stack_limit(bun_core::StackCheck::init().remaining());
-                checker.set_time_limit(request.file_time_limit);
                 after_file(&mut checker, file);
             }
         }
     }
-    report.gave_up = gave_up.into_inner().unwrap();
     report.deepest_stack = deepest_stack.into_inner();
-    report.gave_up.sort();
     report.incomplete = incomplete.into_inner().unwrap();
     report.incomplete.sort();
     report.incomplete.dedup();

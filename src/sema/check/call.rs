@@ -66,10 +66,8 @@ pub(super) enum CallLike {
         right: ExprId,
     },
     Decorator(DecoratorOwner),
-    /// A JSX element. `construct`: its signatures are construct signatures.
-    Jsx {
-        construct: bool,
-    },
+    /// `JsxOpeningLikeElement`, `JsxOpeningFragment`
+    Jsx(JsxId),
 }
 
 /// `CallState`
@@ -171,32 +169,6 @@ impl<'p> Checker<'p> {
                 self.is_context_sensitive(file, x)
             }
             // There is no case for a JSX element either: what its attributes are expected to be is up to its component.
-            _ => false,
-        }
-    }
-
-    /// Whether what is expected of `e` can change its type at all.
-    pub(super) fn depends_on_context(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Object(_)
-            | ExprKind::Array(_)
-            | ExprKind::Fn(_)
-            | ExprKind::Call(_)
-            | ExprKind::New(_)
-            | ExprKind::Jsx(_) => true,
-            ExprKind::Cond { yes, no, .. } => {
-                self.depends_on_context(file, yes) || self.depends_on_context(file, no)
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish | BinOp::And | BinOp::Comma,
-                left,
-                right,
-            } => self.depends_on_context(file, left) || self.depends_on_context(file, right),
-            ExprKind::Spread(x)
-            | ExprKind::NonNull(x)
-            | ExprKind::Await(x)
-            | ExprKind::Satisfies { expr: x, .. } => self.depends_on_context(file, x),
             _ => false,
         }
     }
@@ -448,7 +420,7 @@ impl<'p> Checker<'p> {
     pub(super) fn has_correct_arity(&mut self, s: &CallState<'_>, params: &[SigParam]) -> bool {
         let (file, call, node, args) = (s.file, s.call, s.node, s.args);
         // The attributes are one argument, whatever the component takes besides.
-        if matches!(node, CallLike::Jsx { .. }) {
+        if matches!(node, CallLike::Jsx(_)) {
             return true;
         }
         let given = match node {
@@ -505,6 +477,9 @@ impl<'p> Checker<'p> {
 
     fn resolve_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
         let hir = self.hir(file);
+        if let ExprKind::Jsx(j) = hir[call].kind {
+            return self.resolve_jsx_opening_like_element(file, call, j);
+        }
         // `resolveTaggedTemplateExpression`: a call with the pieces of text for a first argument.
         if let ExprKind::TaggedTemplate(c) = hir[call].kind {
             let Call {
@@ -954,13 +929,13 @@ impl<'p> Checker<'p> {
         s.is_single_non_generic_candidate =
             s.candidates.len() == 1 && self.sig_type_params(s.candidates[0]).is_empty();
         s.checks_arguments_once = s.is_single_non_generic_candidate
-            && matches!(node, CallLike::Call(_))
+            && matches!(node, CallLike::Call(_) | CallLike::Jsx(_))
             // `getResolvedSignature` resets `resolutionStart` the first time only.
             && self.resolution_start == self.stack.len()
             && self.stack.last() == Some(&Query::Call(file, call));
         let has_context_sensitive_argument = match node {
             CallLike::Decorator(_) => false,
-            CallLike::Jsx { .. } => !self.jsx_parts_that_wait(file, call).is_empty(),
+            CallLike::Jsx(j) => self.is_jsx_attributes_context_sensitive(file, j),
             _ => args
                 .iter()
                 .any(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e))),
@@ -1137,9 +1112,10 @@ impl<'p> Checker<'p> {
         context: &mut Inference,
     ) -> MapperId {
         let (file, call, args) = (s.file, s.call, s.args);
-        if let CallLike::Jsx { construct } = s.node {
-            return self
-                .infer_jsx_type_arguments(file, call, signature, construct, check_mode, context);
+        if let CallLike::Jsx(j) = s.node
+            && self.hir(file)[j].tag.is_some()
+        {
+            return self.infer_jsx_type_arguments(file, call, signature, check_mode, context);
         }
         if matches!(s.node, CallLike::Call(_)) {
             let mut skip_binding_patterns = true;
@@ -1487,7 +1463,18 @@ impl<'p> Checker<'p> {
                 args
             }
             CallLike::InstanceOf { left, .. } => smallvec![Arg::Expr(left)],
-            CallLike::Jsx { .. } => smallvec![Arg::Expr(call)],
+            // `emptyFreshJsxObjectType`: "This attributes Type does not include a children property yet".
+            CallLike::Jsx(j) if hir[j].tag.is_none() => {
+                let empty = self.synth(Shape {
+                    literal: Literalness::JsxAttributes,
+                    ..Shape::default()
+                });
+                smallvec![Arg::Type(empty, Atom::NONE, call)]
+            }
+            CallLike::Jsx(j) if hir[j].attrs.is_empty() && hir[j].children.is_empty() => {
+                Args::new()
+            }
+            CallLike::Jsx(_) => smallvec![Arg::Expr(call)],
             // `getEffectiveDecoratorArguments`
             CallLike::Decorator(owner) => match self.decorator_call_signature(file, owner) {
                 Some(expected) => {
@@ -1661,17 +1648,78 @@ impl<'p> Checker<'p> {
         args: &[TypeId],
         node: InstantiationExpression,
     ) -> TypeId {
-        if self.is_any(ty) || ty == TypeId::SILENT_NEVER {
+        if ty == TypeId::SILENT_NEVER || self.is_error_type(ty) {
+            return ty;
+        }
+        // `hasSomeApplicableSignature`, `nonApplicableType`
+        let mut found = (false, None);
+        let result = self.instantiated_type(ty, args, node, &mut found);
+        let error_type = if found.0 { found.1 } else { Some(ty) };
+        let (file, nodes) = self.type_argument_nodes(node);
+        if let Some(error_type) = error_type
+            && let Some(first) = self.hir(file).ids(nodes).next()
+        {
+            let start = super::errors_x_typenodes::start_of_type(self.hir(file), first);
+            let loc = (file, start, self.end_of_type_args(file, nodes));
+            self.error_at(loc, 2635, &[super::sink::Arg::Type(error_type)]);
+        }
+        result
+    }
+
+    /// `node.TypeArgumentList()`
+    fn type_argument_nodes(&self, node: InstantiationExpression) -> (FileId, IdList<TypeNodeId>) {
+        match node {
+            InstantiationExpression::Expr(file, e) => match self.hir(file)[e].kind {
+                ExprKind::Instantiation { type_args, .. } => (file, type_args),
+                _ => (file, IdList::default()),
+            },
+            InstantiationExpression::TypeNode(file, node) => match self.hir(file)[node].kind {
+                TypeNodeKind::Typeof { args, .. } | TypeNodeKind::Import { args, .. } => {
+                    (file, args)
+                }
+                _ => (file, IdList::default()),
+            },
+        }
+    }
+
+    /// `getInstantiatedType`
+    fn instantiated_type(
+        &mut self,
+        ty: TypeId,
+        args: &[TypeId],
+        node: InstantiationExpression,
+        found: &mut (bool, Option<TypeId>),
+    ) -> TypeId {
+        // `hasSignatures`, `hasApplicableSignature`
+        let mut own = (false, false);
+        let result = self.instantiated_type_part(ty, args, node, &mut own, found);
+        found.0 |= own.1;
+        if own.0 && !own.1 && found.1.is_none() {
+            found.1 = Some(ty);
+        }
+        result
+    }
+
+    /// `getInstantiatedTypePart`
+    fn instantiated_type_part(
+        &mut self,
+        ty: TypeId,
+        args: &[TypeId],
+        node: InstantiationExpression,
+        own: &mut (bool, bool),
+        found: &mut (bool, Option<TypeId>),
+    ) -> TypeId {
+        if self.is_any(ty) {
             return ty;
         }
         match self.data(ty).clone() {
             TypeData::Union(_) => {
-                return self.map_type(ty, |c, m| c.with_type_arguments(m, args, node));
+                return self.map_type(ty, |c, m| c.instantiated_type(m, args, node, found));
             }
             TypeData::Intersection(parts) => {
                 let parts: Vec<TypeId> = parts
                     .iter()
-                    .map(|&p| self.with_type_arguments(p, args, node))
+                    .map(|&p| self.instantiated_type_part(p, args, node, own, found))
                     .collect();
                 return self.intersection(&parts);
             }
@@ -1679,7 +1727,7 @@ impl<'p> Checker<'p> {
         }
         if self.is_deferred(ty) {
             let constraint = self.base_constraint(ty);
-            let given = self.with_type_arguments(constraint, args, node);
+            let given = self.instantiated_type_part(constraint, args, node, own, found);
             return if given == constraint { ty } else { given };
         }
         let Some(members) = self.members(ty) else {
@@ -1697,6 +1745,18 @@ impl<'p> Checker<'p> {
                 if params.is_empty() || !c.has_correct_type_argument_arity(&params, args.len()) {
                     continue;
                 }
+                // `checkTypeArguments`
+                if let Ok(Some((index, argument, constraint))) =
+                    c.failing_type_argument(sig, &params, args)
+                {
+                    let (file, nodes) = c.type_argument_nodes(node);
+                    let at = c.hir(file).id_at(nodes, index);
+                    let start = super::errors_x_typenodes::start_of_type(c.hir(file), at);
+                    let error_node = (file, start, c.end_of_type_node_from(file, at, start));
+                    c.check_type_assignable_to(argument, constraint, Some(error_node), Some(2344));
+                    out.push(sig);
+                    continue;
+                }
                 let filled = c.fill_sig_type_args(sig, &params, args);
                 let mapper = c.mapper_from(&params, &filled);
                 out.push(c.instantiate_sig(sig, mapper));
@@ -1705,6 +1765,8 @@ impl<'p> Checker<'p> {
         };
         let call = given(self, &members.shape().call);
         let construct = given(self, &members.shape().construct);
+        own.0 = true;
+        own.1 |= !call.is_empty() || !construct.is_empty();
         let mut props = Vec::with_capacity(members.shape().props.len());
         for prop in &members.shape().props {
             let mut prop = prop.clone();
@@ -2359,19 +2421,14 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `instantiate_sig_in_context`. `stand_ins`: see `Inference::stand_ins`.
-    pub(super) fn instantiate_sig_in_context_under(
+    /// `instantiateSignatureInContextOf`. `with_result`: what `expected` returns says something too, though less than what it takes.
+    pub(super) fn instantiate_sig_in_context(
         &mut self,
         sig: SigId,
         expected: SigId,
         with_result: bool,
-        stand_ins: Option<super::relate::Relation>,
     ) -> SigId {
         let mut inference = Inference::for_params(&self.sig_type_params(sig), Some(sig));
-        if stand_ins.is_some() {
-            inference.stand_ins = stand_ins;
-            inference.own_of_source = SmallVec::from_slice(&self.sig_type_params(expected));
-        }
         inference.around_source = self
             .sig_decl(expected)
             .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);

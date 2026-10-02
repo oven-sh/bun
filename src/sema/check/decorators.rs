@@ -585,11 +585,7 @@ impl<'p> Checker<'p> {
         }
         let returned = self.with_return_type(resolved).ret;
         let wanted = self.sig_return(expected);
-        if !self.is_known(returned)
-            || self.is_any(returned)
-            || !self.is_known(wanted)
-            || self.is_assignable(returned, wanted)
-        {
+        if self.is_any(returned) {
             return;
         }
         let code = match owner {
@@ -601,24 +597,6 @@ impl<'p> Checker<'p> {
             }
             _ => 1270,
         };
-        // `checkTypeAssignableTo`
-        let from = self.reported.len();
-        self.report_not_assignable_with_end(returned, wanted, start, end, code);
-        let mut said = self.reported.split_off(from);
-        said.retain(|d| d.start == start && d.code == code);
-        if said.is_empty() {
-            {
-                let (returned, wanted) = self.type_names_for_error_display(returned, wanted);
-                self.error_at(
-                    (file, start, end),
-                    code,
-                    &[Arg::Text(&returned), Arg::Text(&wanted)],
-                );
-            }
-            self.explain_chain(start, code, |c| c.assignability_chain(returned, wanted));
-            self.relate(start, code, |c| c.assignability_related(returned, wanted));
-        } else {
-            self.reported.append(&mut said);
-        }
+        self.check_type_assignable_to(returned, wanted, Some((file, start, end)), Some(code));
     }
 }

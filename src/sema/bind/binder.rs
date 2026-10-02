@@ -1500,6 +1500,18 @@ impl<'f> Binder<'f> {
                     .extend(places.map(|(place, e)| ((TableId(id as u32), e.0), place)));
             }
         }
+        // `Bound::nested_names`, at 8 bits a name.
+        let is_nested = |s: &&Scope| s.symbol.is_none() && s.parent.is_some();
+        let nested = || self.b.scopes.iter().filter(is_nested);
+        let count: usize = nested().map(|s| self.b.table(s.locals).len()).sum();
+        if count > 0 {
+            let mut filter = vec![0u64; (count / 8 + 1).next_power_of_two()];
+            for &(name, _) in nested().flat_map(|s| self.b.table(s.locals)) {
+                let (word, bit) = Bound::bit_of_nested_name(filter.len(), name);
+                filter[word] |= bit;
+            }
+            self.b.nested_names = filter.into_boxed_slice();
+        }
         // Labels.
         let (mut kept, mut not_kept) = (0, 0);
         for label in &self.label_edges {

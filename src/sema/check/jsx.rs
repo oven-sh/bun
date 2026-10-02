@@ -18,6 +18,14 @@ pub(super) enum JsxName {
     Name(Atom),
 }
 
+/// `JsxReferenceKind`
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum JsxReferenceKind {
+    Component,
+    Function,
+    Mixed,
+}
+
 impl<'p> Checker<'p> {
     fn jsx_symbol(&mut self, file: FileId, name: Atom) -> Option<Sym> {
         let ns = self.jsx_namespace_at(file, false)?;
@@ -91,23 +99,29 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// "Resolve the signatures, preferring constructor", and whether they are for `new`.
-    pub(super) fn jsx_signatures(&mut self, component: TypeId) -> (List<'p, SigId>, bool) {
-        let apparent = self.apparent_type(component);
-        let construct = self.signatures(apparent, true);
-        if !construct.is_empty() {
-            return (construct, true);
+    /// `getJsxReferenceKind`
+    pub(super) fn jsx_reference_kind(&mut self, file: FileId, tag: ExprId) -> JsxReferenceKind {
+        if self.jsx_intrinsic_tag_name(file, tag).is_some() {
+            return JsxReferenceKind::Mixed;
         }
-        (self.signatures(apparent, false), false)
+        let tag_type = self.type_of_expr(file, tag);
+        let tag_type = self.apparent_type(tag_type);
+        if !self.signatures(tag_type, true).is_empty() {
+            JsxReferenceKind::Component
+        } else if !self.signatures(tag_type, false).is_empty() {
+            JsxReferenceKind::Function
+        } else {
+            JsxReferenceKind::Mixed
+        }
     }
 
-    /// `getUninstantiatedJsxSignaturesOfType`, and whether they are for `new` (`getJsxReferenceKind`). `None`: it is not worked out.
+    /// `getUninstantiatedJsxSignaturesOfType`. `None`: it is not worked out.
     pub(super) fn uninstantiated_jsx_signatures_of_type(
         &mut self,
         file: FileId,
         element_type: TypeId,
         caller: ExprId,
-    ) -> Option<(Vec<SigId>, bool)> {
+    ) -> Option<Vec<SigId>> {
         // `anySignature`
         if element_type == TypeId::STRING {
             let takes_nothing = self.p.types.intern_sig(SigData::Synth {
@@ -117,7 +131,7 @@ impl<'p> Checker<'p> {
                 this: None,
                 of: Box::new([]),
             });
-            return Some((vec![takes_nothing], false));
+            return Some(vec![takes_nothing]);
         }
         if let Some(name) = self.string_literal_value(element_type) {
             let attributes = match self.jsx_attributes_of_literal_tag(file, name) {
@@ -130,33 +144,34 @@ impl<'p> Checker<'p> {
                     let at = (file, hir[caller].pos, hir[j].opening_end);
                     let container = Arg::Text("JSX.IntrinsicElements");
                     self.error_at(at, 2339, &[Arg::Atom(name), container]);
-                    return Some((Vec::new(), false));
+                    return Some(Vec::new());
                 }
                 Err(()) => TypeId::ANY,
             };
-            return Some((vec![self.jsx_intrinsic_signature(file, attributes)], false));
+            return Some(vec![self.jsx_intrinsic_signature(file, attributes)]);
         }
         let apparent = self.apparent_type(element_type);
         if !self.is_known(apparent) {
             return None;
         }
-        let (sigs, construct) = self.jsx_signatures(element_type);
-        if !sigs.is_empty() || !self.is_union(apparent) {
-            return Some((sigs.into_vec(), construct));
+        // "Resolve the signatures, preferring constructor"
+        let mut signatures = self.signatures(apparent, true);
+        if signatures.is_empty() {
+            signatures = self.signatures(apparent, false);
+        }
+        if !signatures.is_empty() || !self.is_union(apparent) {
+            return Some(signatures.into_vec());
         }
         let parts = self.parts(apparent);
         let mut lists = Vec::with_capacity(parts.len());
         for &part in parts {
-            lists.push(
-                self.uninstantiated_jsx_signatures_of_type(file, part, caller)?
-                    .0,
-            );
+            lists.push(self.uninstantiated_jsx_signatures_of_type(file, part, caller)?);
         }
         // `getUnionSignatures`: none as soon as one member has none.
         if lists.iter().any(Vec::is_empty) {
-            return Some((Vec::new(), false));
+            return Some(Vec::new());
         }
-        Some((self.union_signatures(&lists), false))
+        Some(self.union_signatures(&lists))
     }
 
     /// `createSignatureForJSXIntrinsic`: `(props: attributes) => JSX.Element`, which is what a tag that is not a component comes to.
@@ -190,7 +205,9 @@ impl<'p> Checker<'p> {
         // What an index signature gives is taken as it is, whatever noUncheckedIndexedAccess says.
         if self.prop_of(elements, name).is_none()
             && let Some(members) = self.members(elements)
-            && let Some(value) = self.applicable_index_info(&members, TypeId::STRING, Some(name))
+            && let Some(value) = self
+                .applicable_index_info_for_name(&members, name)
+                .map(|info| info.value)
         {
             return Some(value);
         }
@@ -233,7 +250,9 @@ impl<'p> Checker<'p> {
         let Some(members) = self.members(elements) else {
             return Err(());
         };
-        Ok(self.applicable_index_info(&members, TypeId::STRING, None))
+        Ok(self
+            .applicable_index_info(&members, TypeId::STRING)
+            .map(|info| info.value))
     }
 
     /// `getJSXFragmentType`: what the fragment `e` is made with. `None`: anything, or it is not found.
@@ -364,14 +383,17 @@ impl<'p> Checker<'p> {
         file: FileId,
         e: ExprId,
         sig: SigId,
-        construct: bool,
     ) -> TypeId {
         // `getTypeOfFirstParameterOfSignatureWithFallback`: of a rest parameter, what it holds first.
         let first_parameter = |c: &mut Self| {
             let params = c.sig_params(sig);
             c.param_type_at(&params, 0).unwrap_or(TypeId::UNKNOWN)
         };
-        if !construct {
+        let tag = match self.hir(file)[e].kind {
+            ExprKind::Jsx(j) => self.hir(file)[j].tag,
+            _ => ExprId::NONE,
+        };
+        if tag.is_none() || self.jsx_reference_kind(file, tag) != JsxReferenceKind::Component {
             let props = first_parameter(self);
             return self.jsx_props_from_first_parameter(file, e, props);
         }

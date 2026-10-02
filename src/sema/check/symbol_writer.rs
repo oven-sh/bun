@@ -332,8 +332,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                         // An index signature nothing declares, as `Record<string, any>` gives: `intrinsicElementsType.symbol`.
                         None => {
                             let members = self.c.members(elements)?;
-                            self.c
-                                .applicable_index(&members, TypeId::STRING, Some(name))?;
+                            self.c.applicable_index_info_for_name(&members, name)?;
                             self.symbol_of_type(elements)
                         }
                     },
@@ -829,8 +828,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     /// `getPropertyOfType`
     fn get_property_of_type(&mut self, ty: TypeId, name: Atom) -> Option<Found> {
         // `getReducedApparentType`
-        let ty = self.c.apparent_type(ty);
-        let ty = self.c.reduced(ty);
+        let ty = self.c.reduced_apparent_type(ty);
         if !matches!(self.c.data(ty), TypeData::Union(_)) {
             let members = self.c.members(ty)?;
             // `typeOnlyExportStarMap`: what a module has through `export type *` is listed and is not there for the asking.
@@ -878,73 +876,30 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             }
             return Some(Found::Property(prop));
         }
-        // `createUnionOrIntersectionProperty`
-        let parts = self.c.parts(ty);
-        if self.c.is_hidden_in_union(parts, name) {
-            return None;
-        }
-        let mut prop_set: Vec<(Prop, MapperId)> = Vec::new();
-        for &part in self.c.parts(ty) {
-            let part = self.c.apparent_type(part);
-            if part.is_never() {
-                continue;
-            }
-            let members = self.c.members(part)?;
-            let Some((prop, mapper)) = self.c.property_of_type(&members, name) else {
-                // `CheckFlagsWritePartial`: an index signature applies, or the constituent is an object literal type without a
-                // spread. Otherwise `CheckFlagsReadPartial`, and `getPropertyOfType` has no such property.
-                let is_write_partial = self
-                    .c
-                    .applicable_index_info(&members, TypeId::STRING, Some(name))
-                    .is_some()
-                    || self.c.is_closed_object_literal_type(part)
-                    || matches!(
-                        self.c.data(part),
-                        TypeData::Anon {
-                            origin: Origin::WidenedLiteral(..),
-                            ..
-                        }
-                    );
-                if is_write_partial {
-                    continue;
+        let (prop, _) = self.c.get_property_of_type(ty, name)?;
+        Some(match &prop.source {
+            // `propSet`
+            PropSource::Intersected(_, parts) => {
+                let is_declared = |part: &&Prop| !part.flags.contains(PropFlags::WRITE_PARTIAL);
+                let mut props: Vec<Prop> = parts.iter().filter(is_declared).cloned().collect();
+                match props.len() {
+                    1 => Found::Property(props.pop()?),
+                    _ => Found::Properties(props),
                 }
-                return None;
-            };
-            let is_same_symbol = |other: &(Prop, MapperId)| {
-                other.0.source == prop.source && other.0.mapper == prop.mapper && other.1 == mapper
-            };
-            if prop_set.iter().any(is_same_symbol) {
-                continue;
             }
-            // `isInstantiation`: instantiations of one property that have the same type are one property.
-            if let Some(single) = prop_set.first().cloned()
-                && single.0.source == prop.source
-                && self.c.type_of_prop(&single.0, single.1) == self.c.type_of_prop(&prop, mapper)
-            {
-                continue;
-            }
-            prop_set.push((prop, mapper));
-        }
-        let mut props: Vec<Prop> = prop_set.into_iter().map(|entry| entry.0).collect();
-        match props.len() {
-            0 => None,
-            1 => props.pop().map(Found::Property),
-            _ => Some(Found::Properties(props)),
-        }
+            _ => Found::Property(prop.clone()),
+        })
     }
 
     /// `getApplicableIndexSymbol`, for the key `name`.
     fn get_applicable_index_symbol(&mut self, ty: TypeId, name: Atom) -> Option<Found> {
         // `getIndexInfosOfType`: `getReducedApparentType`. What `getUnionIndexInfos` makes has no declaration.
-        let apparent = self.c.apparent_type(ty);
-        let apparent = self.c.reduced(apparent);
+        let apparent = self.c.reduced_apparent_type(ty);
         if self.c.is_union(apparent) {
             return None;
         }
         let members = self.c.members(apparent)?;
-        let info = self
-            .c
-            .applicable_index(&members, TypeId::STRING, Some(name))?;
+        let info = self.c.applicable_index_info_for_name(&members, name)?;
         let mut declarations = Vec::new();
         match info.declaration {
             Some(declaration) => declarations.push(declaration),

@@ -61,6 +61,8 @@ pub enum Intrinsic {
     Object,
     /// `intrinsicMarkerType`: what the keyword `intrinsic` is as a type. It has `TypeFlagsAny`.
     IntrinsicMarker,
+    /// `wildcardType`: what `getPermissiveInstantiation` puts for a type parameter. It has `TypeFlagsAny`.
+    Wildcard,
 }
 
 bitflags::bitflags! {
@@ -71,6 +73,26 @@ bitflags::bitflags! {
         const REST = 4;
         /// `...T` where `T` is a type parameter.
         const VARIADIC = 8;
+    }
+}
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub struct IndexFlags: u8 {
+        const NO_INDEX_SIGNATURES = 1 << 1;
+        const NO_REDUCIBLE_CHECK = 1 << 2;
+    }
+}
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub struct AccessFlags: u8 {
+        const INCLUDE_UNDEFINED = 1 << 0;
+        const NO_INDEX_SIGNATURES = 1 << 1;
+        const WRITING = 1 << 2;
+        const ALLOW_MISSING = 1 << 4;
+        const EXPRESSION_POSITION = 1 << 5;
+        const SUPPRESS_NO_IMPLICIT_ANY_ERROR = 1 << 7;
     }
 }
 
@@ -267,7 +289,6 @@ impl PartialEq for TypeArguments {
 
 impl Eq for TypeArguments {}
 
-/// Those that are given are hashed as the list they are: see `TypeParts`.
 impl std::hash::Hash for TypeArguments {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
@@ -275,6 +296,21 @@ impl std::hash::Hash for TypeArguments {
             TypeArguments::Deferred(deferred) => std::hash::Hash::hash(&deferred.key(), state),
         }
     }
+}
+
+/// A type parameter that has no declaration.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub enum Marker {
+    Super,
+    Sub,
+    Other,
+    SuperForCheck,
+    SubForCheck,
+    /// `getRestrictiveTypeParameter`: the type parameter, extending nothing.
+    Restrictive(TypeId),
+    /// `createTupleTargetType`: `typeParameters` and `thisType`. All targets share them: nothing but a mapper ever sees them.
+    TupleElement(u32),
+    TupleThis,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -329,8 +365,7 @@ pub enum TypeData {
     TypeParam(FileId, TypeParamId, MapperId),
     /// The `this` type of a class or an interface.
     ThisParam(Sym),
-    /// A type parameter that is nobody's, put for a real one to see how a generic type varies with it.
-    Marker(u8),
+    Marker(Marker),
     /// In the order of `CompareTypes`.
     Union(Box<[TypeId]>),
     Intersection(Box<[TypeId]>),
@@ -393,7 +428,7 @@ pub enum TypeData {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
-    pub struct PropFlags: u16 {
+    pub struct PropFlags: u32 {
         const OPTIONAL = 1;
         const READONLY = 2;
         const METHOD = 4;
@@ -418,6 +453,11 @@ bitflags::bitflags! {
         /// Of an object literal type that is no longer fresh: nor is an object literal that is its type
         /// (`getRegularTypeOfObjectLiteral`, `transformTypeOfMembers`).
         const REGULAR = 2048;
+        /// `CheckFlags` of what `createUnionOrIntersectionProperty` makes for a union.
+        const READ_PARTIAL = 1 << 13;
+        const WRITE_PARTIAL = 1 << 14;
+        const HAS_NON_UNIFORM_TYPE = 1 << 15;
+        const HAS_LITERAL_TYPE = 1 << 16;
     }
 }
 
@@ -813,6 +853,7 @@ pub mod tf {
         | STRING_MAPPING;
     pub const INCLUDES_MISSING_TYPE: u32 = TYPE_PARAMETER;
     pub const INCLUDES_EMPTY_OBJECT: u32 = CONDITIONAL;
+    pub const INCLUDES_WILDCARD: u32 = INDEXED_ACCESS;
     pub const INCLUDES_UNRESOLVED: u32 = 1 << 30;
     /// `TypeFlagsIncludesError`
     pub const INCLUDES_ERROR: u32 = 1 << 31;
@@ -874,14 +915,6 @@ impl Provenance {
 
 /// What a type is interned by.
 type Made = (TypeData, Option<Box<Provenance>>);
-
-/// A type without provenance has the hash of its data, which `TypeParts` has too.
-fn spread_hash_of(made: &Made) -> u64 {
-    match &made.1 {
-        None => spread_hash(&made.0),
-        Some(provenance) => spread_hash(&(&made.0, provenance)),
-    }
-}
 
 pub struct TypeRecord {
     made: Made,
@@ -1046,8 +1079,8 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
         | TypeData::StringLit { .. }
         | TypeData::NumberLit { .. }
         | TypeData::BigIntLit { .. }
-        | TypeData::BoolLit { .. }
-        | TypeData::Marker(_) => false,
+        | TypeData::BoolLit { .. } => false,
+        TypeData::Marker(marker) => matches!(marker, Marker::Restrictive(t) if t.is_local()),
         TypeData::UnresolvedName { args, .. } => any(args),
         TypeData::EnumLit { member: sym, .. }
         | TypeData::Enum { symbol: sym, .. }
@@ -1171,148 +1204,6 @@ fn is_in_order(pairs: &[(TypeId, TypeId)]) -> bool {
     pairs.is_sorted_by(|a, b| a.0 < b.0)
 }
 
-/// What a type of some kinds is made of, for whoever has it in lists of their own. See `TypeStore::intern_parts`.
-#[derive(Copy, Clone)]
-pub enum TypeParts<'a> {
-    Union(&'a [TypeId]),
-    Intersection(&'a [TypeId]),
-    Ref {
-        target: Sym,
-        args: &'a [TypeId],
-    },
-    Tuple {
-        elems: &'a [TypeId],
-        flags: &'a [ElemFlags],
-        readonly: bool,
-    },
-    Fns {
-        decls: &'a [(FileId, FnId)],
-        mapper: MapperId,
-    },
-}
-
-impl TypeParts<'_> {
-    fn is(self, data: &TypeData) -> bool {
-        match (self, data) {
-            (TypeParts::Union(parts), TypeData::Union(known))
-            | (TypeParts::Intersection(parts), TypeData::Intersection(known)) => *parts == **known,
-            (
-                TypeParts::Ref { target, args },
-                TypeData::Ref {
-                    target: known_target,
-                    args: known,
-                },
-            ) => {
-                target == *known_target
-                    && matches!(known, TypeArguments::Given(known) if *args == **known)
-            }
-            (
-                TypeParts::Tuple {
-                    elems,
-                    flags,
-                    readonly,
-                },
-                TypeData::Tuple {
-                    elems: known,
-                    flags: known_flags,
-                    readonly: known_readonly,
-                },
-            ) => {
-                readonly == *known_readonly
-                    && matches!(known, TypeArguments::Given(known) if *elems == **known)
-                    && *flags == **known_flags
-            }
-            (
-                TypeParts::Fns { decls, mapper },
-                TypeData::Fns {
-                    decls: known,
-                    mapper: known_mapper,
-                },
-            ) => mapper == *known_mapper && *decls == **known,
-            _ => false,
-        }
-    }
-
-    fn to_data(self) -> TypeData {
-        match self {
-            TypeParts::Union(parts) => TypeData::Union(parts.into()),
-            TypeParts::Intersection(parts) => TypeData::Intersection(parts.into()),
-            TypeParts::Ref { target, args } => TypeData::Ref {
-                target,
-                args: args.into(),
-            },
-            TypeParts::Tuple {
-                elems,
-                flags,
-                readonly,
-            } => TypeData::Tuple {
-                elems: elems.into(),
-                flags: flags.into(),
-                readonly,
-            },
-            TypeParts::Fns { decls, mapper } => TypeData::Fns {
-                decls: decls.into(),
-                mapper,
-            },
-        }
-    }
-}
-
-/// What `to_data` gives is hashed the same: which kind it is, then the fields in the order they are declared in.
-impl std::hash::Hash for TypeParts<'_> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        /// `empty`: a type of the kind. A box of nothing is not allocated.
-        #[inline]
-        fn kind<H: std::hash::Hasher>(empty: TypeData, state: &mut H) {
-            std::mem::discriminant(&empty).hash(state);
-        }
-        match *self {
-            TypeParts::Union(parts) => {
-                kind(TypeData::Union(Box::default()), state);
-                parts.hash(state);
-            }
-            TypeParts::Intersection(parts) => {
-                kind(TypeData::Intersection(Box::default()), state);
-                parts.hash(state);
-            }
-            TypeParts::Ref { target, args } => {
-                let empty = TypeData::Ref {
-                    target,
-                    args: TypeArguments::default(),
-                };
-                kind(empty, state);
-                target.hash(state);
-                args.hash(state);
-            }
-            TypeParts::Tuple {
-                elems,
-                flags,
-                readonly,
-            } => {
-                let empty = TypeData::Tuple {
-                    elems: TypeArguments::default(),
-                    flags: Box::default(),
-                    readonly,
-                };
-                kind(empty, state);
-                elems.hash(state);
-                flags.hash(state);
-                readonly.hash(state);
-            }
-            TypeParts::Fns { decls, mapper } => {
-                let empty = TypeData::Fns {
-                    decls: Box::default(),
-                    mapper,
-                };
-                kind(empty, state);
-                decls.hash(state);
-                mapper.hash(state);
-            }
-        }
-    }
-}
-
 pub struct TypeStore {
     types: Interned<TypeRecord>,
     sigs: Interned<SigData>,
@@ -1356,18 +1247,19 @@ well_known! {
     TRUE = TypeData::BoolLit { value: true, fresh: false },
     FRESH_FALSE = TypeData::BoolLit { value: false, fresh: true },
     FRESH_TRUE = TypeData::BoolLit { value: true, fresh: true },
-    MARKER_SUPER = TypeData::Marker(0),
-    MARKER_SUB = TypeData::Marker(1),
-    MARKER_OTHER = TypeData::Marker(2),
+    MARKER_SUPER = TypeData::Marker(Marker::Super),
+    MARKER_SUB = TypeData::Marker(Marker::Sub),
+    MARKER_OTHER = TypeData::Marker(Marker::Other),
     // `markerSuperTypeForCheck`, `markerSubTypeForCheck`: `checkTypeParameterDeferred` verifies an `in` / `out` annotation with these.
-    MARKER_SUPER_FOR_CHECK = TypeData::Marker(3),
-    MARKER_SUB_FOR_CHECK = TypeData::Marker(4),
+    MARKER_SUPER_FOR_CHECK = TypeData::Marker(Marker::SuperForCheck),
+    MARKER_SUB_FOR_CHECK = TypeData::Marker(Marker::SubForCheck),
     SILENT_NEVER = TypeData::Intrinsic(Intrinsic::SilentNever),
     UNREACHABLE_NEVER = TypeData::Intrinsic(Intrinsic::UnreachableNever),
     IMPLICIT_NEVER = TypeData::Intrinsic(Intrinsic::ImplicitNever),
     AUTO = TypeData::Intrinsic(Intrinsic::Auto),
     ERROR = TypeData::Intrinsic(Intrinsic::Error),
     INTRINSIC_MARKER = TypeData::Intrinsic(Intrinsic::IntrinsicMarker),
+    WILDCARD = TypeData::Intrinsic(Intrinsic::Wildcard),
 }
 
 impl TypeId {
@@ -1388,12 +1280,16 @@ impl TypeId {
         }
     }
 
-    /// `TypeFlagsAny`: `anyType`, `errorType`, `autoType` or `intrinsicMarkerType`.
+    /// `TypeFlagsAny`
     #[inline]
     pub fn is_any(self) -> bool {
         matches!(
             self,
-            TypeId::ANY | TypeId::ERROR | TypeId::AUTO | TypeId::INTRINSIC_MARKER
+            TypeId::ANY
+                | TypeId::ERROR
+                | TypeId::AUTO
+                | TypeId::INTRINSIC_MARKER
+                | TypeId::WILDCARD
         )
     }
 
@@ -1550,7 +1446,8 @@ impl TypeStore {
                 | Intrinsic::Any
                 | Intrinsic::Error
                 | Intrinsic::Auto
-                | Intrinsic::IntrinsicMarker => tf::ANY,
+                | Intrinsic::IntrinsicMarker
+                | Intrinsic::Wildcard => tf::ANY,
                 Intrinsic::Unknown => tf::UNKNOWN,
                 Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
                     tf::UNDEFINED
@@ -1615,7 +1512,10 @@ impl TypeStore {
                 ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
                     | (self.mapper_record(*around).1 & ObjectFlags::HAS_UNRESOLVED)
             }
-            TypeData::ThisParam(_) => ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES,
+            TypeData::ThisParam(_)
+            | TypeData::Marker(
+                Marker::Restrictive(_) | Marker::TupleElement(_) | Marker::TupleThis,
+            ) => ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES,
             TypeData::Marker(_) => {
                 ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_MARKER
             }
@@ -1746,6 +1646,16 @@ impl TypeStore {
         store.found_components.clear();
     }
 
+    /// `work`, by a store of its own: what mentions the file at hand is numbered in terms of the store it was made for.
+    pub fn apart_from_what_is_local<R>(work: impl FnOnce() -> R) -> R {
+        // SAFETY: nothing is being interned. What is in the lists stays where it is.
+        let kept = std::mem::take(unsafe { local_store_mut() });
+        let result = work();
+        // SAFETY: as above, and nothing that `work` made is left.
+        *unsafe { local_store_mut() } = kept;
+        result
+    }
+
     fn new_record(&self, made: Made, id: u32) -> TypeRecord {
         let data = &made.0;
         let may_be_reduced = match data {
@@ -1807,7 +1717,7 @@ impl TypeStore {
     }
 
     fn intern_made(&self, made: Made) -> TypeId {
-        let spread = spread_hash_of(&made);
+        let spread = spread_hash(&made);
         if !local::is_any_on() {
             return TypeId(self.types.intern_hashed(
                 spread,
@@ -1856,36 +1766,6 @@ impl TypeStore {
             unsafe { local_store_mut() }.found_types.add(spread, id);
         }
         TypeId(id)
-    }
-
-    /// `intern` of the type made of `parts`. Nothing is allocated if this thread has met the type since it took the file at hand or, with no
-    /// file at hand, if the type is there.
-    pub fn intern_parts(&self, parts: TypeParts<'_>) -> TypeId {
-        let spread = spread_hash(&parts);
-        if local::is_any_on() {
-            let store = local_store();
-            if let Some(id) = store.found_types.find(spread, |id| {
-                let record = if id & LOCAL == 0 {
-                    self.types.items.get(id)
-                } else {
-                    store.types.get((id & !LOCAL) as usize)
-                };
-                record.made.1.is_none() && parts.is(&record.made.0)
-            }) {
-                return TypeId(id);
-            }
-            if local::is_on() {
-                return self.intern(parts.to_data());
-            }
-        }
-        let known = self.types.shards[shard_of(spread)].find(spread, |id| {
-            let record = self.types.items.get(id);
-            record.made.1.is_none() && parts.is(&record.made.0)
-        });
-        match known {
-            Some(id) => TypeId(id),
-            None => self.intern(parts.to_data()),
-        }
     }
 
     /// `ObjectFlagsFromTypeNode`, `ObjectFlagsArrayLiteral`: `id` was made by a type node or an array literal, not by

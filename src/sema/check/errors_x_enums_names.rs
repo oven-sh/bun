@@ -24,102 +24,61 @@ impl Checker<'_> {
         // other passes only support source files.
         if hir.kind == FileKind::Declaration {
             self.check_x_built_in_global_names(file);
-            self.check_x_mapped_types_meant(file);
             return;
         }
-        self.check_x_const_enum_accesses(file);
         self.check_x_built_in_global_names(file);
         self.check_x_names_from_other_files(file);
-        self.check_x_words_for_missing_names(file);
-        self.check_x_mapped_types_meant(file);
         self.check_x_umd_globals(file);
     }
 
     // ───────────────────────────── `const` enums ─────────────────────────────
 
-    /// `checkConstEnumAccess`: 2475, of every expression that is the object a `const` enum would be if there were one.
-    /// `checkElementAccessExpression`: 2476.
-    fn check_x_const_enum_accesses(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
-            let parent = bound.expr_parent[i];
-            if bound.is_unchecked(i) {
-                continue;
-            }
-            let e = ExprId(i as u32);
-            match hir.exprs[i].kind {
-                ExprKind::Index { obj, index, .. } => {
-                    let object = self.type_of_expr(file, obj);
-                    let object = if self.is_union(object) {
-                        self.non_nullable(object)
-                    } else {
-                        object
-                    };
-                    if is_const_enum_object_type(self, object)
-                        && !is_string_literal_like(hir, index)
-                    {
-                        if let Some(start) =
-                            open_parenthesis(hir, index).or_else(|| error_start(self, file, index))
-                        {
-                            self.error_at((file, start, self.error_end_of(file, index)), 2476, &[]);
-                        }
-                        // It is in error, and what is in error can be anything.
-                        continue;
-                    }
-                }
-                ExprKind::Ident(_)
-                | ExprKind::Dot { .. }
-                | ExprKind::Call(_)
-                | ExprKind::Cond { .. }
-                | ExprKind::Assign { .. }
-                | ExprKind::Binary {
-                    op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
-                    ..
-                }
-                | ExprKind::NonNull(_)
-                | ExprKind::Satisfies { .. }
-                | ExprKind::As { .. }
-                | ExprKind::AsConst(_)
-                | ExprKind::Await(_) => {}
-                _ => continue,
-            }
-            let ty = self.type_of_expr(file, e);
-            if !is_const_enum_object_type(self, ty) {
-                continue;
-            }
-            // `typeof E.A` is made of names, not of property accesses.
-            let in_type_query = bound.is_in_type_query(e);
-            let is_object_of_access = !in_type_query
-                && matches!(parent, Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e));
-            let own = error_start(self, file, e);
-            let Some(open) = open_parenthesis(hir, e) else {
-                let ok = is_object_of_access
-                    || in_type_query && !matches!(parent, Parent::Expr(_))
-                    || matches!(hir.exprs[i].kind, ExprKind::Ident(_))
-                        && matches!(parent, Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)));
-                if !ok && let Some(start) = own {
-                    let end = self.error_end_inside_parentheses(file, e);
-                    self.error_at((file, start, end), 2475, &[]);
-                }
-                continue;
-            };
-            // Each pair of parentheses is an expression of that type too, and only the outermost is where `e` seems to be.
-            self.reported
-                .extend(own.map(|start| Reported::bare((file, start, 0), 2475)));
-            if let Some(start) = own {
-                let end = self.error_end_inside_parentheses(file, e);
-                self.note(start, end, 2475, &[]);
-            }
+    /// `checkConstEnumAccess`, of `e` and of each pair of parentheses around it, which is an expression of that type too.
+    pub(super) fn check_const_enum_access(&mut self, file: FileId, e: ExprId, ty: TypeId) {
+        let (hir, bound, options) = (self.hir(file), self.bound(file), &self.p.files.options);
+        let parent = bound.expr_parent[e.idx()];
+        // `typeof E.A` is made of names, not of property accesses.
+        let in_type_query = bound.is_in_type_query(e);
+        let is_object_of_access = !in_type_query
+            && matches!(parent, Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e));
+        // From the outside in: where each starts and ends.
+        let own = error_start(self, file, e);
+        let mut levels: Vec<(u32, u32)> = Vec::new();
+        if let Some(open) = open_parenthesis(hir, e) {
             let inside = self.start_inside_parentheses(file, e) as usize;
             let mut at = open as usize;
-            let mut is_outermost = true;
             while at < inside && hir.text.get(at) == Some(&b'(') {
-                if !(is_outermost && is_object_of_access) {
-                    let end = self.end_of_expr_from(file, e, at as u32);
-                    self.error_at((file, at as u32, end), 2475, &[]);
-                }
-                is_outermost = false;
+                levels.push((at as u32, self.end_of_expr_from(file, e, at as u32)));
                 at = skip_trivia(&hir.text, at + 1);
+            }
+        }
+        let is_parenthesized = !levels.is_empty();
+        levels.extend(own.map(|start| (start, self.error_end_inside_parentheses(file, e))));
+        // Only the outermost is where `e` seems to be, and only a name is at the right of an import or an export assignment.
+        let is_ok = |level: usize| {
+            level == 0
+                && (is_object_of_access
+                    || !is_parenthesized
+                        && (in_type_query && !matches!(parent, Parent::Expr(_))
+                            || matches!(hir[e].kind, ExprKind::Ident(_))
+                                && matches!(parent, Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)))))
+        };
+        let is_ambient = matches!(*self.data(ty), TypeData::Anon { origin: Origin::EnumObject(sym), .. } if self.xa_is_ambient_const_enum(sym))
+            && !super::errors_modules::is_valid_type_only_alias_use_site(hir, hir.node(e));
+        // Imports of ambient `const` enums are checked in `checkAliasSymbol`.
+        let local = bound.expr_symbol[first_identifier(hir, e).idx()];
+        let is_import =
+            local.is_some() && bound.symbols[local.idx()].flags.contains(SymFlags::ALIAS);
+        let flag_name = super::errors_x_modules::isolated_modules_like_flag_name(self.files());
+        for (level, &(start, end)) in levels.iter().enumerate() {
+            if !is_ok(level) {
+                self.error_at((file, start, end), 2475, &[]);
+            }
+            if is_ambient
+                && (options.isolated_modules_said
+                    || options.verbatim_module_syntax && is_ok(level) && !is_import)
+            {
+                self.error_at((file, start, end), 2748, &[Arg::Bytes(flag_name)]);
             }
         }
     }
@@ -129,17 +88,17 @@ impl Checker<'_> {
     /// `initializeChecker`, `addUndefinedToGlobalsOrErrorOnRedeclaration`: 2397
     fn check_x_built_in_global_names(&mut self, file: FileId) {
         let (bound, files) = (self.bound(file), self.files());
-        let report = |c: &mut Self, decl: Decl| {
-            let range = c.error_range_of_declaration(file, decl);
-            c.reported
-                .extend(range.map(|(start, _)| Reported::bare((file, start, 0), 2397)));
+        let report = |c: &mut Self, decl: Decl, name: Atom| {
+            if let Some((start, _)) = c.error_range_of_declaration(file, decl) {
+                c.error_at((file, start, 0), 2397, &[Arg::Atom(name)]);
+            }
         };
         // A script has no `globalThis` of its own, of whatever kind.
         if !files.module(file).is_module()
             && let Some(symbol) = bound.lookup(bound.scopes[0].locals, known::globalThis)
         {
             for &decl in bound.symbols[symbol.idx()].decls.iter() {
-                report(self, decl);
+                report(self, decl, known::globalThis);
             }
         }
         if let Some(&symbol) = files.globals.get(&known::undefined) {
@@ -150,7 +109,7 @@ impl Checker<'_> {
                     Decl::Class(_) | Decl::Interface(_) | Decl::Alias(_) | Decl::Enum(_)
                 );
                 if of == file && !is_type {
-                    report(self, decl);
+                    report(self, decl, known::undefined);
                 }
             }
         }
@@ -158,11 +117,10 @@ impl Checker<'_> {
 
     // ───────────────────────────── names that are found after all ─────────────────────────────
 
-    /// The names nothing in the file declares that mean what another file adds to an enum or a namespace they are written in.
     /// `Resolve`, at an enum declaration: 1281.
     fn check_x_names_from_other_files(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        if hir.enums.is_empty() && hir.modules.is_empty() {
+        if !files.options.isolated_modules || hir.enums.is_empty() {
             return;
         }
         for &(e, scope) in &bound.free_idents {
@@ -201,28 +159,17 @@ impl Checker<'_> {
                     continue;
                 }
                 let start = hir[e].pos;
-                self.reported
-                    .retain(|d| d.start != start || !is_name_not_found(d.code));
                 if let ScopeKind::Enum(en) = s.kind
-                    && files.options.isolated_modules
                     && !hir[en].flags.contains(Flags::AMBIENT)
                     && files.decls(found).first().is_some_and(|d| d.0 != file)
                 {
-                    let option = if files.options.verbatim_module_syntax {
-                        "verbatimModuleSyntax"
-                    } else {
-                        "isolatedModules"
-                    };
-                    let name = self.atom_text(name);
-                    let qualified = format!("{}.{name}", self.atom_text(hir[en].name));
+                    let option = super::errors_x_modules::isolated_modules_like_flag_name(files);
+                    let (of, member) = (files.atoms.bytes(hir[en].name), files.atoms.bytes(name));
+                    let qualified = [of, b".", member].concat();
                     self.error_at(
                         (file, start, 0),
                         1281,
-                        &[
-                            Arg::Text(&name),
-                            Arg::Text(&option.to_owned()),
-                            Arg::Text(&qualified),
-                        ],
+                        &[Arg::Atom(name), Arg::Bytes(option), Arg::Bytes(&qualified)],
                     );
                 }
                 break;
@@ -232,134 +179,25 @@ impl Checker<'_> {
 
     // ───────────────────────────── names that are not found ─────────────────────────────
 
-    /// `getCannotFindNameDiagnosticForName`: 2311 18004, where nothing more telling is known than that the name cannot be found.
-    fn check_x_words_for_missing_names(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if !self.reported.iter().any(|d| is_name_not_found(d.code)) {
-            return;
-        }
-        for &(e, _) in &bound.free_idents {
-            let ExprKind::Ident(name) = hir[e].kind else {
-                continue;
-            };
-            let start = hir[e].pos;
-            let parent = bound.expr_parent[e.idx()];
-            let is_shorthand = |parent: Parent| matches!(parent, Parent::Prop(p) if hir[p].kind == PropKind::Shorthand);
-            let names_shorthand_property = match parent {
-                // `{ a = 1 }`
-                Parent::Expr(x)
-                    if matches!(hir[x].kind, ExprKind::Assign { op: None, target, .. } if target == e)
-                        && is_shorthand(bound.expr_parent[x.idx()]) =>
-                {
-                    // `checkShorthandPropertyAssignment`: outside a destructuring pattern only the initializer is checked.
-                    if !self.is_assignment_target(file, x) {
-                        self.reported
-                            .retain(|d| d.start != start || !is_name_not_found(d.code));
-                        continue;
-                    }
-                    true
-                }
-                Parent::Expr(_) => false,
-                _ => is_shorthand(parent),
-            };
-            let Some(said) = self
-                .reported
-                .iter()
-                .position(|d| d.start == start && d.code == 2304)
-            else {
-                continue;
-            };
-            if is_parenthesized(hir, e) {
-                continue;
-            }
-            if self.files().atoms.bytes(name) == b"await"
-                && matches!(parent, Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(_)))
-            {
-                self.reported[said].code = 2311;
-            } else if names_shorthand_property {
-                self.reported[said].code = 18004;
-                self.note(start, 0, 18004, &[Arg::Atom(name)]);
+    /// `maybeMappedType`
+    pub(super) fn maybe_mapped_type(&mut self, file: FileId, mut node: Node, symbol: Sym) -> bool {
+        let hir = self.hir(file);
+        loop {
+            node = hir.parent(node);
+            if !matches!(
+                hir.kind(node),
+                Kind::ComputedPropertyName | Kind::PropertySignature
+            ) {
+                break;
             }
         }
-    }
-
-    /// `checkAndReportErrorForUsingTypeAsValue` with `maybeMappedType`: 2690 replaces the 2693 at `K` in `{ [K]: T }` and in
-    /// `{ a: T = K }`, where `{ [P in K]: T }` may have been meant. `onFailedToResolveSymbol` stops at the first handler that reports
-    /// and does not run for a name that resolves to a value, so a `K` without a 2693 is left alone.
-    fn check_x_mapped_types_meant(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if !self.reported.iter().any(|d| d.code == 2693) {
-            return;
-        }
-        for i in 0..hir.types.len() {
-            let TypeNodeKind::Object(members) = hir.types[i].kind else {
-                continue;
-            };
-            let scope = bound.type_scope[i];
-            if members.len() != 1 || bound.is_unchecked_type(i) {
-                continue;
-            }
-            let member = &hir[members.at(0)];
-            if member.kind != MemberKind::Property {
-                continue;
-            }
-            // Only a computed property name and the property signature may lie between the identifier and the type literal:
-            // `[(K)]` and `= (K)` do not qualify.
-            let key = match member.key {
-                PropKey::Computed(e) if text_before(hir, hir[e].pos).ends_with(b"[") => e,
-                _ => ExprId::NONE,
-            };
-            let initializer = if !is_parenthesized(hir, member.init) {
-                member.init
-            } else {
-                ExprId::NONE
-            };
-            for e in [key, initializer] {
-                if e.is_none() {
-                    continue;
-                }
-                let ExprKind::Ident(name) = hir[e].kind else {
-                    continue;
-                };
-                let start = hir[e].pos;
-                if !self
-                    .reported
-                    .iter()
-                    .any(|d| d.start == start && d.code == 2693)
-                    || !self.is_union_of_property_names(file, scope, name)
-                {
-                    continue;
-                }
-                for d in self.reported.iter_mut() {
-                    if d.start == start && d.code == 2693 {
-                        d.code = 2690;
-                    }
-                }
-                let name = self.atom_text(name);
-                let parameter = if name == "K" { "P" } else { "K" };
-                self.note(start, 0, 2690, &[Arg::Text(&name), Arg::Text(parameter)]);
-            }
-        }
-    }
-
-    /// What `checkAndReportErrorForUsingTypeAsValue` and `maybeMappedType` require of the symbol: `name` resolves to a type that is
-    /// not a value, and its declared type is a union of types assignable to `string` or `number`.
-    fn is_union_of_property_names(&mut self, file: FileId, scope: ScopeId, name: Atom) -> bool {
-        let files = self.files();
-        // The error for a primitive type name is reported before any symbol is resolved.
-        if is_primitive_type_name(files.atoms.bytes(name)) {
+        if !matches!(hir.data(node), NodeData::Type(t) if matches!(hir[t].kind, TypeNodeKind::Object(members) if members.len() == 1))
+        {
             return false;
         }
-        let Some(symbol) = files
-            .resolve_name(file, scope, name, SymFlags::TYPE)
-            .and_then(|s| files.resolve_alias_if_needed(s))
-        else {
+        let Some(symbol) = self.files().resolve_alias_if_needed(symbol) else {
             return false;
         };
-        let flags = files.flags(symbol);
-        if flags.intersects(SymFlags::VALUE) || !flags.intersects(SymFlags::TYPE) {
-            return false;
-        }
         let ty = self.declared_type(symbol);
         if !self.is_known(ty) || !self.is_union(ty) {
             return false;
@@ -384,86 +222,15 @@ impl Checker<'_> {
     /// `onSuccessfullyResolvedSymbol`: 2686, the name a module goes by globally is for scripts.
     fn check_x_umd_globals(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        // NEEDS: `Options::allow_umd_global_access` (`allowUmdGlobalAccess`), see requests/X-enums_names.md
-        if files.options.allow_umd_global_access || !files.module(file).is_module() {
-            return;
-        }
-        // `getSymbol`: an alias is found by what it stands for.
         let means_umd_global = |name: Atom, scope: ScopeId, meaning: SymFlags| {
-            umd_global(files, name).is_some_and(|global| {
-                let flags = files.symbol_flags(global);
-                files.resolve_name(file, scope, name, meaning) == Some(global)
-                    && flags != SymFlags::all()
-                    && flags.intersects(meaning)
-            })
+            means_umd_global(files, file, scope, name, meaning)
         };
         for &(e, scope) in &bound.free_idents {
             if let ExprKind::Ident(name) = hir[e].kind
                 && !bound.is_unchecked(e.idx())
                 && means_umd_global(name, scope, SymFlags::VALUE)
             {
-                self.error_at((file, hir[e].pos, 0), 2686, &[]);
-            }
-        }
-        // `import a = N.b`
-        for (i, import) in hir.import_equals.iter().enumerate() {
-            let ImportEqualsTarget::Entity(names) = import.target else {
-                continue;
-            };
-            let scope = bound.import_equals_scope[i];
-            let Some(first) = hir.texts(names).next() else {
-                continue;
-            };
-            if scope.is_none()
-                || !means_umd_global(first, scope, SymFlags::VALUE | SymFlags::NAMESPACE)
-            {
-                continue;
-            }
-            // `checkImportEqualsDeclaration`: the first name is looked up as a value only once what is imported is known to be one.
-            let path: Vec<Atom> = hir.texts(names).collect();
-            let meaning = if path.len() == 1 {
-                SymFlags::NAMESPACE
-            } else {
-                SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE
-            };
-            let is_value = files
-                .resolve_entity(file, scope, &path, meaning)
-                .and_then(|target| files.resolve_alias_if_needed(target))
-                .is_some_and(|target| files.flags(target).intersects(SymFlags::VALUE));
-            if !is_value {
-                continue;
-            }
-            // It is written after the `=`.
-            let text = &hir.text[..];
-            let equals = skip_trivia(
-                text,
-                import.name_pos as usize + files.atoms.bytes(import.name).len(),
-            );
-            if text.get(equals) != Some(&b'=') {
-                continue;
-            }
-            let start = skip_trivia(text, equals + 1);
-            if text[start..].starts_with(files.atoms.bytes(first)) {
-                self.error_at((file, start as u32, 0), 2686, &[]);
-            }
-        }
-        // `export { N }`, `export type { N }`: it is declared in a module, so that it is not the module's own is not what is wrong.
-        for (i, export) in hir.exports.iter().enumerate() {
-            let scope = bound.export_scope[i];
-            if export.spec.is_some() || scope.is_none() {
-                continue;
-            }
-            for s in export.items.iter() {
-                let item = &hir[s];
-                if means_umd_global(
-                    item.local,
-                    scope,
-                    SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
-                ) {
-                    self.reported
-                        .retain(|d| d.start != item.local_pos || d.code != 2661);
-                    self.error_at((file, item.local_pos, 0), 2686, &[]);
-                }
+                self.error_at((file, hir[e].pos, 0), 2686, &[Arg::Atom(name)]);
             }
         }
         // `markJsxAliasReferenced`: what elements are made with is looked up at every tag, of a fragment what fragments are made with too.
@@ -567,30 +334,24 @@ pub(super) fn is_declared_before_use(
 
 // ───────────────────────────── kinds of types and symbols ─────────────────────────────
 
-/// `isConstEnumObjectType`
-#[inline]
-fn is_const_enum_object_type(c: &Checker<'_>, ty: TypeId) -> bool {
-    match *c.data(ty) {
-        TypeData::Anon {
-            origin: Origin::EnumObject(symbol),
-            ..
-        } => is_const_enum(c, symbol),
-        _ => false,
-    }
-}
-
-/// Whether every enum among the declarations of `symbol` is `const`, and there is one.
-fn is_const_enum(c: &Checker<'_>, symbol: Sym) -> bool {
-    let mut is_enum = false;
-    for (file, decl) in c.files().decls(symbol) {
-        if let Decl::Enum(en) = decl {
-            if !c.hir(file)[en].flags.contains(Flags::CONST) {
-                return false;
-            }
-            is_enum = true;
-        }
-    }
-    is_enum
+/// `onSuccessfullyResolvedSymbol`: whether `name`, looked for from `scope` of `file`, a module, is the name a module goes by globally,
+/// which is for scripts.
+pub(super) fn means_umd_global(
+    files: &Files,
+    file: FileId,
+    scope: ScopeId,
+    name: Atom,
+    meaning: SymFlags,
+) -> bool {
+    !files.options.allow_umd_global_access
+        && files.module(file).is_module()
+        && umd_global(files, name).is_some_and(|global| {
+            // `getSymbol`: an alias is found by what it stands for.
+            let flags = files.symbol_flags(global);
+            files.resolve_name(file, scope, name, meaning) == Some(global)
+                && flags != SymFlags::all()
+                && flags.intersects(meaning)
+        })
 }
 
 /// What goes by `name` globally, if that is nothing but `export as namespace name`.
@@ -613,39 +374,7 @@ pub(super) fn is_primitive_type_name(name: &[u8]) -> bool {
     PRIMITIVE_TYPE_NAMES.contains(&name)
 }
 
-/// What is said of a name that means nothing where it is written.
-fn is_name_not_found(code: u32) -> bool {
-    matches!(
-        code,
-        2304 | 2503
-            | 2552
-            | 2583
-            | 2584
-            | 2585
-            | 2591
-            | 2592
-            | 2593
-            | 2662
-            | 2663
-            | 2689
-            | 2693
-            | 2702
-            | 2708
-            | 2709
-            | 2713
-            | 2749
-            | 2833
-            | 2863
-            | 2868
-    )
-}
-
 // ───────────────────────────── where things are written ─────────────────────────────
-
-/// What is written before `pos`, up to the end of the last token. Nothing where the text is not kept.
-fn text_before(hir: &hir::File, pos: u32) -> &[u8] {
-    trim_trivia_end(hir.text.get(..pos as usize).unwrap_or(&[]))
-}
 
 /// `GetErrorRangeForNode`, of `e` less the parentheses around it: where an error about it starts. `None`: it cannot be told.
 fn error_start(c: &Checker<'_>, file: FileId, e: ExprId) -> Option<u32> {

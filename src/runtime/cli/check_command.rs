@@ -275,7 +275,6 @@ fn run_quietly(
         threads,
         lib_dir: None,
         global_node_modules: global.as_deref(),
-        file_time_limit: core::time::Duration::from_secs(10),
         progress,
         only: None,
         ends_the_process,
@@ -379,7 +378,7 @@ impl CheckCommand {
         }
         let _ = Output::error_writer().write_all(summary.as_bytes());
         Output::flush();
-        Global::exit(u32::from(report.error_count() > 0));
+        Global::exit(u32::from(!report.is_ok()));
     }
 }
 
@@ -398,9 +397,26 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     if paths.is_empty() {
         return true;
     }
+    // A JavaScript entry point is read for what it imports, whatever `allowJs` says. Only `checkJs` has its own errors reported.
+    let allow_js: Vec<CompilerOption> = paths
+        .iter()
+        .any(|path| !path.ends_with("ts") && !path.ends_with(".tsx"))
+        .then(|| bun_sema_driver::compiler_option_from_flag("allowJs", None).ok())
+        .flatten()
+        .into_iter()
+        .collect();
+    check_and_say(&paths, &allow_js)
+}
+
+/// Type checks the project around the working directory, as `bun check` does, before one of its scripts is run.
+pub(crate) fn check_project_before() -> bool {
+    check_and_say(&[], &[])
+}
+
+fn check_and_say(paths: &[String], compiler_options: &[CompilerOption]) -> bool {
     let cwd = working_directory();
-    let report = run(&cwd, None, &paths, &[], 0, false);
-    if report.diagnostics.is_empty() && report.gave_up.is_empty() && report.incomplete.is_empty() {
+    let report = run(&cwd, None, paths, compiler_options, 0, false);
+    if report.diagnostics.is_empty() && report.incomplete.is_empty() {
         return true;
     }
     let shown_from = bun_sema_driver::host::from_native(&cwd);
@@ -414,10 +430,10 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     );
     let mut out = String::new();
     format::write_diagnostics(&mut out, &report, &style);
-    if report.error_count() > 0 || !report.gave_up.is_empty() || !report.incomplete.is_empty() {
+    if !report.is_ok() {
         format::write_summary(&mut out, &report, &style);
     }
     let _ = Output::error_writer().write_all(out.as_bytes());
     Output::flush();
-    report.error_count() == 0
+    report.is_ok()
 }

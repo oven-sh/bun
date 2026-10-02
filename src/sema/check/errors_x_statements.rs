@@ -18,7 +18,6 @@
 //! misplaced `return`, the expression of a `for`-`of` whose declaration list is empty, or the operand of a `yield` outside a generator:
 //! the walk notes where it turns away, and what the passes said there is taken back when they are through.
 
-use super::errors_grammar_modifiers::HasModifiers;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, PatParent};
 use crate::resolve::{ModuleKind, ScriptTarget};
@@ -118,24 +117,6 @@ fn after_await(text: &[u8], at: u32) -> AfterAwait {
 
 // ───────────────────────────── the syntax ─────────────────────────────
 
-/// `checkReferenceExpression`: what is wrong with assigning to `e`, `[that it is no reference, that it is an optional chain]`.
-fn why_no_reference(hir: &File, mut e: ExprId, codes: [u32; 2]) -> Option<u32> {
-    loop {
-        e = match hir[e].kind {
-            ExprKind::As { expr, .. }
-            | ExprKind::Satisfies { expr, .. }
-            | ExprKind::AsConst(expr)
-            | ExprKind::NonNull(expr) => expr,
-            // `createMissingIdentifier`: what is not there is a name without letters.
-            ExprKind::Ident(_) | ExprKind::Missing => return None,
-            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
-                return (chain != Chain::No).then_some(codes[1]);
-            }
-            _ => return Some(codes[0]),
-        };
-    }
-}
-
 /// A `with` statement is kept as a block of its object and its body, put where the keyword is.
 pub(super) fn is_with_statement(hir: &File, s: StmtId) -> bool {
     matches!(hir[s].kind, StmtKind::Block(list) if list.len() == 2)
@@ -162,11 +143,6 @@ pub(super) fn is_said_by_the_parser(code: u32) -> bool {
             | 1486..=1490 | 2657 | 2754 | 2809 | 2819 | 2880 | 6188 | 6189 | 17002 | 17006..=17008 | 17014 | 17015 | 17021
             | 18009 | 18016 | 18026 | 18029 | 18030
     )
-}
-
-/// What is said of a name that nothing declares. What it stands for is `errorType` then.
-fn is_name_not_found(code: u32) -> bool {
-    matches!(code, 2304 | 2552 | 2580..=2585 | 2591..=2593 | 2662 | 2663 | 2693)
 }
 
 // ───────────────────────────── where `await` can be ─────────────────────────────
@@ -484,7 +460,7 @@ impl Checker<'_> {
         if kind == VarKind::Var {
             return;
         }
-        if self.has_grammar_error_in_modifiers(file, HasModifiers::Statement(s)) {
+        if self.has_grammar_error_in_modifiers(file, s) {
             // The parser's.
             let start = self.start_after_modifiers(file, s);
             self.reported
@@ -759,33 +735,6 @@ impl Checker<'_> {
         self.report_not_assignable_with_end(source, target, at, end, 2850 + u32::from(is_await));
     }
 
-    /// What `for`-`in` and `for`-`of` assign to: 2405 2406 2780, 2487 2781. After `check_iteration`, which says 2405 too.
-    pub(super) fn check_targets_of_loops(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.stmts.len() {
-            let (StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }) = hir.stmts[i].kind
-            else {
-                continue;
-            };
-            let StmtKind::Expr(target) = hir[left].kind else {
-                continue;
-            };
-            // A literal is a pattern, unless it is in parentheses.
-            if matches!(bound.stmt_parent[i], Parent::None)
-                || matches!(hir[target].kind, ExprKind::Array(_) | ExprKind::Object(_))
-                    && !is_parenthesized(hir, target)
-            {
-                continue;
-            }
-            if let StmtKind::ForIn { expr, .. } = hir.stmts[i].kind {
-                self.check_target_of_for_in(file, target, expr);
-            } else if let Some(code) = why_no_reference(hir, target, [2487, 2781]) {
-                let start = self.error_start_of(file, target);
-                self.error_at((file, start, self.error_end_of(file, target)), code, &[]);
-            }
-        }
-    }
-
     /// What the passes say where `checkSourceFile` never comes is taken back. The parser's and the binder's stays. After all the passes.
     pub(super) fn take_back_what_is_never_checked(&mut self, file: FileId) {
         let hir = self.hir(file);
@@ -821,63 +770,6 @@ impl Checker<'_> {
                     || is_said_by_the_parser(d.code)
                         && hir.early_errors.contains(&(d.start, d.code))
             });
-        }
-    }
-
-    /// `checkForInStatement`, of a left-hand side that is not a reference. It is an error for certain: 2405 if a key does not fit
-    /// in it, which is asked first, or else 2406 2780. Which of them is only said where it can be told.
-    fn check_target_of_for_in(&mut self, file: FileId, target: ExprId, object: ExprId) {
-        let Some(code) = why_no_reference(self.hir(file), target, [2406, 2780]) else {
-            return;
-        };
-        let (written, start) = (
-            self.start_of(file, target),
-            self.error_start_of(file, target),
-        );
-        // One of the two is reported.
-        let end = self.error_end_of(file, target);
-        self.note(start, end, code, &[]);
-        self.note(start, end, 2405, &[]);
-        // It may have been said already, of where the expression starts.
-        if let Some(said) = self
-            .reported
-            .iter_mut()
-            .find(|d| d.start == written && d.code == 2405)
-        {
-            said.start = start;
-            return;
-        }
-        let wanted = self.type_of_expr(file, target);
-        if !self.is_known(wanted) {
-            // What is unknown here is `any` to TypeScript where it could not find a name either, and anything fits in that.
-
-            if self
-                .reported
-                .iter()
-                .any(|d| (written..end).contains(&d.start) && is_name_not_found(d.code))
-            {
-                self.error_at((file, start, 0), code, &[]);
-            }
-            return;
-        }
-        // `getIndexTypeOrString`. All that is known of the keys of what is not known is that they are strings of some kind.
-        let given = self.type_of_expr(file, object);
-        let mut is_sure = self.is_known(given);
-        let mut keys = TypeId::STRING;
-        if is_sure {
-            let given = self.non_nullable(given);
-            let all = self.keyof(given);
-            let strings = self.filter(all, |c, m| c.is_string_like(m) || c.is_deferred(m));
-            if !self.is_known(strings) {
-                is_sure = false;
-            } else if !strings.is_never() {
-                keys = strings;
-            }
-        }
-        if self.is_assignable(keys, wanted) {
-            self.error_at((file, start, 0), code, &[]);
-        } else if is_sure {
-            self.error_at((file, start, 0), 2405, &[]);
         }
     }
 

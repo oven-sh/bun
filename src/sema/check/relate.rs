@@ -21,24 +21,14 @@ pub(super) enum Relation {
     StrictSubtype = 1,
     /// Might be the same value: what `===` and casts allow.
     Comparable = 2,
-    /// Assignable for some choice of the type parameters.
-    Permissive = 3,
     Subtype = 4,
     Identity = 5,
-    /// Assignable whatever the type parameters are, whatever they are declared to extend.
-    Restrictive = 6,
 }
 
 impl Relation {
     /// `relation == assignableRelation || relation == comparableRelation`
     pub(super) fn is_lenient(self) -> bool {
-        matches!(
-            self,
-            Relation::Assignable
-                | Relation::Comparable
-                | Relation::Permissive
-                | Relation::Restrictive
-        )
+        matches!(self, Relation::Assignable | Relation::Comparable)
     }
 
     pub(super) fn is_subtype(self) -> bool {
@@ -315,6 +305,7 @@ fn is_primitive_kind(data: &TypeData) -> bool {
                 | Intrinsic::Error
                 | Intrinsic::Auto
                 | Intrinsic::IntrinsicMarker
+                | Intrinsic::Wildcard
                 | Intrinsic::Unknown
                 | Intrinsic::Never
                 | Intrinsic::SilentNever
@@ -412,17 +403,6 @@ fn is_normalized_kind(data: &TypeData) -> bool {
 impl<'p> Checker<'p> {
     pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         self.related(source, target, Relation::Assignable)
-    }
-
-    /// `isTypeAssignableTo` of the `getPermissiveInstantiation` of both. `getObjectTypeInstantiation` maps the type parameters around a
-    /// type, not those of a generic signature in it: a type that mentions none from around it is its own instantiation.
-    pub fn is_assignable_permissive(&mut self, source: TypeId, target: TypeId) -> bool {
-        let relation = if self.has_type_variables(source) || self.has_type_variables(target) {
-            Relation::Permissive
-        } else {
-            Relation::Assignable
-        };
-        self.related(source, target, relation)
     }
 
     pub fn is_strict_subtype(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -799,11 +779,42 @@ impl<'p> Checker<'p> {
         self.p.plain_global_refs.insert(name, global)
     }
 
+    /// `Checker::inherited_names`. They stay as they are if one of the four is not there, or not yet.
+    #[cold]
+    fn note_inherited_names(&mut self) {
+        let before = self.what_only_holds_for_now();
+        let mut names = [0; 4];
+        for global in [
+            known::Object,
+            known::Function,
+            known::CallableFunction,
+            known::NewableFunction,
+        ] {
+            let global = self.plain_global_ref(global);
+            let Some(members) = self.members(global) else {
+                return;
+            };
+            for prop in &members.shape().props {
+                names[prop.name.0 as usize / 64 % 4] |= 1 << (prop.name.0 % 64);
+            }
+        }
+        if self.what_only_holds_for_now() == before {
+            self.inherited_names = names;
+        }
+    }
+
     fn inherited_property(
         &mut self,
         from: &mut Inherited<'p>,
         name: Atom,
     ) -> Option<(&'p Prop, MapperId)> {
+        if self.inherited_names == [0; 4] {
+            self.note_inherited_names();
+        }
+        let n = name.0 as usize;
+        if self.inherited_names != [0; 4] && self.inherited_names[n / 64 % 4] & 1 << (n % 64) == 0 {
+            return None;
+        }
         for i in 0..from.count {
             if i == from.asked {
                 let global = self.plain_global_ref(from.globals[i]);
@@ -828,25 +839,8 @@ impl<'p> Checker<'p> {
         if source == target {
             return true;
         }
-        if relation == Relation::Restrictive
-            && self.restrictive_operands.last() != Some(&(source, target))
-        {
-            self.restrictive_operands.push((source, target));
-            let result = self.related(source, target, relation);
-            self.restrictive_operands.pop();
-            return result;
-        }
-        // `getPermissiveInstantiation` of the two replaces the type parameters of the signatures around as well.
-        if relation == Relation::Permissive && !self.own_of_compared_sigs.is_empty() {
-            let around = std::mem::take(&mut self.own_of_compared_sigs);
-            let result = self.related(source, target, relation);
-            self.own_of_compared_sigs = around;
-            return result;
-        }
-        let is_stack_low = self.is_stack_low();
-        if is_stack_low {}
-        // A question asked while a type is being simplified passes no `enter`: what does not end has to be cut off here too.
-        if self.is_out_of_time() || is_stack_low {
+        // A question asked while a type is being simplified passes no `enter`.
+        if self.is_stack_low() {
             self.gave_up();
             return false;
         }
@@ -909,11 +903,11 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// What `ask` answers. `None`: a comparison was cut short or time ran out on the way, and the answer is not to be told anybody.
+    /// What `ask` answers. `None`: a comparison was cut short on the way, and the answer is not to be told anybody.
     pub(super) fn answer_if_sure(&mut self, ask: impl FnOnce(&mut Self) -> bool) -> Option<bool> {
         let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
         let answer = ask(self);
-        let is_sure = !self.relation_gave_up && !self.timed_out();
+        let is_sure = !self.relation_gave_up;
         self.relation_gave_up |= gave_up_before;
         is_sure.then_some(answer)
     }
@@ -944,9 +938,8 @@ impl<'p> Checker<'p> {
         r.keeps_failures = is_trial;
         let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, STATE_NONE);
         let overflow = r.overflow;
-        // `relationCount <= 0`. Running out of nesting depth, native stack or time is not a complexity overflow.
-        let is_too_complex =
-            overflow && r.relation_count <= 0 && self.cycles == r.cycles && !self.timed_out();
+        // `relationCount <= 0`. Running out of nesting depth or native stack is not a complexity overflow.
+        let is_too_complex = overflow && r.relation_count <= 0 && self.cycles == r.cycles;
         let hit_cached_overflow = r.hit_cached_overflow;
         r.is_from_related = false;
         r.top_key = None;
@@ -997,8 +990,8 @@ impl<'p> Checker<'p> {
         relation: Relation,
         error_reporter: Option<&mut Relater>,
     ) -> bool {
-        // But for the wildcard, no rule has an object type on both sides.
-        if is_object_kind(sd) && is_object_kind(td) && relation != Relation::Permissive {
+        // No rule has an object type on both sides.
+        if is_object_kind(sd) && is_object_kind(td) {
             return false;
         }
         self.is_simple_type_related_to_by_rule(s, t, relation, error_reporter)
@@ -1013,12 +1006,10 @@ impl<'p> Checker<'p> {
         mut error_reporter: Option<&mut Relater>,
     ) -> bool {
         let (s, t) = (self.flags(source), self.flags(target));
-        if t & tf::ANY != 0 || s & tf::NEVER != 0 || source == TypeId::UNRESOLVED {
-            return true;
-        }
-        // The wildcard the permissive instantiation puts for type parameters, and for what is worked out from one.
-        if relation == Relation::Permissive
-            && (self.is_permissive_wildcard(source, 0) || self.is_permissive_wildcard(target, 0))
+        if t & tf::ANY != 0
+            || s & tf::NEVER != 0
+            || source == TypeId::UNRESOLVED
+            || source == TypeId::WILDCARD
         {
             return true;
         }
@@ -1098,133 +1089,6 @@ impl<'p> Checker<'p> {
                 Some(symbol)
             }
             _ => self.union_enum_symbol(ty),
-        }
-    }
-
-    /// What `getPermissiveInstantiation` makes the wildcard of: a type parameter, and what is worked out from one. `T[K]`,
-    /// `keyof T`, a conditional type that checks it or checks against it, a mapped type over it, a union or an intersection with
-    /// it, a template literal type with it. Not a string mapping: `Uppercase<any>` is a type of its own.
-    /// `depth`: how far `ty` is inside the type that is instantiated.
-    fn is_permissive_wildcard(&mut self, ty: TypeId, depth: u32) -> bool {
-        if !self.has_type_variables(ty) {
-            return false;
-        }
-        // tsgo has no depth limit. Past this one the answer is unknown, and a wildcard never makes a comparison definitely false.
-        if depth > 8 {
-            return true;
-        }
-        match *self.data(ty) {
-            // `getObjectTypeInstantiation` maps the type parameters around a type. Those of a generic signature in it stay.
-            TypeData::TypeParam(..) => !self.own_of_compared_sigs.contains(&ty),
-            TypeData::ThisParam(_) | TypeData::Marker(_) => true,
-            // `getTemplateLiteralType`. `getPermissiveInstantiation` returns a primitive unchanged, and a template literal type is one.
-            TypeData::Template { ref types, .. } => {
-                depth > 0
-                    && types
-                        .iter()
-                        .any(|&t| self.is_permissive_wildcard(t, depth + 1))
-            }
-            TypeData::IndexedAccess { obj, index, .. } => {
-                self.is_permissive_wildcard(obj, depth + 1)
-                    || self.is_permissive_wildcard(index, depth + 1)
-            }
-            TypeData::Keyof(of) | TypeData::Substitution { base: of, .. } => {
-                self.is_permissive_wildcard(of, depth + 1)
-            }
-            TypeData::Cond { .. } => {
-                let (check, extends) = (self.cond_check(ty), self.cond_extends(ty));
-                self.is_permissive_wildcard(check, depth + 1)
-                    || self.is_permissive_wildcard(extends, depth + 1)
-            }
-            TypeData::Anon {
-                origin: Origin::Mapped(..),
-                ..
-            } => {
-                let keys = self.mapped_keys(ty);
-                self.is_permissive_wildcard(keys, depth + 1)
-            }
-            TypeData::Union(_) | TypeData::Intersection(_) => self
-                .constituents(ty)
-                .iter()
-                .any(|&p| self.is_permissive_wildcard(p, depth + 1)),
-            _ => false,
-        }
-    }
-
-    /// `isTypeIdenticalTo`, of two parts of permissive instantiations. The wildcard has the flags of `any`, which is what the identity
-    /// relation goes by.
-    fn is_identical_with_wildcards(&mut self, a: TypeId, b: TypeId) -> bool {
-        let (mut open, mut seen) = (Vec::new(), FxHashSet::default());
-        if !self.collect_open_type_params(a, &mut open, &mut seen)
-            || !self.collect_open_type_params(b, &mut open, &mut seen)
-        {
-            return true;
-        }
-        let wildcards = self
-            .p
-            .types
-            .mapper(open.into_iter().map(|param| (param, TypeId::ANY)).collect());
-        let (a, b) = (
-            self.instantiate(a, wildcards),
-            self.instantiate(b, wildcards),
-        );
-        self.is_identical(a, b)
-    }
-
-    /// Adds the type parameters in `ty` that `is_permissive_wildcard` takes for wildcards to `open`. `false`: something in `ty` is
-    /// worked out from one, or it cannot be told. The wildcard makes a wildcard of that, `any` something else.
-    fn collect_open_type_params(
-        &self,
-        ty: TypeId,
-        open: &mut Vec<TypeId>,
-        seen: &mut FxHashSet<TypeId>,
-    ) -> bool {
-        if !self.has_type_variables(ty) || !seen.insert(ty) {
-            return true;
-        }
-        match self.data(ty) {
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) => {
-                if !self.own_of_compared_sigs.contains(&ty) {
-                    open.push(ty);
-                }
-                true
-            }
-            TypeData::Union(types)
-            | TypeData::Intersection(types)
-            | TypeData::Ref {
-                args: TypeArguments::Given(types),
-                ..
-            }
-            | TypeData::Tuple {
-                elems: TypeArguments::Given(types),
-                ..
-            } => types
-                .iter()
-                .all(|&t| self.collect_open_type_params(t, open, seen)),
-            TypeData::Anon {
-                origin: Origin::Mapped(..),
-                ..
-            } => false,
-            TypeData::Ref {
-                args: TypeArguments::Deferred(deferred),
-                ..
-            }
-            | TypeData::Tuple {
-                elems: TypeArguments::Deferred(deferred),
-                ..
-            } => self
-                .p
-                .types
-                .mapping(deferred.mapper)
-                .iter()
-                .all(|pair| self.collect_open_type_params(pair.1, open, seen)),
-            TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => self
-                .p
-                .types
-                .mapping(*mapper)
-                .iter()
-                .all(|pair| self.collect_open_type_params(pair.1, open, seen)),
-            _ => false,
         }
     }
 
@@ -1576,14 +1440,14 @@ impl<'p> Checker<'p> {
         let (yes, no) = (self.cond_true(t), self.cond_false(t));
         let checked = self.actual_type_variable(check);
         if no.is_never() && self.actual_type_variable(yes) == checked {
-            if self.has_any_flag(check) || self.related(check, extends, Relation::Restrictive) {
+            if self.has_any_flag(check) || self.is_assignable_restrictive(check, extends) {
                 return self.simplified(yes, writing);
             }
             if self.intersection(&[check, extends]).is_never() {
                 return TypeId::NEVER;
             }
         } else if yes.is_never() && self.actual_type_variable(no) == checked {
-            if !self.has_any_flag(check) && self.related(check, extends, Relation::Restrictive) {
+            if !self.has_any_flag(check) && self.is_assignable_restrictive(check, extends) {
                 return TypeId::NEVER;
             }
             if self.has_any_flag(check) || self.intersection(&[check, extends]).is_never() {
@@ -1629,95 +1493,6 @@ impl<'p> Checker<'p> {
             },
             _ => self.base_constraint_of(t),
         }
-    }
-
-    /// Whether `param` is the key of a mapped type inside the two types `getRestrictiveInstantiation` was called with.
-    /// `getObjectTypeInstantiation` maps the type parameters around a mapped type only, so the key keeps its constraint. A key that
-    /// is free in the two types is replaced like any other type parameter.
-    /// Limit: the type parameters of a generic signature inside the two types keep their constraints too. They count as replaced.
-    fn is_bound_mapped_key(&mut self, param: TypeId) -> bool {
-        let TypeData::TypeParam(file, tp, _) = *self.data(param) else {
-            return false;
-        };
-        let Some(&(source, target)) = self.restrictive_operands.last() else {
-            return false;
-        };
-        self.hir(file).mapped.iter().any(|m| m.param == tp)
-            && !self.references_type_variable(source, param)
-            && !self.references_type_variable(target, param)
-    }
-
-    /// `getConstraintOfType`, of a part of a restrictive instantiation (`getRestrictiveInstantiation`): the type parameters it
-    /// replaced extend nothing. An indexed access and a conditional type still go by what their parts extend.
-    fn restrictive_constraint_of(&mut self, t: TypeId) -> Option<TypeId> {
-        if self.is_bound_mapped_key(t) {
-            return self.constraint_of_type_param(t);
-        }
-        match *self.data(t) {
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => None,
-            TypeData::IndexedAccess {
-                obj,
-                index,
-                undefined,
-            } => {
-                self.base_constraint(t);
-                if self.p.circular_constraints.get(&t).is_some() {
-                    return None;
-                }
-                if let Some(substituted) = self.substitute_indexed_mapped(obj, index) {
-                    return Some(substituted);
-                }
-                if let Some(constraint) = self.restrictive_simplified_or_constraint(index)
-                    && constraint != index
-                    && let Some(access) =
-                        self.indexed_access_flagged(obj, constraint, undefined, None)
-                {
-                    return Some(access);
-                }
-                if let Some(constraint) = self.restrictive_simplified_or_constraint(obj)
-                    && constraint != obj
-                {
-                    return self.indexed_access_flagged(constraint, index, undefined, None);
-                }
-                None
-            }
-            TypeData::Cond { .. } => {
-                match self.constraint_of_distributive_conditional_worker(t, true) {
-                    Some(constraint) => Some(constraint),
-                    None => Some(self.default_constraint_of_conditional(t)),
-                }
-            }
-            _ => self.base_constraint_of(t),
-        }
-    }
-
-    /// `getSimplifiedTypeOrConstraint`, of the same.
-    fn restrictive_simplified_or_constraint(&mut self, t: TypeId) -> Option<TypeId> {
-        let simplified = self.simplified(t, false);
-        if simplified != t {
-            Some(simplified)
-        } else {
-            self.restrictive_constraint_of(t)
-        }
-    }
-
-    /// `getBaseConstraintOrType`, of the same: through conditional types and indexed accesses. A type parameter is its own base
-    /// constraint, and so is whatever else is come to.
-    fn restrictive_base_constraint_or_type(&mut self, t: TypeId) -> TypeId {
-        let mut base = t;
-        for _ in 0..8 {
-            if !matches!(
-                self.data(base),
-                TypeData::Cond { .. } | TypeData::IndexedAccess { .. }
-            ) {
-                break;
-            }
-            match self.restrictive_constraint_of(base) {
-                Some(constraint) if constraint != base => base = constraint,
-                _ => break,
-            }
-        }
-        base
     }
 
     /// `getConstraintFromIndexedAccess`. `undefined`: what the access has kept of how it was made (`accessFlags`).
@@ -1805,20 +1580,12 @@ impl<'p> Checker<'p> {
         self.base_constraint_of(t).unwrap_or(t)
     }
 
-    /// `restrictive`: see `restrictive_constraint_of`.
-    fn effective_constraint_of_intersection_ex(
+    /// `getEffectiveConstraintOfIntersection`
+    fn effective_constraint_of_intersection(
         &mut self,
         types: &[TypeId],
         target_is_union: bool,
-        restrictive: bool,
     ) -> Option<TypeId> {
-        let constraint_of = |c: &mut Self, t: TypeId| {
-            if restrictive {
-                c.restrictive_constraint_of(t)
-            } else {
-                c.constraint_of(t)
-            }
-        };
         let mut constraints: Vec<TypeId> = Vec::new();
         let mut has_disjoint_domain_type = false;
         let is_disjoint = |c: &mut Self, t: TypeId| {
@@ -1827,14 +1594,14 @@ impl<'p> Checker<'p> {
         for &t in types {
             if self.is_instantiable(t) {
                 // As long as it is known not to go round in circles, hence not through `T[K]`.
-                let mut constraint = constraint_of(self, t);
+                let mut constraint = self.constraint_of(t);
                 let mut steps = 0;
                 while let Some(c) = constraint
                     && (self.is_type_param(c)
                         || matches!(self.data(c), TypeData::Keyof(_) | TypeData::Cond { .. }))
                     && steps < 32
                 {
-                    constraint = constraint_of(self, c);
+                    constraint = self.constraint_of(c);
                     steps += 1;
                 }
                 if let Some(c) = constraint {
@@ -1920,19 +1687,6 @@ impl<'p> Checker<'p> {
         matches!(self.data(declared), TypeData::TypeParam(..)).then_some(declared)
     }
 
-    /// Whether instantiating `ty` replaces the type variable `variable` anywhere in it.
-    fn references_type_variable(&mut self, ty: TypeId, variable: TypeId) -> bool {
-        if !self.has_type_variables(ty) {
-            return false;
-        }
-        let probe = self.mapper_from(&[variable], &[TypeId::MARKER_OTHER]);
-        // The probe belongs to no comparison, so it must not affect a variance measurement in progress.
-        let reliability = self.reliability;
-        let is_referenced = self.instantiate(ty, probe) != ty;
-        self.reliability = reliability;
-        is_referenced
-    }
-
     /// `getInferredTrueTypeFromConditionalType`: the true branch under `combinedMapper`, that is with what `getConditionalType`
     /// inferred before it put the test off. From what waits itself nothing is inferred: what is to be inferred is then as wide
     /// as it can be.
@@ -1996,11 +1750,19 @@ impl<'p> Checker<'p> {
 
     /// `getConstraintOfDistributiveConditionalType`, computed once (`resolvedConstraintOfDistributive`).
     pub(super) fn constraint_of_distributive_conditional(&mut self, t: TypeId) -> Option<TypeId> {
+        // A type that `getRestrictiveInstantiation` returned has none. A conditional type INSIDE one has.
+        if self
+            .restrictive_operands
+            .last()
+            .is_some_and(|&(source, target)| t == source || t == target)
+        {
+            return None;
+        }
         if let Some(&cached) = self.cond_distributive_memo.get(&t) {
             return cached;
         }
         let cycles_before = self.cycles;
-        let result = self.constraint_of_distributive_conditional_worker(t, false);
+        let result = self.constraint_of_distributive_conditional_worker(t);
         // A result computed while a resolution cycle was hit may be incomplete, so it is not cached.
         if self.cycles == cycles_before {
             self.cond_distributive_memo.insert(t, result);
@@ -2008,31 +1770,13 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `restrictive`: see `restrictive_constraint_of`.
-    fn constraint_of_distributive_conditional_worker(
-        &mut self,
-        t: TypeId,
-        restrictive: bool,
-    ) -> Option<TypeId> {
-        // A type that `getRestrictiveInstantiation` returned has none.
-        if restrictive
-            && self
-                .restrictive_operands
-                .last()
-                .is_some_and(|&(source, target)| t == source || t == target)
-        {
-            return None;
-        }
+    fn constraint_of_distributive_conditional_worker(&mut self, t: TypeId) -> Option<TypeId> {
         let param = self.cond_distributes_over(t)?;
         let (file, node, mapper, _) = self.cond_origin(t);
         let check = self.cond_check(t);
         let mut constraint = self.simplified(check, false);
         if constraint == check {
-            constraint = if restrictive {
-                self.restrictive_constraint_of(check)?
-            } else {
-                self.constraint_of(check)?
-            };
+            constraint = self.constraint_of(check)?;
         }
         if constraint == check {
             return None;
@@ -2288,7 +2032,13 @@ impl<'p> Checker<'p> {
         }
         let mut measured = None;
         for (&arg, &param) in args.iter().zip(params) {
-            if matches!(self.data(arg), TypeData::Marker(_)) {
+            if self
+                .p
+                .types
+                .object_flags(arg)
+                .contains(ObjectFlags::HAS_MARKER)
+                && self.is_type_param(arg)
+            {
                 if measured.replace((param, arg)).is_some() {
                     return false;
                 }
@@ -2509,15 +2259,6 @@ impl<'p> Checker<'p> {
         let is_from_related = std::mem::take(&mut r.is_from_related)
             && original_source == r.top_source
             && original_target == r.top_target;
-        // `getPermissiveInstantiation` is called with `top_source` and `top_target`. Any other type is a part of one of them, where a
-        // template literal type is instantiated too.
-        if relation == Relation::Permissive
-            && (original_source != r.top_source && self.is_permissive_wildcard(original_source, 1)
-                || original_target != r.top_target
-                    && self.is_permissive_wildcard(original_target, 1))
-        {
-            return Ternary::TRUE;
-        }
         if !is_from_related
             && is_object_kind(original_sd)
             && self.has_primitive_flag_as(original_target, original_td)
@@ -2587,10 +2328,7 @@ impl<'p> Checker<'p> {
             );
         }
         // A type parameter against exactly what it extends: very common.
-        if relation != Relation::Restrictive
-            && is_type_param_kind(sd)
-            && self.constraint_of_type_param(source) == Some(target)
-        {
+        if is_type_param_kind(sd) && self.constraint_of_type_param(source) == Some(target) {
             return Ternary::TRUE;
         }
         // Something that is never null or undefined against `X | null | undefined`: against `X`.
@@ -2839,11 +2577,10 @@ impl<'p> Checker<'p> {
                         || prop.flags.contains(PropFlags::WRITTEN)
                         || is_jsx
                             && prop.flags.contains(PropFlags::JSX_CHILDREN)
-                            && sm
-                                .shape()
-                                .props
-                                .iter()
-                                .any(|p| matches!(p.source, PropSource::Literal(..)))
+                            && sm.shape().props.iter().any(|p| {
+                                matches!(p.source, PropSource::Literal(..))
+                                    || p.flags.contains(PropFlags::WRITTEN)
+                            })
                 }
                 _ => false,
             };
@@ -2933,25 +2670,8 @@ impl<'p> Checker<'p> {
             return self.type_of_prop_with_missing(prop, members.mapper);
         }
         self.applicable_index_info_for_name(&members, name)
+            .map(|info| info.value)
             .unwrap_or(TypeId::UNDEFINED)
-    }
-
-    /// `getApplicableIndexInfoForName`
-    fn applicable_index_info_for_name(&mut self, members: &Members, name: Atom) -> Option<TypeId> {
-        if members.shape().index.is_empty() {
-            return None;
-        }
-        if self.files().atoms.is_symbol_name(name) {
-            return members
-                .shape()
-                .index
-                .iter()
-                .find(|i| i.key == TypeId::SYMBOL)
-                .map(|i| i.value)
-                .map(|v| self.instantiate(v, members.mapper));
-        }
-        let key = self.string_literal(name, false);
-        self.applicable_index_info(members, key, Some(name))
     }
 
     /// `isExcessPropertyCheckTarget`
@@ -2988,6 +2708,7 @@ impl<'p> Checker<'p> {
                 if members.resolved.prop(name).is_some()
                     || self
                         .applicable_index_info_for_name(&members, name)
+                        .map(|info| info.value)
                         .is_some()
                 {
                     return true;
@@ -3063,6 +2784,9 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
+        if let Some(matching) = self.matching_union_constituent_for_type(target, source) {
+            return Some(matching);
+        }
         let sm = self.members(source)?;
         let telling: SmallVec<[&Prop; 4]> = sm
             .shape()
@@ -3127,7 +2851,9 @@ impl<'p> Checker<'p> {
             return Some(self.type_of_prop_with_missing(prop, mapper));
         }
         // There may be nothing under the name.
-        let value = self.applicable_index_info_for_name(&members, name)?;
+        let value = self
+            .applicable_index_info_for_name(&members, name)
+            .map(|info| info.value)?;
         Some(self.optional_property(value))
     }
 
@@ -3329,6 +3055,19 @@ impl<'p> Checker<'p> {
         result
     }
 
+    /// `getMatchingUnionConstituentForType`
+    pub(super) fn matching_union_constituent_for_type(
+        &mut self,
+        union: TypeId,
+        ty: TypeId,
+    ) -> Option<TypeId> {
+        let (name, constituents) = self.key_property(union)?;
+        let key = self.type_of_property(ty, *name)?;
+        // `getConstituentTypeForKeyType`
+        let found = constituents.get(&self.regular(key)).copied();
+        found.filter(|&member| member != TypeId::UNKNOWN)
+    }
+
     /// `typeRelatedToSomeType`
     fn type_related_to_some_type<const REPORT: bool>(
         &mut self,
@@ -3373,6 +3112,13 @@ impl<'p> Checker<'p> {
                         primitive.is_some_and(|p| self.contains_type(types, p))
                             || self.contains_type(types, alternate),
                     );
+                }
+            }
+            if let Some(matching) = self.matching_union_constituent_for_type(target, source) {
+                let related =
+                    self.is_related_to_ex::<false>(r, source, matching, REC_TARGET, state);
+                if related.holds() {
+                    return related;
                 }
             }
         }
@@ -3523,28 +3269,18 @@ impl<'p> Checker<'p> {
         state: u8,
         ignore_constraints: bool,
     ) -> (Key, bool) {
-        let flags = self.relation_key_flags(relation, state);
+        let flags = relation as u8 | state << 4;
         let (source, target) = if relation == Relation::Identity && source > target {
             (target, source)
         } else {
             (source, target)
         };
-        // tsgo compares permissive and restrictive instantiations, which do not have the declared type parameters. Here the declared
-        // ones stand in for them, and their constraints must not be resolved.
-        if matches!(relation, Relation::Permissive | Relation::Restrictive)
-            || !self.is_type_reference_with_generic_arguments(source)
+        if !self.is_type_reference_with_generic_arguments(source)
             || !self.is_type_reference_with_generic_arguments(target)
         {
             return ((source, target, flags), false);
         }
         self.generic_relation_key(source, target, flags, ignore_constraints)
-    }
-
-    /// The flags of a `Key`. Inside a generic signature the permissive relation goes by which type parameters are the signature's.
-    #[inline]
-    fn relation_key_flags(&self, relation: Relation, state: u8) -> u8 {
-        let is_inside = relation == Relation::Permissive && !self.own_of_compared_sigs.is_empty();
-        relation as u8 | u8::from(is_inside) << 3 | state << 4
     }
 
     /// `relation_key` that heeds constraints. `sd`, `td`: what `source` and `target` are.
@@ -3564,7 +3300,7 @@ impl<'p> Checker<'p> {
         if is_reference(sd) && is_reference(td) {
             return self.relation_key(source, target, relation, state, false);
         }
-        let flags = self.relation_key_flags(relation, state);
+        let flags = relation as u8 | state << 4;
         if relation == Relation::Identity && source > target {
             ((target, source, flags), false)
         } else {
@@ -3666,7 +3402,7 @@ impl<'p> Checker<'p> {
             }
         }
         let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
-        if is_too_deep || self.is_stack_low() || self.is_out_of_time() {
+        if is_too_deep || self.is_stack_low() {
             if is_too_deep {
                 self.relations_too_deep.push((r.top_source, r.top_target));
             }
@@ -3676,7 +3412,6 @@ impl<'p> Checker<'p> {
         }
         let maybe_start = r.maybe_keys.len();
         let taint_scope = self.begin_taint_scope();
-        let events_before = self.deep_events;
         r.maybe_keys.push(key);
         let save_expanding = r.expanding;
         if recursion & REC_SOURCE != 0 {
@@ -3713,10 +3448,8 @@ impl<'p> Checker<'p> {
             r.target_stack.pop();
         }
         r.expanding = save_expanding;
-        // tsgo reports an instantiation limit at the node that is current when the comparison is first made. A comparison that hit one
-        // that could not be reported is made again, so that `check_excessive_depth` comes to the limit.
         // With reports the answer can be another (`relate_variances`): it is nobody else's.
-        let is_cacheable = !REPORT && !is_tainted && self.unreported_event <= events_before;
+        let is_cacheable = !REPORT && !is_tainted;
         if result.holds() {
             if result == Ternary::TRUE || r.source_stack.is_empty() && r.target_stack.is_empty() {
                 // What held on assumptions holds now that there are none left. What is not known stays so.
@@ -4063,9 +3796,8 @@ impl<'p> Checker<'p> {
                 TypeData::Intersection(parts) => parts,
                 _ => &one,
             };
-            let restrictive = r.relation == Relation::Restrictive;
             if let Some(constraint) =
-                self.effective_constraint_of_intersection_ex(types, target_is_union, restrictive)
+                self.effective_constraint_of_intersection(types, target_is_union)
                 && self.every_type(constraint, |_, c| c != source)
             {
                 result = self.is_related_to_ex::<false>(r, constraint, target, REC_SOURCE, state);
@@ -4123,8 +3855,7 @@ impl<'p> Checker<'p> {
         optionals_only: bool,
         state: u8,
     ) -> Ternary {
-        // The type parameters of a restrictive instantiation extend nothing.
-        if !self.is_intersection(source) || r.relation == Relation::Restrictive {
+        if !self.is_intersection(source) {
             return self.properties_related_to::<REPORT>(
                 r,
                 source,
@@ -4391,11 +4122,11 @@ impl<'p> Checker<'p> {
         };
         if same_body
             && let Some((alias, source_args, target_args, true)) = self.same_alias(source, target)
-            // With a wildcard for every type parameter there are no marker types left.
-            && (relation == Relation::Permissive || {
+            && {
                 let params = self.type_params_of_symbol(alias);
-                !self.are_marker_arguments(alias, &params, &source_args) && !self.are_marker_arguments(alias, &params, &target_args)
-            })
+                !self.are_marker_arguments(alias, &params, &source_args)
+                    && !self.are_marker_arguments(alias, &params, &target_args)
+            }
         {
             let variances = self.variances_list(alias);
             // Being measured.
@@ -4496,23 +4227,20 @@ impl<'p> Checker<'p> {
                 }
                 // `S` fits `T[K]` if it fits what can be written to it whatever `T` and `K` are. That goes by what they extend.
                 if relation.is_lenient() {
-                    let (base_object, base_index) = if relation == Relation::Restrictive {
-                        (
-                            self.restrictive_base_constraint_or_type(object),
-                            self.restrictive_base_constraint_or_type(index),
-                        )
-                    } else {
-                        (
-                            self.base_constraint_or_type(object),
-                            self.base_constraint_or_type(index),
-                        )
-                    };
+                    let (base_object, base_index) = (
+                        self.base_constraint_or_type(object),
+                        self.base_constraint_or_type(index),
+                    );
                     if !self.is_generic_object_type(base_object)
                         && !self.is_generic_index_type(base_index)
-                        && let Some(constraint) = self.indexed_access_for_writing(
+                        && let Some(constraint) = self.indexed_access_with_flags(
                             base_object,
                             base_index,
-                            base_object != object,
+                            if base_object != object {
+                                AccessFlags::WRITING | AccessFlags::NO_INDEX_SIGNATURES
+                            } else {
+                                AccessFlags::WRITING
+                            },
                         )
                     {
                         if REPORT && shared.original_error_chain.is_some() {
@@ -4558,15 +4286,11 @@ impl<'p> Checker<'p> {
                         return result;
                     }
                 } else {
-                    let constraint = if relation == Relation::Restrictive {
-                        self.restrictive_simplified_or_constraint(of)
-                    } else {
-                        self.simplified_or_constraint(of)
-                    };
-                    if let Some(constraint) = constraint {
+                    if let Some(constraint) = self.simplified_or_constraint(of) {
                         // For certain, or `T extends { [K in keyof T]: string }` would let anything through.
                         // `IndexFlagsNoReducibleCheck`: a union is its own constraint, and its `keyof` must not be deferred again.
-                        let keys = self.keyof_ex(constraint, true);
+                        let keys =
+                            self.get_index_type_ex(constraint, IndexFlags::NO_REDUCIBLE_CHECK);
                         if self.is_related_to_ex::<REPORT>(r, source, keys, REC_TARGET, STATE_NONE)
                             == Ternary::TRUE
                         {
@@ -4602,9 +4326,8 @@ impl<'p> Checker<'p> {
                 {
                     let (check, extends) = (self.cond_check(target), self.cond_extends(target));
                     // It may always go one way, and wait all the same.
-                    let skip_true = !self.related(check, extends, Relation::Permissive);
-                    let skip_false =
-                        !skip_true && self.related(check, extends, Relation::Restrictive);
+                    let skip_true = !self.is_assignable_permissive(check, extends);
+                    let skip_false = !skip_true && self.is_assignable_restrictive(check, extends);
                     let mut result = if skip_true {
                         Ternary::TRUE
                     } else {
@@ -4672,7 +4395,8 @@ impl<'p> Checker<'p> {
                             Some(name) => name,
                             None => self.mapped_keys(target),
                         };
-                        let source_keys = self.keyof_without_index_signatures(source);
+                        let source_keys =
+                            self.get_index_type_ex(source, IndexFlags::NO_INDEX_SIGNATURES);
                         let include_optional = modifier == MappedModifier::Add;
                         let filtered = if include_optional {
                             Some(self.intersection(&[target_keys, source_keys]))
@@ -4738,19 +4462,14 @@ impl<'p> Checker<'p> {
                 if !(matches!(self.data(source), TypeData::IndexedAccess { .. })
                     && matches!(self.data(target), TypeData::IndexedAccess { .. }))
                 {
-                    let constraint = if relation != Relation::Restrictive {
-                        self.constraint_of(source)
-                    } else {
-                        self.restrictive_constraint_of(source)
-                    };
-                    let constraint = constraint.unwrap_or(TypeId::UNKNOWN);
+                    let constraint = self.constraint_of(source).unwrap_or(TypeId::UNKNOWN);
                     let result =
                         self.is_related_to_ex::<false>(r, constraint, target, REC_SOURCE, state);
                     if result.holds() {
                         return result;
                     }
                     // `getTypeWithThisArgument`: in what it has through what it extends, `this` is the type variable itself.
-                    let with_this = self.reference_with_this(constraint, source);
+                    let with_this = self.type_with_this_argument(constraint, source);
                     if REPORT
                         && constraint != TypeId::UNKNOWN
                         && !(self.is_type_param(target) && self.is_type_param(source))
@@ -4767,8 +4486,7 @@ impl<'p> Checker<'p> {
                             return result;
                         }
                     }
-                    if relation != Relation::Restrictive
-                        && self.is_mapped_type_generic_indexed_access(source)
+                    if self.is_mapped_type_generic_indexed_access(source)
                         && let TypeData::IndexedAccess { obj, index, .. } = *self.data(source)
                         && let Some(index_constraint) = self.constraint_of(index)
                     {
@@ -4828,12 +4546,7 @@ impl<'p> Checker<'p> {
                         mapper = self.mapper_from(&source_params, &inferred);
                         source_extends = self.instantiate(source_extends, mapper);
                     }
-                    let is_same = if relation == Relation::Permissive {
-                        self.is_identical_with_wildcards(source_extends, target_extends)
-                    } else {
-                        self.is_identical(source_extends, target_extends)
-                    };
-                    if is_same {
+                    if self.is_identical(source_extends, target_extends) {
                         let (sc, tc) = (self.cond_check(source), self.cond_check(target));
                         if self.is_related_to(r, sc, tc, REC_BOTH).holds()
                             || self.is_related_to(r, tc, sc, REC_BOTH).holds()
@@ -4869,12 +4582,8 @@ impl<'p> Checker<'p> {
                 if !matches!(self.data(target), TypeData::Cond { .. })
                     && self.has_non_circular_base_constraint(source)
                 {
-                    let distributive = if relation == Relation::Restrictive {
-                        self.constraint_of_distributive_conditional_worker(source, true)
-                    } else {
-                        self.constraint_of_distributive_conditional(source)
-                    };
-                    if let Some(distributive) = distributive {
+                    if let Some(distributive) = self.constraint_of_distributive_conditional(source)
+                    {
                         if REPORT {
                             r.restore_error_state(&shared.save_error_state);
                         }
@@ -4968,8 +4677,8 @@ impl<'p> Checker<'p> {
         }
         let source_is_primitive = self.has_primitive_flag_as(source, sd);
         // What stands for `object` is nobody's declaration: it is not known to have nothing else in it.
-        let source_is_object_keyword = !is_object_kind(sd)
-            && self.looks_like_the_object_keyword(source, relation == Relation::Restrictive);
+        let source_is_object_keyword =
+            !is_object_kind(sd) && self.looks_like_the_object_keyword(source);
         let (mut source, mut sd) = (source, sd);
         if relation != Relation::Identity {
             // An object type other than a mapped one is its own apparent type.
@@ -4986,8 +4695,7 @@ impl<'p> Checker<'p> {
         }
         match (sd, td) {
             (TypeData::Ref { target: st, .. }, TypeData::Ref { target: tt, .. })
-                // With a wildcard for every type parameter there are no marker types left.
-                if st == tt && (relation == Relation::Permissive || !self.is_marker_type(source) && !self.is_marker_type(target)) =>
+                if st == tt && !self.is_marker_type(source) && !self.is_marker_type(target) =>
             {
                 // Two instantiations of one generic type: go by how it varies with its type parameters.
                 let variances = self.variances_list(*st);
@@ -4996,27 +4704,51 @@ impl<'p> Checker<'p> {
                     return Ternary::UNKNOWN;
                 }
                 let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-                if let Some(result) = self.relate_variances::<REPORT>(r, sa, ta, &variances, state, shared) {
+                if let Some(result) =
+                    self.relate_variances::<REPORT>(r, sa, ta, &variances, state, shared)
+                {
                     return result;
                 }
             }
-            (_, TypeData::Ref { .. }) if self.is_array(target)
-                && (self.is_reference_to_global(target, known::ReadonlyArray) && self.every_type(source, |c, m| c.is_array_or_tuple(m))
-                    || self.every_type(source, |c, m| matches!(c.data(m), TypeData::Tuple { readonly: false, .. }))) =>
+            (_, TypeData::Ref { .. })
+                if self.is_array(target)
+                    && (self.is_reference_to_global(target, known::ReadonlyArray)
+                        && self.every_type(source, |c, m| c.is_array_or_tuple(m))
+                        || self.every_type(source, |c, m| {
+                            matches!(
+                                c.data(m),
+                                TypeData::Tuple {
+                                    readonly: false,
+                                    ..
+                                }
+                            )
+                        })) =>
             {
                 if relation != Relation::Identity {
-                    let (s, t) = (self.number_index_type_or_any(source), self.number_index_type_or_any(target));
+                    let (s, t) = (
+                        self.index_type_of_type(source, TypeId::NUMBER)
+                            .unwrap_or(TypeId::ANY),
+                        self.index_type_of_type(target, TypeId::NUMBER)
+                            .unwrap_or(TypeId::ANY),
+                    );
                     return self.is_related_to_ex::<REPORT>(r, s, t, REC_BOTH, STATE_NONE);
                 }
                 return Ternary::FALSE;
             }
-            (TypeData::Tuple { .. }, TypeData::Tuple { .. }) if is_generic_tuple_kind(sd) && !is_generic_tuple_kind(td) => {
+            (TypeData::Tuple { .. }, TypeData::Tuple { .. })
+                if is_generic_tuple_kind(sd) && !is_generic_tuple_kind(td) =>
+            {
                 let constraint = self.base_constraint_or_type(source);
                 if constraint != source {
-                    return self.is_related_to_ex::<REPORT>(r, constraint, target, REC_SOURCE, STATE_NONE);
+                    return self
+                        .is_related_to_ex::<REPORT>(r, constraint, target, REC_SOURCE, STATE_NONE);
                 }
             }
-            _ if relation.is_subtype() && self.is_fresh_object_literal_type(target) && self.is_empty_object_type(target) && !self.is_empty_object_type(source) => {
+            _ if relation.is_subtype()
+                && self.is_fresh_object_literal_type(target)
+                && self.is_empty_object_type(target)
+                && !self.is_empty_object_type(source) =>
+            {
                 return Ternary::FALSE;
             }
             _ => {}
@@ -5169,37 +4901,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeWithThisArgument`: `t` with `this_argument` for `this` in its members. As there, it goes after the type arguments
-    /// of a reference to a class or an interface, where `members` finds it.
-    pub(super) fn reference_with_this(&mut self, t: TypeId, this_argument: TypeId) -> TypeId {
-        match self.data(t) {
-            TypeData::Ref { target, .. } => {
-                let args = self.type_arguments(t);
-                if self.all_type_params_of_symbol(*target).len() != args.len() {
-                    return t;
-                }
-                let mut with_this = args.to_vec();
-                with_this.push(this_argument);
-                self.intern(TypeData::Ref {
-                    target: *target,
-                    args: with_this.into(),
-                })
-            }
-            TypeData::Intersection(parts) => {
-                let with_this: Vec<TypeId> = parts
-                    .iter()
-                    .map(|&p| self.reference_with_this(p, this_argument))
-                    .collect();
-                if with_this[..] == parts[..] {
-                    t
-                } else {
-                    self.intersection(&with_this)
-                }
-            }
-            _ => t,
-        }
-    }
-
     pub(super) fn is_mutable_array_or_tuple(&self, t: TypeId) -> bool {
         self.is_reference_to_global(t, known::Array)
             || matches!(
@@ -5209,169 +4910,6 @@ impl<'p> Checker<'p> {
                     ..
                 }
             )
-    }
-
-    /// `getIndexTypeOfTypeEx(t, numberType, anyType)`
-    pub(super) fn number_index_type_or_any(&mut self, t: TypeId) -> TypeId {
-        if let Some(element) = self.array_element(t) {
-            return element;
-        }
-        if let TypeData::Tuple { flags, .. } = self.data(t) {
-            let elems = self.type_arguments(t);
-            return self.tuple_element_union(elems, flags);
-        }
-        if let TypeData::Union(parts) = self.data(t) {
-            let types: Vec<TypeId> = parts
-                .iter()
-                .map(|&p| self.number_index_type_or_any(p))
-                .collect();
-            return self.union(&types);
-        }
-        match self.members(t) {
-            Some(members) => self
-                .applicable_index_info(&members, TypeId::NUMBER, None)
-                .unwrap_or(TypeId::ANY),
-            None => TypeId::ANY,
-        }
-    }
-
-    /// `getIndexTypeEx(t, IndexFlagsNoIndexSignatures)`
-    pub(super) fn keyof_without_index_signatures(&mut self, t: TypeId) -> TypeId {
-        self.get_index_type_ex(t, false, true)
-    }
-
-    /// `getIndexedAccessTypeOrUndefined(object, index, AccessFlagsWriting | ...)`: what can be written whichever key it is.
-    pub(super) fn indexed_access_for_writing(
-        &mut self,
-        object: TypeId,
-        index: TypeId,
-        no_index_signatures: bool,
-    ) -> Option<TypeId> {
-        let object = self.reduced(object);
-        let index = self.key_into_string_index_only(object, index);
-        // `getReducedApparentType`: a type parameter answers with what it extends.
-        let object = self.apparent_type(object);
-        let object = self.reduced(object);
-        // Only the keys are gone through one by one.
-        if !self.is_union(index) {
-            return self.property_type_for_writing(object, index, no_index_signatures);
-        }
-        // `indexType.Types()`: in the order of `CompareTypes`. An intersection keeps the order it is given.
-        let keys = self.parts(index);
-        let mut types = Vec::with_capacity(keys.len());
-        for &key in keys.iter() {
-            types.push(self.property_type_for_writing(object, key, no_index_signatures)?);
-        }
-        Some(self.intersection(&types))
-    }
-
-    /// `getPropertyTypeForIndexType`, to write: what `object`, which waits for nothing, takes under `key`, which is no union.
-    fn property_type_for_writing(
-        &mut self,
-        object: TypeId,
-        key: TypeId,
-        no_index_signatures: bool,
-    ) -> Option<TypeId> {
-        let objects = self.parts(object);
-        let name = self.property_name_of_type(key);
-        if let Some(name) = name {
-            // `getPropertyOfType`. A union is asked as a whole: it has what some member has and the others have something to stand
-            // in for, and that is any of theirs (`createUnionOrIntersectionProperty`).
-            let mut of_each = Vec::with_capacity(objects.len());
-            let mut is_property = false;
-            for &one in objects {
-                let apparent = self.apparent_type(one);
-                let Some(members) = self.members(apparent) else {
-                    break;
-                };
-                if let Some((prop, mapper)) = self.property_in(&members, name) {
-                    is_property = true;
-                    // `getWriteTypeOfSymbol`
-                    let ty = self.write_type_of_prop(prop, mapper);
-                    let takes_undefined = prop.flags.contains(PropFlags::OPTIONAL)
-                        && !self.p.files.options.exact_optional_property_types;
-                    of_each.push(if takes_undefined {
-                        self.optional(ty)
-                    } else {
-                        ty
-                    });
-                } else if let TypeData::Tuple { flags, .. } = self.data(apparent)
-                    && self.is_numeric_name(name)
-                {
-                    // `getRestTypeOfTupleType`
-                    let elems = self.type_arguments(apparent);
-                    let fixed = Self::fixed_length(flags);
-                    of_each.push(if fixed < flags.len() {
-                        self.tuple_element_union(&elems[fixed..], &flags[fixed..])
-                    } else {
-                        self.undefined_as_declared()
-                    });
-                } else if let Some(value) = self.applicable_index_info_for_name(&members, name) {
-                    of_each.push(value);
-                } else if self.is_closed_object_literal_type(apparent) {
-                    of_each.push(self.undefined_as_declared());
-                } else {
-                    break;
-                }
-            }
-            // `getTupleElementTypeOutOfStartCount`: a place past those that tuples have of their own is any of what follows them.
-            let is_past_tuples = !is_property
-                && self.is_numeric_name(name)
-                && !self.files().atoms.bytes(name).starts_with(b"-")
-                && objects.iter().all(|&one| self.is_tuple(one));
-            if !objects.is_empty()
-                && of_each.len() == objects.len()
-                && (is_property || is_past_tuples)
-            {
-                return Some(self.union(&of_each));
-            }
-        }
-        if self.is_any(object) || object.is_never() {
-            return Some(object);
-        }
-        // `any` and `never` are assignable to the key type of every index signature. Where there is none they index to themselves.
-        let fits_every_key = self.has_any_flag(key) || key.is_never();
-        let members = match objects {
-            [one] => {
-                let apparent = self.apparent_type(*one);
-                self.members(apparent)
-            }
-            _ => {
-                let index = self.union_index_infos(objects);
-                let whole = self.synth(Shape {
-                    index,
-                    ..Shape::default()
-                });
-                self.members(whole)
-            }
-        };
-        let Some(members) = members else {
-            return fits_every_key.then_some(key);
-        };
-        // Through what a type parameter extends only the index signature for numbers is written to.
-        if no_index_signatures {
-            let infos = &members.shape().index;
-            if fits_every_key && infos.is_empty() {
-                return Some(key);
-            }
-            // `getApplicableIndexInfo`: the signature for strings applies only if no other does, and several that apply are not the
-            // one for numbers.
-            let is_numeric = self.is_number_like(key)
-                || name.is_some_and(|n| self.is_numeric_name(n))
-                || fits_every_key && infos.iter().filter(|i| i.key != TypeId::STRING).count() == 1;
-            let info = infos
-                .iter()
-                .find(|i| i.key == TypeId::NUMBER)
-                .copied()
-                .filter(|_| is_numeric)?;
-            return Some(self.instantiate(info.value, members.mapper));
-        }
-        let mut value = self.applicable_index_info(&members, key, name);
-        // Where none applies the one for strings stands in, which is to say for symbols.
-        if value.is_none() && self.is_symbol_like(key) {
-            value = self.applicable_index_info(&members, TypeId::STRING, None);
-        }
-        value.or_else(|| (key.is_never() || self.has_any_flag(key)).then_some(key))
     }
 
     /// `typeArgumentsRelatedTo`
@@ -5895,6 +5433,9 @@ impl<'p> Checker<'p> {
                 continue;
             };
             if sp.source == tp.source {
+                if (sp.mapper, source_mapper) == (tp.mapper, tm.mapper) {
+                    continue;
+                }
                 let a = self.compose(sp.mapper, source_mapper);
                 let b = self.compose(tp.mapper, tm.mapper);
                 // `H.this -> H.this` is kept in a mapper, and moves nothing.
@@ -6650,29 +6191,6 @@ impl<'p> Checker<'p> {
         check_mode: u8,
         state: u8,
     ) -> Ternary {
-        if r.relation != Relation::Permissive {
-            return self.compare_signatures_inside::<REPORT>(
-                r, source, target, as_given, check_mode, state,
-            );
-        }
-        let around = self.own_of_compared_sigs.len();
-        let own = self.sig_type_params(target);
-        self.own_of_compared_sigs.extend_from_slice(&own);
-        let result = self
-            .compare_signatures_inside::<REPORT>(r, source, target, as_given, check_mode, state);
-        self.own_of_compared_sigs.truncate(around);
-        result
-    }
-
-    fn compare_signatures_inside<const REPORT: bool>(
-        &mut self,
-        r: &mut Relater,
-        source: SigId,
-        target: SigId,
-        as_given: (SigId, SigId),
-        check_mode: u8,
-        state: u8,
-    ) -> Ternary {
         if source == target {
             return Ternary::TRUE;
         }
@@ -6715,11 +6233,7 @@ impl<'p> Checker<'p> {
         }
         let source_type_params = self.sig_type_params(source);
         if !source_type_params.is_empty() && source_type_params != self.sig_type_params(target) {
-            // tsgo compares permissive and restrictive instantiations. Here the declared type parameters stand in for theirs.
-            let stand_ins = Some(r.relation).filter(|relation| {
-                matches!(relation, Relation::Permissive | Relation::Restrictive)
-            });
-            source = self.instantiate_sig_in_context_under(source, target, true, stand_ins);
+            source = self.instantiate_sig_in_context(source, target, true);
         }
         let sp = self.sig_params(source);
         let source_count = self.parameter_count(&sp);
@@ -7080,7 +6594,7 @@ impl<'p> Checker<'p> {
         let Some(sm) = self.members(source) else {
             return Ternary::FALSE;
         };
-        if let Some(given) = self.applicable_index_info(&sm, key, None) {
+        if let Some(given) = self.applicable_index_info(&sm, key).map(|info| info.value) {
             // `getApplicableIndexInfo`: the signature for the same keys, or else the one for strings.
             let source_key = if !REPORT || sm.shape().index.iter().any(|i| i.key == key) {
                 key
@@ -7159,11 +6673,9 @@ impl<'p> Checker<'p> {
 
     /// Whether `getApparentType(ty)` is `emptyObjectType`, which is what `object` looks like. It has no symbol, unlike a `{}` that
     /// is written, and here the two are one type. Of what counts as `{}` in an intersection `addTypeToIntersection` takes the
-    /// first. `restrictive`: `ty` stands for its restrictive instantiation, whose type parameters extend nothing.
-    pub(super) fn looks_like_the_object_keyword(&mut self, ty: TypeId, restrictive: bool) -> bool {
-        let ty = if restrictive && is_type_param_kind(self.data(ty)) {
-            TypeId::UNKNOWN
-        } else if self.is_deferred(ty) {
+    /// first.
+    pub(super) fn looks_like_the_object_keyword(&mut self, ty: TypeId) -> bool {
+        let ty = if self.is_deferred(ty) {
             self.base_constraint(ty)
         } else {
             ty
@@ -7174,9 +6686,7 @@ impl<'p> Checker<'p> {
         };
         let mut first = None;
         for &p in parts.iter() {
-            let look = if restrictive && is_type_param_kind(self.data(p)) {
-                self.apparent_type(TypeId::UNKNOWN)
-            } else if p == TypeId::OBJECT || self.is_deferred(p) {
+            let look = if p == TypeId::OBJECT || self.is_deferred(p) {
                 self.apparent_type(p)
             } else {
                 p
@@ -7187,7 +6697,7 @@ impl<'p> Checker<'p> {
                 return false;
             }
         }
-        first.is_some_and(|p| self.looks_like_the_object_keyword(p, restrictive))
+        first.is_some_and(|p| self.looks_like_the_object_keyword(p))
     }
 
     /// `isObjectTypeWithInferableIndex`: known to have nothing but what is seen.

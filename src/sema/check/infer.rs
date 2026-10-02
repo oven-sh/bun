@@ -1,7 +1,7 @@
 //! Working out what type parameters stand for from a type that is given and a type that mentions them.
 //!
 //! Follows `internal/checker/inference.go` of TypeScript 7.0.2 function by function. The names in `backticks` at the head of
-//! a function are the ones there. Left out: what the language service blocks, `wildcardType` (there is none here), and the
+//! a function are the ones there. Left out: what the language service blocks, and the
 //! arity a spread argument implies for `[...T, ...U]`.
 
 use super::*;
@@ -87,13 +87,7 @@ pub struct Inference {
     /// Without a signature, for `infer`: what has been filled in around the conditional type. What the parameters extend may
     /// mention it.
     around: MapperId,
-    /// `getPermissiveInstantiation`, `getRestrictiveInstantiation`: the signatures are parts of such instantiations, compared under
-    /// this relation. The type parameters declared around them stand in for the wildcard, or for type parameters that extend
-    /// nothing: what they are declared to extend is not resolved.
-    pub(super) stand_ins: Option<super::relate::Relation>,
-    /// The type parameters of the signature that is inferred from, which are no stand-ins.
-    pub(super) own_of_source: SmallVec<[TypeId; 4]>,
-    /// `propagationType`: the stand-in for the wildcard that is inferred for every type parameter in the target.
+    /// `propagationType`
     propagated: Option<TypeId>,
     /// `returnMapper`. `IDENTITY`: nil.
     pub(super) return_mapper: MapperId,
@@ -140,8 +134,6 @@ impl Inference {
             any_default: false,
             around_source: MapperId::IDENTITY,
             around: MapperId::IDENTITY,
-            stand_ins: None,
-            own_of_source: SmallVec::new(),
             propagated: None,
             return_mapper: MapperId::IDENTITY,
             outer_return_context: None,
@@ -228,6 +220,13 @@ impl<'p> Checker<'p> {
     /// `inferFromTypes`
     fn infer_types(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
         if !self.has_type_variables(target) || self.is_no_infer(target) {
+            return;
+        }
+        // It is inferred for every type parameter in `target`.
+        if source == TypeId::WILDCARD {
+            let saved = n.propagated.replace(source);
+            self.infer_types(n, target, target);
+            n.propagated = saved;
             return;
         }
         let (mut source, mut target) = (source, target);
@@ -385,11 +384,6 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        // Nothing is inferred to a type parameter that is not inferred for. tsgo finds that out from `getApparentType` of a source
-        // whose type parameters extend nothing.
-        if n.stand_ins.is_some() && self.is_type_param(target) {
-            return;
-        }
         // `source.AsTypeReference().node != nil && target.AsTypeReference().node != nil`
         let are_both_deferred =
             self.p.types.deferred(source).is_some() && self.p.types.deferred(target).is_some();
@@ -481,24 +475,6 @@ impl<'p> Checker<'p> {
                 if self.is_generic_mapped_type(source) && self.is_generic_mapped_type(target) {
                     self.invoke_once(n, source, target, Self::infer_from_generic_mapped_types);
                 }
-                if let Some(relation) = n.stand_ins
-                    && let Some(others) = self.without_stand_ins(n, source)
-                {
-                    // `source == c.wildcardType`: it is inferred for every type parameter in `target`.
-                    if relation == super::relate::Relation::Permissive {
-                        if n.propagated.is_none() {
-                            n.propagated = Some(source);
-                            self.infer_types(n, target, target);
-                            n.propagated = None;
-                        }
-                        return;
-                    }
-                    // `getApparentType` makes `{}` of a type parameter that extends nothing.
-                    if others.is_empty() {
-                        return;
-                    }
-                    source = self.intersection(&others);
-                }
                 if !(n.priority & PRIORITY_NO_CONSTRAINTS != 0
                     && (matches!(self.data(source), TypeData::Intersection(_))
                         || self.is_instantiable(source)))
@@ -520,18 +496,6 @@ impl<'p> Checker<'p> {
                     self.invoke_once(n, source, target, Self::infer_from_object_types);
                 }
             }
-        }
-    }
-
-    /// The members of `source` that are no stand-ins (`Inference::stand_ins`), if `source` is one or is an intersection with one.
-    fn without_stand_ins(&self, n: &Inference, source: TypeId) -> Option<Parts> {
-        let is_stand_in = |p: TypeId| self.is_type_param(p) && !n.own_of_source.contains(&p);
-        match self.data(source) {
-            TypeData::Intersection(parts) if parts.iter().any(|&p| is_stand_in(p)) => {
-                Some(parts.iter().copied().filter(|&p| !is_stand_in(p)).collect())
-            }
-            _ if is_stand_in(source) => Some(Parts::new()),
-            _ => None,
         }
     }
 
@@ -1132,12 +1096,7 @@ impl<'p> Checker<'p> {
             }
             return;
         }
-        let fixed_length = |flags: &[ElemFlags]| {
-            flags
-                .iter()
-                .position(|f| f.intersects(variable))
-                .unwrap_or(flags.len())
-        };
+        let fixed_length = |flags: &[ElemFlags]| Self::fixed_length(flags);
         let end_fixed_count = |flags: &[ElemFlags]| {
             flags
                 .iter()
@@ -1339,11 +1298,7 @@ impl<'p> Checker<'p> {
                     .filter(|f| f.intersects(ElemFlags::REQUIRED | ElemFlags::VARIADIC))
                     .count()
             };
-            let fixed_length = |f: &[ElemFlags]| {
-                f.iter()
-                    .position(|f| f.intersects(variable))
-                    .unwrap_or(f.len())
-            };
+            let fixed_length = |f: &[ElemFlags]| Self::fixed_length(f);
             let has = |f: &[ElemFlags], which: ElemFlags| f.iter().any(|f| f.intersects(which));
             return !has(t, ElemFlags::VARIADIC) && min_length(t) > min_length(s)
                 || !has(t, variable) && (has(s, variable) || fixed_length(t) < fixed_length(s));
@@ -1697,7 +1652,9 @@ impl<'p> Checker<'p> {
         for info in &tm.shape().index {
             let wanted = self.instantiate(info.value, tm.mapper);
             if self.has_type_variables(wanted)
-                && let Some(given) = self.applicable_index_info(&sm, info.key, None)
+                && let Some(given) = self
+                    .applicable_index_info(&sm, info.key)
+                    .map(|info| info.value)
             {
                 self.infer_with_priority(n, given, wanted, priority);
             }
@@ -2252,7 +2209,12 @@ impl<'p> Checker<'p> {
             return Vec::new();
         };
         let mut params = self.sig_type_params(contextual).into_vec();
-        params.retain(|&param| self.p.types.map(mapper, param).is_none());
+        params.retain(|&param| {
+            self.p
+                .types
+                .map(mapper, param)
+                .is_none_or(|given| given == param)
+        });
         params
     }
 
@@ -2311,12 +2273,8 @@ impl<'p> Checker<'p> {
         self.is_type_parameter_at_top_level(ret, param, 0)
     }
 
-    /// `getCommonSupertype`. `stand_ins`: `stand_ins_among` the types.
-    fn common_supertype_under(
-        &mut self,
-        types: &[TypeId],
-        stand_ins: Option<super::relate::Relation>,
-    ) -> TypeId {
+    /// `getCommonSupertype`
+    fn common_supertype(&mut self, types: &[TypeId]) -> TypeId {
         if types.len() == 1 {
             return types[0];
         }
@@ -2334,7 +2292,7 @@ impl<'p> Checker<'p> {
         let supertype = if self.literal_types_with_same_base_type(&primary) {
             self.union(&primary)
         } else {
-            self.single_common_supertype(&primary, stand_ins)
+            self.single_common_supertype(&primary)
         };
         if primary[..] == types[..] {
             return supertype;
@@ -2368,21 +2326,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSingleCommonSupertype`
-    fn single_common_supertype(
-        &mut self,
-        types: &[TypeId],
-        stand_ins: Option<super::relate::Relation>,
-    ) -> TypeId {
-        // Which is a subtype of which goes by what type parameters extend.
-        if let Some(relation) = stand_ins {
-            let mut candidate = types[0];
-            for &t in &types[1..] {
-                if self.related(candidate, t, relation) {
-                    candidate = t;
-                }
-            }
-            return candidate;
-        }
+    fn single_common_supertype(&mut self, types: &[TypeId]) -> TypeId {
         let leftmost = |c: &mut Self, relation: fn(&mut Self, TypeId, TypeId) -> bool| {
             let mut candidate = types[0];
             for &t in &types[1..] {
@@ -2402,16 +2346,11 @@ impl<'p> Checker<'p> {
         leftmost(self, Self::is_subtype)
     }
 
-    /// `getCommonSubtype`: the leftmost that nothing to its right is a subtype of. `stand_ins`: `stand_ins_among` the types.
-    fn common_subtype(
-        &mut self,
-        types: &[TypeId],
-        stand_ins: Option<super::relate::Relation>,
-    ) -> TypeId {
-        let relation = stand_ins.unwrap_or(super::relate::Relation::Subtype);
+    /// `getCommonSubtype`: the leftmost that nothing to its right is a subtype of.
+    fn common_subtype(&mut self, types: &[TypeId]) -> TypeId {
         let mut best = types[0];
         for &t in &types[1..] {
-            if self.related(t, best, relation) {
+            if self.is_subtype(t, best) {
                 best = t;
             }
         }
@@ -2429,39 +2368,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `Inference::stand_ins`, if there is a type parameter in `types`.
-    fn stand_ins_among(&self, n: &Inference, types: &[TypeId]) -> Option<super::relate::Relation> {
-        n.stand_ins
-            .filter(|_| types.iter().any(|&t| self.has_type_variables(t)))
-    }
-
-    /// `getUnionType(types, UnionReductionSubtype)` where there are stand-ins. Which member is a subtype of which goes by what type
-    /// parameters extend, so `relation` decides (`Inference::stand_ins`).
-    fn union_reduced_under(
-        &mut self,
-        types: &[TypeId],
-        relation: super::relate::Relation,
-    ) -> TypeId {
-        let union = self.union(types);
-        let TypeData::Union(members) = self.data(union) else {
-            return union;
-        };
-        // `removeSubtypes` goes through the members from the last.
-        let mut kept = Parts::from_slice(members);
-        for i in (0..kept.len()).rev() {
-            let source = kept[i];
-            if (0..kept.len()).any(|j| j != i && self.related(source, kept[j], relation)) {
-                kept.remove(i);
-            }
-        }
-        if kept.len() == members.len() {
-            union
-        } else {
-            self.union(&kept)
-        }
-    }
-
-    /// `getCovariantInference`, and what `param` extends. `stand_ins`: `stand_ins_among` the candidates.
+    /// `getCovariantInference`, and what `param` extends.
     fn covariant_inference(
         &mut self,
         c: &Candidate,
@@ -2469,7 +2376,6 @@ impl<'p> Checker<'p> {
         sig: SigId,
         is_fixed: bool,
         array_literals: &[TypeId],
-        stand_ins: Option<super::relate::Relation>,
     ) -> (TypeId, Option<TypeId>) {
         // `unionObjectAndArrayLiteralCandidates`: the object and array literals count as one, after the others.
         let mut candidates = c.covariant.clone();
@@ -2504,21 +2410,11 @@ impl<'p> Checker<'p> {
             };
         }
         let unwidened = if c.priority & PRIORITY_IMPLIES_COMBINATION == 0 {
-            self.common_supertype_under(&candidates, stand_ins)
-        } else if let Some(relation) = stand_ins {
-            self.union_reduced_under(&candidates, relation)
+            self.common_supertype(&candidates)
         } else {
             self.union_reduced(&candidates)
         };
         (self.regular_object(unwidened), constraint)
-    }
-
-    /// `context.compareTypes`, and `isTypeAssignableTo` between what is inferred.
-    fn is_inferred_assignable(&mut self, n: &Inference, source: TypeId, target: TypeId) -> bool {
-        let relation = self
-            .stand_ins_among(n, &[source, target])
-            .unwrap_or(super::relate::Relation::Assignable);
-        self.related(source, target, relation)
     }
 
     /// `getInferredType`. `is_fixed`: it is being settled, because something has to know it before everything has been seen.
@@ -2559,9 +2455,8 @@ impl<'p> Checker<'p> {
             let covariant = if c.covariant.is_empty() {
                 None
             } else {
-                let stand_ins = self.stand_ins_among(n, &c.covariant);
                 let (covariant, constraint) =
-                    self.covariant_inference(c, param, sig, is_fixed, &n.array_literals, stand_ins);
+                    self.covariant_inference(c, param, sig, is_fixed, &n.array_literals);
                 extended = Some(constraint);
                 Some(covariant)
             };
@@ -2570,8 +2465,7 @@ impl<'p> Checker<'p> {
             } else if c.priority & PRIORITY_IMPLIES_COMBINATION != 0 {
                 Some(self.intersection(&c.contravariant))
             } else {
-                let stand_ins = self.stand_ins_among(n, &c.contravariant);
-                Some(self.common_subtype(&c.contravariant, stand_ins))
+                Some(self.common_subtype(&c.contravariant))
             };
             if covariant.is_some() || contravariant.is_some() {
                 // The covariant one, unless it is `never` or `any`, or is one of several that do not agree, or fits nowhere the
@@ -2582,16 +2476,14 @@ impl<'p> Checker<'p> {
                     (Some(co), Some(_)) => {
                         !co.is_never()
                             && !self.is_any(co)
-                            && c.contravariant
-                                .iter()
-                                .any(|&t| self.is_inferred_assignable(n, co, t))
+                            && c.contravariant.iter().any(|&t| self.is_assignable(co, t))
                             && (0..n.params.len()).all(|other| {
                                 other != index
                                     && self.constraint_of_type_param(n.params[other]) != Some(param)
                                     || n.candidates[other]
                                         .covariant
                                         .iter()
-                                        .all(|&t| self.is_inferred_assignable(n, t, co))
+                                        .all(|&t| self.is_assignable(t, co))
                             })
                     }
                 };
@@ -2636,12 +2528,12 @@ impl<'p> Checker<'p> {
         let so_far = self.non_fixing_mapper(n, constraint);
         let constraint = self.instantiate(constraint, so_far);
         if let Some(ty) = inferred
-            && !self.is_inferred_assignable(n, ty, constraint)
+            && !self.is_assignable(ty, constraint)
             && !self.fits_through_what_is_around(n, ty, constraint)
         {
             // Going by what is expected of the result alone is a guess anyway: what of it fits will do.
             let filtered = if c.priority == PRIORITY_RETURN {
-                self.filter(ty, |k, m| k.is_inferred_assignable(n, m, constraint))
+                self.filter(ty, |k, m| k.is_assignable(m, constraint))
             } else {
                 TypeId::NEVER
             };
@@ -2650,7 +2542,7 @@ impl<'p> Checker<'p> {
         match inferred {
             Some(ty) => ty,
             None => match fallback {
-                Some(fallback) if self.is_inferred_assignable(n, fallback, constraint) => fallback,
+                Some(fallback) if self.is_assignable(fallback, constraint) => fallback,
                 _ => constraint,
             },
         }
@@ -2667,7 +2559,6 @@ impl<'p> Checker<'p> {
         if n.around_source == MapperId::IDENTITY
             || !matches!(self.data(ty), TypeData::TypeParam(..))
             || self.is_cloned_type_param(ty)
-            || n.stand_ins.is_some() && !n.own_of_source.contains(&ty)
         {
             return false;
         }
@@ -2675,8 +2566,7 @@ impl<'p> Checker<'p> {
             return false;
         };
         let extended = self.instantiate(declared, n.around_source);
-        extended != declared
-            && (extended == constraint || self.is_inferred_assignable(n, extended, constraint))
+        extended != declared && (extended == constraint || self.is_assignable(extended, constraint))
     }
 
     /// `nonFixingMapper`, for the parameters `ty` mentions.
@@ -2750,13 +2640,13 @@ impl<'p> Checker<'p> {
 
     /// Whether `param` occurs in `ty`, as far as can be told without resolving members.
     pub fn mentions(&self, ty: TypeId, param: TypeId) -> bool {
-        self.any_type_in(ty, |t| t == param)
+        self.any_type_in(ty, false, |t| t == param)
     }
 
     /// `mentions`, for each of `params`, going through `ty` once.
     pub(super) fn params_mentioned_in(&self, ty: TypeId, params: &[TypeId]) -> SmallVec<[bool; 4]> {
         let mut mentioned: SmallVec<[bool; 4]> = smallvec![false; params.len()];
-        let may_be_any = self.any_type_in(ty, |t| {
+        let may_be_any = self.any_type_in(ty, false, |t| {
             if let Some(i) = params.iter().position(|&p| p == t) {
                 mentioned[i] = true;
             }
@@ -2770,8 +2660,16 @@ impl<'p> Checker<'p> {
 
     /// Whether `found` says yes to `ty` or to something `ty` is made of, as far as can be told without resolving members. Yes also
     /// where that cannot be told. A type refers only to types made before it, and each is looked at once, however deep it lies.
-    fn any_type_in(&self, ty: TypeId, mut found: impl FnMut(TypeId) -> bool) -> bool {
+    /// `all`: through signatures too, so it can always be told. Not through the type arguments of an alias: `getObjectTypeInstantiation`
+    /// leaves a type alone that mentions none of the type parameters around it, whatever it is an alias of.
+    pub(super) fn any_type_in(
+        &self,
+        ty: TypeId,
+        all: bool,
+        mut found: impl FnMut(TypeId) -> bool,
+    ) -> bool {
         let mut left: SmallVec<[TypeId; 16]> = smallvec![ty];
+        let mut signatures: SmallVec<[SigId; 4]> = SmallVec::new();
         // The first few are looked up as they come.
         let mut seen: SmallVec<[TypeId; 16]> = SmallVec::new();
         let mut seen_later = crate::util::FxHashSet::default();
@@ -2801,7 +2699,9 @@ impl<'p> Checker<'p> {
                 | TypeData::Fns { mapper, .. }
                 | TypeData::Cond { mapper, .. } => left.extend(values(*mapper)),
                 TypeData::Synth(shape) => {
-                    if !shape.call.is_empty() {
+                    if all {
+                        signatures.extend(shape.call.iter().chain(&shape.construct).copied());
+                    } else if !shape.call.is_empty() {
                         return true;
                     }
                     for p in &shape.props {
@@ -2820,6 +2720,31 @@ impl<'p> Checker<'p> {
                 | TypeData::Keyof(t)
                 | TypeData::StringMapping { ty: t, .. } => left.push(*t),
                 _ => {}
+            }
+            while let Some(sig) = signatures.pop() {
+                match self.p.types.sig(sig) {
+                    SigData::Decl { mapper, .. } | SigData::Construct { mapper, .. } => {
+                        left.extend(values(*mapper))
+                    }
+                    SigData::DefaultConstruct { base, mapper, .. } => {
+                        signatures.extend(*base);
+                        left.extend(values(*mapper));
+                    }
+                    SigData::Synth {
+                        params,
+                        ret,
+                        this,
+                        of,
+                        ..
+                    } => {
+                        left.extend(params.iter().map(|p| p.ty).chain([*ret]).chain(*this));
+                        signatures.extend_from_slice(of);
+                    }
+                    SigData::WithReturn { sig, ret } => {
+                        signatures.push(*sig);
+                        left.push(*ret);
+                    }
+                }
             }
         }
         false

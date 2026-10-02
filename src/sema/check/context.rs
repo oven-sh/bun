@@ -154,7 +154,7 @@ impl<'p> Checker<'p> {
     fn prepare_jsx(&mut self, file: FileId, e: ExprId) {
         if self.p.calls.get(&(file, e)).is_none() && !self.stack.contains(&Query::Call(file, e)) {
             self.prepare_context(file, e);
-            self.jsx_props_type(file, e);
+            self.resolved_signature(file, e);
         }
     }
 
@@ -638,7 +638,7 @@ impl<'p> Checker<'p> {
                 let prop = &hir[p];
                 if let ExprKind::Jsx(_) = hir[owner].kind {
                     if prop.kind == PropKind::Spread {
-                        return self.jsx_props_type(file, owner);
+                        return self.contextual_jsx_element_attributes_type(file, owner);
                     }
                     let props = self.apparent_type_of_contextual_type_of_jsx_attributes(
                         file,
@@ -759,33 +759,6 @@ impl<'p> Checker<'p> {
                 self.type_of_property_of_type(parent_ty, name)
             }
             Err(index) => self.contextual_element_at(parent_ty, index, None, None, None),
-        }
-    }
-
-    /// `getTypeOfPropertyOfType`: the type of a property that is declared. An index signature does not stand in for one, except
-    /// in a member of a union another member of which declares it.
-    fn type_of_property_of_type(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
-        let ty = self.reduced(ty);
-        if !self.is_union(ty) {
-            let apparent = self.apparent_type(ty);
-            let members = self.members(apparent)?;
-            let (prop, mapper) = self.property_in(&members, name)?;
-            return Some(self.type_of_prop(prop, mapper));
-        }
-        let mut is_declared = false;
-        for &part in self.parts(ty) {
-            let apparent = self.apparent_type(part);
-            if let Some(members) = self.members(apparent)
-                && self.property_in(&members, name).is_some()
-            {
-                is_declared = true;
-                break;
-            }
-        }
-        if is_declared {
-            self.type_of_property(ty, name)
-        } else {
-            None
         }
     }
 
@@ -1056,54 +1029,26 @@ impl<'p> Checker<'p> {
         let members = self.members(part)?;
         // A name that is a symbol goes by the signature for symbols.
         if self.files().atoms.is_symbol_name(name) {
-            self.applicable_index_info(&members, TypeId::SYMBOL, None)
+            self.applicable_index_info(&members, TypeId::SYMBOL)
+                .map(|info| info.value)
         } else {
-            self.applicable_index_info(&members, TypeId::STRING, Some(name))
+            self.applicable_index_info_for_name(&members, name)
+                .map(|info| info.value)
         }
     }
 
-    /// `findApplicableIndexInfo`, member by member, for a name of which only the type `key` is known.
+    /// `getApplicableIndexInfo`, member by member, for a name of which only the type `key` is known.
     fn contextual_index(&mut self, context: TypeId, key: TypeId) -> Option<TypeId> {
         let mut types = Vec::new();
         for &part in self.parts(context) {
             let part = self.apparent_type(part);
-            let Some(members) = self.members(part) else {
-                continue;
-            };
-            // The signature for strings counts only where no other does.
-            let (mut for_strings, mut found) = (None, Vec::new());
-            for info in &members.shape().index {
-                if info.key == TypeId::STRING {
-                    for_strings = Some(info.value);
-                // `isApplicableIndexType`: a number signature also applies to `${number}`.
-                } else if self.is_assignable(key, info.key)
-                    || info.key == TypeId::NUMBER && self.is_numeric_string_type(key)
-                {
-                    found.push(info.value);
-                }
-            }
-            // `isApplicableIndexType`: it takes numbers as well.
-            if found.is_empty()
-                && let Some(value) = for_strings
-                && (self.is_assignable(key, TypeId::STRING)
-                    || self.is_assignable(key, TypeId::NUMBER))
+            if let Some(members) = self.members(part)
+                && let Some(info) = self.applicable_index_info(&members, key)
             {
-                found.push(value);
-            }
-            for value in &mut found {
-                *value = self.instantiate(*value, members.mapper);
-            }
-            match found[..] {
-                [] => {}
-                [only] => types.push(only),
-                _ => types.push(self.intersection(&found)),
+                types.push(info.value);
             }
         }
-        if types.is_empty() {
-            None
-        } else {
-            Some(self.union_unreduced(&types))
-        }
+        (!types.is_empty()).then(|| self.union_unreduced(&types))
     }
 
     /// `getApparentTypeOfContextualType`
@@ -1128,7 +1073,7 @@ impl<'p> Checker<'p> {
         e: ExprId,
         context_flags: ContextFlags,
     ) -> Option<TypeId> {
-        let contextual_type = self.jsx_props_type(file, e)?;
+        let contextual_type = self.contextual_jsx_element_attributes_type(file, e)?;
         let apparent = self.apparent_contextual_type(contextual_type, file, e, context_flags)?;
         Some(self.discriminate_by_jsx_attributes(file, e, apparent))
     }
@@ -1278,6 +1223,21 @@ impl<'p> Checker<'p> {
         if !self.is_union(context) {
             return (context, true);
         }
+        // `getMatchingUnionConstituentForObjectLiteral`
+        if let Some((name, constituents)) = self.key_property(context)
+            && let Some(p) = props.iter().find(|&p| {
+                hir[p].kind == PropKind::Init
+                    && hir[p].key.name() == Some(*name)
+                    && Self::is_possibly_discriminant_value(hir, hir[p].value)
+            })
+        {
+            let (given, is_for_good) = self.context_free_discriminant_type(file, hir[p].value);
+            if let Some(&member) = constituents.get(&self.regular(given))
+                && member != TypeId::UNKNOWN
+            {
+                return (member, is_for_good);
+            }
+        }
         // Only names the binder knows count. A computed name is skipped.
         let (mut items, mut written) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
         let mut is_given_for_good = true;
@@ -1297,9 +1257,8 @@ impl<'p> Checker<'p> {
                     _ => false,
                 };
             if counts && self.is_discriminant_property(context, name) {
-                let given = self.context_free_discriminant_type(file, prop.value);
-                is_given_for_good &= self.every_type(given, |c, t| c.is_primitive(t))
-                    && self.p.expr_types.get(file, prop.value.idx()) == Some(given);
+                let (given, is_for_good) = self.context_free_discriminant_type(file, prop.value);
+                is_given_for_good &= is_for_good;
                 items.push((name, given));
             }
         }
@@ -1319,9 +1278,7 @@ impl<'p> Checker<'p> {
             && !self.is_innermost_tainted()
             && !matches!(self.stack.last(), Some(Query::Call(..)))
             // These are raised for whoever asked, each time.
-            && !(self.relation_gave_up
-                || self.relation_too_complex
-                || self.union_too_complex)
+            && !(self.relation_gave_up || self.relation_too_complex)
             && self.reliability == 0
             // What is under way is passed over in silence, or taken for what it is so far, by whoever comes upon it meanwhile.
             && self.instantiation_depth == 0
@@ -1396,7 +1353,7 @@ impl<'p> Checker<'p> {
                 let given = if attr.value.is_none() {
                     TypeId::TRUE
                 } else {
-                    self.context_free_discriminant_type(file, attr.value)
+                    self.context_free_discriminant_type(file, attr.value).0
                 };
                 items.push((name, given));
             }
@@ -1430,21 +1387,35 @@ impl<'p> Checker<'p> {
     }
 
     /// `getContextFreeTypeOfExpression`, of such an expression. Whether a template stays a pattern does go by what is expected, which
-    /// is what is being found out: it is what it comes to, or else a string.
-    fn context_free_discriminant_type(&mut self, file: FileId, e: ExprId) -> TypeId {
-        if !matches!(self.hir(file)[e].kind, ExprKind::Template { .. }) {
-            return self.check_expression_with_contextual_type(
+    /// is what is being found out: it is what it comes to, or else a string. With it, whether it is that whoever asks: it is written
+    /// out, or it is kept, and primitive. What may have a generic signature is looked at again for a call that is being resolved.
+    fn context_free_discriminant_type(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
+        let kind = self.hir(file)[e].kind;
+        let given = match kind {
+            ExprKind::Template { .. } => match self.constant_value(file, e) {
+                Some(EnumValue::String(text)) => self.string_literal(text, true),
+                _ => TypeId::STRING,
+            },
+            _ => self.check_expression_with_contextual_type(
                 file,
                 e,
                 TypeId::ANY,
                 None,
                 CheckMode::SKIP_CONTEXT_SENSITIVE,
-            );
-        }
-        match self.constant_value(file, e) {
-            Some(EnumValue::String(text)) => self.string_literal(text, true),
-            _ => TypeId::STRING,
-        }
+            ),
+        };
+        // What is written out does not go by who asks.
+        let is_for_good = matches!(
+            kind,
+            ExprKind::String(_)
+                | ExprKind::Number(_)
+                | ExprKind::BigInt(_)
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Null
+        ) || self.every_type(given, |c, t| c.is_primitive(t))
+            && self.p.expr_types.get(file, e.idx()) == Some(given);
+        (given, is_for_good)
     }
 
     /// The second half of the discriminators: a property of the union `context` that may be left out, tells its members apart and
@@ -1498,17 +1469,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getTypeOfPropertyOrIndexSignatureOfType`
-    fn discriminant_type_in(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
-        if let Some(declared) = self.type_of_property_of_type(ty, name) {
-            return Some(declared);
-        }
-        let apparent = self.apparent_type(ty);
-        let members = self.members(apparent)?;
-        let value = self.applicable_index_type_for_name(&members, name)?;
-        Some(self.optional_property(value))
-    }
-
     /// `discriminateTypeByDiscriminableItems`. `items`: the names of properties, and what each is given as.
     fn discriminate_by_items(&mut self, context: TypeId, items: &[(Atom, TypeId)]) -> TypeId {
         const OUT: u8 = 0;
@@ -1530,7 +1490,7 @@ impl<'p> Checker<'p> {
                 if include[i] == OUT {
                     continue;
                 }
-                let Some(wanted) = self.discriminant_type_in(t, name) else {
+                let Some(wanted) = self.type_of_property_or_index_signature_of_type(t, name) else {
                     continue;
                 };
                 if given.is_never()
@@ -1768,7 +1728,16 @@ impl<'p> Checker<'p> {
                     {
                         return None;
                     }
-                    if bound.is_expando_declaration(assignment) {
+                    // `binary.Symbol != nil`: `bindExportsOrObjectDefineProperty` and `bindModuleExportsAssignment` go by the syntax, whatever
+                    // `exports` and `module` are here.
+                    if bound.is_expando_declaration(assignment)
+                        || bound.commonjs_indicator.is_some()
+                            && matches!(
+                                crate::bind::assignment_declaration_kind(hir, assignment),
+                                crate::bind::JsDeclarationKind::ModuleExports
+                                    | crate::bind::JsDeclarationKind::ExportsProperty(_)
+                            )
+                    {
                         // A variable that says what it is says what its properties are expected to be.
                         let symbol = bound.expr_symbol[obj.idx()];
                         if symbol.is_some()
@@ -1944,10 +1913,7 @@ impl<'p> Checker<'p> {
             }
             if let TypeData::Tuple { flags, .. } = self.data(part) {
                 let elems = self.type_arguments(part);
-                let fixed = flags
-                    .iter()
-                    .position(|f| f.intersects(variable))
-                    .unwrap_or(flags.len());
+                let fixed = Self::fixed_length(flags);
                 if before_spreads && index < fixed {
                     let element = elems[index];
                     // What may be left out holds `undefined` too, whether or not that is kept with the element.

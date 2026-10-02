@@ -2056,6 +2056,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
   <d>Run all test files, only including tests whose names includes \"baz\"<r>
   <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
 
+  <d>Type check the test files and what they import, then run them<r>
+  <b><green>bun test<r> <cyan>--check<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "
                 );

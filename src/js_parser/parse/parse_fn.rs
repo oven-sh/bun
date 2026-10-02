@@ -436,8 +436,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // "function foo(a?) {}"
                 if p.lexer.token == T::TQuestion {
+                    p.note_loc(&mut arg.loc, Mark::Optional, p.lexer.loc());
                     p.lexer.next()?;
-                    p.note_flag(&mut arg.loc, Mark::Optional);
                 }
 
                 // "function foo(a: any) {}"

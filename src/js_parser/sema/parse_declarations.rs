@@ -43,6 +43,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut name = self.keep_name(name_loc, name);
         match kind {
             ModuleNameKind::Identifier => {}
+            ModuleNameKind::AfterModule => self.note_flag(&mut name.loc, Mark::ModuleKeyword),
             ModuleNameKind::String => self.note_flag(&mut name.loc, Mark::StringName),
             ModuleNameKind::Global => self.note_flag(&mut name.loc, Mark::GlobalName),
         }
@@ -350,6 +351,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ModuleNameKind {
     Identifier,
+    /// An identifier, of a declaration whose `Keyword` is `module`.
+    AfterModule,
     String,
     Global,
 }
@@ -629,14 +632,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn keep_import(&mut self, kept: Option<ModuleSyntax>, stmt: Stmt, loc: Loc) -> Stmt {
         match kept {
-            Some(kept) => self.emit_import(kept, stmt, loc),
+            Some(kept) => self.emit_import(&kept, stmt, loc),
             None => stmt,
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn emit_import(&mut self, kept: ModuleSyntax, stmt: Stmt, loc: Loc) -> Stmt {
+    fn emit_import(&mut self, kept: &ModuleSyntax, stmt: Stmt, loc: Loc) -> Stmt {
         // `import(..)` and `import.meta` start an expression. `import a = b` is kept already.
         let Some(module) = kept.module else {
             return stmt;
@@ -747,14 +750,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn keep_export(&mut self, kept: Option<ModuleSyntax>, stmt: Stmt, loc: Loc) -> Stmt {
         match kept {
-            Some(kept) => self.emit_export(kept, stmt, loc),
+            Some(kept) => self.emit_export(&kept, stmt, loc),
             None => stmt,
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn emit_export(&mut self, kept: ModuleSyntax, stmt: Stmt, loc: Loc) -> Stmt {
+    fn emit_export(&mut self, kept: &ModuleSyntax, stmt: Stmt, loc: Loc) -> Stmt {
         let clause = match (kept.star_loc, kept.specifiers) {
             (Some(star_loc), _) => ts::ExportClause::Star {
                 star_loc,

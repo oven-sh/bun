@@ -1613,6 +1613,9 @@ impl Checker<'_> {
                 Part::Label | Part::NameLiteral | Part::Operand | Part::Keyword | Part::Specifier,
                 _,
             ) if hir.start(node) != 0 => self.end_of_token_at(file, hir.start(node)),
+            NodeData::Part(Part::ExportClause, row) => {
+                self.end_of_node(file, row.with(Part::BindingsName))
+            }
             // The tree does not say.
             NodeData::Part(..) => 0,
             NodeData::Expr(e) => self.end_inside_parentheses(file, e),
@@ -1646,6 +1649,11 @@ impl Checker<'_> {
     pub(super) fn get_error_range_for_node(&self, file: FileId, node: Node) -> (u32, u32) {
         let hir = self.hir(file);
         match hir.data(node) {
+            // The file goes by its first token.
+            NodeData::File => {
+                let start = self.skip_trivia_from(file, 0);
+                (start, self.end_of_token_at(file, start))
+            }
             NodeData::Expr(e) => (
                 self.error_start_inside_parentheses(file, e),
                 self.error_end_inside_parentheses(file, e),

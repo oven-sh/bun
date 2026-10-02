@@ -178,8 +178,6 @@ pub struct Program {
     circular_mapped_prop_names: ByNodeKept<(FileId, TypeNodeId), (TypeId, Atom)>,
     /// `MappedType.containsError`
     mapped_types_with_errors: IdSet<TypeId>,
-    /// Type nodes whose resolution produced a tuple of 10,000 or more elements (2799). `TupleNormalizer.normalize`
-    too_large_tuples: NodeSet<(FileId, TypeNodeId)>,
     /// The variables in a circle that goes through a call: whoever asks first is told what the initializer comes to.
     circular_through_call: NodeSet<(FileId, PatId)>,
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
@@ -197,13 +195,20 @@ pub struct Program {
     /// What `members` says of a type, once that holds for good.
     members: ById<TypeId, shape::KeptMembers>,
     instantiations: ByKey<(TypeId, MapperId), TypeId>,
+    /// `UnionType.keyPropertyName`, `constituentMap`
+    key_properties: ByIdKept<TypeId, Option<(Atom, FxHashMap<TypeId, TypeId>)>>,
+    /// `compose`
+    composed: ByKey<(MapperId, MapperId), MapperId>,
     outer_type_params: ByNodeKept<(FileId, crate::bind::ScopeId), Arc<[TypeId]>>,
     /// `type_param`
     declared_type_params: ByNode<(FileId, TypeParamId), TypeId>,
     /// `identity_mapper`
     identity_mappers: ByNode<(FileId, crate::bind::ScopeId), MapperId>,
+    identity_mappers_with_adopted: ByNode<(FileId, crate::bind::ScopeId), MapperId>,
     base_types: ByNodeKept<Sym, Arc<[TypeId]>>,
     calls: ByNode<(FileId, ExprId), ResolvedCall>,
+    /// `getEffectiveFirstArgumentForJsxSignature` of the signature a JSX element is resolved to, by the element.
+    jsx_attributes_types: ByNode<(FileId, JsxId), TypeId>,
     /// What `resolveCall` reported of a call when it was resolved for good, with the notes.
     said_of_calls: ByNodeKept<(FileId, ExprId), Vec<Reported>>,
     /// `NodeCheckFlagsContextChecked`, with what `assignContextualParameterTypes` was given. `None`: it was not called.
@@ -226,15 +231,13 @@ pub struct Program {
     /// See `optional_property_kept`.
     optional_properties: ById<TypeId, TypeId>,
     intersected_props: ByKey<(TypeId, Atom), TypeId>,
-    /// `isDiscriminantProperty`, by union and property name.
-    discriminants: ByKey<(TypeId, Atom), bool>,
+    /// `UnionOrIntersectionType.propertyCache`. A made-up type holds the property.
+    union_properties: ByKey<(TypeId, Atom), Option<TypeId>>,
     never_intersections: ById<TypeId, bool>,
     /// `getMappedTargetWithSymbol` of a mapped type.
     mapped_targets: ById<TypeId, TypeId>,
     inferred_constraints: ById<TypeId, Option<TypeId>>,
     constraints: ById<TypeId, TypeId>,
-    /// See `holder_of_index_signatures`.
-    tuple_bases: ById<TypeId, TypeId>,
     /// `global_ref` of a name, without type arguments.
     plain_global_refs: ById<Atom, TypeId>,
     /// `CachedTypeKindEquivalentBaseType`
@@ -249,11 +252,6 @@ pub struct Program {
     conditionals: ByKey<(FileId, TypeNodeId, MapperId), TypeId>,
     /// What the parameter of each mapped type extends, if anything. See `constraint_of_mapped_param`.
     mapped_param_constraints: ByNode<(FileId, TypeNodeId), Option<TypeId>>,
-    /// Memo entries whose evaluation hit an instantiation limit, and those 2589 has been reported for. See `note_depth`.
-    excessive: ByKey<Deep, ()>,
-    excessive_reported: ByKey<Deep, ()>,
-    /// Whether `excessive` has an entry. Saves the lookup on every memo hit.
-    has_excessive: AtomicBool,
     /// What `global_type_of_arity` found, by name and number of type parameters.
     global_types: ByKey<(Atom, u8), Option<Sym>>,
     /// `global_type_symbol`, of the names known from the start.
@@ -318,7 +316,6 @@ impl Program {
             global_errors: Default::default(),
             circular_mapped_prop_names: ByNodeKept::new(&type_nodes),
             mapped_types_with_errors: Default::default(),
-            too_large_tuples: NodeSet::new(&type_nodes),
             circular_through_call: NodeSet::new(&pats),
             initializer_is_undefined: ByNode::new(&params),
             declared_types: ByNode::new(&symbols),
@@ -331,11 +328,15 @@ impl Program {
             candidate_orders: Default::default(),
             members: Default::default(),
             instantiations: Default::default(),
+            key_properties: Default::default(),
+            composed: Default::default(),
             outer_type_params: ByNodeKept::new(&scopes),
             declared_type_params: ByNode::new(&type_params),
             identity_mappers: ByNode::new(&scopes),
+            identity_mappers_with_adopted: ByNode::new(&scopes),
             base_types: ByNodeKept::new(&symbols),
             calls: ByNode::new(&exprs),
+            jsx_attributes_types: ByNode::new(&bases(|m| m.hir.jsx.len())),
             said_of_calls: ByNodeKept::new(&exprs),
             context_checked: ByNode::new(&fns),
             context_free_types: ByNode::new(&fns),
@@ -349,12 +350,11 @@ impl Program {
             reverse_mapped_cache: Default::default(),
             optional_properties: Default::default(),
             intersected_props: Default::default(),
-            discriminants: Default::default(),
+            union_properties: Default::default(),
             never_intersections: Default::default(),
             mapped_targets: Default::default(),
             inferred_constraints: Default::default(),
             constraints: Default::default(),
-            tuple_bases: Default::default(),
             plain_global_refs: Default::default(),
             equivalent_base_types: Default::default(),
             circular_constraints: Default::default(),
@@ -363,9 +363,6 @@ impl Program {
             type_param_defaults: Default::default(),
             conditionals: Default::default(),
             mapped_param_constraints: ByNode::new(&type_nodes),
-            excessive: Default::default(),
-            excessive_reported: Default::default(),
-            has_excessive: AtomicBool::new(false),
             global_types: Default::default(),
             global_type_symbols: Default::default(),
             type_parents: Default::default(),
@@ -457,10 +454,8 @@ impl Program {
             inference_contexts: Vec::new(),
             instantiation_depth: 0,
             recent_instantiations: Default::default(),
-            reports_depth: false,
-            deep_events: 0,
-            unreported_event: 0,
-            excessive_at: Vec::new(),
+            limits: 0,
+            instantiations_up_to_a_limit: FxHashMap::default(),
             free_relaters: Vec::new(),
             reliability: 0,
             in_variance_computation: false,
@@ -468,6 +463,7 @@ impl Program {
             is_trial_comparison: false,
             variances_in_progress: Vec::new(),
             simplified: FxHashMap::default(),
+            inherited_names: [0; 4],
             cond_distributive_memo: FxHashMap::default(),
             relation_gave_up: false,
             relation_too_complex: false,
@@ -484,9 +480,7 @@ impl Program {
             recent_intersected_props: Box::new(
                 [((TypeId(u32::MAX), Atom::NONE), TypeId::NEVER); shape::RECENT_PROPS],
             ),
-            union_too_complex: false,
             recent_unions: Default::default(),
-            deadline: None,
             constraint_stack: Vec::new(),
             conditional_constraint_depth: 0,
             deepest_stack: std::cell::Cell::new(0),
@@ -500,8 +494,6 @@ impl Program {
             has_ambient_context: false,
             parsed_again_for_await: None,
             noted_ahead: Vec::new(),
-            timed_out: false,
-            ticks: 0,
             flow_analysis_disabled_in: None,
             inline_level: 0,
             walk_declared: TypeId::NEVER,
@@ -516,13 +508,13 @@ impl Program {
             reverse_mapped_source_stack: Vec::new(),
             reverse_mapped_target_stack: Vec::new(),
             reverse_expanding: 0,
-            discriminants: FxHashMap::default(),
             flow_memo: Default::default(),
             discriminated: FxHashMap::default(),
             contextual_properties: FxHashMap::default(),
             trace_cycles: *TRACE_CYCLES,
             looked_at: Default::default(),
             deferred_nodes: Default::default(),
+            unresolved_identifiers: Vec::new(),
             is_deferred_node: Default::default(),
             shares_nothing: false,
             deferred_diagnostics: Vec::new(),
@@ -533,9 +525,7 @@ impl Program {
             context_checking: Vec::new(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
-            own_of_compared_sigs: Vec::new(),
             restrictive_operands: Vec::new(),
-            jsx_resolving: Vec::new(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
@@ -648,25 +638,6 @@ enum EnterOutcome {
     Runaway,
 }
 
-/// The key of a memo entry that `note_depth` tracks.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub(super) enum Deep {
-    /// `Program::instantiations`
-    Instantiation(TypeId, MapperId),
-    /// `Program::conditionals`
-    Conditional(FileId, TypeNodeId, MapperId),
-}
-
-impl MaybeLocal for Deep {
-    #[inline]
-    fn is_local(&self) -> bool {
-        match self {
-            Deep::Instantiation(ty, mapper) => ty.is_local() || mapper.is_local(),
-            Deep::Conditional(file, _, mapper) => file.is_local() || mapper.is_local(),
-        }
-    }
-}
-
 /// `Checker.currentNode`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum CurrentNode {
@@ -769,15 +740,11 @@ pub struct Checker<'p> {
     instantiation_depth: u32,
     /// What was last read from or put into `Program::instantiations`.
     recent_instantiations: instantiate::Recent,
-    /// Set while `check_excessive_depth` runs: an instantiation limit is reported at `current_node`.
-    reports_depth: bool,
-    /// How many times an instantiation limit was hit, or a memo entry that depends on one was read. A change across an
-    /// evaluation means that the error type of a limit went into the result.
-    deep_events: u64,
-    /// `deep_events` after the last hit that could not be reported.
-    unreported_event: u64,
-    /// Where 2589 was reported (file, start, end). `check_excessive_depth` drains it.
-    excessive_at: Vec<(FileId, u32, u32)>,
+    /// How many times `error_at_current_node` had nothing to say since `check_file` began: what was being worked out is not kept.
+    limits: u64,
+    /// What `Program::instantiations` does not get for that reason, with the number of the outermost question under way. While that
+    /// is open no way to the limit is gone twice. Whoever asks next runs into the limit itself.
+    instantiations_up_to_a_limit: FxHashMap<(TypeId, MapperId), (u64, TypeId)>,
     free_relaters: Vec<relate::Relater>,
     /// What the comparisons under way found out about how far the variance being measured can be trusted.
     reliability: u8,
@@ -788,6 +755,9 @@ pub struct Checker<'p> {
     pub(super) is_trial_comparison: bool,
     variances_in_progress: Vec<Sym>,
     simplified: FxHashMap<(TypeId, bool), TypeId>,
+    /// A bit for each of 256 numbers that the name of a property of `Object`, `Function`, `CallableFunction` or `NewableFunction` falls on:
+    /// a name that falls on another is none of theirs. All zero: not made yet.
+    pub(super) inherited_names: [u64; 4],
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
     /// A comparison was cut short. What it answered is not to be told anybody.
@@ -810,12 +780,8 @@ pub struct Checker<'p> {
     recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
     recent_signatures: Box<[(TypeId, &'p [SigId]); shape::RECENT_SIGNATURES]>,
     recent_intersected_props: Box<[((TypeId, Atom), TypeId); shape::RECENT_PROPS]>,
-    /// Set when `union_reduced` or `intersection_ex` gives up on a union that is too complex to represent (2590). The caller
-    /// clears it first.
-    pub(super) union_too_complex: bool,
     /// What `union` last made of two types, the one with the lower number first.
     recent_unions: instantiate::Recent,
-    deadline: Option<std::time::Instant>,
     /// The `stack` of `getResolvedBaseConstraint`: what the constraints being worked out, one for the sake of the other, are instances of.
     constraint_stack: Vec<relate::RecursionId>,
     /// `conditionalConstraintDepth`
@@ -844,8 +810,6 @@ pub struct Checker<'p> {
     parsed_again_for_await: Option<Vec<StmtId>>,
     /// See `note`.
     noted_ahead: Vec<Reported>,
-    timed_out: bool,
-    ticks: u32,
     /// `flowAnalysisDisabled`: the file whose nodes the writer of `.types` checks again with the flag set.
     flow_analysis_disabled_in: Option<FileId>,
     /// How many `const ok = test` are being looked through.
@@ -880,7 +844,6 @@ pub struct Checker<'p> {
     reverse_mapped_source_stack: Vec<TypeId>,
     reverse_mapped_target_stack: Vec<TypeId>,
     reverse_expanding: u8,
-    discriminants: FxHashMap<(TypeId, Atom), bool>,
     /// What narrowing has worked out once and for all.
     flow_memo: flow::FlowMemo,
     trace_cycles: bool,
@@ -889,6 +852,8 @@ pub struct Checker<'p> {
     /// `deferredNodes` of the file being checked.
     /// `deferredNodes`, an ordered set.
     deferred_nodes: std::collections::VecDeque<ExprId>,
+    /// The identifiers `getResolvedSymbol` found nothing for, until `report_unresolved_identifiers`.
+    unresolved_identifiers: Vec<(FileId, ExprId, Atom)>,
     is_deferred_node: crate::util::FxHashSet<ExprId>,
     /// It is the only checker of its `Program`, as every checker of tsgo's is.
     shares_nothing: bool,
@@ -915,12 +880,8 @@ pub struct Checker<'p> {
     in_check_identifier: Vec<(FileId, crate::hir::PatId)>,
     /// `resolvedSignature = result`, while `resolveCall` reports the errors of a call that nothing takes.
     resolved_meanwhile: Vec<(FileId, ExprId, call::ResolvedCall)>,
-    /// The type parameters of the generic signatures that the permissive comparison under way is inside of.
-    own_of_compared_sigs: Vec<TypeId>,
-    /// The two types of each restrictive comparison under way, innermost last: what `getRestrictiveInstantiation` was called with.
+    /// The two types of each restrictive comparison under way, innermost last: what `getRestrictiveInstantiation` returned.
     restrictive_operands: Vec<(TypeId, TypeId)>,
-    /// The JSX elements whose components' type arguments are being worked out, and what each takes for properties.
-    jsx_resolving: Vec<(FileId, ExprId, TypeId)>,
     /// Functions whose context `prepare_enclosing` has seen to.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),
@@ -1101,44 +1062,13 @@ impl<'p> Checker<'p> {
         self.deepest_stack.get()
     }
 
-    /// From now on, no more than `limit` is spent. What is not known by then stays unknown, and nothing is said about it.
-    pub fn set_time_limit(&mut self, limit: std::time::Duration) {
-        self.deadline = Some(std::time::Instant::now() + limit);
-        self.timed_out = false;
-    }
-
-    pub fn timed_out(&self) -> bool {
-        self.timed_out
-    }
-
-    /// Looks at the clock once in a while.
-    #[inline]
-    fn is_out_of_time(&mut self) -> bool {
-        if self.timed_out {
-            return true;
-        }
-        self.ticks = self.ticks.wrapping_add(1);
-        self.ticks & 0x3ff == 0 && self.is_past_the_deadline()
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn is_past_the_deadline(&mut self) -> bool {
-        if let Some(deadline) = self.deadline
-            && std::time::Instant::now() > deadline
-        {
-            self.timed_out = true;
-        }
-        self.timed_out
-    }
-
     /// `false`: the question is being answered further down the stack.
     #[inline]
     fn enter(&mut self, q: Query) -> bool {
         self.work += 1;
         self.came_full_circle = false;
-        if self.is_out_of_time() || self.work == self.work_trap || self.is_stack_low() {
-            return self.refuse_for_lack_of_time_or_stack();
+        if self.work == self.work_trap || self.is_stack_low() {
+            return self.refuse_for_lack_of_stack();
         }
         let class = (crate::util::fx_hash(&q) >> 54) as u16;
         let from = self.resolution_start;
@@ -1176,16 +1106,14 @@ impl<'p> Checker<'p> {
 
     #[cold]
     #[inline(never)]
-    fn refuse_for_lack_of_time_or_stack(&mut self) -> bool {
+    fn refuse_for_lack_of_stack(&mut self) -> bool {
         self.last_enter = EnterOutcome::Refused;
-        if !self.timed_out {
-            if self.work == self.work_trap {
-                panic!(
-                    "work trap: {:?}\n{}",
-                    &self.stack,
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
+        if self.work == self.work_trap {
+            panic!(
+                "work trap: {:?}\n{}",
+                &self.stack,
+                std::backtrace::Backtrace::force_capture()
+            );
         }
         self.gave_up();
         false
@@ -1546,7 +1474,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `c.currentNode`, derived from the queries in progress. `checkExpression` always sets it. `getTypeFromTypeNode` never does, but
-    /// `checkSourceElement` visits a type node before anything resolves it: the type nodes `check_excessive_depth` starts from, a
+    /// `checkSourceElement` visits a type node before anything resolves it: the type nodes `check_type_node` asks about, a
     /// type written in an expression (`checkAssertion`), and the type arguments of a call (`resolveCall`). A type node reached
     /// through any other query is resolved on demand and leaves `currentNode` alone.
     pub(super) fn current_node(&self) -> Option<CurrentNode> {
@@ -1591,7 +1519,7 @@ impl<'p> Checker<'p> {
         if !is_limit_in_tsgo {
             return TypeId::UNRESOLVED;
         }
-        self.record_excessive_depth();
+        self.error_at_current_node(2589);
         TypeId::ERROR
     }
 
@@ -1601,77 +1529,34 @@ impl<'p> Checker<'p> {
         if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Refused {
             return TypeId::UNRESOLVED;
         }
-        self.record_excessive_depth();
+        self.error_at_current_node(2589);
         TypeId::ERROR
     }
 
-    /// Counts one hit of an instantiation limit. Returns whether 2589 was reported for it.
-    fn record_excessive_depth(&mut self) -> bool {
-        self.deep_events += 1;
-        self.p.has_excessive.store(true, Ordering::Relaxed);
+    /// `c.error_at(c.currentNode, ..)`: what is being worked out ran into a limit. A checker of tsgo's says so once, at whatever it is
+    /// checking just then, and keeps the answer. Which node that is goes by all it has asked before, so it is said by a checker
+    /// that shares nothing (`check_source_file`). To any other the answer does not hold whoever asks.
+    #[cold]
+    fn error_at_current_node(&mut self, code: u32) {
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
-        if self.reports_depth
-            && self.eager.is_empty()
-            && let Some(current) = self.current_node()
-        {
-            let at = match current {
-                CurrentNode::Expr(file, e) => (
-                    file,
-                    self.error_start_inside_parentheses(file, e),
-                    self.error_end_inside_parentheses(file, e),
-                ),
-                CurrentNode::TypeNode(file, node) => (
-                    file,
-                    self.hir(file)[node].pos,
-                    self.end_of_type_node(file, node),
-                ),
-            };
-            self.excessive_at.push(at);
-            return true;
-        }
-        // There is no node to report at. No open query is memoized, so `check_excessive_depth` evaluates them again in check order.
-        // `cycles` stays as it is: `instantiations` keeps its entries, which bounds the repeated work.
-        self.unreported_event = self.deep_events;
-        self.mark_tainted_from(0);
-        false
-    }
-
-    /// Tracks the memo entries that depend on an instantiation limit. tsgo caches the error type like any other result, so it
-    /// reports 2589 once per cache entry, at the node that is current when the entry is computed. We may compute an entry with no
-    /// node to report at. The first memo hit that has one then stands for that computation.
-    /// `events`: `Some(deep_events before the evaluation)` if `key` was just evaluated and is about to be memoized, `None` if `key`
-    /// was found in its memo.
-    #[inline]
-    pub(super) fn note_depth(&mut self, key: Deep, events: Option<u64>) {
-        let is_relevant = match events {
-            Some(before) => self.deep_events != before,
-            None => self.p.has_excessive.load(Ordering::Relaxed),
+        let is_said = self.shares_nothing && self.eager.is_empty();
+        let Some(current) = self.current_node().filter(|_| is_said) else {
+            self.limits += 1;
+            return self.mark_tainted_from(0);
         };
-        if is_relevant {
-            self.note_excessive(key, events);
-        }
-    }
-
-    fn note_excessive(&mut self, key: Deep, events: Option<u64>) {
-        let is_reported = match events {
-            Some(before) => {
-                self.p.excessive.insert(key, ());
-                self.unreported_event <= before
-            }
-            None => {
-                if self.p.excessive.get(&key).is_none() {
-                    return;
-                }
-                if self.p.excessive_reported.get(&key).is_some() {
-                    self.deep_events += 1;
-                    return;
-                }
-                self.record_excessive_depth()
-            }
+        let at = match current {
+            CurrentNode::Expr(file, e) => (
+                file,
+                self.error_start_inside_parentheses(file, e),
+                self.error_end_inside_parentheses(file, e),
+            ),
+            CurrentNode::TypeNode(file, node) => (
+                file,
+                self.hir(file)[node].pos,
+                self.end_of_type_node(file, node),
+            ),
         };
-        if is_reported {
-            self.p.excessive_reported.insert(key, ());
-        }
+        self.commit(Reported::bare(at, code));
     }
 
     /// See `pulls_contextual_types_at`.
@@ -1794,7 +1679,7 @@ impl<'p> Checker<'p> {
     /// to everybody who gets there.
     #[inline]
     fn what_only_holds_for_now(&self) -> (u64, u64) {
-        (self.cycles as u64, self.deep_events as u64)
+        (self.cycles as u64, self.limits)
     }
 
     /// An answer that was worked out while something it rests on was still open (a question it came back to, a candidate being tried

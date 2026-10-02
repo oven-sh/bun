@@ -330,8 +330,8 @@ impl<'p> Checker<'p> {
         self.is_trial_comparison = is_trial;
         let is_related = self.related(source, target, relation);
         self.is_trial_comparison = false;
-        let is_sure = !self.relation_gave_up && !self.timed_out();
-        let is_too_complex = self.relation_too_complex && !self.timed_out();
+        let is_sure = !self.relation_gave_up;
+        let is_too_complex = self.relation_too_complex;
         self.relation_gave_up |= gave_up_before;
         self.relation_too_complex = too_complex_before;
         (!is_too_complex).then_some(is_related || !is_sure)
@@ -423,61 +423,6 @@ impl<'p> Checker<'p> {
         let source = self.normalized(original_source, false);
         let target = self.normalized(original_target, true);
         self.report_error_results(r, original_source, original_target, source, target, head);
-    }
-
-    /// The lines under the message of an error that says `source` is not assignable to `target`, outermost first, from level 1:
-    /// `checkTypeAssignableTo(source, target, node, nil)` without its first line.
-    pub(super) fn assignability_chain(&mut self, source: TypeId, target: TypeId) -> Vec<Line> {
-        let lines = self.relation_lines(source, target, Relation::Assignable, None, 0);
-        lines.into_iter().skip(1).collect()
-    }
-
-    /// The `relatedInfo` of the error `checkTypeAssignableTo(source, target, node, head)` reports, whatever the `head`.
-    pub(super) fn assignability_related(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> Vec<Reported> {
-        self.relation_lines_with_related(source, target, Relation::Assignable, None, 0)
-            .1
-    }
-
-    /// The lines under the first line of `checkTypeRelatedToEx(source, target, relation, node, head)`, from level 1. `head`, the code
-    /// of `headMessage`, decides whether a line about missing properties takes the place of the first line or goes under it.
-    pub(super) fn relation_chain_under(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        relation: Relation,
-        head: u32,
-    ) -> Vec<Line> {
-        let lines = self.relation_lines(source, target, relation, Some(head), 0);
-        lines.into_iter().skip(1).collect()
-    }
-
-    /// All the lines of the error `checkTypeAssignableTo(source, target, node, nil)` reports, the first at `level`. The first line
-    /// is not always 2322: `reportRelationError` replaces it or leaves it out.
-    pub(super) fn assignability_lines(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        level: u32,
-    ) -> Vec<Line> {
-        self.relation_lines(source, target, Relation::Assignable, None, level)
-    }
-
-    /// All the lines of the error `checkTypeRelatedToEx(source, target, relation, node, head)` reports, the first at `level`.
-    /// `head`: the code of `headMessage`. Nothing if the two are related, or if the comparison is cut short.
-    pub(super) fn relation_lines(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        relation: Relation,
-        head: Option<u32>,
-        level: u32,
-    ) -> Vec<Line> {
-        self.relation_lines_with_related(source, target, relation, head, level)
-            .0
     }
 
     /// The same, and the `relatedInfo` that error is given.
@@ -678,7 +623,7 @@ impl<'p> Checker<'p> {
                 if args.len() > params.len()
                     && let Some(&this_argument) = args.last()
                 {
-                    base = self.reference_with_this(base, this_argument);
+                    base = self.type_with_this_argument(base, this_argument);
                 }
                 Some(base)
             }

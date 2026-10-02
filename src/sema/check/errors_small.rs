@@ -5,7 +5,7 @@
 //! its binder.go.
 
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent, ScopeKind, SymbolId};
+use crate::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent, ScopeKind};
 
 impl Checker<'_> {
     /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot get past a `let` or a `const` of the same name on its way up.
@@ -126,7 +126,6 @@ impl Checker<'_> {
     }
 
     pub(super) fn check_small_things(&mut self, file: FileId) {
-        self.check_enum_declarations(file);
         self.check_names_that_are_keywords(file);
         self.check_vars_not_shadowed(file);
     }
@@ -301,21 +300,15 @@ impl Checker<'_> {
                 && self.is_mentioned_within(file, location, test, body, false)
         };
         if !is_used {
-            let code = if is_promise { 2801 } else { 2774 };
-            self.error_at((file, start, 0), code, &[]);
-            let end = self.end_inside_parentheses(file, location);
-            self.explain_to(start, end, code, |c| {
-                if code != 2801 {
-                    return vec![];
-                }
-                // `getTypeNameForErrorDisplay`: two types that read the same are both written with qualified names.
-                vec![c.type_names_for_error_display(ty, ty).0]
-            });
-            // `errorAndMaybeSuggestAwait`
+            let at = (file, start, self.end_inside_parentheses(file, location));
             if is_promise {
-                self.relate(start, code, |_| {
-                    vec![Reported::bare((file, start, end), 2773)]
-                });
+                // `getTypeNameForErrorDisplay`: two types that read the same are both written with qualified names.
+                let name = self.type_names_for_error_display(ty, ty).0;
+                // `errorAndMaybeSuggestAwait`
+                self.error_at(at, 2801, &[Arg::Text(&name)])
+                    .add_related_info(Reported::bare(at, 2773));
+            } else {
+                self.error_at(at, 2774, &[]);
             }
         }
     }
@@ -349,94 +342,83 @@ impl Checker<'_> {
         container: Parent,
         by_name_alone: bool,
     ) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let hir = self.hir(file);
         // `IsIdentifier`: only those are looked at, and a private name is not one.
-        if matches!(hir[tested].kind, ExprKind::Dot { name, .. } if self.is_private_name(name)) {
+        let is_looked_at = match hir[tested].kind {
+            ExprKind::Dot { name, .. } => !self.is_private_name(name),
+            ExprKind::Ident(_) => true,
+            _ => false,
+        };
+        // The name of an `a.b` is a child of it.
+        let is_access = |e: ExprId| matches!(hir[e].kind, ExprKind::Dot { .. });
+        is_looked_at
+            && (matches!(container, Parent::Expr(e) if is_access(e) && self.is_mention_of(file, tested, test, e, by_name_alone))
+                || self.is_mentioned_below(file, tested, test, hir.node(container), by_name_alone))
+    }
+
+    /// `node.ForEachChild(visit)`
+    fn is_mentioned_below(
+        &mut self,
+        file: FileId,
+        tested: ExprId,
+        test: ExprId,
+        node: Node,
+        by_name_alone: bool,
+    ) -> bool {
+        let hir = self.hir(file);
+        !self.is_stack_low()
+            && hir.for_each_child(node, &mut |child| {
+                matches!(hir.data(child), NodeData::Expr(e) if self.is_mention_of(file, tested, test, e, by_name_alone))
+                    || self.is_mentioned_below(file, tested, test, child, by_name_alone)
+            })
+    }
+
+    /// `visit`, of the name `child`, or of the `a.b` whose name it is.
+    fn is_mention_of(
+        &mut self,
+        file: FileId,
+        tested: ExprId,
+        test: ExprId,
+        child: ExprId,
+        by_name_alone: bool,
+    ) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let same_variable = |a: ExprId, b: ExprId| matches!((hir[a].kind, hir[b].kind), (ExprKind::Ident(x), ExprKind::Ident(y)) if x == y && bound.expr_symbol[a.idx()] == bound.expr_symbol[b.idx()]);
+        let may_be_the_same = same_variable(tested, child)
+            || matches!((hir[tested].kind, hir[child].kind), (ExprKind::Dot { name: x, .. }, ExprKind::Dot { name: y, .. }) if x == y);
+        if child == tested
+            || !may_be_the_same
+            // `getSymbolAtLocation`: the name in `{ name }` is that of the property.
+            || matches!(bound.expr_parent[child.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+            || !self.same_property(file, tested, child)
+        {
             return false;
         }
-        let same_variable = |a: ExprId, b: ExprId| matches!((hir[a].kind, hir[b].kind), (ExprKind::Ident(x), ExprKind::Ident(y)) if x == y && bound.expr_symbol[a.idx()] == bound.expr_symbol[b.idx()]);
-        let index = self.exprs_by_kind(file);
-        let of_its_kind = match hir[tested].kind {
-            ExprKind::Ident(_) => index.of(ExprTag::Ident),
-            ExprKind::Dot { .. } => index.of(ExprTag::Dot),
-            _ => return false,
+        if by_name_alone || matches!(hir[test].kind, ExprKind::Ident(_)) {
+            return true;
+        }
+        let (ExprKind::Dot { obj: mut a, .. }, ExprKind::Dot { obj: mut b, .. }) =
+            (hir[tested].kind, hir[child].kind)
+        else {
+            // `IsBinaryExpression(testedNode.Parent)`: a name that is an operand of the test. In parentheses it is not one, and
+            // nothing is like it.
+            return !is_parenthesized(hir, tested);
         };
-        for &child in of_its_kind {
-            let i = child.idx();
-            let may_be_the_same = same_variable(tested, child)
-                || matches!((hir[tested].kind, hir[child].kind), (ExprKind::Dot { name: x, .. }, ExprKind::Dot { name: y, .. }) if x == y);
-            if child == tested || !may_be_the_same || bound.is_unchecked(i) {
-                continue;
-            }
-            // `ForEachChild`: what is in `container` is gone through, not `container` itself, and there is nothing in a name.
-            if container == Parent::Expr(child)
-                && matches!(hir[child].kind, ExprKind::Ident(_))
-                && !is_parenthesized(self.hir(file), child)
-            {
-                continue;
-            }
-            // `getSymbolAtLocation`: the name in `{ name }` is that of the property.
-            if matches!(bound.expr_parent[i], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
-            {
-                continue;
-            }
-            // Inside?
-            let mut parent = Parent::Expr(child);
-            let mut is_inside = false;
-            for _ in 0..4096 {
-                if parent == container {
-                    is_inside = true;
-                    break;
-                }
-                if matches!(parent, Parent::None)
-                    || matches!(parent, Parent::Stmt(s) if s.is_none())
-                {
-                    break;
-                }
-                parent = match parent {
-                    Parent::Expr(x) => bound.expr_parent[x.idx()],
-                    other => self.outward(file, other),
-                };
-            }
-            if !is_inside || !self.same_property(file, tested, child) {
-                continue;
-            }
-            if by_name_alone || matches!(hir[test].kind, ExprKind::Ident(_)) {
-                return true;
-            }
-            let (ExprKind::Dot { obj: mut a, .. }, ExprKind::Dot { obj: mut b, .. }) =
-                (hir[tested].kind, hir[child].kind)
-            else {
-                // `IsBinaryExpression(testedNode.Parent)`: a name that is an operand of the test. In parentheses it is not one, and
-                // nothing is like it.
-                if is_parenthesized(self.hir(file), tested) {
-                    continue;
-                }
-                return true;
-            };
-            // On the same thing, written the same way.
-            while !is_parenthesized(self.hir(file), a) && !is_parenthesized(self.hir(file), b) {
-                match (hir[a].kind, hir[b].kind) {
-                    (ExprKind::Ident(_), ExprKind::Ident(_)) => {
-                        if same_variable(a, b) {
-                            return true;
-                        }
-                        break;
-                    }
-                    (ExprKind::This, ExprKind::This) => return true,
-                    (
-                        ExprKind::Dot {
-                            obj: x, name: n, ..
-                        },
-                        ExprKind::Dot {
-                            obj: y, name: m, ..
-                        },
-                    ) if n == m && self.same_property(file, a, b) => (a, b) = (x, y),
-                    (ExprKind::Call(x), ExprKind::Call(y)) => {
-                        (a, b) = (hir[x].callee, hir[y].callee)
-                    }
-                    _ => break,
-                }
+        // On the same thing, written the same way.
+        while !is_parenthesized(hir, a) && !is_parenthesized(hir, b) {
+            match (hir[a].kind, hir[b].kind) {
+                (ExprKind::Ident(_), ExprKind::Ident(_)) => return same_variable(a, b),
+                (ExprKind::This, ExprKind::This) => return true,
+                (
+                    ExprKind::Dot {
+                        obj: x, name: n, ..
+                    },
+                    ExprKind::Dot {
+                        obj: y, name: m, ..
+                    },
+                ) if n == m && self.same_property(file, a, b) => (a, b) = (x, y),
+                (ExprKind::Call(x), ExprKind::Call(y)) => (a, b) = (hir[x].callee, hir[y].callee),
+                _ => break,
             }
         }
         false
@@ -601,47 +583,30 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkEnumDeclaration`, as far as several declarations of one enum go.
-    fn check_enum_declarations(&mut self, file: FileId) {
-        // Only what an enum of this file starts with is objected to.
-        if self.hir(file).enums.is_empty() {
+    /// The end of `checkEnumDeclaration`: 2432. "Only perform this check once per symbol": at its first declaration.
+    pub(super) fn check_first_members_of_enum_declarations(&mut self, file: FileId, e: EnumId) {
+        let symbol = self.bound(file).enum_symbol[e.idx()];
+        if symbol.is_none() {
             return;
         }
-        let bound = self.bound(file);
-        for i in 0..bound.symbols.len() {
-            let symbol = &bound.symbols[i];
-            if !symbol.flags.intersects(SymFlags::ENUM)
-                || symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
+        let declarations = self.files().decls(self.files().sym(file, symbol));
+        let enums = declarations.into_iter().filter_map(|(f, d)| match d {
+            Decl::Enum(e) => Some((f, e)),
+            _ => None,
+        });
+        let enums: smallvec::SmallVec<[(FileId, EnumId); 2]> = enums.collect();
+        if enums.len() < 2 || enums[0] != (file, e) {
+            return;
+        }
+        let mut seen_enum_missing_initial_initializer = false;
+        for (f, e) in enums {
+            if let Some(first) = self.hir(f)[e].members.iter().next()
+                && self.hir(f)[first].init.is_none()
             {
-                continue;
-            }
-            let sym = self.files().sym(file, SymbolId(i as u32));
-            if sym.file == file && sym.id.idx() != i {
-                continue;
-            }
-            let enums: Vec<(FileId, EnumId)> = self
-                .files()
-                .decls(sym)
-                .into_iter()
-                .filter_map(|(f, d)| match d {
-                    Decl::Enum(e) => Some((f, e)),
-                    _ => None,
-                })
-                .collect();
-            let mut seen_without_initializer = false;
-            for &(f, e) in &enums {
-                let decl = &self.hir(f)[e];
-                let Some(member) = decl.members.iter().next() else {
-                    continue;
-                };
-                let member = &self.hir(f)[member];
-                if member.init.is_none() {
-                    if seen_without_initializer && f == file {
-                        let end = self.end_of_name_at(file, member.pos);
-                        self.error_at((file, member.pos, end), 2432, &[]);
-                    }
-                    seen_without_initializer = true;
+                if seen_enum_missing_initial_initializer {
+                    self.error(f, self.hir(f).name(self.hir(f).node(first)), 2432, &[]);
                 }
+                seen_enum_missing_initial_initializer = true;
             }
         }
     }

@@ -16,12 +16,12 @@
 //! * `reportFlowControlError`: 2563
 //!
 //! All of TypeScript 7.0.2's checker.go, flow.go, grammarchecks.go, binder.go and parser/references.go. Only
-//! `check_import_attribute_types` and `check_flow_too_deep` ask for types.
+//! `check_import_attributes` and `check_flow_too_deep` ask for types.
 //!
-//! The summary of a file keeps neither modifiers nor keywords: they are read from the text, from a place the summary does have. The
-//! attributes of import types are read from the text too. Those of declarations are in `hir::File::import_attributes`.
+//! The summary of a file keeps neither modifiers nor keywords: they are read from the text, from a place the summary does have.
 //! Of a declaration file there is no text, and what can only be read is not looked for.
 
+use super::errors_x_enums_names::means_umd_global;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, ScopeId};
 use crate::resolve::ModuleKind;
@@ -32,8 +32,6 @@ struct Cx<'a> {
     text: &'a [u8],
     /// Where module specifiers are written, in the order of the text.
     uses: &'a [SpecifierUse],
-    /// What `attributes_keyword` was last asked, and what it said.
-    last_keyword: std::cell::Cell<(u32, bool, Option<(usize, usize)>)>,
     /// `IsExternalModule`, as the program has it.
     is_module: bool,
     /// Not `hasParseDiagnostics`: what `grammarErrorOnNode` has to say is only said of a file that parses.
@@ -46,22 +44,8 @@ struct Cx<'a> {
     verbatim_commonjs: bool,
     /// `getVerbatimModuleSyntaxErrorMessage`
     esm_syntax_code: u32,
-    /// The start, the end and the type (`getTypeFromImportAttributes`) of the attributes of each import or export declaration. The
-    /// `&self` passes collect them, and `check_import_attribute_types` relates them, which needs `&mut self`.
-    attribute_types: std::cell::RefCell<Vec<(u32, u32, AttributesType)>>,
     /// `node.Symbol`, of the declarations of aliases.
     aliases: FxHashMap<Decl, Sym>,
-    /// The start and the code of each error whose message names a symbol, and the symbol. Printing it needs `&mut self`.
-    named_symbols: std::cell::RefCell<Vec<(u32, u32, Sym)>>,
-}
-
-/// What `getTypeFromImportAttributes` is computed from.
-#[derive(Copy, Clone)]
-enum AttributesType {
-    /// The attributes as the parser kept them: an `ExprKind::Object` of `hir::File::import_attributes`.
-    Object(ExprId),
-    /// The type, for attributes that were read from the text.
-    Known(TypeId),
 }
 
 /// What a list of statements is the body of.
@@ -84,17 +68,6 @@ impl Cx<'_> {
     fn specifier(&self, pos: u32, spec: Atom) -> Option<SpecifierUse> {
         let at = self.uses.partition_point(|u| u.pos < pos);
         self.uses.get(at).copied().filter(|u| u.spec == spec)
-    }
-
-    /// `attributes_keyword`. A statement is asked about more than once.
-    fn attributes_keyword(&self, spec_pos: u32, is_export: bool) -> Option<(usize, usize)> {
-        let (last_pos, last_is_export, found) = self.last_keyword.get();
-        if last_pos == spec_pos && last_is_export == is_export {
-            return found;
-        }
-        let found = attributes_keyword(self.text, spec_pos, is_export);
-        self.last_keyword.set((spec_pos, is_export, found));
-        found
     }
 }
 
@@ -124,16 +97,15 @@ impl Checker<'_> {
             file,
             text: &hir.text,
             is_module: module.is_module(),
-            grammar: !has_parse_diagnostics(hir) && !has_import_assertions(&hir.text, uses),
+            // `tryParseImportAttributes`, `parseImportType`: `assert` where `with` belongs is an error of the parser's.
+            grammar: !has_parse_diagnostics(hir)
+                && !hir.early_errors.iter().any(|&(_, code)| code == 2880),
             is_js: hir.is_js,
             is_verbatim,
             verbatim_commonjs: is_verbatim && self.xm_emits_commonjs(file),
             esm_syntax_code: self.verbatim_module_syntax_error_message(file),
-            attribute_types: Default::default(),
             aliases: self.symbols_of_alias_declarations(file),
-            named_symbols: Default::default(),
             uses,
-            last_keyword: std::cell::Cell::new((u32::MAX, false, None)),
         };
         let top = Around {
             module: ModuleId::NONE,
@@ -142,12 +114,11 @@ impl Checker<'_> {
             is_top_level: false,
             is_ambient: hir.kind == FileKind::Declaration,
         };
-        self.xm_statements(&cx, hir.body, top, false);
+        self.xm_statements(&cx, hir.body, top);
         self.xm_statements_out_of_place(&cx, top);
         self.xm_statements_in_blocks(&cx);
         self.xm_static_blocks(&cx);
         self.xm_import_calls_and_types(&cx);
-        self.check_import_attribute_types(&cx);
         // A circle goes through a file by an alias others can get at, or by one that stands for another name of the file.
         let can_be_circular = cx.aliases.keys().any(|d| {
             matches!(
@@ -171,9 +142,6 @@ impl Checker<'_> {
             {
                 self.error_at(at, 2303, &[Arg::Sym(sym)]);
             }
-        }
-        for (start, code, sym) in cx.named_symbols.take() {
-            self.note(start, 0, code, &[Arg::Sym(sym)]);
         }
     }
 
@@ -236,21 +204,15 @@ impl Checker<'_> {
         }
     }
 
-    /// The statements of the file or of the body of a module. `says_module`: of `module A.B`, when this is what is in `A`.
-    fn xm_statements(
-        &mut self,
-        cx: &Cx<'_>,
-        list: IdList<StmtId>,
-        around: Around,
-        says_module: bool,
-    ) {
+    /// The statements of the file or of the body of a module.
+    fn xm_statements(&mut self, cx: &Cx<'_>, list: IdList<StmtId>, around: Around) {
         let hir = self.hir(cx.file);
         for s in hir.ids(list) {
             let Stmt {
                 start, modifiers, ..
             } = hir[s];
             match hir[s].kind {
-                StmtKind::Module(m) => self.xm_module(cx, list, s, m, around, says_module),
+                StmtKind::Module(m) => self.xm_module(cx, list, s, m, around),
                 StmtKind::Import(i) => self.xm_import(cx, s, i, around),
                 StmtKind::ImportEquals(i) => self.xm_import_equals(cx, s, i, around),
                 StmtKind::ExportNamed(x) => self.xm_export_named(cx, s, x, around),
@@ -289,7 +251,6 @@ impl Checker<'_> {
         s: StmtId,
         m: ModuleId,
         around: Around,
-        inherited: bool,
     ) {
         let (hir, files) = (self.hir(cx.file), self.files());
         let module = hir[m];
@@ -306,8 +267,6 @@ impl Checker<'_> {
             around.is_ambient_module && around.is_top_level && !cx.is_module
         };
         let is_augmentation = is_ambient_module && adds_to_another;
-        let says_module = !is_ambient_module && says_module(cx.text, name_pos, inherited);
-
         let inner = Around {
             module: m,
             is_ambient_module,
@@ -315,7 +274,7 @@ impl Checker<'_> {
             is_top_level: is_at_top,
             is_ambient,
         };
-        self.xm_statements(cx, module.body, inner, says_module);
+        self.xm_statements(cx, module.body, inner);
 
         if is_ambient_module {
             // The flag is also on what is written in an exported one: only the word counts.
@@ -335,7 +294,7 @@ impl Checker<'_> {
                     .count()
                     > 1
             {
-                self.error_at((cx.file, name_pos, 0), 5061, &[]);
+                self.error_at((cx.file, name_pos, 0), 5061, &[Arg::Atom(name)]);
             }
         }
 
@@ -350,7 +309,7 @@ impl Checker<'_> {
         if cx.grammar && !is_ambient && matches!(module.name, ModuleName::String(_)) {
             self.error_at((cx.file, name_pos, 0), 1035, &[]);
         }
-        if says_module {
+        if module.says_module {
             self.error_at((cx.file, name_pos, 0), 1540, &[]);
         }
         // Both are about options that keep `const enum`s, so that a namespace of nothing else counts as well.
@@ -363,7 +322,7 @@ impl Checker<'_> {
                 self.error_at(
                     (cx.file, name_pos, 0),
                     1280,
-                    &[Arg::Text(&isolated_modules_like_flag_name(files))],
+                    &[Arg::Bytes(isolated_modules_like_flag_name(files))],
                 );
             }
             if cx.verbatim_commonjs
@@ -447,58 +406,29 @@ impl Checker<'_> {
             _ => None,
         });
         let start = hir[m].name_pos;
-        let report = |c: &mut Self, code: u32, of_each: bool| {
+        let report = |c: &mut Self, code: u32, of_each: bool, args: &[Arg<'_>]| {
             if of_each || first == Some(m) {
-                c.error_at((cx.file, start, 0), code, &[]);
+                c.error_at((cx.file, start, 0), code, args);
             }
         };
+        // `resolveExternalModuleNameWorker(moduleName, moduleName, moduleNotFoundError, false, true)`. Names written where everything is only
+        // declared are not held against anybody.
+        if first == Some(m) {
+            let written = SpecifierUse {
+                spec: name,
+                pos: start,
+                kind: SpecifierKind::Import,
+                mode: ResolutionMode::None,
+            };
+            let site = SpecifierSite {
+                is_ambient: true,
+                is_for_augmentation: true,
+                is_not_validated: around.is_ambient,
+                ..Default::default()
+            };
+            self.resolve_external_module(cx.file, written, site);
+        }
         let Some(found) = self.xm_module_of_specifier(cx.file, name) else {
-            // `resolveExternalModule`. Names written where everything is only declared are not held against anybody.
-            let (from, validates) = (files.module(cx.file), !around.is_ambient);
-            if let Some(target) = from.imported_file(name) {
-                if validates {
-                    report(self, 2306, false);
-                    self.note(
-                        start,
-                        0,
-                        2306,
-                        &[Arg::Text(&files.module(target).path.clone())],
-                    );
-                }
-            } else if from.is_untyped_import(name) {
-                // With `allowJs` the JavaScript is a file of the program like any other.
-                if !self.p.files.options.allow_js {
-                    report(self, 2665, false);
-                    let at = from.untyped_imports.iter().position(|u| u.0 == name);
-                    let path = from.untyped_import_files[at.unwrap()].0;
-                    self.note(start, 0, 2665, &[Arg::Atom(name), Arg::Atom(path)]);
-                }
-            } else if validates {
-                let code = if !self.p.files.options.resolve_json_module && text.ends_with(b".json")
-                {
-                    2732
-                } else if let Some(&(_, is_there)) = from
-                    .extensionless_imports
-                    .iter()
-                    .find(|e| from.is_esm && e.0 == name)
-                {
-                    if is_there { 2835 } else { 2834 }
-                } else {
-                    2664
-                };
-                report(self, code, false);
-                let written = self.atom_text(name);
-                match code {
-                    2835 => {
-                        if let Some(extension) =
-                            suggested_import_extension(files, &from.path, &written)
-                        {
-                            self.note(start, 0, code, &[Arg::Text(&(written + extension))]);
-                        }
-                    }
-                    _ => self.note(start, 0, code, &[Arg::Text(&written)]),
-                }
-            }
             return false;
         };
         // `resolveExternalModuleSymbol`
@@ -507,7 +437,7 @@ impl Checker<'_> {
         if !flags.intersects(SymFlags::NAMESPACE) {
             // An alias here is one that could not be followed.
             if !flags.contains(SymFlags::ALIAS) {
-                report(self, 2671, false);
+                report(self, 2671, false, &[Arg::Atom(name)]);
             }
             return false;
         }
@@ -522,11 +452,10 @@ impl Checker<'_> {
         };
         if (is_variable || flags.intersects(SymFlags::ENUM) && is_const_enum()) && has_values() {
             if flags.contains(SymFlags::NAMESPACE_MODULE) {
-                report(self, 2649, false);
-                cx.named_symbols.borrow_mut().push((start, 2649, main));
+                report(self, 2649, false, &[Arg::Sym(main)]);
             } else if !is_variable {
                 // `reportMergeSymbolError`, of the declarations on this side.
-                report(self, 2567, true);
+                report(self, 2567, true, &[]);
             }
             return false;
         }
@@ -597,18 +526,27 @@ impl Checker<'_> {
                 return false;
             }
         }
-        // The values of its attributes are strings. `import a = require("m")` has none.
+        // The values of its attributes are strings.
+        let hir = self.hir(cx.file);
         let mut are_strings = true;
-        if let Some(written) = written
-            && written.kind != SpecifierKind::Require
+        if written.is_some()
+            && let Some((.., attributes)) = self.xm_get_import_attributes(cx.file, hir[s].loc)
         {
-            let mut others = Vec::new();
-            self.xm_attributes_after(cx, written.pos, is_export, |value, end| {
-                others.push((value, end))
-            });
-            are_strings = others.is_empty();
-            for (value, end) in others {
-                self.error_at((cx.file, value, end), 2858, &[]);
+            for value in attributes.iter().map(|attribute| hir[attribute].value) {
+                // The parser has reported a missing value.
+                if !matches!(hir[value].kind, ExprKind::Missing)
+                    && !self
+                        .xm_string_literal_like(cx.file, value)
+                        .is_some_and(|(_, is_string_literal)| is_string_literal)
+                {
+                    are_strings = false;
+                    let start = self.start_of(cx.file, value);
+                    self.error_at(
+                        (cx.file, start, self.end_of_expr(cx.file, value)),
+                        2858,
+                        &[],
+                    );
+                }
             }
         }
         are_strings
@@ -835,12 +773,14 @@ impl Checker<'_> {
                 )
                 && files.is_only_importable_as_default(cx.file, module)
                 && !self
-                    .xm_attributes_after(cx, written.pos, false, |_, _| {})
-                    .is_some_and(|(attributes, _)| {
-                        attributes
-                            .entries
-                            .iter()
-                            .any(|&(name, value)| name == b"type" && value == Some(&b"json"[..]))
+                    .xm_get_import_attributes(cx.file, hir[s].loc)
+                    .is_some_and(|(.., attributes)| {
+                        attributes.iter().map(|attribute| hir[attribute]).any(|it| {
+                            it.key.name().map(|name| files.atoms.bytes(name)) == Some(b"type")
+                                && self
+                                    .xm_string_literal_like(cx.file, it.value)
+                                    .is_some_and(|(value, _)| files.atoms.bytes(value) == b"json")
+                        })
                     })
             {
                 self.error_at(
@@ -860,7 +800,7 @@ impl Checker<'_> {
                 self.xm_module_is_missing(cx, s, import.spec, around);
             }
         }
-        self.xm_import_attributes(cx, pos, import.spec, import.type_only, false);
+        self.check_import_attributes(cx, s, import.spec, import.type_only);
     }
 
     /// `checkImportEqualsDeclaration`
@@ -896,21 +836,56 @@ impl Checker<'_> {
         self.check_collisions_for_declaration_name(cx.file, s, import.name);
         self.check_alias_symbol(cx.file, &cx.aliases, s, Decl::ImportEquals(i), is_ambient);
         let scope = bound.import_equals_scope[i.idx()];
-        let mut path = [Atom::NONE; 8];
-        if scope.is_none() || names.is_empty() || names.len() > path.len() {
+        if scope.is_none() || names.is_empty() {
             return;
         }
-        for (slot, name) in path.iter_mut().zip(hir.texts(names)) {
-            *slot = name;
-        }
-        let path = &path[..names.len()];
+        let first = hir[names.at(0)];
         // `getSymbolOfPartOfRightHandSideOfImportEquals`: a name on its own is the name of a namespace.
-        let meaning = if path.len() == 1 {
+        let meaning = if names.len() == 1 {
             SymFlags::NAMESPACE
         } else {
             SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE
         };
-        let Some(target) = files.resolve_entity(cx.file, scope, path, meaning) else {
+        let Some(target) = self.resolve_entity_name(cx.file, scope, names, meaning, false) else {
+            // `markLinkedReferences`: not where nothing is emitted, nor when imports stay as they are written.
+            if first.text == known::empty
+                || import.flags.contains(Flags::AMBIENT)
+                || files.options.verbatim_module_syntax
+            {
+                return;
+            }
+            // `markImportEqualsAliasReferenced`, `markExportSpecifierAliasReferenced`, `markIdentifierAliasReferenced`
+            let is_referenced = import.flags.contains(Flags::EXPORT)
+                || hir.exports.iter().enumerate().any(|(x, export)| {
+                    export.spec.is_none()
+                        && !export.type_only
+                        && bound.export_scope[x] == scope
+                        && export
+                            .items
+                            .iter()
+                            .any(|s| !hir[s].type_only && hir[s].local == import.name)
+                })
+                || bound.alias_idents.iter().any(|&(e, _)| {
+                    !bound.is_unchecked(e.idx())
+                        && !bound.is_in_type_query(e)
+                        && bound.symbols[bound.expr_symbol[e.idx()].idx()]
+                            .decls
+                            .contains(&Decl::ImportEquals(i))
+                });
+            // `markAliasSymbolAsReferenced`: the first name of an alias that is kept is looked up as a value as well.
+            let value = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+            if is_referenced
+                && files
+                    .resolve_name(cx.file, scope, first.text, value)
+                    .is_none()
+            {
+                let location = hir.node(names.at(0));
+                let message =
+                    self.get_cannot_find_name_diagnostic_for_name(cx.file, location, first.text);
+                self.on_failed_to_resolve_symbol(
+                    cx.file, location, None, scope, first.text, value, message,
+                );
+            }
             return;
         };
         let flags = files.symbol_flags(target);
@@ -920,14 +895,16 @@ impl Checker<'_> {
         if flags.intersects(SymFlags::VALUE) {
             // As a value, the first name may mean something nearer by that is no namespace.
             let wanted = SymFlags::VALUE | SymFlags::NAMESPACE;
+            if means_umd_global(files, cx.file, scope, first.text, wanted) {
+                self.error(cx.file, names.at(0), 2686, &[Arg::Atom(first.text)]);
+            }
             let nearest = files
-                .resolve_name(cx.file, scope, path[0], wanted)
+                .resolve_name(cx.file, scope, first.text, wanted)
                 .and_then(|found| files.resolve_alias_as(found, wanted));
             if let Some(nearest) = nearest
                 && !files.flags(nearest).intersects(SymFlags::NAMESPACE)
-                && let Some(start) = after_equals(cx.text, import.name_pos)
             {
-                self.error_at((cx.file, start, 0), 2437, &[]);
+                self.error_at((cx.file, first.pos(), 0), 2437, &[Arg::Atom(first.text)]);
             }
         }
         // `checkTypeNameIsReserved`
@@ -947,7 +924,11 @@ impl Checker<'_> {
                     | b"undefined"
             )
         {
-            self.error_at((cx.file, import.name_pos, 0), 2438, &[]);
+            self.error_at(
+                (cx.file, import.name_pos, 0),
+                2438,
+                &[Arg::Atom(import.name)],
+            );
         }
     }
 
@@ -968,7 +949,7 @@ impl Checker<'_> {
     /// `checkExportDeclaration`, of `export { .. }`
     fn xm_export_named(&mut self, cx: &Cx<'_>, s: StmtId, x: ExportId, around: Around) {
         let hir = self.hir(cx.file);
-        let (export, pos) = (hir[x], hir[s].start);
+        let export = hir[x];
         if export.spec.is_none() || self.xm_is_in_place(cx, s, export.spec, true, around) {
             let is_missing = if export.spec.is_none() {
                 false
@@ -994,6 +975,9 @@ impl Checker<'_> {
                     Decl::ExportSpec(item),
                     around.is_ambient,
                 );
+                if export.spec.is_none() {
+                    self.xm_export_specifier(cx, x, item, around.is_ambient);
+                }
             }
             let is_in_ambient_namespace = export.spec.is_none() && around.is_ambient;
             if around.module.is_some() && !around.is_ambient_module && !is_in_ambient_namespace {
@@ -1011,7 +995,61 @@ impl Checker<'_> {
                 self.xm_module_is_missing(cx, s, export.spec, around);
             }
         }
-        self.xm_import_attributes(cx, pos, export.spec, export.type_only, true);
+        self.check_import_attributes(cx, s, export.spec, export.type_only);
+    }
+
+    /// `checkExportSpecifier`, of the `export { a }` `x`, which says no module
+    fn xm_export_specifier(&mut self, cx: &Cx<'_>, x: ExportId, s: ExportSpecId, is_ambient: bool) {
+        let (hir, files) = (self.hir(cx.file), self.files());
+        let scope = self.bound(cx.file).export_scope[x.idx()];
+        let ExportSpec {
+            local: name,
+            local_pos: start,
+            type_only,
+            ..
+        } = hir[s];
+        // `export { "a" }`: not a name.
+        if scope.is_none() || matches!(cx.text.get(start as usize), Some(b'"' | b'\'')) {
+            return;
+        }
+        // `PropertyNameOrName`
+        let location = match hir.property_name(hir.node(s)) {
+            Node::NONE => hir.name(hir.node(s)),
+            written => written,
+        };
+        let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+        let message = self.get_cannot_find_name_diagnostic_for_name(cx.file, location, name);
+        // `getTargetOfExportSpecifier`
+        let is_found = files.resolve_name(cx.file, scope, name, all).is_some();
+        if !is_found {
+            self.on_failed_to_resolve_symbol(cx.file, location, None, scope, name, all, message);
+        } else if means_umd_global(files, cx.file, scope, name, all) {
+            self.error(cx.file, location, 2686, &[Arg::Atom(name)]);
+        }
+        let is_global = files
+            .resolve_name(cx.file, scope, name, all | SymFlags::ALIAS)
+            .is_some_and(|found| {
+                found == files.undefined_symbol
+                    || found == files.global_this_symbol
+                    || self.is_first_declared_in_global_source_file(found)
+            });
+        if is_global {
+            self.error(cx.file, location, 2661, &[Arg::Atom(name)]);
+            return;
+        }
+        // `markLinkedReferences`: not where nothing is emitted, nor when exports stay as they are written.
+        // `markIdentifierAliasReferenced`: what is kept is looked up once more, as a value.
+        if !is_found
+            && !is_ambient
+            && !type_only
+            && !hir[x].type_only
+            && !files.options.verbatim_module_syntax
+        {
+            let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+            self.on_failed_to_resolve_symbol(
+                cx.file, location, None, scope, name, meaning, message,
+            );
+        }
     }
 
     /// `checkExportDeclaration`, of `export * from` and `export * as alias from`
@@ -1036,10 +1074,7 @@ impl Checker<'_> {
                 // `hasExportAssignmentSymbol`
                 if files.export(module, known::export_equals).is_some() {
                     if let Some(written) = cx.specifier(pos, spec) {
-                        self.error_at((cx.file, written.pos, 0), 2498, &[]);
-                        cx.named_symbols
-                            .borrow_mut()
-                            .push((written.pos, 2498, module));
+                        self.error_at((cx.file, written.pos, 0), 2498, &[Arg::Sym(module)]);
                     }
                 } else {
                     self.check_alias_symbol(
@@ -1066,7 +1101,7 @@ impl Checker<'_> {
                 self.xm_module_is_missing(cx, s, spec, around);
             }
         }
-        self.xm_import_attributes(cx, pos, spec, is_type_only, true);
+        self.check_import_attributes(cx, s, spec, is_type_only);
     }
 
     /// `checkExportAssignment`
@@ -1122,7 +1157,7 @@ impl Checker<'_> {
                 code,
                 &[
                     Arg::Atom(name),
-                    Arg::Text(&isolated_modules_like_flag_name(files)),
+                    Arg::Bytes(isolated_modules_like_flag_name(files)),
                 ],
             );
         };
@@ -1158,44 +1193,73 @@ impl Checker<'_> {
 
     // ───────────────────────────── import attributes ─────────────────────────────
 
-    /// `checkImportAttributes`, of the statement at `pos` that names the module `spec`.
-    fn xm_import_attributes(
-        &mut self,
-        cx: &Cx<'_>,
-        pos: u32,
-        spec: Atom,
-        is_type_only: bool,
-        is_export: bool,
-    ) {
+    /// `GetImportAttributes`, of the declaration or the import type that is written at `within`: where `with` is, and the attributes as the
+    /// parser keeps them, an `ExprKind::Object`.
+    fn xm_get_import_attributes(
+        &self,
+        file: FileId,
+        within: TextRange,
+    ) -> Option<(u32, ExprId, Span<PropId>)> {
+        let hir = self.hir(file);
+        let is_within = |kept: &&(u32, ExprId)| (within.pos..within.end).contains(&kept.0);
+        let &(keyword, object) = hir.import_attributes.iter().find(is_within)?;
+        match hir[object].kind {
+            ExprKind::Object(attributes) => Some((keyword, object, attributes)),
+            _ => None,
+        }
+    }
+
+    /// `IsStringLiteralLike`: what `e` says, and whether it is `IsStringLiteral`.
+    fn xm_string_literal_like(&self, file: FileId, e: ExprId) -> Option<(Atom, bool)> {
+        let hir = self.hir(file);
+        let text = match hir[e].kind {
+            ExprKind::String(text) => text,
+            ExprKind::Template { exprs } if exprs.is_empty() => {
+                hir.id_at(hir.template_texts(exprs), 0)
+            }
+            _ => return None,
+        };
+        // Parentheses make it another kind of node. A template without substitutions may be lowered to a `String`.
+        match hir.text.get(self.start_of(file, e) as usize)? {
+            b'"' | b'\'' => Some((text, true)),
+            b'`' => Some((text, false)),
+            _ => None,
+        }
+    }
+
+    /// `checkImportAttributes`, of the declaration `s`, which names the module `spec`.
+    fn check_import_attributes(&mut self, cx: &Cx<'_>, s: StmtId, spec: Atom, is_type_only: bool) {
+        let within = self.hir(cx.file)[s].loc;
         if spec.is_none() {
             return;
         }
-        let Some(written) = cx.specifier(pos, spec) else {
-            return;
-        };
-        let Some((attributes, object)) =
-            self.xm_attributes_after(cx, written.pos, is_export, |_, _| {})
+        let Some((start, object, attributes)) = self.xm_get_import_attributes(cx.file, within)
         else {
             return;
         };
-        if object.is_some() {
-            cx.attribute_types.borrow_mut().push((
-                attributes.start,
-                attributes.end,
-                AttributesType::Object(object),
-            ));
-        } else if let Some(ty) = self.type_from_import_attributes(&attributes) {
-            cx.attribute_types.borrow_mut().push((
-                attributes.start,
-                attributes.end,
-                AttributesType::Known(ty),
-            ));
+        let node = (
+            cx.file,
+            start,
+            self.xm_end_of_import_attributes(cx.file, object),
+        );
+        // `getGlobalImportAttributesTypeChecked` returns `emptyObjectType` if there is no such interface, and the check is skipped.
+        if let Some(sym) = self
+            .files()
+            .atoms
+            .lookup(b"ImportAttributes")
+            .and_then(|name| self.global_type_of_arity(name, 0))
+            && let Some(source) = self.get_type_from_import_attributes(cx.file, object)
+        {
+            // `getNullableType(importAttributesType, TypeFlagsUndefined)`
+            let target = self.declared_type(sym);
+            let target = self.optional(target);
+            self.check_type_assignable_to(source, target, Some(node), None);
         }
         // The remaining checks report with `grammarErrorOnNode`.
         if !cx.grammar {
             return;
         }
-        let overrides = attributes.overrides_resolution_mode(self, is_type_only);
+        let overrides = self.get_resolution_mode_override(node, attributes, is_type_only);
         if is_type_only && overrides {
             return;
         }
@@ -1215,42 +1279,73 @@ impl Checker<'_> {
         } else {
             return;
         };
-        self.error_at((cx.file, attributes.start, attributes.end), code, &[]);
+        self.error_at(node, code, &[]);
     }
 
-    /// `getTypeFromImportAttributes`: a non-fresh object type with one property per attribute, typed as the regular literal type of its
-    /// value. Returns `None` if the text does not give the type of every value: a value is not a string, or has escapes.
-    fn type_from_import_attributes(&self, attributes: &Attributes<'_>) -> Option<TypeId> {
-        let atoms = &self.files().atoms;
-        let mut props: Vec<Prop> = Vec::with_capacity(attributes.entries.len());
-        for &(name, value) in &attributes.entries {
-            let value = value?;
-            if name.contains(&b'\\') || value.contains(&b'\\') {
-                return None;
-            }
-            let name = atoms.intern(name);
-            let ty = self.string_literal(atoms.intern(value), false);
-            // `members[member.Name] = member`: the last attribute with a given name wins.
-            props.retain(|p| p.name != name);
-            props.push(Prop {
-                name,
-                flags: PropFlags::empty(),
-                source: PropSource::Type(ty),
-                mapper: MapperId::IDENTITY,
-            });
+    /// Where the `ImportAttributes` whose attributes are `object` end: after the closing brace. 0 if that is not known.
+    fn xm_end_of_import_attributes(&self, file: FileId, object: ExprId) -> u32 {
+        let (hir, open) = (self.hir(file), self.hir(file)[object].pos);
+        if hir.text.get(open as usize) == Some(&b'{') {
+            self.end_of_bracket_at(file, open)
+        } else {
+            0
         }
-        Some(self.synth(Shape {
-            props,
-            ..Shape::default()
-        }))
     }
 
-    /// `getTypeFromImportAttributes`, from the attributes as the parser kept them. Returns `None` if the type of a value is unknown.
-    fn type_from_import_attributes_object(
+    /// `getResolutionModeOverride`: whether `attributes`, the `node`, say how the module is to be looked for.
+    fn get_resolution_mode_override(
+        &mut self,
+        node: super::related::Place,
+        attributes: Span<PropId>,
+        report_errors: bool,
+    ) -> bool {
+        let (file, hir) = (node.0, self.hir(node.0));
+        let report = |c: &mut Self, at: super::related::Place, code: u32| {
+            if report_errors {
+                c.error_at(at, code, &[]);
+            }
+            false
+        };
+        if attributes.len() != 1 {
+            return report(self, node, 1464);
+        }
+        let only = hir[attributes.at(0)];
+        if !matches!(hir.text.get(only.pos as usize), Some(b'"' | b'\'')) {
+            return false;
+        }
+        if only.key.name().map(|name| self.files().atoms.bytes(name)) != Some(b"resolution-mode") {
+            return report(self, (file, only.pos, 0), 1463);
+        }
+        let Some((value, _)) = self.xm_string_literal_like(file, only.value) else {
+            return false;
+        };
+        matches!(self.files().atoms.bytes(value), b"import" | b"require")
+            || report(self, (file, self.start_of(file, only.value), 0), 1453)
+    }
+
+    /// `HasResolutionModeOverride`, of the declaration or the import type whose module specifier is `written`. What attributes it has
+    /// come after that, and before the next specifier.
+    pub(super) fn has_resolution_mode_override(
         &mut self,
         file: FileId,
-        object: ExprId,
-    ) -> Option<TypeId> {
+        written: SpecifierUse,
+    ) -> bool {
+        let later = self.hir(file).specifier_uses.iter().map(|u| u.pos);
+        let within = TextRange {
+            pos: written.pos,
+            end: later
+                .filter(|&pos| pos > written.pos)
+                .min()
+                .unwrap_or(u32::MAX),
+        };
+        self.xm_get_import_attributes(file, within)
+            .is_some_and(|(.., attributes)| {
+                self.get_resolution_mode_override((file, 0, 0), attributes, false)
+            })
+    }
+
+    /// `getTypeFromImportAttributes`. `None`: the type of a value is unknown.
+    fn get_type_from_import_attributes(&mut self, file: FileId, object: ExprId) -> Option<TypeId> {
         let hir = self.hir(file);
         let ExprKind::Object(attributes) = hir[object].kind else {
             return None;
@@ -1276,99 +1371,6 @@ impl Checker<'_> {
             props,
             ..Shape::default()
         }))
-    }
-
-    /// `checkImportAttributes`: reports 2322 at the keyword unless the attributes are assignable to the global `ImportAttributes`.
-    /// tsgo reports it with a plain `error`, so parse diagnostics do not suppress it.
-    fn check_import_attribute_types(&mut self, cx: &Cx<'_>) {
-        let attribute_types = cx.attribute_types.take();
-        if attribute_types.is_empty() {
-            return;
-        }
-        // `getGlobalImportAttributesTypeChecked` returns `emptyObjectType` if there is no such interface, and the check is skipped.
-        let Some(sym) = self
-            .files()
-            .atoms
-            .lookup(b"ImportAttributes")
-            .and_then(|name| self.global_type_of_arity(name, 0))
-        else {
-            return;
-        };
-        let target = self.declared_type(sym);
-        // `getNullableType(importAttributesType, TypeFlagsUndefined)`
-        let target = self.optional(target);
-        for (start, end, source) in attribute_types {
-            let source = match source {
-                AttributesType::Known(ty) => Some(ty),
-                AttributesType::Object(object) => {
-                    self.type_from_import_attributes_object(cx.file, object)
-                }
-            };
-            if let Some(source) = source {
-                self.check_type_assignable_to(source, target, Some((cx.file, start, end)), None);
-            }
-        }
-    }
-
-    /// `parseImportType` in a file that does not parse: where the last token it takes ends, if it never gets to its `)`. The keyword is at
-    /// `import`.
-    fn xm_end_of_unfinished_import_type(&self, file: FileId, import: u32) -> Option<u32> {
-        let hir = self.hir(file);
-        if !hir.has_parse_diagnostics {
-            return None;
-        }
-        let text = &hir.text[..];
-        // `parseExpected`, `parseOptional`: takes what comes after `end` if it is `token`.
-        let take = |end: &mut u32, token: &[u8]| {
-            let at = self.skip_trivia_from(file, *end);
-            let token_end = self.end_of_token_at(file, at);
-            let is_next = text.get(at as usize..token_end as usize) == Some(token);
-            if is_next {
-                *end = token_end;
-            }
-            is_next
-        };
-        // Takes the name or the string that comes after `end`, or the number if it is a value that is wanted.
-        let take_word = |end: &mut u32, is_name: bool| {
-            let at = self.skip_trivia_from(file, *end);
-            let is_next = text.get(at as usize).is_some_and(|&b| {
-                b.is_ascii_alphabetic()
-                    || matches!(b, b'_' | b'$' | b'"' | b'\'')
-                    || !is_name && b.is_ascii_digit()
-            });
-            if is_next {
-                *end = self.end_of_token_at(file, at);
-            }
-            is_next
-        };
-        let mut end = self.end_of_token_at(file, import);
-        take(&mut end, b"(");
-        let specifier = self.skip_trivia_from(file, end);
-        if !matches!(text.get(specifier as usize), Some(b'"' | b'\'')) {
-            return None;
-        }
-        end = self.end_of_token_at(file, specifier);
-        if take(&mut end, b",") {
-            take(&mut end, b"{");
-            if !take(&mut end, b"with") {
-                take(&mut end, b"assert");
-            }
-            take(&mut end, b":");
-            // `parseImportAttributes`
-            if take(&mut end, b"{") {
-                while take_word(&mut end, true) {
-                    take(&mut end, b":");
-                    take_word(&mut end, false);
-                    if !take(&mut end, b",") {
-                        break;
-                    }
-                }
-                take(&mut end, b"}");
-            }
-            take(&mut end, b",");
-            take(&mut end, b"}");
-        }
-        (!take(&mut end, b")")).then_some(end)
     }
 
     /// `checkGrammarImportCallExpression`, `checkImportType`, `getTypeFromImportTypeNode`
@@ -1400,11 +1402,21 @@ impl Checker<'_> {
             if bound.is_unchecked_type(i) {
                 continue;
             }
+            if !name.is_empty() {
+                self.check_import_type_names(cx.file, TypeNodeId(i as u32));
+            }
+            let within = TextRange {
+                pos: node.pos,
+                end: self.end_of_type_node(cx.file, TypeNodeId(i as u32)),
+            };
             if cx.grammar
-                && let Some(written) = cx.specifier(node.pos, spec)
-                && let Some(attributes) = import_type_attributes(cx.text, written.pos as usize)
+                && let Some((_, object, attributes)) =
+                    self.xm_get_import_attributes(cx.file, within)
             {
-                attributes.overrides_resolution_mode(self, true);
+                // The node starts at the brace: `with` is a property of the object around it.
+                let end = self.xm_end_of_import_attributes(cx.file, object);
+                let node = (cx.file, hir[object].pos, end);
+                self.get_resolution_mode_override(node, attributes, true);
             }
             if !name.is_empty() {
                 continue;
@@ -1423,14 +1435,7 @@ impl Checker<'_> {
                 SymFlags::TYPE
             }) {
                 let code = if is_typeof { 1339 } else { 1340 };
-                let import = if is_typeof {
-                    self.skip_trivia_from(cx.file, self.end_of_token_at(cx.file, node.pos))
-                } else {
-                    node.pos
-                };
-                let end = self
-                    .xm_end_of_unfinished_import_type(cx.file, import)
-                    .unwrap_or_else(|| self.end_of_type_node(cx.file, TypeNodeId(i as u32)));
+                let end = within.end;
                 self.error_at((cx.file, node.pos, end), code, &[Arg::Atom(spec)]);
             }
         }
@@ -1527,22 +1532,6 @@ impl Checker<'_> {
 
 // ───────────────────────────── whether the file parses ─────────────────────────────
 
-/// `tryParseImportAttributes`, `parseExportDeclaration`, `parseImportType`: `assert` where `with` belongs is an error of the parser's.
-fn has_import_assertions(text: &[u8], uses: &[SpecifierUse]) -> bool {
-    uses.iter().any(|u| {
-        let Some(end) = string_end(text, u.pos as usize) else {
-            return false;
-        };
-        let mut at = skip_trivia(text, end);
-        if text.get(at) != Some(&b',') {
-            return word_at(text, at) == b"assert" && !has_line_break(&text[end..at]);
-        }
-        // `import("m", { assert: { .. } })`
-        at = skip_trivia(text, at + 1);
-        text.get(at) == Some(&b'{') && word_at(text, skip_trivia(text, at + 1)) == b"assert"
-    })
-}
-
 // ───────────────────────────── names of modules ─────────────────────────────
 
 /// `IsExternalModuleNameRelative`
@@ -1557,42 +1546,14 @@ fn is_relative_name(name: &[u8]) -> bool {
     }
 }
 
-/// `getSuggestedImportExtension`, of the relative `spec` written in the file `from`. Only the files of the program are known to be there.
-pub(super) fn suggested_import_extension(
-    files: &Files,
-    from: &str,
-    spec: &str,
-) -> Option<&'static str> {
-    let stem = crate::resolve::join(crate::resolve::parent_dir(from), spec);
-    let for_tsx = if files.options.jsx == crate::resolve::JsxEmit::Preserve {
-        ".jsx"
-    } else {
-        ".js"
-    };
-    [
-        (".mts", ".mjs"),
-        (".ts", ".js"),
-        (".cts", ".cjs"),
-        (".mjs", ".mjs"),
-        (".js", ".js"),
-        (".cjs", ".cjs"),
-        (".tsx", for_tsx),
-        (".jsx", ".jsx"),
-        (".json", ".json"),
-    ]
-    .into_iter()
-    .find(|(written, _)| files.by_path.contains_key(&format!("{stem}{written}")))
-    .map(|(_, suggested)| suggested)
-}
-
 // ───────────────────────────── what goes into messages ─────────────────────────────
 
 /// `getIsolatedModulesLikeFlagName`
-pub(super) fn isolated_modules_like_flag_name(files: &Files) -> String {
+pub(super) fn isolated_modules_like_flag_name(files: &Files) -> &'static [u8] {
     if files.options.verbatim_module_syntax {
-        "verbatimModuleSyntax".to_owned()
+        b"verbatimModuleSyntax"
     } else {
-        "isolatedModules".to_owned()
+        b"isolatedModules"
     }
 }
 
@@ -1609,289 +1570,7 @@ pub(super) fn import_clause_end(text: &[u8], spec_pos: u32) -> u32 {
 
 // ───────────────────────────── import attributes, as they are written ─────────────────────────────
 
-struct Attribute<'a> {
-    name: &'a [u8],
-    name_pos: u32,
-    name_is_string: bool,
-    /// `IsStringLiteralLike`: what is between the quotes, of whichever kind they are.
-    value: Option<&'a [u8]>,
-    value_pos: u32,
-}
-
-/// `with { name: "value", .. }`
-struct Attributes<'a> {
-    /// Where the node starts: at the keyword, or at the brace in `import("m", { with: { .. } })`.
-    start: u32,
-    /// Where it ends: after the closing brace. 0 if that is not known.
-    end: u32,
-    first: Option<Attribute<'a>>,
-    /// The name, without quotes, and the `Attribute::value` of every attribute.
-    entries: Vec<(&'a [u8], Option<&'a [u8]>)>,
-}
-
-impl Attributes<'_> {
-    /// `getResolutionModeOverride`: whether they say how the module is to be looked for.
-    fn overrides_resolution_mode(&self, c: &mut Checker<'_>, report_errors: bool) -> bool {
-        let report = |c: &mut Checker<'_>, start: u32, code: u32| {
-            if report_errors {
-                c.error_at((c.checking.unwrap(), start, 0), code, &[]);
-            }
-        };
-        let Some(only) = self.first.as_ref().filter(|_| self.entries.len() == 1) else {
-            report(c, self.start, 1464);
-            c.note(self.start, self.end, 1464, &[]);
-            return false;
-        };
-        if !only.name_is_string {
-            return false;
-        }
-        if only.name != b"resolution-mode" {
-            report(c, only.name_pos, 1463);
-            return false;
-        }
-        let Some(value) = only.value else {
-            return false;
-        };
-        if value != b"import" && value != b"require" {
-            report(c, only.value_pos, 1453);
-            return false;
-        }
-        true
-    }
-}
-
-impl<'p> Checker<'p> {
-    /// The attributes after the module specifier at `spec_pos` of an import or export declaration, and the `ExprKind::Object` the
-    /// parser kept them as (`hir::File::import_attributes`). They are read from the text, and the object is `NONE`, if it kept none.
-    /// `on_other_value`: called with the start and the end of each value that is not a string in single or double quotes.
-    fn xm_attributes_after<'a>(
-        &self,
-        cx: &Cx<'a>,
-        spec_pos: u32,
-        is_export: bool,
-        mut on_other_value: impl FnMut(u32, u32),
-    ) -> Option<(Attributes<'a>, ExprId)>
-    where
-        'p: 'a,
-    {
-        let (keyword, keyword_end) = cx.attributes_keyword(spec_pos, is_export)?;
-        let start = keyword as u32;
-        let (hir, atoms) = (self.hir(cx.file), &self.files().atoms);
-        let Some(&(_, object)) = hir.import_attributes.iter().find(|kept| kept.0 == start) else {
-            let attributes = parse_attributes(
-                cx.text,
-                skip_trivia(cx.text, keyword_end),
-                start,
-                on_other_value,
-            )?;
-            return Some((attributes, ExprId::NONE));
-        };
-        let ExprKind::Object(props) = hir[object].kind else {
-            return None;
-        };
-        let mut attributes = Attributes {
-            start,
-            // Without a `{` they are the keyword.
-            end: match cx.text.get(hir[object].pos as usize) {
-                Some(b'{') => hir[object].end,
-                _ => 0,
-            },
-            first: None,
-            entries: Vec::with_capacity(props.len()),
-        };
-        for p in props.iter() {
-            let prop = &hir[p];
-            let name: &'a [u8] = prop.key.name().map_or(&[][..], |name| atoms.bytes(name));
-            let value_pos = self.start_of(cx.file, prop.value);
-            // Parentheses make it another kind of node. A template without substitutions may be lowered to a `String`.
-            let quote = cx
-                .text
-                .get(value_pos as usize)
-                .copied()
-                .filter(|&c| matches!(c, b'"' | b'\'' | b'`'));
-            let value: Option<&'a [u8]> = match hir[prop.value].kind {
-                ExprKind::String(value) if quote.is_some() => Some(atoms.bytes(value)),
-                ExprKind::Template { exprs } if exprs.is_empty() && quote.is_some() => {
-                    Some(atoms.bytes(hir.id_at(hir.template_texts(exprs), 0)))
-                }
-                _ => None,
-            };
-            // The parser has reported a missing value.
-            if (value.is_none() || quote == Some(b'`'))
-                && !matches!(hir[prop.value].kind, ExprKind::Missing)
-            {
-                on_other_value(value_pos, self.end_of_expr(cx.file, prop.value));
-            }
-            if attributes.first.is_none() {
-                let name_is_string = matches!(cx.text.get(prop.pos as usize), Some(b'"' | b'\''));
-                attributes.first = Some(Attribute {
-                    name,
-                    name_pos: prop.pos,
-                    name_is_string,
-                    value,
-                    value_pos,
-                });
-            }
-            attributes.entries.push((name, value));
-        }
-        Some((attributes, object))
-    }
-}
-
-/// The start and the end of the `with` or `assert` after the module specifier at `spec_pos` of an import or export declaration.
-fn attributes_keyword(text: &[u8], spec_pos: u32, is_export: bool) -> Option<(usize, usize)> {
-    let end = string_end(text, spec_pos as usize)?;
-    let keyword = skip_trivia(text, end);
-    let word = word_at(text, keyword);
-    // `tryParseImportAttributes` accepts `with` on any line and `assert` on the same line only. `parseExportDeclaration` accepts both
-    // on the same line only. The parser reports `assert` and still builds the node.
-    let must_be_on_same_line = match word {
-        b"with" => is_export,
-        b"assert" => true,
-        _ => return None,
-    };
-    if must_be_on_same_line && has_line_break(&text[end..keyword]) {
-        return None;
-    }
-    Some((keyword, keyword + word.len()))
-}
-
-/// `parseImportAttributes`, from the brace at `open`. `None` for what does not parse, or cannot be told to.
-fn parse_attributes(
-    text: &[u8],
-    open: usize,
-    start: u32,
-    mut on_other_value: impl FnMut(u32, u32),
-) -> Option<Attributes<'_>> {
-    if text.get(open) != Some(&b'{') {
-        return None;
-    }
-    let mut at = skip_trivia(text, open + 1);
-    let mut attributes = Attributes {
-        start,
-        end: 0,
-        first: None,
-        entries: Vec::new(),
-    };
-    while text.get(at) != Some(&b'}') {
-        let name_pos = at;
-        let name_is_string = matches!(text.get(at), Some(b'"' | b'\''));
-        let name_end = if name_is_string {
-            string_end(text, at)?
-        } else {
-            word_end(text, at)
-        };
-        if name_end == name_pos {
-            return None;
-        }
-        at = skip_trivia(text, name_end);
-        if text.get(at) != Some(&b':') {
-            return None;
-        }
-        let value_pos = skip_trivia(text, at + 1);
-        let (value, value_end) = match string_end(text, value_pos) {
-            Some(end) => (Some(&text[value_pos + 1..end - 1]), end),
-            None => {
-                let end = expression_end(text, value_pos).filter(|&end| end > value_pos)?;
-                on_other_value(value_pos as u32, skip_trivia_back(text, end) as u32);
-                // A template that nothing is substituted in.
-                match text[value_pos..end].trim_ascii_end() {
-                    [b'`', inner @ .., b'`'] if !inner.contains(&b'`') => (Some(inner), end),
-                    _ => (None, end),
-                }
-            }
-        };
-        let name = if name_is_string {
-            &text[name_pos + 1..name_end - 1]
-        } else {
-            &text[name_pos..name_end]
-        };
-        if attributes.first.is_none() {
-            attributes.first = Some(Attribute {
-                name,
-                name_pos: name_pos as u32,
-                name_is_string,
-                value,
-                value_pos: value_pos as u32,
-            });
-        }
-        attributes.entries.push((name, value));
-        at = skip_trivia(text, value_end);
-        match text.get(at) {
-            Some(b',') => at = skip_trivia(text, at + 1),
-            Some(b'}') => {}
-            _ => return None,
-        }
-    }
-    attributes.end = at as u32 + 1;
-    Some(attributes)
-}
-
-/// The attributes of `import("m", { with: { .. } })`, whose `"m"` is at `spec_pos`.
-fn import_type_attributes(text: &[u8], spec_pos: usize) -> Option<Attributes<'_>> {
-    let mut at = skip_trivia(text, string_end(text, spec_pos)?);
-    for expected in [b',', b'{'] {
-        if text.get(at) != Some(&expected) {
-            return None;
-        }
-        at = skip_trivia(text, at + 1);
-    }
-    if word_at(text, at) != b"with" {
-        return None;
-    }
-    at = skip_trivia(text, at + 4);
-    if text.get(at) != Some(&b':') {
-        return None;
-    }
-    let open = skip_trivia(text, at + 1);
-    parse_attributes(text, open, open as u32, |_, _| {})
-}
-
-/// Where the expression at `at` ends, which a `,` or a `}` follows. `None` if counting brackets does not tell.
-fn expression_end(text: &[u8], mut at: usize) -> Option<usize> {
-    let mut depth = 0u32;
-    loop {
-        match *text.get(at)? {
-            b'"' | b'\'' => at = string_end(text, at)?,
-            b'`' => {
-                at += 1;
-                loop {
-                    match *text.get(at)? {
-                        b'`' => break,
-                        b'\\' => at += 2,
-                        b'$' if text.get(at + 1) == Some(&b'{') => return None,
-                        _ => at += 1,
-                    }
-                }
-                at += 1;
-            }
-            // A comment. A division and a regular expression cannot be told apart from here.
-            b'/' => {
-                let after = skip_trivia(text, at);
-                if after == at {
-                    return None;
-                }
-                at = after;
-            }
-            b'(' | b'[' | b'{' => {
-                depth += 1;
-                at += 1;
-            }
-            b',' | b'}' if depth == 0 => return Some(at),
-            b')' | b']' | b'}' => {
-                depth = depth.checked_sub(1)?;
-                at += 1;
-            }
-            _ => at += 1,
-        }
-    }
-}
-
 // ───────────────────────────── reading the text ─────────────────────────────
-
-fn has_line_break(text: &[u8]) -> bool {
-    text.iter().any(|&c| c == b'\n' || c == b'\r')
-}
 
 /// The start of the first token of the file. The scanner skips a byte order mark and a `#!` line there like trivia.
 fn first_token_start(text: &[u8]) -> u32 {
@@ -1964,19 +1643,4 @@ fn statement_list_start(hir: &hir::File, statements: IdList<StmtId>) -> Option<u
             None => return Some(start as u32),
         }
     }
-}
-
-/// Whether the namespace whose name is at `name_pos` is declared with `module`. What holds for the `A` of `module A.B` holds for `B`.
-fn says_module(text: &[u8], name_pos: u32, inherited: bool) -> bool {
-    let end = skip_trivia_back(text, name_pos as usize);
-    if text[..end].ends_with(b".") {
-        return inherited;
-    }
-    &text[word_start(text, end)..end] == b"module"
-}
-
-/// Where what follows the `=` of `import name = ..` starts.
-fn after_equals(text: &[u8], name_pos: u32) -> Option<u32> {
-    let at = skip_trivia(text, word_end(text, name_pos as usize));
-    (text.get(at) == Some(&b'=')).then(|| skip_trivia(text, at + 1) as u32)
 }

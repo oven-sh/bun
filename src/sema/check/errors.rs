@@ -5,13 +5,12 @@
 //! reported: better to miss one than to make one up.
 
 use super::errors_modules::fully_qualified_name;
-use super::errors_x_operators::{has_empty_object_intersection, type_of_property_of_type};
+use super::errors_x_operators::has_empty_object_intersection;
 use super::errors_x_statements::{is_said_by_the_binder, is_said_by_the_parser};
 use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
-use smallvec::SmallVec;
 
 /// What `check_file` found. What a question that was under way reported is in the sink. `finish_file` makes the errors of the file of it.
 pub struct Checked {
@@ -64,6 +63,8 @@ impl Checker<'_> {
     /// All that asks a question about `file`. What it leads other files, or other files lead this one, to report is in the sink.
     pub fn check_file(&mut self, file: FileId) -> Checked {
         self.noted_ahead.clear();
+        self.limits = 0;
+        self.instantiations_up_to_a_limit.clear();
         self.deferred_diagnostics.clear();
         self.node_check_flags.clear();
         self.never_checked.borrow_mut().clear();
@@ -115,7 +116,16 @@ impl Checker<'_> {
             .into_iter()
             .partition(is_syntactic);
         self.reported = syntactic;
-        self.check_js_syntax(file);
+        // `GetSyntacticDiagnostics`: `file.JSDiagnostics()`
+        for &(start, end, code, what) in hir.js_diagnostics.iter() {
+            let args = (!what.is_empty()).then(|| what.into());
+            self.add_diagnostic(Reported::new(
+                (file, start, end),
+                code,
+                args.into_iter().collect(),
+            ));
+        }
+        self.get_additional_js_syntactic_diagnostics(file);
         if self.only_syntax || !self.reports_semantic_errors(file) {
             return self.checked(None, false);
         }
@@ -138,9 +148,7 @@ impl Checker<'_> {
         // `checkUnmatchedJSDocParameters`
         for &(start, code) in self.bound(file).jsdoc_param_errors.iter() {
             self.error_at((file, start, 0), code, &[]);
-            if code == 8032 {
-                explain_qualified_parameter_name(self, file, start);
-            }
+            explain_early_error(self, file, start, code);
         }
         self.checking = Some(file);
         self.emit_resolver_links = Default::default();
@@ -151,17 +159,13 @@ impl Checker<'_> {
         self.check_declare_modifiers(file);
         self.check_empty_declaration_lists(file);
         self.check_modules(file);
-        self.check_names(file);
-        self.check_type_argument_counts(file);
-        self.check_properties_initialized(file);
-        self.check_writes(file);
+        self.report_unresolved_identifiers();
+        self.check_keywords_implemented(file);
         self.check_property_accesses(file);
         self.check_calls(file);
         self.check_unused(file);
         self.check_grammar(file);
-        self.check_grammar_modifiers(file);
         self.check_duplicates(file);
-        self.check_heritage(file);
         self.check_jsx(file);
         self.check_overloads(file);
         self.check_use_before_declaration(file);
@@ -175,23 +179,16 @@ impl Checker<'_> {
         self.check_x_aliases(file);
         // It takes back what has been said of specifiers that are never resolved.
         self.check_x_modules(file);
-        self.check_x_classes(file);
         self.produce_deferred_diagnostics(file);
-        self.check_type_modifier_in_type_only_clauses(file);
-        // `checkGrammarRegularExpressionLiteral`
-        if !has_parse_diagnostics {
-            self.check_x_regexp_scanner(file);
-        }
         self.check_x_typenodes(file);
-        self.recount_type_arguments_of_circular_aliases(file);
         // The last two put other words in the place of what has been said: of what is assigned, of names that are not found.
         self.check_x_signatures(file);
         self.check_x_operators(file);
         self.check_x_enums_names(file);
+        self.report_unresolved_identifiers();
         self.check_external_emit_helpers(file);
         // It takes back what has been said of decorators that are out of place.
         self.report_decorators(file);
-        self.check_targets_of_loops(file);
         self.check_strict_mode_statements(file);
         self.check_modifiers_of_merged_declarations(file);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
@@ -203,6 +200,7 @@ impl Checker<'_> {
                 explain_jsdoc_nullable_type(self, file, start, code);
             }
         }
+        self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive takes these back, and plain JavaScript has them too.
         self.settle_what_was_noted_ahead();
         // What is reported of another file goes where that file finds it.
@@ -682,11 +680,6 @@ impl Checker<'_> {
                 self.error_at((file, prop.pos, 0), 2880, &[]);
             }
         }
-        for x in 0..hir.exports.len() {
-            if hir.exports[x].spec.is_none() {
-                self.check_exported_names_are_there(file, x);
-            }
-        }
     }
 
     /// What `getTargetOfAliasDeclaration` reports of the declaration `decl` in `file` of the alias `sym`, if its module is found:
@@ -846,54 +839,6 @@ impl Checker<'_> {
             }
         }
         None
-    }
-
-    /// `getTargetOfExportSpecifier`, `markExportSpecifierAliasReferenced`: what the `x`th `export { a }` of the file names has to be there.
-    fn check_exported_names_are_there(&mut self, file: FileId, x: usize) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (export, scope) = (&hir.exports[x], bound.export_scope[x]);
-        // `checkGrammarModuleElementContext`: anywhere but at the top of a file or a namespace it is left at that.
-        if scope.is_none()
-            || !matches!(
-                bound.scopes[scope.idx()].kind,
-                ScopeKind::File | ScopeKind::Module(_)
-            )
-        {
-            return;
-        }
-        let mut is_ambient = hir.kind == FileKind::Declaration;
-        let mut at = scope;
-        while !is_ambient && at.is_some() {
-            is_ambient = matches!(bound.scopes[at.idx()].kind, ScopeKind::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
-            at = bound.scopes[at.idx()].parent;
-        }
-        // `markLinkedReferences`: not where nothing is emitted, nor when exports stay as they are written.
-        let is_marked =
-            !export.type_only && !is_ambient && !self.p.files.options.verbatim_module_syntax;
-        let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
-        for s in export.items.iter() {
-            let ExportSpec {
-                local: name,
-                local_pos: start,
-                type_only,
-                ..
-            } = hir[s];
-            if self.files().resolve_name(file, scope, name, all).is_some()
-                // 2661, which `check_exports` says.
-                || matches!(self.files().atoms.bytes(name), b"any" | b"string" | b"number" | b"boolean" | b"never" | b"unknown")
-                // `export { "a" }`: not a name.
-                || matches!(hir.text.get(start as usize), Some(b'"' | b'\''))
-            {
-                continue;
-            }
-            let code = self.not_found(file, scope, name, all, start);
-            self.error_at((file, start, 0), code, &[]);
-            // `markIdentifierAliasReferenced`: what is kept is looked up once more, as a value.
-            if is_marked && !type_only {
-                let code = self.not_found(file, scope, name, SymFlags::VALUE, start);
-                self.error_at((file, start, 0), code, &[]);
-            }
-        }
     }
 
     /// `getTargetOfModuleDefault`: whether `module` has a default export, its own or a synthetic one. `usage`: the syntax the specifier is
@@ -1178,88 +1123,83 @@ impl Checker<'_> {
 
     /// 2564: a property that has to hold something is left without a value by its declaration and by the constructor.
     /// `checkPropertyInitialization`
-    fn check_properties_initialized(&mut self, file: FileId) {
-        let options = &self.p.files.options;
-        if !options.strict_null_checks || !options.strict_property_initialization {
+    pub(super) fn check_property_initialization(&mut self, file: FileId, c: ClassId) {
+        let (options, hir) = (&self.p.files.options, self.hir(file));
+        let class = &hir[c];
+        if !options.strict_null_checks
+            || !options.strict_property_initialization
+            || hir.kind == FileKind::Declaration
+            || class.flags.contains(Flags::AMBIENT)
+        {
             return;
         }
-        let hir = self.hir(file);
-        if hir.kind == FileKind::Declaration {
-            return;
-        }
-        for c in 0..hir.classes.len() {
-            let class = &hir.classes[c];
-            if class.flags.contains(Flags::AMBIENT) {
+        let constructor = class
+            .members
+            .iter()
+            .find(|&m| {
+                hir[m].kind == MemberKind::Constructor
+                    && !matches!(hir[hir[m].func].body, FnBody::None)
+            })
+            .map(|m| hir[m].func);
+        for m in class.members.iter() {
+            let member = &hir[m];
+            if member.kind != MemberKind::Property
+                || member.init.is_some()
+                || member.flags.intersects(
+                    Flags::STATIC
+                        | Flags::ABSTRACT
+                        | Flags::AMBIENT
+                        | Flags::DEFINITE
+                        | Flags::OPTIONAL
+                        | Flags::LITERAL_NAME,
+                )
+            {
                 continue;
             }
-            let constructor = class
-                .members
-                .iter()
-                .find(|&m| {
-                    hir[m].kind == MemberKind::Constructor
-                        && !matches!(hir[hir[m].func].body, FnBody::None)
-                })
-                .map(|m| hir[m].func);
-            for m in class.members.iter() {
-                let member = &hir[m];
-                if member.kind != MemberKind::Property
-                    || member.init.is_some()
-                    || member.flags.intersects(
-                        Flags::STATIC
-                            | Flags::ABSTRACT
-                            | Flags::AMBIENT
-                            | Flags::DEFINITE
-                            | Flags::OPTIONAL
-                            | Flags::LITERAL_NAME,
+            // What `this.name` or `this[key]` is known by where the constructor assigns to it, and `getTypeOfSymbol` of the
+            // declaration: the type as it is declared, where `this` is still `this`.
+            let (key, ty) = match self.declared_member_name(file, member.key) {
+                Some(name) => {
+                    let sym = self.class_sym(file, c);
+                    let instance = self.declared_type(sym);
+                    let Some((prop, _)) = self.prop_ref(instance, name) else {
+                        continue;
+                    };
+                    (Some(name), self.type_of_prop(prop, MapperId::IDENTITY))
+                }
+                None => {
+                    // `[k]: T` is held to it whatever `k` is.
+                    let PropKey::Computed(k) = member.key else {
+                        continue;
+                    };
+                    // What it is only matters where there is a constructor to go through.
+                    let written = self.type_of_expr(file, k);
+                    if constructor.is_some() && !self.is_known(written) {
+                        continue;
+                    }
+                    (
+                        self.access_key(file, k),
+                        self.type_of_member_declaration(file, m),
                     )
-                {
-                    continue;
                 }
-                // What `this.name` or `this[key]` is known by where the constructor assigns to it, and `getTypeOfSymbol` of the
-                // declaration: the type as it is declared, where `this` is still `this`.
-                let (key, ty) = match self.declared_member_name(file, member.key) {
-                    Some(name) => {
-                        let sym = self.files().sym(file, self.bound(file).class_symbol[c]);
-                        let instance = self.declared_type(sym);
-                        let Some((prop, _)) = self.prop_ref(instance, name) else {
-                            continue;
-                        };
-                        (Some(name), self.type_of_prop(prop, MapperId::IDENTITY))
-                    }
-                    None => {
-                        // `[k]: T` is held to it whatever `k` is.
-                        let PropKey::Computed(k) = member.key else {
-                            continue;
-                        };
-                        // What it is only matters where there is a constructor to go through.
-                        let written = self.type_of_expr(file, k);
-                        if constructor.is_some() && !self.is_known(written) {
-                            continue;
-                        }
-                        (
-                            self.access_key(file, k),
-                            self.type_of_member_declaration(file, m),
-                        )
-                    }
-                };
-                if ty == TypeId::UNRESOLVED
-                    || ty == TypeId::UNKNOWN
-                    || self.is_any(ty)
-                    || self.contains_undefined(ty)
-                {
-                    continue;
-                }
-                // `isPropertyInitializedInConstructor`
-                let is_assigned = match (constructor, key) {
-                    (Some(func), Some(key)) => self.is_assigned_in_constructor(file, func, key, ty),
-                    _ => false,
-                };
-                if !is_assigned {
-                    // `DeclarationNameToString`
-                    let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
-                    let name = Arg::Bytes(&hir.text[start as usize..end as usize]);
-                    self.error_at((file, start, end), 2564, &[name]);
-                }
+            };
+            if ty == TypeId::UNRESOLVED
+                || ty == TypeId::UNKNOWN
+                || self.is_any(ty)
+                || self.contains_undefined(ty)
+            {
+                continue;
+            }
+            // `isPropertyInitializedInConstructor`
+            let is_assigned = match (constructor, key) {
+                (Some(func), Some(key)) => self.is_assigned_in_constructor(file, func, key, ty),
+                _ => false,
+            };
+            if !is_assigned {
+                // `DeclarationNameToString`
+                let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
+                let name = Arg::Bytes(&hir.text[start as usize..end as usize]);
+                self.error_at((file, start, end), 2564, &[name]);
             }
         }
     }
@@ -1345,383 +1285,424 @@ impl Checker<'_> {
 
     // ───────────────────────────── names nothing goes by ─────────────────────────────
 
-    fn check_names(&mut self, file: FileId) {
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        for &(e, scope) in &bound.free_idents {
-            let ExprKind::Ident(name) = hir[e].kind else {
+    /// `resolveEntityName`, of the name of a primitive type after `implements`: a name like any other there, which is kept as the keyword.
+    fn check_keywords_implemented(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for node in hir.classes.iter().flat_map(|c| hir.ids(c.implements)) {
+            let TypeNodeKind::Keyword(keyword) = hir[node].kind else {
                 continue;
             };
-            // `await x` where it cannot be: the parser took the keyword for a name, and has said what is wrong.
-            if hir
-                .early_errors
-                .iter()
-                .any(|&(start, code)| code == 1308 && start == hir[e].pos)
-            {
+            if matches!(
+                keyword,
+                Keyword::Void | Keyword::Null | Keyword::This | Keyword::Intrinsic
+            ) {
                 continue;
             }
-            if bound.is_unchecked(e.idx())
-                // What another declaration of the namespace or the enum around exports, in whichever file, is in scope too.
-                || matches!(
-                    self.files()
-                        .resolve_name_or_error(file, scope, name, SymFlags::VALUE),
-                    Ok(Some(_))
-                )
-            {
-                continue;
+            let (location, scope) = (hir.node(node), bound.type_scope[node.idx()]);
+            let (start, end) = self.get_error_range_for_node(file, location);
+            if let Some(written) = hir.text.get(start as usize..end as usize) {
+                let name = self.files().atoms.intern(written);
+                self.on_failed_to_resolve_symbol(
+                    file,
+                    location,
+                    None,
+                    scope,
+                    name,
+                    SymFlags::TYPE,
+                    2304,
+                );
             }
-            // `RequireSymbol`: in JavaScript, `require(x)` needs no declaration. `(require)(x)` is not a require call (`IsRequireCall`).
-            if let Parent::Expr(call) = bound.expr_parent[e.idx()]
-                && hir.is_js
-                && crate::bind::require_argument(hir, call).is_some()
-                && matches!(hir[call].kind, ExprKind::Call(c) if hir[c].callee == e)
-            {
-                continue;
+        }
+    }
+
+    /// `addLazyDiagnostic`, which `onFailedToResolveSymbol` is wrapped in in checker.ts. To say what is wrong with a name classes are asked
+    /// for their members, which here closes a circle with a question that is under way. So it is said when none is.
+    fn report_unresolved_identifiers(&mut self) {
+        while !self.unresolved_identifiers.is_empty() {
+            let mut unresolved = std::mem::take(&mut self.unresolved_identifiers);
+            unresolved.sort_unstable_by_key(|u| (u.0, u.1));
+            unresolved.dedup_by_key(|u| (u.0, u.1));
+            for (file, e, name) in unresolved {
+                self.report_unresolved_identifier(file, e, name);
             }
+        }
+    }
+
+    /// `getResolvedSymbol`, where `resolveName` comes back with nothing: no value goes by `name`, the identifier `e`.
+    fn report_unresolved_identifier(&mut self, file: FileId, e: ExprId, name: Atom) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let scope_among = |idents: &[(ExprId, ScopeId)]| {
+            let i = idents.binary_search_by_key(&e, |ident| ident.0).ok()?;
+            Some(idents[i].1)
+        };
+        let Some(scope) =
+            scope_among(&bound.free_idents).or_else(|| scope_among(&bound.alias_idents))
+        else {
+            return;
+        };
+        // `await x` where it cannot be: the parser took the keyword for a name, and has said what is wrong.
+        if bound.is_unchecked(e.idx()) || hir.early_errors.contains(&(hir[e].pos, 1308)) {
+            return;
+        }
+        match bound.expr_parent[e.idx()] {
             // `checkExportAssignment`: `export = A` and `export default A` are about whatever `A` is. In a namespace they are out of
             // place, and `A` is not looked at.
-            if let Parent::Stmt(s) = bound.expr_parent[e.idx()]
-                && matches!(
+            Parent::Stmt(s)
+                if matches!(
                     hir[s].kind,
                     StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
-                )
-                && (matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
+                ) && (matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
                     || self
                         .files()
                         .resolve_name(file, scope, name, SymFlags::TYPE | SymFlags::NAMESPACE)
-                        .is_some())
+                        .is_some()) =>
             {
-                continue;
+                return;
             }
             // `checkShorthandPropertyAssignment`: outside a destructuring pattern only the initializer of `{ a = 1 }` is checked.
-            if let Parent::Expr(assign) = bound.expr_parent[e.idx()]
-                && matches!(hir[assign].kind, ExprKind::Assign { op: None, target, .. } if target == e)
-                && let Parent::Prop(p) = bound.expr_parent[assign.idx()]
-                && hir[p].kind == PropKind::Shorthand
-                && !self.is_assignment_target(file, bound.prop_owner[p.idx()])
+            Parent::Expr(assign)
+                if matches!(hir[assign].kind, ExprKind::Assign { op: None, target, .. } if target == e)
+                    && matches!(bound.expr_parent[assign.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand
+                        && !self.is_assignment_target(file, bound.prop_owner[p.idx()])) =>
             {
-                continue;
+                return;
             }
-            let code = match self
-                .files()
-                .resolve(file, scope, name, SymFlags::VALUE, true)
-            {
-                Err(invalid) => {
-                    // `result == nil`
-                    let is_found = self
-                        .files()
-                        .resolve_name(file, scope, name, SymFlags::VALUE)
-                        .is_some();
-                    let not_found = (!is_found).then_some(e);
-                    self.why_invalid_initializer(file, not_found, hir[e].pos, name, invalid)
-                }
-                Ok(_) => self.why_no_value(file, Some(e), scope, name, hir[e].pos),
-            };
-            self.error_at((file, hir[e].pos, 0), code, &[]);
+            _ => {}
         }
-        // `getSymbol`: an alias is what it stands for. One that stands for no value is not there where a value is wanted, and the search
-        // goes on further out.
-        // An import is a local of the file or the module it is written in, where the binder found it from the same scope: if it stands
-        // for a value, that is where the search ends at the latest. Whether each does, once it has been asked.
-        let mut imports_value: Vec<Option<bool>> = Vec::new();
-        for &(e, scope) in &bound.alias_idents {
-            let ExprKind::Ident(name) = hir[e].kind else {
-                continue;
-            };
-            if bound.is_unchecked(e.idx()) {
-                continue;
-            }
-            if imports_value.is_empty() {
-                imports_value.resize(bound.symbols.len(), None);
-            }
-            let local = bound.expr_symbol[e.idx()];
-            let is_value = local.is_some()
-                && *imports_value[local.idx()].get_or_insert_with(|| {
-                    let symbol = &bound.symbols[local.idx()];
-                    !symbol.flags.contains(SymFlags::MERGED)
-                        && matches!(
-                            symbol.decls.first(),
-                            Some(
-                                Decl::ImportSpec(_)
-                                    | Decl::ImportDefault(_)
-                                    | Decl::ImportNamespace(_)
-                            )
-                        )
-                        && self
-                            .files()
-                            .means(self.files().sym(file, local), SymFlags::VALUE)
-                });
-            if is_value
-                || self
-                    .files()
-                    .resolve_name(file, scope, name, SymFlags::VALUE)
-                    .is_some()
-            {
-                continue;
-            }
-            // `checkExportAssignment`: `export = A` and `export default A` are about whatever `A` is.
-            if let Parent::Stmt(s) = bound.expr_parent[e.idx()]
-                && matches!(
-                    hir[s].kind,
-                    StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
-                )
-            {
-                continue;
-            }
-            let code = self.why_no_value(file, Some(e), scope, name, hir[e].pos);
-            self.error_at((file, hir[e].pos, 0), code, &[]);
-        }
-        for i in 0..hir.types.len() {
-            if let TypeNodeKind::Import { name, .. } = hir.types[i].kind {
-                if !bound.is_unchecked_type(i) && !name.is_empty() {
-                    self.check_import_type_names(file, TypeNodeId(i as u32));
-                }
-                continue;
-            }
-            let TypeNodeKind::Ref { name, .. } = hir.types[i].kind else {
-                continue;
-            };
-            let scope = bound.type_scope[i];
-            if bound.is_unchecked_type(i) {
-                continue;
-            }
-            let Some(first) = hir.texts(name).next() else {
-                continue;
-            };
-            // `resolveEntityName`: `NodeIsMissing(name)`
-            if first == known::empty {
-                continue;
-            }
-            let start = hir.types[i].pos;
-            // `getTypeFromTypeReference`: no symbol is looked for.
-            if self
-                .get_intended_type_from_jsdoc_type_reference(file, TypeNodeId(i as u32))
-                .is_some()
-            {
-                continue;
-            }
-            if name.len() > 1 {
-                let names: SmallVec<[Atom; 8]> = hir.texts(name).collect();
-                self.check_entity_name(file, scope, &names, start, SymFlags::TYPE);
-                continue;
-            }
-            let found = match self.resolve(file, scope, first, SymFlags::TYPE, true) {
-                Ok(found) => found,
-                // 2302 2467 2562
-                Err((code, property)) if property.is_none() => {
-                    self.error_at((file, start, 0), code, &[]);
-                    continue;
-                }
-                Err(invalid) => {
-                    let code = self.why_invalid_initializer(file, None, start, first, invalid);
-                    self.error_at((file, start, 0), code, &[]);
-                    continue;
-                }
-            };
-            if found.is_none() {
-                let is_primitive = matches!(
-                    self.files().atoms.bytes(first),
-                    b"any" | b"string" | b"number" | b"boolean" | b"never" | b"unknown"
-                );
-                let me = TypeNodeId(i as u32);
-                let code = if is_primitive
-                    && hir
-                        .interfaces
-                        .iter()
-                        .any(|x| hir.ids(x.extends).any(|t| t == me))
-                {
-                    2840
-                } else {
-                    self.why_no_type(file, scope, first, start)
-                };
-                self.error_at((file, start, 0), code, &[]);
-            }
-        }
-        // After `implements` the names of the primitive types are names like any other, and nothing goes by them.
-        for class in &hir.classes {
-            for node in hir.ids(class.implements) {
-                let TypeNodeKind::Keyword(keyword) = hir[node].kind else {
-                    continue;
-                };
-                let scope = bound.type_scope[node.idx()];
-                let code = match keyword {
-                    Keyword::Any
-                    | Keyword::String
-                    | Keyword::Number
-                    | Keyword::Boolean
-                    | Keyword::Never
-                    | Keyword::Unknown => 2864,
-                    Keyword::Undefined => 2749,
-                    Keyword::Object | Keyword::Symbol | Keyword::BigInt if scope.is_some() => {
-                        let text: &[u8] = match keyword {
-                            Keyword::Object => b"object",
-                            Keyword::Symbol => b"symbol",
-                            _ => b"bigint",
-                        };
-                        let name = self.files().atoms.intern(text);
-                        self.why_no_type(file, scope, name, hir[node].pos)
-                    }
-                    _ => continue,
-                };
-                self.error_at((file, hir[node].pos, 0), code, &[]);
-            }
-        }
-        // `checkImportEqualsDeclaration`: what `import a = A.B.C` names.
-        for (i, import) in hir.import_equals.iter().enumerate() {
-            let ImportEqualsTarget::Entity(list) = import.target else {
-                continue;
-            };
-            let scope = bound.import_equals_scope[i];
-            // `checkGrammarModuleElementContext`: anywhere but at the top of a file or a namespace it is left at that.
-            if scope.is_none()
-                || list.is_empty()
-                || !matches!(
-                    bound.scopes[scope.idx()].kind,
-                    ScopeKind::File | ScopeKind::Module(_)
-                )
-            {
-                continue;
-            }
-            let names: Vec<Atom> = hir.texts(list).collect();
-            // `resolveEntityName`: `NodeIsMissing(name)`
-            if names[0] == known::empty {
-                continue;
-            }
-            // Where the first name is written: past the name of the alias and the `=`. There is no text of a declaration file.
-            let equals = skip_trivia(
-                &hir.text,
-                import.name_pos as usize + self.files().atoms.bytes(import.name).len(),
-            );
-            let start = if hir.text.get(equals) == Some(&b'=') {
-                skip_trivia(&hir.text, equals + 1)
-            } else if hir.early_errors.contains(&(equals as u32, 1005)) {
-                // `parseExpected`: an `=` that is left out takes no room.
-                equals
-            } else {
-                continue;
-            };
-            if !hir
-                .text
-                .get(start..)
-                .is_some_and(|rest| rest.starts_with(self.files().atoms.bytes(names[0])))
-            {
-                continue;
-            }
-            let start = start as u32;
-            let before = self.reported.len();
-            self.check_entity_name(
+        let location = hir.node(e);
+        match self
+            .files()
+            .resolve(file, scope, name, SymFlags::VALUE, true)
+        {
+            Err(error) => self.check_and_report_error_for_invalid_initializer(
                 file,
+                location,
                 scope,
-                &names,
-                start,
-                SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
-            );
-            // What was found and is a value is in a namespace that is one: only an alias that stands for nothing is looked at further.
-            // `markLinkedReferences`: not where nothing is emitted, nor when imports stay as they are written.
-            if self.reported.len() == before
-                || import.flags.contains(Flags::AMBIENT)
-                || self.p.files.options.verbatim_module_syntax
-            {
-                continue;
-            }
-            // `markImportEqualsAliasReferenced`, `markExportSpecifierAliasReferenced`, `markIdentifierAliasReferenced`
-            let is_referenced = import.flags.contains(Flags::EXPORT)
-                || hir.exports.iter().enumerate().any(|(x, export)| {
-                    export.spec.is_none()
-                        && !export.type_only
-                        && bound.export_scope[x] == scope
-                        && export
-                            .items
-                            .iter()
-                            .any(|s| !hir[s].type_only && hir[s].local == import.name)
-                })
-                || bound.alias_idents.iter().any(|&(e, _)| {
-                    !bound.is_unchecked(e.idx())
-                        && !bound.is_in_type_query(e)
-                        && bound.symbols[bound.expr_symbol[e.idx()].idx()]
-                            .decls
-                            .iter()
-                            .any(|d| matches!(d, Decl::ImportEquals(x) if x.idx() == i))
-                });
-            // `markAliasSymbolAsReferenced`: the first name of an alias that is kept is looked up as a value as well.
-            if is_referenced
-                && self
-                    .files()
-                    .resolve_name(file, scope, names[0], SymFlags::VALUE)
-                    .is_none()
-            {
-                let code = self.why_no_value(file, None, scope, names[0], start);
-                self.error_at((file, start, 0), code, &[]);
+                name,
+                SymFlags::VALUE,
+                error,
+            ),
+            Ok(_) => {
+                let message = self.get_cannot_find_name_diagnostic_for_name(file, location, name);
+                let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+                self.on_failed_to_resolve_symbol(
+                    file, location, None, scope, name, meaning, message,
+                );
             }
         }
     }
 
-    /// `resolveEntityName` with its errors: the first name of `A.B.C` has to be a namespace, the others exported. `start`: where the
-    /// first is written. `meaning`: what the last has to be.
-    fn check_entity_name(
+    /// What `resolveEntityName` says of `names`, which come to nothing. `meaning`: what the last has to be.
+    pub(super) fn report_unresolved_entity_name(
         &mut self,
         file: FileId,
         scope: ScopeId,
-        names: &[Atom],
-        start: u32,
+        names: Span<NameId>,
         meaning: SymFlags,
     ) {
-        let first = names[0];
-        if first == known::globalThis {
+        let hir = self.hir(file);
+        let Some(first) = names.iter().next() else {
             return;
-        }
-        if self
-            .files()
-            .resolve_name(file, scope, first, SymFlags::NAMESPACE)
-            .is_some()
-        {
-            if names.len() > 1 {
-                self.check_qualified_name(file, scope, names, start, meaning);
-            }
-            return;
-        }
-        // `resolveEntityName` looks for a namespace that is not found once more, with a message.
-        if let Err(invalid) = self
-            .files()
-            .resolve(file, scope, first, SymFlags::NAMESPACE, true)
-        {
-            let code = self.why_invalid_initializer(file, None, start, first, invalid);
-            self.error_at((file, start, 0), code, &[]);
-            return;
-        }
-        // `checkAndReportErrorForUsingTypeAsNamespace`
-        let as_type = self
-            .files()
-            .resolve_name(file, scope, first, SymFlags::TYPE)
-            .and_then(|s| self.files().resolve_alias_as(s, SymFlags::TYPE));
-        let code = match as_type {
-            Some(sym) if self.files().flags(sym).intersects(SymFlags::TYPE) => {
-                let declared = self.declared_type(sym);
-                if names.len() > 1 && self.has_property(declared, names[1]) {
-                    2713
-                } else {
-                    2702
-                }
-            }
-            _ => self.not_found(file, scope, first, SymFlags::NAMESPACE, start),
         };
-        self.error_at((file, start, 0), code, &[]);
-        // It is said of the `QualifiedName` the first two names make.
-        if code == 2713 {
-            let (text, atoms) = (&self.hir(file).text, &self.files().atoms);
-            let property = names[1];
-            let dot = skip_trivia(text, start as usize + atoms.bytes(first).len());
-            let end = if text.get(dot) == Some(&b'.') {
-                (skip_trivia(text, dot + 1) + atoms.bytes(property).len()) as u32
-            } else {
-                0
-            };
-            self.note(start, end, code, &[Arg::Atom(first), Arg::Atom(property)]);
+        let (location, name) = (hir.node(first), hir[first].text);
+        let meaning_of_first = if names.len() > 1 {
+            SymFlags::NAMESPACE
+        } else {
+            meaning
+        };
+        let is_namespace = meaning_of_first == SymFlags::NAMESPACE;
+        // `NodeIsMissing(name)`
+        if name == known::empty {
+            return;
+        }
+        match self.resolve(file, scope, name, meaning_of_first, true) {
+            Ok(Some(_)) if names.len() > 1 => {
+                self.check_qualified_name(file, scope, names, meaning)
+            }
+            Ok(Some(_)) => {}
+            Err(error) => self.check_and_report_error_for_invalid_initializer(
+                file,
+                location,
+                scope,
+                name,
+                meaning_of_first,
+                error,
+            ),
+            Ok(None) => {
+                let message = if is_namespace {
+                    2503
+                } else {
+                    self.get_cannot_find_name_diagnostic_for_name(file, location, name)
+                };
+                self.on_failed_to_resolve_symbol(
+                    file,
+                    location,
+                    None,
+                    scope,
+                    name,
+                    meaning_of_first,
+                    message,
+                );
+            }
         }
     }
 
+    /// `checkAndReportErrorForInvalidInitializer`: 2301 2844, with the property. Without one: what `Resolve` says itself, 2302 2467 2562.
+    fn check_and_report_error_for_invalid_initializer(
+        &mut self,
+        file: FileId,
+        location: Node,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+        (code, property): (u32, MemberId),
+    ) {
+        if property.is_none() {
+            self.error(file, location, code, &[]);
+            return;
+        }
+        // `result == nil`
+        if self
+            .files()
+            .resolve_name(file, scope, name, meaning)
+            .is_none()
+            && self.check_and_report_error_for_missing_prefix(file, location, name)
+        {
+            return;
+        }
+        // `DeclarationNameToString`
+        let hir = self.hir(file);
+        let written =
+            hir[property].name_pos as usize..self.end_of_member_name(file, property) as usize;
+        let args = [
+            Arg::Bytes(hir.text.get(written).unwrap_or_default()),
+            Arg::Atom(name),
+        ];
+        self.error(file, location, code, &args);
+    }
+
+    /// `checkAndReportErrorForMissingPrefix`
+    fn check_and_report_error_for_missing_prefix(
+        &mut self,
+        file: FileId,
+        location: Node,
+        name: Atom,
+    ) -> bool {
+        let hir = self.hir(file);
+        // `isTypeReferenceIdentifier`: a name that is no expression stands in no class.
+        if !matches!(hir.data(location), NodeData::Expr(_))
+            || hir.kind(location) != Kind::Identifier
+            || hir.text(location) != name
+            || hir.is_in_type_query(location)
+        {
+            return false;
+        }
+        let container = hir.get_this_container(location, false, false);
+        let mut at = container;
+        while hir.parent(at).is_some() {
+            if let Some(class) = hir.class_of(hir.parent(at)).some() {
+                let class = self.class_sym(file, class);
+                let constructor = self.type_of_symbol(class);
+                if self.has_property(constructor, name) {
+                    self.error(file, location, 2662, &[Arg::Atom(name), Arg::Sym(class)]);
+                    return true;
+                }
+                if at == container && !hir.is_static(at) {
+                    let instance = self.declared_type(class);
+                    if self.has_property(instance, name) {
+                        self.error(file, location, 2663, &[Arg::Atom(name)]);
+                        return true;
+                    }
+                }
+            }
+            at = hir.parent(at);
+        }
+        false
+    }
+
+    /// `getCannotFindNameDiagnosticForName`
+    pub(super) fn get_cannot_find_name_diagnostic_for_name(
+        &self,
+        file: FileId,
+        node: Node,
+        name: Atom,
+    ) -> u32 {
+        let (hir, text) = (self.hir(file), self.files().atoms.bytes(name));
+        if let Some(&(with_all_types, otherwise)) = CANNOT_FIND_NAME_DIAGNOSTICS.get(text) {
+            // `UsesWildcardTypes`: there is nothing to add to `types` then.
+            let types = self.p.files.options.types.as_ref();
+            return if types.is_some_and(|t| t.iter().any(|t| t == "*")) {
+                with_all_types
+            } else {
+                otherwise
+            };
+        }
+        match hir.kind(hir.parent(node)) {
+            Kind::CallExpression if text == b"await" => 2311,
+            Kind::ShorthandPropertyAssignment => 18004,
+            _ => 2304,
+        }
+    }
+
+    /// `onFailedToResolveSymbol`. `scope`: where `location` is written. `at`: where the error goes, if not at `location`: at a tag, for
+    /// what makes it.
+    pub(super) fn on_failed_to_resolve_symbol(
+        &mut self,
+        file: FileId,
+        location: Node,
+        at: Option<super::related::Place>,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+        name_not_found_message: u32,
+    ) {
+        let (files, hir) = (self.files(), self.hir(file));
+        if self.check_and_report_error_for_missing_prefix(file, location, name) {
+            return;
+        }
+        let at = at.unwrap_or_else(|| {
+            let (start, end) = self.get_error_range_for_node(file, location);
+            (file, start, end)
+        });
+        let (text, said) = (files.atoms.bytes(name), Arg::Atom(name));
+        if let NodeData::Expr(e) = hir.data(location)
+            && self.check_and_report_error_for_extending_interface(file, e)
+        {
+            return;
+        }
+        let resolve_name = |meaning: SymFlags| files.resolve_name(file, scope, name, meaning);
+        // `checkAndReportErrorForUsingTypeAsNamespace`
+        if meaning == SymFlags::NAMESPACE
+            && let Some(symbol) = resolve_name(SymFlags::TYPE.difference(SymFlags::NAMESPACE))
+                .and_then(|s| files.resolve_alias_as(s, SymFlags::TYPE))
+            && files.flags(symbol).intersects(SymFlags::TYPE)
+        {
+            let parent = hir.parent(location);
+            if let (Kind::QualifiedName, NodeData::Name(right)) =
+                (hir.kind(parent), hir.data(parent.row()))
+            {
+                let (declared, right) = (self.declared_type(symbol), hir[right].text);
+                if self.has_property(declared, right) {
+                    self.error(file, parent, 2713, &[said, Arg::Atom(right)]);
+                    return;
+                }
+            }
+            self.error_at(at, 2702, &[said]);
+            return;
+        }
+        let is_primitive = super::errors_x_enums_names::is_primitive_type_name(text);
+        // `checkAndReportErrorForExportingPrimitiveType`
+        if is_primitive && hir.kind(hir.parent(location)) == Kind::ExportSpecifier {
+            self.error_at(at, 2661, &[said]);
+            return;
+        }
+        // `checkAndReportErrorForUsingNamespaceAsTypeOrValue`
+        let (namespace, code) = if meaning.intersects(SymFlags::VALUE.difference(SymFlags::TYPE)) {
+            (SymFlags::NAMESPACE_MODULE, 2708)
+        } else {
+            (SymFlags::MODULE, 2709)
+        };
+        if (code == 2708 || meaning.intersects(SymFlags::TYPE.difference(SymFlags::VALUE)))
+            && resolve_name(namespace).is_some_and(|s| self.resolved_flags(s).intersects(namespace))
+        {
+            self.error_at(at, code, &[said]);
+            return;
+        }
+        // `checkAndReportErrorForUsingTypeAsValue`
+        if meaning.intersects(SymFlags::VALUE) {
+            if is_primitive {
+                // `errorLocation.Parent.Parent`. A keyword after `implements` has nothing around it.
+                let clause = match hir.data(location) {
+                    NodeData::Type(_) => hir.parent(location),
+                    _ => hir.parent(hir.parent(location)),
+                };
+                let code = if hir.kind(clause) != Kind::HeritageClause {
+                    2693
+                } else {
+                    match (hir.kind(hir.parent(clause)), clause.part()) {
+                        (Kind::InterfaceDeclaration, Some(Part::Extends)) => 2840,
+                        (Kind::ClassDeclaration | Kind::ClassExpression, Some(Part::Extends)) => {
+                            2863
+                        }
+                        (Kind::ClassDeclaration | Kind::ClassExpression, _) => 2864,
+                        _ => return,
+                    }
+                };
+                self.error_at(at, code, &[said]);
+                return;
+            }
+            if let Some(symbol) = resolve_name(SymFlags::TYPE.difference(SymFlags::VALUE)) {
+                let flags = self.resolved_flags(symbol);
+                if flags.intersects(SymFlags::TYPE) && !flags.intersects(SymFlags::VALUE) {
+                    // `isES2015OrLaterConstructorName`
+                    if matches!(
+                        text,
+                        b"Promise" | b"Symbol" | b"Map" | b"WeakMap" | b"Set" | b"WeakSet"
+                    ) {
+                        self.error_at(at, 2585, &[said]);
+                    } else if self.maybe_mapped_type(file, location, symbol) {
+                        let parameter = if text == b"K" { "P" } else { "K" };
+                        self.error_at(at, 2690, &[said, Arg::Text(parameter)]);
+                    } else {
+                        self.error_at(at, 2693, &[said]);
+                    }
+                    return;
+                }
+            }
+        }
+        // `checkAndReportErrorForUsingValueAsType`
+        if meaning.intersects(SymFlags::TYPE.difference(SymFlags::NAMESPACE))
+            && let Some(symbol) = resolve_name(SymFlags::VALUE.difference(SymFlags::TYPE))
+        {
+            let flags = self.get_symbol_flags(symbol);
+            if flags != SymFlags::all() && !flags.intersects(SymFlags::NAMESPACE) {
+                self.error_at(at, 2749, &[said]);
+                return;
+            }
+        }
+        // `DeclarationNameToString`: with the escapes it is written with.
+        let written = hir
+            .text
+            .get(at.1 as usize..at.2 as usize)
+            .filter(|written| {
+                written.contains(&b'\\')
+                    && hir.kind(location) == Kind::Identifier
+                    && hir.text(location) == name
+            });
+        let declaration_name = written.map_or(said, Arg::Bytes);
+        // `getSuggestedLibForNonExistentName`
+        if let Some(&lib) = SUGGESTED_LIBS.get(text) {
+            let args = [declaration_name, Arg::Bytes(lib)];
+            self.error_at(at, name_not_found_message, &args);
+            return;
+        }
+        // `getSuggestedSymbolForNonexistentSymbol`
+        let Some((meant, leads_to_export)) =
+            similar_in_scope_and_where(self, file, scope, name, meaning)
+        else {
+            self.error_at(at, name_not_found_message, &[declaration_name]);
+            return;
+        };
+        let (suggestion, declared) = match meant {
+            // `suggestion.ValueDeclaration`, which what only leads to an export has none of.
+            Meant::Symbol(sym) if leads_to_export => (Arg::Sym(sym), None),
+            Meant::Symbol(sym) => (Arg::Sym(sym), self.place_where_value_is_declared(sym)),
+            Meant::Word(word) => (Arg::Text(word), None),
+        };
+        let code = if meaning == SymFlags::NAMESPACE {
+            2833
+        } else {
+            2552
+        };
+        let mut diagnostic = self.new_diagnostic(at, code, &[declaration_name, suggestion]);
+        if let Some(declared) = declared {
+            diagnostic.add_related_info(self.new_diagnostic(declared, 2728, &[suggestion]));
+        }
+        self.add_diagnostic(diagnostic);
+    }
+
     /// `getTypeFromImportTypeNode`: 2694, each name after `import("m")` has to be there.
-    fn check_import_type_names(&mut self, file: FileId, node: TypeNodeId) {
+    pub(super) fn check_import_type_names(&mut self, file: FileId, node: TypeNodeId) {
         let hir = self.hir(file);
         let TypeNodeKind::Import {
             spec,
@@ -1733,7 +1714,6 @@ impl Checker<'_> {
         else {
             return;
         };
-        let text = &hir.text[..];
         let mode = self.files().mode_of_import(file, mode);
         // Of a module that is not found that much has been said.
         let Some(module) = self.files().module_of_specifier_as(file, spec, mode) else {
@@ -1749,47 +1729,12 @@ impl Checker<'_> {
         {
             return;
         }
-        // Past the `)` that closes `import(`.
-        let mut at = skip_trivia(text, hir[node].pos as usize);
-        while text.get(at).is_some_and(|&c| c != b'(') {
-            at = skip_trivia(text, at + 1);
-        }
-        let mut depth = 0u32;
-        loop {
-            let Some(&c) = text.get(at) else { return };
-            at += 1;
-            match c {
-                b'(' | b'{' => depth += 1,
-                b')' | b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                b'"' | b'\'' => {
-                    while text.get(at).is_some_and(|&x| x != c) {
-                        at += if text[at] == b'\\' { 2 } else { 1 };
-                    }
-                    at += 1;
-                }
-                _ => {}
-            }
-            at = skip_trivia(text, at);
-        }
         // In `typeof import("m").a.b`: the type the names so far come to, once they are past what modules and namespaces export.
         let mut ty: Option<TypeId> = None;
         // `sym` is what an `export { a }` stands for: who says so, and under which name. That alias is `currentNamespace`.
         let mut exported_by: Option<(Sym, Atom)> = None;
-        for (i, n) in hir.texts(name).enumerate() {
-            at = skip_trivia(text, at);
-            if text.get(at) != Some(&b'.') {
-                return;
-            }
-            at = skip_trivia(text, at + 1);
-            let written = self.files().atoms.bytes(n);
-            if !text.get(at..).is_some_and(|rest| rest.starts_with(written)) {
-                return;
-            }
+        for (i, current) in name.iter().enumerate() {
+            let n = hir[current].text;
             let wanted = if is_typeof {
                 SymFlags::VALUE
             } else if i + 1 == name.len() {
@@ -1851,345 +1796,21 @@ impl Checker<'_> {
                 None => false,
             };
             if !is_there {
-                self.error_at((file, at as u32, 0), 2694, &[]);
-                if let Some((namespace, exported_by)) = namespace {
-                    self.explain(at as u32, 2694, |c| {
-                        let qualified = match exported_by {
-                            Some((module, name)) => {
-                                let module = fully_qualified_name(c, module);
-                                format!("{module}.{}", c.atom_text(name))
-                            }
-                            None => fully_qualified_name(c, namespace),
-                        };
-                        vec![qualified, c.atom_text(n)]
-                    });
+                let Some((namespace, exported_by)) = namespace else {
+                    self.error(file, current, 2694, &[]);
+                    return;
+                };
+                let mut qualified =
+                    fully_qualified_name(self, exported_by.map_or(namespace, |by| by.0))
+                        .into_bytes();
+                if let Some((_, name)) = exported_by {
+                    qualified.push(b'.');
+                    qualified.extend_from_slice(self.files().atoms.bytes(name));
                 }
+                self.error(file, current, 2694, &[Arg::Bytes(&qualified), Arg::Atom(n)]);
                 return;
             }
-            at += written.len();
         }
-    }
-
-    /// 2314, 2707, 2315: a reference to a type with the wrong number of type arguments. 8026, 8027 for a heritage clause element in
-    /// JavaScript. `getTypeReferenceType`
-    fn check_type_argument_counts(&mut self, file: FileId) {
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        // `isJsImplicitAny`
-        let is_js_implicit_any = hir.is_js && !self.p.files.options.no_implicit_any;
-        for i in 0..hir.types.len() {
-            if bound.is_unchecked_type(i) {
-                continue;
-            }
-            let (sym, given) = match hir.types[i].kind {
-                TypeNodeKind::Ref { name, args } => {
-                    let mut names = [Atom::NONE; 8];
-                    let node = TypeNodeId(i as u32);
-                    if name.len() > names.len()
-                        || self
-                            .get_intended_type_from_jsdoc_type_reference(file, node)
-                            .is_some()
-                    {
-                        continue;
-                    }
-                    for (slot, part) in names.iter_mut().zip(hir.texts(name)) {
-                        *slot = part;
-                    }
-                    let Some(sym) = self.files().resolve_entity(
-                        file,
-                        bound.type_scope[i],
-                        &names[..name.len()],
-                        SymFlags::TYPE,
-                    ) else {
-                        continue;
-                    };
-                    // `resolveEntityName`: an alias is followed as far as the first symbol that is a type itself.
-                    let Some(sym) = self.files().resolve_alias_as(sym, SymFlags::TYPE) else {
-                        continue;
-                    };
-                    (sym, args.len())
-                }
-                // `resolveImportSymbolType`: `import("m").A<T>` is read the same way. Found as `getTypeFromImportTypeNode` finds it.
-                TypeNodeKind::Import {
-                    spec,
-                    name,
-                    args,
-                    is_typeof: false,
-                    mode,
-                } => {
-                    let mode = self.files().mode_of_import(file, mode);
-                    let Some(module) = self.files().module_of_specifier_as(file, spec, mode) else {
-                        continue;
-                    };
-                    let mut found = Some(self.files().module_value(module));
-                    for (k, n) in hir.texts(name).enumerate() {
-                        let wanted = if k + 1 == name.len() {
-                            SymFlags::TYPE
-                        } else {
-                            SymFlags::NAMESPACE
-                        };
-                        found = found
-                            .and_then(|sym| self.files().namespace_member(sym, n))
-                            .and_then(|member| self.files().resolve_alias_as(member, wanted))
-                            .filter(|&next| self.files().flags(next).intersects(wanted));
-                    }
-                    let Some(sym) = found else { continue };
-                    (sym, args.len())
-                }
-                _ => continue,
-            };
-            // Of what is no type nothing is said here.
-            let flags = self.files().flags(sym);
-            if !flags.intersects(SymFlags::TYPE) {
-                continue;
-            }
-            let Some(code) = self.why_wrong_type_argument_count(sym, given) else {
-                continue;
-            };
-            // `getTypeFromClassOrInterfaceReference`. Type aliases and 2315 (`checkNoTypeArguments`) are the same in JavaScript.
-            let code = if hir.is_js
-                && code != 2315
-                && flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-            {
-                if is_js_implicit_any {
-                    continue;
-                }
-                // `missingAugmentsTag`, `IsExpressionWithTypeArguments`: an element of `implements`, or of the `extends` of an interface.
-                let node = TypeNodeId(i as u32);
-                let is_heritage_element = hir
-                    .classes
-                    .iter()
-                    .any(|c| hir.ids(c.implements).any(|t| t == node))
-                    || hir
-                        .interfaces
-                        .iter()
-                        .any(|x| hir.ids(x.extends).any(|t| t == node));
-                match code {
-                    2314 if is_heritage_element => 8026,
-                    2707 if is_heritage_element => 8027,
-                    code => code,
-                }
-            } else {
-                code
-            };
-            self.error_at((file, hir.types[i].pos, 0), code, &[]);
-            let end = self.end_of_type_node(file, TypeNodeId(i as u32));
-            explain_type_argument_count(self, hir.types[i].pos, end, code, sym);
-        }
-        // `resolveBaseTypesOfClass`: what a class extends, if that is a class, is read like a reference to its type.
-        for c in 0..hir.classes.len() {
-            let class = &hir.classes[c];
-            if class.extends.is_none()
-                || bound.class_symbol[c].is_none()
-                || bound.is_unchecked(class.extends.idx())
-            {
-                continue;
-            }
-            let sym = self.class_sym(file, ClassId(c as u32));
-            let constructor = self.base_constructor_type_of_class(sym);
-            if !self.is_known(constructor) {
-                continue;
-            }
-            let constructor = self.apparent_type(constructor);
-            let TypeData::Anon {
-                origin: Origin::ClassStatic(base),
-                ..
-            } = *self.data(constructor)
-            else {
-                continue;
-            };
-            // `areAllOuterTypeParametersApplied`: a class declared where type parameters can be mentioned goes by its construct
-            // signatures.
-            if !self.outer_type_params_of_symbol(base).is_empty() {
-                continue;
-            }
-            if let Some(code) = self.why_wrong_type_argument_count(base, class.extends_args.len()) {
-                // `isJsImplicitAny`, `missingAugmentsTag`. 2315 is `checkNoTypeArguments`, which is the same in JavaScript.
-                let code = match code {
-                    2314 | 2707 if is_js_implicit_any => continue,
-                    2314 if hir.is_js => 8026,
-                    2707 if hir.is_js => 8027,
-                    code => code,
-                };
-                let start = self.start_of(file, class.extends);
-                self.error_at((file, start, 0), code, &[]);
-                let end = end_of_extends(self, file, class);
-                explain_type_argument_count(self, start, end, code, base);
-            }
-        }
-    }
-
-    /// `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference`, `checkNoTypeArguments`: what is said of `given` type
-    /// arguments for `sym`, if that is not a number it takes.
-    fn why_wrong_type_argument_count(&self, sym: Sym, given: usize) -> Option<u32> {
-        let (least, most) = self.type_argument_arity(sym);
-        if given >= least && given <= most {
-            None
-        } else if most == 0 {
-            Some(2315)
-        } else if least == most {
-            Some(2314)
-        } else {
-            Some(2707)
-        }
-    }
-
-    /// `getDeclaredTypeOfTypeAlias`: an alias that circularly references itself (2456) never gets its type parameters, so
-    /// `getTypeFromTypeAliasReference` takes it for one that is not generic: 2315 with type arguments, nothing without.
-    fn recount_type_arguments_of_circular_aliases(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut circular: Vec<Sym> = Vec::new();
-        for (a, alias) in hir.aliases.iter().enumerate() {
-            if alias.type_params.is_empty() || bound.alias_symbol[a].is_none() {
-                continue;
-            }
-            let sym = self.files().sym(file, bound.alias_symbol[a]);
-            self.declared_type(sym);
-            if self.p.circular_aliases.get(&sym).is_some() {
-                circular.push(sym);
-            }
-        }
-        if circular.is_empty() {
-            return;
-        }
-        for (i, node) in hir.types.iter().enumerate() {
-            let TypeNodeKind::Ref { name, args } = node.kind else {
-                continue;
-            };
-            if bound.is_unchecked_type(i) {
-                continue;
-            }
-            let names: Vec<Atom> = hir.texts(name).collect();
-            let found = self
-                .files()
-                .resolve_entity(file, bound.type_scope[i], &names, SymFlags::TYPE)
-                .and_then(|sym| self.files().resolve_alias_as(sym, SymFlags::TYPE));
-            if !found.is_some_and(|sym| circular.contains(&sym)) {
-                continue;
-            }
-            self.reported
-                .retain(|d| d.start != node.pos || !matches!(d.code, 2314 | 2707));
-            if !args.is_empty() {
-                self.error_at((file, node.pos, 0), 2315, &[]);
-                if let Some(sym) = found {
-                    let end = self.end_of_type_node(file, TypeNodeId(i as u32));
-                    explain_type_argument_count(self, node.pos, end, 2315, sym);
-                }
-            }
-        }
-    }
-
-    /// `onFailedToResolveSymbol`: `name` is written where a value goes and no value goes by it. `e`: the identifier, if it is an
-    /// expression, which the first name of `import a = b.c` is not. `start`: where it is written.
-    fn why_no_value(
-        &mut self,
-        file: FileId,
-        e: Option<ExprId>,
-        scope: ScopeId,
-        name: Atom,
-        start: u32,
-    ) -> u32 {
-        if let Some(code) = self.what_is_there_instead_of_a_value(file, e, scope, name) {
-            return code;
-        }
-        let code = self.not_found(file, scope, name, SymFlags::VALUE, start);
-        // `getCannotFindNameDiagnosticForName`: `await(x)` and `f(await)` were meant to await. Parentheses around the name come between
-        // it and the call.
-        if code == 2304
-            && self.files().atoms.bytes(name) == b"await"
-            && let Some(e) = e
-            && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(self.hir(file)[p].kind, ExprKind::Call(_) | ExprKind::ImportCall { .. }))
-            && !is_parenthesized(self.hir(file), e)
-        {
-            return 2311;
-        }
-        code
-    }
-
-    /// `onFailedToResolveSymbol` for a value name that is not written where the error goes: what a tag is made with. `otherwise`: what
-    /// the one who looks for it says of a name that is not found.
-    pub(super) fn why_no_jsx_factory(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        name: Atom,
-        otherwise: u32,
-    ) -> u32 {
-        if let Some(code) = self.what_is_there_instead_of_a_value(file, None, scope, name) {
-            return code;
-        }
-        // A library that is missing comes before a letter that is.
-        if !is_name_of_a_library_feature(self.files().atoms.bytes(name))
-            && what_is_similar_in_scope(self, file, scope, name, SymFlags::VALUE).is_some()
-        {
-            return 2552;
-        }
-        otherwise
-    }
-
-    /// What `onFailedToResolveSymbol` starts with, where a value is wanted: what is said if something that is no value goes by `name`, or
-    /// a member that takes a prefix. `e` as in `why_no_value`.
-    fn what_is_there_instead_of_a_value(
-        &mut self,
-        file: FileId,
-        e: Option<ExprId>,
-        scope: ScopeId,
-        name: Atom,
-    ) -> Option<u32> {
-        if let Some(e) = e
-            && let Some(code) = self.member_meant_without_prefix(file, e, name)
-        {
-            return Some(code);
-        }
-        if let Some(e) = e
-            && self.is_extending_interface(file, e)
-        {
-            let start = self.hir(file)[e].pos;
-            self.note(
-                start,
-                0,
-                2689,
-                &[Arg::Text(&self.entity_name_around(file, e))],
-            );
-            return Some(2689);
-        }
-        if self
-            .files()
-            .resolve_name(file, scope, name, SymFlags::NAMESPACE_MODULE)
-            .is_some_and(|s| self.resolved_flags(s).contains(SymFlags::NAMESPACE_MODULE))
-        {
-            return Some(2708);
-        }
-        let text = self.files().atoms.bytes(name);
-        if matches!(
-            text,
-            b"any" | b"string" | b"number" | b"boolean" | b"never" | b"unknown"
-        ) {
-            // The name is all that is extended: not `(string)`.
-            let is_extended = e.is_some_and(|e| {
-                matches!(
-                    self.bound(file).expr_parent[e.idx()],
-                    Parent::ClassExtends(_)
-                ) && !is_parenthesized(self.hir(file), e)
-            });
-            return Some(if is_extended { 2863 } else { 2693 });
-        }
-        if let Some(sym) = self.files().resolve_name(file, scope, name, SymFlags::TYPE) {
-            let flags = self.resolved_flags(sym);
-            if flags.intersects(SymFlags::TYPE) && !flags.intersects(SymFlags::VALUE) {
-                return Some(
-                    if matches!(
-                        text,
-                        b"Promise" | b"Symbol" | b"Map" | b"WeakMap" | b"Set" | b"WeakSet"
-                    ) {
-                        2585
-                    } else {
-                        2693
-                    },
-                );
-            }
-        }
-        None
     }
 
     /// `checkAndReportErrorForExtendingInterface`: `e` is the dotted name that a class extends or that is given type arguments (an
@@ -2249,30 +1870,6 @@ impl Checker<'_> {
             .is_some_and(|s| self.resolved_flags(s).contains(SymFlags::INTERFACE))
     }
 
-    /// `name` is written at `start`, where a type goes, and no type goes by it.
-    fn why_no_type(&mut self, file: FileId, scope: ScopeId, name: Atom, start: u32) -> u32 {
-        if self
-            .files()
-            .resolve_name(file, scope, name, SymFlags::MODULE)
-            .is_some_and(|s| self.resolved_flags(s).intersects(SymFlags::MODULE))
-        {
-            return 2709;
-        }
-        if let Some(sym) = self
-            .files()
-            .resolve_name(file, scope, name, SymFlags::VALUE)
-        {
-            let flags = self.get_symbol_flags(sym);
-            if flags != SymFlags::all()
-                && flags.intersects(SymFlags::VALUE)
-                && !flags.intersects(SymFlags::NAMESPACE)
-            {
-                return 2749;
-            }
-        }
-        self.not_found(file, scope, name, SymFlags::TYPE, start)
-    }
-
     /// `getSymbolFlags`. Of an alias that leads nowhere, nothing.
     fn resolved_flags(&self, sym: Sym) -> SymFlags {
         let flags = self.files().symbol_flags(sym);
@@ -2281,108 +1878,6 @@ impl Checker<'_> {
         } else {
             flags
         }
-    }
-
-    /// `start`: where `name` is written, which is where the error goes.
-    fn not_found(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        name: Atom,
-        meaning: SymFlags,
-        start: u32,
-    ) -> u32 {
-        let text = self.files().atoms.bytes(name);
-        if !is_name_of_a_library_feature(text)
-            && what_is_similar_in_scope(self, file, scope, name, meaning).is_some()
-        {
-            let code = did_you_mean(meaning);
-            self.explain(start, code, |c| {
-                let meant = name_meant(c, file, scope, name, meaning);
-                vec![c.atom_text(name), meant]
-            });
-            // Who asks for a value and nothing else is `getResolvedSymbol`.
-            let is_expression = meaning == SymFlags::VALUE;
-            relate_name_meant(self, file, scope, name, meaning, is_expression, start);
-            return code;
-        }
-        if meaning == SymFlags::NAMESPACE {
-            return 2503;
-        }
-        // `getCannotFindNameDiagnosticForName`. `UsesWildcardTypes`: there is nothing to add to `types` then.
-        let takes_all_types = self
-            .p
-            .files
-            .options
-            .types
-            .as_ref()
-            .is_some_and(|t| t.iter().any(|t| t == "*"));
-        let code = match text {
-            b"document" | b"console" => 2584,
-            b"$" => {
-                if takes_all_types {
-                    2581
-                } else {
-                    2592
-                }
-            }
-            b"beforeEach" | b"describe" | b"suite" | b"it" | b"test" => {
-                if takes_all_types {
-                    2582
-                } else {
-                    2593
-                }
-            }
-            b"process" | b"require" | b"Buffer" | b"module" | b"NodeJS" => {
-                if takes_all_types {
-                    2580
-                } else {
-                    2591
-                }
-            }
-            b"Bun" => {
-                if takes_all_types {
-                    2867
-                } else {
-                    2868
-                }
-            }
-            b"Map"
-            | b"Set"
-            | b"Promise"
-            | b"WeakMap"
-            | b"WeakSet"
-            | b"Iterator"
-            | b"AsyncIterator"
-            | b"SharedArrayBuffer"
-            | b"Atomics"
-            | b"AsyncIterable"
-            | b"AsyncIterableIterator"
-            | b"AsyncGenerator"
-            | b"AsyncGeneratorFunction"
-            | b"BigInt"
-            | b"Reflect"
-            | b"BigInt64Array"
-            | b"BigUint64Array" => 2583,
-            _ => 2304,
-        };
-        if code != 2304 {
-            self.explain(start, code, |c| {
-                let mut arguments = vec![c.atom_text(name)];
-                if code == 2583 {
-                    arguments.push(library_of_feature(text).to_owned());
-                }
-                arguments
-            });
-        } else {
-            // `DeclarationNameToString`: a name with an escape in it is said as it is written.
-            let end = self.end_of_token_at(file, start);
-            let written = self.source_text(file, start, end);
-            if written.contains('\\') {
-                self.note(start, end, code, &[Arg::Text(&written)]);
-            }
-        }
-        code
     }
 
     /// `getPropertyOfType`: whether `ty` has a property `name`, what every function and every object has included. What an index
@@ -2422,61 +1917,6 @@ impl Checker<'_> {
         }
         let object = self.global_ref(known::Object, &[]);
         self.prop_ref(object, name).is_some()
-    }
-
-    /// `checkAndReportErrorForInvalidInitializer`: what is said of `name`, written at `start`, for which `Files::resolve` has ended
-    /// with `invalid`, 2301 or 2844 and the property. `not_found`: the name, if it is an expression and nothing goes by it.
-    fn why_invalid_initializer(
-        &mut self,
-        file: FileId,
-        not_found: Option<ExprId>,
-        start: u32,
-        name: Atom,
-        invalid: (u32, MemberId),
-    ) -> u32 {
-        if let Some(e) = not_found
-            && let Some(code) = self.member_meant_without_prefix(file, e, name)
-        {
-            return code;
-        }
-        let (code, property) = invalid;
-        // `DeclarationNameToString`: the name of the property as it is written.
-        self.explain(start, code, |c| {
-            let end = c.end_of_member_name(file, property);
-            vec![
-                c.source_text(file, c.hir(file)[property].name_pos, end),
-                c.atom_text(name),
-            ]
-        });
-        code
-    }
-
-    /// `x` where `this.x` or `C.x` was meant: 2663, 2662. `checkAndReportErrorForMissingPrefix`
-    fn member_meant_without_prefix(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<u32> {
-        let hir = self.hir(file);
-        if hir.is_in_type_query(hir.node(e)) {
-            return None;
-        }
-        let container = hir.get_this_container(hir.node(e), false, false);
-        let mut location = container;
-        while hir.parent(location).is_some() {
-            if let Some(class) = hir.class_of(hir.parent(location)).some() {
-                let class = self.class_sym(file, class);
-                let constructor = self.type_of_symbol(class);
-                if self.has_property(constructor, name) {
-                    self.note(hir[e].pos, 0, 2662, &[Arg::Atom(name), Arg::Sym(class)]);
-                    return Some(2662);
-                }
-                if location == container && !hir.is_static(location) {
-                    let instance = self.declared_type(class);
-                    if self.has_property(instance, name) {
-                        return Some(2663);
-                    }
-                }
-            }
-            location = hir.parent(location);
-        }
-        None
     }
 }
 
@@ -2525,66 +1965,101 @@ fn is_before_namespace_export(hir: &hir::File, start: u32) -> bool {
     })
 }
 
-/// Names that come with a version of the standard library: what is missing then is the library, not a letter. The keys of
-/// `getFeatureMap`.
-fn is_name_of_a_library_feature(name: &[u8]) -> bool {
-    matches!(
-        name,
-        b"Array"
-            | b"Iterator"
-            | b"AsyncIterator"
-            | b"ArrayBuffer"
-            | b"Atomics"
-            | b"SharedArrayBuffer"
-            | b"AsyncIterable"
-            | b"AsyncIterableIterator"
-            | b"AsyncGenerator"
-            | b"AsyncGeneratorFunction"
-            | b"RegExp"
-            | b"RegExpConstructor"
-            | b"Reflect"
-            | b"ArrayConstructor"
-            | b"ObjectConstructor"
-            | b"NumberConstructor"
-            | b"Math"
-            | b"Map"
-            | b"MapConstructor"
-            | b"Set"
-            | b"PromiseConstructor"
-            | b"Symbol"
-            | b"WeakMap"
-            | b"WeakSet"
-            | b"String"
-            | b"StringConstructor"
-            | b"DateTimeFormat"
-            | b"Promise"
-            | b"RegExpMatchArray"
-            | b"RegExpExecArray"
-            | b"Intl"
-            | b"NumberFormat"
-            | b"SymbolConstructor"
-            | b"DataView"
-            | b"BigInt"
-            | b"RelativeTimeFormat"
-            | b"Int8Array"
-            | b"Uint8Array"
-            | b"Uint8ClampedArray"
-            | b"Int16Array"
-            | b"Uint16Array"
-            | b"Int32Array"
-            | b"Uint32Array"
-            | b"Float16Array"
-            | b"Float32Array"
-            | b"Float64Array"
-            | b"BigInt64Array"
-            | b"BigUint64Array"
-            | b"Error"
-            | b"ErrorConstructor"
-            | b"Uint8ArrayConstructor"
-            | b"DisposableStack"
-            | b"AsyncDisposableStack"
-            | b"Date"
-    )
+bun_core::comptime_string_map! {
+    /// `getFeatureMap`: the names that come with a version of the standard library, and the library of the first entry of each.
+    static SUGGESTED_LIBS: &'static [u8] = {
+        b"Array" => b"es2015",
+        b"Iterator" => b"es2015",
+        b"AsyncIterator" => b"es2015",
+        b"ArrayBuffer" => b"es2024",
+        b"Atomics" => b"es2017",
+        b"SharedArrayBuffer" => b"es2017",
+        b"AsyncIterable" => b"es2018",
+        b"AsyncIterableIterator" => b"es2018",
+        b"AsyncGenerator" => b"es2018",
+        b"AsyncGeneratorFunction" => b"es2018",
+        b"RegExp" => b"es2015",
+        b"RegExpConstructor" => b"es2025",
+        b"Reflect" => b"es2015",
+        b"ArrayConstructor" => b"es2015",
+        b"ObjectConstructor" => b"es2015",
+        b"NumberConstructor" => b"es2015",
+        b"Math" => b"es2015",
+        b"Map" => b"es2015",
+        b"MapConstructor" => b"es2024",
+        b"Set" => b"es2015",
+        b"PromiseConstructor" => b"es2015",
+        b"Symbol" => b"es2015",
+        b"WeakMap" => b"es2015",
+        b"WeakSet" => b"es2015",
+        b"String" => b"es2015",
+        b"StringConstructor" => b"es2015",
+        b"DateTimeFormat" => b"es2017",
+        b"Promise" => b"es2015",
+        b"RegExpMatchArray" => b"es2018",
+        b"RegExpExecArray" => b"es2018",
+        b"Intl" => b"es2018",
+        b"NumberFormat" => b"es2018",
+        b"SymbolConstructor" => b"es2020",
+        b"DataView" => b"es2020",
+        b"BigInt" => b"es2020",
+        b"RelativeTimeFormat" => b"es2020",
+        b"Int8Array" => b"es2022",
+        b"Uint8Array" => b"es2022",
+        b"Uint8ClampedArray" => b"es2022",
+        b"Int16Array" => b"es2022",
+        b"Uint16Array" => b"es2022",
+        b"Int32Array" => b"es2022",
+        b"Uint32Array" => b"es2022",
+        b"Float16Array" => b"es2025",
+        b"Float32Array" => b"es2022",
+        b"Float64Array" => b"es2022",
+        b"BigInt64Array" => b"es2020",
+        b"BigUint64Array" => b"es2020",
+        b"Error" => b"es2022",
+        b"ErrorConstructor" => b"esnext",
+        b"Uint8ArrayConstructor" => b"esnext",
+        b"DisposableStack" => b"esnext",
+        b"AsyncDisposableStack" => b"esnext",
+        b"Date" => b"esnext",
+    };
+}
+
+bun_core::comptime_string_map! {
+    /// `getCannotFindNameDiagnosticForName`: with `UsesWildcardTypes`, and without.
+    static CANNOT_FIND_NAME_DIAGNOSTICS: (u32, u32) = {
+        b"document" => (2584, 2584),
+        b"console" => (2584, 2584),
+        b"$" => (2581, 2592),
+        b"beforeEach" => (2582, 2593),
+        b"describe" => (2582, 2593),
+        b"suite" => (2582, 2593),
+        b"it" => (2582, 2593),
+        b"test" => (2582, 2593),
+        b"process" => (2580, 2591),
+        b"require" => (2580, 2591),
+        b"Buffer" => (2580, 2591),
+        b"module" => (2580, 2591),
+        b"NodeJS" => (2580, 2591),
+        b"Bun" => (2867, 2868),
+        b"Map" => (2583, 2583),
+        b"Set" => (2583, 2583),
+        b"Promise" => (2583, 2583),
+        b"WeakMap" => (2583, 2583),
+        b"WeakSet" => (2583, 2583),
+        b"Iterator" => (2583, 2583),
+        b"AsyncIterator" => (2583, 2583),
+        b"SharedArrayBuffer" => (2583, 2583),
+        b"Atomics" => (2583, 2583),
+        b"AsyncIterable" => (2583, 2583),
+        b"AsyncIterableIterator" => (2583, 2583),
+        b"AsyncGenerator" => (2583, 2583),
+        b"AsyncGeneratorFunction" => (2583, 2583),
+        b"BigInt" => (2583, 2583),
+        b"Reflect" => (2583, 2583),
+        b"BigInt64Array" => (2583, 2583),
+        b"BigUint64Array" => (2583, 2583),
+    };
 }
 
 /// Whether `GetSpellingSuggestion` would take `candidate` for `name`, were it the only one.
@@ -2602,26 +2077,6 @@ fn get_candidate_name(name: &[u8]) -> &[u8] {
 }
 
 // ───────────────────────────── what goes into the messages ─────────────────────────────
-
-/// `checkUnmatchedJSDocParameters`: 8032 is said of all of the `a.b.c` written at `start`, and names it and `a.b`.
-fn explain_qualified_parameter_name(c: &mut Checker<'_>, file: FileId, start: u32) {
-    let text = &c.hir(file).text[..];
-    let (mut end, mut last_dot) = (word_end(text, start as usize), None);
-    while text.get(end) == Some(&b'.') && word_end(text, end + 1) > end + 1 {
-        last_dot = Some(end);
-        end = word_end(text, end + 1);
-    }
-    if let Some(dot) = last_dot {
-        let whole = c.source_text(file, start, end as u32);
-        let left = c.source_text(file, start, dot as u32);
-        c.note(
-            start,
-            end as u32,
-            8032,
-            &[Arg::Text(&whole), Arg::Text(&left)],
-        );
-    }
-}
 
 /// `DeclarationNameToString`, `TokenText`: the name or the word written at `start`.
 fn word_at(c: &Checker<'_>, file: FileId, start: u32) -> String {
@@ -2662,17 +2117,6 @@ fn get_spelling_suggestion_for_name<'a>(
         .then_with(|| a.0.cmp(b.0))
     };
     get_spelling_suggestion(name, candidates, |c| get_candidate_name(c.0), compare).map(|c| c.1)
-}
-
-/// `getSuggestedSymbolForNonexistentSymbol`
-fn what_is_similar_in_scope(
-    c: &Checker<'_>,
-    file: FileId,
-    scope: ScopeId,
-    name: Atom,
-    meaning: SymFlags,
-) -> Option<Meant> {
-    similar_in_scope_and_where(c, file, scope, name, meaning).map(|found| found.0)
 }
 
 /// The same, and whether it is come upon among the locals of the block of a module or namespace that exports it. `declareModuleMember`:
@@ -2806,78 +2250,6 @@ impl Files {
     }
 }
 
-/// `symbolToString` of `getSuggestedSymbolForNonexistentSymbol`: the name that may have been meant by `name`, which nothing that is a
-/// `meaning` goes by in `scope`. Empty if nothing is close.
-pub(super) fn name_meant(
-    c: &mut Checker<'_>,
-    file: FileId,
-    scope: ScopeId,
-    name: Atom,
-    meaning: SymFlags,
-) -> String {
-    match what_is_similar_in_scope(c, file, scope, name, meaning) {
-        Some(Meant::Symbol(sym)) => c.symbol_to_string(sym),
-        Some(Meant::Word(word)) => word.to_owned(),
-        None => String::new(),
-    }
-}
-
-/// `Cannot_find_namespace_0_Did_you_mean_1`, `Cannot_find_name_0_Did_you_mean_1`
-fn did_you_mean(meaning: SymFlags) -> u32 {
-    if meaning == SymFlags::NAMESPACE {
-        2833
-    } else {
-        2552
-    }
-}
-
-/// `onFailedToResolveSymbol`: with the error at `start` comes where what `name_meant` names is declared, if it has a `ValueDeclaration`.
-/// `is_expression`: `SymbolFlagsExportValue` is asked for too, so that what only leads to an export is taken for the suggestion. It
-/// has no such declaration.
-pub(super) fn relate_name_meant(
-    c: &mut Checker<'_>,
-    file: FileId,
-    scope: ScopeId,
-    name: Atom,
-    meaning: SymFlags,
-    is_expression: bool,
-    start: u32,
-) {
-    c.relate(start, did_you_mean(meaning), |c| {
-        let asked = if is_expression {
-            meaning | SymFlags::EXPORT_VALUE
-        } else {
-            meaning
-        };
-        let Some((Meant::Symbol(sym), leads_to_export)) =
-            similar_in_scope_and_where(c, file, scope, name, asked)
-        else {
-            return Vec::new();
-        };
-        if is_expression && leads_to_export {
-            return Vec::new();
-        }
-        let Some(place) = c.place_where_value_is_declared(sym) else {
-            return Vec::new();
-        };
-        let meant = c.symbol_to_string(sym);
-        vec![c.declared_here(place, meant)]
-    });
-}
-
-/// `getSuggestedLibForNonExistentName`: the library of the first entry of `getFeatureMap`, for the names 2583 is said of.
-fn library_of_feature(name: &[u8]) -> &'static str {
-    match name {
-        b"SharedArrayBuffer" | b"Atomics" => "es2017",
-        b"AsyncIterable"
-        | b"AsyncIterableIterator"
-        | b"AsyncGenerator"
-        | b"AsyncGeneratorFunction" => "es2018",
-        b"BigInt" | b"BigInt64Array" | b"BigUint64Array" => "es2020",
-        _ => "es2015",
-    }
-}
-
 /// `getFullyQualifiedName` of `module`, seen from an import of it. `getSpecifierForModuleSymbol`: a file goes by a specifier that
 /// leads to it from there, for which `spec`, the one that is written, is taken.
 fn module_name_as_imported(c: &mut Checker<'_>, module: Sym, spec: Atom) -> String {
@@ -2890,7 +2262,7 @@ fn module_name_as_imported(c: &mut Checker<'_>, module: Sym, spec: Atom) -> Stri
 }
 
 /// `node.End()` of the `ExpressionWithTypeArguments` that `class` extends. 0: it cannot be told.
-fn end_of_extends(c: &Checker<'_>, file: FileId, class: &Class) -> u32 {
+pub(super) fn end_of_extends(c: &Checker<'_>, file: FileId, class: &Class) -> u32 {
     if class.extends_args.is_empty() {
         return c.end_of_expr(file, class.extends);
     }
@@ -2904,60 +2276,6 @@ fn end_of_extends(c: &Checker<'_>, file: FileId, class: &Class) -> u32 {
     } else {
         0
     }
-}
-
-/// What `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference` and `checkNoTypeArguments` say of `sym`. 8026 and 8027
-/// are given the arguments of 2314 and 2707, so that their `{0}` is the type.
-fn explain_type_argument_count(c: &mut Checker<'_>, start: u32, end: u32, code: u32, sym: Sym) {
-    c.explain_to(start, end, code, |c| {
-        if code == 2315 {
-            return vec![c.symbol_to_string(sym)];
-        }
-        let flags = c.files().flags(sym);
-        let name = if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
-            let declared = c.declared_type(sym);
-            // `TypeFormatFlagsWriteArrayAsGenericType`
-            match c.array_element(declared) {
-                Some(element) => {
-                    let (array, element) = (c.symbol_to_string(sym), c.type_to_string(element));
-                    format!("{array}<{element}>")
-                }
-                None => c.type_to_string(declared),
-            }
-        } else {
-            c.symbol_to_string(sym)
-        };
-        let (least, most) = c.type_argument_arity(sym);
-        vec![name, least.to_string(), most.to_string()]
-    });
-}
-
-/// `getPropertyTypeForIndexType`: where `e` is `a[k]`, the 2540 at `at` is said of all of `k`, and names the property as
-/// `symbolToString` does. Of `a.b` it is said of `b`, which is read off the source.
-fn explain_readonly_element(
-    c: &mut Checker<'_>,
-    file: FileId,
-    e: ExprId,
-    at: u32,
-    prop: Option<&Prop>,
-    name: Atom,
-) {
-    let ExprKind::Index { index, .. } = c.hir(file)[e].kind else {
-        return;
-    };
-    let end = error_end_if_read(c, file, index);
-    {
-        let arg0 = match prop {
-            Some(prop) => c.prop_to_string(prop),
-            None => c.atom_text(name),
-        };
-        c.note(at, end, 2540, &[Arg::Text(&arg0)])
-    };
-}
-
-/// `error_end_of`, if it is going to be read.
-fn error_end_if_read(c: &Checker<'_>, file: FileId, e: ExprId) -> u32 {
-    c.error_end_of(file, e)
 }
 
 /// `entityNameToString`
@@ -3512,7 +2830,8 @@ impl Checker<'_> {
             && self.maybe_type_of_kind(right_type, |_, t| t.is_undefined())
         {
             let object = self.type_of_expr(file, obj);
-            if type_of_property_of_type(self, object, name)
+            if self
+                .type_of_property_of_type(object, name)
                 .is_some_and(|declared| self.contains_missing_type(declared))
             {
                 head_message = Some(2412);
@@ -3631,60 +2950,14 @@ impl Checker<'_> {
         start_inside_parentheses(self.hir(file), e)
     }
 
-    /// `GetErrorRangeForNode`, of a declaration. `None`: the tree does not have it.
+    /// `GetErrorRangeForNode`, of a declaration.
     pub(super) fn error_range_of_declaration(
         &self,
         file: FileId,
         decl: Decl,
     ) -> Option<(u32, u32)> {
-        let hir = self.hir(file);
-        Some(match decl {
-            Decl::Member(m) => self.error_range_of_member(file, m),
-            Decl::EnumMember(m) => self.error_range_of_enum_member(file, m),
-            // All of a parameter, with its modifiers.
-            Decl::ParameterProperty(p) => (hir[p].pos, self.end_of_param(file, p)),
-            Decl::Param(name)
-                if let PatParent::Param(p) = self.bound(file).pat_parent[name.idx()] =>
-            {
-                (hir[p].pos, self.end_of_param(file, p))
-            }
-            // `GetNameOfDeclaration`, of a variable declaration or a binding element.
-            Decl::Var(name) | Decl::Require(name) | Decl::Param(name) => {
-                (hir[name].pos, self.end_of_token_at(file, hir[name].pos))
-            }
-            // A method or an accessor is pointed at by its name.
-            Decl::Property(p) => match hir[p].kind {
-                PropKind::Method | PropKind::Getter | PropKind::Setter => {
-                    (hir[p].pos, self.end_of_prop_name(file, p))
-                }
-                _ => (hir[p].pos, self.end_of_prop(file, p)),
-            },
-            // The file goes by its first token.
-            Decl::File | Decl::CommonJsVariable => {
-                let start = self.skip_trivia_from(file, 0);
-                (start, self.end_of_token_at(file, start))
-            }
-            Decl::ExportSpec(it) => (hir[it].start, self.end_of_export_spec(file, it)),
-            Decl::ExportStarAs(it) => match hir[it].kind {
-                StmtKind::ExportStar {
-                    star_pos,
-                    alias_pos,
-                    ..
-                } => (star_pos, self.end_of_name_at(file, alias_pos)),
-                _ => return None,
-            },
-            Decl::ModuleExports(e)
-            | Decl::ExportsProperty(e)
-            | Decl::Expando(e)
-            | Decl::ThisProperty(e) => (
-                self.error_start_inside_parentheses(file, e),
-                self.error_end_inside_parentheses(file, e),
-            ),
-            _ => {
-                let statement = self.files().statement_of_declaration(file, decl)?;
-                self.error_range_of_stmt(file, statement)
-            }
-        })
+        let node = self.hir(file).node(decl);
+        (node.is_some()).then(|| self.get_error_range_for_node(file, node))
     }
 }
 
@@ -3709,25 +2982,11 @@ impl Files {
 
     /// The statement that `decl` is.
     pub(crate) fn statement_of_declaration(&self, file: FileId, decl: Decl) -> Option<StmtId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let statement = match decl {
-            Decl::Fn(function) => match bound.fns[function.idx()].owner {
-                FnOwner::Stmt(statement) => statement,
-                _ => return None,
-            },
-            Decl::Class(class) => match bound.class_owner[class.idx()] {
-                ClassOwner::Stmt(statement) => statement,
-                ClassOwner::Expr(_) => return None,
-            },
-            Decl::Interface(interface) => hir[interface].stmt,
-            Decl::Alias(alias) => hir[alias].stmt,
-            Decl::Enum(enumeration) => hir[enumeration].stmt,
-            Decl::Module(module) => hir[module].stmt,
-            Decl::ImportEquals(import) => hir[import].stmt,
-            Decl::ExportExpr(statement) | Decl::UmdGlobal(statement) => statement,
-            _ => return None,
-        };
-        statement.some()
+        let hir = self.hir(file);
+        match hir.data(hir.node(decl)) {
+            NodeData::Stmt(statement) => Some(statement),
+            _ => None,
+        }
     }
 
     /// `GetTokenPosOfNode`, of a declaration: where its first token is, decorators and modifiers included.
@@ -3777,7 +3036,7 @@ impl Files {
 
 // ───────────────────────────── what is written to ─────────────────────────────
 
-impl Checker<'_> {
+impl<'p> Checker<'p> {
     /// How `e` is written to, if it is: by `=`, by an operator that reads it first, or by `++` and `--`.
     fn write_kind(&self, file: FileId, e: ExprId) -> Option<Write> {
         Some(
@@ -3789,78 +3048,6 @@ impl Checker<'_> {
         )
     }
 
-    /// 2628 to 2632, 2539, 2588: a name that cannot be assigned to. 2540: a property that can only be read.
-    fn check_writes(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let index = self.exprs_by_kind(file);
-        let (assignments, unaries) = (index.of(ExprTag::Assign), index.of(ExprTag::Unary));
-        // What may be written to: the target of an assignment, of `++` or `--` or of the head of a loop, and in it whatever
-        // `write_kind` sees through on its way out.
-        let mut targets: Vec<ExprId> = Vec::new();
-        for &e in assignments {
-            if let ExprKind::Assign { target, .. } = hir[e].kind {
-                targets.push(target);
-            }
-        }
-        for &e in unaries {
-            if let ExprKind::Unary {
-                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                operand,
-            } = hir[e].kind
-            {
-                targets.push(operand);
-            }
-        }
-        for s in &hir.stmts {
-            if let StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } = s.kind
-                && let StmtKind::Expr(x) = hir[left].kind
-            {
-                targets.push(x);
-            }
-        }
-        let mut written: Vec<ExprId> = Vec::new();
-        while let Some(e) = targets.pop() {
-            if e.is_none() {
-                continue;
-            }
-            match hir[e].kind {
-                ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                    written.push(e)
-                }
-                ExprKind::NonNull(x) | ExprKind::Spread(x) => targets.push(x),
-                ExprKind::Array(items) => targets.extend(hir.ids(items)),
-                ExprKind::Object(props) => targets.extend(props.iter().map(|p| hir[p].value)),
-                _ => {}
-            }
-        }
-        written.sort_unstable();
-        written.dedup();
-        for e in written {
-            let i = e.idx();
-            if bound.is_unchecked(i) {
-                continue;
-            }
-            match hir.exprs[i].kind {
-                ExprKind::Ident(name) => {
-                    if self.write_kind(file, e).is_none() {
-                        continue;
-                    }
-                    if let Some(code) = self.why_not_assignable(file, e, name) {
-                        self.error_at((file, hir.exprs[i].pos, 0), code, &[]);
-                    }
-                }
-                ExprKind::Dot {
-                    obj,
-                    name,
-                    name_pos,
-                    ..
-                } => self.check_property_write(file, e, obj, name, name_pos),
-                ExprKind::Index { obj, index, .. } => self.check_element_write(file, e, obj, index),
-                _ => {}
-            }
-        }
-    }
-
     /// Whatever is got at through `import * as` can only be read: whether `obj` is the name such an import declares.
     fn is_namespace_import_name(&self, file: FileId, obj: ExprId) -> bool {
         matches!(self.hir(file)[obj].kind, ExprKind::Ident(n)
@@ -3869,22 +3056,19 @@ impl Checker<'_> {
         }))
     }
 
-    /// `isAssignmentToReadonlyEntity`: 2540, put at `at`, if `e` is written to and the property `name` of `obj`, which is what `e` is,
-    /// can only be read.
-    pub(super) fn check_property_write(
+    /// `isAssignmentToReadonlyEntity`: the property `name` of `obj`, which is what `e` is, if `e` is written to and the property can only be
+    /// read.
+    pub(super) fn readonly_entity_assigned_to(
         &mut self,
         file: FileId,
         e: ExprId,
         obj: ExprId,
         name: Atom,
-        at: u32,
-    ) {
-        if self.write_kind(file, e).is_none() {
-            return;
-        }
+    ) -> Option<&'p Prop> {
+        self.write_kind(file, e)?;
         let ty = self.type_of_expr(file, obj);
         if !self.is_known(ty) || self.is_any(ty) {
-            return;
+            return None;
         }
         let ty = self.non_nullable(ty);
         // `getIndexedAccessTypeOrUndefined`: in `a[k]` no property is looked for where `a` has only a string index signature.
@@ -3893,26 +3077,16 @@ impl Checker<'_> {
         {
             let reduced = self.reduced(ty);
             if self.is_string_index_signature_only(reduced) {
-                return;
+                return None;
             }
         }
         // `getReducedApparentType`
-        let apparent = self.apparent_type(ty);
-        let apparent = self.reduced(apparent);
-        if let TypeData::Union(parts) = self.data(apparent) {
-            if self.is_readonly_in_union(parts, name) == Some(true) {
-                self.error_at((file, at, 0), 2540, &[]);
-                explain_readonly_element(self, file, e, at, None, name);
-            }
-            return;
-        }
+        let apparent = self.reduced_apparent_type(ty);
         // `getPropertyOfType`: what every function and every object has counts.
-        let Some(members) = self.members(apparent) else {
-            return;
-        };
-        let Some((prop, _)) = self.property_in(&members, name) else {
-            return;
-        };
+        let (prop, _) = self.get_property_of_type(apparent, name)?;
+        if self.is_union(apparent) {
+            return prop.flags.contains(PropFlags::READONLY).then_some(prop);
+        }
         // `isAssignmentToReadonlyEntity`: what a CommonJS module exports by assigning can be assigned again, whatever it stands for.
         if let PropSource::Symbol(sym) = prop.source
             && self
@@ -3929,7 +3103,7 @@ impl Checker<'_> {
                 self.files().flags(s).contains(SymFlags::MODULE_EXPORTS)
             }));
             if is_through_module {
-                return;
+                return None;
             }
             let mut is_refused = false;
             for (declared_in, decl) in self.files().decls(sym) {
@@ -3940,11 +3114,7 @@ impl Checker<'_> {
                     break;
                 }
             }
-            if is_refused || self.is_namespace_import_name(file, obj) {
-                self.error_at((file, at, 0), 2540, &[]);
-                explain_readonly_element(self, file, e, at, Some(prop), name);
-            }
-            return;
+            return (is_refused || self.is_namespace_import_name(file, obj)).then_some(prop);
         }
         let is_refused = if prop.flags.contains(PropFlags::READONLY) {
             !self.is_written_in_own_constructor(file, e, obj, prop)
@@ -3953,103 +3123,8 @@ impl Checker<'_> {
         } else {
             self.is_namespace_import_name(file, obj)
         };
-        if is_refused {
-            self.error_at((file, at, 0), 2540, &[]);
-            explain_readonly_element(self, file, e, at, Some(prop), name);
-        }
+        is_refused.then_some(prop)
     }
-
-    /// `getPropertyTypeForIndexType`: 2540, of `obj[index]`, which is `e`, for each property that can only be read among those the
-    /// type of `index` names.
-    pub(super) fn check_element_write(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        obj: ExprId,
-        index: ExprId,
-    ) {
-        if self.write_kind(file, e).is_none() {
-            return;
-        }
-        let keys = self.type_of_expr(file, index);
-        // `checkElementAccessExpression`: a `const enum` is looked into with a string literal. Anything else is 2476, and in error.
-        if !is_string_literal_like(self.hir(file), index) {
-            let object = self.type_of_expr(file, obj);
-            if self.is_const_enum_object(object) {
-                return;
-            }
-        }
-        let at = self.error_start_of(file, index);
-        for &key in self.parts(keys) {
-            // `getPropertyNameFromIndex`
-            if let Some(name) = self.property_name_of_type(key) {
-                self.check_property_write(file, e, obj, name, at);
-            }
-        }
-    }
-
-    /// `createUnionOrIntersectionProperty`, of the union of `parts`: whether its property `name` can only be read, which is so as soon
-    /// as it is so in one member. `None`: the union has no such property.
-    fn is_readonly_in_union(&mut self, parts: &[TypeId], name: Atom) -> Option<bool> {
-        let is_late_bound = self.files().atoms.is_symbol_name(name);
-        let (mut is_declared, mut is_readonly) = (false, false);
-        for &part in parts {
-            let part = self.apparent_type(part);
-            // What nothing can be has no say.
-            if part.is_never() {
-                continue;
-            }
-            // What a type parameter extends.
-            if let TypeData::Union(inner) = self.data(part) {
-                is_readonly |= self.is_readonly_in_union(inner, name)?;
-                is_declared = true;
-                continue;
-            }
-            let members = self.members(part)?;
-            if let Some((prop, _)) = self.property_in(&members, name) {
-                is_declared = true;
-                is_readonly |= prop.flags.contains(PropFlags::READONLY);
-                continue;
-            }
-            // `getApplicableIndexInfoForName`: an index signature stands in for it, but not for what goes by a symbol.
-            let stand_in = if is_late_bound {
-                None
-            } else {
-                self.applicable_index(&members, TypeId::STRING, Some(name))
-            };
-            match stand_in {
-                Some(info) => is_readonly |= info.readonly,
-                // An object literal that does not mention it does not have it.
-                None if self.is_closed_object_literal_type(part) => {}
-                None => return None,
-            }
-        }
-        // Where only signatures answer there is no property, and it is of them that something is said (2542).
-        (is_declared && !self.is_hidden_in_union(parts, name)).then_some(is_readonly)
-    }
-
-    /// Why the name `e` cannot be given a value, if it cannot. `checkIdentifier`
-    fn why_not_assignable(&self, file: FileId, e: ExprId, name: Atom) -> Option<u32> {
-        let sym = self.symbol_of_identifier(file, e, name)?;
-        let flags = self.files().flags(sym);
-        if flags.intersects(SymFlags::VARIABLE) {
-            return flags.contains(SymFlags::CONST).then_some(2588);
-        }
-        Some(if flags.intersects(SymFlags::ENUM) {
-            2628
-        } else if flags.contains(SymFlags::CLASS) {
-            2629
-        } else if flags.intersects(SymFlags::MODULE) {
-            2631
-        } else if flags.contains(SymFlags::FUNCTION) {
-            2630
-        } else if flags.contains(SymFlags::ALIAS) {
-            2632
-        } else {
-            2539
-        })
-    }
-
     /// `this.p = v` in a constructor of the class that declares `p` is how a `readonly` property gets its value.
     fn is_written_in_own_constructor(
         &self,

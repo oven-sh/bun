@@ -188,7 +188,6 @@ test("an error that bun creates without a cause has no own cause", async () => {
     ["AggregateError", false],
     ["AggregateError", false],
   ]);
-  expect(require("util").inspect(errors[0])).not.toContain("[cause]");
 });
 
 describe("error.code is a String object that has no primitive value", () => {

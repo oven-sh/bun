@@ -1635,6 +1635,12 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
 // - monitorEventLoopDelay().enable(): the per-thread monitor holds the file's
 //   histogram. It is disabled at the swap and only ever holds the histogram
 //   weakly, so an enabled monitor must not keep the file's global alive.
+// - a module source that the loader drops: the source of a data or object
+//   module (JSON, a mock, a plugin's loader "object") kept a GC root on the
+//   value the module exports until a module was made from it. require() of a
+//   mocked module, two import() of one file at once, and require() of a graph
+//   that imports one data file twice each fetch a source that no module is
+//   made from, so its root stayed, and the value reaches its global.
 //
 // Each fixture runs 8 isolated files that leak one handle apiece, forces a
 // full GC, and counts live GlobalObject cells. Pinned globals accumulate
@@ -1771,6 +1777,42 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         monitorEventLoopDelay({ resolution: 1 }).enable();
       `),
     );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("require() of a mocked module", async () => {
+    using dir = tempDir(
+      "isolate-leak-mock-require",
+      makeLeakFixture(`
+        import { mock } from "bun:test";
+        mock.module("./mocked-dep", () => ({ default: 1 }));
+        require("./mocked-dep");
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("two import() of one data file at once", async () => {
+    using dir = tempDir("isolate-leak-data-import", {
+      ...makeLeakFixture(`
+        await Promise.all([import("./data.json"), import("./data.json")]);
+      `),
+      "data.json": `{ "value": 1 }`,
+    });
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  // The shape of #39941. A synchronous load fetches the data file once for each module that imports it.
+  test("require() of an ES module graph that imports one data file twice", async () => {
+    using dir = tempDir("isolate-leak-require-graph", {
+      ...makeLeakFixture(`
+        require("./graph/entry.mjs");
+      `),
+      "graph/entry.mjs": `import { a } from "./a.mjs";\nimport { b } from "./b.mjs";\nexport const sum = a + b;\n`,
+      "graph/a.mjs": `import data from "./data.json";\nexport const a = data.value;\n`,
+      "graph/b.mjs": `import data from "./data.json";\nexport const b = data.value;\n`,
+      "graph/data.json": `{ "value": 1 }`,
+    });
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 });

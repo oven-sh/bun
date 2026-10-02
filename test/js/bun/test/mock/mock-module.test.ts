@@ -540,3 +540,32 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
   expect(stderr).toContain(" 1 pass");
   expect(exitCode).toBe(0);
 });
+
+// require() of a mocked module fetches the source of the mock twice, and the loader makes a module from one of the two.
+test.concurrent("mock.module() and then require() of the mock leave nothing protected", async () => {
+  using dir = tempDir("mock-module-require-protected", {
+    "protected.test.ts": `
+      import { expect, mock, test } from "bun:test";
+      import { heapStats } from "bun:jsc";
+
+      test("require() of 20 mocked modules", () => {
+        for (let i = 0; i < 20; i++) mock.module("mocked-" + i, () => ({ value: i }));
+        Bun.gc(true);
+        const before = heapStats().protectedObjectCount;
+        for (let i = 0; i < 20; i++) expect(require("mocked-" + i).value).toBe(i);
+        Bun.gc(true);
+        expect(heapStats().protectedObjectCount - before).toBe(0);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./protected.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});

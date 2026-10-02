@@ -1102,12 +1102,6 @@ impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
     }
 }
 
-/// No-op tier-0 shim that keeps call-site shape (panics already carry a
-/// backtrace); the real reporter lives above in
-/// `bun_crash_handler::handle_error_return_trace`.
-#[inline(always)]
-pub fn handle_error_return_trace<E>(_err: E) {}
-
 // Real `declare_scope!`/`scoped_log!`/`pretty*!`/`warn!`/`note!` are
 // `#[macro_export]`ed from output.rs.
 

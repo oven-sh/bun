@@ -160,7 +160,6 @@ export const zlib: Dependency = {
         : {
             HAVE_VISIBILITY_HIDDEN: true,
             HAVE_VISIBILITY_INTERNAL: true,
-            HAVE_POSIX_MEMALIGN: true,
             _LARGEFILE64_SOURCE: 1,
             __USE_LARGEFILE64: true,
           }),

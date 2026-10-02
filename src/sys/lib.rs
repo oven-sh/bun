@@ -3215,12 +3215,6 @@ mod posix_impl {
                 dst: *const i8,
                 flags: u32,
             ) -> i32;
-            fn copyfile(
-                from: *const i8,
-                to: *const i8,
-                state: *mut core::ffi::c_void,
-                flags: u32,
-            ) -> i32;
             // safe: by-value `c_int` fds + `u32` flags; bad fd → `EBADF`/
             // `EOPNOTSUPP`, never UB. `state` is `Option<NonNull<c_void>>`
             // (FFI-safe via the null-pointer niche → ABI-identical to a
@@ -3260,16 +3254,6 @@ mod posix_impl {
             );
             Ok(())
         }
-        pub fn copyfile_(from: &ZStr, to: &ZStr, flags: u32) -> Maybe<()> {
-            check_p!(
-                // SAFETY: both `ZStr`s are valid NUL-terminated C strings;
-                // a null `copyfile_state_t` is documented as "use defaults".
-                unsafe { copyfile(from.as_ptr(), to.as_ptr(), core::ptr::null_mut(), flags) },
-                Tag::copyfile,
-                from
-            );
-            Ok(())
-        }
         pub fn fcopyfile_(from: Fd, to: Fd, flags: u32) -> Maybe<()> {
             check!(
                 fcopyfile(from.native(), to.native(), None, flags),
@@ -3280,8 +3264,7 @@ mod posix_impl {
     }
     #[cfg(target_os = "macos")]
     pub use darwin_copy::{
-        clonefile_ as clonefile, clonefileat_ as clonefileat, copyfile_ as copyfile,
-        fcopyfile_ as fcopyfile,
+        clonefile_ as clonefile, clonefileat_ as clonefileat, fcopyfile_ as fcopyfile,
     };
 
     // ── mmap/munmap ──

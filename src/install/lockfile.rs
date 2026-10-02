@@ -2019,8 +2019,6 @@ impl Lockfile {
         }
 
         if let Err(e) = file.close_and_move_to(tmpname, save_format.filename()) {
-            bun_core::handle_error_return_trace(&e);
-
             // note: file is already closed here.
             let _ = sys::unlink(tmpname);
 

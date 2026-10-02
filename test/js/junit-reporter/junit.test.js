@@ -609,7 +609,7 @@ describe("junit reporter", () => {
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
 
-  it("includes the type, message and location of a build or resolve error in <failure>", async () => {
+  it.concurrent("includes the type, message and location of a build or resolve error in <failure>", async () => {
     await using tmpDir = tempDir("junit-build-error", {
       "package.json": "{}",
       "broken.js": "const x = ;\n",
@@ -627,7 +627,8 @@ describe("junit reporter", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 0 pass\n 2 fail\n");
 
     const xmlContent = await file(junitPath).text();
     const result = await new Promise((resolve, reject) => {
@@ -794,6 +795,15 @@ describe("junit reporter", () => {
             });
           });
         `,
+        // The callback of the describe block did not throw: the rejection is not its result.
+        "d-stray.test.js": `
+          import { describe, test } from "bun:test";
+          describe("waits", async () => {
+            Promise.reject(new Error("stray-while-describe-waits"));
+            await Bun.sleep(1);
+          });
+          test("beside", () => {});
+        `,
       });
 
       const { stderr, exitCode, root, suites } = await runJunit(dir);
@@ -831,9 +841,15 @@ describe("junit reporter", () => {
           cases: [unhandled("leaked-in-group")],
           suites: [{ name: "group", line: 3, tests: 2, failures: 0, cases: ["leaks", "waits"] }],
         },
+        {
+          name: "d-stray.test.js",
+          tests: 2,
+          failures: 1,
+          cases: [unhandled("stray-while-describe-waits"), "beside"],
+        },
       ]);
-      expect(root).toEqual({ tests: 9, failures: 5 });
-      expect(stderr).toContain(" 4 pass\n 1 fail\n 5 errors\n");
+      expect(root).toEqual({ tests: 11, failures: 6 });
+      expect(stderr).toContain(" 5 pass\n 1 fail\n 6 errors\n");
       expect(exitCode).toBe(1);
     });
 
@@ -973,6 +989,8 @@ async function runJunit(dir, args = []) {
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Every run here gets as far as its summary. If it does not, this shows why.
+  expect(stderr).toMatch(/^Ran \d+ tests? across \d+ files?\./m);
   const xml = await file(junitPath).text();
   const { testsuites } = await new Promise((resolve, reject) => {
     xml2js.parseString(xml, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));

@@ -1268,9 +1268,23 @@ impl BunTest {
         is_rejection: bool,
         user_data: &RefDataValue,
     ) {
-        let _g = group_begin!();
-
         let _ = is_rejection;
+        self.report_uncaught_exception(global_this, exception, user_data, false);
+    }
+
+    /// A rejection that nothing handles. It is not the result of the callback in flight.
+    pub(crate) fn on_stray_rejection(&mut self, global_this: &JSGlobalObject, rejection: JSValue, user_data: &RefDataValue) {
+        self.report_uncaught_exception(global_this, Some(rejection), user_data, true);
+    }
+
+    fn report_uncaught_exception(
+        &mut self,
+        global_this: &JSGlobalObject,
+        exception: Option<JSValue>,
+        user_data: &RefDataValue,
+        is_stray: bool,
+    ) {
+        let _g = group_begin!();
 
         let handle_status: HandleUncaughtExceptionResult = match self.phase {
             Phase::Collection => self.collection.handle_uncaught_exception(user_data),
@@ -1348,7 +1362,7 @@ impl BunTest {
             // SAFETY: as for the count above.
             let reporter = unsafe { &mut *self.reporter.unwrap().as_ptr() };
             let file = reporter.jest.files.items_source()[self.file_id as usize].path.text;
-            let in_describe = handle_status == HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe;
+            let in_describe = !is_stray && handle_status == HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe;
             let (name, site) = self.unhandled_error_record(file, is_load_failure, in_describe);
             reporter.record_file_failure(name, site, unhandled_detail);
         }
@@ -1366,14 +1380,15 @@ impl BunTest {
         }
         if in_describe {
             let scope = self.collection.active_scope();
-            if !core::ptr::eq(scope, &*self.collection.root_scope) {
+            let root: &DescribeScope = &self.collection.root_scope;
+            if !core::ptr::eq(scope, root) {
                 return (b"(describe callback)", FailureSite::Describe(file, scope));
             }
         } else if self.phase == Phase::Execution
             && let Some(sequence) = self.get_current_state_data().sequence(self)
-            && let Some(entry) = sequence.test_entry.or(sequence.first_entry)
+            && let Some(entry) = sequence.test_entry
         {
-            // SAFETY: entries are owned by the collection tree, which lives as long as `self`.
+            // SAFETY: the test entry of a sequence is owned by the collection tree, which lives as long as `self`.
             return (b"(unhandled error)", FailureSite::BesideTest(file, unsafe { entry.as_ref() }));
         }
         (b"(unhandled error)", FailureSite::File(file))

@@ -617,12 +617,7 @@ pub(crate) mod on_unhandled_rejection {
                     }
                 }
             }
-            buntest.on_uncaught_exception(
-                global_object,
-                Some(rejection),
-                true,
-                &current_state_data,
-            );
+            buntest.on_stray_rejection(global_object, rejection, &current_state_data);
             buntest.add_result(current_state_data);
             if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
                 // As `RunTestsTask::call`: what advancing the runner threw is

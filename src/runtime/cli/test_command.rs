@@ -209,6 +209,7 @@ pub(crate) fn describe_chain<'a>(child: &'a bun_test::BaseScope) -> Vec<(&'a [u8
 }
 
 /// Where the testcase of a failure that is not a finished test goes. Each variant starts with the file, which this process runs.
+#[derive(Clone, Copy)]
 pub(crate) enum FailureSite<'a> {
     /// Under no `describe` block.
     File(&'a [u8]),
@@ -413,9 +414,9 @@ impl TestFailure {
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
     pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
-        // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
-        // `on_uncaught_exception` for the duration of a single
-        // `run_error_handler` call; single-threaded, no other borrow live.
+        // SAFETY: `on_uncaught_exception` set `ctx` to `&mut CommandLineReporter.test_failure`
+        // or to its own local `Option<TestFailure>`, and clears the hook before it returns;
+        // single-threaded, no other borrow live during the `run_error_handler` call.
         let slot = unsafe { &mut *ctx.cast::<Option<TestFailure>>() };
         TestFailure::record(slot, exception);
     }

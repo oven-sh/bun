@@ -3,6 +3,11 @@
 // debug, and file-level pass/fail is what the surrounding tooling checks. These
 // tests pin how `bun test --parallel` counts and reports a failure that is not a
 // finished test.
+//
+// Each test starts a coordinator and its workers, and two of them wait for a
+// worker to crash. On an ASAN debug build that takes longer than the default
+// timeout, so each test passes the timeout that the crash tests of
+// parallel.test.ts pass.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
@@ -46,8 +51,7 @@ describe("suite", () => {
         xml: maskJunit(await Bun.file(`${dir}/${name}.xml`).text()),
       };
     };
-    const serial = await run("serial");
-    const parallel = await run("parallel", "--parallel=2");
+    const [serial, parallel] = await Promise.all([run("serial"), run("parallel", "--parallel=2")]);
 
     const { xml, ...console } = serial;
     expect(console).toEqual({

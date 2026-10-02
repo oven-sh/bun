@@ -341,16 +341,8 @@ describe("--lockfile-only with remove and update", () => {
 // A peer edge and a cleaning error are not caught by verify_resolutions.
 describe.concurrent("--lockfile-only fails on a logged error", () => {
   async function packManifest(tarball: string, manifest: object) {
-    using work = tempDir("pack-manifest", { "package/package.json": JSON.stringify(manifest) });
-    await using tar = spawn({
-      cmd: ["tar", "-czf", tarball, "-C", String(work), "package"],
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [tarStderr, tarExitCode] = await Promise.all([tar.stderr.text(), tar.exited]);
-    if (tarExitCode !== 0) {
-      throw new Error(`tar exited with ${tarExitCode}: ${tarStderr}`);
-    }
+    const archive = new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" });
+    await writeFile(tarball, await archive.bytes());
   }
 
   async function lockfileOnly(dir: string) {

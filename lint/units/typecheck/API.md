@@ -2686,12 +2686,12 @@ At `a582ea9efb`, called by their upstream names with upstream's parameter order:
 
 ## Checker: name resolution hooks (`checker/c04_name_resolution_hooks.rs`)
 
-Commit `cad7795f23` (written by the job that commits the worktree). The file holds checker.go 1505-2200 whole and in
-upstream order: the 30 functions of the layer N-DIAG (`symbolReferenced` 1505 to `addTypeOnlyDeclarationRelatedInfo`
+Commits `cad7795f23` and `f5d129e53c` (written by the job that commits the worktree). The file holds checker.go
+1505-2200 whole and in upstream order: the 30 functions of the layer N-DIAG (`symbolReferenced` 1505 to `addTypeOnlyDeclarationRelatedInfo`
 2174) before `get_symbol` (2182, layer N-RESOLVE), which was there and did not change. PORT_STATUS.md has the rows.
 
 NOT compiled by cargo: `checker/mod.rs` still names modules without a file (`c16`, `c18`, `c19`, `emitresolver` at
-`ed705371ac`). "Verified" below says what was checked instead.
+`f5d129e53c`). "Verified" below says what was checked instead.
 
 ### How a caller writes the calls
 
@@ -2739,6 +2739,8 @@ NOT compiled by cargo: `checker/mod.rs` still names modules without a file (`c16
   and one to compare two symbols. Here both borrow it from one `RefCell` for the time of their call
   (`try_borrow_mut`, `try_borrow`), so `core::get_spelling_suggestion_exported` runs them in upstream's order: the
   name of a candidate is asked before the candidate is compared, and `ast.GetSymbolId` gives its ids in that order.
+  A callback that finds the checker taken, which the order of the calls rules out, records `StoreBusy` and answers
+  the nil symbol or 0.
 - `getSuggestionForSymbolNameLookup` (1781): `maps.Values(symbols)` is the table in its own order, and the
   suggestions of the primitive types follow in the order of the table of names, where the order of both Go maps is
   random. The candidates are collected before the first is looked at, where upstream's sequences are lazy.
@@ -2763,14 +2765,14 @@ NOT compiled by cargo: `checker/mod.rs` still names modules without a file (`c16
 Cargo built nothing and no test ran a function of the file. What was checked:
 
 - `sh round2-layer7-checker/c04-probe.sh`, with `rustc` and `clippy-driver` alone (no cargo), on the working tree
-  when its last commit was `ed705371ac`: no error, no warning, no finding. One crate of 1,065 lines compiles the
+  when its last commit was `f5d129e53c`: no error, no warning, no finding. One crate of 1,070 lines compiles the
   real file by `#[path]` beside the real `diagnostics/`, `internal.rs`,
   `core/{arena,golang,linkstore,text,tristate}.rs`, `collections/{set,ordered_map,ordered_set}.rs`,
   `ast/{flags,ids,checkflags,symbolflags,nodeflags,kind_generated,diagnostic}.rs` and
   `checker/{types,c01_data}.rs`, with `#![deny(warnings)]` and the deny set of the workspace, then the clippy table
   of the workspace with `clippy.toml`. Every other name is a stand-in whose signature `c04-probe-gen.py` reads from
   the file of the tree that defines it, and whose body never returns: the 29 methods of the checker that the file
-  calls, 45 free functions of `ast/`, 7 of `checker/utilities.rs`, 23 accessors of `Ast`,
+  calls, 45 free functions of `ast/`, 7 of `checker/utilities.rs`, 24 methods of `Ast`,
   `get_spelling_suggestion_exported` and `declaration_name_to_string`. `every`, `filter`, `find`, `if_else` and
   `concatenate_seq` are the text of `core/core.rs`. Written by hand: `Map` and `LiveList` (as the contract has
   them), the view of a source file with its one field `global_exports`, and the three methods of `c18` below.
@@ -2792,7 +2794,7 @@ Cargo built nothing and no test ran a function of the file. What was checked:
 
 ### What this file expects and the tree does not have
 
-At `ed705371ac`: three methods of the checker of the range of `c18` (no file), called by their upstream names with
+At `f5d129e53c`: three methods of the checker of the range of `c18` (no file), called by their upstream names with
 upstream's parameter order: `get_this_container(node, include_arrow_functions: bool,
 include_class_computed_property_name: bool) -> NodeId` (12279; `c52_symbol_at_location.rs` calls it the same way),
 `check_and_report_error_for_extending_interface(error_location) -> bool` (11756) and

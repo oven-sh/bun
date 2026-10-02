@@ -1,0 +1,110 @@
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -2971,9 +2971,11 @@
+   InplaceVector<uint8_t, SSL_MAX_MD_SIZE> read_traffic_secret;
+   InplaceVector<uint8_t, SSL_MAX_MD_SIZE> exporter_secret;
+ 
+-  // Connection binding to prevent renegotiation attacks
+-  InplaceVector<uint8_t, 12> previous_client_finished;
+-  InplaceVector<uint8_t, 12> previous_server_finished;
++  // Connection binding to prevent renegotiation attacks. Sized to also hold a
++  // TLS 1.3 Finished, which is one hash long, so that
++  // SSL_get_finished_all_versions can report it.
++  InplaceVector<uint8_t, SSL_MAX_MD_SIZE> previous_client_finished;
++  InplaceVector<uint8_t, SSL_MAX_MD_SIZE> previous_server_finished;
+ 
+   uint8_t send_alert[2] = {0};
+ 
+--- a/ssl/tls13_both.cc
++++ b/ssl/tls13_both.cc
+@@ -433,6 +433,17 @@
+     return false;
+   }
+ 
++  // Retain the peer's Finished for SSL_get_peer_finished_all_versions. TLS 1.3
++  // has no renegotiation, so unlike ssl_process_finished this is not used for
++  // the renegotiation_info extension.
++  bool ok = ssl->server
++                ? ssl->s3->previous_client_finished.TryCopyFrom(verify_data)
++                : ssl->s3->previous_server_finished.TryCopyFrom(verify_data);
++  if (!ok) {
++    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
++    return false;
++  }
++
+   return true;
+ }
+ 
+@@ -664,6 +675,18 @@
+     return false;
+   }
+ 
++  // Retain our own Finished for SSL_get_finished_all_versions. TLS 1.3 has no
++  // renegotiation, so unlike ssl_send_finished this is not used for the
++  // renegotiation_info extension.
++  auto finished = Span(verify_data, verify_data_len);
++  bool ok = ssl->server
++                ? ssl->s3->previous_server_finished.TryCopyFrom(finished)
++                : ssl->s3->previous_client_finished.TryCopyFrom(finished);
++  if (!ok) {
++    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
++    return false;
++  }
++
+   ScopedCBB cbb;
+   CBB body;
+   if (!ssl->method->init_message(ssl, cbb.get(), &body, SSL3_MT_FINISHED) ||
+--- a/ssl/ssl_lib.cc
++++ b/ssl/ssl_lib.cc
+@@ -1566,6 +1566,31 @@
+   return copy_finished(buf, count, ssl->s3->previous_server_finished);
+ }
+ 
++size_t SSL_get_finished_all_versions(const SSL *ssl, void *buf, size_t count) {
++  if (!ssl->s3->initial_handshake_complete) {
++    return 0;
++  }
++
++  if (ssl->server) {
++    return copy_finished(buf, count, ssl->s3->previous_server_finished);
++  }
++
++  return copy_finished(buf, count, ssl->s3->previous_client_finished);
++}
++
++size_t SSL_get_peer_finished_all_versions(const SSL *ssl, void *buf,
++                                          size_t count) {
++  if (!ssl->s3->initial_handshake_complete) {
++    return 0;
++  }
++
++  if (ssl->server) {
++    return copy_finished(buf, count, ssl->s3->previous_client_finished);
++  }
++
++  return copy_finished(buf, count, ssl->s3->previous_server_finished);
++}
++
+ int SSL_get_verify_mode(const SSL *ssl) {
+   if (!ssl->config) {
+     assert(ssl->config);
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -5988,6 +5988,17 @@
+ OPENSSL_EXPORT size_t SSL_get_peer_finished(const SSL *ssl, void *buf,
+                                             size_t count);
+ 
++// SSL_get_finished_all_versions and SSL_get_peer_finished_all_versions behave
++// like SSL_get_finished and SSL_get_peer_finished, but also report the Finished
++// message at TLS 1.3 and later, matching OpenSSL. Node's tlsSocket.getFinished
++// and tlsSocket.getPeerFinished expose the Finished on every protocol version,
++// so Bun cannot use the zero that the functions above return there.
++OPENSSL_EXPORT size_t SSL_get_finished_all_versions(const SSL *ssl, void *buf,
++                                                    size_t count);
++OPENSSL_EXPORT size_t SSL_get_peer_finished_all_versions(const SSL *ssl,
++                                                         void *buf,
++                                                         size_t count);
++
+ // SSL_alert_type_string returns "!". Use `SSL_alert_type_string_long`
+ // instead.
+ OPENSSL_EXPORT const char *SSL_alert_type_string(int value);

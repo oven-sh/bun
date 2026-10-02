@@ -1,7 +1,7 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { chmodSync, cpSync, lstatSync, readdirSync, readFileSync, rmSync } from "fs";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -1232,5 +1232,174 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// A patched package carries an empty `.bun-tag-<hash>` marker file. `bun install` checks
+// that marker to decide whether node_modules/<pkg> already has the patch applied, so
+// every copy of a patched package has one. `bun patch --commit` diffs node_modules/<pkg>
+// against the pristine package, and the marker must stay out of that diff.
+describe.concurrent("bun patch --commit on an already patched package", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr, `bun ${args.join(" ")} failed: ${stderr}`).not.toContain("error:");
+    expect(exitCode, `bun ${args.join(" ")} failed: ${stderr}`).toBe(0);
+    return stdout;
+  }
+
+  // `pristine` is a copy of the package as installed before any patch, so a
+  // patch that only touches package files applies to it.
+  async function gitApplyCheck(packageDir: string, patchPath: string) {
+    const cwd = join(packageDir, "pristine");
+    await using proc = Bun.spawn({
+      cmd: ["git", "apply", "--check", patchPath],
+      cwd,
+      env: { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(cwd, "no-gitconfig") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  async function createProject(linker: "hoisted" | "isolated") {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: { "package.json": JSON.stringify({ name: "foo", dependencies: { "basic-1": "1.0.0" } }) },
+    });
+    await runBun(packageDir, "install");
+    cpSync(join(packageDir, "node_modules", "basic-1"), join(packageDir, "pristine"), {
+      recursive: true,
+      dereference: true,
+    });
+    return packageDir;
+  }
+
+  async function commitEdit(packageDir: string, line: string) {
+    await runBun(packageDir, "patch", "basic-1");
+    const indexJs = join(packageDir, "node_modules", "basic-1", "index.js");
+    await Bun.write(indexJs, (await Bun.file(indexJs).text()) + line + "\n");
+    await runBun(packageDir, "patch", "--commit", "node_modules/basic-1");
+    return join(packageDir, "patches", "basic-1@1.0.0.patch");
+  }
+
+  for (const linker of ["hoisted", "isolated"] as const) {
+    test(`the second patch holds only the package files (${linker} linker)`, async () => {
+      const packageDir = await createProject(linker);
+
+      await commitEdit(packageDir, "// edit1");
+      const patchPath = await commitEdit(packageDir, "// edit2");
+      const patch = await Bun.file(patchPath).text();
+
+      expect(patch).not.toContain(".bun-tag-");
+      expect(patch).toContain("+// edit1\n+// edit2\n");
+      expect(await gitApplyCheck(packageDir, patchPath)).toEqual({ stderr: "", exitCode: 0 });
+
+      // the commit reinstalls the package with the patch applied, marker included
+      const installed = readdirSync(join(packageDir, "node_modules", "basic-1")).sort();
+      expect(installed.filter(name => !name.startsWith(".bun-tag-"))).toEqual(["index.js", "package.json"]);
+      expect(installed.filter(name => name.startsWith(".bun-tag-"))).toHaveLength(1);
+      expect(await Bun.file(join(packageDir, "node_modules", "basic-1", "index.js")).text()).toEndWith(
+        "// edit1\n// edit2\n",
+      );
+    });
+  }
+
+  // `git diff --no-index` names the same folder on both sides of the header for
+  // an added file (`a/node_modules/<pkg>/f b/node_modules/<pkg>/f`) and for a
+  // deleted one (`a/<cache folder>/f b/<cache folder>/f`). Both folders must be
+  // stripped from both sides.
+  test("added and deleted files get plain headers", async () => {
+    const packageDir = await createProject("hoisted");
+    const pkgDir = join(packageDir, "node_modules", "basic-1");
+
+    await runBun(packageDir, "patch", "basic-1");
+    await Bun.write(join(pkgDir, "added.js"), "module.exports = 1;\n");
+    await Bun.write(join(pkgDir, "empty.js"), "");
+    // `lib/node_modules/basic-1/` holds `b/node_modules/basic-1/` as a substring
+    await Bun.write(join(pkgDir, "lib", "node_modules", "basic-1", "deep.js"), "module.exports = 2;\n");
+    rmSync(join(pkgDir, "index.js"));
+    await runBun(packageDir, "patch", "--commit", "node_modules/basic-1");
+
+    const patch = await Bun.file(join(packageDir, "patches", "basic-1@1.0.0.patch")).text();
+    expect(patch).not.toContain(".bun-cache");
+    expect(patch).toContain("diff --git a/added.js b/added.js\nnew file mode 100644\n");
+    expect(patch).toContain("diff --git a/empty.js b/empty.js\nnew file mode 100644\n");
+    expect(patch).toContain("diff --git a/index.js b/index.js\ndeleted file mode 100644\n");
+    expect(patch).toContain(
+      "diff --git a/lib/node_modules/basic-1/deep.js b/lib/node_modules/basic-1/deep.js\nnew file mode 100644\n",
+    );
+    expect(patch).toContain("--- /dev/null\n+++ b/lib/node_modules/basic-1/deep.js\n");
+    // two in the header line of deep.js, one in its +++ line, none from the folder prefixes
+    expect(patch.match(/node_modules\//g)).toHaveLength(3);
+    expect(
+      readdirSync(pkgDir)
+        .filter(name => !name.startsWith(".bun-tag-"))
+        .sort(),
+    ).toEqual(["added.js", "empty.js", "lib", "package.json"]);
+    expect(await Bun.file(join(pkgDir, "lib", "node_modules", "basic-1", "deep.js")).text()).toBe(
+      "module.exports = 2;\n",
+    );
+  });
+
+  // The stub git is a shell script, so this runs on POSIX only.
+  test.skipIf(isWindows)("a commit whose git diff fails puts the folder back", async () => {
+    const packageDir = await createProject("hoisted");
+    const pkgDir = join(packageDir, "node_modules", "basic-1");
+
+    await commitEdit(packageDir, "// edit1");
+    await runBun(packageDir, "patch", "basic-1");
+    await Bun.write(join(pkgDir, "node_modules", "nested.js"), "module.exports = 3;\n");
+    const before = readdirSync(pkgDir).sort();
+    expect(before.filter(name => name.startsWith(".bun-tag-"))).toHaveLength(1);
+
+    const stubDir = join(packageDir, "stub-git");
+    await Bun.write(join(stubDir, "git"), "#!/bin/sh\necho 'stub git refuses' >&2\nexit 1\n");
+    chmodSync(join(stubDir, "git"), 0o755);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "patch", "--commit", "node_modules/basic-1"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"), PATH: stubDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("stub git refuses");
+    expect(stdout).not.toContain("installed");
+    expect(exitCode).toBe(1);
+    expect(readdirSync(pkgDir).sort()).toEqual(before);
+    expect(readdirSync(join(pkgDir, "node_modules"))).toEqual(["nested.js"]);
+    expect(readdirSync(join(packageDir, "node_modules")).filter(name => name.includes("node_modules_tmp"))).toEqual([]);
+  });
+
+  // https://github.com/oven-sh/bun/issues/19327
+  test("committing again without new edits leaves the patch file as it is", async () => {
+    const packageDir = await createProject("hoisted");
+
+    const patchPath = await commitEdit(packageDir, "// edit1");
+    const first = await Bun.file(patchPath).text();
+    expect(first).not.toContain(".bun-tag-");
+
+    await runBun(packageDir, "patch", "--commit", "node_modules/basic-1");
+    expect(await Bun.file(patchPath).text()).toBe(first);
+    expect(await gitApplyCheck(packageDir, patchPath)).toEqual({ stderr: "", exitCode: 0 });
   });
 });

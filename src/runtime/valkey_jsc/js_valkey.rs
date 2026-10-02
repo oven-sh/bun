@@ -192,10 +192,17 @@ impl JSValkeyClient {
         let map = self.subscription_callback_map();
 
         let handlers_array: JSValue;
+        let mut is_new_channel = false;
         let existing_handler_arr = map.get(global_object, channel_name)?;
         if existing_handler_arr != JSValue::UNDEFINED {
             debug!("Adding a new receive handler.");
-            if existing_handler_arr.is_array() {
+            // Note that we need to cover this case because maps in JSC can return undefined when
+            // the key has never been set.
+            if existing_handler_arr.is_undefined() {
+                // Create a new array if the existing_handler_arr is undefined/null
+                handlers_array = JSArray::create_empty(global_object, 0)?;
+                is_new_channel = true;
+            } else if existing_handler_arr.is_array() {
                 // Use the existing array
                 handlers_array = existing_handler_arr;
             } else {
@@ -204,7 +211,9 @@ impl JSValkeyClient {
         } else {
             // No existing_handler_arr exists, create a new array
             handlers_array = JSArray::create_empty(global_object, 0)?;
+            is_new_channel = true;
         }
+        let _ = is_new_channel;
 
         // Append the new callback to the array
         handlers_array.push(global_object, callback)?;

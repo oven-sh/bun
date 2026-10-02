@@ -141,6 +141,8 @@ extern "C" {
 
 typedef int ServerId;
 typedef int HotReloadId;
+typedef int RouteId;
+typedef int RequestId;
 
 [[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, const BunString* address, double startTime, void* serverInstance)
 {

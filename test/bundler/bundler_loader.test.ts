@@ -242,6 +242,23 @@ describe("bundler", async () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
 
+  itBundled("bun/loader-json-remapped-to-jsonc", {
+    target: "bun",
+    loader: { ".json": "jsonc" },
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.json';
+    console.write(JSON.stringify(data));
+  `,
+      "/data.json": `{
+  // a comment
+  "name": "example",
+  "list": [1, 2, 3,],
+}`,
+    },
+    run: { stdout: '{"name":"example","list":[1,2,3]}' },
+  });
+
   itBundled("bun/loader-json5-proto-key-is-own-property", {
     target: "bun",
     files: {

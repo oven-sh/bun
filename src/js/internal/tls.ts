@@ -1,4 +1,4 @@
-const { isTypedArray, isArrayBuffer } = require("node:util/types");
+const { isTypedArray, isArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function isPemObject(obj: unknown): obj is { pem: unknown } {
   return $isObject(obj) && "pem" in obj;
@@ -178,7 +178,35 @@ function processPfxOptions(options) {
   return out;
 }
 
+const ArrayPrototypeSome = Array.prototype.some;
+const ArrayPrototypeMap = Array.prototype.map;
+
+function isPemKeyEntry(k) {
+  return k && typeof k === "object" && !isArrayBufferView(k) && "pem" in k;
+}
+
+function hasPemObject(key) {
+  if (!key) return false;
+  if ($isArray(key)) return ArrayPrototypeSome.$call(key, isPemKeyEntry);
+  return isPemKeyEntry(key);
+}
+
+// Unwraps Node's key: [{ pem, passphrase }] form into the string/Buffer entries the native SSLConfig accepts
+function normalizePemKeyOption(key, ctxPassphrase) {
+  if (!key || !hasPemObject(key)) return key;
+  const entries = $isArray(key) ? key : [key];
+  return ArrayPrototypeMap.$call(entries, k => {
+    if (!isPemKeyEntry(k)) return k;
+    // Node: an explicit per-key null passphrase means "no passphrase" and does not fall back to the context-level one
+    const passphrase = k.passphrase !== undefined ? k.passphrase : ctxPassphrase;
+    if (passphrase == null) return k.pem;
+    const { createPrivateKey } = require("node:crypto");
+    return createPrivateKey({ key: k.pem, passphrase }).export({ type: "pkcs8", format: "pem" });
+  });
+}
+
 export {
+  normalizePemKeyOption,
   processPfxOptions,
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,

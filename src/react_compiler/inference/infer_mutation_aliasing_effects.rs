@@ -54,7 +54,7 @@ use crate::hir::visitors;
 /// Infers mutation/aliasing effects for all instructions and terminals in `func`.
 ///
 /// Corresponds to TS `inferMutationAliasingEffects(fn, {isFunctionExpression})`.
-pub fn infer_mutation_aliasing_effects(
+pub(crate) fn infer_mutation_aliasing_effects(
     func: &mut HirFunction,
     env: &mut Environment,
     is_function_expression: bool,
@@ -106,10 +106,7 @@ pub fn infer_mutation_aliasing_effects(
             );
         }
         if params_len > 1 {
-            let ref_place = match &func.params[1] {
-                ParamPattern::Place(p) => p,
-                ParamPattern::Spread(s) => &s.place,
-            };
+            let ref_place = func.params[1].place();
             let value_id = ValueId(next_value_id);
             next_value_id += 1;
             initial_state.initialize(
@@ -174,6 +171,8 @@ pub fn infer_mutation_aliasing_effects(
         fallback_value_ids: HashMap::default(),
     };
 
+    let revisitable = blocks_reachable_from_back_edges(func);
+
     let mut iteration_count = 0;
 
     while !queued_states.is_empty() {
@@ -195,8 +194,13 @@ pub fn infer_mutation_aliasing_effects(
                 None => continue,
             };
 
-            let mut state = incoming_state.clone();
-            states_by_block.insert(block_id, incoming_state);
+            let mut state = if revisitable.contains(&block_id) {
+                let state = incoming_state.clone();
+                states_by_block.insert(block_id, incoming_state);
+                state
+            } else {
+                incoming_state
+            };
 
             infer_block(&mut context, &mut state, block_id, func, env)?;
 
@@ -240,6 +244,43 @@ pub fn infer_mutation_aliasing_effects(
     }
 
     Ok(())
+}
+
+/// Blocks that the fixpoint loop can queue again after it processed them.
+///
+/// A block is queued only when one of its predecessors is processed, and each
+/// sweep processes blocks in `func.body.blocks` order. So a block is queued
+/// after its own turn only if it is the target of an edge from the same or a
+/// later block, or if such a target reaches it. Every other block is processed
+/// exactly once and `states_by_block` never reads its incoming state back. A
+/// dense state is `env.identifiers.len()` cells, so keeping one per block of a
+/// long loop-free function is quadratic.
+fn blocks_reachable_from_back_edges(func: &HirFunction) -> HashSet<BlockId> {
+    let position: HashMap<BlockId, usize> = func
+        .body
+        .blocks
+        .keys()
+        .enumerate()
+        .map(|(index, id)| (*id, index))
+        .collect();
+    let mut worklist: Vec<BlockId> = Vec::new();
+    for (index, block) in func.body.blocks.values().enumerate() {
+        for successor in terminal_successors(&block.terminal) {
+            if position.get(&successor).is_some_and(|&p| p <= index) {
+                worklist.push(successor);
+            }
+        }
+    }
+    let mut reachable: HashSet<BlockId> = HashSet::default();
+    while let Some(block_id) = worklist.pop() {
+        if !reachable.insert(block_id) {
+            continue;
+        }
+        if let Some(block) = func.body.blocks.get(&block_id) {
+            worklist.extend(terminal_successors(&block.terminal));
+        }
+    }
+    reachable
 }
 
 // =============================================================================
@@ -1359,10 +1400,7 @@ fn infer_param(
     param_kind: AbstractValue,
     next_value_id: &mut u32,
 ) {
-    let place = match param {
-        ParamPattern::Place(p) => p,
-        ParamPattern::Spread(s) => &s.place,
-    };
+    let place = param.place();
     let value_id = ValueId(*next_value_id);
     *next_value_id += 1;
     state.initialize(value_id, param_kind);
@@ -3241,10 +3279,7 @@ fn are_arguments_immutable_and_non_mutating(
                     if let Some(&func_id) = function_values.get(vid) {
                         let inner_func = &env.functions[func_id.0 as usize];
                         let mutates_params = inner_func.params.iter().any(|param| {
-                            let param_id = match param {
-                                ParamPattern::Place(p) => p.identifier,
-                                ParamPattern::Spread(s) => s.place.identifier,
-                            };
+                            let param_id = param.place().identifier;
                             let ident = &env.identifiers[param_id.0 as usize];
                             ident.mutable_range.end.0 > ident.mutable_range.start.0 + 1
                         });

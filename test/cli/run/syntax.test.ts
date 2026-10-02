@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 const exitCode0 = [
@@ -302,39 +302,114 @@ const exitCode0 = [
   "(()=>{let{a=b,b=1}={}})",
 ];
 
-describe.concurrent("exit code 0", () => {
-  const fixturePath = tempDirWithFiles("fixture", {
-    [`package.json`]: `{
-      "name": "test",
+// Originally each source was spawned twice (bun file + bun --eval), giving ~600
+// cold process startups whose cost dominated the file's wall time under ASAN.
+// The driver below parses and evaluates every fixture inside two subprocesses
+// instead: one launched as a file entrypoint that imports each fixture from
+// disk, and one launched via `--eval` that imports each fixture as a data: URL.
+// Every source still passes through Bun's transpiler and module evaluation, and
+// per-fixture failures are reported individually.
+const driver = `
+const count = Number(process.env.SYNTAX_FIXTURE_COUNT);
+const mode = process.env.SYNTAX_FIXTURE_MODE;
+let failures = 0;
+for (let i = 0; i < count; i++) {
+  try {
+    if (mode === "data") {
+      const source = await Bun.file(\`./fixture-\${i}.js\`).text();
+      await import("data:text/javascript;base64," + Buffer.from(source).toString("base64"));
+    } else {
+      await import(\`./fixture-\${i}.js\`);
+    }
+    process.stdout.write(\`PASS \${i}\\n\`);
+  } catch (e) {
+    process.stdout.write(\`FAIL \${i} \${e?.message ?? e}\\n\`);
+    failures++;
+  }
+}
+process.stdout.write(\`DONE \${count}\\n\`);
+process.exitCode = failures === 0 ? 0 : 1;
+`;
 
-    }`,
-    ...Object.fromEntries(exitCode0.map((source, i) => [`fixture-${i}.js`, source])),
+const fixturePath = tempDirWithFiles("syntax-fixture", {
+  "package.json": `{ "name": "test" }`,
+  "driver.mjs": driver,
+  ...Object.fromEntries(exitCode0.map((source, i) => [`fixture-${i}.js`, source])),
+});
+
+type RunResult = {
+  results: Map<number, string>;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+};
+
+async function runDriver(cmd: string[], mode: string): Promise<RunResult> {
+  await using proc = Bun.spawn(cmd, {
+    env: { ...bunEnv, SYNTAX_FIXTURE_COUNT: String(exitCode0.length), SYNTAX_FIXTURE_MODE: mode },
+    cwd: fixturePath,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results = new Map<number, string>();
+  for (const line of stdout.split("\n")) {
+    const m = /^(PASS|FAIL) (\d+)(?: (.*))?$/.exec(line);
+    if (m) results.set(Number(m[2]), m[1] === "PASS" ? "PASS" : `FAIL: ${m[3] ?? ""}`);
+  }
+  return { results, stdout, stderr, exitCode };
+}
+
+describe("exit code 0", () => {
+  let file: RunResult;
+  let data: RunResult;
+
+  beforeAll(async () => {
+    [file, data] = await Promise.all([
+      runDriver([bunExe(), "driver.mjs"], "file"),
+      runDriver([bunExe(), "--eval", driver], "data"),
+    ]);
   });
 
   for (let i = 0; i < exitCode0.length; i++) {
     const source = exitCode0[i];
 
-    test(`file #${i}: ${JSON.stringify(source)}`, async () => {
-      await using proc = Bun.spawn([bunExe(), `./fixture-${i}.js`], {
-        stdout: "inherit",
-        env: bunEnv,
-        cwd: fixturePath,
-        stderr: "inherit",
-        stdin: "inherit",
-      });
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+    test(`file #${i}: ${JSON.stringify(source)}`, () => {
+      const result = file.results.get(i);
+      if (result !== "PASS") {
+        // Surface stderr and exit code when the fixture failed or the driver crashed before reaching it.
+        expect({ result, stderr: file.stderr, exitCode: file.exitCode }).toEqual({
+          result: "PASS",
+          stderr: "",
+          exitCode: 0,
+        });
+      }
+      expect(result).toBe("PASS");
     });
 
-    test(`eval #${i}: ${JSON.stringify(source)}`, async () => {
-      await using proc = Bun.spawn([bunExe(), "--eval", source], {
-        stdout: "inherit",
-        env: bunEnv,
-        stderr: "inherit",
-        stdin: "inherit",
-      });
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+    test(`eval #${i}: ${JSON.stringify(source)}`, () => {
+      const result = data.results.get(i);
+      if (result !== "PASS") {
+        expect({ result, stderr: data.stderr, exitCode: data.exitCode }).toEqual({
+          result: "PASS",
+          stderr: "",
+          exitCode: 0,
+        });
+      }
+      expect(result).toBe("PASS");
     });
   }
+
+  test("file driver: clean exit", () => {
+    expect(file.stderr).toBe("");
+    expect(file.stdout.trimEnd().split("\n").at(-1)).toBe(`DONE ${exitCode0.length}`);
+    expect(file.exitCode).toBe(0);
+  });
+
+  test("eval driver: clean exit", () => {
+    expect(data.stderr).toBe("");
+    expect(data.stdout.trimEnd().split("\n").at(-1)).toBe(`DONE ${exitCode0.length}`);
+    expect(data.exitCode).toBe(0);
+  });
 });

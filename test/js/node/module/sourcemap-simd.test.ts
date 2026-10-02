@@ -444,7 +444,7 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
   test("over-long VLQ (>= 8 cont bytes): SIMD bails, scalar rejects", async () => {
     // 'g' is sextet 32 (cont bit set, payload 0). Eight in a row then
     // "AAAA," is a 12-byte segment whose first field has 9 sextets.
-    // Scalar caps at 8 bytes and returns no-progress -> ParseResult::Fail;
+    // Scalar caps at 8 bytes and returns no-progress -> Err(ParseFail);
     // SIMD must bail at this segment so scalar reports the same error.
     const head: number[][] = [];
     for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
@@ -459,7 +459,7 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     expect(simd.error).toEqual(scalar.error);
   });
 
-  test("out-of-range source index: identical ParseResult::Fail", async () => {
+  test("out-of-range source index: identical ParseFail", async () => {
     const head: number[][] = [];
     for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
     const { mappings: headM } = build([head]);

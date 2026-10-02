@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import net from "node:net";
 
 const skip = !fault.available() || isWindows;
 
@@ -48,6 +49,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
         // 1-byte sends → guaranteed backpressure → on_drain is exercised on
         // every event-loop turn for both the proxy→client and upstream→proxy legs.
         fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
 
         const port = proxy.address().port;
         const reqs = [];
@@ -117,6 +119,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
         },
       });
       fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+      fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
       const ctrl = new AbortController();
       const res = await fetch("http://127.0.0.1:" + server.port, { signal: ctrl.signal });
       const reader = res.body.getReader();
@@ -161,6 +164,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
       });
       server.listen(0, "127.0.0.1", async () => {
         fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
         const port = server.address().port;
         await Promise.all(Array.from({ length: N }, () => new Promise(resolve => {
           const r = http.get({ port, host: "127.0.0.1" }, res => {
@@ -192,6 +196,121 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
   });
 });
 
+describe.skipIf(skip)("node:http pipelining under short sends", () => {
+  // Every send() takes at most 12 KB, so each 16 KB response leaves a tail in
+  // userspace, and the flush that follows a drain callback sends the next
+  // response's tail whole. That response has ended, its buffer is empty and
+  // its drain callback has not run: the next pipelined request still has to
+  // queue behind it. The last end() callback exits, so a callback that does
+  // not wait for its tail cuts that body short.
+  test("responses whose tail leaves before their drain callback stay in order and complete (subprocess server)", async () => {
+    const COUNT = 8;
+    const BODY = Buffer.alloc(16 * 1024, "A");
+    const fixture = /* js */ `
+      const http = require("node:http");
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const body = Buffer.alloc(${BODY.length}, "A");
+      let served = 0;
+      const server = http.createServer((req, res) => {
+        res.end(body, ++served === ${COUNT} ? () => process.exit(0) : undefined);
+      });
+      server.listen(0, "127.0.0.1", () => {
+        fault.set({ syscall: "send", action: "short", bytes: 12 * 1024, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes: 12 * 1024, repeat: -1 });
+        console.log(server.address().port);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+    let portLine = "";
+    for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+      portLine += chunk;
+      if (portLine.includes("\n")) break;
+    }
+
+    const socket = net.connect(Number(portLine), "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", () => {});
+    const request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    socket.on("connect", () => socket.write(Buffer.alloc(request.length * COUNT, request)));
+    await once(socket, "close");
+
+    const bytes = Buffer.concat(chunks);
+    let complete = 0;
+    let offset = 0;
+    while (offset < bytes.length) {
+      const bodyStart = bytes.indexOf("\r\n\r\n", offset) + 4;
+      if (bodyStart < 4 || !bytes.subarray(offset, bodyStart).toString("latin1").startsWith("HTTP/1.1 200 OK\r\n"))
+        break;
+      if (!bytes.subarray(bodyStart, bodyStart + BODY.length).equals(BODY)) break;
+      offset = bodyStart + BODY.length;
+      complete++;
+    }
+    expect({ complete, unparsed: bytes.length - offset }).toEqual({ complete: COUNT, unparsed: 0 });
+    expect(await proc.exited).toBe(0);
+  });
+});
+
+describe.skipIf(skip)("node:http pipelining under stalled sends", () => {
+  // The second request is parsed while the first response still has a backlog,
+  // so the connection's reads are paused behind it. The next writable events
+  // then move nothing (send() reports 0, as it does for ENOBUFS). The client is
+  // alive and reading: the server has to retry, not take the stall for a dead
+  // peer and close over both responses.
+  test("a writable event that moves nothing does not close a live connection whose reads are paused (subprocess server)", async () => {
+    const SIZE = 8 * 1024 * 1024;
+    const fixture = /* js */ `
+      const http = require("node:http");
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const body = Buffer.alloc(${SIZE}, "A");
+      const server = http.createServer((req, res) => {
+        if (req.url === "/first") return res.end(body);
+        fault.set({ syscall: "send", action: "zero", repeat: 6 });
+        res.end("second", () => process.exit(0));
+      });
+      server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+    let portLine = "";
+    for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+      portLine += chunk;
+      if (portLine.includes("\n")) break;
+    }
+
+    const socket = net.connect(Number(portLine), "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", () => {});
+    socket.on("connect", () =>
+      socket.write(
+        "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      ),
+    );
+    await once(socket, "close");
+
+    const bytes = Buffer.concat(chunks);
+    const firstBody = bytes.indexOf("\r\n\r\n") + 4;
+    const secondHead = bytes.indexOf("HTTP/1.1 200 OK\r\n", firstBody);
+    const firstEnd = secondHead < 0 ? bytes.length : secondHead;
+    expect({
+      first: firstEnd - firstBody,
+      firstIntact: bytes.subarray(firstBody, firstEnd).equals(Buffer.alloc(SIZE, "A")),
+      second: secondHead < 0 ? null : bytes.subarray(bytes.indexOf("\r\n\r\n", secondHead) + 4).toString("latin1"),
+    }).toEqual({ first: SIZE, firstIntact: true, second: "second" });
+    expect(await proc.exited).toBe(0);
+  });
+});
+
 describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
   const seed = Number(process.env.BUN_SOCKET_FUZZ_SEED ?? 0x5e1d) >>> 0 || 1;
   function makePrng(s: number) {
@@ -217,6 +336,7 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
         const bytes = Number(url.searchParams.get("bytes"));
         const after = Number(url.searchParams.get("after"));
         fault.set({ syscall: "send", action: "short", bytes, after, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes, after, repeat: -1 });
         res.writeHead(200, { "content-length": String(body.length) });
         res.end(body);
         res.on("close", () => fault.clear());

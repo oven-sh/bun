@@ -47,14 +47,16 @@ declare var self: Worker;
 
 You can use `import` and `export` syntax in your worker code. Unlike in browsers, you don't need to pass `{type: "module"}` to use ES modules.
 
-To simplify error handling, Bun resolves the worker's script when `new Worker(url)` is called.
+If the worker's script fails to resolve, Bun emits an `"error"` event on the `Worker` object.
 
 ```js
 const worker = new Worker("/not-found.js");
-// throws an error immediately
+worker.addEventListener("error", event => {
+  console.log(event.message);
+});
 ```
 
-The specifier passed to `Worker` is resolved relative to the project root (like typing `bun ./path/to/file.js`).
+Bun resolves the specifier passed to `Worker` relative to the project root (like typing `bun ./path/to/file.js`).
 
 ### `preload` - load modules before the worker starts
 
@@ -96,7 +98,7 @@ const worker = new Worker(url);
 
 ### `"open"`
 
-The `"open"` event is emitted when a worker is created and ready to receive messages. (This event does not exist in browsers.)
+Bun emits the `"open"` event when a worker is created and ready to receive messages. (This event does not exist in browsers.)
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);
@@ -106,11 +108,28 @@ worker.addEventListener("open", () => {
 });
 ```
 
-Bun enqueues messages until the worker is ready, so you don't need to wait for the `"open"` event before sending.
+Messages posted before the worker's script has run are queued until it has, so you don't need to wait for the `"open"` event before sending. They are delivered to the handler the script installed while it ran. If it installed none, they are dropped.
+
+As in browsers, a message is dispatched to the worker as soon as the synchronous part of its script has run, whether or not a `"message"` handler exists yet, and a message dispatched while there is no handler is dropped. Install `self.onmessage` / `self.addEventListener("message", ...)` before the first top-level `await`:
+
+```ts worker.ts icon="file-code"
+declare var self: Worker;
+
+// installed before any `await`: nothing posted during startup is missed
+self.onmessage = (event: MessageEvent) => {
+  console.log(event.data);
+};
+
+const config = await loadConfig();
+```
+
+A top-level `await` in a statically imported module counts too. Static imports are evaluated before the worker's own code, so if any module in the import graph awaits at its top level, delivery starts before the first line of the worker runs and installing the handler on that first line is already too late. Load such modules with a dynamic `import()` after installing the handler, or use `node:worker_threads`.
+
+[`node:worker_threads`](https://nodejs.org/api/worker_threads.html) differs here, in Bun as in Node.js: `parentPort` keeps messages queued until a `"message"` listener is attached (and again whenever the last one is removed), so a worker that runs `await init()` before `parentPort.on("message", ...)` still receives everything in order.
 
 ## Messages with `postMessage`
 
-To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage). Messages are serialized with the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).
+To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage). Bun serializes messages with the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).
 
 ### Performance optimizations
 
@@ -206,11 +225,11 @@ Calling `worker.terminate()` makes the worker exit as soon as possible.
 
 ### `process.exit()`
 
-A worker can terminate itself with `process.exit()`. This does not terminate the main process. Like in Node.js, `process.on('beforeExit', callback)` and `process.on('exit', callback)` are emitted on the worker thread (and not on the main thread), and the exit code is passed to the `"close"` event.
+A worker can terminate itself with `process.exit()`. This does not terminate the main process. Like in Node.js, `process.on('beforeExit', callback)` and `process.on('exit', callback)` are emitted on the worker thread, not on the main thread. Bun passes the exit code to the `"close"` event.
 
 ### `"close"`
 
-The `"close"` event is emitted when a worker has been marked as terminated; the worker itself can take some time to fully exit. The `CloseEvent` contains the exit code passed to `process.exit()`, or 0 if it closed for another reason.
+Bun emits the `"close"` event when a worker has been marked as terminated. The worker itself can take some time to fully exit. The `CloseEvent` contains the exit code passed to `process.exit()`, or 0 if it closed for another reason.
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);
@@ -248,7 +267,7 @@ worker.unref();
 worker.ref();
 ```
 
-Alternatively, you can also pass an `options` object to `Worker`:
+Alternatively, you can also pass `ref: false` in the `options` object to `Worker`, which is equivalent to calling `worker.unref()`:
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker(new URL("worker.ts", import.meta.url).href, {
@@ -289,7 +308,7 @@ console.log(config); // => { apiUrl: "https://api.example.com" }
 
 ## Worker Events
 
-Listen for worker creation events using `process.emit()`:
+Listen for worker creation events using `process.on()`:
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 process.on("worker", worker => {

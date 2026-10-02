@@ -47,8 +47,12 @@ CryptoAlgorithmIdentifier CryptoAlgorithmPBKDF2::identifier() const
 
 void CryptoAlgorithmPBKDF2::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    if (!length || *length % 8) {
-        exceptionCallback(OperationError, ""_s);
+    if (!length) {
+        exceptionCallback(OperationError, "length cannot be null"_s);
+        return;
+    }
+    if (*length % 8) {
+        exceptionCallback(OperationError, "length must be a multiple of 8"_s);
         return;
     }
 
@@ -64,12 +68,12 @@ void CryptoAlgorithmPBKDF2::importKey(CryptoKeyFormat format, KeyData&& data, co
         exceptionCallback(NotSupportedError, ""_s);
         return;
     }
-    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey)) {
-        exceptionCallback(SyntaxError, ""_s);
+    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
+        exceptionCallback(SyntaxError, "Unsupported key usage for a PBKDF2 key"_s);
         return;
     }
     if (extractable) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "PBKDF2 keys are not extractable"_s);
         return;
     }
 

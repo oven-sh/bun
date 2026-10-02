@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -102,7 +102,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should show direct dependency", async () => {
-    const tempDir = tempDirWithFiles(`why-direct-dependency-${i++}`, {
+    await using tmpDir = tempDir(`why-direct-dependency-${i++}`, {
       "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
@@ -114,7 +114,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -123,7 +123,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "lodash"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -138,7 +138,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should show nested dependencies", async () => {
-    const tempDir = tempDirWithFiles(`why-nested-${i++}`, {
+    await using tmpDir = tempDir(`why-nested-${i++}`, {
       "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
@@ -150,7 +150,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "inherit",
       stderr: "inherit",
@@ -159,7 +159,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "mime-types"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
@@ -174,7 +174,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should handle workspace dependencies", async () => {
-    const tempDir = tempDirWithFiles(`why-workspace-${i++}`, {
+    await using tmpDir = tempDir(`why-workspace-${i++}`, {
       "package.json": JSON.stringify({
         name: "workspace-root",
         version: "1.0.0",
@@ -198,7 +198,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "inherit",
       stderr: "inherit",
@@ -207,7 +207,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "pkg-a"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
@@ -220,7 +220,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should handle npm aliases", async () => {
-    const tempDir = tempDirWithFiles(`why-alias-${i++}`, {
+    await using tmpDir = tempDir(`why-alias-${i++}`, {
       "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
@@ -232,7 +232,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "inherit",
       stderr: "inherit",
@@ -241,7 +241,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "alias-pkg"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
@@ -256,7 +256,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should show error for non-existent package", async () => {
-    const tempDir = tempDirWithFiles(`why-non-existent-${i++}`, {
+    await using tmpDir = tempDir(`why-non-existent-${i++}`, {
       "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
@@ -268,7 +268,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "inherit",
       stderr: "inherit",
@@ -277,7 +277,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "non-existent-package"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -293,7 +293,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should show dependency types correctly", async () => {
-    const tempDir = tempDirWithFiles(`why-dependency-types-${i++}`, {
+    await using tmpDir = tempDir(`why-dependency-types-${i++}`, {
       "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
@@ -314,7 +314,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -323,7 +323,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout: devStdout, exited: devExited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "typescript"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -334,7 +334,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout: peerStdout, exited: peerExited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "react"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -345,7 +345,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout: optStdout, exited: optExited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "chalk"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
@@ -356,7 +356,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should handle packages with multiple versions", async () => {
-    const tempDir = tempDirWithFiles(`why-multi-version-${i++}`, {
+    await using tmpDir = tempDir(`why-multi-version-${i++}`, {
       "package.json": JSON.stringify({
         name: "multi-version-test",
         version: "1.0.0",
@@ -369,7 +369,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
@@ -378,7 +378,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "react"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
@@ -429,7 +429,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should support version constraints in the query", async () => {
-    const tempDir = tempDirWithFiles(`why-version-test-${i++}`, {
+    await using tmpDir = tempDir(`why-version-test-${i++}`, {
       "package.json": JSON.stringify({
         name: "version-test",
         version: "1.0.0",
@@ -442,7 +442,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
@@ -451,7 +451,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "react@^18.0.0"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
@@ -466,7 +466,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should handle nested workspaces", async () => {
-    const tempDir = tempDirWithFiles(`why-workspace-${i++}`, {
+    await using tmpDir = tempDir(`why-workspace-${i++}`, {
       "package.json": JSON.stringify({
         name: "workspace-root",
         version: "1.0.0",
@@ -497,7 +497,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -506,7 +506,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "lodash"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

@@ -1180,6 +1180,89 @@ b {
     },
   });
 
+  // A url()'s `?query` / `#fragment` suffix must survive path rewriting so that
+  // SVG fragment references like `url(sprites.svg#icon)` keep addressing the
+  // element inside the asset. esbuild also preserves these.
+  itBundled("css/URLQueryFragmentPreservedFileLoader", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { mask: url(./sprites.svg#icon) }
+        .b { clip-path: url("./sprites.svg?v=3#c") }
+        .c { background: url(./sprites.svg) }
+        .d { --bg: url("./sprites.svg#custom") }
+      `,
+      "/sprites.svg": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".svg": "file",
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  mask: url("./sprites-mrrzcz3w.svg#icon");
+}
+.b {
+  clip-path: url("./sprites-mrrzcz3w.svg?v=3#c");
+}
+.c {
+  background: url("./sprites-mrrzcz3w.svg");
+}
+.d {
+  --bg: url("./sprites-mrrzcz3w.svg#custom");
+}
+`);
+    },
+  });
+  itBundled("css/URLQueryFragmentPreservedDataURL", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { mask: url(./small.svg#m1) }
+        .b { background: url("./small.svg?v=2") }
+        .c { mask: url(./small.svg?v=2#m1) }
+        .d { background: url(./small.svg) }
+      `,
+      "/small.svg": `<svg xmlns="http://www.w3.org/2000/svg"><mask id="m1"/></svg>`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      // A `?query` appended to a base64 data: URL lands in the body and fails
+      // decoding, so only the `#fragment` is kept on the inline path.
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
+}
+.b {
+  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==");
+}
+.c {
+  mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
+}
+.d {
+  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==");
+}
+`);
+    },
+  });
+  itBundled("css/URLQueryFragmentPreservedMinified", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { mask: url(./sprites.svg#icon) }
+      `,
+      "/sprites.svg": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".svg": "file",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`);
+    },
+  });
+
   itBundled("css/IgnoreURLsInAtRulePrelude", {
     // GENERATED
     files: {

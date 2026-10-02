@@ -18,7 +18,7 @@ bun add @sentry/bun
 
 ---
 
-Then initialize the SDK with your Sentry DSN in your app's entry file. You can find your DSN in your Sentry project settings.
+Then initialize the SDK with your Sentry DSN in its own file. You can find your DSN in your Sentry project settings.
 
 ```ts sentry.ts icon="/icons/typescript.svg"
 import * as Sentry from "@sentry/bun";
@@ -31,6 +31,14 @@ Sentry.init({
   // We recommend adjusting this value in production
   tracesSampleRate: 1.0,
 });
+```
+
+---
+
+Start your app with [`--preload`](/runtime) so this file runs before any of your app's modules. Bun evaluates a file's `import`s before its own code, so calling `Sentry.init()` at the top of your entry file would still run after everything that file imports.
+
+```sh terminal icon="terminal"
+bun --preload ./sentry.ts index.ts
 ```
 
 ---

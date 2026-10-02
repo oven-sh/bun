@@ -54,7 +54,7 @@ function makeEchoServer(opts: { tls?: boolean } = {}) {
   });
 }
 
-describe.skipIf(skip)("WebSocket client (ws://) under injected syscall faults", () => {
+describe.concurrent.skipIf(skip)("WebSocket client (ws://) under injected syscall faults", () => {
   test("recv → short reads (1 byte) deliver complete echoed text frame", async () => {
     using server = makeEchoServer();
     const r = await runWSClient(
@@ -172,7 +172,7 @@ describe.skipIf(skip)("WebSocket client (ws://) under injected syscall faults", 
   });
 });
 
-describe.skipIf(skip)("WebSocket client (wss://) under injected syscall faults", () => {
+describe.concurrent.skipIf(skip)("WebSocket client (wss://) under injected syscall faults", () => {
   test("recv → short reads (1 byte) over TLS deliver complete echoed frame", async () => {
     using server = makeEchoServer({ tls: true });
     const r = await runWSClient(
@@ -224,7 +224,7 @@ describe.skipIf(skip)("WebSocket client (wss://) under injected syscall faults",
   });
 });
 
-describe.skipIf(skip)("WebSocket client close-frame under faults", () => {
+describe.concurrent.skipIf(skip)("WebSocket client close-frame under faults", () => {
   test("close(code, reason) reaches server intact (no fault — regression)", async () => {
     const { promise: closedP, resolve } = Promise.withResolvers<{ code: number; reason: string }>();
     using server = Bun.serve({
@@ -297,7 +297,7 @@ describe.skipIf(skip)("WebSocket client close-frame under faults", () => {
   });
 });
 
-describe.skipIf(skip)("Bun.serve WebSocket server under injected syscall faults (subprocess)", () => {
+describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected syscall faults (subprocess)", () => {
   test("send → short writes (1 byte) deliver complete frame to client", async () => {
     const fixture = /* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
@@ -410,43 +410,45 @@ describe.skipIf(skip)("Bun.serve WebSocket server under injected syscall faults 
   });
 });
 
-describe.skipIf(skip)("WebSocket client (wss:// via HTTP CONNECT proxy) under injected syscall faults", () => {
-  // Regression for the proxy-tunnel pending-close path: a close frame that is
-  // only partially flushed defers `close` until handle_tunnel_writable() drains
-  // it. The wss endpoint below never answers the close frame, so the deferred
-  // dispatch is the ONLY way `onclose` can fire — without the drain this hangs.
-  test("send → short writes (1 byte): close() still dispatches 'close' once the tunnel drains", async () => {
-    const wss = tls.createServer({ cert: certs.cert, key: certs.key }, sock => {
-      let buf = Buffer.alloc(0);
-      let upgraded = false;
-      sock.on("data", chunk => {
-        if (upgraded) return; // absorb frames (including close) without replying
-        buf = Buffer.concat([buf, chunk]);
-        const end = buf.indexOf("\r\n\r\n");
-        if (end === -1) return;
-        const m = /Sec-WebSocket-Key:\s*([A-Za-z0-9+/=]+)/i.exec(buf.subarray(0, end).toString("latin1"));
-        if (!m) return sock.destroy();
-        const accept = crypto
-          .createHash("sha1")
-          .update(m[1] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-          .digest("base64");
-        sock.write(
-          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
-            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
-        );
-        upgraded = true;
+describe.concurrent.skipIf(skip)(
+  "WebSocket client (wss:// via HTTP CONNECT proxy) under injected syscall faults",
+  () => {
+    // Regression for the proxy-tunnel pending-close path: a close frame that is
+    // only partially flushed defers `close` until handle_tunnel_writable() drains
+    // it. The wss endpoint below never answers the close frame, so the deferred
+    // dispatch is the ONLY way `onclose` can fire — without the drain this hangs.
+    test("send → short writes (1 byte): close() still dispatches 'close' once the tunnel drains", async () => {
+      const wss = tls.createServer({ cert: certs.cert, key: certs.key }, sock => {
+        let buf = Buffer.alloc(0);
+        let upgraded = false;
+        sock.on("data", chunk => {
+          if (upgraded) return; // absorb frames (including close) without replying
+          buf = Buffer.concat([buf, chunk]);
+          const end = buf.indexOf("\r\n\r\n");
+          if (end === -1) return;
+          const m = /Sec-WebSocket-Key:\s*([A-Za-z0-9+/=]+)/i.exec(buf.subarray(0, end).toString("latin1"));
+          if (!m) return sock.destroy();
+          const accept = crypto
+            .createHash("sha1")
+            .update(m[1] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+            .digest("base64");
+          sock.write(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+              `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+          );
+          upgraded = true;
+        });
+        sock.on("error", () => {});
       });
-      sock.on("error", () => {});
-    });
-    await new Promise<void>(r => wss.listen(0, "127.0.0.1", () => r()));
-    const proxy = createConnectProxy();
-    const proxyPort = await startProxy(proxy);
-    try {
-      const url = `wss://127.0.0.1:${(wss.address() as import("node:net").AddressInfo).port}/`;
-      const r = await runWSClient(
-        url,
-        { syscall: "send", action: "short", bytes: 1, repeat: -1 },
-        /* js */ `
+      await new Promise<void>(r => wss.listen(0, "127.0.0.1", () => r()));
+      const proxy = createConnectProxy();
+      const proxyPort = await startProxy(proxy);
+      try {
+        const url = `wss://127.0.0.1:${(wss.address() as import("node:net").AddressInfo).port}/`;
+        const r = await runWSClient(
+          url,
+          { syscall: "send", action: "short", bytes: 1, repeat: -1 },
+          /* js */ `
           const ws = new WebSocket(url, {
             proxy: "http://127.0.0.1:${proxyPort}",
             tls: { rejectUnauthorized: false },
@@ -465,11 +467,12 @@ describe.skipIf(skip)("WebSocket client (wss:// via HTTP CONNECT proxy) under in
           ws.onerror = () => {};
           ws.onclose = e => { fault.clear(); out({ ok: true, code: e.code }); process.exit(0); };
         `,
-      );
-      expect(r).toMatchObject({ ok: true, code: 1000, signal: null, exitCode: 0 });
-    } finally {
-      proxy.close();
-      wss.close();
-    }
-  });
-});
+        );
+        expect(r).toMatchObject({ ok: true, code: 1000, signal: null, exitCode: 0 });
+      } finally {
+        proxy.close();
+        wss.close();
+      }
+    });
+  },
+);

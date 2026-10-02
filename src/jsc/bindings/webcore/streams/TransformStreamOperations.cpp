@@ -1,6 +1,8 @@
 #include "config.h"
 #include "WebStreamsInternals.h"
 
+#include "JSCompressionStream.h"
+#include "JSDecompressionStream.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
@@ -27,34 +29,15 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSStreamsRuntime;
 
-// The transform's readable half always carries a default controller.
+// Null-safe: Bun's native-sink pumps clear a consumed stream's controller slot in their
+// finally step, so a transform reaction (or an async transform()/flush() resuming after
+// that teardown) can see a readable with no controller. A torn-down readable is terminal.
 static JSReadableStreamDefaultController* transformReadableController(JSTransformStream* stream)
 {
-    auto* readable = stream->m_readable.get();
-    ASSERT(readable && readable->m_controllerKind == ControllerKind::Default);
-    return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
-}
-
-// WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a
-// rejected promise (a sanctioned completion-record catch). Returns nullptr on VM termination.
-static JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result;
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = getCallData(method);
-        ASSERT(callData.type != CallData::Type::None);
-        result = call(globalObject, method, callData, thisValue, args);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (result.isEmpty())
+    const auto* readable = stream->m_readable.get();
+    if (readable->m_controllerKind != ControllerKind::Default)
         return nullptr;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+    return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
 }
 
 // [[flushAlgorithm]] dispatch (needed only by the default sink close algorithm below).
@@ -67,15 +50,19 @@ static JSPromise* performFlushAlgorithm(JSC::VM& vm, JSGlobalObject* globalObjec
             MarkedArgumentBuffer args;
             args.append(controller);
             ASSERT(!args.hasOverflowed());
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, method, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, method, controller->m_transformer.get(), args));
         }
         break;
     case TransformerKind::Identity:
         break;
     case TransformerKind::TextEncoder:
-        RELEASE_AND_RETURN(scope, textEncoderStreamFlush(globalObject, uncheckedDowncast<JSTextEncoderStream>(controller->m_algorithmContext.get()), controller));
+        RELEASE_AND_RETURN(scope, runNativeArm<JSTextEncoderStream>(controller->m_algorithmContext.get(), [&](auto* s) { return textEncoderStreamFlush(globalObject, s, controller); }));
     case TransformerKind::TextDecoder:
-        RELEASE_AND_RETURN(scope, textDecoderStreamFlush(globalObject, uncheckedDowncast<JSTextDecoderStream>(controller->m_algorithmContext.get()), controller));
+        RELEASE_AND_RETURN(scope, runNativeArm<JSTextDecoderStream>(controller->m_algorithmContext.get(), [&](auto* s) { return textDecoderStreamFlush(globalObject, s, controller); }));
+    case TransformerKind::Compression:
+        RELEASE_AND_RETURN(scope, runNativeArm<JSCompressionStream>(controller->m_algorithmContext.get(), [&](auto* s) { return compressionStreamFlush(globalObject, s, controller); }));
+    case TransformerKind::Decompression:
+        RELEASE_AND_RETURN(scope, runNativeArm<JSDecompressionStream>(controller->m_algorithmContext.get(), [&](auto* s) { return decompressionStreamFlush(globalObject, s, controller); }));
     }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
@@ -89,35 +76,31 @@ static JSPromise* performCancelAlgorithm(JSC::VM& vm, JSGlobalObject* globalObje
             MarkedArgumentBuffer args;
             args.append(reason);
             ASSERT(!args.hasOverflowed());
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, method, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, method, controller->m_transformer.get(), args));
         }
     }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
-JSTransformStream* createTransformStream(JSGlobalObject* globalObject, TransformerKind kind, JSCell* algorithmContext, double writableHighWaterMark, JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSObject* readableSizeAlgorithm)
+void setUpNativeTransformStream(JSGlobalObject* globalObject, JSTransformStream* stream, TransformerKind kind)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(writableHighWaterMark >= 0);
-    ASSERT(readableHighWaterMark >= 0);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
 
-    auto* stream = JSTransformStream::create(vm, WebCore::getDOMStructure<JSTransformStream>(vm, *domGlobalObject));
     auto* startPromise = JSPromise::create(vm, globalObject->promiseStructure());
-    initializeTransformStream(globalObject, stream, startPromise, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    // readableHighWaterMark = 1 (not the spec's 0) so the first write completes without a
+    // reader attached, matching Node.js and Chromium.
+    initializeTransformStream(globalObject, stream, startPromise, 1, nullptr, 1, nullptr);
+    RETURN_IF_EXCEPTION(scope, void());
 
     auto* controller = JSTransformStreamDefaultController::create(vm, WebCore::getDOMStructure<JSTransformStreamDefaultController>(vm, *domGlobalObject));
     controller->m_transformerKind = kind;
-    if (algorithmContext)
-        controller->m_algorithmContext.set(vm, controller, algorithmContext);
+    controller->m_algorithmContext.set(vm, controller, stream);
     setUpTransformStreamDefaultController(vm, stream, controller);
 
-    // The internal kinds' start algorithm is trivial.
     resolvePromise(globalObject, startPromise, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return stream;
+    scope.assertNoException();
 }
 
 void initializeTransformStream(JSGlobalObject* globalObject, JSTransformStream* stream, JSPromise* startPromise, double writableHighWaterMark, JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSObject* readableSizeAlgorithm)
@@ -145,8 +128,10 @@ void transformStreamError(JSGlobalObject* globalObject, JSTransformStream* strea
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    readableStreamDefaultControllerError(globalObject, transformReadableController(stream), error);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerError(globalObject, readableController, error);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     RELEASE_AND_RETURN(scope, transformStreamErrorWritableAndUnblockWrite(globalObject, stream, error));
 }
 
@@ -218,9 +203,9 @@ JSPromise* transformStreamDefaultSinkWriteAlgorithm(JSGlobalObject* globalObject
         auto* backpressureChangePromise = stream->m_backpressureChangePromise.get();
         ASSERT(backpressureChangePromise);
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-        auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), stream, chunk);
+        stream->m_pendingWriteChunk.set(vm, stream, chunk);
         auto* runtime = JSStreamsRuntime::from(globalObject);
-        backpressureChangePromise->performPromiseThenWithContext(vm, globalObject, runtime->onTSSinkWriteBackpressureChangeFulfilled(), jsUndefined(), result, context);
+        backpressureChangePromise->performPromiseThenWithContext(vm, globalObject, runtime->onTSSinkWriteBackpressureChangeFulfilled(), jsUndefined(), result, stream);
         return result;
     }
     RELEASE_AND_RETURN(scope, transformStreamDefaultControllerPerformTransform(globalObject, controller, chunk));
@@ -270,6 +255,10 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = stream->m_controller.get();
+    // The readable is closed: a codec chunk (or, with a close in flight, flush) still being
+    // drained into it can no longer finish.
+    nativeCodecAbandon(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (auto* finishPromise = controller->m_finishPromise.get())
         return finishPromise;
     auto* finishPromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -287,9 +276,21 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
 
 JSPromise* transformStreamDefaultSourcePullAlgorithm(JSGlobalObject* globalObject, JSTransformStream* stream)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_backpressure);
     ASSERT(stream->m_backpressureChangePromise);
     transformStreamSetBackpressure(globalObject, stream, false);
+    scope.assertNoException();
+    if (stream->m_codecPromise) [[unlikely]] {
+        // The readable is asking for the next piece of a native codec chunk. Its enqueues may
+        // set [[backpressure]] again right here; a null result (pull done) keeps the next pull
+        // valid in that case, and otherwise the usual promise does.
+        nativeCodecContinue(globalObject, stream);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (stream->m_backpressure)
+            return nullptr;
+    }
     return stream->m_backpressureChangePromise.get();
 }
 
@@ -307,11 +308,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkWriteBackpressureChangeFulf
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1));
-    auto* stream = uncheckedDowncast<JSTransformStream>(context->getInternalField(0));
-    JSValue chunk = context->getInternalField(1);
+    auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
+    JSValue chunk = stream->m_pendingWriteChunk.get();
+    stream->m_pendingWriteChunk.clear();
 
-    auto* writable = stream->m_writable.get();
+    const auto* writable = stream->m_writable.get();
     if (writable->m_state == WritableStreamState::Erroring) {
         throwException(globalObject, scope, writable->m_storedError.get());
         return {};
@@ -331,13 +332,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkAbortCancelFulfilled, (JSGl
     JSValue reason = context->getInternalField(1);
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    auto* readable = stream->m_readable.get();
+    const auto* readable = stream->m_readable.get();
     if (readable->m_state == ReadableStreamState::Errored) {
         rejectPromise(globalObject, finishPromise, readable->m_storedError.get());
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
-    readableStreamDefaultControllerError(globalObject, transformReadableController(stream), reason);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerError(globalObject, readableController, reason);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     resolvePromise(globalObject, finishPromise, jsUndefined());
     // Resolving with `undefined` performs no thenable lookup and cannot throw.
     scope.assertNoException();
@@ -352,9 +356,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkAbortCancelRejected, (JSGlo
     auto* stream = uncheckedDowncast<JSTransformStream>(uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1))->getInternalField(0));
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    readableStreamDefaultControllerError(globalObject, transformReadableController(stream), rejection);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerError(globalObject, readableController, rejection);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     rejectPromise(globalObject, finishPromise, rejection);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -365,13 +372,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkCloseFlushFulfilled, (JSGlo
     auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    auto* readable = stream->m_readable.get();
+    const auto* readable = stream->m_readable.get();
     if (readable->m_state == ReadableStreamState::Errored) {
         rejectPromise(globalObject, finishPromise, readable->m_storedError.get());
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
-    readableStreamDefaultControllerClose(globalObject, transformReadableController(stream));
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerClose(globalObject, readableController);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     resolvePromise(globalObject, finishPromise, jsUndefined());
     // Resolving with `undefined` performs no thenable lookup and cannot throw.
     scope.assertNoException();
@@ -386,9 +396,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkCloseFlushRejected, (JSGlob
     auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    readableStreamDefaultControllerError(globalObject, transformReadableController(stream), rejection);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerError(globalObject, readableController, rejection);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     rejectPromise(globalObject, finishPromise, rejection);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -401,9 +414,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSourceCancelFulfilled, (JSGloba
     JSValue reason = context->getInternalField(1);
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    auto* writable = stream->m_writable.get();
+    const auto* writable = stream->m_writable.get();
     if (writable->m_state == WritableStreamState::Errored) {
         rejectPromise(globalObject, finishPromise, writable->m_storedError.get());
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
     writableStreamDefaultControllerErrorIfNeeded(globalObject, writable->m_controller.get(), reason);
@@ -429,6 +443,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSourceCancelRejected, (JSGlobal
     transformStreamUnblockWrite(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     rejectPromise(globalObject, finishPromise, rejection);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

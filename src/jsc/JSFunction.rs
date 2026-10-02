@@ -1,4 +1,4 @@
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 
 use crate::{JSGlobalObject, JSHostFn, JSValue};
 
@@ -25,7 +25,7 @@ pub enum ImplementationVisibility {
 pub struct Intrinsic(u8);
 
 impl Intrinsic {
-    pub(crate) const NONE: Intrinsic = Intrinsic(0);
+    const NONE: Intrinsic = Intrinsic(0);
 }
 
 impl Default for Intrinsic {
@@ -42,14 +42,13 @@ pub struct CreateJSFunctionOptions {
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; the remaining
-// params are by-value scalars / `#[repr(C)]` PODs / fn-ptrs, so all three
-// shims are declared `safe fn`. `getSourceCode` writes a `ZigString` view into
-// the `&mut` out-param on success and leaves it untouched on failure — `&mut
-// ZigString` is ABI-identical to a non-null `*mut ZigString`.
+// params are by-value scalars / `#[repr(C)]` PODs / fn-ptrs, so both shims are
+// declared `safe fn`. `getSourceCode` writes a +1 `String` into the `&mut`
+// out-param on success and leaves it untouched on failure.
 unsafe extern "C" {
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
-        fn_name: BunString,
+        fn_name: &BunString,
         implementation: JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,
@@ -57,22 +56,20 @@ unsafe extern "C" {
         constructor: Option<JSHostFn>,
     ) -> JSValue;
 
-    pub(crate) safe fn JSC__JSFunction__optimizeSoon(value: JSValue);
-
-    safe fn JSC__JSFunction__getSourceCode(value: JSValue, out: &mut ZigString) -> bool;
+    safe fn JSC__JSFunction__getSourceCode(value: JSValue, out: &mut BunString) -> bool;
 }
 
 impl JSFunction {
     pub fn create(
         global: &JSGlobalObject,
-        fn_name: impl Into<BunString>,
+        fn_name: &'static str,
         implementation: JSHostFn,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) -> JSValue {
         JSFunction__createFromZig(
             global,
-            fn_name.into(),
+            &BunString::static_(fn_name),
             implementation,
             function_length,
             options.implementation_visibility,
@@ -81,17 +78,9 @@ impl JSFunction {
         )
     }
 
-    pub fn optimize_soon(value: JSValue) {
-        JSC__JSFunction__optimizeSoon(value)
-    }
-
+    /// A copy of the function's source text; `None` for native functions.
     pub fn get_source_code(value: JSValue) -> Option<BunString> {
-        let mut str = ZigString::EMPTY;
-        // C++ overwrites `str` on success and leaves it untouched on failure.
-        if JSC__JSFunction__getSourceCode(value, &mut str) {
-            Some(BunString::init(str))
-        } else {
-            None
-        }
+        let mut str = BunString::EMPTY;
+        JSC__JSFunction__getSourceCode(value, &mut str).then_some(str)
     }
 }

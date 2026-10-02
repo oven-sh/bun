@@ -10,7 +10,7 @@ let connections = 0;
 const server = createServer(common.mustCall(function(req, res) {
   res.writeHead(200, { Connection: 'keep-alive' });
   res.end();
-}, 2), {
+}), {
   headersTimeout: 0,
   keepAliveTimeout: 0,
   requestTimeout: common.platformTimeout(60000),
@@ -20,7 +20,7 @@ server.on('connection', function() {
   connections++;
 });
 
-server.listen(0, function() {
+server.listen(0, common.mustCall(() => {
   const port = server.address().port;
 
   // Create a first request but never finish it
@@ -57,5 +57,5 @@ server.listen(0, function() {
 
   client1.on('error', () => {});
 
-  client1.write('GET / HTTP/1.1\r\nHost: example.com\r\n\r\n'); // Bun only reports connect after headers are received
-});
+  client1.write('GET / HTTP/1.1');
+}));

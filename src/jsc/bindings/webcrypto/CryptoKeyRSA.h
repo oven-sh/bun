@@ -31,25 +31,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#if 0
-#include "CommonCryptoUtilities.h"
-
-typedef CCRSACryptorRef PlatformRSAKey;
-namespace WebCore {
-struct CCRSACryptorRefDeleter {
-    void operator()(CCRSACryptorRef key) const { CCRSACryptorRelease(key); }
-};
-}
-typedef std::unique_ptr<typename std::remove_pointer<CCRSACryptorRef>::type, WebCore::CCRSACryptorRefDeleter> PlatformRSAKeyContainer;
-#endif
-
-#if USE(GCRYPT)
-#include <pal/crypto/gcrypt/Handle.h>
-
-typedef gcry_sexp_t PlatformRSAKey;
-typedef std::unique_ptr<typename std::remove_pointer<gcry_sexp_t>::type, PAL::GCrypt::HandleDeleter<gcry_sexp_t>> PlatformRSAKeyContainer;
-#endif
-
 #if USE(OPENSSL)
 #include "OpenSSLCryptoUniquePtr.h"
 typedef EVP_PKEY* PlatformRSAKey;
@@ -59,7 +40,6 @@ typedef WebCore::EvpPKeyPtr PlatformRSAKeyContainer;
 namespace WebCore {
 
 class CryptoKeyRSAComponents;
-class PromiseWrapper;
 class ScriptExecutionContext;
 
 struct CryptoKeyPair;
@@ -82,8 +62,11 @@ public:
     using VoidCallback = Function<void()>;
     static void generatePair(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier hash, bool hasHash, unsigned modulusLength, const Vector<uint8_t>& publicExponent, bool extractable, CryptoKeyUsageBitmap, KeyPairCallback&&, VoidCallback&& failureCallback, ScriptExecutionContext*);
     static RefPtr<CryptoKeyRSA> importJwk(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyRSA> importSpki(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyRSA> importPkcs8(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap);
+    // On failure, `keyTypeMismatch` (when given) reports whether the data parsed into a
+    // well-formed key of some *other* type, which callers surface as "Invalid key type"
+    // rather than "Invalid keyData".
+    static RefPtr<CryptoKeyRSA> importSpki(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch = nullptr);
+    static RefPtr<CryptoKeyRSA> importPkcs8(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch = nullptr);
 
     PlatformRSAKey platformKey() const { return m_platformKey.get(); }
     JsonWebKey exportJwk() const;

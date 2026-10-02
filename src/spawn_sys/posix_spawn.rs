@@ -2,21 +2,15 @@
 
 #[cfg(target_os = "macos")]
 use core::ffi::c_short;
-#[cfg(unix)]
 use core::ffi::{c_char, c_int};
-#[cfg(unix)]
 use core::ptr;
 use std::ffi::{CStr, CString};
 
-use bun_core::{Error, err};
-#[cfg(unix)]
-use bun_sys as sys;
-use bun_sys::Fd;
+use bun_sys::{self as sys, Fd};
 
 // `bun_sys::c` only re-exports a thin slice of libc
 // (no `posix_spawn*`/`waitpid`/`wait4`). Use the `libc` crate directly here;
 // `bun_sys::c` can re-export these later and this `use` swaps back.
-#[cfg(unix)]
 use libc as system;
 
 // ── Darwin spawn extensions missing from the `libc` crate ────────────────
@@ -44,41 +38,26 @@ mod darwin_spawn_np {
 // MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
 // is self-contained; delete in favour of `bun_sys::posix::*` once that module
 // widens.
-#[cfg(unix)]
-use self::posix_compat::{Errno, errno};
+use self::posix_compat::{Errno, errno, to_posix_path};
 #[cfg(target_os = "macos")]
 use self::posix_compat::{errno_from_posix_spawn, mode_t};
-use self::posix_compat::{fd_t, pid_t, to_posix_path};
+use libc::pid_t;
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
-    use bun_core::{Error, err};
-    #[cfg(unix)]
+    use crate::Error;
     use core::ffi::c_int;
     use std::ffi::CString;
 
-    /// Native fd backing int.
-    // posix_spawn file actions use libc `int` fds on the C side
-    // (`posix_spawn_bun.cpp`). On POSIX `FdNative == c_int`; on Windows
-    // `FdNative` is HANDLE, but this code path is unreachable there — keep
-    // the C-ABI type so the struct compiles unchanged.
-    pub(super) type fd_t = core::ffi::c_int;
-    /// Native process id type.
-    #[cfg(unix)]
-    pub(super) type pid_t = libc::pid_t;
-    #[cfg(not(unix))]
-    pub(super) type pid_t = i32;
     #[cfg(target_os = "macos")]
     pub(super) use bun_sys::posix::mode_t;
 
     /// Errno enum with **unprefixed** variant names. The real
     /// `bun_errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
     /// keeps the body's `Errno::SUCCESS`/`NOMEM`/... matches intact.
-    #[cfg(unix)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[repr(transparent)]
     pub(super) struct Errno(pub c_int);
-    #[cfg(unix)]
     impl Errno {
         pub(super) const SUCCESS: Errno = Errno(0);
         #[cfg(target_os = "macos")]
@@ -89,7 +68,6 @@ mod posix_compat {
     /// else `.SUCCESS`. For syscalls using the conventional return style
     /// (`wait4`, etc.) — NOT for `posix_spawn*`, which returns the errno
     /// directly; use [`errno_from_posix_spawn`] there.
-    #[cfg(unix)]
     #[inline]
     pub(super) fn errno(rc: c_int) -> Errno {
         if rc == -1 {
@@ -108,7 +86,7 @@ mod posix_compat {
 
     /// Copy a path into a NUL-terminated buffer.
     pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
-        CString::new(path).map_err(|_| err!("Unexpected"))
+        CString::new(path).map_err(|_| crate::Error::Unexpected)
     }
 }
 
@@ -118,6 +96,7 @@ mod posix_compat {
 
 pub mod bun_spawn {
     use super::*;
+    use crate::Error;
 
     // The #[repr(C)] FFI mirrors (`FileActionType`, `Action`) live in
     // `bun_core::spawn_ffi` — the single source of truth for bun-spawn.cpp's
@@ -125,46 +104,43 @@ pub mod bun_spawn {
     // lives in `Actions.paths` below.
     pub use bun_core::spawn_ffi::{Action, FileActionType};
 
-    // `Fd::native()` returns `*mut c_void` on Windows, which can't fill the
-    // `c_int` action slot. posix_spawn never runs on Windows (libuv handles
-    // spawn there), so trap instead of inventing a HANDLE→int cast.
-    #[cfg(unix)]
-    #[inline(always)]
-    fn fd_int(fd: Fd) -> fd_t {
-        fd.native()
-    }
-    #[cfg(windows)]
-    #[inline(always)]
-    fn fd_int(_fd: Fd) -> fd_t {
-        unreachable!("posix_spawn file actions are unix-only")
-    }
-
     #[derive(Default)]
     pub struct Actions {
-        pub chdir_buf: Option<CString>,
-        pub actions: Vec<Action>,
+        pub(crate) chdir_buf: Option<CString>,
+        pub(crate) actions: Vec<Action>,
         /// Owns the C strings pointed to by `Action.path` for `.Open` actions.
         /// `CString`'s heap buffer does not move when this Vec reallocates, so
         /// raw pointers stored in `actions[i].path` remain valid for the life
         /// of `Actions`.
-        pub paths: Vec<CString>,
-        pub detached: bool,
+        pub(crate) paths: Vec<CString>,
     }
 
     impl Actions {
-        pub fn init() -> Result<Actions, Error> {
+        pub(crate) fn init() -> Result<Actions, Error> {
             Ok(Actions::default())
         }
 
         // deinit: freed chdir_buf, each action.path, and the actions list — all owned
         // types now, so Drop is automatic.
 
-        pub fn open(&mut self, fd: Fd, path: &[u8], flags: u32, mode: i32) -> Result<(), Error> {
+        pub(crate) fn open(
+            &mut self,
+            fd: Fd,
+            path: &[u8],
+            flags: u32,
+            mode: i32,
+        ) -> Result<(), Error> {
             let posix_path = to_posix_path(path)?;
             self.open_z(fd, &posix_path, flags, mode)
         }
 
-        pub fn open_z(&mut self, fd: Fd, path: &CStr, flags: u32, mode: i32) -> Result<(), Error> {
+        pub(crate) fn open_z(
+            &mut self,
+            fd: Fd,
+            path: &CStr,
+            flags: u32,
+            mode: i32,
+        ) -> Result<(), Error> {
             self.paths.push(path.to_owned());
             // SAFETY: CString's heap buffer is stable across Vec<CString> reallocs;
             // pointer outlives this Action because both are owned by `self`.
@@ -174,43 +150,42 @@ pub mod bun_spawn {
                 path: path_ptr,
                 flags: i32::try_from(flags).expect("int cast"),
                 mode,
-                fds: [fd_int(fd), 0],
+                fds: [fd.native(), 0],
             });
             Ok(())
         }
 
-        pub fn close(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn close(&mut self, fd: Fd) -> Result<(), Error> {
             self.actions.push(Action {
                 kind: FileActionType::Close,
-                fds: [fd_int(fd), 0],
+                fds: [fd.native(), 0],
                 ..Default::default()
             });
             Ok(())
         }
 
-        pub fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
+        pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
             self.actions.push(Action {
                 kind: FileActionType::Dup2,
-                fds: [fd_int(fd), fd_int(newfd)],
+                fds: [fd.native(), newfd.native()],
                 ..Default::default()
             });
             Ok(())
         }
 
-        pub fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
             self.dup2(fd, fd)
         }
 
-        pub fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
+        pub(crate) fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
             // previous buffer (if any) is dropped by assignment.
             // CString::new errors on interior NUL.
-            self.chdir_buf = Some(CString::new(path).map_err(|_| err!("Unexpected"))?);
+            self.chdir_buf = Some(CString::new(path).map_err(|_| crate::Error::Unexpected)?);
             Ok(())
         }
     }
 
     #[derive(Clone, Copy)]
-    #[allow(dead_code)]
     pub(crate) struct Attr {
         pub detached: bool,
         pub new_process_group: bool,
@@ -220,6 +195,7 @@ pub mod bun_spawn {
         pub linux_pdeathsig: i32,
         pub uid: Option<u32>,
         pub gid: Option<u32>,
+        pub cgroup_fd: i32,
     }
 
     impl Default for Attr {
@@ -236,17 +212,16 @@ pub mod bun_spawn {
                 linux_pdeathsig: 0,
                 uid: None,
                 gid: None,
+                cgroup_fd: -1,
             }
         }
     }
 
     impl Attr {
-        #[allow(dead_code)]
         pub(crate) fn init() -> Result<Attr, Error> {
             Ok(Attr::default())
         }
 
-        #[allow(dead_code)]
         pub(crate) fn set(&mut self, flags: u16) -> Result<(), Error> {
             self.flags = flags;
             // FreeBSD's <spawn.h> has no POSIX_SPAWN_SETSID; bun-spawn.cpp
@@ -268,7 +243,6 @@ pub mod bun_spawn {
             Ok(())
         }
 
-        #[allow(dead_code)]
         pub(crate) fn reset_signals(&mut self) -> Result<(), Error> {
             self.reset_signals = true;
             Ok(())
@@ -277,13 +251,10 @@ pub mod bun_spawn {
 }
 
 pub mod posix_spawn {
-    #[cfg(unix)]
     use super::bun_spawn;
     use super::*;
 
-    #[cfg(unix)]
     const SYSCALL_POSIX_SPAWN: sys::Tag = sys::Tag::posix_spawn;
-    #[cfg(unix)]
     const SYSCALL_WAITPID: sys::Tag = sys::Tag::waitpid;
 
     #[derive(Copy, Clone)]
@@ -313,18 +284,15 @@ pub mod posix_spawn {
     // On Linux/FreeBSD the runtime path goes through `bun_spawn` (vfork-based
     // `posix_spawn_bun`), so these are only **used** on macOS-non-PTY. Gate
     // them on `target_os = "macos"` to avoid the Darwin-only `_np` extensions
-    // (`addinherit_np`) breaking the Linux build; the `not(unix)` Windows path
-    // never reaches them either.
+    // (`addinherit_np`) breaking the Linux build.
     #[cfg(target_os = "macos")]
     pub struct PosixSpawnAttr {
-        pub attr: system::posix_spawnattr_t,
-        pub detached: bool,
-        pub pty_slave_fd: i32,
+        pub(crate) attr: system::posix_spawnattr_t,
     }
 
     #[cfg(target_os = "macos")]
     impl PosixSpawnAttr {
-        pub fn init() -> sys::Result<PosixSpawnAttr> {
+        pub(crate) fn init() -> sys::Result<PosixSpawnAttr> {
             let mut attr = core::mem::MaybeUninit::<system::posix_spawnattr_t>::uninit();
             // SAFETY: posix_spawnattr_init writes into attr on SUCCESS
             spawn_errno(errno_from_posix_spawn(unsafe {
@@ -333,12 +301,10 @@ pub mod posix_spawn {
             Ok(PosixSpawnAttr {
                 // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
                 attr: unsafe { attr.assume_init() },
-                detached: false,
-                pty_slave_fd: -1,
             })
         }
 
-        pub fn set(&mut self, flags: u16) -> sys::Result<()> {
+        pub(crate) fn set(&mut self, flags: u16) -> sys::Result<()> {
             // `as` between same-width signed/unsigned is a bitcast.
             let flags_s: c_short = flags as c_short;
             // SAFETY: self.attr is a live posix_spawnattr_t
@@ -347,7 +313,7 @@ pub mod posix_spawn {
             }))
         }
 
-        pub fn reset_signals(&mut self) -> sys::Result<()> {
+        pub(crate) fn reset_signals(&mut self) -> sys::Result<()> {
             // SAFETY: self.attr is a live posix_spawnattr_t
             if unsafe { posix_spawnattr_reset_signals(&raw mut self.attr) } != 0 {
                 // posix_spawnattr_setsigdefault/setsigmask only fail on an
@@ -379,7 +345,7 @@ pub mod posix_spawn {
 
     #[cfg(target_os = "macos")]
     impl PosixSpawnActions {
-        pub(crate) fn init() -> sys::Result<PosixSpawnActions> {
+        fn init() -> sys::Result<PosixSpawnActions> {
             let mut actions =
                 core::mem::MaybeUninit::<system::posix_spawn_file_actions_t>::uninit();
             // SAFETY: posix_spawn_file_actions_init writes into actions on SUCCESS
@@ -392,13 +358,7 @@ pub mod posix_spawn {
             })
         }
 
-        pub(crate) fn open_z(
-            &mut self,
-            fd: Fd,
-            path: &CStr,
-            flags: u32,
-            mode: mode_t,
-        ) -> sys::Result<()> {
+        fn open_z(&mut self, fd: Fd, path: &CStr, flags: u32, mode: mode_t) -> sys::Result<()> {
             let flags_c: c_int = flags as c_int;
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno_from_posix_spawn(unsafe {
@@ -412,7 +372,7 @@ pub mod posix_spawn {
             }))
         }
 
-        pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> sys::Result<()> {
+        fn dup2(&mut self, fd: Fd, newfd: Fd) -> sys::Result<()> {
             if fd == newfd {
                 return self.inherit(fd);
             }
@@ -427,7 +387,7 @@ pub mod posix_spawn {
             }))
         }
 
-        pub(crate) fn inherit(&mut self, fd: Fd) -> sys::Result<()> {
+        fn inherit(&mut self, fd: Fd) -> sys::Result<()> {
             // SAFETY: self.actions is live
             spawn_errno(errno_from_posix_spawn(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
@@ -457,36 +417,26 @@ pub mod posix_spawn {
         }
     }
 
-    // Use BunSpawn types on POSIX (both Linux and macOS) for PTY support via posix_spawn_bun.
-    // Windows uses different spawn mechanisms.
-    #[cfg(unix)]
+    // BunSpawn types on both Linux and macOS, for PTY support via posix_spawn_bun.
     pub(crate) type Actions = bun_spawn::Actions;
-    #[cfg(unix)]
     pub(crate) type Attr = bun_spawn::Attr;
-    // No not(unix) Actions/Attr aliases: Windows goes through
-    // `process.rs::spawn_process_windows` (libuv) and never reaches these.
 
     // The #[repr(C)] request mirrors + extern decl live in `bun_core::spawn_ffi`
     // (single source of truth for bun-spawn.cpp's `bun_spawn_request_t`). The
     // `sys::Result`-wrapping spawn helper stays here because `bun_core` cannot
     // depend on `bun_sys`.
-    #[cfg(unix)]
     pub(super) use bun_core::spawn_ffi::{ActionsList, BunSpawnRequest, posix_spawn_bun};
 
-    #[cfg(unix)]
-    pub(super) fn spawn_bun(
+    fn spawn_bun(
         path: &CStr,
-        req_: BunSpawnRequest,
+        req: &BunSpawnRequest,
         argv: *const *const c_char,
         envp: *const *const c_char,
     ) -> sys::Result<pid_t> {
-        let mut req = req_;
         let mut pid: c_int = 0;
 
         // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
-        let rc =
-            unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), &raw const req, argv, envp) };
-        let _ = &mut req; // keep req alive across the call
+        let rc = unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), req, argv, envp) };
 
         if cfg!(debug_assertions) {
             // SAFETY: argv has at least one element (the NULL terminator)
@@ -508,6 +458,12 @@ pub mod posix_spawn {
 
         if rc == 0 {
             return sys::Result::Ok(pid_t::try_from(pid).expect("int cast"));
+        }
+
+        // Negative: the child could not be placed in `cgroup_fd`. The caller
+        // knows the cgroup's path; don't blame argv[0].
+        if rc < 0 {
+            return sys::Result::Err(sys::Error::from_code_int((-rc) as _, sys::Tag::clone3));
         }
 
         // SAFETY: argv has at least one element (the NULL terminator)
@@ -595,7 +551,6 @@ pub mod posix_spawn {
         Ok((posix_actions, posix_attr))
     }
 
-    #[cfg(unix)]
     pub(crate) fn spawn_z(
         path: &CStr,
         actions: Option<&Actions>,
@@ -620,11 +575,10 @@ pub mod posix_spawn {
             || cfg!(target_os = "freebsd")
             || (cfg!(target_os = "macos") && (pty_slave_fd >= 0 || uid.is_some() || gid.is_some()));
 
-        #[cfg(unix)]
         if use_bun_spawn {
             return spawn_bun(
                 path,
-                BunSpawnRequest {
+                &BunSpawnRequest {
                     actions: match actions {
                         Some(act) => ActionsList {
                             ptr: act.actions.as_ptr(),
@@ -646,6 +600,7 @@ pub mod posix_spawn {
                     gid: gid.unwrap_or(0),
                     set_uid: uid.is_some(),
                     set_gid: gid.is_some(),
+                    cgroup_fd: attr.map_or(-1, |a| a.cgroup_fd),
                 },
                 argv,
                 envp,
@@ -700,54 +655,13 @@ pub mod posix_spawn {
         // Linux/FreeBSD: `use_bun_spawn` is statically true above, so the
         // early return always fires; rustc can't prove that from the runtime
         // bool. macOS falls through to the system-posix_spawn block above.
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             unreachable!("posix_spawn_bun handles all unix-non-darwin spawns");
-        }
-
-        // Windows path (uses different mechanism)
-        // Gated not(unix) because `actions`/`attr` here are PosixSpawnActions/PosixSpawnAttr
-        // fields; on unix the Actions/Attr aliases resolve to bun_spawn::* which lack `.attr`.
-        #[cfg(not(unix))]
-        {
-            let mut pid: pid_t = 0;
-            // SAFETY: all pointers valid; argv/envp NULL-terminated
-            let rc = unsafe {
-                system::posix_spawn(
-                    &mut pid,
-                    path.as_ptr(),
-                    actions.map_or(ptr::null(), |a| &a.actions),
-                    attr.map_or(ptr::null(), |a| &a.attr),
-                    argv,
-                    envp,
-                )
-            };
-            if cfg!(debug_assertions) {
-                sys::syslog!(
-                    "posix_spawn({}) = {} ({})",
-                    bstr::BStr::new(path.to_bytes()),
-                    rc,
-                    pid
-                );
-            }
-
-            // Unlike most syscalls, posix_spawn returns 0 on success and an errno on failure.
-            // That is why bun.sys.getErrno() is not used here, since that checks for -1.
-            if rc == 0 {
-                return sys::Result::Ok(pid);
-            }
-
-            sys::Result::Err(sys::Error {
-                errno: rc as sys::ErrorInt,
-                syscall: SYSCALL_POSIX_SPAWN,
-                path: path.to_bytes().into(),
-                ..Default::default()
-            })
         }
     }
 
     /// Same as waitpid, but also returns resource usage information.
-    #[cfg(unix)]
     pub fn wait4(
         pid: pid_t,
         flags: u32,
@@ -785,12 +699,6 @@ pub mod posix_spawn {
             }
         }
     }
-
-    // Higher-tier re-exports (`Process`/`Status`/`spawn_process`/`sync`/
-    // `Windows*`) live in `bun_spawn::posix_spawn::bun_spawn`, which augments
-    // this module — they need event-loop types this `-sys` crate cannot name.
-    pub use crate::spawn_process::{PosixSpawnResult, Rusage};
 }
 
-#[cfg(unix)]
 use crate::spawn_process as process;

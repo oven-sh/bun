@@ -74,4 +74,4 @@ Bun.serve({
 });
 ```
 
-Deleted cookies become a `Set-Cookie` header on the response with the `maxAge` set to `0` and an empty `value`.
+Deleted cookies become a `Set-Cookie` header on the response with the `Expires` attribute set to a date in the past and an empty `value`.

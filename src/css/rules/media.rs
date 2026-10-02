@@ -34,7 +34,7 @@ impl<R> MediaRule<R> {
 }
 
 impl<R> MediaRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

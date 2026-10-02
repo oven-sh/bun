@@ -10,7 +10,6 @@ use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, 
 /// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
 /// re-export the enum + set type here.
 pub use crate::flags::Function as FnFlags;
-pub use crate::flags::FunctionSet as FnFlagsSet;
 
 // All `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
@@ -102,7 +101,10 @@ impl Class {
                 return false;
             }
 
-            if property.kind == PropertyKind::Normal && f.contains(flags::Property::IsStatic) {
+            if (property.kind == PropertyKind::Normal
+                || property.kind == PropertyKind::AutoAccessor)
+                && f.contains(flags::Property::IsStatic)
+            {
                 for val in [property.value, property.initializer].into_iter().flatten() {
                     match val.data {
                         ExprData::EArrow(..) | ExprData::EFunction(..) => {}
@@ -129,15 +131,6 @@ pub struct Comment {
 pub struct ClassStaticBlock {
     pub stmts: Vec<Stmt, bun_alloc::AstAlloc>,
     pub loc: crate::Loc,
-}
-
-impl Default for ClassStaticBlock {
-    fn default() -> Self {
-        Self {
-            stmts: bun_alloc::AstAlloc::vec(),
-            loc: crate::Loc::default(),
-        }
-    }
 }
 
 pub struct Property {
@@ -202,7 +195,7 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Property, bun_alloc::AllocError> {
@@ -305,7 +298,7 @@ impl Default for Fn {
 }
 
 impl Fn {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Fn, bun_alloc::AllocError> {
@@ -353,7 +346,7 @@ impl Default for Arg {
 }
 
 impl Arg {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Arg, bun_alloc::AllocError> {

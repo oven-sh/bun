@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("bun pm version", () => {
@@ -122,7 +122,7 @@ describe.concurrent("bun pm version", () => {
     });
 
     it("shows help with version previews", async () => {
-      const testDir1 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir1 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "2.5.3" }, null, 2),
       });
 
@@ -134,7 +134,7 @@ describe.concurrent("bun pm version", () => {
       expect(output1).toContain("minor      2.5.3 → 2.6.0");
       expect(output1).toContain("major      2.5.3 → 3.0.0");
 
-      const testDir2 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir2 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0-alpha.0" }, null, 2),
       });
 
@@ -148,7 +148,7 @@ describe.concurrent("bun pm version", () => {
       expect(output2).toContain("1.1.0-alpha.0");
       expect(output2).toContain("2.0.0-alpha.0");
 
-      const testDir3 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir3 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0" }, null, 2),
       });
 
@@ -165,7 +165,7 @@ describe.concurrent("bun pm version", () => {
       expect(output3).toContain("1.1.0-beta.0");
       expect(output3).toContain("2.0.0-beta.0");
 
-      const testDir4 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir4 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test" }, null, 2),
       });
 
@@ -218,7 +218,7 @@ describe.concurrent("bun pm version", () => {
     });
 
     it("handles empty package.json", async () => {
-      const testDir = tempDirWithFiles(`version-${i++}`, {
+      await using testDir = tempDir(`version-${i++}`, {
         "package.json": "{}",
       });
 
@@ -234,7 +234,7 @@ describe.concurrent("bun pm version", () => {
 
   describe("error handling", () => {
     it("handles various error conditions", async () => {
-      const testDir2 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir2 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "invalid-version" }, null, 2),
       });
 
@@ -275,7 +275,7 @@ describe.concurrent("bun pm version", () => {
     });
 
     it("handles missing package.json like npm", async () => {
-      const testDir = tempDirWithFiles(`version-${i++}`, {
+      await using testDir = tempDir(`version-${i++}`, {
         "README.md": "# Test project",
       });
 
@@ -291,7 +291,7 @@ describe.concurrent("bun pm version", () => {
     });
 
     it("handles empty string package.json like npm", async () => {
-      const testDir = tempDirWithFiles(`version-${i++}`, {
+      await using testDir = tempDir(`version-${i++}`, {
         "package.json": '""',
       });
 
@@ -305,7 +305,7 @@ describe.concurrent("bun pm version", () => {
     });
 
     it("handles malformed JSON like npm", async () => {
-      const testDir = tempDirWithFiles(`version-${i++}`, {
+      await using testDir = tempDir(`version-${i++}`, {
         "package.json": '{ "name": "test", invalid json }',
       });
 
@@ -500,7 +500,7 @@ describe.concurrent("bun pm version", () => {
             }
   }`;
 
-      const testDir1 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir1 = tempDir(`version-${i++}`, {
         "package.json": originalJson1,
       });
 
@@ -530,7 +530,7 @@ describe.concurrent("bun pm version", () => {
 
   describe("prerelease handling", () => {
     it("handles custom preid and prerelease scenarios", async () => {
-      const testDir1 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir1 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0" }, null, 2),
       });
 
@@ -542,7 +542,7 @@ describe.concurrent("bun pm version", () => {
       expect(code1).toBe(0);
       expect(output1.trim()).toBe("v1.0.1-beta.0");
 
-      const testDir3 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir3 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0" }, null, 2),
       });
 
@@ -554,7 +554,7 @@ describe.concurrent("bun pm version", () => {
       expect(code3).toBe(0);
       expect(output3.trim()).toBe("v1.0.1-0");
 
-      const testDir5 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir5 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0-alpha" }, null, 2),
       });
 
@@ -566,7 +566,7 @@ describe.concurrent("bun pm version", () => {
       expect(code5).toBe(0);
       expect(output5.trim()).toBe("v1.0.0-alpha.1");
 
-      const testDir6 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir6 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0-3" }, null, 2),
       });
 
@@ -636,7 +636,7 @@ describe.concurrent("bun pm version", () => {
       ];
 
       for (const scenario of scenarios) {
-        const testDir = tempDirWithFiles(`version-${i++}`, {
+        await using testDir = tempDir(`version-${i++}`, {
           "package.json": JSON.stringify({ name: "test", version: scenario.version }, null, 2),
         });
 
@@ -653,7 +653,7 @@ describe.concurrent("bun pm version", () => {
         }
       }
 
-      const testDir2 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir2 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.3-alpha.1" }, null, 2),
       });
 
@@ -669,7 +669,7 @@ describe.concurrent("bun pm version", () => {
 
   describe("lifecycle scripts", () => {
     it("runs lifecycle scripts in correct order and handles failures", async () => {
-      const testDir1 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir1 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify(
           {
             name: "test",
@@ -696,7 +696,7 @@ describe.concurrent("bun pm version", () => {
       const logContent = await Bun.file(join(testDir1, "lifecycle.log")).text();
       expect(logContent.trim()).toBe("step1\nstep2\nstep3");
 
-      const testDir2 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir2 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify(
           {
             name: "test",
@@ -726,7 +726,7 @@ describe.concurrent("bun pm version", () => {
       expect(eventContent.trim()).toBe("preversion");
       expect(scriptContent.trim()).toContain("echo $npm_lifecycle_event");
 
-      const testDir3 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir3 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify(
           {
             name: "test",
@@ -754,7 +754,7 @@ describe.concurrent("bun pm version", () => {
       const packageJson = await Bun.file(join(testDir3, "package.json")).json();
       expect(packageJson.version).toBe("1.0.0");
 
-      const testDir4 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir4 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify(
           {
             name: "test",
@@ -783,7 +783,7 @@ describe.concurrent("bun pm version", () => {
       const content = await Bun.file(join(testDir4, "version-output.txt")).text();
       expect(content.trim()).toBe("built");
 
-      const testDir5 = tempDirWithFiles(`version-${i++}`, {
+      await using testDir5 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify(
           {
             name: "test",
@@ -837,7 +837,7 @@ describe.concurrent("bun pm version", () => {
     });
 
     it("should work from subdirectories", async () => {
-      const testDir = tempDirWithFiles(`version-${i++}`, {
+      await using testDir = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0" }, null, 2),
         "src/index.js": "console.log('hello');",
       });

@@ -17,163 +17,141 @@ pub(crate) mod jsdoc;
 pub(crate) mod keep;
 pub(crate) mod lower;
 pub(crate) mod lower_modules;
+pub(crate) mod notes;
 pub(crate) mod parse_declarations;
 pub(crate) mod reparse;
 
 use bun_ast::ts_syntax as ts;
-use bun_ast::{Expr, ExprData};
+use bun_ast::{Expr, Loc};
 
-/// What is written at a place the parser skipped.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+/// What the parser says of a node that `bun_ast` has no place for (see [`notes`]). Of which node, and what the payload of the note is.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Mark {
-    /// From a binding, to its type.
+    /// Of a binding, or of the name of a member of a class: its type (`ts::TypeId`).
     Annotation,
-    /// A binding followed by `?`.
+    /// Of the same: `?` follows it.
     Optional,
-    /// A binding followed by `!`.
+    /// Of the same: `!` follows it.
     Definite,
-    /// From the `(` of a function's parameters or from where an arrow function is said to be, to the return type.
+    /// Of the `(` of a function's parameters, or of an arrow function: the return type (`ts::TypeId`).
     ReturnType,
-    /// From the token after `<T, U>`, from the `class` keyword, or from where an arrow function is said to be, to the `<`.
+    /// Of the `(` of a function's parameters, of the `class` keyword, or of an arrow function: the type parameters
+    /// (`ts::Span<ts::TypeParam>`, in `Notes::ranges`).
     TypeParameters,
-    /// From the `(` of a function's parameters, to its `this` parameter. The type is the `Annotation` of that.
+    /// Of the `(` of a function's parameters: its `this` parameter (`ts::Id<ts::Param>`).
     ThisParameter,
-    /// From the `)` of a call or the `new` of a `new` expression, to the `<` of its type arguments.
+    /// Of the `)` of a call, of a `new` expression or of an import call: the type arguments (`ts::IdList<ts::Type>`, in
+    /// `Notes::ranges`).
     TypeArguments,
-
-    /// From a tagged template, to the `<` of the type arguments of its tag.
+    /// Of the `)` of a call of `async`: the type arguments, which were read as type parameters (`ts::Span<ts::TypeParam>`, in
+    /// `Notes::ranges`).
+    TypeArgumentsReadAsParameters,
+    /// Of a tagged template: the type arguments of its tag, like `TypeArguments`.
     TagTypeArguments,
-    /// From where the body of an arrow function is said to be, to its `=>`. Of a body that is an expression only if the `=>` is
+    /// Of a tagged template: where its `` ` `` is.
+    Backtick,
+    /// Of a tagged template: its last piece of text is missing or unterminated (`callIsIncomplete`).
+    IncompleteTemplate,
+    /// Of the body of an arrow function (`G::FnBody::loc`): where its `=>` is. Of a body that is an expression only if the `=>` is
     /// missing: it is said to be at the `=>`.
     ArrowToken,
-    /// From the `class` keyword, to the `<` after the expression it extends.
+    /// Of the `class` keyword: the type arguments after the expression it extends, like `TypeArguments`.
     ExtendsArguments,
-    /// From the `class` keyword, to an element of an `extends` clause that is not the first. As many as there are.
+    /// Of the `class` keyword: an element of an `extends` clause that is not the first (`ts::Id<Expr>`). As many as there are.
     OtherExtends,
-    /// From the `class` keyword, to an element of its first `implements` clause. As many as there are.
+    /// Of the `class` keyword: an element of its first `implements` clause (`ts::TypeId`). As many as there are.
     Implements,
-    /// From the name of a member of a class (the `{` of a static block), of an object literal or of a JSX attribute (the `e` of
-    /// `{...e}`), to its first token: a decorator, a modifier, `get`, `set`, `*`, `[`, `{`.
-    MemberStart,
-    /// From the name of a member of a class that is a string literal, to the token after it.
-    StringLiteralName,
-    /// From the `key` of the name `[key]` of a member or of a property in a pattern, to the `[`.
-    ComputedName,
-    /// From the comma that stands for an element that is left out of `[a, , b]`, to itself.
-    OmittedExpression,
-    /// From a binding or from the `e` of `...e` in an object literal, to the `...` before it.
-    DotDotDot,
-    /// From where `MemberStart` or `DotDotDot` is noted from, or from the name of a member of an enum, to where the last token of
-    /// the member ends.
-    MemberEnd,
-    /// From the name or the pattern of a variable, or of a parameter of a function that has a body, to where the last token of the
-    /// declaration ends (`VariableLikeDeclaration`).
-    VariableLikeEnd,
-    /// From where a statement or a class expression is said to be, or from the name or pattern of a parameter, to its first token: a
-    /// decorator, a modifier, `...`, what stands where a name is missing. From the dot before the `B` of `namespace A.B`, to `B`.
-    DeclarationStart,
-    /// From the first token of a statement, the `{` of a block, the `finally` of its block or the initializer of a `for`, to where
-    /// its last token ends.
-    StatementEnd,
-    /// From an expression statement whose first token is `(`, to itself (`hasParen`, `parseExpressionOrLabeledStatement`).
-    HasParen,
-    /// From the `class` keyword, to an element of an `implements` clause that is not the first. As many as there are.
+    /// Of the `class` keyword: an element of an `implements` clause that is not the first (`ts::TypeId`). As many as there are.
     OtherImplements,
-    /// From the `class` keyword, to the `ts_syntax::Member` that is an index signature of the class. As many as there are.
+    /// Of the `class` keyword: an index signature of the class (`ts::MemberId`). As many as there are.
     IndexSignature,
-    /// From the name of a module, to itself: it is a string (`parseAmbientExternalModuleDeclaration`).
+    /// Of the `class` keyword: where a `;` among its members is before which comments stand. As many as there are.
+    SemicolonClassElement,
+    /// Of the `class` keyword: `TokenFullStart` of each of those, in the same order.
+    SemicolonFullStart,
+    /// Of the name of a member of a class (the `{` of a static block), of an object literal or of a JSX attribute (the `e` of
+    /// `{...e}`): where its first token is: a decorator, a modifier, `get`, `set`, `*`, `[`, `{`.
+    MemberStart,
+    /// Of the same: `TokenFullStart` of that token (`node.Pos()`). Of a member of an object literal only in JavaScript, if comments
+    /// stand before it.
+    MemberFullStart,
+    /// Of the same, or of the `e` of `...e` in an object literal: where the last token of the member ends.
+    MemberEnd,
+    /// Of the name of a member of a class that is a string literal: where the token after it is.
+    StringLiteralName,
+    /// Of the `key` of the name `[key]` of a member or of a property in a pattern: where the `[` is. Of a member of an enum: the `key`
+    /// that is neither a string nor a number (`ts::Id<Expr>`).
+    ComputedName,
+    /// Of the element that is left out of `[a, , b]`.
+    OmittedExpression,
+    /// Of a binding, or of the `e` of `...e` in an object literal: where the `...` before it is.
+    DotDotDot,
+    /// Of a statement, a class expression, or the name or pattern of a parameter: where its first token is: a decorator, a modifier,
+    /// `...`, what stands where a name is missing.
+    DeclarationStart,
+    /// Of a statement, or of the name of a parameter or of a member of a class: its modifiers (`ts::Span<ts::Modifier>`, in
+    /// `Notes::ranges`).
+    Modifiers,
+    /// Of the parameter of `x => x` before which comments stand: they are not its own (`parseSimpleArrowFunctionExpression`).
+    SimpleArrowParameter,
+    /// Of an expression statement: its first token is `(` (`hasParen`, `parseExpressionOrLabeledStatement`).
+    HasParen,
+    /// Of what `catch` binds: its initializer (`ts::Id<Expr>`).
+    Initializer,
+    /// Of the name of a module: it is a string (`parseAmbientExternalModuleDeclaration`).
     StringName,
-    /// From the name of a module, to itself: it is `global` (`NodeFlagsGlobalAugmentation`).
+    /// Of the name of a module: it is `global` (`NodeFlagsGlobalAugmentation`).
     GlobalName,
-    /// From the name of a module, to itself: `declare module "a";`.
+    /// Of the name of a module: `declare module "a";`.
     NoBody,
-
-    /// From where the `(` of a function's parameters was expected, to where the token before ends (`createMissingList`).
+    /// Of where the `(` of a function's parameters was expected: where the token before ends (`createMissingList`).
     MissingParameters,
-    /// From the `(` of a function's parameters, to the token where its `{` was expected: the body is a missing block (`parseBlock`).
+    /// Of the `(` of a function's parameters: where its `{` was expected. The body is a missing block (`parseBlock`).
     MissingBody,
-    /// From a tagged template whose last piece of text is missing or unterminated, to itself (`callIsIncomplete`).
-    IncompleteTemplate,
-    /// From a token that `abort_list_or_skip` skipped, to the token after it.
-    SkippedToken,
-    /// From the `import` of `import.defer(..)`, to its `)`.
+    /// Of `import.defer(..)`: where its `)` is.
     DeferredImportClose,
-    /// From the expression of a decorator, to its `@`.
+    /// Of an import call: an argument after the second (`ts::Id<Expr>`). As many as there are.
+    OtherArgument,
+    /// Of `new.target`: what is written instead of `target`, as a string (`ts::Id<Expr>`).
+    MetaPropertyName,
+    /// Of the expression of a decorator: where its `@` is.
     AtSign,
-    /// From a decorator that decorates nothing (`note_stray_decorators`), to where what comes after the decorators starts.
-    StrayDecorator,
-    /// From the bracket that opens an array or object literal whose closing bracket is missed, to where the token before the miss ends.
-    UnclosedLiteral,
-}
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum CastKind {
-    /// `e as T`, `<T>e`. `to` is where the type starts; of a `<T>(e)` that was read as type parameters, where the `<` is.
+    // What is made of an expression that is only the expression in the tree. In the order it is made: `(e) as T` is not `(e as T)`.
+    /// `e as T`, `<T>e`: the type (`ts::TypeId`).
     As,
-    /// The `As` that is noted next is `<T>e`. `to` is where the `<` is.
+    /// `<T>(e)` that was read as the type parameters of an arrow function: those (`ts::Span<ts::TypeParam>`, in `Notes::ranges`).
+    AsTypeParameter,
+    /// The `As` or `AsTypeParameter` that is noted next is `<T>e`: where the `<` is.
     LessThan,
+    /// `e satisfies T`: the type (`ts::TypeId`).
     Satisfies,
     /// `e!`
     NonNull,
-    /// `e<T>` that nothing takes the type arguments of. `to` is where the `<` is.
+    /// Where the `<` is of the `Instantiation` that is noted next.
+    InstantiationStart,
+    /// `e<T>` that nothing takes the type arguments of: those, like `TypeArguments`.
     Instantiation,
-    /// `(e)`. `to` is where the `(` is.
+    /// Comments stand before the `(` of the `Paren` that is noted next: its `TokenFullStart`.
+    ParenFullStart,
+    /// `(e)`: where the `(` is.
     Paren,
-    /// `e` is the tag of a tagged template. `to` is where the `` ` `` is.
-    Tag,
 }
 
-/// Which expression, when several start at the same place: `a`, `a.b` and `a.b()` do.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct ExprKey {
-    start: i32,
-    tag: u8,
-    /// Where the node is, for those that are somewhere. At most one of the others starts at any place.
-    address: usize,
-}
-
-impl ExprKey {
-    pub(crate) fn of(expr: &Expr) -> ExprKey {
-        ExprKey {
-            start: expr.loc.start,
-            tag: expr.data.tag() as u8,
-            address: address_of(&expr.data),
-        }
+impl Mark {
+    /// Whether it makes a node of its own kind of an expression.
+    #[inline]
+    pub(crate) fn is_cast(self) -> bool {
+        matches!(
+            self,
+            Mark::As
+                | Mark::AsTypeParameter
+                | Mark::Satisfies
+                | Mark::NonNull
+                | Mark::Instantiation
+                | Mark::Paren
+        )
     }
-}
-
-fn address_of(data: &ExprData) -> usize {
-    macro_rules! address {
-        ($($variant:ident),*) => {
-            match data {
-                $(ExprData::$variant(node) => core::ptr::from_ref(&**node).addr(),)*
-                _ => 0,
-            }
-        };
-    }
-    address!(
-        EArray,
-        EUnary,
-        EBinary,
-        EClass,
-        ENew,
-        EFunction,
-        ECall,
-        EDot,
-        EIndex,
-        EArrow,
-        EJsxElement,
-        EObject,
-        ESpread,
-        ETemplate,
-        ERegExp,
-        EAwait,
-        EYield,
-        EIf,
-        EImport,
-        EBigInt,
-        EString
-    )
 }
 
 /// The code TypeScript has for what the parser says in `text`, having gone on to parse the rest as if nothing were the matter.
@@ -497,27 +475,24 @@ pub fn summarize(
 }
 
 pub(crate) struct TypeSyntax {
-    /// (from, what, to). Entries an abandoned attempt at parsing left behind are harmless: nothing asks for them, or the
-    /// attempt that succeeded made the same ones.
-    pub(crate) marks: Vec<(i32, Mark, i32)>,
-    /// In the order they apply, parentheses among them: `(e) as T` is not `(e as T)`. `to` is where the type starts.
-    pub(crate) casts: Vec<(ExprKey, CastKind, i32)>,
-    /// `hir::File::expr_ends`. Of two for one expression the later one counts.
-    pub(crate) expr_ends: Vec<(ExprKey, i32)>,
-    /// `with { .. }` after a module specifier: where `with` is, and the attributes as an object literal.
-    pub(crate) import_attributes: Vec<(i32, Expr)>,
-    /// The module specifiers that are no string literals (`parseModuleSpecifier`).
-    pub(crate) specifier_expressions: Vec<Expr>,
-    /// The expressions of a node that `bun_ast` has no place for, by where the node starts (`keep_expressions`).
-    pub(crate) kept_expressions: bun_collections::HashMap<i32, Vec<Expr>>,
-    /// `f<T>` was just parsed: where the `<` is, and where the next token starts.
-    pub(crate) pending_type_arguments: (i32, i32),
+    /// What is said of the nodes of the tree.
+    pub(crate) notes: notes::Notes,
+    /// `hir::File::after_skipped`: where the token after each token is that `abort_list_or_skip` skipped.
+    pub(crate) after_skipped: Vec<Loc>,
+    /// `hir::File::stray_decorators`: where the expression of each decorator is that decorates nothing, and where what comes after the
+    /// decorators starts.
+    pub(crate) stray_decorators: Vec<(Loc, Loc)>,
+    /// `hir::File::unclosed_literals`: the bracket that opens an array or object literal whose closing bracket is missed, and where the
+    /// token before the miss ends.
+    pub(crate) unclosed_literals: Vec<(Loc, Loc)>,
+    /// `f<T>` was just parsed: the type arguments, in `Notes::ranges`, and where the next token is.
+    pub(crate) pending_type_arguments: Option<(u32, Loc)>,
     /// Build type nodes instead of only recording where types are.
     pub(crate) keep_types: bool,
+    /// `withJSDoc`: only in JavaScript is anything made of the tags.
+    pub(crate) has_jsdoc: bool,
     /// The TypeScript syntax nodes of the file.
     pub(crate) ast: ts::Syntax,
-    /// Finished nodes, keyed by start offset.
-    pub(crate) by_offset: keep::KeptNodes,
     /// The most recently parsed type. `NONE` if there is no usable type.
     pub(crate) last_type: ts::TypeId,
     /// Where the first token is of the type `parse_and_keep_type` read last.
@@ -548,8 +523,6 @@ pub(crate) struct TypeSyntax {
     pub(crate) statement_modifiers: Vec<ts::Modifier>,
     /// Where the modifiers of the current statement start in `statement_modifiers`.
     pub(crate) statement_modifiers_base: usize,
-    /// `node.Modifiers()` of each statement that has any: where the statement is said to be, and the list.
-    pub(crate) modifier_lists: Vec<(i32, ts::Span<ts::Modifier>)>,
     /// The statements being parsed that start with `import` or `export`, the innermost last.
     pub(crate) module_syntax: Vec<parse_declarations::ModuleSyntax>,
 }
@@ -557,16 +530,14 @@ pub(crate) struct TypeSyntax {
 impl TypeSyntax {
     pub(crate) fn new() -> Self {
         TypeSyntax {
-            marks: Vec::new(),
-            casts: Vec::new(),
-            expr_ends: Vec::new(),
-            import_attributes: Vec::new(),
-            specifier_expressions: Vec::new(),
-            kept_expressions: Default::default(),
-            pending_type_arguments: (0, 0),
+            notes: Default::default(),
+            after_skipped: Vec::new(),
+            stray_decorators: Vec::new(),
+            unclosed_literals: Vec::new(),
+            pending_type_arguments: None,
             keep_types: true,
+            has_jsdoc: false,
             ast: ts::Syntax::new(),
-            by_offset: Default::default(),
             last_type: ts::TypeId::NONE,
             last_type_start: 0,
             type_stack: Vec::new(),
@@ -582,68 +553,15 @@ impl TypeSyntax {
             last_statement: ts::StatementId::NONE,
             statement_modifiers: Vec::new(),
             statement_modifiers_base: 0,
-            modifier_lists: Vec::new(),
             module_syntax: Vec::new(),
         }
     }
 }
 
-/// How much had been noted when a speculative parse began.
-#[derive(Copy, Clone, Default)]
-pub(crate) struct Checkpoint {
-    marks: usize,
-    casts: usize,
-    expr_ends: usize,
-    modifier_lists: usize,
-}
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// `mark`: pass the result to `rewind_type_syntax` if what is parsed from here on is abandoned.
-    #[inline]
-    pub(crate) fn type_syntax_checkpoint(&self) -> Checkpoint {
-        match &self.type_syntax {
-            Some(syntax) if TYPESCRIPT => Checkpoint {
-                marks: syntax.marks.len(),
-                casts: syntax.casts.len(),
-                expr_ends: syntax.expr_ends.len(),
-                modifier_lists: syntax.modifier_lists.len(),
-            },
-            _ => Checkpoint::default(),
-        }
-    }
-
-    /// `rewind`: an attempt that is abandoned leaves nothing behind.
-    #[inline]
-    pub(crate) fn rewind_type_syntax(&mut self, to: Checkpoint) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
-            syntax.marks.truncate(to.marks);
-            syntax.casts.truncate(to.casts);
-            syntax.expr_ends.truncate(to.expr_ends);
-            syntax.modifier_lists.truncate(to.modifier_lists);
-        }
-    }
-
     #[inline(always)]
     pub(crate) fn keeps_type_syntax(&self) -> bool {
         TYPESCRIPT && self.type_syntax.is_some()
-    }
-
-    #[inline]
-    pub(crate) fn mark_type_syntax(&mut self, from: bun_ast::Loc, what: Mark, to: bun_ast::Loc) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
-            syntax.marks.push((from.start, what, to.start));
-        }
-    }
-
-    /// What was noted from `from` a moment ago.
-    #[cold]
-    pub(crate) fn noted(&self, from: bun_ast::Loc, what: Mark) -> Option<bun_ast::Loc> {
-        let marks = &self.type_syntax.as_ref()?.marks;
-        let mark = marks
-            .iter()
-            .rev()
-            .find(|mark| mark.0 == from.start && mark.1 == what)?;
-        Some(bun_ast::Loc { start: mark.2 })
     }
 
     /// `E::JSXElement::syntax`
@@ -654,6 +572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
         opening_end: bun_ast::Loc,
         closing_start: bun_ast::Loc,
         end: bun_ast::Loc,
+        type_arguments: ts::IdList<ts::Type>,
     ) -> ts::JsxId {
         match &mut self.type_syntax {
             Some(syntax) if TYPESCRIPT => syntax.ast.add_jsx(ts::Jsx {
@@ -661,16 +580,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
                 opening_end,
                 closing_start,
                 end,
+                type_arguments,
             }),
             _ => ts::JsxId::NONE,
-        }
-    }
-
-    /// `finishNode`: what is noted from `from` ends where the token before the current one does.
-    #[inline]
-    pub(crate) fn mark_end(&mut self, from: bun_ast::Loc, what: Mark) {
-        if self.keeps_type_syntax() {
-            self.mark_type_syntax(from, what, self.lexer.full_start());
         }
     }
 
@@ -695,97 +607,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
         }
     }
 
-    /// `operand<T>` was parsed, and the lexer is at what follows. An instantiation expression, unless the type arguments are taken.
+    /// `nodePos()`, taken on the first token of a node for `has_comments_before`. Nothing where nothing is made of comments.
     #[inline]
-    pub(crate) fn note_type_arguments(&mut self, operand: &Expr, less_than: bun_ast::Loc) {
-        let next = self.lexer.loc().start;
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
-            syntax.pending_type_arguments = (less_than.start, next);
-            syntax.casts.push((
-                ExprKey::of(operand),
-                CastKind::Instantiation,
-                less_than.start,
-            ));
+    pub(crate) fn pos_for_jsdoc(&self) -> bun_ast::Loc {
+        match &self.type_syntax {
+            Some(syntax) if TYPESCRIPT && syntax.has_jsdoc => self.lexer.full_start(),
+            _ => bun_ast::Loc::EMPTY,
         }
     }
 
-    /// The `<` of the type arguments that end right before the current token, for the call, `new` or tagged template that has them.
+    /// `hasPrecedingJSDocComment`, more or less: whether comments stand before the token at `token`, which fully starts at
+    /// `full_start`, in a file in which something is made of them.
     #[inline]
-    pub(crate) fn take_type_arguments(&mut self) -> Option<bun_ast::Loc> {
-        let here = self.lexer.loc().start;
-        if TYPESCRIPT
-            && let Some(syntax) = &mut self.type_syntax
-            && syntax.pending_type_arguments.1 == here
-        {
-            syntax.pending_type_arguments.1 = -1;
-            let less_than = syntax.pending_type_arguments.0;
-            // Nothing was parsed since they were noted.
-            if matches!(syntax.casts.last(), Some(&(_, CastKind::Instantiation, at)) if at == less_than)
-            {
-                syntax.casts.pop();
-            }
-            return Some(bun_ast::Loc { start: less_than });
-        }
-        None
-    }
-
-    #[inline]
-    pub(crate) fn mark_paren(&mut self, inside: &Expr, open: bun_ast::Loc) {
-        self.mark_cast(inside, CastKind::Paren, open);
-    }
-
-    /// Keeps `expressions` for the node that starts at `of`. Parsed again, it keeps the same.
-    pub(crate) fn keep_expressions(&mut self, of: bun_ast::Loc, expressions: &[Expr]) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
-            syntax
-                .kept_expressions
-                .insert(of.start, expressions.to_vec());
-        }
-    }
-
-    /// `P::finish_expr`
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn note_expr_end(&mut self, expr: &Expr, end: bun_ast::Loc) {
-        let is_after_start = end.start > expr.loc.start;
-        let end = match expr.data {
-            // `createMissingNode`: it takes no room, where the token before it ends. One that is made late does not know where.
-            ExprData::EMissing(_) if is_after_start => return,
-            ExprData::EMissing(_) => end,
-            // `parse_jsx_element` returns before the last ">" is taken, and text is no trivia: `hir::Jsx::end`.
-            ExprData::EJsxElement(_) => return,
-            // A literal is made before its token is taken.
-            _ if !is_after_start => return,
-            _ => end,
-        };
-        if let Some(syntax) = &mut self.type_syntax {
-            syntax.expr_ends.push((ExprKey::of(expr), end.start));
-        }
-    }
-
-    /// `new_expr`, of an expression that is put together when tokens after it have been taken. It ends at `end`.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn new_expr_ending_at<T>(
-        &mut self,
-        t: T,
-        loc: bun_ast::Loc,
-        end: bun_ast::Loc,
-    ) -> Expr
-    where
-        T: bun_ast::expr::IntoExprData,
-    {
-        let expr = Expr::init(t, loc);
-        if self.log().errors != 0 {
-            self.note_expr_end(&expr, end);
-        }
-        expr
-    }
-
-    #[inline]
-    pub(crate) fn mark_cast(&mut self, operand: &Expr, kind: CastKind, ty: bun_ast::Loc) {
-        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
-            syntax.casts.push((ExprKey::of(operand), kind, ty.start));
-        }
+    pub(crate) fn has_comments_before(
+        &self,
+        token: bun_ast::Loc,
+        full_start: bun_ast::Loc,
+    ) -> bool {
+        TYPESCRIPT
+            && self
+                .type_syntax
+                .as_ref()
+                .is_some_and(|syntax| syntax.has_jsdoc)
+            && !full_start.is_empty()
+            && self.lexer.has_comment_between(full_start, token)
     }
 }

@@ -523,6 +523,7 @@ impl<'a> Parser<'a> {
         let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
         let mut type_syntax = Box::new(crate::sema::TypeSyntax::new());
         type_syntax.keep_types |= is_declaration_file;
+        type_syntax.has_jsdoc = p.lexer.is_javascript_file();
         p.type_syntax = Some(type_syntax);
         // `parseSourceFileWorker`: nor is a declaration file ever read again for its top-level `await`.
         if await_is_a_name || is_declaration_file {
@@ -561,6 +562,12 @@ impl<'a> Parser<'a> {
         let mut has_errors = false;
         for msg in p.log().msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
             let offset = msg.data.location.as_ref().map(|l| l.offset);
+            // The location of a node was logged without `P::real_loc`.
+            assert!(
+                offset.is_none_or(|offset| offset < 1 << 30),
+                "{}",
+                bstr::BStr::new(&msg.data.text)
+            );
             let at = offset
                 .and_then(|o| self.source.contents().get(o..))
                 .unwrap_or_default();

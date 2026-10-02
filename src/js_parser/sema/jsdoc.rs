@@ -7,7 +7,7 @@
 
 use bun_ast::op::Level;
 use bun_ast::ts_syntax as ts;
-use bun_ast::{ExprData, Range, StoreStr};
+use bun_ast::{Range, StoreStr};
 use bun_sema::hir::Flags;
 
 use super::TypeSyntax;
@@ -23,15 +23,21 @@ use crate::parse::lists::ListKind;
 pub(crate) struct Name {
     pub(crate) start: u32,
     pub(crate) end: u32,
+    /// The token, as it is written.
+    pub(crate) text: StoreStr,
 }
 
 impl Name {
-    pub(crate) fn is_missing(self) -> bool {
-        self.start == self.end
+    fn missing(at: u32) -> Name {
+        Name {
+            start: at,
+            end: at,
+            text: StoreStr::EMPTY,
+        }
     }
 
-    pub(crate) fn text(self, source: &[u8]) -> &[u8] {
-        &source[self.start as usize..self.end as usize]
+    pub(crate) fn is_missing(self) -> bool {
+        self.start == self.end
     }
 }
 
@@ -145,7 +151,7 @@ pub(crate) struct Import {
     pub(crate) named: Vec<ImportSpecifier>,
     /// The module specifier and where it is. `None` if it is no string.
     pub(crate) specifier: Option<(StoreStr, u32)>,
-    pub(crate) mode: ts::ResolutionMode,
+    pub(crate) module: Option<ts::ModuleSpecifier>,
     /// Where the token after it starts.
     pub(crate) end: u32,
 }
@@ -153,7 +159,8 @@ pub(crate) struct Import {
 pub(crate) enum TagKind {
     Type(TypeExpr),
     Satisfies(TypeExpr),
-    This(TypeExpr),
+    /// With the text of the tag.
+    This(TypeExpr, StoreStr),
     Return(Option<TypeExpr>),
     /// `@param`, `@arg`, `@argument`
     Param(Property),
@@ -244,6 +251,7 @@ pub(crate) fn read_comments<'a>(
     }
     let source: &'a [u8] = p.lexer.contents;
     let ranges = core::mem::take(&mut p.lexer.all_comments);
+    let flags = core::mem::take(&mut p.lexer.comment_flags);
     p.type_syntax = Some(Box::new(syntax));
     // `PCJSDocComment`: like `PCJsxChildren`, any token is an element of it, so no list skips a token it has no use for.
     let outer_contexts = core::mem::replace(
@@ -270,6 +278,7 @@ pub(crate) fn read_comments<'a>(
     }
     p.lexer.contents = source;
     p.lexer.all_comments = ranges;
+    p.lexer.comment_flags = flags;
     p.lexer.list_contexts = outer_contexts;
     p.lexer.skips_jsdoc_asterisks = false;
     let syntax = *p.type_syntax.take().expect("set above");
@@ -329,6 +338,7 @@ fn name_at_token(p: &P<'_, true, false>) -> Name {
     Name {
         start: p.lexer.start as u32,
         end: p.lexer.end as u32,
+        text: StoreStr::new(p.lexer.raw()),
     }
 }
 
@@ -474,6 +484,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         let text = &source[..end - 2];
         p.lexer.contents = text;
         p.lexer.all_comments.clear();
+        p.lexer.comment_flags.clear();
         p.lexer.prev_error_loc = bun_ast::Loc::EMPTY;
         p.lexer.stuck = 0;
         p.lexer.is_log_disabled = false;
@@ -897,22 +908,14 @@ impl<'p, 'a> Reader<'p, 'a> {
             };
         }
         self.enter_lexer();
-        let from = self.start;
         let mut import = Import::default();
         self.p.scopes_in_order.truncate(0);
-        let kept = self.p.type_syntax_mut().specifier_expressions.len();
+        self.p.begin_module_syntax(&Default::default());
         let result = Self::read_import_declaration(self.p, &mut import);
-        // `reparseUnhosted` makes nothing of a tag without an import clause.
-        if !import.has_clause {
-            self.p
-                .type_syntax_mut()
-                .specifier_expressions
-                .truncate(kept);
-        }
+        import.module = self.p.end_module_specifier();
         self.p.lexer.skips_jsdoc_asterisks = false;
         self.leave_lexer(result);
         import.end = self.start as u32;
-        import.mode = self.resolution_mode_override(from);
         import
     }
 
@@ -949,7 +952,7 @@ impl<'p, 'a> Reader<'p, 'a> {
                         p.lexer.next()?;
                     } else {
                         let at = p.lexer.full_start().to_usize() as u32;
-                        import.namespace = Some(Name { start: at, end: at });
+                        import.namespace = Some(Name::missing(at));
                         p.lexer.expect(T::TIdentifier)?;
                     }
                 } else {
@@ -974,39 +977,6 @@ impl<'p, 'a> Reader<'p, 'a> {
             import.specifier = Some((StoreStr::new(path.text), path.loc.start.max(0) as u32));
         }
         Ok(())
-    }
-
-    /// `GetResolutionModeOverride`, of the import attributes the parser kept since it was at `from`.
-    fn resolution_mode_override(&mut self, from: usize) -> ts::ResolutionMode {
-        let Some(&(keyword, attributes)) = self.p.type_syntax_mut().import_attributes.last() else {
-            return ts::ResolutionMode::None;
-        };
-        if (keyword.max(0) as usize) < from {
-            return ts::ResolutionMode::None;
-        }
-        let ExprData::EObject(object) = &attributes.data else {
-            return ts::ResolutionMode::None;
-        };
-        let [attribute] = object.properties.as_slice() else {
-            return ts::ResolutionMode::None;
-        };
-        match (
-            attribute.key.as_ref().map(|key| &key.data),
-            attribute.value.as_ref().map(|value| &value.data),
-        ) {
-            (Some(ExprData::EString(name)), Some(ExprData::EString(value)))
-                if name.eql_comptime(b"resolution-mode") =>
-            {
-                if value.eql_comptime(b"import") {
-                    ts::ResolutionMode::Import
-                } else if value.eql_comptime(b"require") {
-                    ts::ResolutionMode::Require
-                } else {
-                    ts::ResolutionMode::None
-                }
-            }
-            _ => ts::ResolutionMode::None,
-        }
     }
 
     /// `canFollowModifier`, of a token the lexer scanned.
@@ -1288,8 +1258,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.next_jsdoc();
         let name = self.identifier_name(Some(1003));
         let indent_text = self.skip_whitespace_or_asterisk();
-        let text = self.text;
-        let kind = match name.text(text) {
+        let kind = match name.text.slice() {
             b"implements" => {
                 let class = self.class_name();
                 self.trailing_comments(start, margin, indent_text);
@@ -1365,12 +1334,12 @@ impl<'p, 'a> Reader<'p, 'a> {
             if let Some(code) = code {
                 self.error_at_token(code);
             }
-            let at = self.full_start() as u32;
-            return Name { start: at, end: at };
+            return Name::missing(self.full_start() as u32);
         }
         let name = Name {
             start: self.start as u32,
             end: self.end as u32,
+            text: StoreStr::new(self.token_text()),
         };
         self.next_jsdoc();
         name
@@ -1567,11 +1536,12 @@ impl<'p, 'a> Reader<'p, 'a> {
         let ty = self.type_expression(true);
         self.skip_whitespace();
         self.trailing_comments(start, margin, indent_text);
+        let end = self.full_start();
         Tag {
-            kind: TagKind::This(ty),
+            kind: TagKind::This(ty, StoreStr::new(&self.text[start..end])),
             pos: start as u32,
             name_pos: name.start,
-            end: self.full_start() as u32,
+            end: end as u32,
         }
     }
 
@@ -1769,11 +1739,7 @@ impl<'p, 'a> Reader<'p, 'a> {
 
     /// `textsEqual`, of `parent` and what is left of the last dot in `child`.
     fn is_part_of(&self, child: &[Name], parent: &[Name]) -> bool {
-        child.len() == parent.len() + 1
-            && child
-                .iter()
-                .zip(parent)
-                .all(|(a, b)| a.text(self.text) == b.text(self.text))
+        child.len() == parent.len() + 1 && child.iter().zip(parent).all(|(a, b)| a.text == b.text)
     }
 
     /// `tryParseChildTag`
@@ -1782,8 +1748,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.next_jsdoc();
         let name = self.identifier_name(Some(1003));
         let indent_text = self.skip_whitespace_or_asterisk();
-        let text = self.text;
-        let fits = match name.text(text) {
+        let fits = match name.text.slice() {
             b"type" if target == PROPERTY => {
                 return Some(self.type_tag(&[], start, name, None, 0));
             }

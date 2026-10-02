@@ -8,11 +8,9 @@ pub(crate) struct Builder<'a> {
     pub(crate) atoms: &'a Interner,
     /// The short names that were interned for this file, each at the place its spelling gives it. The last to come to a place has it.
     seen_names: Box<[std::cell::Cell<SeenName>]>,
-    pub(crate) source: &'a [u8],
+
     /// The TypeScript syntax nodes the parser built.
     pub(crate) ts: bun_ast::ts_syntax::Syntax,
-    /// Those nodes, keyed by start offset.
-    pub(crate) kept: super::keep::KeptNodes,
     /// Parts of cloned nodes that the lowering still has to fill in.
     pub(crate) pending: Vec<super::clone_types::PendingPart>,
     /// The class whose members are being lowered is a declaration that says `abstract`.
@@ -27,8 +25,6 @@ pub(crate) struct Builder<'a> {
     pub(crate) in_jsdoc: bool,
     /// Where the first token of the statement being made is: a decorator, a modifier or its keyword.
     pub(crate) statement_start: u32,
-    /// `Lexer::all_comments` of the parser, which has been through all of the file.
-    pub(crate) comments: Vec<bun_ast::Range>,
 }
 
 /// A name of at most 16 bytes and its atom. The first bytes, the last bytes and the length say all there is to say of its spelling.
@@ -251,16 +247,15 @@ pub(crate) fn modifier_error(
 }
 
 impl<'a> Builder<'a> {
-    pub(crate) fn new(source: &'a [u8], is_js: bool, atoms: &'a Interner) -> Self {
+    pub(crate) fn new(source_len: usize, is_js: bool, atoms: &'a Interner) -> Self {
         // A power of two, and more than a file of this length has different names.
-        let names = (source.len() / 16).next_power_of_two().clamp(64, 2048);
+        let names = (source_len / 16).next_power_of_two().clamp(64, 2048);
         Builder {
             file: hir::File::default(),
             atoms,
             seen_names: vec![std::cell::Cell::new(SeenName::NONE); names].into_boxed_slice(),
-            source,
+
             ts: Default::default(),
-            kept: Default::default(),
             pending: Vec::new(),
             in_abstract_class: false,
             statement_modifiers: Vec::new(),
@@ -268,7 +263,6 @@ impl<'a> Builder<'a> {
             is_js,
             in_jsdoc: false,
             statement_start: 0,
-            comments: Vec::new(),
         }
     }
 
@@ -413,11 +407,6 @@ impl<'a> Builder<'a> {
             }
         }
         self.statement_modifiers.truncate(base);
-    }
-
-    /// `node.Pos()` of what starts with the token at `token`, `node.End()` of what ends before it. Not in a JSDoc comment.
-    pub(crate) fn full_start_of(&self, token: u32) -> u32 {
-        crate::lexer::comments_before(self.source, &self.comments, token as usize).1 as u32
     }
 
     /// Says what is wrong with `modifiers`, if anything is. `name_pos`: where the name of what they are written on is.

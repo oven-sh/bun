@@ -194,6 +194,7 @@ pub(crate) struct ParserSnapshot<'a> {
     await_was_refused: bool,
     reparses_rest_of_file: bool,
     stray_decorators_len: usize,
+    noted: crate::sema::notes::Checkpoint,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -869,7 +870,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// `finishNode`: `expr` ends where the token before the current one does. For `hir::File::expr_ends`.
     #[inline]
-    pub(crate) fn finish_expr(&mut self, expr: &Expr) {
+    pub(crate) fn finish_expr(&mut self, expr: &mut Expr) {
         if TYPESCRIPT && self.lexer.tolerant && self.log().errors != 0 {
             self.note_expr_end(expr, self.lexer.full_start());
         }
@@ -882,8 +883,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     {
         // The import-record side-effect is order-independent of `Expr.init`'s
         // Store allocation.
-        let expr = Expr::init(t, loc);
-        self.finish_expr(&expr);
+        let loc = self.real_loc(loc);
+        let mut expr = Expr::init(t, loc);
+        self.finish_expr(&mut expr);
         if SCAN_ONLY {
             if let js_ast::ExprData::ECall(call) = expr.data {
                 if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
@@ -909,7 +911,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     where
         T: js_ast::stmt::StatementData,
     {
-        Stmt::alloc(t, loc)
+        Stmt::alloc(t, self.real_loc(loc))
     }
 
     pub(crate) fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
@@ -1971,6 +1973,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `Binding { loc, data }` directly.
     #[inline]
     pub(crate) fn b<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
+    where
+        T: js_ast::binding::BindingAlloc,
+    {
+        Binding::alloc(self.arena, t, self.real_loc(loc))
+    }
+
+    /// `b`, of the binding that the expression whose `loc` is `loc` turned out to be. It is that node: what is noted of the expression
+    /// is noted of the binding.
+    #[inline]
+    fn binding_of_expr<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
     where
         T: js_ast::binding::BindingAlloc,
     {
@@ -4035,7 +4047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match expr.data {
             js_ast::ExprData::EMissing(_) => return None,
             js_ast::ExprData::EIdentifier(ex) => {
-                return Some(self.b(B::Identifier { r#ref: ex.ref_ }, expr.loc));
+                return Some(self.binding_of_expr(B::Identifier { r#ref: ex.ref_ }, expr.loc));
             }
             js_ast::ExprData::EArray(ex) => {
                 if let Some(spread) = ex.comma_after_spread.to_nullable() {
@@ -4047,7 +4059,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
-                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
+                        loc: self
+                            .source
+                            .range_of_operator_before(self.real_loc(expr.loc), b"(")
+                            .loc,
                         kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
@@ -4057,15 +4072,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut is_spread = false;
                 for i in 0..ex.items.len_u32() as usize {
                     let mut item = ex.items.slice()[i];
+                    let mut dots = bun_ast::Loc::EMPTY;
                     if matches!(item.data, js_ast::ExprData::ESpread(_)) {
                         is_spread = true;
-                        let dots = item.loc;
+                        dots = self.real_loc(item.loc);
                         item = item
                             .data
                             .e_spread()
                             .expect("infallible: variant checked")
                             .value;
-                        self.mark_type_syntax(item.loc, crate::sema::Mark::DotDotDot, dots);
                     }
                     let res = self.convert_expr_to_binding_and_initializer(
                         &mut item,
@@ -4073,19 +4088,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_spread,
                     );
 
+                    // It's valid for it to be missing
+                    // An example:
+                    //      Promise.all(promises).then(([, len]) => true);
+                    //                                   ^ Binding is missing there
+                    let mut binding = res
+                        .binding
+                        .unwrap_or_else(|| self.binding_of_expr(B::Missing {}, item.loc));
+                    if !dots.is_empty() {
+                        self.note_loc(&mut binding.loc, crate::sema::Mark::DotDotDot, dots);
+                    }
                     items.push(bun_ast::ArrayBinding {
-                        // It's valid for it to be missing
-                        // An example:
-                        //      Promise.all(promises).then(([, len]) => true);
-                        //                                   ^ Binding is missing there
-                        binding: res
-                            .binding
-                            .unwrap_or_else(|| self.b(B::Missing {}, item.loc)),
+                        binding,
                         default_value: res.expr,
                     });
                 }
 
-                return Some(self.b(
+                return Some(self.binding_of_expr(
                     B::Array {
                         items: bun_ast::StoreSlice::new_mut(items.into_bump_slice_mut()),
                         has_spread: is_spread,
@@ -4104,7 +4123,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
-                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
+                        loc: self
+                            .source
+                            .range_of_operator_before(self.real_loc(expr.loc), b"(")
+                            .loc,
                         kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
@@ -4118,7 +4140,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || item.kind == js_ast::g::PropertyKind::Set
                     {
                         invalid_loc.push(InvalidLoc {
-                            loc: item.key.expect("infallible: prop has key").loc,
+                            loc: self.real_loc(item.key.expect("infallible: prop has key").loc),
                             kind: if item.flags.contains(Flags::Property::IsMethod) {
                                 crate::parser::InvalidLocTag::Method
                             } else if item.kind == js_ast::g::PropertyKind::Get {
@@ -4154,7 +4176,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
 
-                return Some(self.b(
+                return Some(self.binding_of_expr(
                     B::Object {
                         properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                         is_single_line: ex.is_single_line,
@@ -4164,7 +4186,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 invalid_loc.push(InvalidLoc {
-                    loc: expr.loc,
+                    loc: self.real_loc(expr.loc),
                     kind: crate::parser::InvalidLocTag::Unknown,
                 });
                 return None;
@@ -4192,7 +4214,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let bind = self.convert_expr_to_binding(expr, invalid_log);
         if let Some(initial) = initializer {
-            let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
+            let equals_range = self
+                .source
+                .range_of_operator_before(self.real_loc(initial.loc), b"=");
             if is_spread {
                 self.log().add_range_error(
                     Some(self.source),
@@ -4817,7 +4841,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 exported_members.put(
                     name,
                     js_ast::TSNamespaceMember {
-                        loc: binding.loc,
+                        loc: self.real_loc(binding.loc),
                         data: js_ast::ts::Data::Property,
                     },
                 )?;
@@ -4855,7 +4879,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     self.log().add_error_fmt(
                         Some(self.source),
-                        value.loc,
+                        self.real_loc(value.loc),
                         format_args!(
                             "for-{} loop variables cannot have an initializer",
                             loop_type
@@ -4866,7 +4890,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {
                 self.log().add_error_fmt(
                     Some(self.source),
-                    decls[0].binding.loc,
+                    self.real_loc(decls[0].binding.loc),
                     format_args!("for-{} loops must have a single declaration", loop_type),
                 );
             }
@@ -4890,7 +4914,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if decl.value.is_none() {
                 match &decl.binding.data {
                     js_ast::b::B::BIdentifier(ident) => {
-                        let r = js_lexer::range_of_identifier(self.source, decl.binding.loc);
+                        let r = js_lexer::range_of_identifier(
+                            self.source,
+                            self.real_loc(decl.binding.loc),
+                        );
                         let ident_ref = ident.r#ref;
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let name = self.symbols[ident_ref.inner_index() as usize]
@@ -4914,7 +4941,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         self.log().add_error_fmt(
                             Some(self.source),
-                            decl.binding.loc,
+                            self.real_loc(decl.binding.loc),
                             format_args!("This {} must be initialized", what),
                         );
                     }
@@ -5351,7 +5378,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !opts.is_typescript_declare || (opts.scope.is_namespace() && opts.is_export) {
                     bind.r#ref = self.declare_symbol(
                         kind,
-                        binding.loc,
+                        self.real_loc(binding.loc),
                         self.load_name_from_ref(bind.r#ref),
                     )?;
                 }
@@ -8410,13 +8437,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_was_refused: self.await_was_refused,
             reparses_rest_of_file: self.reparses_rest_of_file,
             stray_decorators_len: self.stray_decorators.len(),
+            noted: self.type_syntax_checkpoint(),
         }
+    }
+
+    /// [`Self::restore_parser_snapshot`], where what was parsed since is kept: what is noted of it stays.
+    pub(crate) fn restore_parser_snapshot_but_for_notes(
+        &mut self,
+        mut snapshot: ParserSnapshot<'a>,
+    ) {
+        snapshot.noted = self.type_syntax_checkpoint();
+        self.restore_parser_snapshot(snapshot);
     }
 
     /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
     pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
         self.lexer.restore(&snapshot.lexer);
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
+        self.rewind_type_syntax(snapshot.noted);
 
         let log = self.log();
         log.msgs.truncate(snapshot.log_msgs_len);

@@ -13,9 +13,9 @@ use super::keep::{TypeMemberParts, modifier_flag};
 use crate::Error;
 use crate::lexer::{PropertyModifierKeyword, T};
 use crate::p::P;
-use crate::parser::{PropertyOpts, SkipTypeParameterResult, TypeParameterFlag};
+use crate::parser::{PropertyOpts, TypeParameterFlag};
 use bun_ast::ts_syntax as ts;
-use bun_ast::{E, Loc, LocRef, Ref, S, Stmt};
+use bun_ast::{E, G, Loc, LocRef, Ref, S, Stmt};
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// The name of a declaration that declares no symbol, because an ordinary build drops it.
@@ -40,15 +40,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         body: Option<&'a mut [Stmt]>,
         is_export: bool,
     ) -> Stmt {
+        let mut name = self.keep_name(name_loc, name);
         match kind {
             ModuleNameKind::Identifier => {}
-            ModuleNameKind::String => self.mark_type_syntax(name_loc, Mark::StringName, name_loc),
-            ModuleNameKind::Global => self.mark_type_syntax(name_loc, Mark::GlobalName, name_loc),
+            ModuleNameKind::String => self.note_flag(&mut name.loc, Mark::StringName),
+            ModuleNameKind::Global => self.note_flag(&mut name.loc, Mark::GlobalName),
         }
         if body.is_none() {
-            self.mark_type_syntax(name_loc, Mark::NoBody, name_loc);
+            self.note_flag(&mut name.loc, Mark::NoBody);
         }
-        let name = self.keep_name(name_loc, name);
         self.s(
             S::Namespace {
                 name,
@@ -62,16 +62,89 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// The type parameters of the class whose keyword is at `class_keyword`.
     #[inline]
-    pub(crate) fn skip_class_type_parameters(&mut self, class_keyword: Loc) -> Result<(), Error> {
-        let less_than = self.lexer.loc();
-        let skipped = self.skip_type_script_type_parameters(
+    pub(crate) fn skip_class_type_parameters(
+        &mut self,
+        class_keyword: &mut Loc,
+    ) -> Result<(), Error> {
+        let parameters = self.parse_type_parameters(
             TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                 | TypeParameterFlag::ALLOW_CONST_MODIFIER,
         )?;
-        if skipped != SkipTypeParameterResult::DidNotSkipAnything {
-            self.mark_type_syntax(class_keyword, Mark::TypeParameters, less_than);
-        }
+        self.note_type_parameters(class_keyword, parameters);
         Ok(())
+    }
+
+    /// `parseClassElement`: `property`, whose first token is at `start` and fully starts at `full_start`, ends before the current
+    /// token. Those pushed since there were `modifiers_base` are its modifiers.
+    #[inline]
+    pub(crate) fn finish_class_member(
+        &mut self,
+        property: &mut G::Property,
+        start: Loc,
+        full_start: Loc,
+        modifiers_base: usize,
+    ) {
+        if !self.keeps_type_syntax() {
+            return;
+        }
+        // What is said of a static block is said of its `{`, of any other member of its name.
+        let named_at = if property.class_static_block.is_some() {
+            property
+                .class_static_block_mut()
+                .map(|block| &mut block.loc)
+        } else {
+            property.key.as_mut().map(|key| &mut key.loc)
+        };
+        if let Some(named_at) = named_at {
+            self.note_loc(named_at, Mark::MemberStart, start);
+            self.finish_member(named_at, full_start);
+            self.end_parameter_modifiers(modifiers_base, named_at);
+        }
+    }
+
+    /// `implemented`, which starts at `start`, is an element of an `implements` clause of the class whose keyword is at
+    /// `class_keyword`. `NONE`: it is no `A.B<C>`, which the parser has objected to.
+    pub(crate) fn note_implemented(
+        &mut self,
+        class_keyword: &mut Loc,
+        clause: Mark,
+        implemented: ts::TypeId,
+        start: Loc,
+    ) {
+        if let Some(syntax) = &mut self.type_syntax {
+            let implemented = if implemented.is_some() {
+                implemented
+            } else {
+                let error = ts::TypeData::Error {
+                    is_syntax_error: false,
+                };
+                syntax.ast.add_type(error, start)
+            };
+            self.note(class_keyword, clause, implemented.index() as u32);
+        }
+    }
+
+    /// The `this` parameter of the function whose `(` is at `open_parens_loc`, which `bun_ast` has no place for. Its name is at `name`,
+    /// its type, if it has one, is the type that was parsed last, and it ends before the current token.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn keep_this_parameter(
+        &mut self,
+        open_parens_loc: &mut Loc,
+        mut parameter: ts::Param,
+        name: Loc,
+        has_type: bool,
+    ) {
+        parameter.end = self.lexer.full_start();
+        if let Some(syntax) = &mut self.type_syntax {
+            let this = ts::PatternData::Identifier(bun_ast::StoreStr::new(b"this"));
+            parameter.pattern = syntax.ast.add_pattern(this, name);
+            if has_type {
+                parameter.ty = syntax.last_type_or_error();
+            }
+            let kept = syntax.ast.add_param(parameter);
+            self.note(open_parens_loc, Mark::ThisParameter, kept.index() as u32);
+        }
     }
 
     /// `parseModifiersEx`: the word at `loc` was taken for a modifier of the member being parsed.
@@ -135,7 +208,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     pub(crate) fn finish_class_index_signature(
         &mut self,
-        class_keyword: Loc,
+        class_keyword: &mut Loc,
         start: Loc,
         full_start: Loc,
         modifiers_base: usize,
@@ -161,31 +234,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 kept.loc = first;
             }
             (kept.start, kept.full_start, kept.end) = (start, full_start, end);
-            syntax.marks.push((
-                class_keyword.start,
-                Mark::IndexSignature,
-                member.index() as i32,
-            ));
+            syntax
+                .notes
+                .add(class_keyword, Mark::IndexSignature, member.index() as u32);
         }
         syntax.statement_modifiers.truncate(base);
     }
 
-    /// `parseExpressionWithTypeArguments` after `implements`, where the names read as a type at `start` go on with `?.`.
+    /// `parseExpressionWithTypeArguments` after `implements`, where the names read as the type `kept` go on with `?.`.
     /// `isEntityNameExpression` takes `A?.B` for an entity name, so it is resolved as `A.B`. False, with nothing consumed, if that is
     /// not all there is to it.
     #[cold]
     #[inline(never)]
     pub(crate) fn parse_optional_chain_of_implemented(
         &mut self,
-        start: Loc,
+        kept: ts::TypeId,
     ) -> Result<bool, Error> {
-        let Some(&kept) = self
-            .type_syntax
-            .as_ref()
-            .and_then(|syntax| syntax.by_offset.types.get(&start.start))
-        else {
+        if kept.is_none() {
             return Ok(false);
-        };
+        }
         let ts::TypeData::Reference { name, args } = self.type_syntax_mut().ast[kept].data else {
             return Ok(false);
         };
@@ -226,29 +293,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    /// Whether the type read at `start` is `A.B<C>`. True outside of type checking, and where no type could be made out.
+    /// Whether the type `kept` is `A.B<C>`. True outside of type checking, and where no type could be made out.
     #[cold]
     #[inline(never)]
-    pub(crate) fn is_kept_entity_name(&self, start: Loc) -> bool {
-        let Some(syntax) = &self.type_syntax else {
-            return true;
-        };
-        match syntax.by_offset.types.get(&start.start) {
+    pub(crate) fn is_kept_entity_name(&self, kept: ts::TypeId) -> bool {
+        match &self.type_syntax {
             // `number` is a name like any other to `parseLeftHandSideExpressionOrHigher`.
-            Some(&kept) => matches!(
+            Some(syntax) if kept.is_some() => matches!(
                 syntax.ast[kept].data,
                 ts::TypeData::Reference { .. } | ts::TypeData::Keyword(_)
             ),
-            None => true,
-        }
-    }
-
-    /// What was read at `start` is not the type it was taken for.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn forget_kept_type(&mut self, start: Loc) {
-        if let Some(syntax) = &mut self.type_syntax {
-            syntax.by_offset.types.remove(&start.start);
+            _ => true,
         }
     }
 
@@ -488,15 +543,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `parseModuleSpecifier`: it is at `loc`. `text`: its value, if it is a string.
-    pub(crate) fn keep_module_specifier(&mut self, text: Option<&'a [u8]>, loc: Loc) {
+    /// `parseModuleSpecifier`: it is at `loc`. `text`: its value, if it is a string. `expression`: what is written, if not.
+    pub(crate) fn keep_module_specifier(
+        &mut self,
+        text: Option<&'a [u8]>,
+        expression: Option<bun_ast::Expr>,
+        loc: Loc,
+    ) {
         if let Some(kept) = self.module_syntax_mut() {
             kept.module = Some(ts::ModuleSpecifier {
                 text: text.map(bun_ast::StoreStr::new),
                 loc,
                 mode: ts::ResolutionMode::None,
+                expression,
+                attributes: None,
             });
         }
+    }
+
+    /// `parseImportAttributes`, after the module specifier: `object` is what they are, as an object literal, and `keyword_loc` where
+    /// `with` is.
+    pub(crate) fn keep_import_attributes(&mut self, keyword_loc: Loc, object: bun_ast::Expr) {
+        if let Some(ModuleSyntax {
+            module: Some(module),
+            ..
+        }) = self.module_syntax_mut()
+        {
+            module.attributes = Some(ts::ImportAttributes {
+                keyword_loc,
+                object,
+            });
+        }
+    }
+
+    /// `end_module_syntax`, of a declaration of which only the module specifier is asked for.
+    pub(crate) fn end_module_specifier(&mut self) -> Option<ts::ModuleSpecifier> {
+        self.end_module_syntax()?.module
     }
 
     /// `getResolutionModeOverride`, of the attribute `key: value` that was just parsed. `is_string_key`: `key` is written as a string.

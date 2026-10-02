@@ -234,16 +234,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(decorators) = opts.ts_decorators.take()
             && let Some(first) = decorators.values.first()
         {
-            let at_sign = |p: &Self, decorator: &Expr| {
-                p.noted(decorator.loc, crate::sema::Mark::AtSign)
-                    .unwrap_or(decorator.loc)
+            let at_sign = |p: &Self, decorator: &Expr| match p
+                .noted(decorator.loc, crate::sema::Mark::AtSign)
+            {
+                Some(at_sign) => bun_ast::Loc {
+                    start: at_sign as i32,
+                },
+                None => p.real_loc(decorator.loc),
             };
             let loc = at_sign(p, first);
             p.lexer
                 .ts_grammar_error(bun_ast::Range { loc, len: 1 }, 1206);
             let end = p.lexer.full_start();
             for decorator in decorators.values {
-                p.mark_type_syntax(decorator.loc, crate::sema::Mark::StrayDecorator, end);
+                p.note_stray_decorator(decorator, end);
                 let loc = at_sign(p, decorator);
                 p.push_statement_decorator(*decorator, loc);
             }
@@ -468,8 +472,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let open_paren = p.lexer.loc();
         p.lexer.expect(T::TOpenParen)?;
+        let test_full_start = p.lexer.full_start();
         let test = p.parse_expr(Level::Lowest)?;
         let body_loc = p.lexer.loc();
+        let test_end = p.lexer.full_start();
         p.lexer.expect_closing(T::TCloseParen, open_paren)?;
 
         // Push a scope so we make sure to prevent any bare identifiers referenced
@@ -480,6 +486,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
         p.pop_scope();
 
+        // What is in the parentheses is a statement to the type checker. This is its range.
+        let mut body_loc = body_loc;
+        p.note_range(&mut body_loc, test_full_start, test_end);
         Ok(p.s(
             S::With {
                 body,
@@ -551,7 +560,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `value`/`stmt_opts` are reinitialized every iteration before any read, so
                 // declare per-iteration.
                 let mut value: Option<js_ast::Expr> = None;
-                let clause_loc = p.lexer.loc();
+                let clause_start = p.lexer.loc();
+                let mut clause_loc = clause_start;
+                p.mark_comments_before(&mut clause_loc, clause_start, p.pos_for_jsdoc());
                 if p.lexer.token == T::TDefault {
                     if found_default {
                         if !p.lexer.tolerant {
@@ -660,6 +671,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `parseStatement` sends `catch` and `finally` here as well: `try` is missed then, and nothing is taken for it.
         p.lexer.expect(T::TTry)?;
         let body_loc = p.lexer.loc();
+        let body_full_start = p.lexer.full_start();
         let has_block = Self::open_block(p)?;
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
         let mut stmt_opts = ParseStatementOptions::default();
@@ -669,9 +681,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StmtList::new_in(p.arena)
         };
         p.pop_scope();
+        let mut body_end = bun_ast::Loc::EMPTY;
         if has_block {
-            p.end_of_block(body_loc)?;
+            body_end = p.end_of_block(body_loc)?;
         }
+        let mut body_loc = body_loc;
+        p.note_range(&mut body_loc, body_full_start, body_end);
 
         let mut catch: Option<js_ast::Catch> = None;
         let mut finally: Option<js_ast::Finally> = None;
@@ -688,6 +703,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.lexer.expect(T::TOpenParen)?;
                 // `parseVariableDeclaration`: what is caught is a variable like any other.
+                let value_full_start = p.lexer.full_start();
                 let mut value = p.parse_binding(crate::parser::ParseBindingOptions {
                     private_name_code: 18029,
                     ..Default::default()
@@ -697,8 +713,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let has_type = Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon;
                 if has_type {
                     p.lexer.expect(T::TColon)?;
-                    p.mark_type_syntax(value.loc, crate::sema::Mark::Annotation, p.lexer.loc());
                     p.skip_type_script_type(Level::Lowest)?;
+                    p.note_type(&mut value.loc, crate::sema::Mark::Annotation);
                 }
 
                 // It may have an initializer, then. `checkCatchClause` objects to it, unless there is a type to look at.
@@ -706,12 +722,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     let at = p.lexer.range();
                     let initializer = p.parse_expr(Level::Comma)?;
-                    p.keep_expressions(value.loc, &[initializer]);
+                    p.note_expr(&mut value.loc, crate::sema::Mark::Initializer, initializer);
                     if !has_type {
                         Self::grammar_error(p, at, 1197);
                     }
                 }
-                p.mark_end(value.loc, crate::sema::Mark::VariableLikeEnd);
+                p.finish_node(&mut value.loc, value_full_start);
 
                 p.lexer.expect(T::TCloseParen)?;
 
@@ -725,6 +741,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let catch_body_loc = p.lexer.loc();
+            let catch_body_full_start = p.lexer.full_start();
             let has_block = Self::open_block(p)?;
 
             let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, catch_body_loc)?;
@@ -734,9 +751,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtList::new_in(p.arena)
             };
             p.pop_scope();
+            let mut catch_body_end = bun_ast::Loc::EMPTY;
             if has_block {
-                p.end_of_block(catch_body_loc)?;
+                catch_body_end = p.end_of_block(catch_body_loc)?;
             }
+            let mut catch_body_loc = catch_body_loc;
+            p.note_range(&mut catch_body_loc, catch_body_full_start, catch_body_end);
             catch = Some(js_ast::Catch {
                 loc: catch_loc,
                 binding,
@@ -758,16 +778,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect(T::TFinally)?;
             }
             let finally_body_loc = p.lexer.loc();
+            let finally_body_full_start = p.lexer.full_start();
             let has_block = Self::open_block(p)?;
             let stmts = if has_block {
                 p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?
             } else {
                 StmtList::new_in(p.arena)
             };
+            let mut finally_body_end = bun_ast::Loc::EMPTY;
             if has_block {
                 p.end_of_block(finally_body_loc)?;
-                p.mark_end(finally_loc, crate::sema::Mark::StatementEnd);
+                finally_body_end = p.lexer.full_start();
             }
+            let mut finally_loc = finally_loc;
+            p.note_range(&mut finally_loc, finally_body_full_start, finally_body_end);
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
                 stmts: bun_ast::StoreSlice::from_bump(stmts),
@@ -895,6 +919,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // arena outlives this fn, so the lifetime-erased view remains valid.
             let mut decls_ptr: bun_ast::StoreSlice<G::Decl> = bun_ast::StoreSlice::EMPTY;
             let init_loc = p.lexer.loc();
+            let init_full_start = p.lexer.full_start();
             let mut is_var = false;
             // `parseForOrForInOrForOfStatement`: `let` here always starts a list of declarations, be it an empty one.
             let is_empty_let_list = bad_let_range.is_some()
@@ -994,8 +1019,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "in" expressions are allowed again
             p.allow_in = true;
-            if let Some(init) = &init_ {
-                p.mark_end(init.loc, crate::sema::Mark::StatementEnd);
+            if let Some(init) = &mut init_ {
+                p.finish_node(&mut init.loc, init_full_start);
             }
 
             // `parseForOrForInOrForOfStatement`: after `await`, wherever the loop stands, `of` is expected, and nothing is taken
@@ -1172,7 +1197,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let expr = p.parse_expr(Level::Lowest)?;
         if !p.can_parse_semicolon() && p.lexer.tolerant {
-            Self::missing_semicolon_after_expr(p, &expr, loc)?;
+            Self::missing_semicolon_after_expr(p, &expr)?;
         } else {
             p.lexer.expect_or_insert_semicolon()?;
         }
@@ -1453,6 +1478,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if p.lexer.is_contextual_keyword(b"async") {
                     let async_range = p.lexer.range();
+                    let async_full_start = p.lexer.full_start();
                     p.lexer.next()?;
                     if p.lexer.token == T::TFunction && !p.lexer.has_newline_before {
                         p.push_statement_modifier(
@@ -1496,8 +1522,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let default_name = p.create_default_name(loc);
 
-                    let mut expr =
-                        p.parse_async_prefix_expr(async_range, Level::Comma, EFlags::None)?;
+                    let mut expr = p.parse_async_prefix_expr(
+                        async_range,
+                        async_full_start,
+                        Level::Comma,
+                        EFlags::None,
+                    )?;
                     p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
                     p.lexer.expect_or_insert_semicolon()?;
                     let value = js_ast::StmtOrExpr::Expr(expr);
@@ -1554,7 +1584,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // building an S.ExportDefault that the visit and print
                             // passes don't support.
                             _ => {
-                                let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+                                let r =
+                                    js_lexer::range_of_identifier(p.source, p.real_loc(stmt.loc));
                                 p.log().add_range_error_fmt(
                                     Some(p.source),
                                     r,
@@ -1591,7 +1622,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && !p.lexer.has_newline_before
                     && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                 {
-                    p.push_statement_modifier(bun_ast::ts_syntax::Flags::ABSTRACT, expr.loc);
+                    let abstract_loc = p.real_loc(expr.loc);
+                    p.push_statement_modifier(bun_ast::ts_syntax::Flags::ABSTRACT, abstract_loc);
                     let mut stmt_opts = ParseStatementOptions {
                         ts_decorators: opts.ts_decorators.take(),
                         is_name_optional: true,
@@ -1599,7 +1631,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     // Scopes are pushed in the order of the places they are given, and decorators that come after `default` may
                     // have pushed some.
-                    let class_loc = if p.lexer.tolerant { expr.loc } else { loc };
+                    let class_loc = if p.lexer.tolerant { abstract_loc } else { loc };
                     let stmt: Stmt = p.parse_class_stmt(class_loc, &mut stmt_opts)?;
 
                     // Use the statement name if present, since it's a better name
@@ -1649,7 +1681,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                         && !p.lexer.tolerant
                     {
-                        let r = js_lexer::range_of_identifier(p.source, expr.loc);
+                        let r = js_lexer::range_of_identifier(p.source, p.real_loc(expr.loc));
                         p.log()
                             .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
                         return Err(crate::Error::SyntaxError);
@@ -2362,12 +2394,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn import_with_expression_specifier(p: &mut Self, loc: bun_ast::Loc) -> Result<Stmt> {
         let specifier = p.parse_expr(Level::Lowest)?;
         if !matches!(specifier.data, js_ast::ExprData::EMissing(_)) {
-            p.ts_checker_error(specifier.loc, 1141);
+            p.ts_checker_error(p.real_loc(specifier.loc), 1141);
         }
-        if let Some(syntax) = &mut p.type_syntax {
-            syntax.specifier_expressions.push(specifier);
-        }
-        p.keep_module_specifier(None, specifier.loc);
+        p.keep_module_specifier(None, Some(specifier), p.real_loc(specifier.loc));
         p.lexer.expect_or_insert_semicolon()?;
         Ok(p.s(S::TypeScript::default(), loc))
     }
@@ -2483,8 +2512,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn parse_embedded_stmt(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         let outer_modifiers_base = p.begin_statement();
-        let stmt = p.parse_stmt(opts)?;
-        p.end_statement(outer_modifiers_base, stmt.loc);
+        let mut stmt = p.parse_stmt(opts)?;
+        p.end_statement(outer_modifiers_base, &mut stmt.loc);
         Ok(stmt)
     }
 
@@ -2494,7 +2523,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         let is_identifier = p.lexer.token == T::TIdentifier;
-        let has_paren = p.lexer.token == T::TOpenParen;
         let name = p.lexer.identifier;
         if p.lexer.tolerant && is_identifier && Self::IS_TYPESCRIPT_ENABLED {
             if let Some(stmt) = Self::parse_declaration_after_modifiers(p, opts)? {
@@ -2506,6 +2534,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut expr: Expr;
         if is_identifier && p.lexer.raw() == b"async" {
             let async_range = p.lexer.range();
+            let async_full_start = p.lexer.full_start();
             p.lexer.next()?;
             if p.lexer.token == T::TFunction && !p.lexer.has_newline_before {
                 p.push_statement_modifier(bun_ast::ts_syntax::Flags::ASYNC, async_range.loc);
@@ -2514,7 +2543,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return p.parse_fn_stmt(async_range.loc, opts, Some(async_range));
             }
 
-            expr = p.parse_async_prefix_expr(async_range, Level::Lowest, EFlags::None)?;
+            expr = p.parse_async_prefix_expr(
+                async_range,
+                async_full_start,
+                Level::Lowest,
+                EFlags::None,
+            )?;
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
         } else {
             let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
@@ -2531,7 +2565,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if is_identifier {
             if let js_ast::ExprData::EIdentifier(ident) = &expr.data {
                 if p.lexer.token == T::TColon && !opts.has_decorators() {
-                    return Self::parse_labeled_stmt(p, opts, loc, expr.loc, ident.ref_);
+                    let label_loc = p.real_loc(expr.loc);
+                    return Self::parse_labeled_stmt(p, opts, loc, label_loc, ident.ref_);
                 }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
@@ -2553,13 +2588,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         // Output.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
         if !p.can_parse_semicolon() && p.lexer.tolerant {
-            Self::missing_semicolon_after_expr(p, &expr, loc)?;
+            Self::missing_semicolon_after_expr(p, &expr)?;
         } else {
             p.lexer.expect_or_insert_semicolon()?;
         }
-        if has_paren {
-            p.mark_type_syntax(loc, crate::sema::Mark::HasParen, loc);
-        }
+
         Ok(p.s(
             S::SExpr {
                 value: expr,
@@ -2618,29 +2651,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Some(stmt))
     }
 
-    /// `parseErrorForMissingSemicolonAfter(expression)`, for the expression of the statement that starts at `loc`.
+    /// `parseErrorForMissingSemicolonAfter(expression)`
     #[cold]
     #[inline(never)]
-    fn missing_semicolon_after_expr(p: &mut Self, expr: &Expr, loc: bun_ast::Loc) -> Result<()> {
+    fn missing_semicolon_after_expr(p: &mut Self, expr: &Expr) -> Result<()> {
         // `(x)`, `x as T`, `x!` and `x<T>` are only `x` in the tree.
-        let key = crate::sema::ExprKey::of(expr);
-        let is_wrapped = p.type_syntax.as_ref().is_some_and(|syntax| {
-            let mut casts_in_statement = syntax
-                .casts
-                .iter()
-                .rev()
-                .take_while(|cast| cast.2 >= loc.start);
-            casts_in_statement.any(|cast| cast.0 == key)
-        });
+        let is_wrapped = p.last_cast(expr).is_some();
+        let at = p.real_loc(expr.loc);
         match &expr.data {
             js_ast::ExprData::ETemplate(template)
                 if template.tag.is_some() && !is_wrapped && !p.lexer.is_log_disabled =>
             {
-                if let Some(backtick) = Self::tagged_template_start(p, template) {
+                if let Some(backtick) = p.noted(expr.loc, crate::sema::Mark::Backtick) {
                     let before = p.lexer.prev_error_loc;
                     p.lexer.ts_error(
                         bun_ast::Range {
-                            loc: backtick,
+                            loc: bun_ast::Loc {
+                                start: backtick as i32,
+                            },
                             len: 1,
                         },
                         1443,
@@ -2651,22 +2679,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EIdentifier(identifier) if !is_wrapped => {
                 let word = p.load_name_from_ref(identifier.ref_);
-                return p.missing_semicolon_after(word, expr.loc);
+                return p.missing_semicolon_after(word, at);
             }
             _ => {}
         }
-        p.missing_semicolon_after(b"", expr.loc)
-    }
-
-    /// Where the backtick of a tagged template is.
-    fn tagged_template_start(p: &Self, template: &js_ast::E::Template) -> Option<bun_ast::Loc> {
-        let tag = crate::sema::ExprKey::of(template.tag.as_ref()?);
-        let casts = &p.type_syntax.as_ref()?.casts;
-        let noted = casts
-            .iter()
-            .rev()
-            .find(|cast| cast.0 == tag && cast.1 == crate::sema::CastKind::Tag)?;
-        Some(bun_ast::Loc { start: noted.2 })
+        p.missing_semicolon_after(b"", at)
     }
 
     /// `parseErrorForMissingSemicolonAfter`, for a node that is not a tagged template. Call where no semicolon can be parsed.
@@ -3069,7 +3086,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let loc = self.lexer.loc();
-        let stmt = match self.lexer.token {
+        let full_start = self.lexer.full_start();
+        let has_paren = self.lexer.token == T::TOpenParen;
+        let mut stmt = match self.lexer.token {
             T::TSemicolon => Self::t_semicolon(self),
             T::TAt => Self::t_at(self, opts),
 
@@ -3098,10 +3117,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             _ => Self::parse_stmt_fallthrough(self, opts, loc),
         }?;
-        if stmt.loc.start > loc.start {
-            self.mark_type_syntax(stmt.loc, crate::sema::Mark::DeclarationStart, loc);
+        if self.real_loc(stmt.loc).start > loc.start {
+            self.note_loc(&mut stmt.loc, crate::sema::Mark::DeclarationStart, loc);
         }
-        self.mark_end(loc, crate::sema::Mark::StatementEnd);
+        self.finish_node(&mut stmt.loc, full_start);
+        if has_paren {
+            self.note_flag(&mut stmt.loc, crate::sema::Mark::HasParen);
+        }
         Ok(stmt)
     }
 }

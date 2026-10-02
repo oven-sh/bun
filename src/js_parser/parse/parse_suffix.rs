@@ -5,8 +5,7 @@ use crate::lexer::T;
 use crate::p::P;
 use crate::parser::DeferredErrors;
 use crate::scan::scan_side_effects::SideEffects;
-use crate::sema::ExprKey;
-use crate::sema::{CastKind, Mark};
+use crate::sema::Mark;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprData, OpCode, OptionalChain};
@@ -22,20 +21,20 @@ enum Continuation {
 type CResult = core::result::Result<Continuation, Error>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    fn sfx_handle_typescript_as(p: &mut Self, level: Level, left: &Expr) -> CResult {
+    fn sfx_handle_typescript_as(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)
             && !p.lexer.has_newline_before
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
         {
             let kind = if p.lexer.identifier == b"as" {
-                CastKind::As
+                Mark::As
             } else {
-                CastKind::Satisfies
+                Mark::Satisfies
             };
             p.lexer.next()?;
-            p.mark_cast(left, kind, p.lexer.loc());
             p.skip_type_script_type(Level::Lowest)?;
+            p.note_type(&mut left.loc, kind);
 
             // These tokens are not allowed to follow a cast expression. This isn't
             // an outright error because it may be on a new line, in which case it's
@@ -92,13 +91,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         }
         // `(a ## b)` is no binary expression.
-        let key = ExprKey::of(left);
-        if p.type_syntax.as_ref().is_some_and(|syntax| {
-            syntax
-                .casts
-                .iter()
-                .any(|&(of, kind, _)| of == key && kind == CastKind::Paren)
-        }) {
+        if p.noted(left.loc, Mark::Paren).is_some() {
             return false;
         }
         // The operand of an operator is handed back to `parseBinaryExpressionRest`, which goes on. Nothing above an assignment
@@ -244,7 +237,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let range = p.lexer.range();
             let made = p.source.contents();
             let made = made
-                .get(left.loc.to_usize()..p.lexer.full_start().to_usize())
+                .get(p.real_loc(left.loc).to_usize()..p.lexer.full_start().to_usize())
                 .unwrap_or_default();
             p.lexer.ts_error_about(range, 1209, made);
             return Ok(Continuation::Done);
@@ -324,8 +317,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
-                let type_arguments = p.lexer.loc();
                 let _ = p.skip_type_script_type_arguments::<false, false>()?;
+                let type_arguments = p.kept_type_arguments();
                 if p.lexer.token != T::TOpenParen {
                     p.lexer.expected(T::TOpenParen)?;
                 }
@@ -334,8 +327,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(Continuation::Done);
                 }
 
-                let list_loc = p.parse_call_args()?;
-                p.mark_type_syntax(list_loc.loc, Mark::TypeArguments, type_arguments);
+                let mut list_loc = p.parse_call_args()?;
+                if let Some(type_arguments) = type_arguments {
+                    p.note(&mut list_loc.loc, Mark::TypeArguments, type_arguments);
+                }
                 let loc = left.loc;
                 let target = *left;
                 *left = p.new_expr(
@@ -440,15 +435,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 b"Template literals cannot have an optional chain as a tag",
             );
         }
-        if let Some(type_arguments) = p.take_type_arguments() {
-            p.mark_type_syntax(left.loc, Mark::TagTypeArguments, type_arguments);
-        }
+        let type_arguments = p.take_type_arguments();
         // `hasCorrectArity`: a call with an unterminated template is incomplete.
-        if p.lexer.tolerant && p.lexer.unterminated_at == p.lexer.start {
-            p.mark_type_syntax(left.loc, Mark::IncompleteTemplate, left.loc);
-        }
+        let is_incomplete = p.lexer.tolerant && p.lexer.unterminated_at == p.lexer.start;
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        p.mark_cast(left, crate::sema::CastKind::Tag, p.lexer.loc());
+        let backtick = p.lexer.loc();
         let head = p.tagged_template_contents();
         p.lexer.next()?;
 
@@ -462,6 +453,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
+        p.note_tagged_template(left, backtick, type_arguments, is_incomplete);
         Ok(Continuation::Next)
     }
 
@@ -479,17 +471,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 b"Template literals cannot have an optional chain as a tag",
             );
         }
-        if let Some(type_arguments) = p.take_type_arguments() {
-            p.mark_type_syntax(left.loc, Mark::TagTypeArguments, type_arguments);
-        }
+        let type_arguments = p.take_type_arguments();
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        p.mark_cast(left, crate::sema::CastKind::Tag, p.lexer.loc());
+        let backtick = p.lexer.loc();
         let head = p.tagged_template_contents();
         let (parts, tail_loc) = p.parse_template_parts(true)?;
         // `hasCorrectArity`: a call with a template whose last literal is missing or unterminated is incomplete.
-        if p.lexer.tolerant && p.lexer.unterminated_at == tail_loc.start as usize {
-            p.mark_type_syntax(left.loc, Mark::IncompleteTemplate, left.loc);
-        }
+        let is_incomplete = p.lexer.tolerant && p.lexer.unterminated_at == tail_loc.start as usize;
         let tag = *left;
         let loc = left.loc;
         *left = p.new_expr(
@@ -500,6 +488,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
+        p.note_tagged_template(left, backtick, type_arguments, is_incomplete);
         Ok(Continuation::Next)
     }
 
@@ -581,9 +570,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let type_arguments = p.take_type_arguments();
-        let list_loc = p.parse_call_args()?;
+        let mut list_loc = p.parse_call_args()?;
         if let Some(type_arguments) = type_arguments {
-            p.mark_type_syntax(list_loc.loc, Mark::TypeArguments, type_arguments);
+            p.note(&mut list_loc.loc, Mark::TypeArguments, type_arguments);
         }
         let loc = left.loc;
         let target = *left;
@@ -618,7 +607,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "(a?: b) => {}"
         // "(a?, b?) => {}"
         if Self::IS_TYPESCRIPT_ENABLED
-            && left.loc.start == p.latest_arrow_arg_loc.start
+            && p.real_loc(left.loc).start == p.latest_arrow_arg_loc.start
             && (p.lexer.token == T::TColon
                 || p.lexer.token == T::TCloseParen
                 || p.lexer.token == T::TComma
@@ -640,7 +629,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev = *left;
         // The `Data::EIf(StoreRef<E::If>)` payload is a
         // boxed arena slot: allocate first, then fill via DerefMut on StoreRef.
-        let ternary = p.new_expr(
+        let mut ternary = p.new_expr(
             E::If {
                 test: prev,
                 yes: Expr::EMPTY,
@@ -672,7 +661,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `parseConditionalExpressionRest`: without the colon, what would come after it is missing as well.
             p.lexer.expect(T::TColon)?;
             e_if.no = p.new_expr(E::Missing {}, p.lexer.loc());
-            p.finish_expr(&ternary);
+            p.finish_expr(&mut ternary);
             *left = ternary;
             return Ok(Continuation::Next);
         }
@@ -690,7 +679,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //                     ^
-        p.finish_expr(&ternary);
+        p.finish_expr(&mut ternary);
 
         *left = ternary;
         Ok(Continuation::Next)
@@ -700,7 +689,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
-        left: &Expr,
+        left: &mut Expr,
     ) -> CResult {
         // Skip over TypeScript non-null assertions
         if p.lexer.has_newline_before {
@@ -714,7 +703,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.next()?;
         *optional_chain = old_optional_chain;
-        p.mark_cast(left, CastKind::NonNull, left.loc);
+        p.note_flag(&mut left.loc, Mark::NonNull);
 
         Ok(Continuation::Next)
     }
@@ -1184,7 +1173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && p.lexer.tolerant
             {
                 let after_super = bun_ast::Loc {
-                    start: left.loc.start + 5,
+                    start: p.real_loc(left.loc).start + 5,
                 };
                 p.lexer.ts_error(
                     bun_ast::Range {
@@ -1751,14 +1740,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         }
         // Parentheses, `!`, type arguments and type assertions make a node of their own kind.
-        let last_cast = p
-            .type_syntax
-            .as_ref()
-            .and_then(|syntax| syntax.casts.last());
-        if let Some(&(key, kind, _)) = last_cast
-            && key == ExprKey::of(left)
-        {
-            return matches!(kind, CastKind::As | CastKind::Satisfies);
+        if let Some(kind) = p.last_cast(left) {
+            return matches!(kind, Mark::As | Mark::AsTypeParameter | Mark::Satisfies);
         }
         matches!(
             left.data,

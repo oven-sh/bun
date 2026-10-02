@@ -815,7 +815,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if !self.lexer.is_log_disabled {
             let next = self.lexer.loc();
-            self.mark_type_syntax(range.loc, crate::sema::Mark::SkippedToken, next);
+            if let Some(syntax) = &mut self.type_syntax {
+                syntax.after_skipped.push(next);
+            }
         }
         Ok(false)
     }

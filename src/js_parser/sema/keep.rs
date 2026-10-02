@@ -17,7 +17,6 @@ use bun_ast::ts_syntax::{
     TypeParam,
 };
 use bun_ast::{Expr, Loc, StoreStr};
-use bun_collections::HashMap;
 
 use super::TypeSyntax;
 use crate::lexer::{PropertyModifierKeyword, T};
@@ -113,12 +112,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc: loc(pos),
         });
         self.emit_type(TypeData::Predicate { param, ty, asserts }, pos);
-    }
-
-    /// Records a finished top-level type by its start offset.
-    pub(crate) fn record_type(&mut self, start: i32, ty: TypeId) {
-        let kept = ty;
-        self.type_syntax_mut().by_offset.types.insert(start, kept);
     }
 
     /// Emits `data` unless one of its child types is missing.
@@ -276,17 +269,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Finishes `<A, B>`. `less_than` is the offset of `<`, and the arguments are on the stack starting at `from`.
-    pub(crate) fn finish_type_args(&mut self, from: usize, less_than: i32) {
+    /// Finishes `<A, B>`. The arguments are on the stack starting at `from`.
+    pub(crate) fn finish_type_args(&mut self, from: usize) {
         let arguments = self.finish_type_list(from);
         self.type_syntax_mut().last_type_args = arguments;
-        if let Some(arguments) = arguments {
-            let kept = arguments;
-            self.type_syntax_mut()
-                .by_offset
-                .type_arguments
-                .insert(less_than, kept);
-        }
     }
 
     // ───────────────────────────── names ─────────────────────────────
@@ -437,7 +423,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Called after `{ with: { "resolution-mode": "import" } }`, which the skipper parsed as an object type. Reads the resolution mode
     /// from those nodes (`GetResolutionModeOverride`), and where `assert` is written instead of `with`. `None` if the attributes are not
     /// in that form.
-    pub(crate) fn import_type_attributes(&mut self) -> Option<(ResolutionMode, Option<Loc>)> {
+    pub(crate) fn import_type_attributes(&mut self) -> Option<ImportTypeAttributes> {
         let syntax = self.type_syntax_mut();
         let ast = &syntax.ast;
         let only_property = |members: Span<Member>| {
@@ -475,7 +461,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => ResolutionMode::None,
         };
-        Some((mode, (&*keyword == b"assert").then_some(keyword_loc)))
+        Some((mode, (&*keyword == b"assert").then_some(keyword_loc), None))
     }
 
     /// Emits `import("specifier")`. A qualified name and type arguments are added later, as for a type reference.
@@ -484,7 +470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         specifier: Option<(StoreStr, u32)>,
         argument: TypeId,
-        attributes: Option<(ResolutionMode, Option<Loc>)>,
+        attributes: Option<ImportTypeAttributes>,
         is_typeof: bool,
         pos: u32,
     ) {
@@ -493,7 +479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             specifier
         };
-        let (Some((specifier, specifier_pos)), Some((mode, assert_keyword_loc))) =
+        let (Some((specifier, specifier_pos)), Some((mode, assert_keyword_loc, attributes))) =
             (specifier, attributes)
         else {
             return self.clear_last_type();
@@ -507,6 +493,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_typeof,
             mode,
             assert_keyword_loc,
+            attributes,
         });
         self.emit_type(TypeData::Import(import), pos);
     }
@@ -685,31 +672,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.type_syntax_mut().ast.add_modifiers(modifiers)
     }
 
-    /// Finishes a parameter list whose `(` is at `open_paren`. `None` if any parameter is unusable.
-    pub(crate) fn finish_params(&mut self, parameters: Option<&[Param]>, open_paren: i32) {
+    /// Finishes a parameter list. `None` if any parameter is unusable.
+    pub(crate) fn finish_params(&mut self, parameters: Option<&[Param]>) {
         let syntax = self.type_syntax_mut();
         syntax.last_params = parameters.map(|parameters| syntax.ast.add_params(parameters));
-        if let Some(parameters) = syntax.last_params {
-            let kept = parameters;
-            self.type_syntax_mut()
-                .by_offset
-                .parameters
-                .insert(open_paren, kept);
-        }
     }
 
-    /// Finishes `<T, U>` whose `<` is at `less_than`. `None` if any type parameter is unusable.
-    pub(crate) fn finish_type_params(&mut self, parameters: Option<&[TypeParam]>, less_than: i32) {
+    /// Finishes `<T, U>`. `None` if any type parameter is unusable.
+    pub(crate) fn finish_type_params(&mut self, parameters: Option<&[TypeParam]>) {
         let syntax = self.type_syntax_mut();
         syntax.last_type_params =
             parameters.map(|parameters| syntax.ast.add_type_params(parameters));
-        if let Some(parameters) = syntax.last_type_params {
-            let kept = parameters;
-            self.type_syntax_mut()
-                .by_offset
-                .type_parameters
-                .insert(less_than, kept);
-        }
     }
 
     /// Saves what precedes the `(` of a function type: `new`, `abstract new` and type parameters. `pos` is the offset after `new`,
@@ -1154,8 +1127,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(Ok(made))
     }
 
-    /// Finishes an object type whose `{` is at `open_brace`.
-    pub(crate) fn finish_object_type(&mut self, kept: ObjectTypeBuilder, open_brace: i32) {
+    /// Finishes an object type.
+    pub(crate) fn finish_object_type(&mut self, kept: ObjectTypeBuilder) {
         let syntax = self.type_syntax_mut();
         syntax.last_object_type = match kept {
             ObjectTypeBuilder {
@@ -1173,13 +1146,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Some(ObjectTypeBody::Members(syntax.ast.add_members(&members)))
             }
         };
-        if let Some(object_type) = syntax.last_object_type {
-            let kept = object_type;
-            self.type_syntax_mut()
-                .by_offset
-                .object_types
-                .insert(open_brace, kept);
-        }
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -1198,22 +1164,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// Called after each statement, which is said to be at `loc`.
+    /// Called after each statement, whose `loc` is `loc`.
     #[inline]
-    pub(crate) fn end_statement(&mut self, outer_modifiers_base: usize, loc: Loc) {
+    pub(crate) fn end_statement(&mut self, outer_modifiers_base: usize, loc: &mut Loc) {
         if !self.should_keep_types() {
             return;
         }
-        let syntax = self.type_syntax_mut();
-        let base = syntax.statement_modifiers_base;
-        if syntax.statement_modifiers.len() > base {
-            let list = syntax
-                .ast
-                .add_modifiers(&syntax.statement_modifiers[base..]);
-            syntax.modifier_lists.push((loc.start, list));
-            syntax.statement_modifiers.truncate(base);
-        }
-        syntax.statement_modifiers_base = outer_modifiers_base;
+        let base = self.type_syntax_mut().statement_modifiers_base;
+        self.end_parameter_modifiers(base, loc);
+        self.type_syntax_mut().statement_modifiers_base = outer_modifiers_base;
     }
 
     /// The statement at `loc` that only exists in TypeScript, and was emitted last.
@@ -1261,17 +1220,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `modifiers` are those of the parameter whose name is at `loc`.
-    pub(crate) fn note_parameter_modifiers(&mut self, loc: Loc, modifiers: &[Modifier]) {
+    /// `modifiers` are those of the parameter whose name has the `loc` `loc`.
+    pub(crate) fn note_parameter_modifiers(&mut self, loc: &mut Loc, modifiers: &[Modifier]) {
         if self.should_keep_types() && !modifiers.is_empty() {
-            let syntax = self.type_syntax_mut();
-            let list = syntax.ast.add_modifiers(modifiers);
-            syntax.modifier_lists.push((loc.start, list));
+            let list = self.type_syntax_mut().ast.add_modifiers(modifiers);
+            self.note_modifiers(loc, list);
         }
     }
 
-    /// Those pushed since there were `base` are the modifiers of the parameter whose name is at `loc`.
-    pub(crate) fn end_parameter_modifiers(&mut self, base: usize, loc: Loc) {
+    /// Those pushed since there were `base` are the modifiers of the statement, or of the parameter or the member whose name it is,
+    /// that has the `loc` `loc`.
+    pub(crate) fn end_parameter_modifiers(&mut self, base: usize, loc: &mut Loc) {
         if !self.should_keep_types() {
             return;
         }
@@ -1280,7 +1239,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let list = syntax
                 .ast
                 .add_modifiers(&syntax.statement_modifiers[base..]);
-            syntax.modifier_lists.push((loc.start, list));
+            syntax.statement_modifiers.truncate(base);
+            self.note_modifiers(loc, list);
+        }
+    }
+
+    /// Those pushed since there were `base` are the modifiers of nothing.
+    pub(crate) fn drop_modifiers(&mut self, base: usize) {
+        if let Some(syntax) = &mut self.type_syntax {
             syntax.statement_modifiers.truncate(base);
         }
     }
@@ -1405,19 +1371,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-/// Nodes the parser built, keyed by start offset. An abandoned speculative parse may leave entries behind. Nothing asks for them, or the
-/// parse that succeeds overwrites them.
-#[derive(Default)]
-pub(crate) struct KeptNodes {
-    pub(crate) types: HashMap<i32, TypeId>,
-    /// Keyed by the offset of `<`.
-    pub(crate) type_arguments: HashMap<i32, IdList<Type>>,
-    pub(crate) type_parameters: HashMap<i32, Span<TypeParam>>,
-    /// Keyed by the offset of `(`. The second value is the type of a `this` parameter.
-    pub(crate) parameters: HashMap<i32, Span<Param>>,
-    /// Keyed by the offset of `{`.
-    pub(crate) object_types: HashMap<i32, ObjectTypeBody>,
-}
+/// Of `import("m", { with: { .. } })`: the resolution mode, where `assert` is written instead of `with`, and the attributes.
+pub(crate) type ImportTypeAttributes = (
+    ResolutionMode,
+    Option<Loc>,
+    Option<bun_ast::ts_syntax::ImportAttributes>,
+);
 
 /// An identifier, keyword, string, number or private name at the start of an object type member. It is either a modifier or the member's
 /// name.

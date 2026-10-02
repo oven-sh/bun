@@ -12,6 +12,7 @@ use bun_sema::hir::*;
 use smallvec::SmallVec;
 
 use super::builder::{Modified, modifier_error};
+use super::comments::flags;
 use super::jsdoc::{
     self, ClassName, DeclaredName, JsDoc, Name, Property, Signature, Tag, TagKind, TagType,
     TypeExpr,
@@ -54,8 +55,6 @@ struct Attached {
     docs: SmallVec<[u32; 2]>,
     /// The last of `docs` is the last JSDoc comment there is.
     last_has_tags: bool,
-    /// Where the token before ends.
-    full_start: usize,
 }
 
 /// The modifiers among `flags`, which an overload signature has in common with the implementation.
@@ -84,34 +83,32 @@ fn is_valid_identifier(text: &[u8]) -> bool {
 impl<'p, 'a> Lower<'p, 'a> {
     // ───────────────────────────── which comments belong to a node ─────────────────────────────
 
-    /// The JSDoc comments of the node whose first token is at `token`. `with_trailing`: those on the line of the token before count
-    /// too, as they do for a parameter, a variable declaration, a parenthesized expression and a function expression.
-    fn jsdoc_before(&self, token: u32, with_trailing: bool) -> Attached {
+    /// The JSDoc comments of the node whose first token is at `token` and fully starts at `full_start`. `with_trailing`: those on the
+    /// line of the token before count too, as they do for a parameter, a variable declaration, a parenthesized expression and a
+    /// function expression.
+    fn jsdoc_before(&self, token: u32, full_start: u32, with_trailing: bool) -> Attached {
         let lexer = &self.p.lexer;
-        let (range, full_start) = lexer.comments_before(token as usize);
+        let first = lexer
+            .all_comments
+            .partition_point(|comment| (comment.loc.start as u32) < full_start);
         let mut attached = Attached {
             docs: SmallVec::new(),
             last_has_tags: false,
-            full_start,
         };
         // `GetLeadingCommentRanges`: what follows the first line break, or the start of the file.
         let mut is_collecting = with_trailing || full_start == 0;
-        let mut at = full_start;
-        for comment in &lexer.all_comments[range] {
-            let (start, end) = (comment.loc.to_usize(), comment.end_i());
-            is_collecting = is_collecting
-                || self
-                    .source
-                    .get(at..start)
-                    .is_some_and(|between| bun_core::strings::contains_any(between, b"\n\r"));
-            at = end;
-            let text = self.source.get(start..end).unwrap_or_default();
-            if !is_collecting || !jsdoc::is_jsdoc_like(text) {
+        let comments = lexer.all_comments[first..]
+            .iter()
+            .zip(&lexer.comment_flags[first..])
+            .take_while(|(comment, _)| (comment.loc.start as u32) < token);
+        for (comment, &said) in comments {
+            is_collecting |= said & flags::LINE_BREAK_BEFORE != 0;
+            if !is_collecting || said & flags::JSDOC_LIKE == 0 {
                 // A line comment ends with its line.
-                is_collecting = is_collecting || text.starts_with(b"//");
+                is_collecting |= said & flags::SINGLE_LINE != 0;
                 continue;
             }
-            attached.last_has_tags = match self.jsdoc.at(start as u32) {
+            attached.last_has_tags = match self.jsdoc.at(comment.loc.start as u32) {
                 Some(index) if !self.jsdoc.list[index].tags.is_empty() => {
                     attached.docs.push(index as u32);
                     true
@@ -126,30 +123,20 @@ impl<'p, 'a> Lower<'p, 'a> {
         attached
     }
 
-    /// `withJSDoc`, of the node `host` whose first token is at `token`.
-    pub(super) fn with_jsdoc(&mut self, token: u32, with_trailing: bool, host: &mut Host) {
+    /// `withJSDoc`, of the node `host` whose first token is at `token` and fully starts at `full_start`.
+    pub(super) fn with_jsdoc(
+        &mut self,
+        token: u32,
+        full_start: u32,
+        with_trailing: bool,
+        host: &mut Host,
+    ) {
         if self.jsdoc.list.is_empty() {
             return;
         }
-        let attached = self.jsdoc_before(token, with_trailing);
+        let attached = self.jsdoc_before(token, full_start, with_trailing);
         if !attached.docs.is_empty() {
             self.reparse_tags(host, &attached);
-        }
-    }
-
-    /// The same for a parameter. `parseSimpleArrowFunctionExpression`: the `x` of `x => x` has no comments of its own.
-    pub(super) fn parameter_jsdoc(&mut self, param: ParamId) {
-        if self.jsdoc.list.is_empty() {
-            return;
-        }
-        let attached = self.jsdoc_before(self.b.file[param].pos, true);
-        let is_in_list = attached
-            .full_start
-            .checked_sub(1)
-            .and_then(|before| self.source.get(before))
-            .is_some_and(|&c| matches!(c, b'(' | b','));
-        if is_in_list {
-            self.reparse_tags(&mut Host::Parameter(param), &attached);
         }
     }
 
@@ -160,8 +147,9 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         let written = member.flags;
         self.member_modifiers.clear();
+        let full_start = member.loc.pos;
         let mut host = Host::ClassMember(member);
-        self.with_jsdoc(start, false, &mut host);
+        self.with_jsdoc(start, full_start, false, &mut host);
         let Host::ClassMember(mut member) = host else {
             return member;
         };
@@ -221,24 +209,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         member
     }
 
-    /// What the parser drops has its comments all the same: an empty statement, a `;` among the members of a class.
-    pub(super) fn dropped_statement_jsdoc(&mut self) {
-        for index in 0..self.jsdoc.list.len() {
-            if self.jsdoc_is_attached[index] {
-                continue;
-            }
-            let end = self.jsdoc.list[index].end as usize;
-            if self.source.get(super::lower::skip_trivia(self.source, end)) == Some(&b';') {
-                let attached = Attached {
-                    docs: SmallVec::from_slice(&[index as u32]),
-                    last_has_tags: false,
-                    full_start: 0,
-                };
-                self.reparse_tags(&mut Host::Other, &attached);
-            }
-        }
-    }
-
     /// Once everything is lowered: hands what is known of the comments over to the file.
     pub(super) fn finish_jsdoc(&mut self) {
         let file = &mut self.b.file;
@@ -261,7 +231,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     // ───────────────────────────── helpers ─────────────────────────────
 
     fn name_atom(&self, name: Name) -> Atom {
-        let text = name.text(self.source);
+        let text = name.text.slice();
         if bun_core::strings::contains_char(text, b'\\') {
             return self.b.atom(&jsdoc::unescaped_name(text));
         }
@@ -278,6 +248,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             .map(|index| parens[index].1)
     }
 
+    /// `IsPrivateIdentifier`, of the name of a property access.
+    fn is_private_name(&self, name: Atom) -> bool {
+        self.b.atoms.bytes(name).first() == Some(&b'#')
+    }
+
     /// `IsEntityNameExpressionEx`, in JavaScript.
     fn is_entity_name_expression(&self, e: ExprId) -> bool {
         if self.paren_of(e).is_some() {
@@ -286,9 +261,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         let file = &self.b.file;
         match file[e].kind {
             ExprKind::Ident(_) | ExprKind::This => true,
-            ExprKind::Dot { obj, name_pos, .. } => {
-                self.source.get(name_pos as usize) != Some(&b'#')
-                    && self.is_entity_name_expression(obj)
+            ExprKind::Dot { obj, name, .. } => {
+                !self.is_private_name(name) && self.is_entity_name_expression(obj)
             }
             ExprKind::Index { obj, index, .. } => {
                 self.paren_of(index).is_none()
@@ -318,10 +292,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         let is_this =
             |obj: ExprId| matches!(file[obj].kind, ExprKind::This) && self.paren_of(obj).is_none();
         match file[target].kind {
-            ExprKind::Dot { obj, name_pos, .. } => {
-                is_this(obj)
-                    || self.source.get(name_pos as usize) != Some(&b'#')
-                        && self.is_entity_name_expression(obj)
+            ExprKind::Dot { obj, name, .. } => {
+                is_this(obj) || !self.is_private_name(name) && self.is_entity_name_expression(obj)
             }
             ExprKind::Index { obj, .. } => is_this(obj) || self.is_entity_name_expression(obj),
             _ => false,
@@ -410,7 +382,7 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// `checkNonIdentifierName`. The reparser's own errors are the parser's, not those of the comment.
     fn check_non_identifier_name(&mut self, name: Name) {
-        if !is_valid_identifier(name.text(self.source)) {
+        if !is_valid_identifier(name.text.slice()) {
             // A missing name is reported at the character before it.
             let at = if name.is_missing() {
                 name.start.saturating_sub(1)
@@ -479,7 +451,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             };
             let mut flags = Flags::REPARSED;
             // What is no identifier is a name all the same, as a string.
-            if !is_valid_identifier(name.text(self.source)) {
+            if !is_valid_identifier(name.text.slice()) {
                 flags |= Flags::STRING_NAME | Flags::LITERAL_NAME;
             }
             if Self::is_optional(property) {
@@ -706,10 +678,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                     return;
                 }
                 self.note_checker_errors(tag.pos, import.end);
-                let mode = match import.mode {
-                    ts::ResolutionMode::None => ResolutionMode::None,
-                    ts::ResolutionMode::Import => ResolutionMode::Import,
-                    ts::ResolutionMode::Require => ResolutionMode::Require,
+                if let Some(module) = import.module {
+                    self.unchecked_parts_of_module_specifier(module);
+                }
+                let mode = match import.module.map(|module| module.mode) {
+                    Some(ts::ResolutionMode::Import) => ResolutionMode::Import,
+                    Some(ts::ResolutionMode::Require) => ResolutionMode::Require,
+                    _ => ResolutionMode::None,
                 };
                 let spec = match import.specifier {
                     Some((text, pos)) => {
@@ -824,12 +799,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         let mut params = Vec::with_capacity(signature.params.len());
         for (index, param) in signature.params.iter().enumerate() {
             let property = match &param.kind {
-                TagKind::This(ty) => {
+                TagKind::This(ty, text) => {
                     if this_param.is_none() {
                         // `thisIdent.Loc = thisTag.Loc`
-                        let name = self
-                            .b
-                            .atom(&self.source[param.pos as usize..param.end as usize]);
+                        let name = self.b.atom(text);
                         let this = Param {
                             pat: self.b.file.pat(PatKind::Ident(name), param.pos),
                             ty: self.reparse_type(*ty),
@@ -867,7 +840,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             if Self::is_optional(property) {
                 flags |= Flags::OPTIONAL;
             }
-            let text = name.text(self.source);
+            let text = name.text.slice();
             let name_atom = if is_valid_identifier(text) {
                 self.name_atom(name)
             } else if text.is_empty() {
@@ -994,7 +967,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     }
                 }
             }
-            TagKind::This(ty) => {
+            TagKind::This(ty, _) => {
                 let func = self.function_like_host(host);
                 if func.is_some() && self.b.file[func].this_param.is_none() {
                     // `finishReparsedNode(thisParam, tag.TagName())`

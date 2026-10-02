@@ -46,8 +46,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
 
             if p.lexer.tolerant {
-                let decorator = p.parse_decorator_expression_tolerant()?;
-                p.mark_type_syntax(decorator.loc, crate::sema::Mark::AtSign, at_sign);
+                let mut decorator = p.parse_decorator_expression_tolerant()?;
+                p.note_loc(&mut decorator.loc, crate::sema::Mark::AtSign, at_sign);
                 decorators.push(decorator);
                 continue;
             }
@@ -130,7 +130,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         for decorator in decorators {
-            self.mark_type_syntax(decorator.loc, crate::sema::Mark::StrayDecorator, end);
+            self.note_stray_decorator(decorator, end);
             self.stray_decorators.push(*decorator);
         }
     }
@@ -149,9 +149,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TOpenParen {
             let open = p.lexer.loc();
             p.lexer.next()?;
-            let expr = p.parse_expr(Level::Lowest)?;
+            let mut expr = p.parse_expr(Level::Lowest)?;
             p.lexer.expect(T::TCloseParen)?;
-            p.mark_paren(&expr, open);
+            p.mark_paren(&mut expr, open, bun_ast::Loc::EMPTY);
             return Ok(expr);
         }
 
@@ -338,6 +338,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let dot_loc = p.lexer.loc();
             p.lexer.next()?;
             let inner_start = p.lexer.loc();
+            let inner_full_start = p.lexer.full_start();
 
             let mut _opts = ParseStatementOptions {
                 is_export: true,
@@ -353,8 +354,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 dot_loc
             };
-            stmts.push(p.parse_type_script_namespace_stmt(inner_loc, &mut _opts)?);
-            p.mark_end(inner_start, crate::sema::Mark::StatementEnd);
+            let mut inner = p.parse_type_script_namespace_stmt(inner_loc, &mut _opts)?;
+            p.finish_node(&mut inner.loc, inner_full_start);
+            stmts.push(inner);
         } else if p.lexer.token != T::TOpenBrace
             // `parseAmbientExternalModuleDeclaration`: for TypeScript only a module named by a string can do without a body.
             && (if p.lexer.tolerant {
@@ -761,7 +763,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_ast::ExprData::EString(_) => {}
                     // `checkEnumMember` never looks at it.
                     _ => {
-                        p.keep_expressions(value.loc, &[name]);
+                        p.note_expr(&mut value.loc, crate::sema::Mark::ComputedName, name);
                     }
                 }
                 if p.lexer.token != T::TCloseBracket {
@@ -845,6 +847,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ListStep::Skipped => continue,
                 ListStep::Over => break,
             }
+            let value_full_start = p.lexer.full_start();
             let mut value = EnumValue {
                 loc: p.lexer.loc(),
                 ref_: Ref::NONE,
@@ -873,7 +876,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Identifiers can be referenced by other values
             if !opts.is_typescript_declare && needs_symbol {
-                value.ref_ = p.declare_symbol(SymbolKind::Other, value.loc, value.name.slice())?;
+                value.ref_ =
+                    p.declare_symbol(SymbolKind::Other, p.real_loc(value.loc), value.name.slice())?;
             }
 
             // Parse the initializer
@@ -883,8 +887,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let value_name = value.name;
-            let value_loc = value.loc;
-            p.mark_end(value_loc, crate::sema::Mark::MemberEnd);
+            let value_loc = p.real_loc(value.loc);
+            p.finish_node(&mut value.loc, value_full_start);
             values.push(value);
 
             exported_members.put(

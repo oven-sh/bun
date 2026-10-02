@@ -87,8 +87,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Even anonymous functions can have TypeScript type parameters
+        let mut type_parameters = None;
         if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            type_parameters = p.parse_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
         }
 
         // Introduce a fake block scope for function declarations inside if statements
@@ -123,6 +124,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         )?;
+        p.note_type_parameters(&mut func.open_parens_loc, type_parameters);
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
         if Self::IS_TYPESCRIPT_ENABLED {
@@ -263,7 +265,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `parseParameters`: without the "(" there are no parameters, and no ")" is expected.
         let has_parens = p.lexer.token == T::TOpenParen || !p.lexer.tolerant;
         if !has_parens {
-            p.mark_end(func.open_parens_loc, Mark::MissingParameters);
+            p.note_token_full_start(&mut func.open_parens_loc, Mark::MissingParameters);
         }
         p.lexer.expect(T::TOpenParen)?;
 
@@ -310,6 +312,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ListStep::Over => break,
             }
             let parameter_start = p.lexer.loc();
+            let parameter_full_start = p.lexer.full_start();
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             // Where the first decorator or modifier starts, and whether a modifier keyword is among them.
             let mut modifiers: Option<(bun_ast::Loc, bool)> = None;
@@ -324,27 +327,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
                 if takes_any_modifiers {
-                    let this_loc = p.lexer.loc();
-                    p.end_parameter_modifiers(modifiers_base, this_loc);
                     let is_first = args.is_empty() && !has_this_parameter;
                     has_this_parameter = true;
                     let first_modifier = modifiers.map(|(start, _)| start);
                     if let Some(arg) = p.parse_this_parameter(
-                        func.open_parens_loc,
+                        &mut func.open_parens_loc,
                         is_first,
                         ts_decorators,
-                        parameter_start,
+                        (parameter_start, parameter_full_start),
                         first_modifier,
+                        modifiers_base,
                     )? {
                         args.push(arg);
                     }
                 } else {
-                    let this_loc = p.lexer.loc();
-                    p.mark_type_syntax(func.open_parens_loc, Mark::ThisParameter, this_loc);
                     p.lexer.next()?;
                     if p.lexer.token == T::TColon {
                         p.lexer.next()?;
-                        p.mark_type_syntax(this_loc, Mark::Annotation, p.lexer.loc());
                         p.skip_type_script_type(Level::Lowest)?;
                     }
                 }
@@ -385,14 +384,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut arg = p.parse_binding(name_of_parameter)?;
             if p.keeps_type_syntax() {
                 if dots != bun_ast::Loc::EMPTY {
-                    p.mark_type_syntax(arg.loc, Mark::DotDotDot, dots);
+                    p.note_loc(&mut arg.loc, Mark::DotDotDot, dots);
                 }
-                if parameter_start != arg.loc {
-                    p.mark_type_syntax(arg.loc, Mark::DeclarationStart, parameter_start);
+                if parameter_start != p.real_loc(arg.loc) {
+                    p.note_loc(&mut arg.loc, Mark::DeclarationStart, parameter_start);
                 }
             }
             if modifiers.is_some() {
-                p.end_parameter_modifiers(modifiers_base, arg.loc);
+                p.end_parameter_modifiers(modifiers_base, &mut arg.loc);
             }
             let mut ts_metadata = bun_ast::ts::Metadata::default();
 
@@ -438,13 +437,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "function foo(a?) {}"
                 if p.lexer.token == T::TQuestion {
                     p.lexer.next()?;
-                    p.mark_type_syntax(arg.loc, Mark::Optional, arg.loc);
+                    p.note_flag(&mut arg.loc, Mark::Optional);
                 }
 
                 // "function foo(a: any) {}"
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
-                    p.mark_type_syntax(arg.loc, Mark::Annotation, p.lexer.loc());
                     if !rest_arg {
                         if p.options.features.emit_decorator_metadata
                             && opts.allow_ts_decorators
@@ -460,6 +458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // rest parameter is always object, leave metadata as m_none
                         p.skip_type_script_type(Level::Lowest)?;
                     }
+                    p.note_type(&mut arg.loc, Mark::Annotation);
                 }
             }
 
@@ -475,7 +474,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 default_value = Some(p.parse_expr(Level::Comma)?);
             }
-            p.mark_end(arg.loc, Mark::VariableLikeEnd);
+            p.finish_node(&mut arg.loc, parameter_full_start);
 
             args.push(G::Arg {
                 ts_decorators,
@@ -523,7 +522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             func.arguments_ref = p
                 .declare_symbol(
                     js_ast::symbol::Kind::Arguments,
-                    func.open_parens_loc,
+                    p.real_loc(func.open_parens_loc),
                     arguments_str,
                 )
                 .expect("unreachable");
@@ -541,7 +540,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             if p.lexer.token == T::TColon {
                 p.lexer.next()?;
-                p.mark_type_syntax(func.open_parens_loc, Mark::ReturnType, p.lexer.loc());
 
                 if p.options.features.emit_decorator_metadata
                     && opts.allow_ts_decorators
@@ -551,6 +549,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     p.skip_typescript_return_type()?;
                 }
+                p.note_type(&mut func.open_parens_loc, Mark::ReturnType);
             } else if p.options.features.emit_decorator_metadata
                 && opts.allow_ts_decorators
                 && (opts.has_argument_decorators || opts.has_decorators)
@@ -712,32 +711,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ))
     }
 
-    /// `parseParameterEx` at "this": the name and an optional type, nothing else. `open_parens_loc` is the key of the function's marks.
+    /// `parseParameterEx` at "this": the name and an optional type, nothing else. `open_parens_loc` is that of the function.
     /// Only the first parameter is the "this" parameter (`getSignatureFromDeclaration`). Any other is returned as a parameter
-    /// named "this", which the checker objects to (2680). `start`: where the first token of the parameter is. `first_modifier`: `nodePos`
-    /// of its modifiers, if it has any.
+    /// named "this", which the checker objects to (2680). `start`, `full_start`: where the first token of the parameter is, and its
+    /// `TokenFullStart`. `first_modifier`: `nodePos` of its modifiers, if it has any: those pushed since there were `modifiers_base`.
     #[cold]
     #[inline(never)]
     fn parse_this_parameter(
         &mut self,
-        open_parens_loc: bun_ast::Loc,
+        open_parens_loc: &mut bun_ast::Loc,
         is_first: bool,
         decorators: js_ast::ExprNodeList,
-        start: bun_ast::Loc,
+        (start, full_start): (bun_ast::Loc, bun_ast::Loc),
         first_modifier: Option<bun_ast::Loc>,
+        modifiers_base: usize,
     ) -> Result<Option<G::Arg>, Error> {
         let p = self;
         let loc = p.lexer.loc();
         p.lexer.next()?;
-        if is_first {
-            p.mark_type_syntax(open_parens_loc, Mark::ThisParameter, loc);
-        }
-        if p.lexer.token == T::TColon {
+        let has_type = p.lexer.token == T::TColon;
+        if has_type {
             p.lexer.next()?;
-            p.mark_type_syntax(loc, Mark::Annotation, p.lexer.loc());
             p.skip_type_script_type(Level::Lowest)?;
         }
-        p.mark_end(loc, Mark::VariableLikeEnd);
         if let Some(node_pos) = first_modifier {
             // Neither decorators nor modifiers may be applied to "this" parameters.
             p.lexer.ts_error(
@@ -747,16 +743,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 1433,
             );
-            p.mark_type_syntax(loc, Mark::DeclarationStart, start);
         }
         if is_first {
+            p.drop_modifiers(modifiers_base);
+            let first_token = if first_modifier.is_some() { start } else { loc };
+            let mut parameter = bun_ast::ts_syntax::Param::at(first_token);
+            parameter.full_start = full_start;
+            p.keep_this_parameter(open_parens_loc, parameter, loc, has_type);
             p.note_stray_decorators(decorators.slice(), loc);
             return Ok(None);
         }
         let r#ref = p.store_name_in_ref(b"this");
+        let mut binding = p.b(js_ast::B::Identifier { r#ref }, loc);
+        if has_type {
+            p.note_type(&mut binding.loc, Mark::Annotation);
+        }
+        p.finish_node(&mut binding.loc, full_start);
+        if first_modifier.is_some() {
+            p.note_loc(&mut binding.loc, Mark::DeclarationStart, start);
+        }
+        p.end_parameter_modifiers(modifiers_base, &mut binding.loc);
         Ok(Some(G::Arg {
             ts_decorators: decorators,
-            binding: p.b(js_ast::B::Identifier { r#ref }, loc),
+            binding,
             ..Default::default()
         }))
     }
@@ -787,7 +796,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.ts_expected(range, "{");
         }
         p.lexer.put_up_with(before)?;
-        p.mark_type_syntax(func.open_parens_loc, Mark::MissingBody, range.loc);
+        p.note_loc(&mut func.open_parens_loc, Mark::MissingBody, range.loc);
         // Tells a missing block from no body, whose `loc` stays empty.
         func.body.loc = range.loc;
         Ok(())
@@ -843,11 +852,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Even anonymous functions can have TypeScript type parameters
+        let mut type_parameters = None;
         if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            type_parameters = p.parse_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
         }
 
-        let func = p.parse_fn(
+        let mut func = p.parse_fn(
             name,
             FnOrArrowDataParse {
                 needs_async_loc: loc,
@@ -864,6 +874,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         )?;
+        p.note_type_parameters(&mut func.open_parens_loc, type_parameters);
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
         p.validate_function_name(&func);
@@ -974,12 +985,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && has_arrow
             && p.is_arrow_body_missing_open_brace();
         if p.lexer.token == T::TOpenBrace || is_missing_open_brace {
-            let body = if is_missing_open_brace {
+            let mut body = if is_missing_open_brace {
                 p.parse_fn_body_without_open_brace(data)?
             } else {
                 p.parse_fn_body(data)?
             };
-            p.mark_type_syntax(body.loc, Mark::ArrowToken, arrow_token);
+            p.note_loc(&mut body.loc, Mark::ArrowToken, arrow_token);
             p.after_arrow_body_loc = p.lexer.loc();
             let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
                 || p.lexer.has_react_hooks_block_suppression;
@@ -999,8 +1010,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .arrow_expression_bodies
                 .insert(arrow_loc.start, p.lexer.loc().start);
         }
+        let mut body_loc = arrow_loc;
         if !has_arrow {
-            p.mark_type_syntax(arrow_loc, Mark::ArrowToken, arrow_token);
+            p.note_loc(&mut body_loc, Mark::ArrowToken, arrow_token);
         }
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, arrow_loc)?;
         // `pop_scope` is called explicitly before each return below.
@@ -1040,7 +1052,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             args: args_slice,
             prefer_expr: true,
             body: G::FnBody {
-                loc: arrow_loc,
+                loc: body_loc,
                 stmts: bun_ast::StoreSlice::new_mut(stmts),
             },
             has_react_hooks_suppression,

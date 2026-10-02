@@ -7,10 +7,32 @@ use bun_sema::hir::*;
 
 #[inline]
 fn pos(loc: bun_ast::Loc) -> u32 {
+    // Nothing is noted of a node of `ts_syntax`.
+    debug_assert!(!loc.is_index());
     loc.start.max(0) as u32
 }
 
 impl Lower<'_, '_> {
+    /// `checkImportAttributes`
+    pub(super) fn import_attributes(&mut self, attributes: ts::ImportAttributes) {
+        let object = self.expr(&attributes.object);
+        self.b
+            .file
+            .import_attributes
+            .push((pos(attributes.keyword_loc), object));
+    }
+
+    /// What is written for a module specifier that is no string, and the import attributes after it.
+    pub(super) fn unchecked_parts_of_module_specifier(&mut self, module: ts::ModuleSpecifier) {
+        if let Some(expression) = module.expression {
+            let expression = self.expr(&expression);
+            self.b.file.specifier_expressions.push(expression);
+        }
+        if let Some(attributes) = module.attributes {
+            self.import_attributes(attributes);
+        }
+    }
+
     /// The module specifier of an import or export declaration, which is noted as a use of that module. `NONE` if it is no string.
     /// `is_type_only`: after `import type` or `export type`, the only declarations whose `resolution-mode` counts
     /// (`getModeForUsageLocation`).
@@ -20,6 +42,7 @@ impl Lower<'_, '_> {
         kind: SpecifierKind,
         is_type_only: bool,
     ) -> (Atom, ResolutionMode) {
+        self.unchecked_parts_of_module_specifier(module);
         let Some(text) = module.text else {
             return (Atom::NONE, ResolutionMode::None);
         };

@@ -5,14 +5,47 @@
 //! TypeScript's scanner does, and when it puts the comment in `Lexer::all_comments`. Those that were there when the parser stood on the
 //! first token are what `getCommentPragmas` goes through.
 
-use crate::lexer::Lexer;
+use crate::lexer::{Lexer, starts_with_line_break};
 use bun_sema::atom::Interner;
 use bun_sema::hir::{
     CommentDirective, CommentDirectiveKind, File, FileKind, JsxPragmas, ReferenceKind,
     ResolutionMode,
 };
 
+/// `Lexer::comment_flags`
+pub(crate) mod flags {
+    /// `GetLeadingCommentRanges`: a line break between it and what comes before it, a token or a comment.
+    pub(crate) const LINE_BREAK_BEFORE: u8 = 1 << 0;
+    /// `isJSDocLikeText`
+    pub(crate) const JSDOC_LIKE: u8 = 1 << 1;
+    /// `KindSingleLineCommentTrivia`
+    pub(crate) const SINGLE_LINE: u8 = 1 << 2;
+}
+
 impl Lexer<'_> {
+    /// Of the comment that has just been scanned, from `start` to `end`, and put in `all_comments`.
+    #[inline(never)]
+    pub(crate) fn push_comment_flags(&mut self) {
+        let text = self.contents;
+        // A comment on the way to the same token, or the token before.
+        let before = match self.all_comments.iter().rev().nth(1) {
+            Some(comment) if comment.loc.to_usize() >= self.token_full_start => comment.end_i(),
+            _ => self.token_full_start,
+        };
+        let mut said = 0;
+        if (before..self.start).any(|at| starts_with_line_break(&text[at..])) {
+            said |= flags::LINE_BREAK_BEFORE;
+        }
+        let comment = &text[self.start..self.end];
+        if super::jsdoc::is_jsdoc_like(comment) {
+            said |= flags::JSDOC_LIKE;
+        }
+        if comment.starts_with(b"//") {
+            said |= flags::SINGLE_LINE;
+        }
+        self.comment_flags.push(said);
+    }
+
     /// `processCommentDirective`, of the comment that has just been scanned, from `start` to `end`. `multiline`: it is a `/* */`
     /// comment, of which the last line counts (`last_line_start`).
     #[inline(never)]

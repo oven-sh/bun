@@ -265,6 +265,8 @@ pub struct Lexer<'a> {
     /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
     pub(crate) jsc_builtin_syntax: bool,
     pub(crate) all_comments: Vec<Range>,
+    /// Beside each of `all_comments`, in tolerant mode: `sema::comments::flags`.
+    pub(crate) comment_flags: Vec<u8>,
     /// `fullStartPos`: where the token before the current one ends.
     pub(crate) token_full_start: usize,
     /// `Scanner.commentDirectives`. Tolerant mode only: see `sema::comments`.
@@ -441,6 +443,7 @@ impl<'a> Lexer<'a> {
         debug_assert!(self.temp_buffer_u16.is_empty());
 
         self.all_comments.truncate(original.all_comments_len);
+        self.comment_flags.truncate(original.all_comments_len);
         self.comment_directives
             .truncate(original.comment_directives_len);
         self.comments_to_preserve_before
@@ -1257,13 +1260,14 @@ impl<'a> Lexer<'a> {
         bun_ast::usize2loc(self.token_full_start)
     }
 
-    /// The comments between the token that starts at `pos` and the token before it, as a range of `all_comments`, and where the
-    /// token before ends (`full_start_of`). Tolerant mode only.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn comments_before(&self, pos: usize) -> (core::ops::Range<usize>, usize) {
-        debug_assert!(self.tolerant);
-        comments_before(self.contents, &self.all_comments, pos)
+    /// Whether a comment starts at or after `from` and before `to`.
+    pub(crate) fn has_comment_between(&self, from: Loc, to: Loc) -> bool {
+        let first = self
+            .all_comments
+            .partition_point(|comment| comment.loc.start < from.start);
+        self.all_comments
+            .get(first)
+            .is_some_and(|comment| comment.loc.start < to.start)
     }
 
     /// Whether the scan may go on after something TypeScript's scanner only reports: notes `code` at `at`.
@@ -2577,11 +2581,6 @@ impl<'a> Lexer<'a> {
                 end += 1;
             }
         }
-        // It is trivia: `full_start_of` walks back over it.
-        self.all_comments.push(Range {
-            loc: bun_ast::usize2loc(pos),
-            len: (end - pos) as i32,
-        });
         self.move_to(end);
         true
     }
@@ -2604,8 +2603,6 @@ impl<'a> Lexer<'a> {
             return false;
         }
         self.jsdoc_asterisk_end = self.end;
-        // It is trivia: `full_start_of` walks back over it.
-        self.all_comments.push(self.range());
         true
     }
 
@@ -2698,12 +2695,12 @@ impl<'a> Lexer<'a> {
         let has_legal_annotation = text.len() > 2 && text[2] == b'!';
         let is_multiline_comment = text.len() > 1 && text[1] == b'*';
 
-        // Tolerant mode: `full_start_of` walks back over them.
         if self.track_comments || self.tolerant {
             // Save the original comment text so we can subtract comments from the
             // character frequency analysis used by symbol minification
             self.all_comments.push(self.range());
             if self.tolerant {
+                self.push_comment_flags();
                 self.process_comment_directive(is_multiline_comment);
             }
         }
@@ -3093,6 +3090,7 @@ impl<'a> Lexer<'a> {
             track_react_suppressions: false,
             jsc_builtin_syntax: false,
             all_comments: Vec::new(),
+            comment_flags: Vec::new(),
             token_full_start: 0,
             comment_directives: Vec::new(),
             last_line_start: 0,
@@ -3366,9 +3364,9 @@ impl<'a> Lexer<'a> {
                                     _ => {}
                                 }
                             }
-                            // `full_start_of` walks back over comments.
                             if self.tolerant {
                                 self.all_comments.push(self.range());
+                                self.push_comment_flags();
                                 self.process_comment_directive(false);
                             }
                             continue;
@@ -3410,6 +3408,7 @@ impl<'a> Lexer<'a> {
                             }
                             if self.tolerant {
                                 self.all_comments.push(self.range());
+                                self.push_comment_flags();
                                 self.process_comment_directive(true);
                             }
                             continue;
@@ -4690,7 +4689,7 @@ fn last_backslash(text: &[u8]) -> usize {
 }
 
 /// `IsLineBreak` of the character `text` starts with.
-fn starts_with_line_break(text: &[u8]) -> bool {
+pub(crate) fn starts_with_line_break(text: &[u8]) -> bool {
     matches!(text.first(), Some(b'\n' | b'\r'))
         || text.starts_with(b"\xE2\x80\xA8")
         || text.starts_with(b"\xE2\x80\xA9")
@@ -4698,34 +4697,6 @@ fn starts_with_line_break(text: &[u8]) -> bool {
 
 /// How many bytes of whitespace and line breaks `text` ends with (`IsWhiteSpaceLike`).
 #[cold]
-/// `Lexer::comments_before`. `comments`: `Lexer::all_comments` of a lexer that has been through all of `text`.
-pub(crate) fn comments_before(
-    text: &[u8],
-    comments: &[Range],
-    pos: usize,
-) -> (core::ops::Range<usize>, usize) {
-    let mut at = pos.min(text.len());
-    // In source order.
-    let end = comments.partition_point(|comment| comment.loc.to_usize() < at);
-    let mut first = end;
-    loop {
-        at -= trailing_whitespace_len(&text[..at]);
-        match first.checked_sub(1).map(|index| &comments[index]) {
-            // Past `at` if the comment ends with whitespace.
-            Some(comment) if comment.end_i() >= at => {
-                at = comment.loc.to_usize();
-                first -= 1;
-            }
-            _ => break,
-        }
-    }
-    // `Scan`: a shebang is trivia.
-    if text.starts_with(b"#!") && !(0..at).any(|i| starts_with_line_break(&text[i..])) {
-        at = 0;
-    }
-    (first..end, at)
-}
-
 fn trailing_whitespace_len(text: &[u8]) -> usize {
     let mut end = text.len();
     while end > 0 {

@@ -70,7 +70,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.skip_type_script_type_with_opts::<false>(level, SkipTypeOptionsBitset::empty(), None)
     }
 
-    /// Keep mode entry point: parses the type like `skip_type_script_type`, builds its node, and records it by start offset.
+    /// Keep mode entry point: parses the type like `skip_type_script_type`, and builds its node, which is the last type.
     #[cold]
     #[inline(never)]
     pub(crate) fn parse_and_keep_type(
@@ -89,10 +89,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         syntax.type_stack.truncate(type_stack_len);
         syntax.name_stack.truncate(name_stack_len);
         syntax.last_type_start = start;
-        let ty = syntax.last_type;
-        if result.is_ok() && ty.is_some() {
-            self.record_type(start, ty);
-        }
         result
     }
 
@@ -307,7 +303,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn skip_typescript_fn_args(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
 
-        let open_paren = self.lexer.loc().start;
         self.lexer.expect(T::TOpenParen)?;
         // Keep mode stores the result in `TypeSyntax::last_params`.
         let keeps = self.should_keep_types();
@@ -373,7 +368,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect(T::TCloseParen)?;
         if keeps {
-            self.finish_params(is_usable.then_some(&parameters[..]), open_paren);
+            self.finish_params(is_usable.then_some(&parameters[..]));
         }
         Ok(())
     }
@@ -425,7 +420,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn skip_index_signature_parameter_list(&mut self) -> Result<Option<bun_ast::Loc>, Error> {
-        let open_bracket = self.lexer.loc().start;
         self.lexer.expect(T::TOpenBracket)?;
         let keeps = self.should_keep_types();
         let mut parameters: Vec<Param> = Vec::new();
@@ -506,7 +500,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect(T::TCloseBracket)?;
         if keeps {
-            self.finish_params(is_usable.then_some(&parameters[..]), open_bracket);
+            self.finish_params(is_usable.then_some(&parameters[..]));
         }
         Ok(trailing_comma)
     }
@@ -565,7 +559,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let snapshot = self.parser_snapshot();
         let result = parse(self);
         let mut after = self.lexer.snapshot();
-        self.restore_parser_snapshot(snapshot);
+        self.restore_parser_snapshot_but_for_notes(snapshot);
         let result = result?;
         // The comments met on the way are forgotten with the rest.
         after.all_comments_len = self.lexer.all_comments.len();
@@ -694,10 +688,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(false);
             }
             // `parseParameters`: without a "(" the list is missing, and the token stays.
-            let open_paren = self.lexer.loc().start;
             self.lexer.expect(T::TOpenParen)?;
             if self.should_keep_types() {
-                self.finish_params(Some(&[]), open_paren);
+                self.finish_params(Some(&[]));
             }
         } else if has_head || self.is_unambiguously_start_of_function_type() {
             self.skip_typescript_fn_args()?;
@@ -952,18 +945,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// `parseImportType`, after the comma that follows the specifier: "{ with: { name: value } }". What is missing is reported and
     /// the token stays, so the ")" and the qualifier are not found either. Returns the resolution mode
-    /// (`getResolutionModeOverride`), and where "assert" is written instead of "with".
+    /// (`getResolutionModeOverride`), where "assert" is written instead of "with", and the attributes.
     #[cold]
     #[inline(never)]
     fn skip_import_type_attributes(
         &mut self,
-    ) -> Result<(ResolutionMode, Option<bun_ast::Loc>), Error> {
+    ) -> Result<crate::sema::keep::ImportTypeAttributes, Error> {
         let open_brace = self.lexer.loc();
         self.lexer.expect(T::TOpenBrace)?;
         let keeps = self.should_keep_types();
         let keyword_loc = self.lexer.loc();
         let mut properties = bun_alloc::ArenaVec::<bun_ast::G::Property>::new_in(self.arena);
         let mut assert_keyword_loc = None;
+        let mut attributes = None;
         if self.lexer.token == T::TWith {
             self.lexer.next()?;
         } else if self.lexer.is_contextual_keyword(b"assert") {
@@ -1066,9 +1060,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ..Default::default()
                 };
                 let object = self.new_expr(object, attributes_open_brace);
-                self.type_syntax_mut()
-                    .import_attributes
-                    .push((keyword_loc.start, object));
+                attributes = Some(bun_ast::ts_syntax::ImportAttributes {
+                    keyword_loc,
+                    object,
+                });
             }
         }
 
@@ -1076,7 +1071,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.next()?;
         }
         self.lexer.expect_close_brace_of_attributes(open_brace)?;
-        Ok((mode, assert_keyword_loc))
+        Ok((mode, assert_keyword_loc, attributes))
     }
 
     /// `nextIsStartOfType`
@@ -1508,7 +1503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // "import('./foo.json', { assert: { type: 'json' } })"
                     // "import('./foo.json', { with: { type: 'json' } })"
-                    let mut attributes = Some((ResolutionMode::None, None));
+                    let mut attributes = Some((ResolutionMode::None, None, None));
                     if self.lexer.token == T::TComma && self.lexer.tolerant {
                         self.lexer.next()?;
                         attributes = Some(self.skip_import_type_attributes()?);
@@ -2634,7 +2629,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
 
-        let open_brace = self.lexer.loc().start;
         if self.lexer.token != T::TOpenBrace && self.lexer.tolerant {
             return self.skip_missing_object_type();
         }
@@ -2927,7 +2921,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.lexer.expect(T::TCloseBrace)?;
         if keeps {
-            self.finish_object_type(kept, open_brace);
+            self.finish_object_type(kept);
         }
         Ok(())
     }
@@ -2936,11 +2930,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn skip_missing_object_type(&mut self) -> Result<(), Error> {
-        let at = self.lexer.loc().start;
         self.lexer.expect(T::TOpenBrace)?;
         if self.should_keep_types() {
             self.type_syntax_mut().next_braces_are_interface_body = false;
-            self.finish_object_type(ObjectTypeBuilder::default(), at);
+            self.finish_object_type(ObjectTypeBuilder::default());
         }
         Ok(())
     }
@@ -3174,7 +3167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.lexer.next()?;
             if keeps {
-                self.finish_type_params(Some(&kept), less_than.start);
+                self.finish_type_params(Some(&kept));
             }
             return Ok(SkipTypeParameterResult::DefinitelyTypeParameters);
         }
@@ -3352,13 +3345,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         self.lexer.expect_greater_than::<false>()?;
-        self.mark_type_syntax(
-            self.lexer.loc(),
-            crate::sema::Mark::TypeParameters,
-            less_than,
-        );
         if keeps {
-            self.finish_type_params(is_complete.then_some(&kept[..]), less_than.start);
+            self.finish_type_params(is_complete.then_some(&kept[..]));
         }
         Ok(result)
     }
@@ -3410,7 +3398,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             self.lexer.expect_greater_than::<false>()?;
             if keeps {
-                self.finish_type_params(Some(&kept), less_than.start);
+                self.finish_type_params(Some(&kept));
             }
             return Ok(SkipTypeParameterResult::DefinitelyTypeParameters);
         }
@@ -3458,13 +3446,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         self.lexer.expect_greater_than::<false>()?;
-        self.mark_type_syntax(
-            self.lexer.loc(),
-            crate::sema::Mark::TypeParameters,
-            less_than,
-        );
         if keeps {
-            self.finish_type_params(is_complete.then_some(&kept[..]), less_than.start);
+            self.finish_type_params(is_complete.then_some(&kept[..]));
         }
         Ok(result)
     }
@@ -3872,8 +3855,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.discard_scopes_up_to(scope_index);
             let _ = self.skip_type_script_type_arguments::<false, false>()?;
             if keeps {
-                self.keep_expressions(bun_ast::Loc { start }, &[expression]);
-                self.emit_type(TypeData::HeritageExpression, pos);
+                let expression = self.type_syntax_mut().ast.add_expression(expression);
+                self.emit_type(TypeData::HeritageExpression(expression), pos);
                 self.finish_last_type();
             }
             return Ok(());
@@ -3912,11 +3895,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if keeps {
             self.attach_type_args(reference, has_arguments);
             self.finish_last_type();
-            // `type_syntax::Builder` looks it up by offset.
-            let ty = self.last_type();
-            if ty.is_some() {
-                self.record_type(start, ty);
-            }
         }
         Ok(())
     }
@@ -4018,7 +3996,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         if keeps {
-            self.finish_type_args(args_base, less_than);
+            self.finish_type_args(args_base);
         }
         Ok(true)
     }

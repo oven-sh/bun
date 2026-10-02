@@ -96,6 +96,21 @@ impl<T> Span<T> {
     pub fn get(self, index: usize) -> Option<Id<T>> {
         (index < self.len()).then(|| Id(self.start + index as u32, PhantomData))
     }
+
+    /// Where it starts, and how long it is.
+    #[inline]
+    pub const fn parts(self) -> [u32; 2] {
+        [self.start, self.len]
+    }
+
+    #[inline]
+    pub const fn from_parts([start, len]: [u32; 2]) -> Self {
+        Span {
+            start,
+            len,
+            marker: PhantomData,
+        }
+    }
 }
 
 impl<T> Copy for Span<T> {}
@@ -134,6 +149,21 @@ impl<T> IdList<T> {
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.len == 0
+    }
+
+    /// Where it starts, and how long it is.
+    #[inline]
+    pub const fn parts(self) -> [u32; 2] {
+        [self.start, self.len]
+    }
+
+    #[inline]
+    pub const fn from_parts([start, len]: [u32; 2]) -> Self {
+        IdList {
+            start,
+            len,
+            marker: PhantomData,
+        }
     }
 }
 
@@ -303,8 +333,12 @@ pub enum TypeData {
     Optional(TypeId),
     /// `[label: ...T]`, which is an error. Only as the type of a labeled tuple element.
     Rest(TypeId),
-    /// `interface A extends f()`: a base that is not an entity name, which is an error. The expression is not kept.
-    HeritageExpression,
+    /// `interface A extends f()`: a base that is not an entity name, which is an error.
+    HeritageExpression(Id<Expr>),
+    /// What is written where a type must be could not be kept. `is_syntax_error`: and nothing has been said about it.
+    Error {
+        is_syntax_error: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -328,6 +362,16 @@ pub struct ImportType {
     pub mode: ResolutionMode,
     /// Where `assert` is written instead of `with`.
     pub assert_keyword_loc: Option<Loc>,
+    pub attributes: Option<ImportAttributes>,
+}
+
+/// `with { .. }` after a module specifier.
+#[derive(Copy, Clone)]
+pub struct ImportAttributes {
+    /// Of `with`, or of what is written instead.
+    pub keyword_loc: Loc,
+    /// The attributes, as an object literal.
+    pub object: Expr,
 }
 
 #[derive(Copy, Clone)]
@@ -590,6 +634,9 @@ pub struct ModuleSpecifier {
     pub loc: Loc,
     /// From `with { "resolution-mode": "import" }`.
     pub mode: ResolutionMode,
+    /// What is written, if it is no string.
+    pub expression: Option<Expr>,
+    pub attributes: Option<ImportAttributes>,
 }
 
 /// `parseModuleExportName`: a word or a string. A name that is missing is empty, and is where the token before it ends.
@@ -693,6 +740,8 @@ pub struct Jsx {
     pub closing_start: Loc,
     /// Where the element ends.
     pub end: Loc,
+    /// `<tag<T>>`
+    pub type_arguments: IdList<Type>,
 }
 
 macro_rules! define_syntax {
@@ -776,6 +825,7 @@ define_syntax! {
     import_equals: ImportEquals, add_import_equals, add_import_equals_nodes;
     exports: Export, add_export, add_exports;
     jsx: Jsx, add_jsx, add_jsx_nodes;
+    expressions: Expr, add_expression, add_expressions;
 }
 
 impl Default for Syntax {

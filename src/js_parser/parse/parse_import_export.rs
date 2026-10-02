@@ -18,6 +18,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Expr, Error> {
         let p = self;
         let mut is_deferred = false;
+        let mut type_arguments = None;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
             p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
@@ -56,8 +57,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             if p.lexer.token != T::TOpenParen {
                 // `checkExpressionWithTypeArguments` checks the type arguments.
-                let keyword = p.new_expr(E::Missing {}, loc);
-                p.note_type_arguments(&keyword, less_than);
+                let mut keyword = p.new_expr(E::Missing {}, loc);
+                p.note_type_arguments(&mut keyword, less_than);
                 return Ok(keyword);
             }
             // `import<T>(x)` is the call. `checkImportCallExpression` never looks at its type arguments, so what the list logged about
@@ -67,7 +68,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log.errors = errors;
             let range = js_lexer::range_of_identifier(p.source, loc);
             p.lexer.ts_grammar_error(range, 1326);
-            p.mark_type_syntax(loc, crate::sema::Mark::TypeArguments, less_than);
+            type_arguments = p.kept_type_arguments();
         }
 
         if level.gt(Level::Call) {
@@ -80,7 +81,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if p.lexer.tolerant {
-            return p.parse_import_call_tolerant(loc, is_deferred);
+            return p.parse_import_call_tolerant(loc, is_deferred, type_arguments);
         }
 
         // allow "in" inside call arguments;
@@ -212,12 +213,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         is_deferred: bool,
+        type_arguments: Option<u32>,
     ) -> Result<Expr, Error> {
         let p = self;
         let args = p.parse_call_args()?;
-        if is_deferred {
-            p.mark_type_syntax(loc, crate::sema::Mark::DeferredImportClose, args.loc);
-        }
         let specifier = match args.list.first() {
             Some(first) => *first,
             None => p.new_expr(E::Missing {}, args.loc),
@@ -226,10 +225,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(second) => *second,
             None => Expr::EMPTY,
         };
-        if let Some(more @ [_, ..]) = args.list.get(2..) {
-            p.keep_expressions(loc, more);
-        }
-        Ok(p.new_expr(
+        let mut call = p.new_expr(
             E::Import {
                 expr: specifier,
                 import_record_index: u32::MAX,
@@ -237,7 +233,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 namespace_ref: Ref::NONE,
             },
             loc,
-        ))
+        );
+        if is_deferred {
+            p.note_loc(
+                &mut call.loc,
+                crate::sema::Mark::DeferredImportClose,
+                args.loc,
+            );
+        }
+        if let Some(type_arguments) = type_arguments {
+            p.note(
+                &mut call.loc,
+                crate::sema::Mark::TypeArguments,
+                type_arguments,
+            );
+        }
+        for argument in args.list.get(2..).unwrap_or_default() {
+            p.note_expr(&mut call.loc, crate::sema::Mark::OtherArgument, *argument);
+        }
+        Ok(call)
     }
 
     pub(crate) fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {

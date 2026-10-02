@@ -30,6 +30,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_computed: bool,
         key: &mut Expr,
         key_range: bun_ast::Range,
+        type_parameters: Option<bun_ast::ts_syntax::Span<bun_ast::ts_syntax::TypeParam>>,
     ) -> crate::CrateResult<Option<G::Property>> {
         let p = self;
         if p.lexer.token == T::TOpenParen && kind != PropertyKind::Get && kind != PropertyKind::Set
@@ -97,10 +98,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let func = p.parse_fn(
+        let mut func = p.parse_fn(
             None,
             FnOrArrowDataParse {
-                needs_async_loc: key.loc,
+                needs_async_loc: p.real_loc(key.loc),
                 allow_await: if opts.is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -128,6 +129,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         )?;
+        p.note_type_parameters(&mut func.open_parens_loc, type_parameters);
 
         opts.has_argument_decorators =
             opts.has_argument_decorators || p.fn_or_arrow_data_parse.has_argument_decorators;
@@ -158,8 +160,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.pop_scope();
-        // G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate `func` in place.
-        let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
         let args = func.args.slice();
         let value = p.new_expr(E::Function { func }, loc);
@@ -168,7 +168,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match kind {
             PropertyKind::Get => {
                 if args.len() > 0 {
-                    let r = js_lexer::range_of_identifier(p.source, args[0].binding.loc);
+                    let r =
+                        js_lexer::range_of_identifier(p.source, p.real_loc(args[0].binding.loc));
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(
                         Some(p.source),
@@ -185,13 +186,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut r = js_lexer::range_of_identifier(
                         p.source,
                         if args.len() > 0 {
-                            args[0].binding.loc
+                            p.real_loc(args[0].binding.loc)
                         } else {
                             loc
                         },
                     );
                     if args.len() > 1 {
-                        r = js_lexer::range_of_identifier(p.source, args[1].binding.loc);
+                        r = js_lexer::range_of_identifier(
+                            p.source,
+                            p.real_loc(args[1].binding.loc),
+                        );
                     }
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(
@@ -244,7 +248,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                 }
                 private.ref_ = p
-                    .declare_symbol(declare, key.loc, name)
+                    .declare_symbol(declare, p.real_loc(key.loc), name)
                     .expect("unreachable");
             }
             _ => {}
@@ -322,7 +326,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key = p.parse_string_literal()?;
                     if opts.is_class {
                         let next = p.lexer.loc();
-                        p.mark_type_syntax(key.loc, crate::sema::Mark::StringLiteralName, next);
+                        p.note_loc(&mut key.loc, crate::sema::Mark::StringLiteralName, next);
                     }
                 }
                 T::TBigIntegerLiteral => {
@@ -386,7 +390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !opts.is_class {
                             p.lexer.ts_error(
                                 bun_ast::Range {
-                                    loc: expr.loc,
+                                    loc: p.real_loc(expr.loc),
                                     len: 1,
                                 },
                                 1171,
@@ -417,7 +421,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     p.lexer.expect(T::TCloseBracket)?;
                     key = expr;
-                    p.mark_type_syntax(key.loc, crate::sema::Mark::ComputedName, key_range.loc);
+                    p.note_loc(&mut key.loc, crate::sema::Mark::ComputedName, key_range.loc);
                 }
                 T::TAsterisk => {
                     // `canFollowModifier`: `accessor` is a modifier before a `*` too.
@@ -834,6 +838,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let mut has_type_parameters = false;
+            let mut type_parameters = None;
             let mut has_definite_assignment_assertion_operator = false;
 
             if Self::IS_TYPESCRIPT_ENABLED {
@@ -841,7 +846,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.token == T::TQuestion {
                         // "class X { foo?: number }"
                         // "class X { foo!: number }"
-                        p.mark_type_syntax(key.loc, crate::sema::Mark::Optional, key.loc);
+                        p.note_flag(&mut key.loc, crate::sema::Mark::Optional);
                         p.lexer.next()?;
                     } else if p.lexer.token == T::TExclamation
                         && !p.lexer.has_newline_before
@@ -850,7 +855,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && !opts.is_generator
                     {
                         // "class X { foo!: number }"
-                        p.mark_type_syntax(key.loc, crate::sema::Mark::Definite, key.loc);
+                        p.note_flag(&mut key.loc, crate::sema::Mark::Definite);
                         p.lexer.next()?;
                         has_definite_assignment_assertion_operator = true;
                     }
@@ -866,9 +871,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "class X { foo?<T>(): T }"
                 // "const x = { foo<T>(): T {} }"
                 if !has_definite_assignment_assertion_operator {
-                    has_type_parameters = p.skip_type_script_type_parameters(
+                    let skipped = p.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
-                    )? != SkipTypeParameterResult::DidNotSkipAnything;
+                    )?;
+                    has_type_parameters = skipped != SkipTypeParameterResult::DidNotSkipAnything;
+                    type_parameters = p.kept_type_parameters(skipped);
                 }
             }
 
@@ -921,6 +928,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_computed,
                         &mut key,
                         key_range,
+                        None,
                     );
                 }
 
@@ -929,7 +937,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Skip over types
                     if p.lexer.token == T::TColon {
                         p.lexer.next()?;
-                        p.mark_type_syntax(key.loc, crate::sema::Mark::Annotation, p.lexer.loc());
                         if p.options.features.emit_decorator_metadata
                             && opts.is_class
                             && opts.ts_decorators.len() > 0
@@ -938,6 +945,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         } else {
                             p.skip_type_script_type(Level::Lowest)?;
                         }
+                        p.note_type(&mut key.loc, crate::sema::Mark::Annotation);
                     }
                 }
 
@@ -989,7 +997,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
 
                         private.ref_ = p
-                            .declare_symbol(declare, key.loc, name)
+                            .declare_symbol(declare, p.real_loc(key.loc), name)
                             .expect("unreachable");
                     }
                     _ => {}
@@ -1060,6 +1068,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_computed,
                     &mut key,
                     key_range,
+                    type_parameters,
                 );
             }
 
@@ -1229,7 +1238,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !is_computed
                     && text.is_utf8()
                     && !matches!(
-                        self.lexer.contents.get(key.loc.start as usize),
+                        self.lexer
+                            .contents
+                            .get(self.real_loc(key.loc).start as usize),
                         Some(b'"' | b'\'')
                     ) =>
             {
@@ -1237,6 +1248,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => b"",
         };
-        self.missing_semicolon_after(name, key.loc)
+        self.missing_semicolon_after(name, self.real_loc(key.loc))
     }
 }

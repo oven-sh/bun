@@ -32,7 +32,9 @@ pub(crate) enum PendingPart {
     /// `([name = expression]) => T`
     PatternElementDefault(PatElemId, Expr),
     /// `interface I extends expression`
-    HeritageExpression(TypeNodeId),
+    HeritageExpression(TypeNodeId, Expr),
+    /// `import("m", { with: expression })`
+    ImportAttributes(ts::ImportAttributes),
 }
 
 macro_rules! assert_same_flags {
@@ -71,6 +73,8 @@ fn flags(flags: ts::Flags) -> Flags {
 
 #[inline]
 fn pos(loc: bun_ast::Loc) -> u32 {
+    // Nothing is noted of a node of `ts_syntax`.
+    debug_assert!(!loc.is_index());
     loc.start.max(0) as u32
 }
 
@@ -246,7 +250,11 @@ impl Builder<'_> {
                     is_typeof,
                     mode,
                     assert_keyword_loc,
+                    attributes,
                 } = self.ts[import];
+                if let Some(attributes) = attributes {
+                    self.pending.push(PendingPart::ImportAttributes(attributes));
+                }
                 if argument.is_some() {
                     let node = self.clone_import_type_without_specifier(
                         argument,
@@ -319,12 +327,20 @@ impl Builder<'_> {
                 return self.clone_type(element);
             }
             // The end of `checkInterfaceDeclaration` reports 2499 for it.
-            ts::TypeData::HeritageExpression => TypeNodeKind::Error,
+            ts::TypeData::HeritageExpression(_) => TypeNodeKind::Error,
+            ts::TypeData::Error {
+                is_syntax_error: true,
+            } => return self.error_type(pos(loc)),
+            ts::TypeData::Error {
+                is_syntax_error: false,
+            } => TypeNodeKind::Error,
         };
         let node = self.file.ty(kind, pos(loc));
         self.file[node].end = pos(end);
-        if matches!(data, ts::TypeData::HeritageExpression) {
-            self.pending.push(PendingPart::HeritageExpression(node));
+        if let ts::TypeData::HeritageExpression(expression) = data {
+            let expression = self.ts[expression];
+            self.pending
+                .push(PendingPart::HeritageExpression(node, expression));
         }
         node
     }
@@ -506,6 +522,12 @@ impl Builder<'_> {
             .map(|param| self.clone_type_param(param))
             .collect();
         self.file.add_type_params(&params)
+    }
+
+    /// The `this` parameter of a function that `bun_ast` has a node for (`keep_this_parameter`).
+    pub(crate) fn clone_param(&mut self, param: ts::Id<ts::Param>) -> ParamId {
+        let only = ts::Span::from_parts([param.index() as u32, 1]);
+        self.clone_params(only).at(0)
     }
 
     pub(crate) fn clone_params(&mut self, params: ts::Span<ts::Param>) -> Span<ParamId> {

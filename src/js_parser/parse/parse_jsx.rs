@@ -36,16 +36,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let tag = JSXTag::parse(p)?;
 
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
+        let mut type_arguments = bun_ast::ts_syntax::IdList::EMPTY;
         if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
-            let type_arguments = p.lexer.loc();
             // `</` is one token for TypeScript. It opens no type arguments. Nor are there any in a JavaScript file
             // (`parseJsxOpeningOrSelfClosingElementOrOpeningFragment`).
             if !(p.lexer.tolerant && p.lexer.is_less_than_slash())
                 && !p.lexer.is_javascript_file()
                 && p.skip_type_script_type_arguments::<true, false>()?
             {
-                p.mark_type_syntax(loc, crate::sema::Mark::TypeArguments, type_arguments);
+                type_arguments = p.take_kept_type_argument_list();
             }
         }
 
@@ -133,12 +133,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ))
                         };
 
+                        let mut prop_name = prop_name;
+                        p.note_token_full_start(&mut prop_name.loc, crate::sema::Mark::MemberEnd);
                         props.push(G::Property {
                             key: Some(prop_name),
                             value,
                             ..Default::default()
                         });
-                        p.mark_end(key_range.loc, crate::sema::Mark::MemberEnd);
                         i += 1;
                     }
                     T::TOpenBrace => {
@@ -222,7 +223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // If we get here, it's invalid
                                     p.log().add_error(
                                         Some(p.source),
-                                        expr.loc,
+                                        p.real_loc(expr.loc),
                                         b"Invalid JSX prop shorthand, must be identifier, dot or string",
                                     );
                                     return Err(crate::Error::SyntaxError);
@@ -265,14 +266,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.lexer.next_inside_jsx_element()?;
                         }
                         // `JsxSpreadAttribute`
-                        if let Some(&G::Property {
+                        if let Some(G::Property {
                             key: None,
-                            value: Some(Expr { loc: from, .. }),
+                            value: Some(spread),
                             ..
-                        }) = props.last()
+                        }) = props.last_mut()
                         {
-                            p.mark_type_syntax(from, crate::sema::Mark::MemberStart, open_brace);
-                            p.mark_end(from, crate::sema::Mark::MemberEnd);
+                            p.note_loc(&mut spread.loc, crate::sema::Mark::MemberStart, open_brace);
+                            p.note_token_full_start(&mut spread.loc, crate::sema::Mark::MemberEnd);
                         }
                         i += 1;
                     }
@@ -344,7 +345,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expected(T::TGreaterThan)?;
             }
             let end = Self::end_of_jsx_tag(p);
-            let syntax = p.keep_jsx(None, end, bun_ast::Loc::EMPTY, end);
+            let syntax = p.keep_jsx(None, end, bun_ast::Loc::EMPTY, end, type_arguments);
 
             return Ok(p.new_expr(
                 E::JSXElement {
@@ -364,7 +365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `parseJsxOpeningOrSelfClosingElementOrOpeningFragment`: 1005 for the `/`, and the element is self-closing.
             p.lexer.expected(T::TSlash)?;
             let end = Self::end_of_jsx_tag(p);
-            let syntax = p.keep_jsx(None, end, bun_ast::Loc::EMPTY, end);
+            let syntax = p.keep_jsx(None, end, bun_ast::Loc::EMPTY, end, type_arguments);
             return Ok(p.new_expr(
                 E::JSXElement {
                     tag: start_tag,
@@ -440,8 +441,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // The child was not closed, and met the closing tag of this element.
                                 p.lexer.list_contexts = saved_contexts;
                                 let closing_tag = end_tag.data.as_expr();
-                                let syntax =
-                                    p.keep_jsx(closing_tag, opening_end, closing_start, end);
+                                let syntax = p.keep_jsx(
+                                    closing_tag,
+                                    opening_end,
+                                    closing_start,
+                                    end,
+                                    type_arguments,
+                                );
                                 return Ok(p.new_expr(
                                     E::JSXElement {
                                         tag: start_tag,
@@ -482,7 +488,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let range = p.lexer.range();
                         p.lexer.ts_error(range, 17015);
                         p.lexer.list_contexts = saved_contexts;
-                        let syntax = p.keep_jsx(None, opening_end, less_than_loc, after_slash);
+                        let syntax = p.keep_jsx(
+                            None,
+                            opening_end,
+                            less_than_loc,
+                            after_slash,
+                            type_arguments,
+                        );
                         return Ok(p.new_expr(
                             E::JSXElement {
                                 tag: None,
@@ -523,7 +535,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .unwrap_or_else(|| p.new_expr(E::Missing {}, after_slash))
                         };
                         p.lexer.list_contexts = saved_contexts;
-                        let syntax = p.keep_jsx(Some(closing_tag), opening_end, less_than_loc, end);
+                        let syntax = p.keep_jsx(
+                            Some(closing_tag),
+                            opening_end,
+                            less_than_loc,
+                            end,
+                            type_arguments,
+                        );
                         return Ok(p.new_expr(
                             E::JSXElement {
                                 tag: start_tag,
@@ -565,7 +583,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         closing_tag
                     };
-                    let syntax = p.keep_jsx(closing_tag, opening_end, less_than_loc, end);
+                    let syntax =
+                        p.keep_jsx(closing_tag, opening_end, less_than_loc, end, type_arguments);
                     return Ok(p.new_expr(
                         E::JSXElement {
                             tag: kept_tag,
@@ -587,7 +606,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Self::report_unclosed_jsx_element(p, full_start, &tag);
                         let at = p.lexer.loc();
                         let closing_tag = start_tag.map(|_| p.new_expr(E::Missing {}, at));
-                        let syntax = p.keep_jsx(closing_tag, opening_end, at, at);
+                        let syntax = p.keep_jsx(closing_tag, opening_end, at, at, type_arguments);
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {
@@ -613,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let marker = p.lexer.range();
                         p.lexer.ts_expected(marker, "</");
                         let closing_tag = start_tag.map(|_| p.new_expr(E::Missing {}, at));
-                        let syntax = p.keep_jsx(closing_tag, opening_end, at, at);
+                        let syntax = p.keep_jsx(closing_tag, opening_end, at, at, type_arguments);
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {

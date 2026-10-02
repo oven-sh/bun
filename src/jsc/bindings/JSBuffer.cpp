@@ -584,16 +584,10 @@ static JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObj
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
-// A result of at most this many bytes is encoded into the typed array's own GC storage, with
-// no heap allocation. A longer result is encoded into memory that becomes its ArrayBuffer.
-// The first read of `.buffer` copies GC storage out and costs nothing for an ArrayBuffer, so
-// the limit is the size up to which building the Buffer and then reading `.buffer` is not
-// slower in GC storage.
+// Above this size, the copy that the first `.buffer` read makes costs more than the ArrayBuffer it avoids.
 static constexpr size_t inPlaceLimit = 128;
 static_assert(inPlaceLimit <= JSC::JSArrayBufferView::fastSizeLimit);
 
-// The Buffer for a string of at most inPlaceLimit code units that encodes to `byteLength`
-// bytes. The caller writes the bytes.
 static JSC::JSUint8Array* createUninitializedBufferForShortString(JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
     if (byteLength <= inPlaceLimit)
@@ -622,8 +616,7 @@ static JSC::JSUint8Array* constructShortLatin1AsUTF8(JSGlobalObject* lexicalGlob
     return buffer;
 }
 
-// Out of line: with the stack array in constructFromEncoding, every call of that function
-// would pay for a stack protector check on macOS.
+// Out of line: the stack array would give constructFromEncoding a stack protector check on macOS.
 static NEVER_INLINE JSC::JSUint8Array* constructShortUTF16AsUTF8(JSGlobalObject* lexicalGlobalObject, std::span<const char16_t> span)
 {
     ASSERT(span.size() <= inPlaceLimit);

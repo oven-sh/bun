@@ -688,11 +688,13 @@ describe("ptr() returns an address that stays valid", () => {
     "new Uint8Array(1000)": () => new Uint8Array(1000),
   };
 
-  it.each(Object.keys(views))("%s keeps its address after a .buffer read", name => {
-    const view = views[name]();
-    const address = ptr(view);
-    new Uint8Array(view.buffer, view.byteOffset, view.byteLength)[0] = 0x5a;
-    expect({ moved: ptr(view) !== address, byte: read.u8(address, 0) }).toEqual({ moved: false, byte: 0x5a });
+  describe.each(Object.keys(views))("%s", name => {
+    it("keeps its address after a .buffer read", () => {
+      const view = views[name]();
+      const address = ptr(view);
+      new Uint8Array(view.buffer, view.byteOffset, view.byteLength)[0] = 0x5a;
+      expect({ moved: ptr(view) !== address, byte: read.u8(address, 0) }).toEqual({ moved: false, byte: 0x5a });
+    });
   });
 
   it("a view above 1000 bytes needs no ArrayBuffer: its bytes do not move", () => {

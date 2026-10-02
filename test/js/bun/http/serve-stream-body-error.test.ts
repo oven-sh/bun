@@ -205,26 +205,33 @@ for (const flags of [[], ["development"]]) {
   // failure: the default 500 goes out, the error is reported on stderr, and (as
   // for a throwing handler) the process exit status becomes 1. The default body
   // is mode-specific and not pinned.
-  test.concurrent(`native stream errored before render, no error() (${mode}): default 500 and the error is reported`, async () => {
-    const { stdout, stderr, exitCode } = await runFixture("native-errored-before-render", ...flags, "no-error-handler");
-    const { statusLine, secondStatusLine, errorCb, unhandled } = JSON.parse(stdout);
-    expect({
-      statusLine,
-      secondStatusLine,
-      errorCb,
-      unhandled,
-      // One report: its first line names the error.
-      reports: stderr.match(/^TypeError: ECONNRESET/gm),
-      exitCode,
-    }).toEqual({
-      statusLine: "HTTP/1.1 500 Internal Server Error",
-      secondStatusLine: "HTTP/1.1 200 OK",
-      errorCb: 0,
-      unhandled: 0,
-      reports: ["TypeError: ECONNRESET"],
-      exitCode: 1,
-    });
-  });
+  test.concurrent(
+    `native stream errored before render, no error() (${mode}): default 500 and the error is reported`,
+    async () => {
+      const { stdout, stderr, exitCode } = await runFixture(
+        "native-errored-before-render",
+        ...flags,
+        "no-error-handler",
+      );
+      const { statusLine, secondStatusLine, errorCb, unhandled } = JSON.parse(stdout);
+      expect({
+        statusLine,
+        secondStatusLine,
+        errorCb,
+        unhandled,
+        // One report: its first line names the error.
+        reports: stderr.match(/^TypeError: ECONNRESET/gm),
+        exitCode,
+      }).toEqual({
+        statusLine: "HTTP/1.1 500 Internal Server Error",
+        secondStatusLine: "HTTP/1.1 200 OK",
+        errorCb: 0,
+        unhandled: 0,
+        reports: ["TypeError: ECONNRESET"],
+        exitCode: 1,
+      });
+    },
+  );
 }
 
 // The body errors after a chunk has already been flushed to the client. The

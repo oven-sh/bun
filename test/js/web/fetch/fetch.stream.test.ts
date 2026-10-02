@@ -1474,23 +1474,20 @@ test.concurrent(
 // `panic: range end index 262144 out of range for slice of length 0`. One fixture per route:
 // node:stream taking the native source over, and the stream's own pull loop after the body
 // failed.
-test.concurrent(
-  "node:stream reading a started native body stream gets its tail instead of crashing",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "bytestream-partial-read-fixture.ts")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+test.concurrent("node:stream reading a started native body stream gets its tail instead of crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "bytestream-partial-read-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toBe("ok\n");
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent("a body that fails after a partial read rejects the next read instead of crashing", async () => {
   await using proc = Bun.spawn({

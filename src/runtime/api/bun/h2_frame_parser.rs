@@ -4733,13 +4733,12 @@ impl H2FrameParser {
             if callframe.arguments_count() >= 3 {
                 if !opaque_data_arg.is_empty_or_undefined_or_null() {
                     if let Some(array_buffer) = opaque_data_arg.as_array_buffer(global_object) {
-                        let opaque_data = array_buffer.byte_slice();
                         // node sends nothing: https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L2979-L2980
-                        if opaque_data.len() > MAX_GOAWAY_OPAQUE_DATA_SIZE {
+                        if array_buffer.byte_slice().len() > MAX_GOAWAY_OPAQUE_DATA_SIZE {
                             return Ok(JSValue::UNDEFINED);
                         }
                         // Own the bytes: write() re-enters JS on JS-backed sockets and can detach this.
-                        let copied = opaque_data.to_vec();
+                        let copied = array_buffer.byte_slice().to_vec();
                         this.send_go_away(
                             0,
                             ErrorCode(error_code as u32),

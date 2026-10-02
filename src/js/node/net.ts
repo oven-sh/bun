@@ -47,6 +47,8 @@ const {
   kDestroyOnRead,
   kPreHandshakeWrite,
   kSecureConnectDone,
+  kStandaloneWrap,
+  kUpgradeClientTLS,
   kVerifyError,
 } = require("internal/net/symbols");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
@@ -161,7 +163,6 @@ interface SNIState {
 }
 
 interface TLSConnectOptions {
-  socket: SocketHandle | null;
   ALPNProtocols: unknown;
   checkServerIdentity: ((hostname: string, cert: import("node:tls").PeerCertificate) => Error | undefined) | undefined;
   session: string | Buffer | null | undefined;
@@ -518,6 +519,10 @@ function onClientHandshake(self, socket, success, verifyError) {
   // without changing Bun.connect's handshake-throw-to-error-handler contract.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   try {
+    if (self[kStandaloneWrap]) {
+      finishStandaloneWrap(self, verifyError);
+      return;
+    }
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
     // Unlike Node, don't gate on !isSessionReused(): BoringSSL keeps the peer
     // chain on a resumed SSL_SESSION, so re-check it against this servername.
@@ -563,6 +568,23 @@ function onClientHandshake(self, socket, success, verifyError) {
   } catch (err) {
     reportError(err);
   }
+}
+// Unlike node, a wrap rejects a bad certificate: node leaves that check to the app, and a forgotten check accepts anything.
+function finishStandaloneWrap(self, verifyError) {
+  if (verifyError && self._rejectUnauthorized) {
+    // The error reaches '_tlsError', so 'secure' must not report it again.
+    self.destroy(verifyError);
+    return;
+  }
+  // The rest is node's _finishInit: no hostname check, no 'secureConnect', and `authorized` stays false.
+  self.secureConnecting = false;
+  self.emit(kSecureConnectDone);
+  const pendingSession = self[kpendingSession];
+  if (pendingSession) {
+    self[kpendingSession] = null;
+    self.emit("session", pendingSession);
+  }
+  self.emit("secure", self);
 }
 function onConnectEnd() {
   if (!this._hadError && this.secureConnecting) {
@@ -1474,7 +1496,8 @@ const SocketHandlers2 = {
       if (options) {
         const { session } = options;
         if (session) {
-          (self as TLSSocketInstance).setSession(session);
+          // On the native socket: an fd upgrade assigns `_handle` after `open`.
+          socket.setSession(typeof session === "string" ? Buffer.from(session, "latin1") : session);
         }
       }
     }
@@ -1779,6 +1802,7 @@ function Socket(options?): void {
   this._parent = null;
   this._parentWrap = null;
   this[kupgraded] = null;
+  this[kStandaloneWrap] = false;
   this[kOnUpgradedClose] = undefined;
   this[kOwesRawClose] = false;
 
@@ -2158,10 +2182,6 @@ Socket.prototype.connect = function connect(...args) {
         }
         tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
         this[bunTLSConnectOptions] = tls;
-        let tlsSocket;
-        if (!connection && (tlsSocket = tls.socket)) {
-          connection = tlsSocket;
-        }
       }
       if (connection) {
         if (
@@ -2182,7 +2202,8 @@ Socket.prototype.connect = function connect(...args) {
       this._secureEstablished = false;
       this._securePending = true;
       this[kConnectOptions] = options;
-      this.prependListener("end", onConnectEnd);
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1811
+      if (!this[kStandaloneWrap]) this.prependListener("end", onConnectEnd);
     }
     // start using existing connection
     if (connection) {
@@ -2642,6 +2663,16 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     raw.connecting = false;
     this._handle = tlsHandle;
     this.emit(kUpgradeAttached);
+  });
+};
+
+// Client-side `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade, without onConnectSecure and onConnectEnd.
+Socket.prototype[kUpgradeClientTLS] = function (connection, servername) {
+  // Own, as in tls.connect(): connect() takes an inherited `rejectUnauthorized` for the caller's choice.
+  Socket.prototype.connect.$call(this, {
+    socket: connection,
+    servername,
+    rejectUnauthorized: this._rejectUnauthorized,
   });
 };
 
@@ -3296,11 +3327,6 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
   }
 
   //TLS
-  let connection = self[ksocket];
-  const optionsSocket = options.socket;
-  if (optionsSocket) {
-    connection = optionsSocket;
-  }
   let tls: TLSConnectOptions | undefined = undefined;
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS === "function") {
@@ -3314,10 +3340,6 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
       self.servername = tls.servername;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
-      let tlsSocket;
-      if (!connection && (tlsSocket = tls.socket)) {
-        connection = tlsSocket;
-      }
     }
     self.authorized = false;
     self.secureConnecting = true;
@@ -3447,11 +3469,6 @@ function internalConnectMultiple(context, canceled?) {
   }
 
   //TLS
-  let connection = self[ksocket];
-  const contextOptionsSocket = context.options.socket;
-  if (contextOptionsSocket) {
-    connection = contextOptionsSocket;
-  }
   let tls: TLSConnectOptions | undefined = undefined;
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS === "function") {
@@ -3465,10 +3482,6 @@ function internalConnectMultiple(context, canceled?) {
       self.servername = tls.servername;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
-      let tlsSocket;
-      if (!connection && (tlsSocket = tls.socket)) {
-        connection = tlsSocket;
-      }
     }
     self.authorized = false;
     self.secureConnecting = true;

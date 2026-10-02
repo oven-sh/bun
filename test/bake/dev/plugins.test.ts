@@ -1,5 +1,5 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -31,6 +31,71 @@ devTest("onResolve", {
   },
   async test(dev) {
     await dev.fetch("/").equals("value: 1");
+  },
+});
+devTest("onResolve that declines an html page's script keeps the page loading", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "decline",
+        setup(build) {
+          build.onResolve({ filter: /script\\.ts$/ }, () => undefined);
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["./script.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("hello");
+  },
+});
+devTest("onResolve that declines the built-in react refresh runtime keeps the page building", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "decline-everything",
+        setup(build) {
+          build.onResolve({ filter: /.*/ }, () => undefined);
+        },
+      };
+    `,
+    // react resolves and react-refresh does not, so the dev server serves its embedded runtime.
+    "node_modules/react/package.json": `{ "name": "react", "version": "19.0.0", "main": "index.js" }`,
+    "node_modules/react/index.js": `export default {};`,
+    "node_modules/react/jsx-dev-runtime.js": `
+      export const Fragment = Symbol.for("react.fragment");
+      export function jsxDEV(type, props) {
+        return { type, props };
+      }
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["./app.tsx"],
+    }),
+    "app.tsx": `
+      function App() {
+        return <h1>hello</h1>;
+      }
+      console.log(App().type);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("h1");
   },
 });
 devTest("onLoad", {

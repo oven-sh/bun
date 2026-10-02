@@ -2863,7 +2863,7 @@ file. "Verified" below says what was checked instead.
 ### Verified
 
 No cargo build has seen the file, and nothing ran a function of it. What was checked, last on the tree of
-`cad7795f23`:
+`f5d129e53c`:
 
 - `rustfmt --check --edition 2024`: exit 0.
 - A probe of the file with `rustc` alone and with `clippy-driver` alone: exit 0 each, no warning and no finding.
@@ -2908,7 +2908,7 @@ No cargo build has seen the file, and nothing ran a function of it. What was che
 
 ### What this file expects and the tree does not have
 
-At `cad7795f23`, two callees, each called by its upstream name with upstream's parameter order, as the other callers
+At `f5d129e53c`, two callees, each called by its upstream name with upstream's parameter order, as the other callers
 of the tree write them:
 
 - `c48`: `get_contextual_type(node, context_flags) -> TypeId` (29466) and

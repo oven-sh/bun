@@ -1672,7 +1672,13 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
-            if !created_package_json && !no_project {
+            // The install `bunx` spawns has its own package.json in its own
+            // cache directory. The directories above it are the user's cache
+            // and home, so a `package.json` there is not a workspace root for
+            // this install, and a malformed one must not fail it.
+            let is_bunx_install =
+                bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
+            if !created_package_json && !no_project && !is_bunx_install {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = bun_paths::path_buffer_pool::get();

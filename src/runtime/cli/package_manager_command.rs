@@ -441,10 +441,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 process_env.load_process()?;
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
 
-                // `bunx` roots its package cache at `<cache dir>/.bunx-<uid>`,
-                // or at `<temp dir>/.bunx-<uid>` when no cache directory
-                // resolves. Both are counted here; the first is inside the
-                // install cache tree deleted below, so count it first.
+                // The bunx root inside the install cache goes away with the
+                // tree deleted below, so count it before that.
                 let mut deleted: usize = 0;
                 let bunx_root_name = crate::cli::bunx_command::cache_root_name();
                 if !cache_dir.is_cwd_fallback {
@@ -505,10 +503,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     };
                     let mut iter = bun_sys::iterate_dir(tmp_dir.fd());
 
-                    // This is to match 'bunx_command.BunxCommand.exec's logic:
-                    // the per-package directories it writes directly in the
-                    // temp directory (Windows, and caches written by an older
-                    // bun).
+                    // This is to match 'bunx_command.BunxCommand.exec's logic
+                    // for the directories written straight into the temp dir.
                     let mut prefix: Vec<u8> = Vec::new();
                     #[cfg(unix)]
                     {
@@ -541,8 +537,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         if !is_cache_root && !name.starts_with(prefix.as_slice()) {
                             continue;
                         }
-                        // One package per entry for the flat layout, one per
-                        // entry *inside* the cache root for the nested one.
+                        // The root holds one entry per package, the flat
+                        // layout one directory per package.
                         let count = if is_cache_root {
                             let mut packages: usize = 0;
                             if let Ok(root_dir) = tmp_dir.open_at(name) {

@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { chmodSync, copyFileSync, existsSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, dirname, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1289,6 +1289,7 @@ it.concurrent.skipIf(isWindows)(
     // validation and fails later with the normal --no-install "could not
     // find an existing binary" message because the cache is empty.
     await mkdir(cacheRoot, { recursive: true });
+    chmodSync(dirname(cacheRoot), 0o700);
     chmodSync(cacheRoot, 0o755);
     {
       const [err, out, exitCode] = await run();
@@ -1346,6 +1347,7 @@ it.concurrent.skipIf(isWindows)(
     };
 
     await mkdir(scopeDir, { recursive: true });
+    chmodSync(dirname(scopeDir), 0o700);
     chmodSync(scopeDir, 0o755);
     {
       const [err, out, exitCode] = await run();
@@ -1379,102 +1381,53 @@ it.concurrent.skipIf(isWindows)(
   },
 );
 
-// A native addon carries its own library search paths (DT_RPATH, DT_RUNPATH,
-// LC_RPATH). They are relative to the addon's own directory and may climb out
-// of the package with `..`, which the dynamic loader resolves and searches. So
-// the bunx cache has to sit in a tree whose directories belong to the current
-// user: under the shared temp directory, a climb lands where any local user
-// can put a library, and that library is loaded into the process of the user
-// who ran bunx. Here `$TMPDIR` stands in for the shared temp directory.
-const cc = isWindows ? null : (Bun.which("cc") ?? Bun.which("clang") ?? Bun.which("gcc"));
-
-it.concurrent.skipIf(isWindows || !cc)(
-  "does not load a library that another local user put in the temp directory",
+// `require` walks every ancestor of the file that asks, looking for
+// `node_modules/<name>`. From a cache one component below the shared temp
+// directory the walk reaches `<temp dir>/node_modules`, which any local user
+// can create, so an optional dependency a CLI probes for (the
+// `try { require("x") } catch {}` shape) runs that user's code. The cache root
+// has to sit in a tree whose directories belong to the current user. `$TMPDIR`
+// stands in for the shared temp directory.
+it.concurrent.skipIf(isWindows || !Bun.which("node"))(
+  "does not load a module that another local user put in the temp directory",
   async () => {
     const { x_dir, env } = setup();
-    // The default resolution: no cache directory is named, so bunx keys the
-    // cache off $HOME. `setup` points the install cache at a temp directory,
-    // which is not where a real user's cache lives.
+    // No cache directory is named, so bunx keys the cache off $HOME, as a real
+    // user's run does.
     delete env.BUN_INSTALL_CACHE_DIR;
     delete env.BUN_INSTALL;
     delete env.XDG_CACHE_HOME;
     env.HOME = tmpdirSync();
 
-    const pkg = "bunx-rpath-fixture";
-    const uid = process.getuid!();
-    const marker = "BUNX_RPATH_PLANTED_LIB_LOADED";
-    // `@img/sharp-linux-x64` climbs five levels. Cover one to eight.
-    const climbs = [1, 2, 3, 4, 5, 6, 7, 8];
-
-    using buildDir = tempDir("bunx-rpath-build", {
+    const pkg = "bunx-optional-dep-fixture";
+    const marker = "BUNX_PLANTED_MODULE_LOADED";
+    using buildDir = tempDir("bunx-optional-dep-build", {
       "package/package.json": JSON.stringify({ name: pkg, version: "1.0.0", bin: { [pkg]: "cli.js" } }),
-      "package/cli.js": `#!/usr/bin/env bun
-let answer = null;
-let error = null;
+      // The optional-dependency probe. It is not a dependency of the package.
+      // The shebang is node's, the shape almost every npm CLI ships.
+      "package/cli.js": `#!/usr/bin/env node
+let helper = "none";
 try {
-  answer = require("./lib/addon.node").answer;
-} catch (e) {
-  error = e.code ?? String(e);
-}
-console.log(JSON.stringify({ ran: true, answer, error }));
-`,
-      "package/foo.c": `int foo(void) { return 777; }\n`,
-      "package/addon.c": `typedef struct napi_env__* napi_env;
-typedef struct napi_value__* napi_value;
-int napi_create_int32(napi_env, int, napi_value*);
-int napi_set_named_property(napi_env, napi_value, const char*, napi_value);
-int foo(void);
-napi_value napi_register_module_v1(napi_env env, napi_value exports) {
-  napi_value v;
-  napi_create_int32(env, foo(), &v);
-  napi_set_named_property(env, exports, "answer", v);
-  return exports;
-}
-`,
-      // What the other local user puts in the temp directory.
-      "planted.c": `#include <stdio.h>
-__attribute__((constructor)) static void init(void) { fprintf(stderr, "${marker}\\n"); }
-int foo(void) { return 666; }
+  helper = require("zz-optional");
+} catch {}
+console.log(JSON.stringify({ helper }));
 `,
     });
-    const build = String(buildDir);
-    const pkgRoot = join(build, "package");
-    await mkdir(join(pkgRoot, "lib"), { recursive: true });
-
-    const runCc = async (cwd: string, args: string[]) => {
-      await using proc = spawn({ cmd: [cc!, ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(`${stdout}${stderr}`.trim()).toBe("");
-      expect(code).toBe(0);
-    };
-
-    // The addon needs libfoo.so and looks for it `..`-wards. The package does
-    // not ship the library, so only a search path decides what gets loaded.
-    await runCc(pkgRoot, ["-shared", "-fPIC", "foo.c", "-o", "libfoo.so", "-Wl,-soname,libfoo.so"]);
-    await runCc(pkgRoot, [
-      "-shared",
-      "-fPIC",
-      "addon.c",
-      "-o",
-      "lib/addon.node",
-      "-L.",
-      "-lfoo",
-      ...climbs.map(n => "-Wl,-rpath,$ORIGIN/" + "../".repeat(n) + "x/lib"),
-    ]);
-    await rm(join(pkgRoot, "libfoo.so"));
-
+    // Executable, so the shebang decides the runtime the way a published CLI does.
+    chmodSync(join(String(buildDir), "package", "cli.js"), 0o755);
     const tgzDir = tmpdirSync();
-    await Bun.$`tar -czf ${join(tgzDir, `${pkg}-1.0.0.tgz`)} -C ${build} package`.quiet();
+    await Bun.$`tar -czf ${join(tgzDir, `${pkg}-1.0.0.tgz`)} -C ${String(buildDir)} package`.quiet();
 
-    await mkdir(join(env.TMPDIR, "x", "lib"), { recursive: true });
-    await runCc(build, [
-      "-shared",
-      "-fPIC",
-      "planted.c",
-      "-o",
-      join(env.TMPDIR, "x", "lib", "libfoo.so"),
-      "-Wl,-soname,libfoo.so",
-    ]);
+    // What any local user can put in a shared temp directory.
+    await mkdir(join(env.TMPDIR, "node_modules", "zz-optional"), { recursive: true });
+    await writeFile(
+      join(env.TMPDIR, "node_modules", "zz-optional", "index.js"),
+      `console.error("${marker}");\nmodule.exports = "planted";\n`,
+    );
+    await writeFile(
+      join(env.TMPDIR, "node_modules", "zz-optional", "package.json"),
+      JSON.stringify({ name: "zz-optional", version: "1.0.0", main: "index.js" }),
+    );
 
     using registry = Bun.serve({
       port: 0,
@@ -1515,25 +1468,225 @@ int foo(void) { return 666; }
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain(marker);
-    // The addon ran and found no libfoo.so anywhere, rather than the require
-    // being skipped.
-    expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({
-      ran: true,
-      answer: null,
-      error: "ERR_DLOPEN_FAILED",
-    });
+    expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ helper: "none" });
     expect(exitCode).toBe(0);
-
-    // The tree is under the per-user cache root, and nothing bunx owns is left
-    // in the temp directory.
-    const cacheRoot = join(env.HOME, ".bun", "install", "cache", `.bunx-${uid}`);
-    expect(statSync(cacheRoot).mode & 0o777).toBe(0o700);
-    expect(statSync(join(cacheRoot, `${pkg}@latest`, "node_modules", ".bin")).isDirectory()).toBe(true);
-    expect(readdirSync(env.TMPDIR).filter(entry => entry.includes("bunx-"))).toEqual([]);
-    // The install cache directory itself keeps the mode bun install gives it.
-    expect(statSync(join(env.HOME, ".bun", "install", "cache")).mode & 0o777).not.toBe(0o700);
   },
 );
+
+// The install bunx spawns has its own package.json in its own cache directory.
+// The directories above that are the user's cache and home, so a package.json
+// there is not a workspace root for this install and must not fail it.
+it.concurrent.skipIf(isWindows)("installs even when an ancestor package.json is malformed", async () => {
+  const { x_dir, env } = setup();
+  delete env.BUN_INSTALL_CACHE_DIR;
+  delete env.BUN_INSTALL;
+  delete env.XDG_CACHE_HOME;
+  env.HOME = tmpdirSync();
+  await writeFile(join(env.HOME, "package.json"), "{");
+
+  const pkg = "bunx-ancestor-fixture";
+  using buildDir = tempDir("bunx-ancestor-build", {
+    "package/package.json": JSON.stringify({ name: pkg, version: "1.0.0", bin: { [pkg]: "cli.js" } }),
+    "package/cli.js": `#!/bin/sh\necho ancestor-ok\n`,
+  });
+  chmodSync(join(String(buildDir), "package", "cli.js"), 0o755);
+  const tgzDir = tmpdirSync();
+  await Bun.$`tar -czf ${join(tgzDir, `${pkg}-1.0.0.tgz`)} -C ${String(buildDir)} package`.quiet();
+
+  using registry = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const path = decodeURIComponent(new URL(req.url).pathname);
+      if (path === `/${pkg}`) {
+        return Response.json({
+          name: pkg,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: pkg,
+              version: "1.0.0",
+              bin: { [pkg]: "cli.js" },
+              dist: { tarball: `http://localhost:${registry.port}/${pkg}/-/${pkg}-1.0.0.tgz` },
+            },
+          },
+        });
+      }
+      if (path === `/${pkg}/-/${pkg}-1.0.0.tgz`) return new Response(Bun.file(join(tgzDir, `${pkg}-1.0.0.tgz`)));
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "x", pkg],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: { ...env, npm_config_registry: `http://localhost:${registry.port}/` },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("package.json");
+  expect(stdout).toContain("ancestor-ok");
+  expect(exitCode).toBe(0);
+});
+
+// A native addon carries its own library search paths (DT_RPATH, DT_RUNPATH,
+// LC_RPATH). They are relative to the addon's own directory and may climb out
+// of the package with `..`, which the dynamic loader resolves and searches. So
+// the bunx cache has to sit in a tree whose directories belong to the current
+// user: under the shared temp directory, a climb lands where any local user
+// can put a library, and that library is loaded into the process of the user
+// who ran bunx. Here `$TMPDIR` stands in for the shared temp directory.
+//
+// Linux only: `$ORIGIN` in `DT_RUNPATH` is what the fixture links against, and
+// macOS gives each user their own `$TMPDIR` anyway. The cache root is the same
+// on both.
+const cc = isLinux ? (Bun.which("cc") ?? Bun.which("clang") ?? Bun.which("gcc")) : null;
+
+it.concurrent.skipIf(!cc)("does not load a library that another local user put in the temp directory", async () => {
+  const { x_dir, env } = setup();
+  // The default resolution: no cache directory is named, so bunx keys the
+  // cache off $HOME. `setup` points the install cache at a temp directory,
+  // which is not where a real user's cache lives.
+  delete env.BUN_INSTALL_CACHE_DIR;
+  delete env.BUN_INSTALL;
+  delete env.XDG_CACHE_HOME;
+  env.HOME = tmpdirSync();
+
+  const pkg = "bunx-rpath-fixture";
+  const uid = process.getuid!();
+  const marker = "BUNX_RPATH_PLANTED_LIB_LOADED";
+  // `@img/sharp-linux-x64` climbs five levels. Cover one to eight.
+  const climbs = [1, 2, 3, 4, 5, 6, 7, 8];
+
+  using buildDir = tempDir("bunx-rpath-build", {
+    "package/package.json": JSON.stringify({ name: pkg, version: "1.0.0", bin: { [pkg]: "cli.js" } }),
+    "package/cli.js": `#!/usr/bin/env bun
+let answer = null;
+let error = null;
+try {
+  answer = require("./lib/addon.node").answer;
+} catch (e) {
+  error = e.code ?? String(e);
+}
+console.log(JSON.stringify({ ran: true, answer, error }));
+`,
+    "package/foo.c": `int foo(void) { return 777; }\n`,
+    "package/addon.c": `typedef struct napi_env__* napi_env;
+typedef struct napi_value__* napi_value;
+int napi_create_int32(napi_env, int, napi_value*);
+int napi_set_named_property(napi_env, napi_value, const char*, napi_value);
+int foo(void);
+napi_value napi_register_module_v1(napi_env env, napi_value exports) {
+  napi_value v;
+  napi_create_int32(env, foo(), &v);
+  napi_set_named_property(env, exports, "answer", v);
+  return exports;
+}
+`,
+    // What the other local user puts in the temp directory.
+    "planted.c": `#include <stdio.h>
+__attribute__((constructor)) static void init(void) { fprintf(stderr, "${marker}\\n"); }
+int foo(void) { return 666; }
+`,
+  });
+  const build = String(buildDir);
+  const pkgRoot = join(build, "package");
+  await mkdir(join(pkgRoot, "lib"), { recursive: true });
+
+  const runCc = async (cwd: string, args: string[]) => {
+    await using proc = spawn({ cmd: [cc!, ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(`${stdout}${stderr}`.trim()).toBe("");
+    expect(code).toBe(0);
+  };
+
+  // The addon needs libfoo.so and looks for it `..`-wards. The package does
+  // not ship the library, so only a search path decides what gets loaded.
+  await runCc(pkgRoot, ["-shared", "-fPIC", "foo.c", "-o", "libfoo.so", "-Wl,-soname,libfoo.so"]);
+  await runCc(pkgRoot, [
+    "-shared",
+    "-fPIC",
+    "addon.c",
+    "-o",
+    "lib/addon.node",
+    "-L.",
+    "-lfoo",
+    ...climbs.map(n => "-Wl,-rpath,$ORIGIN/" + "../".repeat(n) + "x/lib"),
+  ]);
+  await rm(join(pkgRoot, "libfoo.so"));
+
+  const tgzDir = tmpdirSync();
+  await Bun.$`tar -czf ${join(tgzDir, `${pkg}-1.0.0.tgz`)} -C ${build} package`.quiet();
+
+  await mkdir(join(env.TMPDIR, "x", "lib"), { recursive: true });
+  await runCc(build, [
+    "-shared",
+    "-fPIC",
+    "planted.c",
+    "-o",
+    join(env.TMPDIR, "x", "lib", "libfoo.so"),
+    "-Wl,-soname,libfoo.so",
+  ]);
+
+  using registry = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const path = decodeURIComponent(new URL(req.url).pathname);
+      if (path === `/${pkg}`) {
+        return Response.json({
+          name: pkg,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: pkg,
+              version: "1.0.0",
+              bin: { [pkg]: "cli.js" },
+              dist: { tarball: `http://localhost:${registry.port}/${pkg}/-/${pkg}-1.0.0.tgz` },
+            },
+          },
+        });
+      }
+      if (path === `/${pkg}/-/${pkg}-1.0.0.tgz`) return new Response(Bun.file(join(tgzDir, `${pkg}-1.0.0.tgz`)));
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "x", pkg],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: {
+      ...env,
+      npm_config_registry: `http://localhost:${registry.port}/`,
+      // `cli.js` starts with `#!/usr/bin/env bun`.
+      PATH: `${dirname(bunExe())}${delimiter}${env.PATH}`,
+    },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain(marker);
+  // The addon ran and found no libfoo.so anywhere, rather than the require
+  // being skipped.
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({
+    ran: true,
+    answer: null,
+    error: "ERR_DLOPEN_FAILED",
+  });
+  expect(exitCode).toBe(0);
+
+  // The tree is under the per-user cache root, and nothing bunx owns is left
+  // in the temp directory.
+  const cacheRoot = join(env.HOME, ".bun", "install", "cache", `.bunx-${uid}`);
+  expect(statSync(cacheRoot).mode & 0o777).toBe(0o700);
+  expect(statSync(join(cacheRoot, `${pkg}@latest`, "node_modules", ".bin")).isDirectory()).toBe(true);
+  expect(readdirSync(env.TMPDIR).filter(entry => entry.includes("bunx-"))).toEqual([]);
+  // The install cache directory itself keeps the mode bun install gives it.
+  expect(statSync(join(env.HOME, ".bun", "install", "cache")).mode & 0o777).not.toBe(0o700);
+});
 
 // When no install cache directory resolves, the cache root is a private
 // directory in the temp directory rather than a per-package directory one
@@ -1549,13 +1702,45 @@ it.concurrent.skipIf(isWindows)(
     delete env.XDG_CACHE_HOME;
     delete env.HOME;
 
-    const subprocess = spawn({
-      cmd: [bunExe(), "x", "uglify-js@3.14.1", "-v"],
+    const pkg = "bunx-fallback-fixture";
+    using buildDir = tempDir("bunx-fallback-build", {
+      "package/package.json": JSON.stringify({ name: pkg, version: "1.0.0", bin: { [pkg]: "cli.js" } }),
+      "package/cli.js": `#!/bin/sh\necho fallback-ok\n`,
+    });
+    chmodSync(join(String(buildDir), "package", "cli.js"), 0o755);
+    const tgzDir = tmpdirSync();
+    await Bun.$`tar -czf ${join(tgzDir, `${pkg}-1.0.0.tgz`)} -C ${String(buildDir)} package`.quiet();
+
+    using registry = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const path = decodeURIComponent(new URL(req.url).pathname);
+        if (path === `/${pkg}`) {
+          return Response.json({
+            name: pkg,
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: pkg,
+                version: "1.0.0",
+                bin: { [pkg]: "cli.js" },
+                dist: { tarball: `http://localhost:${registry.port}/${pkg}/-/${pkg}-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (path === `/${pkg}/-/${pkg}-1.0.0.tgz`) return new Response(Bun.file(join(tgzDir, `${pkg}-1.0.0.tgz`)));
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await using subprocess = spawn({
+      cmd: [bunExe(), "x", pkg],
       cwd: x_dir,
       stdout: "pipe",
       stdin: "ignore",
       stderr: "pipe",
-      env,
+      env: { ...env, npm_config_registry: `http://localhost:${registry.port}/` },
     });
     const [err, out, exitCode] = await Promise.all([
       subprocess.stderr.text(),
@@ -1563,11 +1748,38 @@ it.concurrent.skipIf(isWindows)(
       subprocess.exited,
     ]);
     expect(err).not.toContain("error:");
-    expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
+    expect(out).toContain("fallback-ok");
     expect(exitCode).toBe(0);
 
     const cacheRoot = join(env.TMPDIR, `.bunx-${uid}`);
     expect(statSync(cacheRoot).mode & 0o777).toBe(0o700);
-    expect(statSync(join(cacheRoot, "uglify-js@3.14.1", "node_modules", ".bin")).isDirectory()).toBe(true);
+    expect(statSync(join(cacheRoot, `${pkg}@latest`, "node_modules", ".bin")).isDirectory()).toBe(true);
   },
 );
+
+// `bunx` must not create anything when it does not install: the root is a
+// directory in the user's home, and a run that finds its binary on `$PATH`
+// has no business writing there.
+it.concurrent.skipIf(isWindows)("creates nothing when it does not install", async () => {
+  const { x_dir, env } = setup();
+  const uid = process.getuid!();
+  delete env.BUN_INSTALL_CACHE_DIR;
+  delete env.BUN_INSTALL;
+  delete env.XDG_CACHE_HOME;
+  env.HOME = tmpdirSync();
+
+  await using subprocess = spawn({
+    cmd: [bunExe(), "x", "--no-install", "bunx-absent-fixture"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, exitCode] = await Promise.all([subprocess.stderr.text(), subprocess.exited]);
+  expect(err).toContain("Could not find an existing 'bunx-absent-fixture' binary to run");
+  expect(exitCode).toBe(1);
+
+  expect(existsSync(join(env.HOME, ".bun"))).toBe(false);
+  expect(readdirSync(env.TMPDIR).filter(entry => entry.includes("bunx-"))).toEqual([]);
+});

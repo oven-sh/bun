@@ -375,11 +375,8 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 pub struct CacheDir {
     pub path: Vec<u8>,
     /// True when nothing named a cache directory and `path` is
-    /// `node_modules/.bun-cache` under the working directory.
-    ///
-    /// `bunx` roots its package cache in this directory and needs one that
-    /// only the current user can write. The working directory is not one, so
-    /// `bunx` uses its own per-user root in the temp directory instead.
+    /// `node_modules/.bun-cache` under the working directory. `bunx` needs a
+    /// root only the current user can write, and that is not one.
     pub is_cwd_fallback: bool,
 }
 

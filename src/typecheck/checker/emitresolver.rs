@@ -461,11 +461,10 @@ impl EmitResolver {
         // guard against circular imports
         let mut visited: Set<u64> = Set::default();
         while !export_symbol.is_nil() {
-            let id = get_symbol_id(a, export_symbol);
-            if visited.has(&id) {
+            if visited.has(&get_symbol_id(a, export_symbol)) {
                 break;
             }
-            visited.add(id);
+            visited.add(get_symbol_id(a, export_symbol));
 
             let mut next_symbol = SymbolId::NIL;
             for declaration in a.sym(export_symbol).declarations.iter() {

@@ -403,8 +403,11 @@ pub mod checker {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Arg, Ast, DiagnosticId, DiagnosticStore, DiagnosticsCollection, NodeFlags, NodeId, SymbolId};
-    use crate::checker::{Checker, MAX_SERIALIZATION_LEVEL};
+    use crate::ast::{
+        Arg, Ast, DiagnosticId, DiagnosticStore, DiagnosticsCollection, File, NodeFlags, NodeId, SourceFiles, SymbolId,
+    };
+    use crate::checker::{Checker, MAX_SERIALIZATION_LEVEL, ProgramFiles};
+    use crate::tspath::Path;
     use crate::core::{CompilerOptions, LinkStore};
     use crate::diagnostics;
 
@@ -416,8 +419,24 @@ mod tests {
     #[test]
     fn deferred_diagnostics_run_once_in_order() {
         let options = CompilerOptions::default();
+        // The stand-in context finds the file of a node by the number of the node: node 1 is the root of `file`, node 2 a node of it.
+        let none = File::default();
+        let mut file = File::default();
+        file.source_file.root = NodeId(1);
+        file.source_file.file_name = b"a.ts".to_vec();
+        file.source_file.path = Path(b"/a.ts".to_vec());
+        file.source_file.diagnostics = vec![DiagnosticId(1)];
+        let files = [&none, &file, &file];
+        let ast = Ast { files: &files };
+        let program_files = ProgramFiles { ast };
+        assert_eq!(program_files.file_name(NodeId(1)), b"a.ts");
+        assert_eq!(program_files.path(NodeId(1)), b"/a.ts");
+        assert_eq!(program_files.text(NodeId(1)), b"");
+        assert!(program_files.ecma_line_map(NodeId(1)).is_empty());
+        assert_eq!(program_files.file_name(NodeId(2)), b"");
+        assert_eq!(program_files.file_name(NodeId(9)), b"");
         let mut c = Checker {
-            ast: Ast { files: &[] },
+            ast,
             compiler_options: &options,
             diagnostic_store: DiagnosticStore::default(),
             diagnostics: DiagnosticsCollection::default(),
@@ -491,5 +510,18 @@ mod tests {
         assert_eq!(c.get_suggestion_diagnostics(NodeId::NIL).len(), 2);
         // The nil symbol and a symbol without declarations are not deprecated.
         assert!(!c.is_deprecated_symbol(SymbolId::NIL));
+        assert!(!c.is_deprecated_declaration(n1));
+        // errorOrSuggestion makes the diagnostic and hands it to one of the two collections.
+        let (errors, suggestions) = (c.get_diagnostics_exported(n1).len(), c.get_suggestion_diagnostics(n1).len());
+        c.error_or_suggestion(true, n1, diagnostics::CANNOT_FIND_NAME_0, &[Arg::Str(b"d")]);
+        c.error_or_suggestion(false, n1, diagnostics::CANNOT_FIND_NAME_0, &[Arg::Str(b"e")]);
+        assert_eq!(c.get_diagnostics_exported(n1).len(), errors + 1);
+        assert_eq!(c.get_suggestion_diagnostics(n1).len(), suggestions + 1);
+        // A canceled check answers no diagnostics.
+        c.was_canceled = true;
+        assert!(c.get_diagnostics_exported(n1).is_empty());
+        c.was_canceled = false;
+        assert!(c.has_parse_diagnostics(n1));
+        assert!(!c.has_parse_diagnostics(NodeId(0)));
     }
 }

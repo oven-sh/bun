@@ -180,6 +180,9 @@ pub(super) struct Relater {
     /// `Checker::cycles` when the question was asked. Once it has moved, nothing found out holds for others.
     cycles: u64,
     steps: u32,
+    /// tsgo compares the two with reports outright (`checkTypeAssignableTo`), where here a run without reports has gone before. There,
+    /// what is under way is not yet remembered as a failure.
+    pub(super) is_only_run: bool,
 }
 
 impl Relater {
@@ -202,6 +205,7 @@ impl Relater {
             relation_count: 2_000_000,
             cycles,
             steps: 0,
+            is_only_run: false,
         }
     }
 }
@@ -3593,6 +3597,7 @@ impl<'p> Checker<'p> {
         if missed.is_none()
             && !self.retracing
             && let Some(entry) = self.p.relations.get(&key)
+            && !(r.is_only_run && entry & FAILED != 0 && r.maybe_keys_set.contains(&key))
         {
             self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
             if entry & COMPLEXITY_OVERFLOW != 0 {
@@ -3644,7 +3649,9 @@ impl<'p> Checker<'p> {
         }
         let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
         if is_too_deep || self.is_stack_low() || self.is_out_of_time() {
-            self.relation_too_deep |= is_too_deep;
+            if is_too_deep {
+                self.relations_too_deep.push((r.top_source, r.top_target));
+            }
             r.maybe_keys_set.remove(&key);
             r.overflow = true;
             return Ternary::FALSE;

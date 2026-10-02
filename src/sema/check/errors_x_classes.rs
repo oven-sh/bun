@@ -1088,9 +1088,14 @@ impl Checker<'_> {
             | PropSource::Literal(..)
             | PropSource::Symbol(_)
             | PropSource::Assigned(..) => Some((true, false)),
-            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => {
+            // `addMemberForKeyTypeWorker`: `prop.Declarations = modifiersProp.Declarations`
+            PropSource::Intersected(..) | PropSource::Copy(..) | PropSource::Mapped(..) => {
+                let parts = match &prop.source {
+                    PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => &parts[..],
+                    _ => prop.declared_by_modifiers_property(),
+                };
                 let (mut is_declared, mut is_abstract) = (false, false);
-                for part in parts.iter() {
+                for part in parts {
                     let (declared, abstract_) = self.declarations_of_base_property(part)?;
                     is_declared |= declared;
                     is_abstract |= abstract_;

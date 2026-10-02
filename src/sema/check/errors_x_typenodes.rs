@@ -818,7 +818,7 @@ impl Checker<'_> {
             if bound.is_unchecked_type(t) {
                 continue;
             }
-            self.relation_too_deep = false;
+            self.relations_too_deep.clear();
             for placeholder in hir.ids(types) {
                 let ty = self.type_from_node(file, placeholder);
                 if self.is_known(ty)
@@ -829,12 +829,13 @@ impl Checker<'_> {
                     self.report_not_assignable_with_end(ty, constraint, start, end, 2322, out);
                 }
             }
-            if std::mem::take(&mut self.relation_too_deep) {
-                let start = hir.types[t].pos;
-                out.push(Diagnostic { start, code: 2321 });
+            for (source, target) in std::mem::take(&mut self.relations_too_deep) {
                 let end = self.end_of_type_node(file, TypeNodeId(t as u32));
-                self.note(start, end, 2321, Vec::new());
+                let at = (file, hir.types[t].pos, end);
+                self.error(at, 2321, &[Arg::Type(source), Arg::Type(target)]);
             }
+            // Printing compares too.
+            self.relations_too_deep.clear();
         }
     }
 

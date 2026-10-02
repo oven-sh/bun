@@ -273,6 +273,40 @@ impl Checker<'_> {
         })
     }
 
+    /// `ConstEnumInliningTransformer`, the last transformer of `emitJSFile`: `GetConstantValue` asks `checkExpressionCached` of every
+    /// property and element access that is written out, a node before its children. tsgo's test harness writes `.types` and
+    /// `.symbols` from a program that has emitted BEFORE it is checked (`compileFilesWithHost`, `Options::emits_first`), so there each
+    /// access is asked first, outside the function it is in. It shows where the error of an access prints a return type: under way
+    /// in a check (7023, `any`), not begun here. JavaScript files are left out: whether one is written goes by `outDir`. tsgo emits
+    /// all the files and then checks them: here it is file by file.
+    pub(super) fn inline_const_enums(&mut self, file: FileId) {
+        let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
+        let (options, module) = (&files.options, files.module(file));
+        // `emitJSFile`, `sourceFileMayBeEmitted`, `GetIsolatedModules`
+        if options.no_emit
+            || options.emit_declaration_only
+            || options.isolated_modules
+            || options.verbatim_module_syntax
+            || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+            || hir.is_js
+            || module.is_lib
+            || module.is_from_external_library
+        {
+            return;
+        }
+        let index = self.exprs_by_kind(file);
+        let mut accesses: Vec<ExprId> = [ExprTag::Dot, ExprTag::Index]
+            .iter()
+            .flat_map(|&tag| index.of(tag).iter().copied())
+            .filter(|&e| !bound.is_unchecked(e.idx()) && !bound.is_in_type_query(e))
+            .collect();
+        // Of two that start at one place the outer is made last.
+        accesses.sort_by_key(|&e| (self.start_of(file, e), std::cmp::Reverse(e)));
+        for e in accesses {
+            self.type_of_expr(file, e);
+        }
+    }
+
     // ───────────────────────────── what a module exports ─────────────────────────────
 
     /// `getExportsOfModuleWorker`: 2308

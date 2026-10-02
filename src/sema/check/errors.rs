@@ -154,6 +154,9 @@ impl Checker<'_> {
             return self.checked(syntactic, None, Vec::new(), false);
         }
         self.checking = Some(file);
+        if self.p.files.options.emits_first {
+            self.inline_const_enums(file);
+        }
         self.check_source_file(file);
         // `BUN_SEMA_TRACE_PASSES=1`: which pass added or removed each error.
         static TRACE_PASSES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

@@ -130,6 +130,20 @@ impl<'p> Checker<'p> {
         all
     }
 
+    /// `getDeclarationName`, of the name `[e]` where `IsSignedNumericLiteral(e)`: `TokenToString(operator) + operand.Text()`.
+    fn declaration_name_of_signed_numeric_literal(&self, file: FileId, e: ExprId) -> Option<Atom> {
+        let hir = self.hir(file);
+        let ExprKind::Unary { op, operand } = hir[e].kind else {
+            return None;
+        };
+        let ExprKind::Number(number) = hir[operand].kind else {
+            return None;
+        };
+        let sign = if op == UnOp::Plus { '+' } else { '-' };
+        let text = crate::atom::number_to_string(hir.numbers[number as usize]);
+        Some(self.files().atoms.intern_str(&format!("{sign}{text}")))
+    }
+
     /// `getResolvedMembersOrExportsOfSymbol`, as far as it adds to what the binder has.
     fn late_bound_members(
         &mut self,
@@ -183,8 +197,14 @@ impl<'p> Checker<'p> {
         let mut late: Vec<(u8, Vec<(FileId, MemberDeclaration)>)> = Vec::new();
         let mut late_symbols: FxHashMap<Atom, usize> = FxHashMap::default();
         for (file, declaration, key, flags) in computed {
-            // `hasLateBindableName`
-            let Some(name) = self.declared_member_name(file, key) else {
+            // `hasLateBindableName`. A literal is named by the binder, which keeps the sign: `[+1]` declares `+1` and is the property `1`.
+            let name = match key {
+                PropKey::Computed(e) if is_signed_numeric_literal(self.hir(file), e) => {
+                    self.declaration_name_of_signed_numeric_literal(file, e)
+                }
+                _ => self.declared_member_name(file, key),
+            };
+            let Some(name) = name else {
                 continue;
             };
             let mut index = *late_symbols.entry(name).or_insert(late.len());

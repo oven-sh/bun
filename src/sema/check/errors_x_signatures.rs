@@ -1281,7 +1281,7 @@ impl Checker<'_> {
                         let mapper = self.mapper_from(&[param], &[default]);
                         let constraint = self.instantiate(constraint, mapper);
                         let constraint = self.type_with_this_argument(constraint, default);
-                        self.relation_too_deep = false;
+                        self.relations_too_deep.clear();
                         if self.is_known_not_to_fit(default, constraint) {
                             let end = self.end_of_type_node_from(file, decl.default, start);
                             self.report_not_assignable_with_end(
@@ -1289,11 +1289,15 @@ impl Checker<'_> {
                             );
                         }
                         // `checkTypeRelatedToEx`: a comparison without an error node reports at `currentNode`, the declaration.
-                        if std::mem::take(&mut self.relation_too_deep)
-                            && let Some(start) = name_of_type_parameter_owner(hir, tp)
-                        {
-                            out.push(Diagnostic { start, code: 2321 });
+                        let too_deep = std::mem::take(&mut self.relations_too_deep);
+                        if let Some(start) = name_of_type_parameter_owner(hir, tp) {
+                            for (source, target) in too_deep {
+                                let at = self.place_of_token(file, start);
+                                self.error(at, 2321, &[Arg::Type(source), Arg::Type(target)]);
+                            }
                         }
+                        // Printing compares too.
+                        self.relations_too_deep.clear();
                     }
                 }
             }

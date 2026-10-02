@@ -795,7 +795,21 @@ impl Checker<'_> {
                     && self.is_valid_base_type(base)
                     && self.heir_against_base(ty, base, this).is_some()
                 {
-                    self.report_not_assignable(ty, base, name_pos, 2430, out);
+                    // `getTypeWithThisArgument` gives back what is no reference.
+                    let mut with_this = [ty, base];
+                    for t in &mut with_this {
+                        if self.takes_this_argument(*t) {
+                            *t = self.type_with_this_argument(*t, this);
+                        }
+                    }
+                    let [type_with_this, base_with_this] = with_this;
+                    self.report_not_assignable_in_one_run(
+                        type_with_this,
+                        base_with_this,
+                        name_pos,
+                        2430,
+                        out,
+                    );
                     self.explain_as_another(name_pos);
                     self.explain_base_of_interface(sym, name_pos, base);
                 }

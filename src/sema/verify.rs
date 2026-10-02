@@ -1,22 +1,11 @@
 //! Configuration diagnostics that do not depend on the program: 5051 5052 5053 5059 5061 5062 5063 5066 5067 5069 5074 5089 5090 5091
-//! 5095 5096 5098 5102 5108 5109 5110 6266 6304 6379 18035.
+//! 5095 5096 5102 5108 5109 5110 6266 6304 6379 18035.
 //!
-//! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths. 6266 is
-//! reported by `convertJsonOption` (tsoptions) while the configuration is parsed.
+//! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths.
 
 use crate::json::Json;
 use crate::json_places::{self, Value};
 use crate::resolve::{JsxEmit, ModuleKind, Options};
-
-/// The options declared `IsCommandLineOnly` (tsoptions).
-const COMMAND_LINE_ONLY_OPTIONS: [&str; 6] = [
-    "help",
-    "ignoreConfig",
-    "listFilesOnly",
-    "locale",
-    "showConfig",
-    "watch",
-];
 
 /// `configDirTemplate` (tsoptions)
 const CONFIG_DIR_TEMPLATE: &str = "${configDir}";
@@ -229,13 +218,6 @@ pub fn verify_compiler_options(
         } else {
             Problem::new(5108, &[name, value], Place::Value(name))
         });
-    }
-
-    // `convertJsonOption` reports a command-line-only option by its key, whatever its value.
-    for name in COMMAND_LINE_ONLY_OPTIONS {
-        if compiler.get(name).is_some() {
-            out.push(Problem::new(6266, &[name], Place::Key(name, "")));
-        }
     }
 
     // What is no longer there.
@@ -489,11 +471,9 @@ pub fn verify_compiler_options(
             Place::Value("allowImportingTsExtensions"),
         ));
     }
-    // `GetModuleResolutionKind`
+    // `GetModuleResolutionKind`: `classic` and `node10` are as good as not said.
     let module = options.module;
     let resolution = match resolution_said.as_str() {
-        "classic" => "Classic",
-        "node10" | "node" => "Node10",
         "node16" => "Node16",
         "nodenext" => "NodeNext",
         "bundler" => "Bundler",
@@ -501,21 +481,6 @@ pub fn verify_compiler_options(
         _ if module.is_node() => "Node16",
         _ => "Bundler",
     };
-    // `moduleResolutionSupportsPackageJsonExportsAndImports`
-    if matches!(resolution, "Classic" | "Node10") {
-        for name in ["resolvePackageJsonExports", "resolvePackageJsonImports"] {
-            if is_true(name) {
-                about(&mut out, 5098, name, "", &[]);
-            }
-        }
-        if compiler
-            .get("customConditions")
-            .and_then(parsed_list)
-            .is_some()
-        {
-            about(&mut out, 5098, "customConditions", "", &[]);
-        }
-    }
     if resolution == "Bundler"
         && !(module >= ModuleKind::Es2015 && module <= ModuleKind::EsNext)
         && module != ModuleKind::Preserve

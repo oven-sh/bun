@@ -658,9 +658,16 @@ impl Checker<'_> {
                 )
             };
             let comparable = Relation::Comparable;
-            let Some(said) =
-                self.report_unrelated(given, target, comparable, (at, end), 2352, false, out)
-            else {
+            let Some(said) = self.report_unrelated(
+                given,
+                target,
+                comparable,
+                (at, end),
+                2352,
+                false,
+                false,
+                out,
+            ) else {
                 continue;
             };
             if self.explains {
@@ -3190,6 +3197,20 @@ impl Checker<'_> {
         self.report_not_assignable_as(source, target, at, end, head, (false, false), out);
     }
 
+    /// `checkTypeAssignableTo(source, target, errorNode, headMessage)`, of two that are not assignable and that tsgo has not compared
+    /// before (`Relater::is_only_run`). `at`: where `errorNode`, a name, starts.
+    pub(super) fn report_not_assignable_in_one_run(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        at: u32,
+        head: u32,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let assignable = Relation::Assignable;
+        self.report_unrelated(source, target, assignable, (at, 0), head, false, true, out);
+    }
+
     /// `named_otherwise`: whether `source`, and whether `target`, is written as an alias that is not the name it is compared under.
     #[allow(clippy::too_many_arguments)]
     fn report_not_assignable_as(
@@ -3232,12 +3253,14 @@ impl Checker<'_> {
             (at, end),
             head,
             is_named_otherwise,
+            false,
             out,
         );
     }
 
     /// `checkTypeRelatedToEx(source, target, relation, errorNode, headMessage)`, of two types that the caller has found not to be
-    /// related: reports what it reports, and gives that back. `place`: from where to where `errorNode` goes.
+    /// related: reports what it reports, and gives that back. `place`: from where to where `errorNode` goes. `is_only_run`: see
+    /// `Relater::is_only_run`.
     #[allow(clippy::too_many_arguments)]
     fn report_unrelated(
         &mut self,
@@ -3247,6 +3270,7 @@ impl Checker<'_> {
         place: (u32, u32),
         head: u32,
         is_named_otherwise: bool,
+        is_only_run: bool,
         out: &mut Vec<Diagnostic>,
     ) -> Option<Diagnostic> {
         let place = (self.checking?, place.0, place.1);
@@ -3257,6 +3281,7 @@ impl Checker<'_> {
             place,
             Some(head),
             is_named_otherwise,
+            is_only_run,
         );
         let diagnostic = match diagnostic {
             // It is not the relation that the caller goes by (`is_refused_by_hosting_alias`): there are no reasons to give.

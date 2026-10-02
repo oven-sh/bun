@@ -196,6 +196,16 @@ const OPTIONS: &[(&str, Kind)] = &[
     ("version", Kind::Boolean),
 ];
 
+/// The options declared `IsCommandLineOnly` (tsoptions).
+const COMMAND_LINE_ONLY_OPTIONS: [&str; 6] = [
+    "help",
+    "ignoreConfig",
+    "listFilesOnly",
+    "locale",
+    "showConfig",
+    "watch",
+];
+
 /// What older versions took and TypeScript 7 has no such option as.
 const REMOVED: &[&str] = &[
     "charset",
@@ -415,6 +425,15 @@ pub fn problems(text: &[u8], options: &[(String, Json)], as_typescript_does: boo
     };
     let mut out = Vec::new();
     for (name, value) in options {
+        if COMMAND_LINE_ONLY_OPTIONS.contains(&name.as_str()) {
+            out.push(Problem {
+                name: name.clone(),
+                code: 6266,
+                args: vec![name.clone()],
+                span: span_of(name, false),
+            });
+            continue;
+        }
         let is_removed = |name: &str| as_typescript_does && REMOVED.contains(&name);
         let Some(kind) = kind_of(name).filter(|_| !is_removed(name)) else {
             let meant = if as_typescript_does {

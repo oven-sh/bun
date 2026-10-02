@@ -3189,7 +3189,7 @@ impl<'p> Checker<'p> {
             && !(self.uncertain
                 || self.relation_gave_up
                 || self.relation_too_complex
-                || self.relation_too_deep
+                || !self.relations_too_deep.is_empty()
                 || self.union_too_complex)
             && self.reliability == 0
             && awaited.is_none_or(|awaited| self.is_known(awaited))

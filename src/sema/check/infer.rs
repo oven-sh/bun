@@ -1953,8 +1953,9 @@ impl<'p> Checker<'p> {
             TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::SilentNever) => true,
             // `checkObjectLiteral`: `objectFlags |= getObjectFlags(t) & ObjectFlagsPropagatingFlags`. `autoType` gets into a literal only
             // as what a target of an assignment pattern is declared as. The members were looked at with the literal.
+            // `getWidenedTypeOfObjectLiteral` keeps the flag, and what is expected of a call is widened (`without_pattern_marks`).
             &TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, ..),
+                origin: Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..),
                 ..
             } if self.is_assignment_target(file, e) => match self.hir(file)[e].kind {
                 ExprKind::Object(props) => props.iter().any(|p| {

@@ -5583,16 +5583,16 @@ impl<'p> Checker<'p> {
                 if is_automatic && init.is_some() {
                     return Some(assigned_to_auto(self, walk.declared, init));
                 }
-                if init.is_none() {
-                    return Some(walk.declared);
-                }
                 // What is assigned only matters if it can tell alternatives apart. It is not looked at otherwise, and may well
                 // depend on this.
                 if !self.is_union(walk.declared) {
                     return Some(walk.declared);
                 }
-                let assigned = self.type_of_declaration_initializer(file, init);
-                Some(reduce(self, walk.declared, assigned))
+                // `getInitialTypeOfVariableDeclaration`: `string` for the variable of a `for`-`in`.
+                match self.initial_type_of_pat(file, hir[d].pat) {
+                    Some(assigned) => Some(reduce(self, walk.declared, assigned)),
+                    None => Some(walk.declared),
+                }
             }
             FlowTarget::Pat(p) => {
                 if walk.reference.root != Root::Symbol(bound.pat_symbol[p.idx()]) {

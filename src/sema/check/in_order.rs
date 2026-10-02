@@ -197,8 +197,18 @@ impl Checker<'_> {
         let symbol = self.bound(file).interface_symbol[interface.idx()];
         if symbol.is_some() {
             let sym = self.files().sym(file, symbol);
-            self.declared_type(sym);
-            self.base_types(sym);
+            let declared = self.declared_type(sym);
+            let bases = self.base_types(sym);
+            // `typeWithThis`, and `getTypeWithThisArgument(baseType, t.thisType)`: made before the members are looked at, and
+            // `isDeeplyNestedType` goes by the order in which types are made. An interface without type parameters may be thisless,
+            // which costs to tell.
+            if !decl.type_params.is_empty() {
+                let this = self.intern(TypeData::ThisParam(sym));
+                self.type_with_this_argument(declared, this);
+                for &base in bases.iter() {
+                    self.type_with_this_argument(base, this);
+                }
+            }
         }
         self.check_type_nodes(file, decl.extends);
         self.check_members(file, decl.members);

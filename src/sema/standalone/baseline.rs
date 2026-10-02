@@ -11,6 +11,7 @@ use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// `srcFolder`
 const SRC: &str = "/.src";
@@ -1129,32 +1130,38 @@ fn run_one(
         }
         compiler.push(("noErrorTruncation".to_owned(), Json::Bool(true)));
     };
-    let mut project: Project = match &config_unit {
-        Some(unit) => {
-            let config_path = absolute(&unit.name, &cwd);
-            host.add_file(&config_path, unit.content.clone());
-            let mut over = said.clone();
-            defaults(&mut over);
-            config::load_as_typescript_does(&host, &config_path, over)
-        }
-        None => {
-            let mut compiler = said.clone();
-            defaults(&mut compiler);
-            config::without_config(&host, &cwd, Json::Object(compiler), files.clone())
-        }
+    if let Some(unit) = &config_unit {
+        host.add_file(&absolute(&unit.name, &cwd), unit.content.clone());
+    }
+    // `compileFilesWithHost` makes two programs of it.
+    let parsed_command_line = || -> Project {
+        let mut project: Project = match &config_unit {
+            Some(unit) => {
+                let mut over = said.clone();
+                defaults(&mut over);
+                config::load_as_typescript_does(&host, &absolute(&unit.name, &cwd), over)
+            }
+            None => {
+                let mut compiler = said.clone();
+                defaults(&mut compiler);
+                config::without_config(&host, &cwd, Json::Object(compiler), files.clone())
+            }
+        };
+        project.files = files.clone();
+        project.options.files = files.clone();
+        // `NewProgram` gets options and file names: there is no `ConfigFile` to explain a root file with.
+        project.options.file_specs.clear();
+        project.options.include_specs.clear();
+        project.options.is_default_include_spec = false;
+        project.options.captures_suggestions = settings
+            .get("capturesuggestions")
+            .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+        project
     };
+    let project = parsed_command_line();
     if !has_baselines && is_unsupported(&project.compiler_options_as_written) {
         return None;
     }
-    project.files = files.clone();
-    project.options.files = files;
-    // `NewProgram` gets options and file names: there is no `ConfigFile` to explain a root file with.
-    project.options.file_specs.clear();
-    project.options.include_specs.clear();
-    project.options.is_default_include_spec = false;
-    project.options.captures_suggestions = settings
-        .get("capturesuggestions")
-        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
 
     // One line per location: unit, line, offset, source text without line breaks, type.
     // `unit_text`: what the unit at `path` says, where that is not `file` itself.
@@ -1253,6 +1260,11 @@ fn run_one(
             write_unit(checker, file, &copy, host.read(&copy).as_deref());
         }
     };
+    let printing_closed_a_circle = AtomicBool::new(false);
+    let note_circle = |program: &bun_sema::check::Program| {
+        let closed = program.printing_closed_a_circle.load(Ordering::Relaxed);
+        printing_closed_a_circle.store(closed, Ordering::Relaxed);
+    };
     let request = Request {
         compiler_options: &[],
         cwd: &cwd,
@@ -1269,7 +1281,9 @@ fn run_one(
         stops_where_tsc_does: false,
         says_it_as_typescript_does: true,
         loaded: None,
-        checked: None,
+        checked: types
+            .is_some()
+            .then_some(&note_circle as &(dyn Fn(&bun_sema::check::Program) + Sync)),
         after_file: types.is_some().then_some(
             &write_types
                 as &(dyn Fn(&mut bun_sema::check::Checker<'_>, bun_sema::program::FileId) + Sync),
@@ -1282,6 +1296,22 @@ fn run_one(
         Report::default(),
         std::time::Instant::now(),
     );
+    // `compileFilesWithHost`: the diagnostics compared are those of a program that is only checked. The types and the symbols are read
+    // from another, which has emitted first. The two differ only where the order of asking shows, so the other is made only there.
+    if printing_closed_a_circle.load(Ordering::Relaxed) {
+        for written in [types, symbols].into_iter().flatten() {
+            written.lock().unwrap().clear();
+        }
+        let mut project = parsed_command_line();
+        project.options.emits_first = true;
+        bun_sema_driver::check_project(
+            &host,
+            project,
+            &request,
+            Report::default(),
+            std::time::Instant::now(),
+        );
+    }
     let inputs = config_unit
         .iter()
         .chain(roots.iter().copied())

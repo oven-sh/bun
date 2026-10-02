@@ -356,8 +356,15 @@ impl<'p> Checker<'p> {
                 (false, Some(self.new_diagnostic(at, 2859, &args)))
             }
             (Some(false), Some(at)) => {
-                let (is_related, diagnostic) =
-                    self.relation_diagnostic(source, target, relation, at, head_message, false);
+                let (is_related, diagnostic) = self.relation_diagnostic(
+                    source,
+                    target,
+                    relation,
+                    at,
+                    head_message,
+                    false,
+                    false,
+                );
                 (
                     is_related,
                     diagnostic.and_then(RelationDiagnostic::into_reported),
@@ -405,7 +412,8 @@ impl<'p> Checker<'p> {
     }
 
     /// The run of `checkTypeRelatedToEx` with `reportErrors`: whether the two are related, and what is reported if they are not. `head`:
-    /// the code of `headMessage`. `is_named_otherwise`: see `Reporter::named_otherwise`.
+    /// the code of `headMessage`. `is_named_otherwise`: see `Reporter::named_otherwise`. `is_only_run`: see `Relater::is_only_run`.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn relation_diagnostic(
         &mut self,
         source: TypeId,
@@ -414,6 +422,7 @@ impl<'p> Checker<'p> {
         error_node: Place,
         head: Option<u32>,
         is_named_otherwise: bool,
+        is_only_run: bool,
     ) -> (bool, Option<RelationDiagnostic>) {
         let mut x = Reporter {
             r: Relater::new(relation, self.cycles),
@@ -423,6 +432,7 @@ impl<'p> Checker<'p> {
             related: Vec::new(),
             budget: 20_000,
         };
+        x.r.is_only_run = is_only_run;
         // These two are never a `headMessage`: they are what `reportRelationError` says for lack of one.
         let head = head.filter(|&code| code != 2322 && code != 2678);
         // What the comparisons made on the way leave behind is for whoever asks a question, and nobody has.
@@ -551,7 +561,7 @@ impl<'p> Checker<'p> {
     ) -> (Vec<Line>, Vec<Related>) {
         // No node: only the lines are asked for.
         let nowhere = (self.checking.unwrap_or(FileId(0)), 0, 0);
-        match self.relation_diagnostic(source, target, relation, nowhere, head, false) {
+        match self.relation_diagnostic(source, target, relation, nowhere, head, false, false) {
             (_, Some(mut diagnostic)) => {
                 for line in &mut diagnostic.lines {
                     line.level += level;

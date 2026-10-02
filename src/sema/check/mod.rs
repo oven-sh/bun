@@ -159,6 +159,8 @@ impl Slots {
 pub struct Program {
     /// Whether a `TypeData::UnresolvedName` has been made.
     pub has_unresolved_names: std::sync::atomic::AtomicBool,
+    /// Whether what `reportNonexistentProperty` prints has come back to a return type that is under way: see `inline_const_enums`.
+    pub printing_closed_a_circle: AtomicBool,
     pub files: Files,
     pub types: TypeStore,
 
@@ -390,6 +392,7 @@ impl Program {
         let symbols = bases(|m| m.bound.symbols.len());
         Program {
             has_unresolved_names: Default::default(),
+            printing_closed_a_circle: Default::default(),
             types: TypeStore::new(),
             expr_types: Slots::new(&exprs),
             exprs_at_hand: Default::default(),
@@ -557,7 +560,7 @@ impl Program {
             cond_distributive_memo: FxHashMap::default(),
             relation_gave_up: false,
             relation_too_complex: false,
-            relation_too_deep: false,
+            relations_too_deep: Vec::new(),
             checking: None,
             is_type_checked: false,
             reported: Vec::new(),
@@ -858,8 +861,8 @@ pub struct Checker<'p> {
     pub(super) relation_gave_up: bool,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
     pub(super) relation_too_complex: bool,
-    /// Set when a comparison reaches 100 nested comparisons (2321). The caller clears it before comparing.
-    pub(super) relation_too_deep: bool,
+    /// The two types of each `checkTypeRelatedToEx` that has reached 100 nested comparisons (2321). The caller clears it before comparing.
+    pub(super) relations_too_deep: Vec<(TypeId, TypeId)>,
     /// The file whose errors are being looked for. For debugging.
     pub(super) checking: Option<FileId>,
     /// `NodeCheckFlagsTypeChecked` of `checking`: `check_file` is through with it.
@@ -941,7 +944,9 @@ pub struct Checker<'p> {
     awaiting: Vec<TypeId>,
     /// `lastFlowNode`, `lastFlowNodeReachable`
     last_flow_node: (FileId, crate::bind::FlowId, bool),
-    /// `undefinedProperties`. There it lasts as long as a checker, which checks many files. Here a checker checks one.
+    /// `undefinedProperties`. There it lasts as long as a checker, which checks many files. Here a checker checks one. The widened
+    /// type of an exported variable is kept in the shared memo by whoever asks first, with the table of that checker, so the ORDER of
+    /// its printed properties can vary with more than one thread. If that is flagged, the table is for what is not kept there.
     undefined_properties: FxHashMap<Atom, Prop>,
     /// The calls of functions written on the spot whose arguments are being looked at to type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
@@ -1373,6 +1378,11 @@ impl<'p> Checker<'p> {
             }
         }
         self.cycles += 1;
+        if matches!(q, Query::Return(..)) && !self.reporting_nonexistent.is_empty() {
+            self.p
+                .printing_closed_a_circle
+                .store(true, Ordering::Relaxed);
+        }
         if self.trace_cycles {
             eprintln!("cycle: {:?}", &self.stack[i..]);
         }

@@ -211,6 +211,8 @@ pub struct Options {
     pub drops_what_nothing_refers_to: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not an option of TypeScript's: its tests say `@captureSuggestions`.
     pub captures_suggestions: bool,
+    /// Each file is emitted before it is checked. Not an option of TypeScript's: its tests read types and symbols from such a program.
+    pub emits_first: bool,
     /// Where `lib.*.d.ts` are.
     pub lib_dir: String,
     /// The `N` of each `lib.N.d.ts` to start from: what `compilerOptions.lib` names, or what goes with the target.
@@ -878,6 +880,8 @@ pub fn join(dir: &str, rest: &str) -> String {
 
 struct Package {
     json: Json,
+    /// `readPackageJsonPeerDependencies`
+    peer_dependencies: std::sync::OnceLock<String>,
 }
 
 /// `resolutionState`: how something is looked for.
@@ -1211,7 +1215,12 @@ impl<'h> Resolver<'h> {
             self.host
                 .read(&path)
                 .and_then(|text| Json::parse(&text))
-                .map(|json| Arc::new(Package { json }))
+                .map(|json| {
+                    Arc::new(Package {
+                        json,
+                        peer_dependencies: Default::default(),
+                    })
+                })
         } else {
             None
         };
@@ -1502,15 +1511,45 @@ impl<'h> Resolver<'h> {
         self.options.default_mode(self.implied_format(path))
     }
 
-    /// `name@version/path/in/package` for a file of a package: two copies of one version of a package are one.
+    /// `getPackageId`: `name@version+peer@version/path/in/package` for a file of a package. Two copies of one version of a package
+    /// next to the same peers are one.
     pub fn package_id(&self, path: &str) -> Option<String> {
         let marker = "/node_modules/";
         let at = path.rfind(marker)? + marker.len();
         let (name, subpath) = split_package_name(&path[at..]);
-        let package = self.package(&path[..at + name.len()])?;
+        let directory = &path[..at + name.len()];
+        let package = self.package(directory)?;
         let version = package.json.get("version")?.as_str()?;
         let declared = package.json.get("name")?.as_str()?;
-        Some(format!("{declared}@{version}/{subpath}"))
+        let peers = package
+            .peer_dependencies
+            .get_or_init(|| self.read_package_json_peer_dependencies(directory, &package.json));
+        Some(format!("{declared}@{version}{peers}/{subpath}"))
+    }
+
+    /// `readPackageJsonPeerDependencies`: `+name@version` for each peer of the package in `directory` that is installed next to it.
+    fn read_package_json_peer_dependencies(&self, directory: &str, json: &Json) -> String {
+        let peers = json.get("peerDependencies").and_then(Json::as_object);
+        // `validatePackageJSONField`: a map of strings.
+        let Some(peers) = peers.filter(|peers| peers.iter().all(|peer| peer.1.as_str().is_some()))
+        else {
+            return String::new();
+        };
+        let real = self.host.realpath(directory);
+        let Some(at) = real.rfind("/node_modules") else {
+            return String::new();
+        };
+        let node_modules = &real[..at + "/node_modules".len()];
+        let mut names: Vec<&str> = peers.iter().map(|peer| peer.0.as_str()).collect();
+        names.sort_unstable();
+        let mut found = String::new();
+        for name in names {
+            if let Some(peer) = self.package(&inside(node_modules, name)) {
+                let version = peer.json.get("version").and_then(Json::as_str);
+                found += &format!("+{name}@{}", version.unwrap_or_default());
+            }
+        }
+        found
     }
 
     /// `ResolveTypeReferenceDirective`: `/// <reference types="name" />` in a file in `from_dir`, resolved in `mode`; with

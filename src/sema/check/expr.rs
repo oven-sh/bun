@@ -2,6 +2,7 @@
 
 use super::errors_order::Named;
 use super::relate::Relation;
+use super::shape::{Access, Found};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
@@ -957,7 +958,12 @@ impl<'p> Checker<'p> {
         if self.is_any(receiver) {
             return (Err(receiver), false);
         }
-        let left = self.non_null_type(receiver);
+        // `apparentType == c.silentNeverType`: the `never` a reference comes to while a loop around it is under way (`newFlowType`).
+        // `assigned_type` takes such an access for one in error.
+        if receiver == TypeId::NEVER && self.met_loop_under_way && !self.flow_loops.is_empty() {
+            return (Err(TypeId::ERROR), stops);
+        }
+        let left = self.check_non_null_type(file, obj, receiver);
         if self.is_error_type(left) {
             return (Err(TypeId::ERROR), stops);
         }
@@ -976,19 +982,48 @@ impl<'p> Checker<'p> {
 
     /// `checkPropertyAccessExpressionOrQualifiedName`: the type of `a.b` when it is got to, and whether the chain may stop before.
     fn type_of_property_access(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Dot {
-            obj, name, chain, ..
+            obj,
+            name,
+            name_pos,
+            chain,
         } = hir[e].kind
         else {
             return (TypeId::UNRESOLVED, false);
         };
         let (left, stops) = self.left_type_of_property_access(file, obj, chain);
+        let target = self.target_kind(file, e);
+        let is_private = self.files().atoms.bytes(name).first() == Some(&b'#');
+        // `parseRightSideOfDot`: in `typeof a.#b` the name is missing.
+        if is_private && bound.is_in_type_query(e) {
+            return (left.map_or_else(|any| any, |_| TypeId::ERROR), stops);
+        }
+        let lexical = if is_private {
+            self.lookup_symbol_for_private_identifier_declaration(file, e, name)
+        } else {
+            None
+        };
+        if target.written && lexical.is_some_and(|(_, m)| hir[m].kind == MemberKind::Method) {
+            let written = self.declaration_name_at(file, name_pos);
+            let right = self.place_of_token(file, name_pos);
+            self.grammar_error_on_node(right, 2803, &[Arg::Text(&written)]);
+        }
         let left = match left {
             Ok(left) => left,
-            Err(any) => return (any, stops),
+            // `isAnyLike`
+            Err(any) => {
+                if is_private
+                    && lexical.is_none()
+                    && self.is_known(any)
+                    && self.classes_around_private_name(file, e).is_empty()
+                {
+                    self.grammar_error_on_node(self.place_of_token(file, name_pos), 18016, &[]);
+                    return (TypeId::ANY, stops);
+                }
+                return (any, stops);
+            }
         };
-        let target = self.target_kind(file, e);
         // `getWidenedType(leftType)`: what is written to or called is looked up in what a variable holding the object would be.
         let receiver = if target.written || self.is_called(file, e) {
             self.regular_object(left)
@@ -996,7 +1031,6 @@ impl<'p> Checker<'p> {
             left
         };
         let cycles_before = self.cycles;
-        let is_private = self.files().atoms.bytes(name).first() == Some(&b'#');
         // `isThisPropertyAccessInConstructor`: the property is `autoType`, and `getTypeOfSymbol` is not called.
         if hir.is_js
             && !is_private
@@ -1007,41 +1041,64 @@ impl<'p> Checker<'p> {
                 stops,
             );
         }
+        let is_super = matches!(hir[obj].kind, ExprKind::Super);
         let found = if is_private && !self.is_private_name_in_reach(file, e, left, name) {
             None
         } else if self.is_apparently_unknown(receiver) {
             None
-        } else if matches!(hir[obj].kind, ExprKind::Super) {
+        } else if is_super {
             self.type_of_super_property(file, obj, receiver, name)
         } else if target.written {
             // `getWriteTypeOfSymbol`, for what is not read first. Read or not, nothing is written through an index signature of
             // what a type parameter extends.
-            match self.write_type_of_property(receiver, name) {
-                Some(_) if !target.assigned => self.type_of_property(receiver, name),
+            match self.property_type(receiver, name, Access::Written) {
+                Some(_) if !target.assigned => self.property_type(receiver, name, Access::Read),
                 to_write => to_write,
             }
         } else {
-            self.type_of_property(receiver, name)
+            self.property_type(receiver, name, Access::Read)
         };
         let found = match found {
             // `getPropertyOfTypeEx` with `includeTypeOnlyMembers`: what a qualified name in `typeof a.b` asks for.
-            None if self.bound(file).is_in_type_query(e) => {
-                self.type_only_member_of_module(receiver, name)
-            }
+            None if bound.is_in_type_query(e) => self
+                .type_only_member_of_module(receiver, name)
+                .map(|ty| (ty, Found::Property)),
             found => found,
         };
-        let Some(declared) = found else {
+        let apparent = self.apparent_type(receiver);
+        let apparent = self.reduced(apparent);
+        let Some((declared, how)) = found else {
             if !self.is_certainly_missing(file, obj, receiver, cycles_before) {
                 return (TypeId::UNRESOLVED, stops);
             }
-            // `isJSLiteralType`: a property missing from the type of a JavaScript object literal is `any`. No error is reported, so
-            // the type is not printed. `isUncheckedJSSuggestion` is tested first, here without its test of the declaring file.
+            if is_private {
+                // `#x in o` is narrowed like `"#x" in o`, not to the class: a `#x` that no class declares comes of that, and what
+                // `o` is by rights is not known.
+                if self
+                    .prop_ref(apparent, name)
+                    .is_some_and(|(prop, _)| !matches!(prop.source, PropSource::Members(_)))
+                {
+                    return (TypeId::UNRESOLVED, stops);
+                }
+                if self.check_private_identifier_property_access(
+                    file, e, left, name, name_pos, lexical,
+                ) {
+                    return (TypeId::ERROR, stops);
+                }
+                if self.is_plain_js(file) && !self.classes_around_private_name(file, e).is_empty() {
+                    let written = self.declaration_name_at(file, name_pos);
+                    let right = self.place_of_token(file, name_pos);
+                    self.grammar_error_on_node(right, 1111, &[Arg::Text(&written)]);
+                }
+            }
+            // `isJSLiteralType`: a property missing from the type of a JavaScript object literal is `any`. `isUncheckedJSSuggestion`
+            // is tested first, here without its test of the declaring file.
             let is_unchecked_js =
                 self.is_plain_js(file) && !matches!(hir[obj].kind, ExprKind::This);
             if !is_unchecked_js && self.is_js_literal_type(left) {
                 return (TypeId::ANY, stops);
             }
-            // `leftType.symbol == c.globalThisSymbol`: 2339 or 7017, and `anyType`.
+            // `leftType.symbol == c.globalThisSymbol`
             if matches!(
                 self.data(left),
                 TypeData::Anon {
@@ -1049,32 +1106,74 @@ impl<'p> Checker<'p> {
                     ..
                 }
             ) {
+                let right = self.place_of_token(file, name_pos);
+                if self.is_block_scoped_global(name) {
+                    self.error(right, 2339, &[Arg::Atom(name), Arg::Type(left)]);
+                } else if self.p.files.options.no_implicit_any {
+                    self.error(right, 7017, &[Arg::Type(left)]);
+                }
                 return (TypeId::ANY, stops);
             }
-            // `reportNonexistentProperty` records the access before it prints the containing type, and prints once.
             if !self.files().atoms.bytes(name).is_empty()
-                && !self
-                    .reporting_nonexistent
-                    .iter()
-                    .any(|r| r.0 == file && r.1 == e)
+                && !self.check_and_report_error_for_extending_interface(file, e)
             {
-                // How sure what is printed is says nothing about what is in error.
-                let uncertain = self.uncertain;
-                self.reporting_nonexistent.push((file, e, self.stack.len()));
-                self.resolve_as_printed(left, 0, &mut Vec::new());
-                self.reporting_nonexistent.pop();
-                self.uncertain = uncertain;
+                let containing = if matches!(self.data(left), TypeData::ThisParam(_)) {
+                    apparent
+                } else {
+                    left
+                };
+                self.report_nonexistent_property(
+                    file,
+                    e,
+                    name,
+                    name_pos,
+                    containing,
+                    is_unchecked_js,
+                );
             }
             // It is not narrowed.
             return (TypeId::ERROR, stops);
         };
+        if how == Found::ByIndex {
+            // `indexInfo.isReadonly && (IsAssignmentTarget(node) || isDeleteTarget(node))`
+            let is_deleted = matches!(bound.expr_parent[e.idx()], Parent::Expr(p)
+                if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
+            if (target.written || is_deleted)
+                && self.is_index_info_for_name_readonly(apparent, name)
+            {
+                let start = self.start_inside_parentheses(file, e);
+                let node = (file, start, self.end_inside_parentheses(file, e));
+                self.error(node, 2542, &[Arg::Type(apparent)]);
+            }
+            if self.p.files.options.no_property_access_from_index_signature
+                && !bound.is_in_type_query(e)
+            {
+                let right = self.place_of_token(file, name_pos);
+                self.error(right, 4111, &[Arg::Atom(name)]);
+            }
+        } else {
+            if let Some((class, declaration)) = lexical
+                && !target.definite
+                && hir[declaration].kind == MemberKind::Setter
+                && !hir[class].members.iter().any(|m| {
+                    hir[m].kind == MemberKind::Getter
+                        && hir[m].key == hir[declaration].key
+                        && hir[m].flags.contains(Flags::STATIC)
+                            == hir[declaration].flags.contains(Flags::STATIC)
+                })
+            {
+                let start = self.start_inside_parentheses(file, e);
+                let node = (file, start, self.end_inside_parentheses(file, e));
+                self.error(node, 2806, &[]);
+            }
+            self.check_property_accessibility(file, e, is_super, apparent, name, name_pos);
+        }
         // 2540
         if target.written && self.is_assignment_to_readonly_property(file, e, obj, name) {
             return (TypeId::ERROR, stops);
         }
         (self.flow_type_of_access(file, e, declared, target), stops)
     }
-
     /// `getFlowTypeOfAccessExpression`: what `=`, `&&=`, `||=` or `??=` gives a value to is what it is declared as, and that it may
     /// not be there so far does not count (`removeMissingType`; nor is `missingType` added to what an index signature gives).
     /// `target`: the `target_kind` of `e`.
@@ -1412,7 +1511,9 @@ impl<'p> Checker<'p> {
             None
         };
         let found = match of_super {
-            Some(name) => self.type_of_super_property(file, obj, receiver, name),
+            Some(name) => self
+                .type_of_super_property(file, obj, receiver, name)
+                .map(|(ty, _)| ty),
             None => {
                 let read = self.indexed_access_of_element_access(receiver, key, is_read);
                 // `AssignmentKindCompound` has `AccessFlagsExpressionPosition` as well: an index signature gives what it gives a read.
@@ -2935,7 +3036,7 @@ impl<'p> Checker<'p> {
         sup: ExprId,
         base: TypeId,
         name: Atom,
-    ) -> Option<TypeId> {
+    ) -> Option<(TypeId, Found)> {
         let container = self.super_container(file, sup, false);
         if let TypeData::Ref { target, .. } = *self.data(base)
             && let Some((class, false)) = container
@@ -2950,9 +3051,9 @@ impl<'p> Checker<'p> {
                 }
             }
             let mapper = self.p.types.mapper(pairs);
-            return Some(self.type_of_prop(&prop, mapper));
+            return Some((self.type_of_prop(&prop, mapper), Found::Property));
         }
-        self.type_of_property(base, name)
+        self.property_type(base, name, Access::Read)
     }
 
     // ───────────────────────────── literals ─────────────────────────────
@@ -3771,6 +3872,9 @@ impl<'p> Checker<'p> {
             });
             i = end;
         }
+        if !added.is_empty() {
+            self.get_named_members(&mut shape.props, |_| true, &[]);
+        }
         shape
     }
 
@@ -4465,7 +4569,8 @@ impl<'p> Checker<'p> {
     }
 
     /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`: whether the attributes of the JSX element `e` are related
-    /// to `props`, with those that wait for what is expected of them, and the children, taken to fit. In doubt they are.
+    /// to `props`. A function that waits for what is expected of it is `anyFunctionType`. What else waits, and the children, are
+    /// taken to fit. In doubt they are.
     fn jsx_fits_without_sensitive(
         &mut self,
         file: FileId,
@@ -4480,12 +4585,13 @@ impl<'p> Checker<'p> {
         if !self.is_known(props) {
             return true;
         }
-        // `anyFunctionType` fits every function type whichever way it is compared, and `any` is a subtype of nothing.
+        // `any` is a subtype of nothing.
         let left_out = if relation == Relation::Subtype {
             TypeId::UNRESOLVED
         } else {
             TypeId::ANY
         };
+        let any_function_type = self.any_function_type();
         let mut shape = Shape::default();
         for p in hir[j].attrs.iter() {
             let prop = &hir[p];
@@ -4499,7 +4605,13 @@ impl<'p> Checker<'p> {
             let waits = prop.value.is_some() && self.is_context_sensitive(file, prop.value);
             shape.props.retain(|x| x.name != name);
             shape.props.push(if waits {
-                Self::literal_member_of_type(file, p, name, left_out)
+                let is_function = matches!(hir[prop.value].kind, ExprKind::Fn(_));
+                let ty = if is_function {
+                    any_function_type
+                } else {
+                    left_out
+                };
+                Self::literal_member_of_type(file, p, name, ty)
             } else {
                 Prop {
                     name,

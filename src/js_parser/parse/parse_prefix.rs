@@ -1147,6 +1147,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 let mut value = Expr::EMPTY;
                 p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
+                p.mark_type_syntax(value.loc, crate::sema::Mark::MemberStart, element_start);
+                p.mark_end(value.loc, crate::sema::Mark::MemberEnd);
                 properties.push(G::Property {
                     kind: PropertyKind::Spread,
                     value: Some(value),
@@ -1166,10 +1168,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Some(&mut self_errors),
                 )? {
                     debug_assert!(prop.key.is_some() || prop.value.is_some());
-                    if let Some(key) = &prop.key
-                        && key.loc != element_start
-                    {
-                        p.mark_type_syntax(key.loc, crate::sema::Mark::MemberStart, element_start);
+                    if let Some(key) = &prop.key {
+                        if key.loc != element_start {
+                            p.mark_type_syntax(
+                                key.loc,
+                                crate::sema::Mark::MemberStart,
+                                element_start,
+                            );
+                        }
+                        p.mark_end(key.loc, crate::sema::Mark::MemberEnd);
                     }
                     properties.push(prop);
                 }

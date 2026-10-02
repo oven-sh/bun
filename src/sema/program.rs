@@ -353,6 +353,8 @@ pub struct Files {
     has_type_only_stars: bool,
 
     /// `aliasSymbolLinks`. An entry is a pure function of the program: it is the same whoever asks first, and from whichever thread.
+    /// The members of a circle do not get here at once. So who is in the middle of something does not take a circular entry from
+    /// here: it goes round again, and meets what it has under way itself (`alias_links`).
     alias_symbol_links: ByNodeKept<Sym, AliasSymbolLinks>,
     /// Symbols are put together: nothing about them changes any more.
     is_merged: bool,
@@ -447,6 +449,11 @@ impl Iterator for Exports<'_> {
     #[inline]
     fn next(&mut self) -> Option<(Atom, Sym)> {
         match self.own.next() {
+            // As `Files::export`: while symbols are put together, as the table has them.
+            Some(&(name, id)) if !self.files.is_merged => {
+                let file = self.file;
+                Some((name, Sym { file, id }))
+            }
             Some(&(name, id)) => Some((name, self.files.sym(self.file, id))),
             None => self.merged.next(),
         }
@@ -477,6 +484,31 @@ pub enum TypeOnlyDeclaration {
     ExportStar(FileId, StmtId),
 }
 
+impl TypeOnlyDeclaration {
+    pub fn file(self) -> FileId {
+        match self {
+            TypeOnlyDeclaration::Alias(_, file, _) | TypeOnlyDeclaration::ExportStar(file, _) => {
+                file
+            }
+        }
+    }
+
+    /// `NodeKindIs(typeOnlyDeclaration, KindExportSpecifier, KindExportDeclaration, KindNamespaceExport)`
+    pub fn is_export(self) -> bool {
+        !matches!(
+            self,
+            TypeOnlyDeclaration::Alias(
+                _,
+                _,
+                Decl::ImportDefault(_)
+                    | Decl::ImportNamespace(_)
+                    | Decl::ImportSpec(_)
+                    | Decl::ImportEquals(_)
+            )
+        )
+    }
+}
+
 /// `AliasSymbolLinks`
 #[derive(Copy, Clone, Default, Debug)]
 pub struct AliasSymbolLinks {
@@ -494,12 +526,10 @@ struct Resolving {
     resolutions: Vec<(Sym, bool)>,
     /// How often an alias was asked for while it was being resolved.
     circles: u32,
-    /// What is under way is the same whoever asked first. Not once `tryResolveAlias` has passed over some of it.
-    is_kept: bool,
 }
 
 thread_local! {
-    static RESOLVING: std::cell::RefCell<Resolving> = const { std::cell::RefCell::new(Resolving { resolutions: Vec::new(), circles: 0, is_kept: true }) };
+    static RESOLVING: std::cell::RefCell<Resolving> = const { std::cell::RefCell::new(Resolving { resolutions: Vec::new(), circles: 0 }) };
 }
 
 /// How a module is asked for, to `canHaveSyntheticDefault`: in a mode, or the way a plain `import` in a file is emitted.
@@ -571,6 +601,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                             value: value(f, v, member.map(|member| &member.value), end, atoms),
                             pos,
                             start: pos,
+                            end: 0,
                         }
                     })
                     .collect();
@@ -625,6 +656,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                             value,
                             pos: p.name_pos,
                             start: p.name_pos,
+                            end: 0,
                         }
                     })
                     .collect();
@@ -3271,7 +3303,7 @@ impl Files {
     /// `symbol_flags`, worked out and kept.
     fn symbol_flags_of_alias(&self, sym: Sym) -> SymFlags {
         let circles = RESOLVING.with(|r| r.borrow().circles);
-        let flags = self.symbol_flags_uncached(sym);
+        let flags = self.symbol_flags_ex(sym, false, false);
         // What an alias answers while it is being resolved is not what it answers later.
         if RESOLVING.with(|r| r.borrow().circles) == circles {
             self.memo
@@ -3282,11 +3314,24 @@ impl Files {
     }
 
     /// `getSymbolFlagsEx`
-    fn symbol_flags_uncached(&self, mut symbol: Sym) -> SymFlags {
-        let mut flags = self.flags(symbol);
+    pub fn symbol_flags_ex(
+        &self,
+        mut symbol: Sym,
+        exclude_type_only_meanings: bool,
+        exclude_local_meanings: bool,
+    ) -> SymFlags {
+        let mut flags = if exclude_local_meanings {
+            SymFlags::empty()
+        } else {
+            self.flags(symbol)
+        };
         let mut seen_symbols: SmallVec<[Sym; 8]> = SmallVec::new();
         while self.flags(symbol).contains(SymFlags::ALIAS) {
-            let Some(target) = self.alias_links(symbol).alias_target else {
+            let links = self.alias_links(symbol);
+            if exclude_type_only_meanings && links.type_only_declaration.is_some() {
+                break;
+            }
+            let Some(target) = links.alias_target else {
                 return SymFlags::all();
             };
             let target = self.export_symbol_of_value_symbol_if_exported(target);
@@ -4068,8 +4113,8 @@ impl Files {
             return Some(sym);
         }
         match self.alias_symbol_links.get_ref(&sym) {
-            Some(known) => known.alias_target,
-            None => self.alias_links(sym).alias_target,
+            Some(known) if !known.is_circular => known.alias_target,
+            _ => self.alias_links(sym).alias_target,
         }
     }
 
@@ -4090,6 +4135,26 @@ impl Files {
         None
     }
 
+    /// `getTypeOnlyAliasDeclarationEx`
+    pub fn type_only_alias_declaration_ex(
+        &self,
+        mut symbol: Sym,
+        meaning: SymFlags,
+    ) -> Option<TypeOnlyDeclaration> {
+        for _ in 0..32 {
+            let flags = self.flags(symbol);
+            if !flags.contains(SymFlags::ALIAS) || flags.intersects(meaning) {
+                return None;
+            }
+            let links = self.alias_links(symbol);
+            if links.type_only_declaration.is_some() {
+                return links.type_only_declaration;
+            }
+            symbol = links.alias_target?;
+        }
+        None
+    }
+
     /// `IsNonLocalAlias`: an alias and nothing else.
     pub fn is_non_local_alias(&self, sym: Sym) -> bool {
         let flags = self.flags(sym);
@@ -4099,7 +4164,9 @@ impl Files {
 
     /// `resolveAlias`, with all that it leaves in `aliasSymbolLinks`.
     pub fn alias_links(&self, sym: Sym) -> AliasSymbolLinks {
-        if let Some(known) = self.alias_symbol_links.get(&sym) {
+        if let Some(known) = self.alias_symbol_links.get(&sym)
+            && (!known.is_circular || RESOLVING.with(|r| r.borrow().resolutions.is_empty()))
+        {
             return known;
         }
         // `pushTypeResolution`: an alias that is asked for while it is being resolved is in a circle with everything begun since.
@@ -4143,49 +4210,30 @@ impl Files {
             };
         }
         // `popTypeResolution`
-        let (begun, is_kept) = RESOLVING.with(|r| {
-            let mut r = r.borrow_mut();
-            let (begun, is_kept) = (r.resolutions.pop(), r.is_kept);
-            if r.resolutions.is_empty() {
-                r.is_kept = true;
-            }
-            (begun, is_kept)
-        });
+        let begun = RESOLVING.with(|r| r.borrow_mut().resolutions.pop());
         if !begun.is_some_and(|begun| begun.1) {
             links.alias_target = None;
             links.is_circular = true;
         }
-        if is_kept {
-            self.alias_symbol_links.insert(sym, links)
-        } else {
-            links
-        }
+        self.alias_symbol_links.insert(sym, links)
     }
 
-    /// `tryResolveAlias`. `None`: `sym` is being resolved.
-    fn try_resolve_alias(&self, sym: Sym) -> Option<AliasSymbolLinks> {
-        if self.alias_symbol_links.get_ref(&sym).is_none() {
-            let is_begun = RESOLVING.with(|r| {
-                let mut r = r.borrow_mut();
-                let is_begun = r.resolutions.iter().any(|begun| begun.0 == sym);
-                // Asked first, it would have been resolved. The last is who is asking, whoever was first.
-                if is_begun && r.resolutions.last().is_some_and(|last| last.0 != sym) {
-                    r.is_kept = false;
-                    r.circles += 1;
-                }
-                is_begun
-            });
-            if is_begun {
-                return None;
-            }
-        }
-        Some(self.alias_links(sym))
+    /// `tryResolveAlias(candidate)`, for a suggestion for a name that is not found in the alias declaration at `asking`. It passes
+    /// over an alias that is being resolved, so that it matters which was begun first. tsgo comes to them as they are written: what is
+    /// written before `asking` has been resolved or is being resolved, and nothing happens to it. What is written after has not
+    /// been begun. If it has been here, by who came in through it, it is in a circle with `asking`, as if `asking` had been first.
+    fn try_resolve_alias(&self, asking: (FileId, u32), candidate: Sym) -> Option<AliasSymbolLinks> {
+        let (file, decl) = self.declaration_of_alias_symbol(candidate)?;
+        ((file, self.start_of_declaration(file, decl)) > asking)
+            .then(|| self.alias_links(candidate))
     }
 
     /// `onFailedToResolveSymbol`, as far as aliases are the wiser for it: `getSpellingSuggestionForName` resolves all those it looks at.
+    /// `decl`: the alias declaration in `file` the name is written in.
     fn on_failed_to_resolve_symbol(
         &self,
         file: FileId,
+        decl: Decl,
         scope: ScopeId,
         name: Atom,
         meaning: SymFlags,
@@ -4202,8 +4250,9 @@ impl Files {
         ) {
             return;
         }
+        let asking = (file, self.start_of_declaration(file, decl));
         let try_resolve_alias = &mut |sym| {
-            let target = self.try_resolve_alias(sym)?.alias_target;
+            let target = self.try_resolve_alias(asking, sym)?.alias_target;
             Some(target.map_or(SymFlags::all(), |target| self.flags(target)))
         };
         self.suggested_symbol_for_nonexistent_symbol(file, scope, name, meaning, try_resolve_alias);
@@ -4408,7 +4457,6 @@ impl Files {
                 ImportEqualsTarget::Require(spec) => self
                     .module_of_specifier_as(file, spec, ResolutionMode::Require)
                     .map(|module| self.required_module_symbol(module)),
-                // Nothing is marked.
                 ImportEqualsTarget::Entity(names) => {
                     let names: SmallVec<[Atom; 4]> = hir.ids(names).collect();
                     // `getSymbolOfPartOfRightHandSideOfImportEquals`: `import a = b` is about a namespace, `import a = b.c` about anything.
@@ -4418,6 +4466,20 @@ impl Files {
                         all
                     };
                     let scope = bound.import_equals_scope[import.idx()];
+                    // `resolveEntityName` marks `getAliasDeclarationFromName(name)` where a name is found to be an alias.
+                    if self.is_type_only_import_or_export_declaration(file, decl)
+                        && (1..=names.len()).any(|n| {
+                            let meaning = if n == names.len() {
+                                meaning
+                            } else {
+                                SymFlags::NAMESPACE
+                            };
+                            self.resolve_entity(file, scope, &names[..n], meaning)
+                                .is_some_and(|found| self.flags(found).contains(SymFlags::ALIAS))
+                        })
+                    {
+                        self.mark_symbol_of_alias_declaration_if_type_only(node, None, type_only);
+                    }
                     let target = self.resolve_entity(file, scope, &names, meaning);
                     // `globalThisSymbol` is found, and has no `Sym`.
                     if target.is_none()
@@ -4428,6 +4490,7 @@ impl Files {
                     {
                         self.on_failed_to_resolve_symbol(
                             file,
+                            decl,
                             scope,
                             names[0],
                             SymFlags::NAMESPACE,
@@ -4441,7 +4504,7 @@ impl Files {
                 let scope = bound.export_scope[hir[spec].export.idx()];
                 let target = self.resolve_name(file, scope, hir[spec].local, all);
                 if target.is_none() {
-                    self.on_failed_to_resolve_symbol(file, scope, hir[spec].local, all);
+                    self.on_failed_to_resolve_symbol(file, decl, scope, hir[spec].local, all);
                 }
                 target
             }

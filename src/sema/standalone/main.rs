@@ -568,6 +568,29 @@ fn main() {
                     }
                 });
             }
+            // `--error-types`: the nodes whose type is the error type, in files without errors. Path, line, column, kind of node.
+            let error_types: std::sync::Mutex<Vec<(String, usize, usize, String)>> =
+                Default::default();
+            let note_error_types =
+                |checker: &mut bun_sema::check::Checker<'_>, file: bun_sema::program::FileId| {
+                    let found = checker.error_types_at_locations(file);
+                    let module = &checker.p.files.modules[file.idx()];
+                    let text = &module.hir.text;
+                    let mut error_types = error_types.lock().unwrap();
+                    for (start, kind) in found {
+                        let before = &text[..(start as usize).min(text.len())];
+                        let line_start = before
+                            .iter()
+                            .rposition(|&b| b == b'\n')
+                            .map_or(0, |n| n + 1);
+                        let line = before.iter().filter(|&&b| b == b'\n').count() + 1;
+                        let column = before.len() - line_start + 1;
+                        error_types.push((module.path.clone(), line, column, kind));
+                    }
+                };
+            type AfterFile<'a> =
+                &'a (dyn Fn(&mut bun_sema::check::Checker<'_>, bun_sema::program::FileId) + Sync);
+            let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
             let report =
                 bun_sema_driver::check(&bun_sema_driver::Request {
                     compiler_options: &[],
@@ -594,7 +617,7 @@ fn main() {
                     checked: args.iter().any(|a| a == "--memory").then_some(
                         &print_checked_sizes as &(dyn Fn(&bun_sema::check::Program) + Sync),
                     ),
-                    after_file: None,
+                    after_file,
                 });
             let cwd = bun_sema_driver::host::from_native(&cwd);
             let style = Style {
@@ -621,6 +644,12 @@ fn main() {
             let mut out = String::new();
             write_diagnostics(&mut out, &report, &style);
             print!("{out}");
+            let mut error_types = error_types.into_inner().unwrap();
+            error_types.retain(|at| !report.diagnostics.iter().any(|d| d.path == at.0));
+            error_types.sort();
+            for (path, line, column, kind) in &error_types {
+                println!("{path}({line},{column}): ERROR-TYPE {kind}");
+            }
             let mut summary = String::new();
             write_summary(&mut summary, &report, &style);
             eprint!("{summary}");

@@ -163,185 +163,27 @@ struct Inaccessible {
 }
 
 impl Checker<'_> {
-    /// 2339 2551 2550 2576 2812 7017 2689; 2542; 18046 to 18050, 2531 to 2533, 2571; 2341 2445 2446 2513 2855.
+    /// `a[k]`, what patterns and types look up by name, and private names out of place. What is wrong with `a.b` is reported where
+    /// its type is worked out (`type_of_property_access`).
     pub(super) fn check_property_accesses(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         self.check_private_names(file, out);
         self.check_lookups_by_name(file, out);
         self.check_element_accesses(file, out);
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let strict_null_checks = self.p.files.options.strict_null_checks;
-        let index = self.exprs_by_kind(file);
-        for &e in index.of(ExprTag::Dot) {
-            let ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                chain,
-            } = hir[e].kind
-            else {
-                continue;
-            };
-            let parent = bound.expr_parent[e.idx()];
-            if bound.is_unchecked(e.idx()) {
-                continue;
-            }
-            let text = self.files().atoms.bytes(name);
-            // `check_private_name_access` checks `a.#b` and its receiver; `check_private_names` adds 18016 and 18012.
-            if text.first() == Some(&b'#') {
-                continue;
-            }
-            let is_name_missing = text.is_empty();
-            let (receiver, _) = self.chain_receiver(file, obj, chain);
-            if !self.is_known(receiver) || self.is_uncertain(file, obj) {
-                continue;
-            }
-            // `checkNonNullExpression`, of `super` as of anything else.
-            let left = self.check_not_nullish(file, obj, receiver, out);
-            // `right.Text() != ""`: the parser reports a missing name. Only the receiver is checked.
-            if is_name_missing {
-                continue;
-            }
-            // What is in error is not looked into, which what is nothing but `null` or `undefined` is whatever the options
-            // (`checkNonNullType`).
-            if self.is_any(left) || self.every_type(left, |_, m| m.is_null() || m.is_undefined()) {
-                continue;
-            }
-            // `isMethodAccessForCall`
-            let is_called = matches!(parent, Parent::Expr(p)
-                if matches!(hir[p].kind, ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee == e));
-            // `IsAssignmentTarget`, which what is called is not.
-            let is_assigned = !is_called && self.is_written(file, e);
-            // `getWidenedType`: what is assigned to, or called, is looked up in the type a variable would get.
-            let looked_into = if is_called || is_assigned {
-                self.regular_object(left)
-            } else {
-                left
-            };
-            let apparent = self.apparent_type(looked_into);
-            let apparent = self.reduced(apparent);
-            // `getApparentType`: without strictNullChecks `unknown` is `{}`.
-            let apparent = if apparent == TypeId::UNKNOWN && !strict_null_checks {
-                TypeId::EMPTY_OBJECT
-            } else {
-                apparent
-            };
-            if self.is_any(apparent) || !self.is_known(apparent) {
-                continue;
-            }
-            // What may be anything at all has nothing that can be counted on.
-            let is_unconstrained = strict_null_checks
-                && self.is_deferred(left)
-                && self.base_constraint(left) == TypeId::UNKNOWN;
-            if is_unconstrained {
-                out.push(Diagnostic {
-                    start: name_pos,
-                    code: 2339,
-                });
-                self.explain_no_property(file, e, left, name, name_pos, 2339);
-                continue;
-            }
-            // Through what a type parameter extends an index signature can be read, not written: `getApplicableIndexInfoForName`
-            // is not asked.
-            let no_index_signatures = is_assigned
-                && self.is_generic_object_type(left)
-                && !matches!(self.data(left), TypeData::ThisParam(_));
-            if self.type_of_property(apparent, name).is_none()
-                || no_index_signatures && !self.has_property_of_type(apparent, name)
-            {
-                // `getPropertyOfTypeEx` with `includeTypeOnlyMembers`: what a qualified name in `typeof a.b` is looked up with.
-                if bound.is_in_type_query(e)
-                    && self.type_only_member_of_module(apparent, name).is_some()
-                {
-                    continue;
-                }
-                // `isJSLiteralType(leftType)`: a property missing from a JS literal type is `any`, read or written. `isUncheckedJS` is
-                // only true in plain JavaScript, where `check_file` drops every code reported below.
-                if self.is_js_literal_type(left) {
-                    continue;
-                }
-                // A global that is scoped to blocks is no property of `globalThis`. Anything else it lacks is `any`, without anybody saying so.
-                if matches!(
-                    self.data(left),
-                    TypeData::Anon {
-                        origin: Origin::GlobalThis,
-                        ..
-                    }
-                ) {
-                    if self.is_block_scoped_global(name) {
-                        out.push(Diagnostic {
-                            start: name_pos,
-                            code: 2339,
-                        });
-                        self.explain(name_pos, 2339, |c| {
-                            vec![c.atom_text(name), c.type_to_string(left)]
-                        });
-                    } else if self.p.files.options.no_implicit_any {
-                        out.push(Diagnostic {
-                            start: name_pos,
-                            code: 7017,
-                        });
-                    }
-                    continue;
-                }
-                // `checkAndReportErrorForExtendingInterface`
-                if self.is_extending_interface(file, e) {
-                    let start = self.start_of(file, e);
-                    out.push(Diagnostic { start, code: 2689 });
-                    let end = self.end_of_expr(file, e);
-                    self.explain_to(start, end, 2689, |c| vec![c.entity_name_around(file, e)]);
-                    continue;
-                }
-                let containing = if matches!(self.data(left), TypeData::ThisParam(_)) {
-                    apparent
-                } else {
-                    left
-                };
-                let code = self.why_no_property(file, e, containing, name);
-                out.push(Diagnostic {
-                    start: name_pos,
-                    code,
-                });
-                self.explain_no_property(file, e, containing, name, name_pos, code);
-                continue;
-            }
-            // `isDeleteTarget`
-            let is_deleted = matches!(parent, Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
-            // A name that only an index signature answers for, which is not written through if it says `readonly`.
-            if (is_assigned || is_deleted) && !self.has_property_of_type(apparent, name) {
-                let infos = self.index_signatures_of(apparent);
-                let key = self.string_literal(name, false);
-                if self
-                    .index_signature_for_key(&infos, key)
-                    .is_some_and(|(_, is_readonly)| is_readonly)
-                {
-                    let start = self.start_inside_parentheses(file, e);
-                    out.push(Diagnostic { start, code: 2542 });
-                    let end = self.end_inside_parentheses(file, e);
-                    self.explain_to(start, end, 2542, |c| vec![c.type_to_string(apparent)]);
-                }
-                continue;
-            }
-            let is_super = matches!(hir[obj].kind, ExprKind::Super);
-            let writing = !is_called && self.is_write_access(file, e);
-            if let Some(code) =
-                self.why_not_accessible(file, Parent::Expr(e), is_super, writing, apparent, name)
-            {
-                out.push(Diagnostic {
-                    start: name_pos,
-                    code,
-                });
-                self.explain(name_pos, code, |c| {
-                    c.names_in_inaccessibility(
-                        file,
-                        Parent::Expr(e),
-                        is_super,
-                        writing,
-                        apparent,
-                        name,
-                    )
-                });
-            }
+    }
+
+    /// `checkAndReportErrorForExtendingInterface`
+    pub(super) fn check_and_report_error_for_extending_interface(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> bool {
+        if !self.is_extending_interface(file, e) {
+            return false;
         }
+        let name = self.entity_name_around(file, e);
+        let node = (file, self.start_of(file, e), self.end_of_expr(file, e));
+        self.error(node, 2689, &[Arg::Text(&name)]);
+        true
     }
 
     /// `getEntityNameForExtendingInterface`: the whole of the dotted name that `e` is, or is the left part of, as it is written.
@@ -375,8 +217,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Private names out of place: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18016 for `a.#b` on `any` outside every class
-    /// (`checkPropertyAccessExpressionOrQualifiedName`), 18012 (`checkPrivateIdentifier` of binder.go), 18024 (`checkEnumMember`).
+    /// Private names out of place: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18012 (`checkPrivateIdentifier` of
+    /// binder.go), 18024 (`checkEnumMember`).
     /// A bare `#x` is an `ExprKind::String` whose source text starts with `#`.
     fn check_private_names(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -407,36 +249,16 @@ impl Checker<'_> {
         }
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::Dot) {
-            let ExprKind::Dot {
-                obj,
-                name_pos,
-                chain,
-                ..
-            } = hir[e].kind
-            else {
+            let ExprKind::Dot { name_pos, .. } = hir[e].kind else {
                 continue;
             };
-            if !is_private_name_at(hir, name_pos) || bound.is_unchecked(e.idx()) {
-                continue;
-            }
-            if is_private_constructor_name(text, name_pos) {
+            if is_private_name_at(hir, name_pos)
+                && !bound.is_unchecked(e.idx())
+                && is_private_constructor_name(text, name_pos)
+            {
                 out.push(Diagnostic {
                     start: name_pos,
                     code: 18012,
-                });
-            }
-            if bound.is_in_type_query(e) || !self.classes_around_private_name(file, e).is_empty() {
-                continue;
-            }
-            let (receiver, _) = self.chain_receiver(file, obj, chain);
-            if !self.is_known(receiver) || self.is_uncertain(file, obj) {
-                continue;
-            }
-            let apparent = self.apparent_type(receiver);
-            if self.is_any(apparent) {
-                out.push(Diagnostic {
-                    start: name_pos,
-                    code: 18016,
                 });
             }
         }
@@ -929,7 +751,7 @@ impl Checker<'_> {
     }
 
     /// Whether `name` is a global `let`, `const`, class or enum (`SymbolFlagsBlockScoped`): those are no properties of `globalThis`.
-    fn is_block_scoped_global(&self, name: Atom) -> bool {
+    pub(super) fn is_block_scoped_global(&self, name: Atom) -> bool {
         self.files().globals.get(&name).is_some_and(|&global| {
             self.files()
                 .flags(global)
@@ -1013,6 +835,14 @@ impl Checker<'_> {
             }
         }
         found.or_else(|| infos.iter().copied().find(|info| info.0 == TypeId::STRING))
+    }
+
+    /// `getApplicableIndexInfoForName(ty, name).isReadonly`
+    pub(super) fn is_index_info_for_name_readonly(&mut self, ty: TypeId, name: Atom) -> bool {
+        let infos = self.index_signatures_of(ty);
+        let key = self.string_literal(name, false);
+        self.index_signature_for_key(&infos, key)
+            .is_some_and(|(_, is_readonly)| is_readonly)
     }
 
     /// `isApplicableIndexType`: whether a signature for `target` covers the key `source`.
@@ -1764,54 +1594,119 @@ impl Checker<'_> {
         )
     }
 
-    /// `reportNonexistentProperty`: what is said of `name`, written at `e`, which `containing` has nothing by.
-    pub(super) fn why_no_property(
+    /// `reportNonexistentProperty`. `e`: the `a.b` whose name is written at `start`, or the `#b` that is.
+    pub(super) fn report_nonexistent_property(
         &mut self,
         file: FileId,
         e: ExprId,
-        containing: TypeId,
         name: Atom,
-    ) -> u32 {
+        start: u32,
+        containing: TypeId,
+        is_unchecked_js: bool,
+    ) {
+        // `NodeCheckFlagsTypeChecked`: the error is being made.
+        if self
+            .reporting_nonexistent
+            .iter()
+            .any(|r| r.0 == file && r.1 == e)
+        {
+            return;
+        }
+        self.reporting_nonexistent.push((file, e, self.stack.len()));
+        // How sure what is printed is says nothing about what is in error.
+        let uncertain = self.uncertain;
+        let at = self.place_of_token(file, start);
+        let missing = self.declaration_name_at(file, start);
         // The static side and what is promised are asked for a `#x` by its text, which is the name of no property.
         let is_private = self.files().atoms.bytes(name).first() == Some(&b'#');
-        // `typeHasStaticProperty`
-        if !is_private
-            && let TypeData::Ref { target, .. } = *self.data(containing)
-            && self.files().flags(target).contains(SymFlags::CLASS)
+        // `TypeFlagsPrimitive`: `boolean`, and an enum, which is the union of its members.
+        let is_enum = match self
+            .parts(containing)
+            .first()
+            .map(|&first| self.data(first))
         {
-            let statics = self.intern(TypeData::Anon {
-                origin: Origin::ClassStatic(target),
-                mapper: MapperId::IDENTITY,
-            });
-            if self
-                .prop_ref(statics, name)
-                .is_some_and(|(prop, _)| matches!(prop.source, PropSource::Members(_)))
-            {
-                return 2576;
+            Some(&TypeData::EnumLit { member, .. } | &TypeData::Enum { symbol: member, .. }) => {
+                self.enum_type_of_member(member) == containing
+            }
+            _ => false,
+        };
+        let mut chain = None;
+        if !is_private && containing != TypeId::BOOLEAN && !is_enum && self.is_union(containing) {
+            for &subtype in self.parts(containing) {
+                let apparent = self.apparent_type(subtype);
+                if self.type_of_property(apparent, name).is_none() {
+                    let args = [Arg::Text(&missing), Arg::Type(subtype)];
+                    chain = Some(self.new_diagnostic_chain(None, at, 2339, &args));
+                    break;
+                }
             }
         }
-        // The same message, with a hint.
-        if self.is_property_of_what_is_promised(containing, name) {
-            return 2339;
-        }
+        let container = self.reduced(containing);
+        let container = self.type_to_string(container);
+        let args = [Arg::Text(&missing), Arg::Text(&container)];
         let apparent = self.apparent_type(containing);
-        if self.library_with_property(apparent, name).is_some() {
-            return 2550;
-        }
-        // `getSuggestedSymbolForNonexistentProperty`: it is for a property access that what is out of reach is left out, which the
-        // `a.b` of `typeof a.b` in a type is not.
+        let diagnostic = if !is_private && self.static_side_has(containing, name) {
+            let member = format!("{container}.{missing}");
+            let args = [args[0], args[1], Arg::Text(&member)];
+            self.new_diagnostic_chain(chain, at, 2576, &args)
+        } else if self.is_property_of_what_is_promised(containing, name) {
+            let mut diagnostic = self.new_diagnostic_chain(chain, at, 2339, &args);
+            diagnostic.add_related_info(self.new_diagnostic(at, 2773, &[]));
+            diagnostic
+        } else if let Some(lib) = self.library_with_property(apparent, name) {
+            let args = [args[0], args[1], Arg::Text(lib)];
+            self.new_diagnostic_chain(chain, at, 2550, &args)
+        } else if let Some((suggestion, declared_at)) =
+            self.suggested_symbol_for_nonexistent_property(file, e, name, apparent)
+        {
+            let suggested = self.name_of_unread_property(suggestion);
+            let args = [args[0], args[1], Arg::Text(&suggested)];
+            let code = if is_unchecked_js { 2568 } else { 2551 };
+            let mut diagnostic = self.new_diagnostic_chain(chain, at, code, &args);
+            if let Some(declared_at) = declared_at {
+                let declared = self.new_diagnostic(declared_at, 2728, &[Arg::Text(&suggested)]);
+                diagnostic.add_related_info(declared);
+            }
+            diagnostic
+        } else {
+            let chain = self.elaborate_never_intersection(chain, at, containing);
+            let code = if self.container_seems_to_be_empty_dom_element(containing) {
+                2812
+            } else {
+                2339
+            };
+            self.new_diagnostic_chain(chain, at, code, &args)
+        };
+        self.uncertain = uncertain;
+        self.reporting_nonexistent.pop();
+        self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
+    }
+
+    /// `getSuggestedSymbolForNonexistentProperty`, of the name written in `e` and the apparent type of what lacks it: the property
+    /// that may have been meant, and `GetErrorRangeForNode` of its `ValueDeclaration`. It is for a property access that what is out
+    /// of reach is left out, which the `a.b` of `typeof a.b` in a type is not.
+    fn suggested_symbol_for_nonexistent_property(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        name: Atom,
+        apparent: TypeId,
+    ) -> Option<(Atom, Option<(FileId, u32, u32)>)> {
         let is_access = matches!(self.hir(file)[e].kind, ExprKind::Dot { .. })
             && !self.bound(file).is_in_type_query(e);
         let looked_into = self.reduced(apparent);
-        if self.is_property_misspelt(looked_into, name, is_access.then_some((file, e))) {
-            return 2551;
-        }
-        // `containerSeemsToBeEmptyDomElement`. `everyContainedType`: the members of a union, or of an intersection.
+        let meant = self.property_meant(looked_into, name, is_access.then_some((file, e)), true)?;
+        Some((meant, self.place_of_property_meant(looked_into, meant)))
+    }
+
+    /// `containerSeemsToBeEmptyDomElement`
+    fn container_seems_to_be_empty_dom_element(&mut self, containing: TypeId) -> bool {
+        // `everyContainedType`: the members of a union, or of an intersection.
         let contained: &[TypeId] = match self.data(containing) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => &parts[..],
             _ => std::slice::from_ref(&containing),
         };
-        if !self.p.files.options.has_dom_lib()
+        !self.p.files.options.has_dom_lib()
             && contained.iter().all(|&m| match self.data(m) {
                 // A class expression need not have a name.
                 TypeData::Ref { target, .. } if self.files().symbol(*target).name.is_some() => {
@@ -1822,10 +1717,6 @@ impl Checker<'_> {
                 _ => false,
             })
             && self.is_empty_object_type(containing)
-        {
-            return 2812;
-        }
-        2339
     }
 
     /// It is what `containing` promises that has `name`: `await` was forgotten. `GetPromisedTypeOfPromise`
@@ -1874,108 +1765,6 @@ impl Checker<'_> {
             .iter()
             .find(|(_, props)| props.contains(&&*missing))
             .map(|&(lib, _)| lib)
-    }
-
-    /// What `reportNonexistentProperty` puts into the message `why_no_property` chose, which is `code`, and under it. `start`: where
-    /// `name` is written.
-    pub(super) fn explain_no_property(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        containing: TypeId,
-        name: Atom,
-        start: u32,
-        code: u32,
-    ) {
-        self.explain(start, code, |c| {
-            let missing = c.declaration_name_at(file, start);
-            let reduced = c.reduced(containing);
-            let container = c.type_to_string(reduced);
-            let last = match code {
-                2576 => format!("{container}.{missing}"),
-                2550 => {
-                    let apparent = c.apparent_type(containing);
-                    c.library_with_property(apparent, name)
-                        .unwrap_or_default()
-                        .to_owned()
-                }
-                2551 => {
-                    let is_access = matches!(c.hir(file)[e].kind, ExprKind::Dot { .. })
-                        && !c.bound(file).is_in_type_query(e);
-                    let apparent = c.apparent_type(containing);
-                    let looked_into = c.reduced(apparent);
-                    let access = is_access.then_some((file, e));
-                    match c.property_meant(looked_into, name, access, true) {
-                        Some(meant) => c.name_of_unread_property(meant),
-                        None => String::new(),
-                    }
-                }
-                _ => return vec![missing, container],
-            };
-            vec![missing, container, last]
-        });
-        if code == 2551 {
-            self.relate(start, code, |c| {
-                let is_access = matches!(c.hir(file)[e].kind, ExprKind::Dot { .. })
-                    && !c.bound(file).is_in_type_query(e);
-                let apparent = c.apparent_type(containing);
-                let looked_into = c.reduced(apparent);
-                let access = is_access.then_some((file, e));
-                let Some(meant) = c.property_meant(looked_into, name, access, true) else {
-                    return Vec::new();
-                };
-                match c.place_of_property_meant(looked_into, meant) {
-                    Some(place) => vec![c.declared_here(place, c.name_of_unread_property(meant))],
-                    None => Vec::new(),
-                }
-            });
-        }
-        self.explain_chain(start, code, |c| {
-            // The first member of a union that lacks it.
-            let is_private = c.files().atoms.bytes(name).first() == Some(&b'#');
-            // `TypeFlagsPrimitive`: `boolean`, and an enum, which is the union of its members.
-            let is_enum = match c.parts(containing).first().map(|&first| c.data(first)) {
-                Some(
-                    &TypeData::EnumLit { member, .. } | &TypeData::Enum { symbol: member, .. },
-                ) => c.enum_type_of_member(member) == containing,
-                _ => false,
-            };
-            if !is_private && containing != TypeId::BOOLEAN && !is_enum && c.is_union(containing) {
-                for &member in c.parts(containing) {
-                    let apparent = c.apparent_type(member);
-                    if c.type_of_property(apparent, name).is_none() {
-                        return vec![Line {
-                            code: 2339,
-                            args: vec![
-                                c.declaration_name_at(file, start),
-                                c.type_to_string(member),
-                            ],
-                            level: 1,
-                        }];
-                    }
-                }
-            }
-            match code {
-                2339 | 2812 => {
-                    let chain =
-                        c.elaborate_never_intersection(None, (file, start, start), containing);
-                    super::explain::lines_of(chain.into_iter().collect())
-                }
-                _ => Vec::new(),
-            }
-        });
-        if code == 2339 {
-            self.relate(start, code, |c| {
-                if !c.is_property_of_what_is_promised(containing, name) {
-                    return Vec::new();
-                }
-                vec![super::explain::Related {
-                    at: Some(c.place_of_token(file, start)),
-                    code: 2773,
-                    args: Vec::new(),
-                }]
-            });
-        }
     }
 
     /// `elaborateNeverIntersection`
@@ -2082,9 +1871,114 @@ impl Checker<'_> {
         self.classes_around_from(file, parent, false)
     }
 
+    /// `lookupSymbolForPrivateIdentifierDeclaration`: the class around the `a.#b` at `e` that declares `#b`, and the declaration.
+    /// What the instances have comes first.
+    pub(super) fn lookup_symbol_for_private_identifier_declaration(
+        &self,
+        file: FileId,
+        e: ExprId,
+        name: Atom,
+    ) -> Option<(ClassId, MemberId)> {
+        let hir = self.hir(file);
+        let &class = self.bound(file).private_class.get(&e)?;
+        let declared = |is_static: bool| {
+            hir[class].members.iter().find(|&m| {
+                hir[m].key == PropKey::Private(name)
+                    && hir[m].flags.contains(Flags::STATIC) == is_static
+            })
+        };
+        Some((class, declared(false).or_else(|| declared(true))?))
+    }
+
+    /// The class that declares the first property of `ty` that goes by a private name written like `name`.
+    fn class_of_private_property(&mut self, ty: TypeId, name: Atom) -> Option<(FileId, ClassId)> {
+        let ty = self.apparent_type(ty);
+        if let TypeData::Union(parts) = self.data(ty) {
+            // What all members have is what one class declares.
+            let first = self.class_of_private_property(*parts.first()?, name)?;
+            return parts[1..]
+                .iter()
+                .all(|&p| self.class_of_private_property(p, name) == Some(first))
+                .then_some(first);
+        }
+        let atoms = &self.files().atoms;
+        let written = as_written(atoms.bytes(name));
+        let members = self.members(ty)?;
+        for prop in &members.shape().props {
+            if as_written(atoms.bytes(prop.name)) != written {
+                continue;
+            }
+            let PropSource::Members(declarations) = &prop.source else {
+                continue;
+            };
+            let Some(&(file, m)) = declarations.first() else {
+                continue;
+            };
+            let MemberOwner::Class(c) = self.bound(file).member_owner[m.idx()] else {
+                continue;
+            };
+            let member = &self.hir(file)[m];
+            // What is static and private is not inherited.
+            let is_of_a_base = member.flags.contains(Flags::STATIC)
+                && !matches!(self.data(ty), TypeData::Anon { origin: Origin::ClassStatic(sym), .. } if *sym == self.class_sym(file, c));
+            if matches!(member.key, PropKey::Private(_)) && !is_of_a_base {
+                return Some((file, c));
+            }
+        }
+        None
+    }
+
+    /// `checkPrivateIdentifierPropertyAccess`, of the `a.#b` at `e`, whose name is written at `start`. `lexical`: what
+    /// `lookup_symbol_for_private_identifier_declaration` found.
+    pub(super) fn check_private_identifier_property_access(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        left: TypeId,
+        name: Atom,
+        start: u32,
+        lexical: Option<(ClassId, MemberId)>,
+    ) -> bool {
+        let Some((declared_in, type_class)) = self.class_of_private_property(left, name) else {
+            return false;
+        };
+        let hir = self.hir(file);
+        let at = self.place_of_token(file, start);
+        let diag_name = self.declaration_name_at(file, start);
+        // `FindAncestor(lexicalClass, n == typeClass)`
+        if let Some((lexical_class, shadowing)) = lexical
+            && declared_in == file
+            && self
+                .classes_around_private_name(file, e)
+                .iter()
+                .skip_while(|&&class| class != lexical_class)
+                .any(|&class| class == type_class)
+        {
+            // Each class has a name of its own for what is written alike.
+            let atoms = &self.files().atoms;
+            let written = as_written(atoms.bytes(name));
+            let meant = hir[type_class].members.iter().find(|&m| {
+                matches!(hir[m].key, PropKey::Private(key) if as_written(atoms.bytes(key)) == written)
+            });
+            let args = [Arg::Text(&diag_name)];
+            let shadowing = self.place_of_token(file, hir[shadowing].pos);
+            let shadowing = self.new_diagnostic(shadowing, 18017, &args);
+            let meant = meant.map(|m| self.place_of_token(file, hir[m].pos));
+            let meant = meant.map(|place| self.new_diagnostic(place, 18018, &args));
+            let diagnostic = self.error(at, 18014, &[args[0], Arg::Type(left)]);
+            diagnostic.add_related_info(shadowing);
+            if let Some(meant) = meant {
+                diagnostic.add_related_info(meant);
+            }
+            return true;
+        }
+        let class = self.class_sym(declared_in, type_class);
+        self.error(at, 18013, &[Arg::Text(&diag_name), Arg::Sym(class)]);
+        true
+    }
     /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` again and again: the classes the private name of `e`,
     /// an `a.#b`, is looked up in.
-    fn classes_around_private_name(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
+    pub(super) fn classes_around_private_name(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
         self.classes_around_from(file, Parent::Expr(e), true)
     }
 
@@ -2205,7 +2099,7 @@ impl Checker<'_> {
 
     /// `IsWriteAccess`: the left of `=` or of an operator that assigns, the operand of `++` or `--`, the variable of `for..in/of`, or
     /// an element, or the value of a property, of a literal that is one of these. Neither `!` nor `...` is seen through (`accessKind`).
-    fn is_write_access(&self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn is_write_access(&self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
         loop {
@@ -2297,6 +2191,24 @@ impl Checker<'_> {
             .map(|found| found.code)
     }
 
+    /// `checkPropertyAccessibility`, of the `a.b` at `e`, whose name is written at `name_pos`.
+    pub(super) fn check_property_accessibility(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_super: bool,
+        containing: TypeId,
+        name: Atom,
+        name_pos: u32,
+    ) {
+        let (at, writing) = (Parent::Expr(e), self.is_write_access(file, e));
+        if let Some(found) = self.inaccessibility(file, at, is_super, writing, containing, name) {
+            let names = self.names_of_inaccessible(&found);
+            let args: Vec<Arg> = names.iter().map(|name| Arg::Text(name)).collect();
+            self.error(self.place_of_token(file, name_pos), found.code, &args);
+        }
+    }
+
     /// What goes into the message `why_not_accessible` chose.
     pub(super) fn names_in_inaccessibility(
         &mut self,
@@ -2307,10 +2219,13 @@ impl Checker<'_> {
         containing: TypeId,
         name: Atom,
     ) -> Vec<String> {
-        let Some(found) = self.inaccessibility(file, at, is_super, writing, containing, name)
-        else {
-            return Vec::new();
-        };
+        match self.inaccessibility(file, at, is_super, writing, containing, name) {
+            Some(found) => self.names_of_inaccessible(&found),
+            None => Vec::new(),
+        }
+    }
+
+    fn names_of_inaccessible(&mut self, found: &Inaccessible) -> Vec<String> {
         let mut names = vec![self.prop_to_string(&found.prop)];
         match found.class {
             Some(class) => {

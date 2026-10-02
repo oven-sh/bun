@@ -222,6 +222,7 @@ impl Checker<'_> {
                                 file,
                                 elem.pat,
                                 i + 1 == elems.len(),
+                                false,
                                 elem.default,
                                 out,
                             );
@@ -239,6 +240,7 @@ impl Checker<'_> {
                                 file,
                                 prop.value,
                                 i + 1 == props.len(),
+                                !matches!(prop.key, PropKey::None),
                                 prop.default,
                                 out,
                             );
@@ -257,17 +259,16 @@ fn check_grammar_rest_element(
     file: FileId,
     name: PatId,
     is_last: bool,
+    has_property_name: bool,
     default: ExprId,
     out: &mut Vec<Diagnostic>,
 ) {
     let hir = c.hir(file);
     let start = hir[name].pos;
-    let before = skip_trivia_back(&hir.text, (start as usize).min(hir.text.len()));
     if !is_last {
         out.push(Diagnostic { start, code: 2462 });
         c.note(start, c.end_of_pat(file, name), 2462, Vec::new());
-    } else if hir.text[..before].ends_with(b":") {
-        // `...a: b`: the property name is not kept.
+    } else if has_property_name {
         out.push(Diagnostic { start, code: 2566 });
         c.note(start, c.end_of_pat(file, name), 2566, Vec::new());
     } else if default.is_some()

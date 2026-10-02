@@ -934,7 +934,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getTypeOfSymbol(getSymbolOfDeclaration(node))`. `None`: `node` declares nothing.
-    fn iso_type_of_declared(&mut self, file: FileId, node: Node) -> Option<TypeId> {
+    pub(super) fn iso_type_of_declared(&mut self, file: FileId, node: Node) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let of_pattern = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_)).then_some(pat);
         let pat = match node {
@@ -2282,7 +2282,11 @@ impl<'p> Checker<'p> {
 
     /// Of the expression of a `PseudoTypeInferred`: `node.Parent`, which is a pair of parentheses if there is one, and that again if
     /// `IsDeclaration`.
-    fn iso_parent_of_inferred(&self, tx: &Emit, of: Node) -> (Option<Node>, Option<Node>) {
+    pub(super) fn iso_parent_of_inferred(
+        &self,
+        tx: &Emit,
+        of: Node,
+    ) -> (Option<Node>, Option<Node>) {
         let parent = match of {
             Node::Expr(e) if !is_parenthesized(self.hir(tx.file), e) => self.iso_parent(tx, of),
             _ => None,
@@ -2722,6 +2726,7 @@ impl<'p> Checker<'p> {
                 }
             }
             TypeNodeKind::Error
+            | TypeNodeKind::Heritage(_)
             | TypeNodeKind::Keyword(_)
             | TypeNodeKind::StringLit(_)
             | TypeNodeKind::NumberLit(_)
@@ -4235,6 +4240,7 @@ impl<'p> Checker<'p> {
                 }
             }
             TypeNodeKind::Error
+            | TypeNodeKind::Heritage(_)
             | TypeNodeKind::Keyword(_)
             | TypeNodeKind::StringLit(_)
             | TypeNodeKind::NumberLit(_)

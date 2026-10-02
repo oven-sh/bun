@@ -192,15 +192,14 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether `result`, an instantiation of `ty`, is of a kind that the alias given to `instantiateTypeWithAlias` ends up on:
-    /// `createDeferredTypeReference`, `getIndexedAccessTypeEx` where it defers, `instantiateAnonymousType`, `getConditionalType`
-    /// where it defers. A union or an intersection goes by `instantiate_union_or_intersection`.
+    /// `createDeferredTypeReference`, `instantiateAnonymousType`, `getConditionalType` where it defers. A union or an intersection
+    /// goes by `instantiate_union_or_intersection`, an indexed access by `instantiate_indexed_access`.
     pub(super) fn takes_alias_of(&self, ty: TypeId, result: TypeId) -> bool {
         match (self.data(ty), self.data(result)) {
             (
                 TypeData::Ref { .. } | TypeData::Tuple { .. },
                 TypeData::Ref { .. } | TypeData::Tuple { .. },
             )
-            | (TypeData::IndexedAccess { .. }, TypeData::IndexedAccess { .. })
             | (TypeData::LazyAlias { .. }, TypeData::LazyAlias { .. })
             | (TypeData::Fns { .. }, TypeData::Fns { .. })
             | (TypeData::Cond { .. }, TypeData::Cond { .. })
@@ -245,6 +244,61 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// The branch of `instantiateTypeWorker` for an indexed access.
+    pub(super) fn instantiate_indexed_access(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
+        let &TypeData::IndexedAccess {
+            obj: declared,
+            index,
+            undefined,
+        } = self.data(ty)
+        else {
+            return ty;
+        };
+        let (obj, index) = (
+            self.instantiate(declared, mapper),
+            self.instantiate(index, mapper),
+        );
+        let instantiated;
+        let alias = match (alias, self.stored_alias(ty)) {
+            (None, Some((symbol, type_arguments))) => {
+                instantiated = self.instantiate_all(type_arguments, mapper);
+                Some((*symbol, &instantiated[..]))
+            }
+            _ => alias,
+        };
+        // `indexed_access_of_alias_under_way`: the access goes on waiting while the type arguments of the alias are generic.
+        // `getTypeArguments` of the instantiated reference starts over until `instantiationDepth == 100` and stores the access all
+        // the same. `force_reference` reports that where the alias is first looked into.
+        if matches!(self.data(declared), TypeData::LazyAlias { .. }) && self.has_type_variables(obj)
+        {
+            if obj != declared {
+                self.p
+                    .excessive
+                    .insert(Deep::Instantiation(obj, MapperId::IDENTITY), ());
+                self.p
+                    .has_excessive
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            let waiting = self.intern(TypeData::IndexedAccess {
+                obj,
+                index,
+                undefined,
+            });
+            return match alias {
+                Some((alias, type_arguments)) => self.with_alias(waiting, alias, type_arguments),
+                None => waiting,
+            };
+        }
+        // `getIndexedAccessTypeEx(.., t.accessFlags, nil)`: there is no node to complain at, so what is not there is `unknown`.
+        self.indexed_access_flagged(obj, index, undefined, alias)
+            .unwrap_or(TypeId::UNKNOWN)
+    }
+
     /// `ty` as `createTypeReference` makes it: a reference or a tuple without the alias of the deferred reference it is.
     pub(super) fn without_alias_of_reference(&self, ty: TypeId) -> TypeId {
         match self.data(ty) {
@@ -276,12 +330,18 @@ impl<'p> Checker<'p> {
         }
         let declared = self.declared_type(hosted);
         let takes_alias = match self.data(declared) {
-            TypeData::Union(_) | TypeData::Intersection(_) => {
+            data @ (TypeData::Union(_)
+            | TypeData::Intersection(_)
+            | TypeData::IndexedAccess { .. }) => {
                 let params = self.local_type_params_of_symbol(hosted);
                 let filled = self.fill_type_args(&params, hosted_arguments);
                 let mapper = self.mapper_from(&params, &filled);
                 let alias = Some((alias, type_arguments));
-                return self.instantiate_union_or_intersection(declared, mapper, alias);
+                return if matches!(data, TypeData::IndexedAccess { .. }) {
+                    self.instantiate_indexed_access(declared, mapper, alias)
+                } else {
+                    self.instantiate_union_or_intersection(declared, mapper, alias)
+                };
             }
             // `with_hosting_alias`
             TypeData::Anon {

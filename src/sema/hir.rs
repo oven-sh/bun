@@ -620,8 +620,10 @@ pub struct Prop {
     pub key: PropKey,
     pub value: ExprId,
     pub pos: u32,
-    /// Where its first token is: a modifier, `get`, `set`, `*`, or `pos`.
+    /// Where its first token is: a modifier, `get`, `set`, `*`, `...`, or `pos`.
     pub start: u32,
+    /// `node.End()`. 0 where the parser did not say.
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -634,8 +636,12 @@ pub struct Jsx {
     pub attrs: Span<PropId>,
     pub children: IdList<ExprId>,
     pub type_args: IdList<TypeNodeId>,
+    /// `End()` of the `JsxOpeningElement`, the `JsxOpeningFragment` or the `JsxSelfClosingElement`.
+    pub opening_end: u32,
     /// Where `</tag>` starts, or is missed. `u32::MAX` for `<tag />`.
     pub close_pos: u32,
+    /// `End()` of the element or fragment.
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -660,6 +666,8 @@ pub struct PatProp {
     pub is_rest: bool,
     /// Where its first token is: the name of the property, or the `...`.
     pub pos: u32,
+    /// Where the name of the property is. After `...` a name is an error (2566).
+    pub key_pos: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -763,7 +771,7 @@ pub enum StmtKind {
         expr: ExprId,
         cases: Span<CaseId>,
     },
-    /// `param` has no initializer.
+    /// An initializer of `param` is an error (1197).
     Try {
         block: StmtId,
         param: VarDeclId,
@@ -1162,6 +1170,8 @@ pub struct TupleElem {
 pub enum TypeNodeKind {
     /// Syntax the type parser gave up on.
     Error,
+    /// An element of a heritage clause of an interface whose expression is no entity name, which is an error: `extends f()`.
+    Heritage(ExprId),
     Keyword(Keyword),
     /// `A.B.C<Args>`
     Ref {
@@ -1391,9 +1401,6 @@ pub struct File {
     /// The decorators of missing declarations and of `this` parameters, which `checkDecorators` never looks at: from where the
     /// expression starts to where what comes after the decorators starts. The expressions are statements of their own.
     pub stray_decorators: Few<(u32, u32)>,
-    /// The opening and closing JSX tags in which the parser objected to something: where their `<` is, and where they end
-    /// (`finishNode`). Sorted.
-    pub jsx_tag_ends: Few<(u32, u32)>,
     /// The directives: where each is written, and what it says. An `ExpressionStatement` of a string literal in tsgo. No statement
     /// is kept for one.
     pub directives: Few<(u32, Atom)>,

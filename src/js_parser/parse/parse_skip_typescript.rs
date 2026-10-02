@@ -3834,10 +3834,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.is_at_entity_name_expression() {
             // `parseLeftHandSideExpressionOrHigher`
             let scope_index = self.scopes_in_order.len();
-            let _ = self.parse_detached(|p| p.parse_expr(Level::New))?;
+            let expression = self.parse_detached(|p| p.parse_expr(Level::New))?;
             self.discard_scopes_up_to(scope_index);
             let _ = self.skip_type_script_type_arguments::<false, false>()?;
             if keeps {
+                self.keep_expressions(bun_ast::Loc { start }, &[expression]);
                 self.emit_type(TypeData::HeritageExpression, pos);
                 self.finish_last_type();
             }
@@ -3847,13 +3848,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name = self.token_text();
             self.emit_type_ref(name, pos);
         }
+        let mut name_end = self.lexer.range().end();
         self.lexer.next()?;
-        while self.lexer.token == T::TDot {
+        let mut is_optional_chain = false;
+        while matches!(self.lexer.token, T::TDot | T::TQuestionDot) {
+            is_optional_chain |= self.lexer.token == T::TQuestionDot;
             self.lexer.next()?;
             if keeps {
                 self.append_qualified_name();
             }
+            name_end = self.lexer.range().end();
             self.lexer.next()?;
+        }
+        // `checkInterfaceDeclaration`: `IsOptionalChain(heritageElement.Expression)`
+        if is_optional_chain && !self.lexer.is_log_disabled {
+            let expression = bun_ast::Range {
+                loc: bun_ast::Loc { start },
+                len: name_end.start - start,
+            };
+            self.log()
+                .add_range_error(Some(self.source), expression, b"TC2499");
         }
         let reference = if keeps {
             self.last_type()
@@ -3881,7 +3895,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_lexer = self.lexer.snapshot();
         self.lexer.is_log_disabled = true;
         let mut is_name = self.lexer.next().is_ok();
-        while is_name && self.lexer.token == T::TDot {
+        while is_name && matches!(self.lexer.token, T::TDot | T::TQuestionDot) {
             is_name = self.lexer.next().is_ok()
                 && self.lexer.is_identifier_or_keyword()
                 && self.lexer.next().is_ok();

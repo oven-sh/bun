@@ -168,8 +168,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             opts.is_name_optional = true;
             if p.lexer.token == T::TClass || p.lexer.is_contextual_keyword(b"abstract") {
-                // `checkGrammarModifiers`: `export` must precede `default`.
-                p.lexer.ts_grammar_error(default_range, 1029);
                 return p.parse_stmt(opts);
             }
         }
@@ -704,7 +702,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.token == T::TEquals && p.lexer.tolerant {
                     p.lexer.next()?;
                     let at = p.lexer.range();
-                    let _ = p.parse_expr(Level::Comma)?;
+                    let initializer = p.parse_expr(Level::Comma)?;
+                    p.keep_expressions(value.loc, &[initializer]);
                     if !has_type {
                         Self::grammar_error(p, at, 1197);
                     }
@@ -1849,14 +1848,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.unexpected()?;
                 Err(crate::Error::SyntaxError)
             }
-            // `parseModifiersEx`: `export` is a modifier as often as it is written. `checkGrammarModifiers` objects to the
-            // second one and looks no further.
+            // `parseModifiersEx`: `export` is a modifier as often as it is written.
             T::TExport if p.lexer.tolerant && !p.lexer.is_log_disabled => {
                 if Self::export_is_modifier(p) {
-                    if !opts.is_export {
-                        let again = p.lexer.range();
-                        Self::grammar_error(p, again, 1030);
-                    }
                     opts.is_export = true;
                 }
                 p.esm_export_keyword = previous_export_keyword;
@@ -2518,7 +2512,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `parseDeclaration`, at a modifier that no statement takes: `public class C {}`, `async enum E {}`, `abstract interface I {}`.
-    /// TypeScript's parser accepts any modifiers before a declaration, and `checkGrammarModifiers` reports the first misplaced one.
+    /// TypeScript's parser accepts any modifiers before a declaration, and the checker reports the first misplaced one.
     /// Returns `None`, with nothing consumed, if no declaration starts here or none of its modifiers has to be dropped.
     #[cold]
     #[inline(never)]
@@ -2526,57 +2520,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
     ) -> Result<Option<Stmt>> {
-        const ACCESSIBILITY: u8 = 1 << 0;
-        const STATIC: u8 = 1 << 1;
-        const ACCESSOR: u8 = 1 << 2;
-        const READONLY: u8 = 1 << 3;
-        const ASYNC: u8 = 1 << 4;
-        const ABSTRACT: u8 = 1 << 5;
-        #[derive(Copy, Clone, PartialEq, Eq)]
-        enum Declaration {
-            Function,
-            Class,
-            Enum,
-            Variable,
-            InterfaceOrTypeAlias,
-            /// A namespace, an import or an export. Also whatever follows `export` or `declare`.
-            Other,
-        }
-
-        if p.lexer.is_log_disabled
-            || !matches!(
-                p.lexer.raw(),
-                b"public"
-                    | b"private"
-                    | b"protected"
-                    | b"static"
-                    | b"accessor"
-                    | b"readonly"
-                    | b"async"
-                    | b"abstract"
-            )
-            || !p.is_start_of_declaration()
-        {
+        use bun_ast::ts_syntax::Flags as Modifier;
+        // `parseModifiersEx`. `async function` and `abstract class` are left for `parse_stmt`.
+        let modifier_at = |p: &Self| match p.lexer.raw() {
+            b"public" => Some((Modifier::PUBLIC, T::TEndOfFile)),
+            b"private" => Some((Modifier::PRIVATE, T::TEndOfFile)),
+            b"protected" => Some((Modifier::PROTECTED, T::TEndOfFile)),
+            b"static" => Some((Modifier::STATIC, T::TEndOfFile)),
+            b"accessor" => Some((Modifier::ACCESSOR, T::TEndOfFile)),
+            b"readonly" => Some((Modifier::READONLY, T::TEndOfFile)),
+            b"async" => Some((Modifier::ASYNC, T::TFunction)),
+            b"abstract" => Some((Modifier::ABSTRACT, T::TClass)),
+            _ => None,
+        };
+        if p.lexer.is_log_disabled || modifier_at(p).is_none() || !p.is_start_of_declaration() {
             return Ok(None);
         }
-
-        // `parseModifiersEx`. `async function` and `abstract class` are left for `parse_stmt`.
-        let mut modifiers: Vec<(u8, bun_ast::Range)> = Vec::new();
-        let mut dropped = 0;
-        while p.lexer.token == T::TIdentifier {
-            use bun_ast::ts_syntax::Flags as Modifier;
-            let (flag, taken_by, modifier) = match p.lexer.raw() {
-                b"public" => (ACCESSIBILITY, T::TEndOfFile, Modifier::PUBLIC),
-                b"private" => (ACCESSIBILITY, T::TEndOfFile, Modifier::PRIVATE),
-                b"protected" => (ACCESSIBILITY, T::TEndOfFile, Modifier::PROTECTED),
-                b"static" => (STATIC, T::TEndOfFile, Modifier::STATIC),
-                b"accessor" => (ACCESSOR, T::TEndOfFile, Modifier::ACCESSOR),
-                b"readonly" => (READONLY, T::TEndOfFile, Modifier::READONLY),
-                b"async" => (ASYNC, T::TFunction, Modifier::ASYNC),
-                b"abstract" => (ABSTRACT, T::TClass, Modifier::ABSTRACT),
-                _ => break,
-            };
-            modifiers.push((flag, p.lexer.range()));
+        let (mut dropped, mut is_async) = (0, false);
+        while p.lexer.token == T::TIdentifier
+            && let Some((modifier, taken_by)) = modifier_at(p)
+        {
+            is_async |= modifier == Modifier::ASYNC;
             if p.next_token_matches(|p| p.lexer.token == taken_by && !p.lexer.has_newline_before) {
                 break;
             }
@@ -2588,91 +2552,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if dropped == 0 {
             return Ok(None);
         }
-
-        let token = p.lexer.token;
-        let declaration = match token {
-            T::TFunction => Declaration::Function,
-            T::TClass => Declaration::Class,
-            T::TEnum => Declaration::Enum,
-            T::TVar => Declaration::Variable,
-            T::TConst if p.next_token_matches(|p| p.lexer.token == T::TEnum) => Declaration::Enum,
-            T::TConst => Declaration::Variable,
-            T::TIdentifier => match p.lexer.raw() {
-                b"async" => Declaration::Function,
-                b"abstract" => Declaration::Class,
-                b"let" | b"using" | b"await" => Declaration::Variable,
-                b"interface" | b"type" => Declaration::InterfaceOrTypeAlias,
-                _ => Declaration::Other,
-            },
-            _ => Declaration::Other,
-        };
-        let is_nested = opts.scope == StatementScope::Nested;
-        // `findFirstIllegalModifier`: the only modifier that may come first in a block.
-        let allowed_first = match declaration {
-            Declaration::Function => ASYNC,
-            Declaration::Class => ABSTRACT,
-            _ => 0,
-        };
-        let mut error = None;
-        if is_nested && declaration != Declaration::Other && modifiers[0].0 != allowed_first {
-            error = Some((modifiers[0].1, 1184));
-        } else {
-            let mut seen = 0u8;
-            let mut last_async = modifiers[0].1;
-            for &(flag, range) in &modifiers {
-                let code = match flag {
-                    ACCESSIBILITY if seen & ACCESSIBILITY != 0 => 1028,
-                    ACCESSIBILITY if seen & (STATIC | ACCESSOR | READONLY | ASYNC) != 0 => 1029,
-                    STATIC if seen & (ACCESSOR | READONLY | ASYNC) != 0 && seen & STATIC == 0 => {
-                        1029
-                    }
-                    _ if seen & flag != 0 => 1030,
-                    ACCESSIBILITY | STATIC if !is_nested => 1044,
-                    ACCESSOR if seen & READONLY != 0 => 1243,
-                    ACCESSOR => 1275,
-                    READONLY => 1024,
-                    ABSTRACT if declaration != Declaration::Class => 1242,
-                    ASYNC if opts.is_typescript_declare => 1040,
-                    ASYNC if seen & ABSTRACT != 0 => 1243,
-                    _ => 0,
-                };
-                if code != 0 {
-                    error = Some((range, code));
-                    break;
-                }
-                seen |= flag;
-                if flag == ASYNC {
-                    last_async = range;
-                }
-            }
-            if error.is_none() {
-                let here = p.lexer.range();
-                if p.lexer.token == T::TExport
-                    && seen & (ASYNC | ABSTRACT) != 0
-                    && p.next_token_matches(|p| {
-                        matches!(
-                            p.lexer.token,
-                            T::TClass | T::TFunction | T::TVar | T::TConst | T::TEnum | T::TImport
-                        ) || p.lexer.token == T::TIdentifier && p.lexer.raw() != b"as"
-                    })
-                {
-                    error = Some((here, 1029));
-                } else if seen & ASYNC != 0 && p.lexer.is_contextual_keyword(b"declare") {
-                    error = Some((here, 1040));
-                } else if seen & ASYNC != 0 && declaration != Declaration::Function {
-                    // `checkGrammarAsyncModifier`
-                    error = Some((last_async, 1042));
-                }
-            }
-        }
-        if let Some((range, code)) = error {
-            p.lexer.ts_grammar_error(range, code);
-        }
         let mut stmt = p.parse_stmt(opts)?;
         // `parseFunctionDeclaration`: `modifierListHasAsync`, wherever `async` stands among the modifiers.
-        if modifiers.iter().any(|modifier| modifier.0 == ASYNC)
-            && let js_ast::StmtData::SFunction(function) = &mut stmt.data
-        {
+        if is_async && let js_ast::StmtData::SFunction(function) = &mut stmt.data {
             function.func.flags.insert(js_ast::Flags::Function::IsAsync);
         }
         Ok(Some(stmt))

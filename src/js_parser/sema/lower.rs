@@ -37,8 +37,6 @@ pub(crate) struct Lower<'p, 'a> {
     /// From the `<` of a JSX element, to the name in its closing tag. The `tag` of such an element is the name in its opening tag.
     closing_tags: HashMap<i32, Expr>,
     kept_expressions: HashMap<i32, Vec<Expr>>,
-    /// The statements being lowered are in a block or a function body, not directly in the file or in a namespace.
-    in_block: bool,
     pub(super) source: &'a [u8],
     stack_check: bun_core::StackCheck,
     /// The JSDoc comments of a JavaScript file. None for TypeScript.
@@ -179,7 +177,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             cast_starts,
             closing_tags,
             kept_expressions: syntax.kept_expressions,
-            in_block: false,
             source: p.source.contents(),
             stack_check: bun_core::StackCheck::init(),
             jsdoc_is_attached: vec![false; jsdoc.list.len()],
@@ -228,12 +225,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             .marks
             .iter()
             .filter(|mark| mark.1 == Mark::UnclosedLiteral)
-            .map(|mark| (mark.0 as u32, mark.2 as u32))
-            .collect();
-        this.b.file.jsx_tag_ends = this
-            .marks
-            .iter()
-            .filter(|mark| mark.1 == Mark::JsxTagEnd)
             .map(|mark| (mark.0 as u32, mark.2 as u32))
             .collect();
         this.b.file.body = body;
@@ -297,6 +288,15 @@ impl<'p, 'a> Lower<'p, 'a> {
                 PendingPart::PatternElementDefault(element, default) => {
                     let default = self.expr(&default);
                     self.b.file.pat_elems[element.idx()].default = default;
+                }
+                PendingPart::HeritageExpression(node) => {
+                    let at = ast::Loc {
+                        start: self.b.file[node].pos as i32,
+                    };
+                    if let Some(expression) = self.kept_expressions(at).first() {
+                        let expression = self.expr(expression);
+                        self.b.file[node].kind = TypeNodeKind::Heritage(expression);
+                    }
                 }
             }
         }
@@ -472,12 +472,6 @@ impl<'p, 'a> Lower<'p, 'a> {
     // ───────────────────────────── statements ─────────────────────────────
 
     fn stmts(&mut self, stmts: &[Stmt], is_top_level: bool) -> IdList<StmtId> {
-        self.stmts_in(stmts, is_top_level, !is_top_level)
-    }
-
-    /// `in_block`: false for the statements of the file and of a namespace.
-    fn stmts_in(&mut self, stmts: &[Stmt], is_top_level: bool, in_block: bool) -> IdList<StmtId> {
-        let outer_in_block = std::mem::replace(&mut self.in_block, in_block);
         let base = self.list_ids.len();
         // An `export` in a namespace makes no module of the file, from wherever it is parsed.
         let was_module = self.b.file.has_module_syntax;
@@ -516,7 +510,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         if !is_top_level {
             self.b.file.has_module_syntax = was_module;
         }
-        self.in_block = outer_in_block;
         self.take_ids(base)
     }
 
@@ -543,7 +536,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         if self.jsdoc.list.is_empty() {
             return self.stmts(stmts, false);
         }
-        let outer_in_block = std::mem::replace(&mut self.in_block, true);
         let was_module = self.b.file.has_module_syntax;
         let mut passed_on = std::mem::take(&mut self.reparsed);
         let mut out = Vec::with_capacity(stmts.len());
@@ -559,7 +551,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         self.reparsed = passed_on;
         self.b.file.has_module_syntax = was_module;
-        self.in_block = outer_in_block;
         self.b.file.list(&out)
     }
 
@@ -618,49 +609,11 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// What the parser has no more than a placeholder for, or less than everything of: parsed again from the source.
     fn reparse(&mut self, loc: ast::Loc) -> Option<StmtId> {
-        let errors_before = self.b.file.early_errors.len();
         let stmt = self.b.statement_at(pos_of(loc), Flags::empty());
         if stmt.is_none() {
             self.b.file.syntax_errors += 1;
         }
-        self.drop_modifier_errors_in_block(stmt, pos_of(loc), errors_before);
         stmt
-    }
-
-    /// `reportObviousModifierErrors`: the first modifier of a declaration in a block gets 1184, and `checkGrammarModifiers` stops there.
-    /// Drops what was reported since `errors_before` about the modifiers of `statement`, which starts at `start`.
-    fn drop_modifier_errors_in_block(
-        &mut self,
-        statement: Option<StmtId>,
-        start: u32,
-        errors_before: usize,
-    ) {
-        if !self.in_block || self.b.file.early_errors.len() == errors_before {
-            return;
-        }
-        let Some(statement) = statement else { return };
-        // `findFirstIllegalModifier`
-        let allowed_modifier: &[u8] = match self.b.file[statement].kind {
-            StmtKind::Fn(_) => b"async",
-            StmtKind::Class(_) => b"abstract",
-            StmtKind::Enum(_) => b"const",
-            StmtKind::Var(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) => b"",
-            _ => return,
-        };
-        let source = self.source;
-        if !allowed_modifier.is_empty() && source[start as usize..].starts_with(allowed_modifier) {
-            return;
-        }
-        let mut index = 0;
-        self.b.file.early_errors.retain(|&(at, code)| {
-            index += 1;
-            // The modifiers come before any brace of the declaration.
-            index <= errors_before
-                || !matches!(code, 1029 | 1030 | 1038 | 1040)
-                || source
-                    .get(start as usize..at as usize)
-                    .is_none_or(|before| bun_core::strings::contains_char(before, b'{'))
-        });
     }
 
     /// Clones a statement that only exists in TypeScript.
@@ -770,10 +723,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.b.statement_start = start;
         let kind = match &stmt.data {
             StmtData::STypeScript(placeholder) if placeholder.syntax.is_some() => {
-                let errors_before = self.b.file.early_errors.len();
-                let statement = self.ts_statement(placeholder.syntax, pos);
-                self.drop_modifier_errors_in_block(statement, pos, errors_before);
-                return statement;
+                return self.ts_statement(placeholder.syntax, pos);
             }
             // The `B` of `namespace A.B { }` that the parser dropped: its placeholder is at the dot.
             StmtData::STypeScript(_) if self.source.get(pos as usize) == Some(&b'.') => {
@@ -940,10 +890,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                     if let Some(binding) = &catch.binding {
                         let pat = self.binding(binding);
                         let ty = self.annotation(binding.loc);
+                        let init = self.optional_expr(self.kept_expressions(binding.loc).first());
                         param = self.b.file.add_var_decl(VarDecl {
                             pat,
                             ty,
-                            init: ExprId::NONE,
+                            init,
                             kind: VarKind::Let,
                             flags: Flags::empty(),
                         });
@@ -1069,7 +1020,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }))
             }
             StmtData::SNamespace(s) => {
-                let body = self.stmts_in(s.stmts.slice(), false, false);
+                let body = self.stmts(s.stmts.slice(), false);
                 let name_pos = pos_of(s.name.loc);
                 // `parseAmbientExternalModuleDeclaration`: `module "a" { .. }` without `declare`. The parser's symbol is not named by the string.
                 let is_quoted = matches!(self.source.get(name_pos as usize), Some(b'"' | b'\''));
@@ -1216,19 +1167,27 @@ impl<'p, 'a> Lower<'p, 'a> {
                 for property in object.properties() {
                     let is_rest = property.flags.contains(ast::flags::Property::IsSpread);
                     let is_computed = property.flags.contains(ast::flags::Property::IsComputed);
-                    let key = if is_rest {
-                        PropKey::None
-                    } else {
+                    let has_name = !matches!(property.key.data, Data::EMissing(_));
+                    let key = if has_name {
                         self.key(&property.key, is_computed)
+                    } else {
+                        PropKey::None
                     };
                     let value = self.binding(&property.value);
                     let default = self.optional_expr(property.default_value.as_ref());
-                    let pos = if is_rest {
-                        self.dots_before(property.value.loc)
+                    let key_pos = if !has_name {
+                        pos_of(property.value.loc)
                     } else if is_computed {
                         self.start_of_computed_name(&property.key)
                     } else {
                         pos_of(property.key.loc)
+                    };
+                    let pos = if is_rest {
+                        self.dots_before(ast::Loc {
+                            start: key_pos as i32,
+                        })
+                    } else {
+                        key_pos
                     };
                     props.push(PatProp {
                         key,
@@ -1236,6 +1195,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         default,
                         is_rest,
                         pos,
+                        key_pos,
                     });
                 }
                 PatKind::Object(self.b.file.add_pat_props(&props))
@@ -2372,19 +2332,15 @@ impl<'p, 'a> Lower<'p, 'a> {
                     Some(at) => self.type_args_at(at),
                     None => IdList::EMPTY,
                 };
-                // The closing tag is said to be where its name is.
-                let before =
-                    self.b.lexer.contents[..pos_of(e.close_tag_loc) as usize].trim_ascii_end();
-                let before = before.strip_suffix(b"/").map(<[u8]>::trim_ascii_end);
-                let missed = self.mark(expr.loc, Mark::JsxClosingMissed);
-                let close_pos = match (missed, before) {
-                    (Some(at), _) => at,
-                    (None, Some(rest)) if rest.ends_with(b"<") => rest.len() as u32 - 1,
-                    _ => u32::MAX,
+                let close_pos = if e.closing_start == ast::Loc::EMPTY {
+                    u32::MAX
+                } else {
+                    pos_of(e.closing_start)
                 };
                 let (tag, close_tag) = if close_pos == u32::MAX || kept.is_none() {
                     (kept, ExprId::NONE)
-                } else if missed.is_some() {
+                } else if e.closing_start == e.end {
+                    // `parseJsxClosingElement` consumed nothing: the name is a missing identifier.
                     (kept, self.b.file.expr(ExprKind::Missing, close_pos))
                 } else if self.b.file[kept].pos < close_pos {
                     // The parser kept the opening name, and noted the closing one unless it is missing.
@@ -2405,7 +2361,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     attrs,
                     children,
                     type_args,
+                    opening_end: pos_of(e.opening_end),
                     close_pos,
+                    end: pos_of(e.end),
                 }))
             }
             Data::EObjectJSON(_)
@@ -2518,13 +2476,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                 .or(property.value.as_ref())
                 .map_or(0, |e| pos_of(e.loc));
             if property.kind == G::PropertyKind::Spread {
+                let from = property.value.as_ref().map_or(ast::Loc::EMPTY, |e| e.loc);
                 let value = self.optional_expr(property.value.as_ref());
+                let start = self.mark(from, Mark::MemberStart).unwrap_or(pos);
                 self.list_props.push(Prop {
                     kind: PropKind::Spread,
                     key: PropKey::None,
                     value,
                     pos,
-                    start: pos,
+                    start,
+                    end: self.mark(from, Mark::MemberEnd).unwrap_or(0),
                 });
                 continue;
             }
@@ -2596,6 +2557,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 value,
                 pos,
                 start,
+                end: self.mark(written_key.loc, Mark::MemberEnd).unwrap_or(0),
             };
             // `parseObjectLiteralElement`
             if is_literal && !self.jsdoc.list.is_empty() {

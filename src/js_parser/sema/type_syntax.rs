@@ -34,12 +34,6 @@ pub(crate) struct Builder<'a> {
     pub(crate) header_modifiers: Vec<(Flags, u32)>,
     /// The modifiers of the statements being parsed, those of the innermost last.
     pub(crate) statement_modifiers: Vec<Modifier>,
-    /// Where the statement being parsed has said `declare`, the first time.
-    said_declare: Option<u32>,
-    /// Directly in the block of a namespace or a module that is ambient.
-    in_ambient_block: bool,
-    /// Something has been said of the modifiers of the statement being parsed.
-    modifiers_in_error: bool,
     /// The decorators of the class member `class_member_at` read last: where the member is, and the expression.
     pub(crate) member_decorators: Vec<(u32, ExprId)>,
     /// The parser has already reported the syntax errors, so a missing token does not stop the reader. False for declaration
@@ -313,9 +307,6 @@ impl<'a> Builder<'a> {
             in_abstract_class: false,
             header_modifiers: Vec::new(),
             statement_modifiers: Vec::new(),
-            said_declare: None,
-            in_ambient_block: false,
-            modifiers_in_error: false,
             member_decorators: Vec::new(),
             tolerant: true,
             classes_around: 0,
@@ -701,7 +692,6 @@ impl<'a> Builder<'a> {
     /// is one; `declare const a, b` is one).
     pub(crate) fn statement_at(&mut self, offset: u32, flags: Flags) -> Option<StmtId> {
         self.depth = 0;
-        self.start_statement(false);
         self.statement_modifiers.clear();
         let statement = self
             .seek(offset)
@@ -760,7 +750,6 @@ impl<'a> Builder<'a> {
     /// The `B` of `namespace A.B { }`, from the dot at `offset` (`parseModuleOrNamespaceDeclaration`).
     pub(crate) fn nested_module_at(&mut self, offset: u32) -> Option<StmtId> {
         self.depth = 0;
-        self.start_statement(false);
         self.seek(offset)
             .and_then(|()| self.expect(T::TDot))
             .and_then(|()| {
@@ -768,16 +757,6 @@ impl<'a> Builder<'a> {
                 self.parse_module(pos, Flags::EXPORT)
             })
             .ok()
-    }
-
-    /// Before a statement that is not part of another: nothing has been made of its modifiers yet. One that was given up on leaves
-    /// all this as it was where it was.
-    fn start_statement(&mut self, in_ambient_block: bool) {
-        (
-            self.in_ambient_block,
-            self.said_declare,
-            self.modifiers_in_error,
-        ) = (in_ambient_block, None, false);
     }
 
     /// A member of a class that has nothing to run: an overload, an index signature, `declare x`, `abstract m()`.
@@ -812,7 +791,6 @@ impl<'a> Builder<'a> {
                     continue;
                 }
                 self.depth = 0;
-                self.start_statement(false);
                 let start = self.pos();
                 self.statement_start = start;
                 let statement = self.parse_statement(Flags::AMBIENT)?;
@@ -2229,6 +2207,7 @@ impl<'a> Builder<'a> {
                             default: ExprId::NONE,
                             is_rest: true,
                             pos: start,
+                            key_pos: start,
                         });
                     } else {
                         let key_pos = self.pos();
@@ -2254,6 +2233,7 @@ impl<'a> Builder<'a> {
                             default,
                             is_rest: false,
                             pos: key_pos,
+                            key_pos,
                         });
                     }
                     if self.eat(T::TComma)? {
@@ -2548,6 +2528,7 @@ impl<'a> Builder<'a> {
                             value,
                             pos,
                             start: pos,
+                            end: self.full_start(),
                         });
                     } else {
                         let name = key.name().ok_or(Error::SyntaxError)?;
@@ -2558,6 +2539,7 @@ impl<'a> Builder<'a> {
                             value,
                             pos,
                             start: pos,
+                            end: self.full_start(),
                         });
                     }
                     if !self.eat(T::TComma)? {
@@ -2629,13 +2611,7 @@ impl<'a> Builder<'a> {
         let has_block = self.tok() == T::TOpenBrace;
         self.expect(T::TOpenBrace)?;
         let mut stmts = Vec::new();
-        let outer = (
-            self.in_ambient_block,
-            self.said_declare,
-            self.modifiers_in_error,
-        );
         while has_block && !matches!(self.tok(), T::TCloseBrace | T::TEndOfFile) {
-            self.start_statement(flags.contains(Flags::AMBIENT));
             let start = self.pos();
             self.statement_start = start;
             let base = self.statement_modifiers.len();
@@ -2644,11 +2620,6 @@ impl<'a> Builder<'a> {
             self.take_statement_modifiers(statement, base);
             stmts.push(statement);
         }
-        (
-            self.in_ambient_block,
-            self.said_declare,
-            self.modifiers_in_error,
-        ) = outer;
         if has_block {
             self.expect(T::TCloseBrace)?;
         }
@@ -2665,13 +2636,6 @@ impl<'a> Builder<'a> {
         let stmt = &mut self.file[statement];
         (stmt.start, stmt.loc) = (start, loc);
         statement
-    }
-
-    /// `checkGrammarModifiers` stops at the first thing that is wrong with the modifiers of a statement.
-    fn statement_modifier_error(&mut self, pos: u32, code: u32) {
-        if !std::mem::replace(&mut self.modifiers_in_error, true) {
-            self.file.early_errors.push((pos, code));
-        }
     }
 
     /// `nextTokenCanFollowModifier`, at `export`: whether it is a modifier of the declaration that follows. It is not in `export *`,
@@ -2714,7 +2678,7 @@ impl<'a> Builder<'a> {
     }
 
     /// `flags` is what the surroundings say of the statement: `AMBIENT`, and `EXPORT` after that keyword.
-    fn parse_statement(&mut self, mut flags: Flags) -> R<StmtId> {
+    fn parse_statement(&mut self, flags: Flags) -> R<StmtId> {
         let pos = self.pos();
         while self.tok() == T::TAt {
             self.skip_decorator()?;
@@ -2727,28 +2691,8 @@ impl<'a> Builder<'a> {
             T::TExport => {
                 let was_module = self.file.has_module_syntax;
                 self.file.has_module_syntax |= self.depth == 0;
-                let declare = self.said_declare.take();
-                let is_modifier = declare.is_some() && self.is_export_modifier();
                 self.push_statement_modifier(Flags::EXPORT);
                 self.next()?;
-                if is_modifier {
-                    // `checkGrammarModifiers`: `export` comes first.
-                    self.statement_modifier_error(pos, 1029);
-                } else if let Some(declare) = declare
-                    && !flags.contains(Flags::EXPORT)
-                {
-                    // `checkExportDeclaration`, `checkExportAssignment`: these take no modifiers. It is said where the first one is.
-                    match self.tok() {
-                        T::TEquals | T::TDefault => self.statement_modifier_error(declare, 1120),
-                        T::TAsterisk | T::TOpenBrace => {
-                            self.statement_modifier_error(declare, 1193)
-                        }
-                        T::TIdentifier if self.lexer.identifier == b"type" => {
-                            self.statement_modifier_error(declare, 1193)
-                        }
-                        _ => {}
-                    }
-                }
                 let statement = self.parse_export(pos, flags)?;
                 // `isAnExternalModuleIndicatorNode`
                 if matches!(self.file[statement].kind, StmtKind::ExportAsNamespace(_)) {
@@ -2789,20 +2733,9 @@ impl<'a> Builder<'a> {
                 }
                 match word {
                     b"declare" => {
-                        if self.said_declare.is_some() {
-                            self.statement_modifier_error(pos, 1030);
-                        } else {
-                            if self.in_ambient_block {
-                                self.statement_modifier_error(pos, 1038);
-                            }
-                            self.said_declare = Some(pos);
-                        }
                         self.push_statement_modifier(Flags::AMBIENT);
                         self.next()?;
-                        flags |= Flags::AMBIENT;
-                        let statement = self.parse_statement(flags);
-                        self.said_declare = None;
-                        statement
+                        self.parse_statement(flags | Flags::AMBIENT)
                     }
                     // `parseDeclaration` takes any modifiers. The checker objects to those that do not fit the declaration.
                     b"public" | b"private" | b"protected" | b"static" | b"readonly"
@@ -2827,9 +2760,6 @@ impl<'a> Builder<'a> {
                         self.parse_class(pos, flags | Flags::ABSTRACT)
                     }
                     b"async" => {
-                        if flags.contains(Flags::AMBIENT) {
-                            self.statement_modifier_error(pos, 1040);
-                        }
                         self.push_statement_modifier(Flags::ASYNC);
                         self.next()?;
                         if self.tok() != T::TFunction {
@@ -3247,8 +3177,7 @@ impl<'a> Builder<'a> {
         let mut other_implements = Vec::new();
         // `parseHeritageClauses`: any number of clauses, in any order. Only the first of each kind counts.
         let (mut seen_extends, mut seen_implements) = (false, false);
-        // `checkGrammarClassDeclarationHeritageClauses`: the clauses are not looked at after an error in the modifiers.
-        let mut done_reporting = self.modifiers_in_error;
+        let mut done_reporting = false;
         loop {
             let keyword = self.pos();
             let is_extends = self.tok() == T::TExtends;
@@ -3481,8 +3410,7 @@ impl<'a> Builder<'a> {
     fn parse_interface_heritage(&mut self) -> R<(Vec<TypeNodeId>, Vec<TypeNodeId>)> {
         let (mut extends, mut others) = (Vec::new(), Vec::new());
         let mut seen_extends = false;
-        // `checkInterfaceDeclaration`: the clauses are not looked at after an error in the modifiers.
-        let mut done_reporting = self.modifiers_in_error;
+        let mut done_reporting = false;
         loop {
             let keyword = self.pos();
             let is_extends = self.tok() == T::TExtends;
@@ -4151,12 +4079,7 @@ impl<'a> Builder<'a> {
             T::TImport => {
                 // `parseDeclarationWorker`: there is one import parser, whatever the modifiers.
                 self.next()?;
-                let stmt = self.parse_import(pos, flags | Flags::EXPORT)?;
-                // `checkImportDeclaration`: only `import a = b` takes modifiers.
-                if matches!(self.file[stmt].kind, StmtKind::Import(_)) {
-                    self.file.early_errors.push((pos, 1191));
-                }
-                Ok(stmt)
+                self.parse_import(pos, flags | Flags::EXPORT)
             }
             T::TIdentifier if self.lexer.identifier == b"as" => {
                 self.next()?;

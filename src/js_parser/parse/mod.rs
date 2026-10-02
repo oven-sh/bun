@@ -2263,8 +2263,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             p.parse_property_binding()?
         };
-        property.flags = Flags::Property::IsSpread.into();
-        property.key = p.new_expr(E::Missing {}, p.lexer.loc());
+        property.flags.insert(Flags::Property::IsSpread);
+        // `...a`: the name is what is bound, and there is no property name.
+        if property.key.loc == property.value.loc
+            && matches!(property.value.data, B::B::BIdentifier(_))
+            && matches!(&property.key.data, js_ast::expr::Data::EString(name) if name.is_present())
+        {
+            property.key = p.new_expr(E::Missing {}, p.lexer.loc());
+        }
         Ok(property)
     }
 

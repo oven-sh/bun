@@ -45,6 +45,8 @@ pub(super) struct Binder<'f> {
     idents: Vec<(ExprId, ScopeId)>,
     /// Identifiers that are assigned to.
     assigned: Vec<ExprId>,
+    /// `ForEachDynamicImportOrRequireCall`: where each is, and the module it names. They come after what the statements name.
+    dynamic_specifiers: Vec<(u32, Atom)>,
     /// `bindExpandoPropertyAssignment`: `a.b = c`, `a[b] = c` and, in JavaScript, `Object.defineProperty(a, "b", c)`, each with the
     /// scope it is written in.
     expando_assignments: Vec<(ExprId, ScopeId)>,
@@ -163,6 +165,7 @@ impl<'f> Binder<'f> {
             is_reached: false,
             is_unchecked: false,
             label_edges: Vec::new(),
+            dynamic_specifiers: Vec::new(),
             start_of_signatures: FlowId::NONE,
             spared: 0,
             break_target: FlowId::NONE,
@@ -296,6 +299,9 @@ impl<'f> Binder<'f> {
             // `Resolve`: the name of a class expression comes after what is declared in the class, and refuses none of it.
             let is_own_name = matches!(there.decls[0], Decl::Class(c) if matches!(self.b.class_owner[c.idx()], ClassOwner::Expr(_)));
             let is_refused = !is_own_name && Self::is_refused(there.flags, flags, decl);
+            if is_refused {
+                self.report_redeclaration(existing, includes, decl);
+            }
             let symbol = &mut self.b.symbols[existing.idx()];
             if is_refused {
                 // Listed all the same, for errors_duplicates.rs, which goes through specifiers by itself.
@@ -321,6 +327,38 @@ impl<'f> Binder<'f> {
         let symbol = self.new_symbol(name, includes, decl, parent);
         self.tables[table.idx()].insert(name, symbol);
         symbol
+    }
+
+    /// `declareSymbolEx`, where `symbol.Flags&excludes != 0`: "Report errors every position with duplicate declaration. Report errors
+    /// on previous encountered declarations".
+    fn report_redeclaration(&mut self, symbol: SymbolId, includes: SymFlags, decl: Decl) {
+        let there = &self.b.symbols[symbol.idx()];
+        let f = self.f;
+        // `isDefaultExport`, or an `ExportAssignment` that is no `export =`
+        let is_default_export = match decl {
+            Decl::Fn(it) => f[it].flags.contains(Flags::DEFAULT),
+            Decl::Class(it) => f[it].flags.contains(Flags::DEFAULT),
+            Decl::Interface(it) => f[it].flags.contains(Flags::DEFAULT),
+            Decl::ExportSpec(it) => f[it].exported == known::default,
+            Decl::ExportExpr(it) => matches!(f[it].kind, StmtKind::ExportDefault(_)),
+            _ => false,
+        };
+        let code = if is_default_export {
+            2528
+        } else if there.flags.contains(SymFlags::ENUM) || includes.contains(SymFlags::ENUM) {
+            2567
+        } else if there.flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {
+            2451
+        } else {
+            2300
+        };
+        let count = there.decls.len() as u32;
+        self.b.redeclarations.push(Redeclaration {
+            symbol,
+            count,
+            decl,
+            code,
+        });
     }
 
     fn push_scope(&mut self, kind: ScopeKind, symbol: SymbolId) -> ScopeId {
@@ -1489,6 +1527,11 @@ impl<'f> Binder<'f> {
             (*start, *len) = (self.b.flow_edges.len() as u32, edges.len() as u32);
             self.b.flow_edges.extend_from_slice(&edges[..]);
         }
+        // `collectExternalModuleReferences`
+        self.dynamic_specifiers.sort_by_key(|dynamic| dynamic.0);
+        let dynamic = self.dynamic_specifiers.iter().map(|dynamic| dynamic.1);
+        let dynamic = dynamic.filter(|spec| spec.is_some());
+        self.b.specifiers.extend(dynamic);
         let mut seen = crate::util::FxHashSet::default();
         self.b.specifiers.retain(|s| seen.insert(*s));
         if !self.b.ambient_specifiers.is_empty() {
@@ -2268,9 +2311,10 @@ impl<'f> Binder<'f> {
                 name,
                 flags,
                 Decl::Module(m),
+                // `declareSourceFileMember` asks `IsExternalModule`, which a CommonJS module is not.
                 all_exported
                     || decl.flags.contains(Flags::EXPORT)
-                    || self.is_implicitly_exported(decl.flags),
+                    || self.is_implicitly_exported(decl.flags) && self.f.has_module_syntax,
             ),
             // `declareModuleMember`: a local of what it is written in, under a name nothing can refer to. 2435
             ModuleName::String(name) if !is_global && !is_augmentation => {
@@ -2305,9 +2349,12 @@ impl<'f> Binder<'f> {
                 }
             }
             ModuleName::Global => {
-                let symbol = self.new_symbol(known::global, flags, Decl::Module(m), SymbolId::NONE);
+                // `declareModuleMember`: `IsAmbientModule`, so it is among the locals, where all of them are one symbol (`InternalSymbolNameGlobal`).
+                let locals = self.b.scopes[self.scope.idx()].locals;
+                let name = known::global_augmentation;
+                let symbol = self.declare_in(locals, name, flags, Decl::Module(m), SymbolId::NONE);
                 // `collectModuleReferences`: anywhere else it adds to nothing. 2669
-                if is_augmentation {
+                if is_augmentation && !self.b.global_augmentations.contains(&symbol) {
                     self.b.global_augmentations.push(symbol);
                 }
                 symbol
@@ -3209,6 +3256,24 @@ impl<'f> Binder<'f> {
         }
     }
 
+    /// A type has no place among the expressions: an expression in it is put in the function, namespace or file around, or in the
+    /// property of a class, which is what decides `this` in its type and its initializer (`GetThisContainer`).
+    fn parent_of_expression_in_type(&self) -> Parent {
+        let mut scope = self.scope;
+        loop {
+            let s = &self.b.scopes[scope.idx()];
+            match s.kind {
+                ScopeKind::Fn(f) => return Parent::FnBody(f),
+                ScopeKind::Module(m) => return Parent::Module(m),
+                ScopeKind::File => return Parent::File,
+                ScopeKind::Class(_) if self.cur_member.is_some() => {
+                    return Parent::MemberInit(self.cur_member);
+                }
+                _ => scope = s.parent,
+            }
+        }
+    }
+
     fn ty(&mut self, id: TypeNodeId) {
         self.b.type_scope[id.idx()] = self.scope;
         if self.is_unchecked {
@@ -3251,22 +3316,17 @@ impl<'f> Binder<'f> {
                 }
                 self.tys(args)
             }
+            // `checkInterfaceDeclaration` objects to it (2499) and does not check it.
+            TypeNodeKind::Heritage(expr) => {
+                let parent = self.parent_of_expression_in_type();
+                let saved = (self.true_target, self.false_target);
+                (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
+                self.b.expr_scope.insert(expr, self.scope);
+                self.unchecked_expr(expr, parent);
+                (self.true_target, self.false_target) = saved;
+            }
             TypeNodeKind::Typeof { args, expr, .. } => {
-                // A type has no place among the expressions: its operand is put in the function, namespace or file around, or in
-                // the property of a class, which is what decides `this` in its type and its initializer (`GetThisContainer`).
-                let mut scope = self.scope;
-                let parent = loop {
-                    let s = &self.b.scopes[scope.idx()];
-                    match s.kind {
-                        ScopeKind::Fn(f) => break Parent::FnBody(f),
-                        ScopeKind::Module(m) => break Parent::Module(m),
-                        ScopeKind::File => break Parent::File,
-                        ScopeKind::Class(_) if self.cur_member.is_some() => {
-                            break Parent::MemberInit(self.cur_member);
-                        }
-                        _ => scope = s.parent,
-                    }
-                };
+                let parent = self.parent_of_expression_in_type();
                 let saved = (self.true_target, self.false_target);
                 (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
                 // The `this` of `typeof this.x` is a name, not the keyword.
@@ -3286,7 +3346,7 @@ impl<'f> Binder<'f> {
                 self.tys(args)
             }
             TypeNodeKind::Import { spec, args, .. } => {
-                self.specifier(spec);
+                self.dynamic_specifiers.push((self.f[id].pos, spec));
                 self.tys(args);
             }
             TypeNodeKind::Template { types, .. } => {
@@ -3623,7 +3683,7 @@ impl<'f> Binder<'f> {
                 if self.f.is_js
                     && let Some(spec) = required_specifier(self.f, id)
                 {
-                    self.specifier(spec);
+                    self.dynamic_specifiers.push((self.f[id].pos, spec));
                 }
                 // What an immediately invoked function sees has the arguments evaluated.
                 if matches!(self.f[call.callee].kind, ExprKind::Fn(_)) {
@@ -3818,7 +3878,7 @@ impl<'f> Binder<'f> {
             | ExprKind::ImportCall(e, _) => {
                 let is_import = matches!(self.f[id].kind, ExprKind::ImportCall(..));
                 if is_import && let ExprKind::String(spec) = self.f[e].kind {
-                    self.specifier(spec);
+                    self.dynamic_specifiers.push((self.f[id].pos, spec));
                 }
                 if matches!(self.f[id].kind, ExprKind::Spread(_)) {
                     self.in_assignment_pattern = in_pattern;

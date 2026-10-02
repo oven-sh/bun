@@ -618,6 +618,13 @@ impl<'p> Checker<'p> {
     }
 
     /// `anyFunctionType`: the type of a context sensitive function under `CheckModeSkipContextSensitive`.
+    pub(super) fn any_function_type(&mut self) -> TypeId {
+        self.synth(Shape {
+            literal: Literalness::Partial,
+            ..Shape::default()
+        })
+    }
+
     pub(super) fn is_any_function_type(&self, ty: TypeId) -> bool {
         matches!(self.data(ty), TypeData::Synth(shape) if Self::is_any_function_shape(shape))
     }

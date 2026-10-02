@@ -1067,6 +1067,16 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `nullType`, likewise.
+    #[inline]
+    pub(super) fn null_as_declared(&self) -> TypeId {
+        if self.p.files.options.strict_null_checks {
+            TypeId::NULL
+        } else {
+            TypeId::NULL_DECLARED
+        }
+    }
+
     /// `getWidenedTypeOfObjectLiteral`: every property is widened, and so is what is found under any key.
     fn widen_object_literal(&mut self, ty: TypeId, siblings: Option<&[TypeId]>) -> TypeId {
         let others: SmallVec<[TypeId; 8]> = siblings

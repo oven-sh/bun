@@ -294,9 +294,14 @@ impl<'p> Checker<'p> {
             |printer| {
                 let ty = printer.c.widen_literal(ty);
                 match declaration {
-                    Some(declaration) => {
-                        printer.serialize_type_for_declaration(file, declaration, ty, false, false)
-                    }
+                    Some(declaration) => printer.serialize_type_for_declaration(
+                        file,
+                        declaration,
+                        ty,
+                        true,
+                        false,
+                        false,
+                    ),
                     None => printer.type_to_node(ty),
                 }
                 .text
@@ -322,7 +327,7 @@ impl<'p> Checker<'p> {
             flags,
             |printer| {
                 let (declared, _, outer_scope) = printer.enter_signature_scope(signature);
-                let text = printer.return_type_text(signature, &declared);
+                let text = printer.return_type_text(signature, &declared, true);
                 printer.leave_scope(outer_scope);
                 text
             },
@@ -998,6 +1003,13 @@ impl<'p> Printer<'_, 'p> {
     }
 
     fn type_to_node_worker(&mut self, ty: TypeId) -> Node {
+        let ty = match self.c.data(ty) {
+            TypeData::LazyAlias { .. } => match self.c.force(ty) {
+                forced if self.c.is_known(forced) => forced,
+                _ => ty,
+            },
+            _ => ty,
+        };
         let ty = if self.flags & NO_TYPE_REDUCTION == 0 {
             self.c.reduced(ty)
         } else {
@@ -1097,13 +1109,6 @@ impl<'p> Printer<'_, 'p> {
             }
             _ => {}
         }
-        let ty = match self.c.data(ty) {
-            TypeData::LazyAlias { .. } => match self.c.force(ty) {
-                forced if self.c.is_known(forced) => forced,
-                _ => ty,
-            },
-            _ => ty,
-        };
         let is_written_out = self.flags & WRITTEN_OUT != 0 && self.depth == 1;
         if !is_written_out
             && let Some((alias, arguments)) = self.c.alias_of_type(ty)
@@ -4095,8 +4100,13 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `serializeReturnTypeForSignature`. `parameters`: those the signature declares.
-    fn return_type_text(&mut self, signature: SigId, parameters: &[Parameter]) -> String {
-        if let Some(reused) = self.try_reuse_return_type_of_signature(signature) {
+    fn return_type_text(
+        &mut self,
+        signature: SigId,
+        parameters: &[Parameter],
+        try_reuse: bool,
+    ) -> String {
+        if try_reuse && let Some(reused) = self.try_reuse_return_type_of_signature(signature) {
             return reused;
         }
         // `serializeInferredReturnTypeForSignature`
@@ -4146,15 +4156,15 @@ impl<'p> Printer<'_, 'p> {
             parameters.push(self.parameter_text(parameter));
         }
         let this = match self.c.sig_this_type(signature) {
-            Some(this) => Some(this),
-            None => self.this_type_taken_from_context(signature),
+            Some(this) => Some((this, signature)),
+            None => self.this_parameter_taken_from_context(signature),
         };
-        if let Some(this) = this {
-            let node = self.serialize_type_of_this_parameter(signature, this);
+        if let Some((this, declared_by)) = this {
+            let node = self.serialize_type_of_this_parameter(declared_by, this);
             self.approximate_length += "this".len() + 3;
             parameters.insert(0, format!("this: {}", node.text));
         }
-        let returned = self.return_type_text(signature, &declared);
+        let returned = self.return_type_text(signature, &declared, true);
         self.leave_scope(outer_scope);
         let type_parameters = if type_parameters.is_empty() {
             String::new()
@@ -4229,11 +4239,11 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `assignContextualParameterTypes`: a context sensitive function that declares no `this` parameter gets that of the signature
-    /// it is expected to have.
-    fn this_type_taken_from_context(&mut self, signature: SigId) -> Option<TypeId> {
+    /// it is expected to have (`createSymbolWithType(context.thisParameter, nil)`): its type here, and the signature that declares it.
+    fn this_parameter_taken_from_context(&mut self, signature: SigId) -> Option<(TypeId, SigId)> {
         let (file, func, mapper) = match *self.c.p.types.sig(signature) {
             SigData::WithReturn { sig: inner, .. } => {
-                return self.this_type_taken_from_context(inner);
+                return self.this_parameter_taken_from_context(inner);
             }
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
@@ -4246,7 +4256,7 @@ impl<'p> Printer<'_, 'p> {
         }
         let expected = self.c.contextual_signature(file, func)?;
         let this = self.c.sig_this_type(expected)?;
-        Some(self.c.instantiate(this, mapper))
+        Some((self.c.instantiate(this, mapper), expected))
     }
 
     /// A function type or a constructor type.

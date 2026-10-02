@@ -152,6 +152,7 @@ known_atoms! {
     React = "React",
     r#const = "const",
     global = "global",
+    global_augmentation = "global=",
     intrinsic = "intrinsic",
     Disposable = "Disposable",
     freeze = "freeze",

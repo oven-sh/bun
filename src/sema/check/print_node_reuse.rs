@@ -24,6 +24,7 @@ impl<'p> Printer<'_, 'p> {
                     file,
                     SyntaxNode::Param(declaration),
                     parameter.ty,
+                    true,
                     false,
                     false,
                 ),
@@ -31,13 +32,13 @@ impl<'p> Printer<'_, 'p> {
         }
     }
 
-    /// `tryGetThisParameterDeclaration`: the type `this` of the `this` parameter of `signature`.
+    /// `tryGetThisParameterDeclaration`: the type `this` of a `this` parameter that `declared_by` declares.
     pub(super) fn serialize_type_of_this_parameter(
         &mut self,
-        signature: SigId,
+        declared_by: SigId,
         this: TypeId,
     ) -> Node {
-        if let Some((file, func, _)) = self.c.sig_decl(signature)
+        if let Some((file, func, _)) = self.c.sig_decl(declared_by)
             && self.reuses_nodes_of(file)
         {
             let written = self.c.hir(file)[func].this_ty(self.c.hir(file));
@@ -74,6 +75,7 @@ impl<'p> Printer<'_, 'p> {
                 file,
                 declaration,
                 ty,
+                true,
                 is_unwidened,
                 is_optional_reverse_mapped,
             );
@@ -112,7 +114,7 @@ impl<'p> Printer<'_, 'p> {
             && let Some((file, declaration)) = declaration
             && self.reuses_nodes_of(file)
         {
-            return self.serialize_type_for_declaration(file, declaration, ty, false, false);
+            return self.serialize_type_for_declaration(file, declaration, ty, true, false, false);
         }
         self.type_to_node(ty)
     }
@@ -228,7 +230,7 @@ impl<'p> Printer<'_, 'p> {
             .any(|member| member.is_undefined() && *member != TypeId::MISSING)
     }
 
-    /// `serializeTypeForDeclaration` with `tryReuse`, of the declaration `node` of `file`, whose type is `ty` here. `is_unwidened`: if
+    /// `serializeTypeForDeclaration`, of the declaration `node` of `file`, whose type is `ty` here. `is_unwidened`: if
     /// `ty` is the type of an array literal it still says so (`ObjectFlagsArrayLiteral`), which types do not keep.
     /// `is_optional_reverse_mapped`: the symbol is an optional property of a reverse mapped type.
     pub(super) fn serialize_type_for_declaration(
@@ -236,6 +238,7 @@ impl<'p> Printer<'_, 'p> {
         file: FileId,
         node: SyntaxNode,
         ty: TypeId,
+        try_reuse: bool,
         is_unwidened: bool,
         is_optional_reverse_mapped: bool,
     ) -> Node {
@@ -266,13 +269,17 @@ impl<'p> Printer<'_, 'p> {
         if self.is_unique_symbol_of_declaration(file, node, ty) {
             self.flags |= ALLOW_UNIQUE_ES_SYMBOL_TYPE;
         }
-        let result = self.serialize_type_for_declaration_worker(
-            file,
-            node,
-            ty,
-            is_unwidened,
-            requires_undefined,
-        );
+        let result = if try_reuse {
+            self.serialize_type_for_declaration_worker(
+                file,
+                node,
+                ty,
+                is_unwidened,
+                requires_undefined,
+            )
+        } else {
+            self.type_to_node(ty)
+        };
         self.flags = saved_flags;
         result
     }
@@ -296,7 +303,7 @@ impl<'p> Printer<'_, 'p> {
         own == symbol && self.enclosing_declaration.is_none_or(|at| at.file == file)
     }
 
-    /// The rest of `serializeTypeForDeclaration`.
+    /// The rest of `serializeTypeForDeclaration`, under `tryReuse`.
     fn serialize_type_for_declaration_worker(
         &mut self,
         file: FileId,
@@ -420,15 +427,10 @@ impl<'p> Printer<'_, 'p> {
                 is_signature_return: true,
                 ..
             } => match self.c.iso_fn_of_node(file, *of) {
-                Some(func) => {
-                    let signature = self.c.sig_of_fn(file, func);
-                    let declared = self.signature_parameters(signature);
-                    Node::new(self.return_type_text(signature, &declared), CONDITIONAL)
-                }
+                Some(func) => self.inferred_return_type_to_node(file, func),
                 None => Node::simple("any"),
             },
-            // It has been found to be what the checker says, so that is what is written.
-            Pseudo::Inferred { .. } => self.type_of_pseudo_type_to_node(file, pt),
+            Pseudo::Inferred { of, .. } => self.inferred_pseudo_type_to_node(file, *of),
             // Only the error type is equivalent to it.
             Pseudo::NoResult(_) => Node::simple("any"),
             Pseudo::MaybeConst {
@@ -527,6 +529,67 @@ impl<'p> Printer<'_, 'p> {
                     // A number is written in its canonical form, as its type is.
                     _ => self.type_of_pseudo_type_to_node(file, pt),
                 }
+            }
+        }
+    }
+
+    /// `serializeReturnTypeForSignature(getSignatureFromDeclaration(func), false)`
+    fn inferred_return_type_to_node(&mut self, file: FileId, func: FnId) -> Node {
+        let signature = self.c.sig_of_fn(file, func);
+        let signature = self.c.instantiate_sig(signature, self.mapper);
+        let declared = self.signature_parameters(signature);
+        Node::new(
+            self.return_type_text(signature, &declared, false),
+            CONDITIONAL,
+        )
+    }
+
+    /// `serializeTypeForDeclaration(declaration, nil, nil, false)`
+    fn inferred_type_of_declaration_to_node(
+        &mut self,
+        file: FileId,
+        declaration: SyntaxNode,
+    ) -> Node {
+        let Some(ty) = self.c.iso_type_of_declared(file, declaration) else {
+            return Node::simple("any");
+        };
+        let ty = self.c.widen_literal(ty);
+        let ty = self.c.instantiate(ty, self.mapper);
+        self.serialize_type_for_declaration(file, declaration, ty, false, false, false)
+    }
+
+    /// `pseudoTypeToNode`, of a `PseudoTypeInferred` of the expression `of` that is not what a signature returns. The type is that of
+    /// the declaration the expression is in, which is widened as that is and not as what is around it.
+    fn inferred_pseudo_type_to_node(&mut self, file: FileId, of: SyntaxNode) -> Node {
+        let (SyntaxNode::Expr(e) | SyntaxNode::Written(e)) = of else {
+            return Node::simple("any");
+        };
+        let tx = Emit::without_reports(file);
+        let (parent, declaration) = self.c.iso_parent_of_inferred(&tx, of);
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let returned_by = match parent {
+            Some(SyntaxNode::Stmt(s)) if matches!(hir[s].kind, StmtKind::Return(_)) => {
+                self.c.enclosing_fn_of_expr(file, e)
+            }
+            // The body of an arrow function.
+            Some(SyntaxNode::Expr(_)) => match bound.expr_parent[e.idx()] {
+                Parent::FnBody(func) => Some(func),
+                _ => None,
+            },
+            _ => None,
+        };
+        match (returned_by, declaration) {
+            (Some(func), _) if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) => {
+                let accessor = self.c.iso_node_of_fn(file, func);
+                self.inferred_type_of_declaration_to_node(file, accessor)
+            }
+            (Some(func), _) => self.inferred_return_type_to_node(file, func),
+            (None, Some(declaration)) => {
+                self.inferred_type_of_declaration_to_node(file, declaration)
+            }
+            (None, None) => {
+                let ty = self.c.type_of_expr(file, e);
+                self.type_to_node(ty)
             }
         }
     }
@@ -805,7 +868,7 @@ impl<'p> Printer<'_, 'p> {
         let hir = self.c.hir(file);
         let pos = hir[node].pos;
         Some(match hir[node].kind {
-            TypeNodeKind::Error => return None,
+            TypeNodeKind::Error | TypeNodeKind::Heritage(_) => return None,
             TypeNodeKind::Keyword(keyword) => Node::simple(match keyword {
                 Keyword::Any => "any",
                 Keyword::Unknown => "unknown",

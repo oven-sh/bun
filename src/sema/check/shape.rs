@@ -185,7 +185,7 @@ struct Built<'p> {
 
 /// What answers when a type is asked for a name.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Found {
+pub(super) enum Found {
     Property,
     /// A property that is private or protected.
     Restricted,
@@ -195,7 +195,7 @@ enum Found {
 
 /// What is done with the property a type is asked for (`getAssignmentTargetKind`, `accessKind`).
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Access {
+pub(super) enum Access {
     Read,
     /// It is the target of an assignment, but not written to and nothing else: `a.b ||= c`, `[...a.b] = c`.
     Assigned,
@@ -1418,6 +1418,8 @@ impl<'p> Checker<'p> {
                     self.intersection(&with_this)
                 }
             }
+            // It has no place to keep the argument (`tuple_members_with_this`). Made anew, it goes by no alias.
+            TypeData::Tuple { .. } => self.without_alias_of_reference(ty),
             _ => ty,
         }
     }
@@ -1603,16 +1605,12 @@ impl<'p> Checker<'p> {
     fn ranges_of_declarations(&self, sym: Sym) -> Vec<(u32, u32)> {
         let mut ranges = Vec::new();
         for (file, decl) in self.files().decls(sym) {
-            let hir = self.hir(file);
-            match decl {
-                Decl::Class(class) => ranges.push((
-                    self.end_of_token_before(file, hir[class].start),
+            match (decl, self.files().loc_of_declaration(file, decl)) {
+                (Decl::Class(_) | Decl::Interface(_), Some(loc)) => ranges.push((loc.pos, loc.end)),
+                (Decl::Class(class), None) => ranges.push((
+                    self.end_of_token_before(file, self.hir(file)[class].start),
                     self.end_of_class(file, class),
                 )),
-                Decl::Interface(interface) => {
-                    let loc = hir[hir[interface].stmt].loc;
-                    ranges.push((loc.pos, loc.end));
-                }
                 _ => {}
             }
         }
@@ -1728,6 +1726,8 @@ impl<'p> Checker<'p> {
             constructor
         } else {
             if holds && let Some(at) = self.place_to_report_base_at(file, c) {
+                // Printing the type may ask for the base constructor type.
+                self.p.base_constructor_types.insert(class, TypeId::ERROR);
                 let mut err = self.new_diagnostic(at, 2507, &[Arg::Type(constructor)]);
                 if let TypeData::TypeParam(of, tp, _) = *self.data(constructor) {
                     let constraint = self.constraint_of_type_param(constructor);
@@ -1912,7 +1912,10 @@ impl<'p> Checker<'p> {
             let mapper = self.decl_params_mapper(sym, file, interface.type_params);
             for node in hir.ids(interface.extends) {
                 // A base that is no `A.B<C>` has the error type (2499), which is skipped.
-                if matches!(hir[node].kind, TypeNodeKind::Error) {
+                if matches!(
+                    hir[node].kind,
+                    TypeNodeKind::Error | TypeNodeKind::Heritage(_)
+                ) {
                     continue;
                 }
                 let base = self.type_from_node(file, node);
@@ -2477,8 +2480,9 @@ impl<'p> Checker<'p> {
     /// that is only about types (`getSymbolFlagsEx`, `excludeTypeOnlyMeanings`). An alias that stands for nothing is in error, and
     /// what is in error can be anything, a value too.
     fn symbol_is_value(&self, sym: Sym) -> bool {
-        self.files().symbol_flags(sym).intersects(SymFlags::VALUE)
-            && self.type_only_alias_declaration(sym).is_none()
+        self.files()
+            .symbol_flags_ex(sym, true, false)
+            .intersects(SymFlags::VALUE)
     }
 
     /// `isReadonlySymbol`, of what a module, a namespace or an enum exports: constants and enum members. What an alias stands
@@ -4758,30 +4762,40 @@ impl<'p> Checker<'p> {
     /// The type of `ty.name`. `None`: there is no such property.
     pub fn type_of_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         self.property_type(ty, name, Access::Read)
+            .map(|found| found.0)
     }
 
     /// The type of `ty.name` where it is only written to: the target of `=`, of a destructuring assignment, of `for..of`.
     pub fn write_type_of_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         self.property_type(ty, name, Access::Written)
+            .map(|found| found.0)
     }
 
     /// The type of `ty.name` where it is the target of an assignment without being only written to: a property is what is read
     /// from it, and an index signature takes what it says.
     pub(super) fn type_of_property_for_write(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         self.property_type(ty, name, Access::Assigned)
+            .map(|found| found.0)
     }
 
-    fn property_type(&mut self, ty: TypeId, name: Atom, access: Access) -> Option<TypeId> {
+    /// `prop` or `indexInfo` of `checkPropertyAccessExpressionOrQualifiedName`: the type, and which of the two it is the type of.
+    pub(super) fn property_type(
+        &mut self,
+        ty: TypeId,
+        name: Atom,
+        access: Access,
+    ) -> Option<(TypeId, Found)> {
         let (found, how) = self.find_property(ty, name, access)?;
         // `noUncheckedIndexedAccess`: what is read through an index signature may not be there.
         let may_be_missing = how == Found::ByIndex
             && access == Access::Read
             && self.p.files.options.no_unchecked_indexed_access;
-        Some(if may_be_missing {
+        let found = if may_be_missing {
             self.with_missing(found)
         } else {
             found
-        })
+        };
+        Some((found, how))
     }
 
     /// `checkPropertyAccessExpressionOrQualifiedName`: the type of the property `name` of `ty`, or failing that of the index

@@ -50,6 +50,29 @@ impl Checker<'_> {
         results
     }
 
+    /// Where the type of a node of `file` is the error type, and what kind of node it is: the walk of `types_at_locations` without the
+    /// printing. TypeScript makes the error type only where it reports an error or was handed one, so in a file without errors each of
+    /// these is a bug. Nothing for a file whose semantic errors are not reported, or only some of them. The file must have been checked.
+    pub fn error_types_at_locations(&mut self, file: FileId) -> Vec<(u32, String)> {
+        if !self.reports_semantic_errors(file) || self.is_plain_js(file) {
+            return Vec::new();
+        }
+        self.flow_analysis_disabled_in = self.is_flow_analysis_left_disabled(file).then_some(file);
+        let mut found = Vec::new();
+        for node in self.visited_nodes(file) {
+            if self.is_left_out_of_types(file, node.kind) {
+                continue;
+            }
+            let ty = self.get_type_of_visited_node(file, node);
+            if self.is_error_type(ty) && !self.is_error_type_written_as_any(file, node.kind) {
+                found.push((node.start, format!("{:?}", node.kind)));
+            }
+        }
+        self.rechecked_exprs.clear();
+        self.rechecked_members.clear();
+        found
+    }
+
     /// `writeTypeOrSymbol`, in the walk for types.
     fn write_type_of_visited_node(
         &mut self,
@@ -234,7 +257,8 @@ impl Checker<'_> {
                     if let Some(&base) = self.base_types(class).first()
                         && !base.is_any()
                     {
-                        return base;
+                        let this = self.intern(TypeData::ThisParam(class));
+                        return self.type_with_this_argument(base, this);
                     }
                 }
                 self.type_of_visited_expression(file, e)
@@ -407,17 +431,24 @@ impl Checker<'_> {
         let scope = bound.import_equals_scope[import.idx()];
         let symbol = self
             .files()
-            .resolve_entity(file, scope, &names[..=index], meaning)
-            .and_then(|found| self.files().resolve_alias_if_needed(found));
+            .resolve_entity(file, scope, &names[..=index], meaning);
         let ty = match symbol {
             // `getDeclaredTypeOfEnumMember`
-            Some(symbol) if self.files().flags(symbol).contains(SymFlags::ENUM_MEMBER) => {
+            Some(symbol)
+                if self.files().resolve_alias(symbol).is_some_and(|target| {
+                    self.files().flags(target).contains(SymFlags::ENUM_MEMBER)
+                }) =>
+            {
                 self.type_of_symbol(symbol)
             }
-            Some(symbol) if self.files().means(symbol, SymFlags::TYPE) => {
-                self.declared_type(symbol)
+            Some(symbol) => {
+                let declared = self.declared_type(symbol);
+                if declared == TypeId::ERROR || declared == TypeId::UNRESOLVED {
+                    self.type_of_symbol(symbol)
+                } else {
+                    declared
+                }
             }
-            Some(symbol) => self.type_of_symbol(symbol),
             None => TypeId::ERROR,
         };
         // A lone name means a namespace, which is `any` only in error.
@@ -502,22 +533,10 @@ impl Checker<'_> {
         };
         // `IsTypeDeclarationName`: a name that is a string literal is not one.
         let is_identifier = !matches!(hir.text.get(start as usize), Some(b'"' | b'\''));
-        match decl {
-            _ if !is_type_declaration || !is_identifier => self.type_of_symbol(sym),
-            Decl::ImportDefault(_) | Decl::ImportSpec(_) | Decl::ExportSpec(_) => {
-                self.get_declared_type_of_alias(sym)
-            }
-            _ => self.declared_type(sym),
-        }
-    }
-
-    /// `getDeclaredTypeOfAlias`. The error type if what `alias` stands for is not a type.
-    fn get_declared_type_of_alias(&mut self, alias: Sym) -> TypeId {
-        match self.files().resolve_alias(alias) {
-            Some(target) if self.type_flags_of_symbol(target).intersects(SymFlags::TYPE) => {
-                self.declared_type(target)
-            }
-            _ => TypeId::ANY,
+        if is_type_declaration && is_identifier {
+            self.declared_type(sym)
+        } else {
+            self.type_of_symbol(sym)
         }
     }
 

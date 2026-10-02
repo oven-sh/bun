@@ -248,28 +248,24 @@ impl Checker<'_> {
     /// first that does not is objected to.
     pub(super) fn check_declare_modifiers(&self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
-        if hir.kind != FileKind::Declaration || hir.text.is_empty() {
+        if hir.kind != FileKind::Declaration {
             return;
         }
         for s in hir.ids(hir.body) {
-            if !matches!(
+            let is_declared = |modifier: &Modifier| {
+                matches!(modifier.kind, ModifierKind::Keyword(flag)
+                    if flag.intersects(Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT))
+            };
+            if matches!(
                 hir[s].kind,
                 StmtKind::Fn(_)
                     | StmtKind::Class(_)
                     | StmtKind::Enum(_)
                     | StmtKind::Module(_)
                     | StmtKind::Var(_)
-            ) {
-                continue;
-            }
-            // Everything in such a file counts as declared: whether it says so is a matter of how it is written.
-            let modifiers =
-                modifiers_around(&hir.text, hir[s].pos, Flags::AMBIENT | Flags::ABSTRACT);
-            let start = modifiers.first().map_or(hir[s].pos, |m| m.0);
-            if !modifiers
-                .iter()
-                .any(|m| matches!(word_at(&hir.text, m.0 as usize), b"declare" | b"export"))
+            ) && !hir.modifier_list(hir[s].modifiers).iter().any(is_declared)
             {
+                let start = hir[s].start;
                 out.push(Diagnostic { start, code: 1046 });
                 return;
             }

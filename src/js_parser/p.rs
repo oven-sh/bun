@@ -397,8 +397,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) type_syntax: Option<Box<crate::sema::TypeSyntax>>,
     /// Tolerant mode only. The tag name of the JSX element whose child is about to be parsed (`openingTag` of `parseJsxChildren`).
     pub(crate) jsx_parent_tag: Option<&'a [u8]>,
-    /// Tolerant mode only. In `<div><span></div>`, the closing tag that the child read and its parent takes.
-    pub(crate) jsx_adopted_close: Option<crate::parser::JSXTag<'a>>,
+    /// Tolerant mode only. In `<div><span></div>`, the closing tag that the child read and its parent takes, with where it starts
+    /// and ends.
+    pub(crate) jsx_adopted_close: Option<(crate::parser::JSXTag<'a>, bun_ast::Loc, bun_ast::Loc)>,
     /// Tolerant mode only. The children of a JSX element went on to the end of the file (`parseJsxChild`). The text among them is no
     /// trivia, so what ends there ends with the file.
     pub(crate) jsx_children_met_end_of_file: bool,

@@ -1825,8 +1825,12 @@ impl Checker<'_> {
                     func.kind,
                     FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
                 );
+            let has_modifier_error = match bound.fns[i].owner {
+                FnOwner::Stmt(s) => self.grammar_error_in_modifiers(file, s).is_some(),
+                _ => is_named && has_modifier_error(hir, func.name_pos),
+            };
             let mut has_objected = !is_silent
-                && (is_named && has_modifier_error(hir, func.name_pos)
+                && (has_modifier_error
                     || check_grammar_type_parameter_list(self, hir, f, out)
                     || check_grammar_parameter_list(self, file, f, out)
                     || check_grammar_arrow_function(self, file, f, is_reserved, out));

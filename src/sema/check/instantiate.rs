@@ -352,54 +352,7 @@ impl<'p> Checker<'p> {
                 let source = self.instantiate(source, mapper);
                 self.reverse_mapped_type(source, mapped, of).unwrap_or(ty)
             }
-            TypeData::IndexedAccess {
-                obj,
-                index,
-                undefined,
-            } => {
-                let undefined = *undefined;
-                let declared = *obj;
-                let (obj, index) = (
-                    self.instantiate(*obj, mapper),
-                    self.instantiate(*index, mapper),
-                );
-                // `alias = c.instantiateTypeAlias(t.alias, m)`
-                let alias = self.stored_alias(ty).map(|(alias, type_arguments)| {
-                    (*alias, self.instantiate_all(type_arguments, mapper))
-                });
-                let alias = alias
-                    .as_ref()
-                    .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
-                // `indexed_access_of_alias_under_way`: the access goes on waiting while the type arguments of the alias are generic.
-                // `getTypeArguments` of the instantiated reference starts over until `instantiationDepth == 100` and stores the access all
-                // the same. `force_reference` reports that where the alias is first looked into.
-                if matches!(self.data(declared), TypeData::LazyAlias { .. })
-                    && self.has_type_variables(obj)
-                {
-                    if obj != declared {
-                        self.p
-                            .excessive
-                            .insert(Deep::Instantiation(obj, MapperId::IDENTITY), ());
-                        self.p
-                            .has_excessive
-                            .store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    let waiting = self.intern(TypeData::IndexedAccess {
-                        obj,
-                        index,
-                        undefined,
-                    });
-                    return match alias {
-                        Some((alias, type_arguments)) => {
-                            self.with_alias(waiting, alias, type_arguments)
-                        }
-                        None => waiting,
-                    };
-                }
-                // `getIndexedAccessTypeEx(.., t.accessFlags, nil)`: there is no node to complain at, so what is not there is `unknown`.
-                self.indexed_access_flagged(obj, index, undefined, alias)
-                    .unwrap_or(TypeId::UNKNOWN)
-            }
+            TypeData::IndexedAccess { .. } => self.instantiate_indexed_access(ty, mapper, None),
             TypeData::Keyof(t) => {
                 let t = self.instantiate(*t, mapper);
                 self.keyof(t)

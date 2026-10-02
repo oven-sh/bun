@@ -605,18 +605,19 @@ impl Visitor<'_, '_> {
         for (index, prop) in hir.pat_props.iter().enumerate() {
             let p = PatPropId(index as u32);
             let kind = VisitedKind::LiteralInBindingPropertyName(p);
-            self.literal_in_computed_name(prop.key, prop.pos, kind);
+            self.literal_in_computed_name(prop.key, prop.key_pos, kind);
             // In `{ a }` the one identifier is the name that is bound. A string or a number is no identifier.
-            let is_identifier = hir.text.get(prop.pos as usize).is_some_and(|&first| {
+            let is_identifier = hir.text.get(prop.key_pos as usize).is_some_and(|&first| {
                 first.is_ascii_alphabetic() || matches!(first, b'_' | b'$' | b'\\') || first >= 0x80
             });
-            if matches!(prop.key, PropKey::Name(_))
-                && !prop.is_rest
+            if matches!(prop.key, PropKey::Name(name) if self.is_missing(name, prop.key_pos)) {
+                self.missing_identifier(prop.key_pos, VisitedKind::BindingPropertyName(p));
+            } else if matches!(prop.key, PropKey::Name(_))
                 && is_identifier
                 && prop.value.is_some()
-                && hir[prop.value].pos != prop.pos
+                && hir[prop.value].pos != prop.key_pos
             {
-                self.token(prop.pos, VisitedKind::BindingPropertyName(p));
+                self.token(prop.key_pos, VisitedKind::BindingPropertyName(p));
             }
         }
         // A name that names nothing (`getDeclarationName`) is kept as no name, as is one the parser missed: `#x` with no class

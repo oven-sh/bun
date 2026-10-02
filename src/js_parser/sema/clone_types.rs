@@ -31,6 +31,8 @@ pub(crate) enum PendingPart {
     PatternPropertyDefault(PatPropId, Expr),
     /// `([name = expression]) => T`
     PatternElementDefault(PatElemId, Expr),
+    /// `interface I extends expression`
+    HeritageExpression(TypeNodeId),
 }
 
 macro_rules! assert_same_flags {
@@ -310,6 +312,9 @@ impl Builder<'_> {
         };
         let node = self.file.ty(kind, pos(loc));
         self.file[node].end = pos(end);
+        if matches!(data, ts::TypeData::HeritageExpression) {
+            self.pending.push(PendingPart::HeritageExpression(node));
+        }
         node
     }
 
@@ -605,6 +610,7 @@ impl Builder<'_> {
                             default: ExprId::NONE,
                             is_rest,
                             pos: pos(loc),
+                            key_pos: pos(loc),
                         }
                     })
                     .collect();
@@ -689,32 +695,19 @@ impl Builder<'_> {
         func
     }
 
-    /// The flags that `export`, `default` and `declare` stand for, and where `export` is. Reports the first modifier that is misplaced
-    /// (`checkGrammarModifiers`).
+    /// The flags that `export`, `default` and `declare` stand for, and where `export` is.
     pub(crate) fn clone_statement_modifiers(
-        &mut self,
+        &self,
         modifiers: ts::Span<ts::Modifier>,
     ) -> (Flags, Option<u32>) {
-        let (mut all, mut export_pos, mut declare_pos, mut error) =
-            (Flags::empty(), None, None, None);
+        let (mut all, mut export_pos) = (Flags::empty(), None);
         for modifier in modifiers.iter() {
             let ts::Modifier { flag, loc } = self.ts[modifier];
-            let at = pos(loc);
             if flag == ts::Flags::EXPORT {
-                // 'export' modifier must precede 'declare' modifier.
-                if std::mem::take(&mut declare_pos).is_some() {
-                    error.get_or_insert((at, 1029));
-                }
-                export_pos.get_or_insert(at);
-            } else if flag == ts::Flags::AMBIENT {
-                // 'declare' modifier already seen.
-                if declare_pos.replace(at).is_some() {
-                    error.get_or_insert((at, 1030));
-                }
+                export_pos.get_or_insert(pos(loc));
             }
             all |= flags(flag);
         }
-        self.file.early_errors.extend(error);
         (all, export_pos)
     }
 
@@ -734,20 +727,12 @@ impl Builder<'_> {
             members,
             ..
         } = self.ts[id];
-        // `checkInterfaceDeclaration`: the clauses are not looked at after an error in the modifiers.
-        if !self
-            .file
-            .early_errors
-            .iter()
-            .any(|&(start, _)| (pos..self::pos(name.loc)).contains(&start))
-        {
-            self.file.early_errors.extend(
-                heritage_errors
-                    .into_iter()
-                    .flatten()
-                    .map(|(loc, code)| (self::pos(loc), code)),
-            );
-        }
+        self.file.early_errors.extend(
+            heritage_errors
+                .into_iter()
+                .flatten()
+                .map(|(loc, code)| (self::pos(loc), code)),
+        );
         let type_params = self.clone_type_params(type_params);
         let heritage: smallvec::SmallVec<[ts::TypeId; 4]> = self.ts.id_list(extends).collect();
         let heritage: smallvec::SmallVec<[TypeNodeId; 4]> = heritage

@@ -545,11 +545,7 @@ impl Checker<'_> {
             let element = &hir[j];
             let start = hir[e].pos;
             // Where the opening tag ends, which is all there is to an element that closes itself.
-            let end = if self.explains {
-                self.end_of_jsx_opening(file, e, j)
-            } else {
-                0
-            };
+            let end = element.opening_end;
             if jsx == JsxEmit::None {
                 out.push(Diagnostic { start, code: 17004 });
                 self.note(start, end, 17004, Vec::new());
@@ -560,11 +556,7 @@ impl Checker<'_> {
                 let is_whole_element = self.p.files.options.no_emit_is_set
                     && element.tag.is_some()
                     && element.close_pos != u32::MAX;
-                let end = if self.explains && is_whole_element {
-                    self.end_of_jsx_closing(file, j)
-                } else {
-                    end
-                };
+                let end = if is_whole_element { element.end } else { end };
                 if let Some((spec, mode)) = untyped_runtime {
                     if no_implicit_any {
                         self.error_on_implicit_any_module(file, spec, mode, (start, end), out);
@@ -654,11 +646,7 @@ impl Checker<'_> {
                     Some(_) => 2339,
                 };
                 out.push(Diagnostic { start, code });
-                let end = if is_closing {
-                    self.end_of_jsx_closing(file, j)
-                } else {
-                    end
-                };
+                let end = if is_closing { element.end } else { end };
                 self.explain_to(start, end, code, |c| {
                     if code == 7026 {
                         vec!["IntrinsicElements".to_owned()]
@@ -706,7 +694,7 @@ impl Checker<'_> {
             return;
         }
         if sigs.is_empty() {
-            let (start, end) = (hir[e].pos, self.end_of_jsx_opening(file, e, j));
+            let (start, end) = (hir[e].pos, hir[j].opening_end);
             out.push(Diagnostic { start, code: 2604 });
             self.explain_to(start, end, 2604, |c| vec![c.source_text(file, start, end)]);
             return;
@@ -730,7 +718,7 @@ impl Checker<'_> {
         {
             return;
         }
-        let (start, end) = (hir[e].pos, self.end_of_jsx_opening(file, e, j));
+        let (start, end) = (hir[e].pos, hir[j].opening_end);
         self.report_not_assignable_with_end(given, props, start, end, 2322, out);
     }
 
@@ -810,7 +798,7 @@ impl Checker<'_> {
                                 start: hir[e].pos,
                                 code: 2339,
                             });
-                            let end = self.end_of_jsx_opening(file, e, j);
+                            let end = hir[j].opening_end;
                             self.explain_to(hir[e].pos, end, 2339, |c| {
                                 vec![c.atom_text(name), "JSX.IntrinsicElements".to_owned()]
                             });
@@ -845,7 +833,7 @@ impl Checker<'_> {
                     if sigs.is_empty() && self.is_union(apparent) {
                         // Every alternative is asked, whatever the others have.
                         let mut said = Vec::new();
-                        let at = (hir[e].pos, self.end_of_jsx_opening(file, e, j));
+                        let at = (hir[e].pos, hir[j].opening_end);
                         if self.jsx_tag_has_signatures(file, component, at, &mut said)
                             != Some(false)
                         {

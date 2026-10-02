@@ -3329,6 +3329,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             TypeNodeKind::Predicate { ty, .. } => self.visit_type(ty, false),
             TypeNodeKind::Error
+            | TypeNodeKind::Heritage(_)
             | TypeNodeKind::Keyword(_)
             | TypeNodeKind::StringLit(_)
             | TypeNodeKind::NumberLit(_)

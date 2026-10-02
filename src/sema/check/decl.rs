@@ -777,6 +777,7 @@ impl<'p> Checker<'p> {
         };
         match hir[node].kind {
             TypeNodeKind::Error
+            | TypeNodeKind::Heritage(_)
             | TypeNodeKind::StringLit(_)
             | TypeNodeKind::NumberLit(_)
             | TypeNodeKind::BigIntLit { .. }
@@ -1878,6 +1879,15 @@ impl<'p> Checker<'p> {
                 }
             }
         }
+        // `getDeclaredTypeOfAlias`
+        if flags.contains(SymFlags::ALIAS)
+            && let Some(target) = self
+                .files()
+                .resolve_alias(sym)
+                .filter(|&target| target != sym)
+        {
+            return self.declared_type(target);
+        }
         TypeId::UNRESOLVED
     }
 
@@ -2154,8 +2164,7 @@ impl<'p> Checker<'p> {
             b"Boolean" => TypeId::BOOLEAN,
             b"Void" => TypeId::VOID,
             b"Undefined" => self.undefined_as_declared(),
-            b"Null" if self.p.files.options.strict_null_checks => TypeId::NULL,
-            b"Null" => TypeId::NULL_DECLARED,
+            b"Null" => self.null_as_declared(),
             b"Function" | b"function" => self.global_ref(known::Function, &[]),
             _ => return None,
         })
@@ -2165,7 +2174,7 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         let scope = self.bound(file).type_scope[node.idx()];
         match hir[node].kind {
-            TypeNodeKind::Error => TypeId::UNRESOLVED,
+            TypeNodeKind::Error | TypeNodeKind::Heritage(_) => TypeId::UNRESOLVED,
             TypeNodeKind::Keyword(k) => match k {
                 Keyword::Any => TypeId::ANY,
                 Keyword::Unknown => TypeId::UNKNOWN,
@@ -2173,8 +2182,7 @@ impl<'p> Checker<'p> {
                 Keyword::Void => TypeId::VOID,
                 // `undefinedType`, `nullType`: written as a type they are never widened.
                 Keyword::Undefined => self.undefined_as_declared(),
-                Keyword::Null if self.p.files.options.strict_null_checks => TypeId::NULL,
-                Keyword::Null => TypeId::NULL_DECLARED,
+                Keyword::Null => self.null_as_declared(),
                 Keyword::String => TypeId::STRING,
                 Keyword::Number => TypeId::NUMBER,
                 Keyword::Boolean => TypeId::BOOLEAN,

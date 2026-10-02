@@ -51,7 +51,39 @@ impl Checker<'_> {
             if statement.modifiers.is_empty() || matches!(bound.stmt_parent[s], Parent::None) {
                 continue;
             }
-            let Some(error) = self.grammar_error_in_modifiers(file, StmtId(s as u32)) else {
+            let error = self.grammar_error_in_modifiers(file, StmtId(s as u32));
+            // `checkGrammarClassDeclarationHeritageClauses`, `checkInterfaceDeclaration`: `!c.checkGrammarModifiers(node) && ..`. The
+            // front end reports the clauses.
+            if error.is_some() {
+                let members = match statement.kind {
+                    StmtKind::Class(c) => hir[c].members,
+                    StmtKind::Interface(i) => hir[i].members,
+                    _ => Span::EMPTY,
+                };
+                let first_member = members.iter().next().map(|m| hir[m].start);
+                let header = statement.start..first_member.unwrap_or(statement.loc.end);
+                out.retain(|d| !matches!(d.code, 1097 | 1172..=1176) || !header.contains(&d.start));
+            }
+            // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these take none.
+            let takes_none = match (statement.kind, bound.stmt_parent[s]) {
+                (StmtKind::Import(_), Parent::File | Parent::Module(_)) => 1191,
+                (
+                    StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
+                    Parent::File | Parent::Module(_),
+                ) => 1193,
+                (StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_), Parent::File) => 1120,
+                (StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_), Parent::Module(m))
+                    if !matches!(hir[m].name, ModuleName::Ident(_)) =>
+                {
+                    1120
+                }
+                _ => 0,
+            };
+            let Some(error) = error.or((takes_none != 0).then_some(GrammarError {
+                start: statement.start,
+                code: takes_none,
+                args: ["", ""],
+            })) else {
                 continue;
             };
             let GrammarError { start, code, args } = error;
@@ -69,6 +101,9 @@ impl Checker<'_> {
         s: StmtId,
     ) -> Option<GrammarError> {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        if s.is_none() || hir[s].modifiers.is_empty() {
+            return None;
+        }
         let Stmt {
             kind, modifiers, ..
         } = hir[s];

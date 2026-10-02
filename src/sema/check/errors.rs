@@ -1675,12 +1675,12 @@ impl Checker<'_> {
     /// `checkIdentifier`: whether the variable the identifier `e` reads, whose type is `declared`, is taken to hold a value where the
     /// flow of control it is followed in starts (`assumeInitialized`).
     pub(super) fn assumes_initialized(&self, file: FileId, e: ExprId, declared: TypeId) -> bool {
-        if !self.p.files.options.strict_null_checks
-            || declared == TypeId::UNKNOWN
-            || declared == TypeId::VOID
-            || self.is_any(declared)
-            // What finds out its type as it goes starts as `undefined` on its own account.
-            || declared == self.auto_array_type
+        let is_automatic = self.is_automatic_type(declared);
+        if !is_automatic
+            && (!self.p.files.options.strict_null_checks
+                || declared == TypeId::UNKNOWN
+                || declared == TypeId::VOID
+                || self.is_any(declared))
         {
             return true;
         }
@@ -1688,7 +1688,7 @@ impl Checker<'_> {
         let parent = bound.expr_parent[e.idx()];
         if hir.kind == FileKind::Declaration
             || bound.is_unchecked(e.idx())
-            || bound.is_in_type_query(e)
+            || !is_automatic && bound.is_in_type_query(e)
         {
             return true;
         }
@@ -4828,14 +4828,16 @@ impl Checker<'_> {
                         {
                             let object = self.type_of_expr(file, right);
                             if self.is_known(object) && !self.is_uncertain(file, right) {
-                                let code = if self.is_any(object) {
-                                    2339
-                                } else {
-                                    self.why_no_property(file, left, object, name)
-                                };
-                                let start = hir[left].pos;
-                                out.push(Diagnostic { start, code });
-                                self.explain_no_property(file, left, object, name, start, code);
+                                let (start, is_unchecked_js) =
+                                    (hir[left].pos, self.is_plain_js(file));
+                                self.report_nonexistent_property(
+                                    file,
+                                    left,
+                                    name,
+                                    start,
+                                    object,
+                                    is_unchecked_js,
+                                );
                             }
                         }
                     } else {
@@ -5394,8 +5396,7 @@ impl Checker<'_> {
         fits
     }
 
-    /// What is left of the type of `node` once `null` and `undefined` are ruled out, which they have to be here.
-    /// 18050, 18046 to 18049, 2531 to 2533, 2571. `checkNonNullType`, `reportObjectPossiblyNullOrUndefinedError`
+    /// `checkNonNullType`, for a pass.
     pub(super) fn check_not_nullish(
         &mut self,
         file: FileId,
@@ -5403,41 +5404,64 @@ impl Checker<'_> {
         ty: TypeId,
         out: &mut Vec<Diagnostic>,
     ) -> TypeId {
-        use super::flow::NonNullError;
         if self.is_uncertain(file, node) {
             return ty;
         }
         self.check_non_null_type_with_reporter(ty, |c, error| {
-            let hir = c.hir(file);
-            let start = c.error_start_of(file, node);
-            let is_name = c.is_entity_name(file, node);
-            let code = match error {
-                NonNullError::IsUnknown if is_name => 18046,
-                NonNullError::IsUnknown => 2571,
-                NonNullError::IsPossibly { undefined, null } => match hir[node].kind {
-                    // `(null)` and `(undefined)` are expressions in parentheses.
-                    ExprKind::Null if !is_parenthesized(hir, node) => 18050,
-                    ExprKind::Ident(known::undefined) if is_name => 18050,
-                    _ => match (is_name, undefined, null) {
-                        (true, true, true) => 18049,
-                        (true, true, false) => 18048,
-                        (true, false, _) => 18047,
-                        (false, true, true) => 2533,
-                        (false, true, false) => 2532,
-                        (false, false, _) => 2531,
-                    },
-                },
-            };
+            let ((_, start, end), code, name) = c.object_possibly_null_error(file, node, error);
             out.push(Diagnostic { start, code });
-            let end = c.error_end_of(file, node);
-            c.explain_to(start, end, code, |c| match code {
-                18050 if matches!(c.hir(file)[node].kind, ExprKind::Null) => {
-                    vec!["null".to_owned()]
-                }
-                18046..=18050 => vec![entity_name_text(c, file, node)],
-                _ => Vec::new(),
-            });
+            c.note(start, end, code, name.into_iter().collect());
         })
+    }
+
+    /// `checkNonNullType`: what is left of the type of `node` once `null` and `undefined` are ruled out, which they have to be here.
+    pub(super) fn check_non_null_type(&mut self, file: FileId, node: ExprId, ty: TypeId) -> TypeId {
+        self.check_non_null_type_with_reporter(ty, |c, error| {
+            let (at, code, name) = c.object_possibly_null_error(file, node, error);
+            let args: Vec<Arg> = name.iter().map(|name| Arg::Text(name)).collect();
+            c.error(at, code, &args);
+        })
+    }
+
+    /// `reportObjectPossiblyNullOrUndefinedError`, and what `checkNonNullTypeWithReporter` says of `unknown`: where, which of 18050,
+    /// 18046 to 18049, 2531 to 2533 and 2571, and the name in it.
+    fn object_possibly_null_error(
+        &self,
+        file: FileId,
+        node: ExprId,
+        error: super::flow::NonNullError,
+    ) -> ((FileId, u32, u32), u32, Option<String>) {
+        use super::flow::NonNullError;
+        let hir = self.hir(file);
+        let is_name = self.is_entity_name(file, node);
+        let code = match error {
+            NonNullError::IsUnknown if is_name => 18046,
+            NonNullError::IsUnknown => 2571,
+            NonNullError::IsPossibly { undefined, null } => match hir[node].kind {
+                // `(null)` and `(undefined)` are expressions in parentheses.
+                ExprKind::Null if !is_parenthesized(hir, node) => 18050,
+                ExprKind::Ident(known::undefined) if is_name => 18050,
+                _ => match (is_name, undefined, null) {
+                    (true, true, true) => 18049,
+                    (true, true, false) => 18048,
+                    (true, false, _) => 18047,
+                    (false, true, true) => 2533,
+                    (false, true, false) => 2532,
+                    (false, false, _) => 2531,
+                },
+            },
+        };
+        let name = match code {
+            18050 if matches!(hir[node].kind, ExprKind::Null) => Some("null".to_owned()),
+            18046..=18050 => Some(entity_name_text(self, file, node)),
+            _ => None,
+        };
+        let at = (
+            file,
+            self.error_start_of(file, node),
+            self.error_end_of(file, node),
+        );
+        (at, code, name)
     }
 
     /// A name that is short enough to be repeated in what is said: `IsEntityNameExpression(node)`,
@@ -5467,8 +5491,16 @@ impl Checker<'_> {
 impl Files {
     /// `declaration.Loc`. `None`: the tree does not have it.
     pub(crate) fn loc_of_declaration(&self, file: FileId, decl: Decl) -> Option<hir::TextRange> {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let statement = match decl {
+            Decl::Fn(function) => match bound.fns[function.idx()].owner {
+                FnOwner::Stmt(statement) => statement,
+                _ => return None,
+            },
+            Decl::Class(class) => match bound.class_owner[class.idx()] {
+                ClassOwner::Stmt(statement) => statement,
+                ClassOwner::Expr(_) => return None,
+            },
             Decl::Interface(interface) => hir[interface].stmt,
             Decl::Alias(alias) => hir[alias].stmt,
             Decl::Enum(enumeration) => hir[enumeration].stmt,

@@ -1738,15 +1738,9 @@ impl Checker<'_> {
                 continue;
             };
             // `checkGrammarModifiers` comes first, and what it objects to is all that is said.
-            let statement = hir
-                .stmts
-                .iter()
-                .find(|s| matches!(s.kind, StmtKind::Interface(x) if x.idx() == i))
-                .map_or(interface.name_pos, |s| s.pos);
-            if !hir
-                .early_errors
-                .iter()
-                .any(|&(start, _)| (statement..interface.name_pos).contains(&start))
+            if self
+                .grammar_error_in_modifiers(file, interface.stmt)
+                .is_none()
             {
                 out.push(Diagnostic {
                     start: keyword as u32,

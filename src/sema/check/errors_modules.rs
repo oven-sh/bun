@@ -11,15 +11,6 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, SymbolId};
 use smallvec::SmallVec;
 
-/// `typeOnlyDeclaration`: what says `type` on the way from an alias to what it stands for.
-#[derive(Copy, Clone)]
-enum TypeOnlyStep {
-    /// This declaration of this alias.
-    Declaration(Sym, Decl),
-    /// An `export type *`, the only way this module has this name.
-    Star(Sym, Atom),
-}
-
 impl Checker<'_> {
     pub(super) fn check_names_and_exports(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         self.check_computed_names(file, out);
@@ -726,163 +717,19 @@ impl Checker<'_> {
         }
     }
 
-    /// `getTypeOnlyAliasDeclarationEx`, asked about values: the first step on the way from the alias `sym` to what it stands for that is
-    /// only about types, and whether that step is an export.
-    pub(super) fn type_only_alias_declaration(&self, sym: Sym) -> Option<bool> {
-        self.type_only_step(sym, &mut 32).map(|step| step.0)
-    }
-
-    /// `addTypeOnlyDeclarationRelatedInfo`: 1376 or 1377 at that step. `name`: what the alias goes by where the error is.
+    /// `addTypeOnlyDeclarationRelatedInfo`, of `getTypeOnlyAliasDeclarationEx(sym, SymbolFlagsValue)`. `name`: what the alias goes by
+    /// where the error is.
     pub(super) fn type_only_declaration_related(
         &self,
         sym: Sym,
         name: String,
     ) -> Vec<super::explain::Related> {
-        let Some((is_export, step)) = self.type_only_step(sym, &mut 32) else {
-            return Vec::new();
-        };
-        let place = match step {
-            TypeOnlyStep::Declaration(alias, decl) => self.place_of_alias_declaration(alias, decl),
-            TypeOnlyStep::Star(module, exported) => {
-                self.place_of_type_only_export_star(module, exported)
-            }
-        };
-        match place {
-            Some(at) => vec![super::explain::Related {
-                at: Some(at),
-                code: if is_export { 1377 } else { 1376 },
-                args: vec![name],
-            }],
-            None => Vec::new(),
-        }
-    }
-
-    /// Whether the step is an export, and the step. `fuel`: how many more aliases are looked at, which is what ends a circle.
-    fn type_only_step(&self, mut sym: Sym, fuel: &mut u32) -> Option<(bool, TypeOnlyStep)> {
-        let files = self.files();
-        loop {
-            // What is a value itself is that value, whatever else it stands for.
-            let flags = files.flags(sym);
-            if *fuel == 0 || !flags.contains(SymFlags::ALIAS) || flags.intersects(SymFlags::VALUE) {
-                return None;
-            }
-            *fuel -= 1;
-            let hir = files.hir(sym.file);
-            // `getDeclarationOfAliasSymbol`: the last. Whether it says `type`, whether it is an export, the module it names, and the name
-            // it takes from that (none: all of it).
-            let declared = files.symbol(sym).decls.iter().rev().find_map(|&decl| {
-                let (says_type, is_export, spec, name) = match decl {
-                    Decl::ImportDefault(i) => {
-                        (hir[i].type_only, false, hir[i].spec, known::default)
-                    }
-                    Decl::ImportNamespace(i) => (hir[i].type_only, false, hir[i].spec, Atom::NONE),
-                    Decl::ImportSpec(s) => {
-                        let import = &hir[hir[s].import];
-                        (
-                            hir[s].type_only || import.type_only,
-                            false,
-                            import.spec,
-                            hir[s].imported,
-                        )
-                    }
-                    Decl::ImportEquals(i) => match hir[i].target {
-                        ImportEqualsTarget::Require(spec) => (
-                            hir[i].flags.contains(Flags::TYPE_ONLY),
-                            false,
-                            spec,
-                            Atom::NONE,
-                        ),
-                        // `resolveEntityName`: the `type` of `import type a = b.c` counts once `b` or `b.c` is found to be an alias.
-                        ImportEqualsTarget::Entity(names) => {
-                            let says_type = hir[i].flags.contains(Flags::TYPE_ONLY) && {
-                                let names: Vec<Atom> = hir.ids(names).collect();
-                                let scope = files.bound(sym.file).import_equals_scope[i.idx()];
-                                (1..=names.len()).any(|n| {
-                                    let is_whole = n > 1 && n == names.len();
-                                    let meaning = if is_whole {
-                                        SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE
-                                    } else {
-                                        SymFlags::NAMESPACE
-                                    };
-                                    files
-                                        .resolve_entity(sym.file, scope, &names[..n], meaning)
-                                        .is_some_and(|s| files.flags(s).contains(SymFlags::ALIAS))
-                                })
-                            };
-                            (says_type, false, Atom::NONE, Atom::NONE)
-                        }
-                    },
-                    Decl::ExportSpec(s) => {
-                        let export = &hir[hir[s].export];
-                        (
-                            hir[s].type_only || export.type_only,
-                            true,
-                            export.spec,
-                            hir[s].local,
-                        )
-                    }
-                    Decl::ExportStarAs(statement) => {
-                        let StmtKind::ExportStar {
-                            spec, type_only, ..
-                        } = hir[statement].kind
-                        else {
-                            return None;
-                        };
-                        (type_only, true, spec, Atom::NONE)
-                    }
-                    _ => return None,
-                };
-                Some((decl, says_type, is_export, spec, name))
-            });
-            let mut next = None;
-            if let Some((decl, says_type, is_export, spec, name)) = declared {
-                let module = if spec.is_some() {
-                    files.module_of_specifier(sym.file, spec)
-                } else {
-                    None
-                };
-                // `IsNonLocalAlias`: `export = name` is an alias like any other.
-                let equals = module
-                    .and_then(|m| files.export(m, known::export_equals))
-                    .filter(|&equals| {
-                        let flags = files.flags(equals);
-                        flags.contains(SymFlags::ALIAS)
-                            && !flags
-                                .intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE)
-                    });
-                if matches!(decl, Decl::ImportEquals(_))
-                    || (name == known::default && module.is_some())
-                {
-                    // `getTargetOfImportEqualsDeclaration`, `getTargetOfModuleDefault`: the `export =` is what the alias stands for.
-                    if says_type {
-                        return Some((is_export, TypeOnlyStep::Declaration(sym, decl)));
-                    }
-                    next = equals;
-                } else {
-                    // `resolveESModuleSymbol`: what the `export =` goes through holds for all that is taken from the module.
-                    if let Some(equals) = equals
-                        && let Some(found) = self.type_only_step(equals, fuel)
-                    {
-                        return Some(found);
-                    }
-                    // `getTargetOfImportClause`: nothing is made of the default of a module that is not there.
-                    if says_type && !matches!(decl, Decl::ImportDefault(_)) {
-                        return Some((is_export, TypeOnlyStep::Declaration(sym, decl)));
-                    }
-                    // `getExportOfModule`: `typeOnlyExportStarMap`. A default never gets here.
-                    if name.is_some()
-                        && let Some(module) = module
-                        && files.is_type_only_star_export(module, name)
-                    {
-                        return Some((true, TypeOnlyStep::Star(module, name)));
-                    }
-                }
-            }
-            sym = match next {
-                Some(equals) => equals,
-                None => files.alias_target(sym)?,
-            };
-        }
+        let type_only = self
+            .files()
+            .type_only_alias_declaration_ex(sym, SymFlags::VALUE);
+        type_only.map_or_else(Vec::new, |type_only| {
+            self.xa_type_only_related(type_only, type_only.is_export(), name)
+        })
     }
 
     /// The end of `onSuccessfullyResolvedSymbol`: 1361, 1362.
@@ -923,7 +770,10 @@ impl Checker<'_> {
                 } else {
                     flags.intersects(SymFlags::VALUE)
                 };
-                codes[local.idx()] = match is_value.then(|| self.type_only_alias_declaration(sym)) {
+                let type_only = self
+                    .files()
+                    .type_only_alias_declaration_ex(sym, SymFlags::VALUE);
+                codes[local.idx()] = match is_value.then(|| type_only.map(|t| t.is_export())) {
                     Some(Some(true)) => 1362,
                     Some(Some(false)) => 1361,
                     _ => 0,

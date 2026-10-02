@@ -783,32 +783,8 @@ impl Checker<'_> {
         let name_pos = self.hir(file)[i].name_pos;
         let bases = self.base_types(sym);
         if is_first {
-            let mut conflict = None;
-            if !self.inherited_properties_are_identical(sym, ty, &bases, &mut conflict) {
-                out.push(Diagnostic {
-                    start: name_pos,
-                    code: 2320,
-                });
-                if let Some((prop, first, second)) = conflict {
-                    self.explain(name_pos, 2320, |c| {
-                        vec![
-                            c.type_to_string(ty),
-                            c.type_to_string(first),
-                            c.type_to_string(second),
-                        ]
-                    });
-                    self.explain_chain(name_pos, 2320, |c| {
-                        vec![super::explain::Line {
-                            code: 2319,
-                            args: vec![
-                                c.prop_to_string(&prop),
-                                c.type_to_string(first),
-                                c.type_to_string(second),
-                            ],
-                            level: 1,
-                        }]
-                    });
-                }
+            let at = self.place_of_token(file, name_pos);
+            if !self.check_inherited_properties_are_identical(sym, ty, &bases, Some(at)) {
                 return;
             }
             let this = self.intern(TypeData::ThisParam(sym));
@@ -823,7 +799,7 @@ impl Checker<'_> {
                     self.explain_base_of_interface(sym, name_pos, base);
                 }
             }
-        } else if !self.inherited_properties_are_identical(sym, ty, &bases, &mut None) {
+        } else if !self.check_inherited_properties_are_identical(sym, ty, &bases, None) {
             return;
         }
         let mut locals: SmallVec<[(FileId, Span<MemberId>); 2]> = SmallVec::new();
@@ -845,18 +821,17 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkInheritedPropertiesAreIdentical`. `conflict`: the first property that is not, and the two of `bases` it differs in.
-    fn inherited_properties_are_identical(
+    /// `checkInheritedPropertiesAreIdentical`. `type_node`: where to report, if at all.
+    fn check_inherited_properties_are_identical(
         &mut self,
         sym: Sym,
         ty: TypeId,
         bases: &[TypeId],
-        conflict: &mut Option<(Prop, TypeId, TypeId)>,
+        type_node: Option<(FileId, u32, u32)>,
     ) -> bool {
         if bases.len() < 2 {
             return true;
         }
-        let _ = ty;
         // What it declares itself settles the matter.
         let mut own: Vec<Atom> = Vec::new();
         for (f, d) in self.files().decls(sym) {
@@ -876,6 +851,7 @@ impl Checker<'_> {
         let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
         // Of what is private or protected, where it is declared as well.
         let mut seen: Vec<(Atom, TypeId, PropFlags, Option<PropSource>, TypeId)> = Vec::new();
+        let mut identical = true;
         for &declared_base in bases {
             // `this` is in each what it is in the heir.
             let base = self.with_this_argument(declared_base, this);
@@ -886,46 +862,54 @@ impl Checker<'_> {
                 if own.contains(&prop.name) {
                     continue;
                 }
-                let ty = self.type_of_prop_as_read(prop, members.mapper);
+                let prop_type = self.type_of_prop_as_read(prop, members.mapper);
                 match seen.iter().find(|s| s.0 == prop.name) {
                     None => seen.push((
                         prop.name,
-                        ty,
+                        prop_type,
                         prop.flags,
                         prop.flags.intersects(access).then(|| prop.source.clone()),
                         declared_base,
                     )),
-                    // `compareProperties`
+                    // `isPropertyIdenticalTo`, `compareProperties`
                     Some((_, other, flags, source, from)) => {
                         let (other, flags, from) = (*other, *flags, *from);
-                        if flags & access != prop.flags & access {
-                            *conflict = Some((prop.clone(), from, declared_base));
-                            return false;
-                        }
                         // What is not for all to see is the same only if it is declared in one place. Of the rest, whether it can be
                         // left out counts.
                         let same = if flags.intersects(access) {
-                            if source.as_ref() != Some(&prop.source) {
-                                *conflict = Some((prop.clone(), from, declared_base));
-                                return false;
-                            }
                             PropFlags::READONLY
                         } else {
                             PropFlags::OPTIONAL | PropFlags::READONLY
                         };
-                        if flags & same != prop.flags & same
-                            || self.is_known(ty)
-                                && self.is_known(other)
-                                && !self.is_identical(other, ty)
+                        if flags & access == prop.flags & access
+                            && (!flags.intersects(access) || source.as_ref() == Some(&prop.source))
+                            && flags & same == prop.flags & same
+                            && (!self.is_known(prop_type)
+                                || !self.is_known(other)
+                                || self.is_identical(other, prop_type))
                         {
-                            *conflict = Some((prop.clone(), from, declared_base));
-                            return false;
+                            continue;
                         }
+                        let Some(at) = type_node else {
+                            return false;
+                        };
+                        identical = false;
+                        let (first, second) = (
+                            self.type_to_string(from),
+                            self.type_to_string(declared_base),
+                        );
+                        let name = self.prop_to_string(prop);
+                        let args = [Arg::Text(&name), Arg::Text(&first), Arg::Text(&second)];
+                        let error_info = self.new_diagnostic(at, 2319, &args);
+                        let args = [Arg::Type(ty), args[1], args[2]];
+                        let diagnostic =
+                            self.new_diagnostic_chain(Some(error_info), at, 2320, &args);
+                        self.add_diagnostic(diagnostic);
                     }
                 }
             }
         }
-        true
+        identical
     }
 
     /// `checkIndexConstraints`. `locals`: the members that the declarations of `ty` itself list. `fallback`: for an interface,

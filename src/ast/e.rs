@@ -631,6 +631,15 @@ pub struct JSXElement {
     pub flags: crate::flags::JSXElementBitset,
 
     pub close_tag_loc: crate::Loc,
+
+    /// Where `<tag attributes>`, `<>` or all of `<tag attributes />` ends.
+    pub opening_end: crate::Loc,
+
+    /// The `<` of `</tag>` or `</>`, or where that is missed. `EMPTY` for `<tag />`.
+    pub closing_start: crate::Loc,
+
+    /// Where the element ends.
+    pub end: crate::Loc,
 }
 impl Default for JSXElement {
     fn default() -> Self {
@@ -641,6 +650,9 @@ impl Default for JSXElement {
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: crate::Loc::EMPTY,
+            opening_end: crate::Loc::EMPTY,
+            closing_start: crate::Loc::EMPTY,
+            end: crate::Loc::EMPTY,
         }
     }
 }

@@ -1633,11 +1633,13 @@ impl<'p> Checker<'p> {
         crosses
     }
 
-    /// `walk` starts from `declared | undefined`.
+    /// `initialType` without `assumeInitialized`: `undefined` for `autoType` and `autoArrayType`, else `declared | undefined`.
     fn start_unassigned(&mut self, walk: &mut Walk) {
         let declared = walk.declared;
-        if declared != self.auto_array_type
-            && self.p.files.options.strict_null_checks
+        if self.is_automatic_type(declared) {
+            walk.initial = self.undefined_as_declared();
+            walk.start = Start::Known;
+        } else if self.p.files.options.strict_null_checks
             && !self.is_any(declared)
             && declared != TypeId::UNKNOWN
             && !self.parts(declared).contains(&TypeId::UNDEFINED)
@@ -2753,13 +2755,17 @@ impl<'p> Checker<'p> {
                 self.narrow_type_by_type_facts(ty, TypeId::BOOLEAN, TYPEOF_EQ_BOOLEAN)
             }
             known::symbol => self.narrow_type_by_type_facts(ty, TypeId::SYMBOL, TYPEOF_EQ_SYMBOL),
-            known::undefined => self.narrow_type_by_type_facts(ty, TypeId::UNDEFINED, EQ_UNDEFINED),
+            known::undefined => {
+                let undefined = self.undefined_as_declared();
+                self.narrow_type_by_type_facts(ty, undefined, EQ_UNDEFINED)
+            }
             known::object => {
                 if self.has_any_flag(ty) {
                     return ty;
                 }
                 let object = self.narrow_type_by_type_facts(ty, TypeId::OBJECT, TYPEOF_EQ_OBJECT);
-                let null = self.narrow_type_by_type_facts(ty, TypeId::NULL, EQ_NULL);
+                let null = self.null_as_declared();
+                let null = self.narrow_type_by_type_facts(ty, null, EQ_NULL);
                 self.union(&[object, null])
             }
             known::function => {
@@ -4186,24 +4192,7 @@ impl<'p> Checker<'p> {
                 | Root::Params(_) => Crossing::No,
             }
         };
-        // `checkIdentifier`: in the function that declares it, it is `undefined` until something is assigned. In another one it is
-        // whatever it was left as (`isOuterVariable`), unless nothing ever assigns to it (`isNeverInitialized`). For `x!` it is
-        // `undefined` to begin with wherever that is written (`isAutomaticTypeInNonNull`).
         let mut initial = declared;
-        if is_automatic {
-            let assume_initialized = match reference.root {
-                Root::Symbol(s) if self.is_value_declaration_in_file(file, s) => {
-                    self.skip_invoked_fns(file, self.enclosing_fn_of_expr(file, e))
-                        != self.skip_invoked_fns(file, self.declaring_fn(file, s))
-                        && !self.is_never_initialized(file, s)
-                }
-                // `isAlias`, or `isOuterVariable`: the declaration container is another file.
-                _ => true,
-            };
-            if !assume_initialized || self.is_operand_of_non_null(file, e) {
-                initial = self.undefined_as_declared();
-            }
-        }
         // `removeOptionalityFromDeclaredType`: `(x: T | undefined = d)` starts out as something.
         if self.p.files.options.strict_null_checks
             && reference.path.is_empty()
@@ -4219,10 +4208,10 @@ impl<'p> Checker<'p> {
         }
         let mut walk = Walk::new(reference, declared, initial, false);
         walk.crossing = crossing;
-        if starts_unassigned {
+        if starts_unassigned || is_automatic && self.is_operand_of_non_null(file, e) {
+            // `isAutomaticTypeInNonNull`
             self.start_unassigned(&mut walk);
-        } else if is_variable && !is_automatic {
-            // What finds out its type as it goes is taken to hold a value.
+        } else if is_variable {
             walk.start = Start::Unsettled;
         }
         self.flow_depth += 1;
@@ -4255,14 +4244,6 @@ impl<'p> Checker<'p> {
             } else {
                 self.finalize_evolving_array(ty)
             };
-        }
-        // `checkIdentifier`: of one that is being filled before there is anything to fill, 2454 is said, and it is what it is declared as.
-        if is_automatic
-            && walk.initial.is_undefined()
-            && self.contains_undefined(ty)
-            && self.is_evolving_array_operation_target(file, e)
-        {
-            return declared;
         }
         // `x!` where all that is left of `x` is what `!` takes away: back to the declared type.
         if ty != TypeId::NEVER
@@ -4604,16 +4585,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether `symbol` is a variable and `symbol.ValueDeclaration` is in `file`. Of a global that several files declare it is the
-    /// first of all.
-    fn is_value_declaration_in_file(&self, file: FileId, symbol: SymbolId) -> bool {
-        self.files()
-            .decls_of(self.files().sym(file, symbol))
-            .iter()
-            .find(|d| matches!(d.1, Decl::Var(_) | Decl::Param(_)))
-            .is_some_and(|d| d.0 == file)
-    }
-
     fn declaring_fn(&self, file: FileId, symbol: SymbolId) -> Option<FnId> {
         let bound = self.bound(file);
         let mut pat = match bound.symbols[symbol.idx()].decls.first() {
@@ -4631,48 +4602,6 @@ impl<'p> Checker<'p> {
                 PatParent::None => return None,
             }
         }
-    }
-
-    /// `getControlFlowContainer`: a function that is called where it is written is part of what is around it.
-    fn skip_invoked_fns(&self, file: FileId, mut func: Option<FnId>) -> Option<FnId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        while let Some(f) = func
-            && let Some(call) = bound.get_immediately_invoked_function_expression(hir, f)
-        {
-            func = self.enclosing_fn_of_expr(file, hir[call].callee);
-        }
-        func
-    }
-
-    /// `isNeverInitialized`: a local `let` without a value that nothing assigns to. `x++` and `x += 1` do not count
-    /// (`isSymbolAssignedDefinitely`).
-    fn is_never_initialized(&self, file: FileId, symbol: SymbolId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let Some(&Decl::Var(pat)) = bound.symbols[symbol.idx()].decls.first() else {
-            return false;
-        };
-        let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
-            return false;
-        };
-        let (decl, stmt) = (&hir[d], bound.var_stmt[d.idx()]);
-        if decl.kind != VarKind::Let
-            || decl.init.is_some()
-            || decl.flags.intersects(Flags::EXPORT | Flags::DEFINITE)
-        {
-            return false;
-        }
-        if stmt.is_none() || !matches!(hir[stmt].kind, StmtKind::Var(_)) {
-            return false;
-        }
-        match bound.stmt_parent[stmt.idx()] {
-            Parent::Stmt(owner) if matches!(hir[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt) =>
-            {
-                return false;
-            }
-            Parent::File if !self.files().modules[file.idx()].is_module() => return false,
-            _ => {}
-        }
-        !bound.is_symbol_assigned_definitely(hir, symbol)
     }
 
     /// `markNodeAssignmentsWorker`: what `export { x }` names may be assigned to at any time, for all that can be seen from here.

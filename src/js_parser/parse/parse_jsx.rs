@@ -28,8 +28,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
-        // See `note_end_of_jsx_tag`.
-        let said_before_tag = p.log().msgs.len();
         let tag = JSXTag::parse(p)?;
 
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
@@ -328,7 +326,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token != T::TGreaterThan {
                 p.lexer.expected(T::TGreaterThan)?;
             }
-            Self::note_end_of_jsx_tag(p, loc, said_before_tag);
+            let end = Self::end_of_jsx_tag(p);
 
             return Ok(p.new_expr(
                 E::JSXElement {
@@ -337,6 +335,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key_prop_index: key_prop_i,
                     flags,
                     close_tag_loc,
+                    opening_end: end,
+                    end,
                     ..Default::default()
                 },
                 loc,
@@ -346,7 +346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token != T::TGreaterThan && p.lexer.tolerant {
             // `parseJsxOpeningOrSelfClosingElementOrOpeningFragment`: 1005 for the `/`, and the element is self-closing.
             p.lexer.expected(T::TSlash)?;
-            Self::note_end_of_jsx_tag(p, loc, said_before_tag);
+            let end = Self::end_of_jsx_tag(p);
             return Ok(p.new_expr(
                 E::JSXElement {
                     tag: start_tag,
@@ -354,13 +354,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key_prop_index: key_prop_i,
                     flags,
                     close_tag_loc: loc,
+                    opening_end: end,
+                    end,
                     ..Default::default()
                 },
                 loc,
             ));
         }
 
-        Self::note_end_of_jsx_tag(p, loc, said_before_tag);
+        let opening_end = Self::end_of_jsx_tag(p);
         // Use ExpectJSXElementChild() so we parse child strings
         p.lexer.expect_jsx_element_child(T::TGreaterThan)?;
         let mut children: Vec<Expr> = Vec::new();
@@ -402,7 +404,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TLessThan => {
                     let less_than_loc = p.lexer.loc();
-                    let said_before_closing_tag = p.log().msgs.len();
                     p.lexer.next_inside_jsx_element()?;
 
                     if p.lexer.token != T::TSlash {
@@ -415,7 +416,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         children.push(child);
 
                         if p.lexer.tolerant {
-                            if let Some(end_tag) = p.jsx_adopted_close.take() {
+                            if let Some((end_tag, closing_start, end)) = p.jsx_adopted_close.take()
+                            {
                                 // The child was not closed, and met the closing tag of this element.
                                 p.lexer.list_contexts = saved_contexts;
                                 p.mark_closing_tag(loc, end_tag.data.as_expr());
@@ -427,7 +429,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         key_prop_index: key_prop_i,
                                         flags,
                                         close_tag_loc: end_tag.range.loc,
-                                        ..Default::default()
+                                        opening_end,
+                                        closing_start,
+                                        end,
                                     },
                                     loc,
                                 ));
@@ -467,7 +471,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 key_prop_index: key_prop_i,
                                 flags,
                                 close_tag_loc: range.loc,
-                                ..Default::default()
+                                opening_end,
+                                closing_start: less_than_loc,
+                                end: after_slash,
                             },
                             loc,
                         ));
@@ -484,17 +490,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             parent_tag,
                             after_slash,
                         )?;
-                        Self::note_end_of_jsx_tag(p, less_than_loc, said_before_closing_tag);
-                        // Where lower.rs finds no `</`, the element has no closing tag.
-                        let mut close_tag_loc = end_tag.range.loc;
+                        let mut end = Self::end_of_jsx_tag(p);
+                        let close_tag_loc = end_tag.range.loc;
                         if belongs_to_parent {
-                            close_tag_loc = loc;
-                            p.jsx_adopted_close = Some(end_tag);
-                            p.mark_type_syntax(
-                                loc,
-                                crate::sema::Mark::JsxClosingMissed,
-                                less_than_loc,
-                            );
+                            // The closing tag of this one is missed where that of the parent starts.
+                            p.jsx_adopted_close = Some((end_tag, less_than_loc, end));
+                            end = less_than_loc;
                         } else {
                             p.mark_closing_tag(loc, end_tag.data.as_expr());
                         }
@@ -507,7 +508,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 key_prop_index: key_prop_i,
                                 flags,
                                 close_tag_loc,
-                                ..Default::default()
+                                opening_end,
+                                closing_start: less_than_loc,
+                                end,
                             },
                             loc,
                         ));
@@ -530,7 +533,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.token != T::TGreaterThan {
                         p.lexer.expected(T::TGreaterThan)?;
                     }
-                    Self::note_end_of_jsx_tag(p, less_than_loc, said_before_closing_tag);
+                    let end = Self::end_of_jsx_tag(p);
 
                     p.lexer.list_contexts = saved_contexts;
                     // The type checker looks at both names (`checkJsxElementDeferred`).
@@ -548,7 +551,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             key_prop_index: key_prop_i,
                             flags,
                             close_tag_loc: end_tag.range.loc,
-                            ..Default::default()
+                            opening_end,
+                            closing_start: less_than_loc,
+                            end,
                         },
                         loc,
                     ));
@@ -559,7 +564,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && !p.lexer.is_log_disabled
                     {
                         Self::report_unclosed_jsx_element(p, loc, &tag, parent_tag.is_some());
-                        p.mark_type_syntax(loc, crate::sema::Mark::JsxClosingMissed, p.lexer.loc());
+                        let at = p.lexer.loc();
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {
@@ -569,7 +574,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 key_prop_index: key_prop_i,
                                 flags,
                                 close_tag_loc: loc,
-                                ..Default::default()
+                                opening_end,
+                                closing_start: at,
+                                end: at,
                             },
                             loc,
                         ));
@@ -584,7 +591,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let at = p.lexer.loc();
                         let marker = p.lexer.range();
                         p.lexer.ts_expected(marker, "</");
-                        p.mark_type_syntax(loc, crate::sema::Mark::JsxClosingMissed, at);
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {
@@ -594,7 +600,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 key_prop_index: key_prop_i,
                                 flags,
                                 close_tag_loc: at,
-                                ..Default::default()
+                                opening_end,
+                                closing_start: at,
+                                end: at,
                             },
                             loc,
                         ));
@@ -606,27 +614,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `finishNode`, of the opening or closing tag whose `<` is at `less_than`. Call before its last `>` is consumed, or where that is
-    /// missed. It is noted only if something was objected to since the log had `said_before` messages: where any other tag ends can
-    /// be read off the source.
+    /// `finishNode`, of an opening or closing tag. Call before its last `>` is consumed, or where that is missed.
     #[inline]
-    fn note_end_of_jsx_tag(p: &mut Self, less_than: bun_ast::Loc, said_before: usize) {
-        if p.lexer.tolerant && p.log().msgs.len() > said_before {
-            Self::note_end_of_jsx_tag_with_errors(p, less_than);
+    fn end_of_jsx_tag(p: &mut Self) -> bun_ast::Loc {
+        if p.lexer.token == T::TGreaterThan {
+            p.lexer.range().end()
+        } else {
+            Self::end_of_jsx_tag_without_greater_than(p)
         }
     }
 
+    /// Tolerant mode only.
     #[cold]
     #[inline(never)]
-    fn note_end_of_jsx_tag_with_errors(p: &mut Self, less_than: bun_ast::Loc) {
-        let end = if p.lexer.token == T::TGreaterThan {
-            p.lexer.range().end()
-        } else if p.lexer.token == T::TEndOfFile && p.jsx_children_met_end_of_file {
+    fn end_of_jsx_tag_without_greater_than(p: &mut Self) -> bun_ast::Loc {
+        if p.lexer.token == T::TEndOfFile && p.jsx_children_met_end_of_file {
             p.lexer.loc()
         } else {
             p.lexer.full_start()
-        };
-        p.mark_type_syntax(less_than, crate::sema::Mark::JsxTagEnd, end);
+        }
     }
 
     /// `parseList(PCJsxAttributes)`, at a token that is neither a JSX name nor a `{`. Returns true if the list continues.

@@ -2378,6 +2378,7 @@ impl<'p> Checker<'p> {
                 }
             }
         }
+        self.get_named_members(&mut shape.props, |_| true, &[]);
         shape
     }
 

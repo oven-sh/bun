@@ -50,10 +50,10 @@ pub(crate) enum Mark {
     OtherExtends,
     /// From the `class` keyword, to what follows `implements`. As many as there are clauses.
     Implements,
-    /// From the name of a member of a class (the `{` of a static block) or of an object literal, to its first token: a decorator, a
-    /// modifier, `get`, `set`, `*`, `[`.
+    /// From the name of a member of a class (the `{` of a static block) or of an object literal (the `e` of `...e`), to its first
+    /// token: a decorator, a modifier, `get`, `set`, `*`, `[`, `...`.
     MemberStart,
-    /// From the same place, of a member of a class, to where its last token ends.
+    /// From the same place, to where the last token of the member ends.
     MemberEnd,
     /// From where a statement or a class expression is said to be, to its first token: a decorator or a modifier. From the dot before
     /// the `B` of `namespace A.B`, to `B`.
@@ -72,10 +72,6 @@ pub(crate) enum Mark {
     SkippedToken,
     /// From the `import` of `import.defer(..)`, to its `)`.
     DeferredImportClose,
-    /// From the `<` of an opening or closing JSX tag in which something was objected to, to where the tag ends.
-    JsxTagEnd,
-    /// From the `<` of a JSX element or fragment, to where `parseJsxClosingElement` or `parseJsxClosingFragment` found no `</` for it.
-    JsxClosingMissed,
     /// From a decorator that decorates nothing (`note_stray_decorators`), to where what comes after the decorators starts.
     StrayDecorator,
     /// From the bracket that opens an array or object literal whose closing bracket is missed, to where the token before the miss ends.

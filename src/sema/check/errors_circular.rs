@@ -192,7 +192,10 @@ impl Checker<'_> {
                 continue;
             }
             for base in hir.ids(interface.extends) {
-                if matches!(hir[base].kind, TypeNodeKind::Error) {
+                if matches!(
+                    hir[base].kind,
+                    TypeNodeKind::Error | TypeNodeKind::Heritage(_)
+                ) {
                     continue;
                 }
                 let ty = self.type_from_node(file, base);

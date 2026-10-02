@@ -5,7 +5,7 @@
 //! * `catch`: 1196 2492.
 //! * Where `await`, `for await` and `await using` can be written: 1308 1375 1378 2524 18037, 1103 1431 1432 18038,
 //!   2852 2853 2854 18054, and 1309 for all three. `yield` in a parameter initializer: 2523.
-//! * `using` and `await using`: 1491 1495, 1493 1494, 1545 1546, 1547 1548, and what they are initialized with: 2850 2851.
+//! * `using` and `await using`: 1493 1494, 1545 1546, 1547 1548, and what they are initialized with: 2850 2851.
 //! * Declarations of one thing with different modifiers: 2687.
 //!
 //! Follows `checkWithStatement`, `checkReturnStatement`, `checkIfStatement`, `checkForInStatement`, `checkForOfStatement`,
@@ -686,27 +686,9 @@ impl Checker<'_> {
             _ => return,
         };
         let start = start_of_declaration_list(&hir.text, hir[s].pos);
-        // `checkGrammarModifiers` refuses `export` and `declare`, whichever comes first, and then the list is not looked at.
-        let modifier = hir[s].start;
-        if parses
-            && matches!(
-                word_at(&hir.text, modifier as usize),
-                b"export" | b"declare"
-            )
-        {
-            out.retain(|d| {
-                !(d.start == start && matches!(d.code, 1545 | 1546)
-                    || d.start == modifier && d.code == 1038)
-            });
-            // In a block it is `reportObviousModifierErrors` that refuses them. 1287 comes before this.
-            if matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
-                && !out.iter().any(|d| d.start == modifier && d.code == 1287)
-            {
-                out.push(Diagnostic {
-                    start: modifier,
-                    code: if is_await { 1495 } else { 1491 },
-                });
-            }
+        // `!c.checkGrammarModifiers(node) && !c.checkGrammarVariableDeclarationList(..)`
+        if parses && self.grammar_error_in_modifiers(file, s).is_some() {
+            out.retain(|d| d.start != start || !matches!(d.code, 1545 | 1546));
             return;
         }
         let around = match bound.stmt_parent[s.idx()] {

@@ -36,6 +36,8 @@ pub(super) struct Reported {
     pub(super) args: Vec<String>,
     pub(super) message_chain: Vec<Reported>,
     pub(super) related_information: Vec<Reported>,
+    /// `CategorySuggestion`
+    pub(super) is_suggestion: bool,
 }
 
 impl Reported {
@@ -44,6 +46,26 @@ impl Reported {
         self.related_information.push(related);
         self
     }
+}
+
+/// `compareMessageChainSize`: the longer first.
+fn compare_message_chain_size(a: &[Reported], b: &[Reported]) -> std::cmp::Ordering {
+    a.iter()
+        .zip(b)
+        .fold(b.len().cmp(&a.len()), |order, (a, b)| {
+            order.then_with(|| compare_message_chain_size(&a.message_chain, &b.message_chain))
+        })
+}
+
+/// `compareMessageChainContent`, of two of one size.
+fn compare_message_chain_content(a: &[Reported], b: &[Reported]) -> std::cmp::Ordering {
+    a.iter()
+        .zip(b)
+        .fold(std::cmp::Ordering::Equal, |order, (a, b)| {
+            order
+                .then_with(|| a.args.cmp(&b.args))
+                .then_with(|| compare_message_chain_content(&a.message_chain, &b.message_chain))
+        })
 }
 
 /// For each file what has been reported in it, and the file that the checker that reported it was checking.
@@ -80,6 +102,7 @@ impl Checker<'_> {
             args,
             message_chain: Vec::new(),
             related_information: Vec::new(),
+            is_suggestion: false,
         }
     }
 
@@ -107,6 +130,28 @@ impl Checker<'_> {
         self.add_diagnostic(diagnostic)
     }
 
+    /// `grammarErrorOnNode`: whether it reported, which it does not in a file that does not parse.
+    pub(super) fn grammar_error_on_node(
+        &mut self,
+        at: (FileId, u32, u32),
+        code: u32,
+        args: &[Arg<'_>],
+    ) -> bool {
+        if has_parse_diagnostics(self.hir(at.0)) {
+            return false;
+        }
+        self.error(at, code, args);
+        true
+    }
+
+    /// `addErrorOrSuggestion`
+    pub(super) fn add_error_or_suggestion(&mut self, is_error: bool, mut diagnostic: Reported) {
+        diagnostic.is_suggestion = !is_error;
+        if is_error || self.captures_suggestions() {
+            self.add_diagnostic(diagnostic);
+        }
+    }
+
     /// `c.addDiagnostic`
     pub(super) fn add_diagnostic(&mut self, diagnostic: Reported) -> &mut Reported {
         self.reported.push(diagnostic);
@@ -130,8 +175,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `c.diagnostics.Add`, of what goes with an answer that is kept whatever becomes of the questions under way. Call it before the
-    /// answer is kept. What is asked about a file after `checkSourceFile` reports nothing there: nobody collects it.
+    /// `c.diagnostics.Add`, of what goes with an answer that is kept whatever becomes of the questions under way. What is asked about
+    /// a file after `checkSourceFile` reports nothing there: nobody collects it.
     pub(super) fn commit(&self, diagnostic: Reported) {
         if self.is_type_checked && self.checking == Some(diagnostic.file) {
             return;
@@ -140,6 +185,23 @@ impl Checker<'_> {
             .lock()
             .unwrap()
             .push((diagnostic, self.checking));
+    }
+
+    /// `CompareDiagnostics`
+    fn compare_diagnostics(&self, a: &Reported, b: &Reported) -> std::cmp::Ordering {
+        let path = |file: FileId| &self.files().modules[file.idx()].path[..];
+        (path(a.file), a.start, a.end, a.code, &a.args)
+            .cmp(&(path(b.file), b.start, b.end, b.code, &b.args))
+            .then_with(|| compare_message_chain_size(&a.message_chain, &b.message_chain))
+            .then_with(|| compare_message_chain_content(&a.message_chain, &b.message_chain))
+            // `compareRelatedInfo`
+            .then_with(|| {
+                let (a, b) = (&a.related_information, &b.related_information);
+                let by_length = b.len().cmp(&a.len());
+                a.iter().zip(b).fold(by_length, |order, (a, b)| {
+                    order.then_with(|| self.compare_diagnostics(a, b))
+                })
+            })
     }
 
     /// Adds what all the checkers have reported in `file`, but for where `checkSourceFile` never comes. Equal ones are one
@@ -151,7 +213,7 @@ impl Checker<'_> {
         never_checked: &[(u32, u32)],
         out: &mut Vec<Diagnostic>,
     ) {
-        let reported = std::mem::take(&mut *self.p.sink.0[file.idx()].lock().unwrap());
+        let mut reported = std::mem::take(&mut *self.p.sink.0[file.idx()].lock().unwrap());
         static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *TRACE.get_or_init(|| std::env::var_os("BUN_SEMA_TRACE_SINK").is_some()) {
             let path = |file: FileId| &self.files().modules[file.idx()].path[..];
@@ -167,6 +229,9 @@ impl Checker<'_> {
                 }
             }
         }
+        // `SortAndDeduplicateDiagnostics`: in what order the checkers got there does not show.
+        reported.sort_by(|a, b| self.compare_diagnostics(&a.0, &b.0));
+        reported.dedup_by(|a, b| a.0 == b.0);
         let mut notes = self.notes.borrow_mut();
         for (diagnostic, _) in reported {
             if never_checked
@@ -179,6 +244,9 @@ impl Checker<'_> {
                 start: diagnostic.start,
                 code: diagnostic.code,
             });
+            if diagnostic.is_suggestion {
+                self.note_suggestion(diagnostic.start, diagnostic.code);
+            }
             notes.push(diagnostic.into());
         }
     }

@@ -3966,10 +3966,7 @@ impl<'p> Checker<'p> {
         {
             return true;
         }
-        let any_function_type = self.synth(Shape {
-            literal: Literalness::Partial,
-            ..Shape::default()
-        });
+        let any_function_type = self.any_function_type();
         self.related(any_function_type, param, relation)
     }
 

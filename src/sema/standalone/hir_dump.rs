@@ -74,7 +74,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         has_errors,
         decorators,
         legacy_decorators,
-        jsx_tag_ends: _,
         directives: _,
         early_errors,
         error_arguments: _,
@@ -642,12 +641,13 @@ impl Dump<'_> {
             value,
             pos,
             start,
+            end,
         } = node!(self, depth, label, props, id);
         put!(
             self,
             depth,
             label,
-            "Prop kind={} pos={pos} start={start}",
+            "Prop kind={} pos={pos} start={start} end={end}",
             prop_kind_name(kind)
         );
         let d = depth + 1;
@@ -661,10 +661,17 @@ impl Dump<'_> {
             attrs,
             children,
             type_args,
+            opening_end,
             close_pos,
+            end,
             close_tag,
         } = node!(self, depth, label, jsx, id);
-        put!(self, depth, label, "Jsx close_pos={close_pos}");
+        put!(
+            self,
+            depth,
+            label,
+            "Jsx opening_end={opening_end} close_pos={close_pos} end={end}"
+        );
         let d = depth + 1;
         self.expr(d, "tag", tag);
         self.expr(d, "close_tag", close_tag);
@@ -698,8 +705,14 @@ impl Dump<'_> {
             default,
             is_rest,
             pos,
+            key_pos,
         } = node!(self, depth, label, pat_props, id);
-        put!(self, depth, label, "PatProp is_rest={is_rest} pos={pos}");
+        put!(
+            self,
+            depth,
+            label,
+            "PatProp is_rest={is_rest} pos={pos} key_pos={key_pos}"
+        );
         let d = depth + 1;
         self.key(d, "key", key);
         self.pat(d, "value", value);
@@ -1264,6 +1277,10 @@ impl Dump<'_> {
         let d = depth + 1;
         match kind {
             TypeNodeKind::Error | TypeNodeKind::UniqueSymbol => self.line(depth, label, &head),
+            TypeNodeKind::Heritage(expr) => {
+                self.line(depth, label, &head);
+                self.expr(d, "expr", expr);
+            }
             TypeNodeKind::Keyword(keyword) => put!(self, depth, label, "{head} {keyword:?}"),
             TypeNodeKind::Ref { name, args } => {
                 put!(self, depth, label, "{head} name={}", self.names(name));
@@ -1483,6 +1500,7 @@ fn stmt_kind_name(kind: StmtKind) -> &'static str {
 fn type_kind_name(kind: TypeNodeKind) -> &'static str {
     match kind {
         TypeNodeKind::Error => "Error",
+        TypeNodeKind::Heritage(_) => "Heritage",
         TypeNodeKind::Keyword(_) => "Keyword",
         TypeNodeKind::Ref { .. } => "Ref",
         TypeNodeKind::StringLit(_) => "StringLit",

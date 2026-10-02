@@ -7,10 +7,10 @@
 //! * `collectModuleReferences`, by way of `resolveExternalModule`: 2307 2580 2591 2732 2882, said or taken back
 //! * `checkImportAttributes`, `getTypeFromImportAttributes`, `checkImportType`, `getResolutionModeOverride`: 1453 1454 1463 1464 2322
 //!   2823 2856 2857
-//! * `checkImportEqualsDeclaration`: 2437 2438; `checkExportDeclaration`: 1193 1194 2498; `checkClassDeclaration`: 1211
-//! * `checkExportAssignment`: 1063 1120 1319 1282 1283 1284 1285 1289 1290 1291 1292
+//! * `checkImportEqualsDeclaration`: 2437 2438; `checkExportDeclaration`: 1194 2498; `checkClassDeclaration`: 1211
+//! * `checkExportAssignment`: 1063 1319 1282 1283 1284 1285 1289 1290 1291 1292
 //! * `getVerbatimModuleSyntaxErrorMessage`, from `checkAliasSymbol`, `checkExportAssignment` and `checkGrammarImportCallExpression`: 1286 1295
-//! * `checkGrammarModifiers`, of `export`: 1287, of `default`: 1319; `reportObviousModifierErrors`: 1184
+//! * `reportObviousModifierErrors`, of `static { }`: 1184
 //! * `checkGrammarModuleElementContext`: 1231 1232 1233 1234 1235 1258 1473 1474
 //! * `getTypeFromImportTypeNode`: 1339 1340; `checkGrammarImportClause`: 18060
 //! * `reportFlowControlError`: 2563
@@ -26,20 +26,6 @@ use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, ScopeId, ScopeKind};
 use crate::resolve::ModuleKind;
-
-/// The words `is_modifier` knows, as the summary has them.
-const MODIFIERS: Flags = Flags::EXPORT
-    .union(Flags::DEFAULT)
-    .union(Flags::AMBIENT)
-    .union(Flags::ABSTRACT)
-    .union(Flags::ASYNC)
-    .union(Flags::STATIC)
-    .union(Flags::READONLY)
-    .union(Flags::PRIVATE)
-    .union(Flags::PROTECTED)
-    .union(Flags::PUBLIC)
-    .union(Flags::OVERRIDE)
-    .union(Flags::ACCESSOR);
 
 /// What is the same all over a file.
 struct Cx<'a> {
@@ -122,67 +108,6 @@ impl Cx<'_> {
         let found = attributes_keyword(self.text, spec_pos, is_export);
         self.last_keyword.set((spec_pos, is_export, found));
         found
-    }
-
-    /// `checkGrammarModifiers`, of `export` on what is more than a type at the top of a file.
-    fn export_modifier(&self, start: u32, flags: Flags, around: Around, out: &mut Vec<Diagnostic>) {
-        if self.verbatim_commonjs
-            && self.grammar
-            && around.module.is_none()
-            && !around.is_ambient
-            && flags.contains(Flags::EXPORT)
-            && !flags.contains(Flags::AMBIENT)
-            && let Some(start) = find_modifier(self.text, start, b"export")
-        {
-            out.push(Diagnostic { start, code: 1287 });
-        }
-    }
-
-    /// `checkGrammarModifiers`, of `default` in a namespace.
-    fn default_modifier(
-        &self,
-        start: u32,
-        flags: Flags,
-        around: Around,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        if self.grammar
-            && around.module.is_some()
-            && !around.is_ambient_module
-            && flags.contains(Flags::DEFAULT)
-            && let Some(start) = find_modifier(self.text, start, b"default")
-        {
-            out.push(Diagnostic { start, code: 1319 });
-        }
-    }
-
-    /// `checkExportAssignment` (1120), `checkExportDeclaration` (1193): `statement`, whose own `export` is at `pos`, has modifiers.
-    /// Reported at the first one, unless `checkGrammarModifiers` rejects them: it accepts `export`, `declare` and `export declare`.
-    fn modifiers_before_export(
-        &self,
-        statement: Stmt,
-        code: u32,
-        around: Around,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let Stmt { pos, start, .. } = statement;
-        if !self.grammar || start == pos || word_at(self.text, pos as usize) != b"export" {
-            return;
-        }
-        let (mut at, mut has_export, mut has_declare) = (start as usize, false, false);
-        while at < pos as usize {
-            let word = word_at(self.text, at);
-            match word {
-                b"export" if !has_export && !has_declare => has_export = true,
-                // 1038 in an ambient module block.
-                b"declare" if !has_declare && !(around.is_ambient && around.module.is_some()) => {
-                    has_declare = true
-                }
-                _ => return,
-            }
-            at = skip_trivia(self.text, at + word.len());
-        }
-        out.push(Diagnostic { start, code });
     }
 }
 
@@ -537,21 +462,6 @@ impl Checker<'_> {
                     self.xm_export_assignment(cx, s, e, false, around, out)
                 }
                 StmtKind::ExportAssign(e) => self.xm_export_assignment(cx, s, e, true, around, out),
-                StmtKind::Var(decls) => {
-                    if let Some(d) = decls.iter().next() {
-                        cx.export_modifier(start, hir[d].flags, around, out);
-                    }
-                }
-                StmtKind::Fn(f) => {
-                    cx.export_modifier(start, hir[f].flags, around, out);
-                    cx.default_modifier(start, hir[f].flags, around, out);
-                }
-                StmtKind::Class(c) => {
-                    cx.export_modifier(start, hir[c].flags, around, out);
-                    cx.default_modifier(start, hir[c].flags, around, out);
-                }
-                StmtKind::Interface(i) => cx.default_modifier(start, hir[i].flags, around, out),
-                StmtKind::Enum(e) => cx.export_modifier(start, hir[e].flags, around, out),
                 // `bindNamespaceExportDeclaration`: `export as namespace N` takes no modifiers, and belongs at the top of a declaration
                 // file that is a module.
                 StmtKind::ExportAsNamespace(_) => {
@@ -626,7 +536,7 @@ impl Checker<'_> {
         if is_ambient_module {
             // The flag is also on what is written in an exported one: only the word counts.
             if module.flags.contains(Flags::EXPORT)
-                && find_modifier(cx.text, start, b"export").is_some()
+                && hir.find_modifier(hir[s].modifiers, Flags::EXPORT).is_some()
             {
                 out.push(Diagnostic { start, code: 2668 });
             }
@@ -651,8 +561,9 @@ impl Checker<'_> {
 
         if is_global
             && !around.is_ambient
-            && !cx.text.is_empty()
-            && find_modifier(cx.text, start, b"declare").is_none()
+            && hir
+                .find_modifier(hir[s].modifiers, Flags::AMBIENT)
+                .is_none()
         {
             out.push(Diagnostic {
                 start: name_pos,
@@ -691,7 +602,7 @@ impl Checker<'_> {
             if cx.verbatim_commonjs
                 && is_at_top
                 && module.flags.contains(Flags::EXPORT)
-                && let Some(start) = find_modifier(cx.text, start, b"export")
+                && let Some(start) = hir.find_modifier(hir[s].modifiers, Flags::EXPORT)
             {
                 out.push(Diagnostic { start, code: 1287 });
             }
@@ -1471,7 +1382,6 @@ impl Checker<'_> {
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let (import, pos) = (hir[i], hir[s].pos);
-        cx.export_modifier(hir[s].start, import.flags, around, out);
         let names = match import.target {
             ImportEqualsTarget::Require(spec) => {
                 if self.xm_is_in_place(cx, s, spec, false, around, out) {
@@ -1512,9 +1422,10 @@ impl Checker<'_> {
         let Some(target) = files.resolve_entity(cx.file, scope, path, meaning) else {
             return;
         };
-        let Some(flags) = self.xm_symbol_flags(target, false) else {
+        let flags = files.symbol_flags(target);
+        if flags == SymFlags::all() {
             return;
-        };
+        }
         if flags.intersects(SymFlags::VALUE) {
             // As a value, the first name may mean something nearer by that is no namespace.
             let wanted = SymFlags::VALUE | SymFlags::NAMESPACE;
@@ -1581,7 +1492,6 @@ impl Checker<'_> {
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let (export, pos) = (hir[x], hir[s].pos);
-        cx.modifiers_before_export(hir[s], 1193, around, out);
         if export.spec.is_none() || self.xm_is_in_place(cx, s, export.spec, true, around, out) {
             let is_missing = if export.spec.is_none() {
                 false
@@ -1676,7 +1586,6 @@ impl Checker<'_> {
         // `export type *`
         let star = after_export(cx.text, pos);
         let is_type_only = word_at(cx.text, star) == b"type";
-        cx.modifiers_before_export(statement, 1193, around, out);
         if self.xm_is_in_place(cx, s, spec, true, around, out) {
             if !self.xm_module_is_missing(
                 cx,
@@ -1758,7 +1667,6 @@ impl Checker<'_> {
             self.note(start, self.end_of_stmt(cx.file, s), code, Vec::new());
             return;
         }
-        cx.modifiers_before_export(hir[s], 1120, around, out);
         // The rest is about what a compiler that sees one file at a time makes of it.
         if around.is_ambient || !self.p.files.options.isolated_modules {
             return;
@@ -1807,9 +1715,10 @@ impl Checker<'_> {
                 vec![self.atom_text(name), isolated_modules_like_flag_name(files)],
             );
         };
-        let type_only = self.xm_type_only_declaration(sym, SymFlags::VALUE);
-        // What cannot be followed may be anything: `SymbolFlagsAll`.
-        let flags = self.xm_symbol_flags(sym, false).unwrap_or(SymFlags::all());
+        let type_only = files
+            .type_only_alias_declaration_ex(sym, SymFlags::VALUE)
+            .map(|type_only| type_only.file());
+        let flags = files.symbol_flags(sym);
         if cx.is_verbatim {
             if !flags.intersects(SymFlags::VALUE) {
                 report(1282, 1284);
@@ -1819,7 +1728,7 @@ impl Checker<'_> {
         }
         let own = files.flags(sym);
         if !own.intersects(SymFlags::VALUE) {
-            let elsewhere = self.xm_symbol_flags(sym, true).unwrap_or(SymFlags::all());
+            let elsewhere = files.symbol_flags_ex(sym, false, true);
             if own.contains(SymFlags::ALIAS)
                 && elsewhere.intersects(SymFlags::TYPE)
                 && !elsewhere.intersects(SymFlags::VALUE)
@@ -1834,61 +1743,6 @@ impl Checker<'_> {
                 });
             }
         }
-    }
-
-    /// `getSymbolFlagsEx`: all that `sym` means, that what it stands for means, and so on. `None`: the way there breaks off.
-    fn xm_symbol_flags(&self, mut sym: Sym, exclude_local_meanings: bool) -> Option<SymFlags> {
-        let files = self.files();
-        let mut flags = if exclude_local_meanings {
-            SymFlags::empty()
-        } else {
-            files.flags(sym)
-        };
-        for _ in 0..32 {
-            if !files.flags(sym).contains(SymFlags::ALIAS) {
-                break;
-            }
-            let target = files.alias_target(sym)?;
-            if target == sym {
-                break;
-            }
-            flags |= files.flags(target);
-            sym = target;
-        }
-        Some(flags)
-    }
-
-    /// `getTypeOnlyAliasDeclarationEx`: the file of the first step from `sym` to what it stands for that is only about types, before
-    /// anything on the way has `meaning` itself.
-    fn xm_type_only_declaration(&self, mut sym: Sym, meaning: SymFlags) -> Option<FileId> {
-        let files = self.files();
-        for _ in 0..32 {
-            let flags = files.flags(sym);
-            if !flags.contains(SymFlags::ALIAS) || flags.intersects(meaning) {
-                return None;
-            }
-            let hir = files.hir(sym.file);
-            // `markSymbolOfAliasDeclarationIfTypeOnly`, `IsTypeOnlyImportOrExportDeclaration`
-            let is_type_only = files.symbol(sym).decls.iter().any(|&decl| match decl {
-                // `getTargetOfImportClause` gets no further than a module that is not there.
-                Decl::ImportDefault(i) => {
-                    hir[i].type_only && files.module_of_specifier(sym.file, hir[i].spec).is_some()
-                }
-                Decl::ImportNamespace(i) => hir[i].type_only,
-                Decl::ImportSpec(s) => hir[s].type_only || hir[hir[s].import].type_only,
-                Decl::ImportEquals(i) => hir[i].flags.contains(Flags::TYPE_ONLY),
-                Decl::ExportSpec(s) => hir[s].type_only || hir[hir[s].export].type_only,
-                Decl::ExportStarAs(s) => {
-                    word_at(&hir.text, after_export(&hir.text, hir[s].pos)) == b"type"
-                }
-                _ => false,
-            });
-            if is_type_only {
-                return Some(sym.file);
-            }
-            sym = files.alias_target(sym)?;
-        }
-        None
     }
 
     // ───────────────────────────── import attributes ─────────────────────────────
@@ -2186,9 +2040,10 @@ impl Checker<'_> {
             let Some(module) = self.xm_module_of_specifier(cx.file, spec) else {
                 continue;
             };
-            let Some(flags) = self.xm_symbol_flags(files.module_value(module), false) else {
+            let flags = files.symbol_flags(files.module_value(module));
+            if flags == SymFlags::all() {
                 continue;
-            };
+            }
             if !flags.intersects(if is_typeof {
                 SymFlags::VALUE
             } else {
@@ -2214,8 +2069,7 @@ impl Checker<'_> {
 
     // ───────────────────────────── what is written where it cannot be ─────────────────────────────
 
-    /// `checkGrammarModuleElementContext` and `reportObviousModifierErrors`, of the statements that are neither at the top of the file
-    /// nor at the top of a namespace. 1211 for a class declaration without a name, wherever it is.
+    /// `checkGrammarModuleElementContext`, of the statements that are neither at the top of the file nor at the top of a namespace. 1211 for a class declaration without a name, wherever it is.
     fn xm_statements_in_blocks(&self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
         if !cx.grammar || cx.text.is_empty() {
             return;
@@ -2247,7 +2101,7 @@ impl Checker<'_> {
                 && hir[c].name.is_none()
                 && !hir[c].flags.contains(Flags::DEFAULT)
                 // `default` without `export` (1029) is a modifier all the same.
-                && find_modifier(cx.text, s.start, b"default").is_none()
+                && hir.find_modifier(s.modifiers, Flags::DEFAULT).is_none()
             {
                 let start = hir[c].start;
                 out.push(Diagnostic { start, code: 1211 });
@@ -2274,47 +2128,18 @@ impl Checker<'_> {
                 }
                 StmtKind::ExportAssign(_) => 1231,
                 StmtKind::ExportDefault(_) => 1258,
-                _ => 1184,
-            };
-            if code != 1184 {
-                out.push(Diagnostic {
-                    start: s.start,
-                    code,
-                });
-                continue;
-            }
-            // `findFirstIllegalModifier`: the one modifier that may come first.
-            let allowed: &[u8] = match s.kind {
-                StmtKind::Fn(_) => b"async",
-                StmtKind::Class(_) => b"abstract",
-                _ => b"",
-            };
-            let flags = match s.kind {
-                StmtKind::Fn(f) => hir[f].flags.difference(Flags::ASYNC),
-                StmtKind::Class(c) => hir[c].flags.difference(Flags::ABSTRACT),
-                StmtKind::Interface(i) => hir[i].flags,
-                StmtKind::TypeAlias(a) => hir[a].flags,
-                StmtKind::Enum(e) => hir[e].flags,
-                StmtKind::Var(decls) => {
-                    decls.iter().next().map_or(Flags::empty(), |d| hir[d].flags)
-                }
                 _ => continue,
             };
-            // Whether there is a modifier is known. The text is only read for where the first one is.
-            if !flags.intersects(MODIFIERS) {
-                continue;
-            }
-            let start = skip_decorators(cx.text, s.start as usize) as u32;
-            let first = word_at(cx.text, start as usize);
-            if first != allowed && is_modifier(first, false) {
-                out.push(Diagnostic { start, code });
-            }
+            out.push(Diagnostic {
+                start: s.start,
+                code,
+            });
         }
     }
 
     /// `reportObviousModifierErrors`, of `static { }`: nothing goes before it.
     fn xm_static_blocks(&self, cx: &Cx<'_>, out: &mut Vec<Diagnostic>) {
-        if !cx.grammar || cx.text.is_empty() {
+        if !cx.grammar {
             return;
         }
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
@@ -2324,23 +2149,14 @@ impl Checker<'_> {
             {
                 continue;
             }
-            // It is said to be where its brace is, or, in a class that is only declared, where its first modifier is.
-            let (start, keyword) = if cx.text.get(member.pos as usize) == Some(&b'{') {
-                let end = skip_trivia_back(cx.text, member.pos as usize);
-                let keyword = word_start(cx.text, end);
-                if &cx.text[keyword..end] != b"static" {
-                    continue;
-                }
-                (member.start, keyword as u32)
-            } else {
-                let Some(keyword) = find_modifier(cx.text, member.pos, b"static") else {
-                    continue;
-                };
-                (member.pos, keyword)
-            };
             // `reportObviousDecoratorErrors` comes first, and nothing more is said then.
-            if start != keyword && cx.text.get(start as usize) != Some(&b'@') {
-                out.push(Diagnostic { start, code: 1184 });
+            if let Some(first) = hir.modifier_list(member.modifiers).first()
+                && cx.text.get(member.start as usize) != Some(&b'@')
+            {
+                out.push(Diagnostic {
+                    start: first.pos,
+                    code: 1184,
+                });
             }
         }
     }
@@ -2773,16 +2589,6 @@ fn string_start(text: &[u8], end: usize) -> Option<usize> {
     }
 }
 
-/// `nextTokenCanFollowModifier`: most of the words that can be modifiers are names unless what follows is on the same line.
-fn is_modifier(word: &[u8], is_before_line_break: bool) -> bool {
-    match word {
-        b"export" | b"default" | b"static" => true,
-        b"declare" | b"abstract" | b"async" | b"public" | b"private" | b"protected"
-        | b"readonly" | b"override" | b"accessor" => !is_before_line_break,
-        _ => false,
-    }
-}
-
 /// The start of the first token of a statement list in braces. `None` if the HIR has no statement of the list.
 fn statement_list_start(hir: &hir::File, statements: IdList<StmtId>) -> Option<u32> {
     let text = &hir.text[..];
@@ -2800,44 +2606,6 @@ fn statement_list_start(hir: &hir::File, statements: IdList<StmtId>) -> Option<u
             Some(token_start) => start = token_start,
             None => return Some(start as u32),
         }
-    }
-}
-
-/// `parseDecorator`: from `at`, past trivia and decorators. A decorator is an `@`, a name or what is in parentheses, and then `.name`,
-/// `(..)` and `[..]`.
-fn skip_decorators(text: &[u8], mut at: usize) -> usize {
-    loop {
-        at = skip_trivia(text, at);
-        if text.get(at) != Some(&b'@') {
-            return at;
-        }
-        at = word_end(text, skip_trivia(text, at + 1));
-        loop {
-            let next = skip_trivia(text, at);
-            at = match text.get(next) {
-                Some(b'.') => word_end(text, skip_trivia(text, next + 1)),
-                _ => match end_of_brackets(text, next) {
-                    Some(end) if text[next] != b'{' => end,
-                    _ => break,
-                },
-            };
-        }
-    }
-}
-
-/// Where `wanted` is among the decorators and modifiers that start at `start`.
-fn find_modifier(text: &[u8], start: u32, wanted: &[u8]) -> Option<u32> {
-    let mut at = start as usize;
-    loop {
-        at = skip_decorators(text, at);
-        let word = word_at(text, at);
-        if word == wanted {
-            return Some(at as u32);
-        }
-        if !is_modifier(word, false) {
-            return None;
-        }
-        at += word.len();
     }
 }
 

@@ -204,35 +204,10 @@ impl Checker<'_> {
         (star.0, start, self.end_of_stmt(star.0, star.1))
     }
 
-    /// `typeOnlyExportStarMap[name]` of `module`: where the `export type *` is that is the only way `name` gets out.
-    pub(super) fn place_of_type_only_export_star(
-        &self,
-        module: Sym,
-        name: Atom,
-    ) -> Option<(FileId, u32, u32)> {
-        let star = self.files().type_only_export_star(module, name)?;
-        Some(self.xa_place_of_export_star(star))
-    }
-
     // ───────────────────────────── what says `type` ─────────────────────────────
 
-    /// Whether `typeOnlyDeclaration` is an `ExportSpecifier`, an `ExportDeclaration` or a `NamespaceExport`.
-    fn xa_is_export(type_only: TypeOnlyDeclaration) -> bool {
-        !matches!(
-            type_only,
-            TypeOnlyDeclaration::Alias(
-                _,
-                _,
-                Decl::ImportDefault(_)
-                    | Decl::ImportNamespace(_)
-                    | Decl::ImportSpec(_)
-                    | Decl::ImportEquals(_)
-            )
-        )
-    }
-
     /// `addTypeOnlyDeclarationRelatedInfo`: 1377 at `type_only` if `is_export`, or else 1376.
-    fn xa_type_only_related(
+    pub(super) fn xa_type_only_related(
         &self,
         type_only: TypeOnlyDeclaration,
         is_export: bool,
@@ -597,9 +572,8 @@ impl Checker<'_> {
                         );
                         if !is_type && let Some(type_only) = type_only_alias {
                             self.relate(start, code, |c| {
-                                let is_export = Self::xa_is_export(type_only);
                                 let name = c.atom_text(property_name);
-                                c.xa_type_only_related(type_only, is_export, name)
+                                c.xa_type_only_related(type_only, type_only.is_export(), name)
                             });
                         }
                     }
@@ -618,10 +592,7 @@ impl Checker<'_> {
                 // What says `type` in this very file can be seen to go away without looking at any other.
                 Decl::ExportSpec(_)
                     if is_verbatim
-                        || type_only_alias.is_none_or(|type_only| match type_only {
-                            TypeOnlyDeclaration::Alias(_, of, _)
-                            | TypeOnlyDeclaration::ExportStar(of, _) => of != file,
-                        }) =>
+                        || type_only_alias.is_none_or(|type_only| type_only.file() != file) =>
                 {
                     let end = self.xa_alias_node_end(file, node);
                     if is_type {
@@ -637,9 +608,8 @@ impl Checker<'_> {
                         );
                         if let Some(type_only) = type_only_alias {
                             self.relate(start, 1448, |c| {
-                                let is_export = Self::xa_is_export(type_only);
                                 let name = c.atom_text(property_name);
-                                c.xa_type_only_related(type_only, is_export, name)
+                                c.xa_type_only_related(type_only, type_only.is_export(), name)
                             });
                         }
                     }

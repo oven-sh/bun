@@ -698,6 +698,16 @@ pub enum InferPosition {
     MappedTemplate(MappedId),
 }
 
+/// `declareSymbolEx`, where `symbol.Flags&excludes != 0`: `symbol` refused `decl`.
+pub struct Redeclaration {
+    pub symbol: SymbolId,
+    /// `len(symbol.Declarations)` by then.
+    pub count: u32,
+    pub decl: Decl,
+    /// What is reported at each of those declarations and at `decl`.
+    pub code: u32,
+}
+
 /// Side tables of a [`File`], index for index.
 #[derive(Default)]
 pub struct Bound {
@@ -717,6 +727,7 @@ pub struct Bound {
     /// `declare global { }` at the top of a module, or right in an ambient module at the top of a script: symbols whose exports are
     /// global.
     pub global_augmentations: Few<SymbolId>,
+    pub redeclarations: Few<Redeclaration>,
     /// `declareSymbolEx`: the declarations that the symbol they are listed with refused. Each has a symbol of its own.
     pub refused_declarations: Few<(SymbolId, Decl)>,
     /// `export as namespace N`

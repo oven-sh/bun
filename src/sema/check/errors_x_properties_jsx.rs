@@ -6,7 +6,6 @@
 //! * 1255, and 1263 1264: `checkGrammarProperty`, `checkGrammarVariableDeclaration`; with 1162, `checkGrammarObjectLiteralExpression`
 //!   and `checkGrammarMethod`
 //! * 2501 1312 18016: `checkGrammarObjectLiteralExpression`
-//! * 1079: `checkGrammarModifiers`
 //! * 2207, and 2206: `checkGrammarTypeOnlyNamedImportsOrExports`
 //! * 18007: `checkGrammarJsxExpression`
 //! * 17000 17001, and 2639: `checkGrammarJsxElement`, `checkGrammarJsxName`
@@ -57,7 +56,6 @@ impl Checker<'_> {
         self.check_grammar_of_method_names(file, out);
         self.check_grammar_of_ambient_or_definite_variables(file, out);
         self.check_grammar_of_object_literals(file, &index, out);
-        self.check_declare_on_imports(file, out);
         self.check_type_modifier_in_type_only_clauses(file, out);
         self.check_commas_in_jsx_expressions(file, &elements, out);
         self.check_grammar_jsx_element(file, &elements, out);
@@ -697,50 +695,6 @@ impl Checker<'_> {
 
     // ───────────────────────────── imports and exports ─────────────────────────────
 
-    /// The end of `checkGrammarModifiers`, of an import: 1079.
-    fn check_declare_on_imports(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.imports.is_empty() && hir.import_equals.is_empty() {
-            return;
-        }
-        let text = &hir.text[..];
-        for (i, s) in hir.stmts.iter().enumerate() {
-            if !matches!(s.kind, StmtKind::Import(_) | StmtKind::ImportEquals(_)) {
-                continue;
-            }
-            // `checkGrammarModuleElementContext`: anywhere else it is out of place, and that is all that is said.
-            let in_ambient_block = match bound.stmt_parent[i] {
-                Parent::File => false,
-                Parent::Module(m) => hir[m].flags.contains(Flags::AMBIENT),
-                _ => continue,
-            };
-            let (mut at, mut has_export, mut last_declare) = (s.start as usize, false, None);
-            let is_refused = loop {
-                at = skip_trivia(text, at);
-                if is_word_at(text, at, b"export") {
-                    // 1030, 1029
-                    if has_export || last_declare.is_some() {
-                        break true;
-                    }
-                    has_export = true;
-                    at += 6;
-                } else if is_word_at(text, at, b"declare") {
-                    // 1030, 1038
-                    if last_declare.is_some() || in_ambient_block {
-                        break true;
-                    }
-                    last_declare = Some(at as u32);
-                    at += 7;
-                } else {
-                    break false;
-                }
-            };
-            if let (false, Some(start)) = (is_refused, last_declare) {
-                out.push(Diagnostic { start, code: 1079 });
-            }
-        }
-    }
-
     /// `checkGrammarTypeOnlyNamedImportsOrExports`: `type` on the statement and again on a name in it. Said of the first.
     fn check_type_modifier_in_type_only_clauses(&self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -1094,7 +1048,7 @@ impl Checker<'_> {
                     start: hir[e].pos,
                     code: 2607,
                 });
-                let end = self.end_of_jsx_opening(file, e, j);
+                let end = hir[j].opening_end;
                 self.explain_to(hir[e].pos, end, 2607, |c| vec![c.atom_text(name)]);
             }
         }

@@ -606,7 +606,7 @@ impl Checker<'_> {
                 } else {
                     factory
                 };
-                let end = self.end_of_jsx_opening(file, ExprId(i as u32), jsx);
+                let end = hir[jsx].opening_end;
                 self.note(x.pos, end, 2686, vec![self.atom_text(looked_up)]);
             } else if of_elements {
                 // The name of the tag, which follows the `<`.

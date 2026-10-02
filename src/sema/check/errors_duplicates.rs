@@ -113,6 +113,18 @@ impl Checker<'_> {
             }
             self.check_declarations_of(file, sym, &mut last_body, out);
         }
+        // "Report errors every position with duplicate declaration. Report errors on previous encountered declarations".
+        for refusal in bound.redeclarations.iter() {
+            let (symbol, code) = (refusal.symbol, refusal.code);
+            let earlier = bound.symbols[symbol.idx()].decls[..refusal.count as usize].iter();
+            let earlier =
+                earlier.filter(|&&at| !bound.refused_declarations.contains(&(symbol, at)));
+            for &at in earlier.chain(std::iter::once(&refusal.decl)) {
+                if let Some(start) = self.start_of_binder_diagnostic(file, at) {
+                    out.push(Diagnostic { start, code });
+                }
+            }
+        }
         self.check_locals_of_bodies(file, out);
         self.check_refused_merges(file, out);
         self.check_duplicate_umd_globals(file, out);
@@ -354,6 +366,23 @@ impl Checker<'_> {
             _ => self
                 .declaration_flags(file, decl)
                 .map(|(_, _, start)| start),
+        }
+    }
+
+    /// `GetErrorRangeForNode(GetNameOfDeclaration(decl) ?? decl)`: a function or a class without a name is reported at its first token.
+    fn start_of_binder_diagnostic(&self, file: FileId, decl: Decl) -> Option<u32> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match decl {
+            Decl::Fn(it) if hir[it].name.is_none() => match bound.fns[it.idx()].owner {
+                crate::bind::FnOwner::Stmt(statement) => Some(hir[statement].pos),
+                _ => None,
+            },
+            Decl::Class(it) if hir[it].name.is_none() => match bound.class_owner[it.idx()] {
+                ClassOwner::Stmt(statement) if statement.is_some() => Some(hir[statement].pos),
+                _ => None,
+            },
+            Decl::ExportExpr(statement) => Some(self.export_assignment_name_start(file, statement)),
+            _ => self.declaration_name_start(file, decl),
         }
     }
 

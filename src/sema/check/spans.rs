@@ -9,7 +9,7 @@ use crate::atom::{Atom, known};
 use crate::bind::{FnOwner, MemberOwner};
 use crate::hir::{
     CallId, CaseId, ClassId, EnumMemberId, ExportSpecId, Expr, ExprId, ExprKind, File, FileKind,
-    Flags, FnBody, FnId, FnKind, Func, INCOMPLETE_TEMPLATE, IdList, ImportSpecId, JsxId, Keyword,
+    Flags, FnBody, FnId, FnKind, Func, INCOMPLETE_TEMPLATE, IdList, ImportSpecId, Keyword,
     MemberId, MemberKind, ParamId, PatElemId, PatId, PatKind, PatPropId, PropId, PropKey, PropKind,
     Span, Stmt, StmtId, StmtKind, TupleElemId, TypeNode, TypeNodeId, TypeNodeKind, TypeParamId,
     UnOp, VarDeclId, is_parenthesized, open_parenthesis, start_inside_parentheses,
@@ -133,36 +133,7 @@ fn line_comment_start(line: &[u8]) -> Option<usize> {
     None
 }
 
-/// `isConflictMarkerTrivia`, of what is written at `line`, where a line starts.
-fn is_conflict_marker_trivia(text: &[u8], line: usize) -> bool {
-    text.get(line..line + 8).is_some_and(|marker| {
-        matches!(marker[0], b'<' | b'>' | b'=' | b'|')
-            && marker[..7].iter().all(|&b| b == marker[0])
-            && (marker[0] == b'=' || marker[7] == b' ')
-    })
-}
-
-/// `scanConflictMarkerTrivia`, backwards from the marker at `line`: where the trivia starts that ends with that line. All from a
-/// `|||||||` or a `=======` to the `>>>>>>>` is trivia.
-fn conflict_marker_trivia_start(text: &[u8], line: usize) -> usize {
-    let (mut start, mut at) = (line, line);
-    while text[line] == b'>' && at > 0 {
-        at = text[..at - 1]
-            .iter()
-            .rposition(|&c| matches!(c, b'\n' | b'\r'))
-            .map_or(0, |i| i + 1);
-        if is_conflict_marker_trivia(text, at) {
-            match text[at] {
-                b'=' | b'|' => start = at,
-                _ => break,
-            }
-        }
-    }
-    start
-}
-
-/// Where the token before `pos` ends: back over blanks, comments, conflict markers and a shebang. A missing node is there
-/// (`createMissingNode`).
+/// Where the token before `pos` ends: back over blanks and comments. A missing node is there (`createMissingNode`).
 pub(super) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
     let mut at = pos.min(text.len());
     loop {
@@ -175,11 +146,7 @@ pub(super) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
                     .iter()
                     .rposition(|&c| matches!(c, b'\n' | b'\r'))
                     .map_or(0, |i| i + 1);
-                if is_conflict_marker_trivia(text, line) {
-                    at = conflict_marker_trivia_start(text, line);
-                } else if line == 0 && text.starts_with(b"#!") {
-                    at = 0;
-                } else if let Some(comment) = line_comment_start(&text[line..at]) {
+                if let Some(comment) = line_comment_start(&text[line..at]) {
                     at = line + comment;
                 }
             } else if matches!(b, b' ' | b'\t' | 0x0B | 0x0C) {
@@ -1211,7 +1178,10 @@ impl<'a> Spans<'a> {
             ExprKind::Instantiation { expr, type_args } => {
                 self.type_args(type_args, self.expr(expr))
             }
-            ExprKind::Jsx(jsx) => self.jsx(pos, jsx),
+            ExprKind::Jsx(jsx) => match self.hir.jsx.get(jsx.idx()) {
+                Some(element) => element.end as usize,
+                None => self.token(pos),
+            },
             ExprKind::ImportCall(specifier, more) => {
                 let mut deferred = self.hir.deferred_import_calls.iter();
                 if let Some(&(_, close)) = deferred.find(|call| call.0 == specifier)
@@ -1258,7 +1228,9 @@ impl<'a> Spans<'a> {
         let Some(prop) = self.hir.props.get(p.idx()) else {
             return 0;
         };
-        if prop.value.is_some() {
+        if prop.end != 0 {
+            prop.end as usize
+        } else if prop.value.is_some() {
             self.expr(prop.value)
         } else {
             self.prop_name(p)
@@ -1291,69 +1263,14 @@ impl<'a> Spans<'a> {
 
     // ───────────────────────────── JSX ─────────────────────────────
 
-    /// The element whose `<` is at `pos`.
-    fn jsx(self, pos: usize, jsx: JsxId) -> usize {
-        match self.hir.jsx.get(jsx.idx()) {
-            Some(element) if element.close_pos != u32::MAX => self.jsx_closing(jsx),
-            _ => self.jsx_opening(pos, jsx),
-        }
-    }
-
-    /// Where the opening or closing tag whose `<` is at `less_than` ends, if the parser objected to something in it.
-    fn jsx_tag_end(self, less_than: usize) -> Option<usize> {
-        let ends = &self.hir.jsx_tag_ends;
-        let found = ends
-            .binary_search_by_key(&(less_than as u32), |tag| tag.0)
-            .ok()?;
-        Some(ends[found].1 as usize)
-    }
-
-    /// `<tag attrs>`, `<>`, or all of `<tag attrs />`. The `<` is at `pos`.
-    fn jsx_opening(self, pos: usize, jsx: JsxId) -> usize {
-        if let Some(end) = self.jsx_tag_end(pos) {
-            return end;
-        }
-        let Some(element) = self.hir.jsx.get(jsx.idx()) else {
-            return self.token(pos);
-        };
-        let at = match element.attrs.iter().next_back() {
-            Some(last) => self.jsx_attr(last),
-            None if element.tag.is_some() => {
-                self.type_args(element.type_args, self.expr(element.tag))
-            }
-            None => pos + 1,
-        };
-        self.eat(self.eat(at, b"/"), b">")
-    }
-
-    /// `</tag>`, `</>`
-    fn jsx_closing(self, jsx: JsxId) -> usize {
-        let Some(element) = self.hir.jsx.get(jsx.idx()) else {
-            return 0;
-        };
-        if element.close_pos == u32::MAX {
-            return 0;
-        }
-        let name = self.hir.exprs.get(element.close_tag.idx());
-        if name.is_some_and(|name| matches!(name.kind, ExprKind::Missing)) {
-            return element.close_pos as usize;
-        }
-        if let Some(end) = self.jsx_tag_end(element.close_pos as usize) {
-            return end;
-        }
-        let slash_end = self.eat(self.eat(element.close_pos as usize, b"<"), b"/");
-        let name = self.skip_trivia(slash_end);
-        match jsx_tag_name_end(self.text, name) {
-            name_end if name_end > name => self.eat(name_end, b">"),
-            _ => self.eat(slash_end, b">"),
-        }
-    }
-
     /// `name`, `name="v"`, `name={e}`, `{...e}`
     fn jsx_attr(self, p: PropId) -> usize {
         let Some(prop) = self.hir.props.get(p.idx()) else {
             return 0;
         };
+        if prop.end != 0 {
+            return prop.end as usize;
+        }
         if prop.kind == PropKind::Spread {
             return self.close(self.expr(prop.value).max(prop.pos as usize), b'}');
         }
@@ -1457,7 +1374,9 @@ impl<'a> Spans<'a> {
         }
         let pos = pos as usize;
         let end = match kind {
-            TypeNodeKind::Error | TypeNodeKind::BoolLit(_) => self.token(pos),
+            TypeNodeKind::Error | TypeNodeKind::Heritage(_) | TypeNodeKind::BoolLit(_) => {
+                self.token(pos)
+            }
             TypeNodeKind::Keyword(keyword) => {
                 if self.is_written_keyword(node) {
                     pos + keyword_text(keyword).len()
@@ -1971,17 +1890,6 @@ impl Checker<'_> {
 
     // ───────────────────────────── JSX ─────────────────────────────
 
-    /// `node.End()` of `<tag attrs>`, of `<>`, or of the whole of `<tag attrs />`. `e` is the element, `jsx` what it holds.
-    pub(super) fn end_of_jsx_opening(&self, file: FileId, e: ExprId, jsx: JsxId) -> u32 {
-        let spans = self.spans(file);
-        spans.jsx_opening(spans.expr_pos(e), jsx) as u32
-    }
-
-    /// `node.End()` of `</tag>` or `</>`, which starts at `close_pos`.
-    pub(super) fn end_of_jsx_closing(&self, file: FileId, jsx: JsxId) -> u32 {
-        self.spans(file).jsx_closing(jsx) as u32
-    }
-
     /// `node.End()` of the attribute `p` of a JSX element: `name`, `name="v"`, `name={e}`, `{...e}`.
     pub(super) fn end_of_jsx_attr(&self, file: FileId, p: PropId) -> u32 {
         self.spans(file).jsx_attr(p) as u32
@@ -2322,7 +2230,10 @@ impl Checker<'_> {
             }
             let end = word_end(spans.text, start);
             ranges.push((start as u32, end as u32));
-            let dot = spans.eat(end, b".");
+            let dot = match spans.eat(end, b"?.") {
+                dot if dot != end => dot,
+                _ => spans.eat(end, b"."),
+            };
             if dot == end {
                 break;
             }

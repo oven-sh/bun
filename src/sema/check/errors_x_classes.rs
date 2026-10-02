@@ -746,7 +746,10 @@ impl Checker<'_> {
         for node in hir.ids(hir[i].extends) {
             // NEEDS: `parse_interface` to keep what is written after `extends` and is no `A.B.C<Args>` as a `TypeNodeKind::Error`
             // placed where it starts, where today it gives up on the whole interface.
-            if matches!(hir[node].kind, TypeNodeKind::Error) {
+            if matches!(
+                hir[node].kind,
+                TypeNodeKind::Error | TypeNodeKind::Heritage(_)
+            ) {
                 out.push(Diagnostic {
                     start: hir[node].pos,
                     code: 2499,

@@ -2510,7 +2510,7 @@ impl Checker<'_> {
                     if !self.is_known(of) {
                         return;
                     }
-                    ty = if of == TypeId::ANY {
+                    ty = if of.is_any() {
                         None
                     } else {
                         self.type_of_property(of, n)

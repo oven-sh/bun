@@ -3382,7 +3382,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         match self.c.data(ty) {
             TypeData::Intrinsic(intrinsic) => {
                 self.b.approximate_length += match intrinsic {
-                    Intrinsic::Unresolved | Intrinsic::Any => 3,
+                    Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error => 3,
                     Intrinsic::Unknown => 0,
                     Intrinsic::Never => 5,
                     Intrinsic::Void | Intrinsic::Null | Intrinsic::NullDeclared => 4,

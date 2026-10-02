@@ -1995,7 +1995,7 @@ fn check_yield_result(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Ve
         return;
     }
     match c.contextual_type(file, e) {
-        Some(TypeId::ANY) => {}
+        Some(TypeId::ANY | TypeId::ERROR) => {}
         Some(_) => return,
         None if !c.is_context_known(file, e) => return,
         None => {}

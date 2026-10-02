@@ -126,6 +126,7 @@ impl<'c, 'p> Describer<'c, 'p> {
             TypeData::Intrinsic(i) => match i {
                 Intrinsic::Unresolved => "?",
                 Intrinsic::Any => "any",
+                Intrinsic::Error => "error",
                 Intrinsic::Unknown => "unknown",
                 Intrinsic::Never => "never",
                 Intrinsic::Void => "void",

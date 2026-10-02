@@ -1722,7 +1722,7 @@ impl<'p> Checker<'p> {
                                 // `getPropertyTypeForIndexType`: that a key of type `any` finds anything comes after what may be missing.
                                 Some(TypeId::ANY)
                                     if allows_missing
-                                        && key == TypeId::ANY
+                                        && key.is_any()
                                         && self
                                             .members(parent_ty)
                                             .is_some_and(|m| m.shape().index.is_empty()) =>
@@ -2054,7 +2054,10 @@ impl<'p> Checker<'p> {
             }
             let declared = self.type_from_node(file, decl.ty);
             let declared = self.force(declared);
-            return if matches!(declared, TypeId::ANY | TypeId::UNKNOWN | TypeId::UNRESOLVED) {
+            return if matches!(
+                declared,
+                TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::UNRESOLVED
+            ) {
                 declared
             } else {
                 TypeId::ANY
@@ -2721,7 +2724,7 @@ impl<'p> Checker<'p> {
             // `getIterationTypeOfGeneratorFunctionReturnType`: `any` says nothing.
             let expected = self
                 .return_type_of_contextual_signature(file, func)
-                .filter(|&t| t != TypeId::ANY);
+                .filter(|&t| !t.is_any());
             let expected = expected.and_then(|t| self.iteration_types(t, is_async));
             if self.is_unit(yielded) {
                 yielded = self.widen_literal_for_context(yielded, expected.map(|t| t.yielded));
@@ -2744,7 +2747,7 @@ impl<'p> Checker<'p> {
             None => {
                 let expected = self
                     .declared_or_contextual_return_type(file, func)
-                    .filter(|&t| t != TypeId::ANY);
+                    .filter(|&t| !t.is_any());
                 expected
                     .and_then(|t| self.iteration_types(t, is_async))
                     .map_or(TypeId::UNKNOWN, |t| t.next)

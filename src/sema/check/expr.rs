@@ -34,7 +34,7 @@ impl<'p> Checker<'p> {
         self.prepare_enclosing(file, e);
         let ty = self.type_of_expr(file, e);
         // `getTypeOfExpression`: the quick type comes first. It says something else only of a `new` that is refused.
-        if ty == TypeId::ANY {
+        if ty.is_any() {
             self.quick_type_of_expr(file, e).unwrap_or(ty)
         } else {
             ty
@@ -2702,7 +2702,7 @@ impl<'p> Checker<'p> {
                     Some(&sig) => self.sig_return(sig),
                     None => TypeId::NEVER,
                 };
-                let is_left_out = instance == TypeId::ANY
+                let is_left_out = instance.is_any()
                     || instance == TypeId::OBJECT
                     || matches!(self.data(instance), TypeData::TypeParam(..));
                 if is_left_out && self.is_valid_base_type(instance) {

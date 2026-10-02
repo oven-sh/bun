@@ -1860,7 +1860,7 @@ impl<'p> Checker<'p> {
 
     #[inline]
     pub fn is_any(&self, ty: TypeId) -> bool {
-        ty == TypeId::ANY || ty == TypeId::UNRESOLVED
+        ty.is_any() || ty == TypeId::UNRESOLVED
     }
 
     #[inline]

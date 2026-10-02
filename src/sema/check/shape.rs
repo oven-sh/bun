@@ -1628,7 +1628,7 @@ impl<'p> Checker<'p> {
         };
         let extends = self.hir(file)[c].extends;
         let constructor = self.type_of_expr(file, extends);
-        if constructor == TypeId::ANY {
+        if constructor.is_any() {
             // In JavaScript `is_callee_in_error` takes the `anyType` of an unresolved `require("m")` for the error type.
             return !self.is_uncertain(file, extends)
                 && !self.is_expr_in_error(file, extends)
@@ -1646,7 +1646,7 @@ impl<'p> Checker<'p> {
         {
             return false;
         }
-        self.base_instance_type(file, c) == TypeId::ANY
+        self.base_instance_type(file, c).is_any()
     }
 
     fn sigs_of_function_declarations(&mut self, sym: Sym) -> Vec<SigId> {

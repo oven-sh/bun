@@ -1347,7 +1347,7 @@ impl Checker<'_> {
             PatParent::Var(d) if hir[d].ty.is_some() => hir[d].ty,
             PatParent::Var(d) if hir[d].init.is_some() => match hir[hir[d].init].kind {
                 ExprKind::As { ty, .. } => ty,
-                _ => return ty == TypeId::ANY && self.is_expression_in_error(file, hir[d].init),
+                _ => return ty.is_any() && self.is_expression_in_error(file, hir[d].init),
             },
             PatParent::Prop(parent, prop) => {
                 let given = self.type_of_pat(file, parent);
@@ -1364,8 +1364,7 @@ impl Checker<'_> {
                     return self.is_rest_of_invalid_type(given);
                 }
                 // 2339. `AccessFlagsAllowMissing`: with a default, what an object literal leaves out is `undefined`.
-                if ty != TypeId::ANY || prop.default.is_some() && self.is_object_literal_type(given)
-                {
+                if !ty.is_any() || prop.default.is_some() && self.is_object_literal_type(given) {
                     return false;
                 }
                 let Some(name) = self.member_name(file, prop.key) else {
@@ -1396,7 +1395,7 @@ impl Checker<'_> {
             }
             _ => return false,
         };
-        if ty != TypeId::ANY || node.is_none() {
+        if !ty.is_any() || node.is_none() {
             return false;
         }
         let (sym, args) = match hir[node].kind {
@@ -1451,7 +1450,7 @@ impl Checker<'_> {
     /// `any` from a declared one. Forms that are not recognized answer `false`.
     pub(super) fn is_expression_in_error(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        if e.is_none() || self.type_of_expr(file, e) != TypeId::ANY {
+        if e.is_none() || !self.type_of_expr(file, e).is_any() {
             return false;
         }
         match hir[e].kind {
@@ -2067,7 +2066,7 @@ impl Checker<'_> {
         }
         // `getSubstitutionType`
         for (this, constraint) in implied_for_this {
-            if constraint != TypeId::ANY
+            if !constraint.is_any()
                 && constraint != TypeId::UNKNOWN
                 && constraint != this
                 && !pairs.iter().any(|pair| pair.0 == this)

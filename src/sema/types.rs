@@ -23,6 +23,9 @@ pub enum Intrinsic {
     /// The resolver does not know. Behaves like `any`, and spreads.
     Unresolved,
     Any,
+    /// `errorType`: what an expression or a type that is in error has. It has `TypeFlagsAny` and behaves like `any`, except where
+    /// `isErrorType` is asked.
+    Error,
     Unknown,
     Never,
     Void,
@@ -891,6 +894,7 @@ well_known! {
     // `markerSuperTypeForCheck`, `markerSubTypeForCheck`: `checkTypeParameterDeferred` verifies an `in` / `out` annotation with these.
     MARKER_SUPER_FOR_CHECK = TypeData::Marker(3),
     MARKER_SUB_FOR_CHECK = TypeData::Marker(4),
+    ERROR = TypeData::Intrinsic(Intrinsic::Error),
 }
 
 impl TypeId {
@@ -909,6 +913,12 @@ impl TypeId {
             TypeId::NULL_DECLARED => TypeId::NULL,
             ty => ty,
         }
+    }
+
+    /// `TypeFlagsAny`: `anyType` or `errorType`.
+    #[inline]
+    pub fn is_any(self) -> bool {
+        self == TypeId::ANY || self == TypeId::ERROR
     }
 
     /// `TypeFlagsUndefined`

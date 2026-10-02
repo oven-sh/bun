@@ -4619,8 +4619,8 @@ impl<'p> Checker<'p> {
         // The names in a pattern can be anything, and nothing is inferred from that: only from the shape of it.
         if is_from_pattern {
             for c in &mut from_result.candidates {
-                c.covariant.retain(|t| *t != TypeId::ANY);
-                c.contravariant.retain(|t| *t != TypeId::ANY);
+                c.covariant.retain(|t| !t.is_any());
+                c.contravariant.retain(|t| !t.is_any());
             }
         }
         self.mapper_of_result_inference(type_params, &from_result)
@@ -9547,7 +9547,7 @@ impl<'p> Checker<'p> {
         }
         // `resolveUntypedCall`, `resolveErrorCall`: what anything comes of has no parameters.
         let Some(sig) = resolved.sig else {
-            return (resolved.ret == TypeId::ANY).then_some(TypeId::ANY);
+            return (resolved.ret.is_any()).then_some(TypeId::ANY);
         };
         let params = self.sig_params(sig);
         // `getTypeAtPosition`: where there is no parameter anything is expected.

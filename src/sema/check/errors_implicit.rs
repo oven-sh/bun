@@ -224,7 +224,7 @@ impl Checker<'_> {
                     }
                     // What a constructor or a static block assigns says what it is, be that `any`.
                     let id = MemberId(m as u32);
-                    if self.type_of_member_declaration(file, id) != TypeId::ANY
+                    if !self.type_of_member_declaration(file, id).is_any()
                         || self.is_found_to_be_any(file, c, id)
                     {
                         continue;
@@ -864,7 +864,7 @@ impl Checker<'_> {
                     PatKind::Ident(_) if param.flags.contains(Flags::REST) => {
                         self.array_element(resolved) == Some(TypeId::ANY)
                     }
-                    PatKind::Ident(_) => resolved == TypeId::ANY,
+                    PatKind::Ident(_) => resolved.is_any(),
                     _ => true,
                 };
                 if !is_any {

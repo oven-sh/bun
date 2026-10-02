@@ -462,7 +462,9 @@ impl<'p> Checker<'p> {
                     fresh: false,
                 })
             }
-            TypeData::Intrinsic(Intrinsic::Any | Intrinsic::Unknown | Intrinsic::Unresolved) => m,
+            TypeData::Intrinsic(
+                Intrinsic::Any | Intrinsic::Error | Intrinsic::Unknown | Intrinsic::Unresolved,
+            ) => m,
             _ if c.is_definitely_falsy(m) => m,
             _ => TypeId::NEVER,
         })
@@ -2499,7 +2501,7 @@ impl<'p> Checker<'p> {
         if self.is_any(candidate) || candidate == object || candidate == function {
             return ty;
         }
-        if ty == TypeId::ANY {
+        if ty.is_any() {
             return candidate;
         }
         self.filter(ty, |c, m| c.is_constructed_by(m, candidate))
@@ -2769,7 +2771,7 @@ impl<'p> Checker<'p> {
             known::symbol => self.narrow_type_by_type_facts(ty, TypeId::SYMBOL, TYPEOF_EQ_SYMBOL),
             known::undefined => self.narrow_type_by_type_facts(ty, TypeId::UNDEFINED, EQ_UNDEFINED),
             known::object => {
-                if ty == TypeId::ANY {
+                if ty.is_any() {
                     return ty;
                 }
                 let object = self.narrow_type_by_type_facts(ty, TypeId::OBJECT, TYPEOF_EQ_OBJECT);
@@ -2777,7 +2779,7 @@ impl<'p> Checker<'p> {
                 self.union(&[object, null])
             }
             known::function => {
-                if ty == TypeId::ANY {
+                if ty.is_any() {
                     return ty;
                 }
                 let function = self.global_ref(known::Function, &[]);
@@ -3229,7 +3231,7 @@ impl<'p> Checker<'p> {
         }
         // `getNarrowedTypeWorker`: `any` is not the error type, so it is neither `t == candidate` nor a subset of it.
         if !sense
-            && ty == TypeId::ANY
+            && ty.is_any()
             && predicate.ty == Some(TypeId::ANY)
             && self.is_predicate_type_in_error(sig)
         {
@@ -6325,7 +6327,7 @@ impl<'p> Checker<'p> {
             }
             let not_equal = not_equal_facts_from_typeof_switch(&witnesses, 0, 0);
             // What can be anything is covered by all that `typeof` can give.
-            if ty == TypeId::ANY || ty == TypeId::UNKNOWN {
+            if ty.is_any() || ty == TypeId::UNKNOWN {
                 return facts::ALL_TYPEOF_NE & not_equal == facts::ALL_TYPEOF_NE;
             }
             // `someType` asks `never` itself, which has no facts: it has all of none.

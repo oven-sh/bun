@@ -113,7 +113,7 @@ impl<'p> Checker<'p> {
         }
         // `getReducedType`: an intersection nothing can be is not there.
         let ty = self.reduced(ty);
-        if ty == TypeId::ANY || ty == TypeId::NEVER {
+        if ty.is_any() || ty == TypeId::NEVER {
             return self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
         }
         if ty == TypeId::UNKNOWN {
@@ -308,7 +308,7 @@ impl<'p> Checker<'p> {
             }
         }
         let names = self.union(&names);
-        Some(self.filter(names, |_, key| key != TypeId::ANY && key != TypeId::STRING))
+        Some(self.filter(names, |_, key| !key.is_any() && key != TypeId::STRING))
     }
 
     /// The literal type that names the property `name`, as far as the name alone tells. `None` for private names.
@@ -532,7 +532,7 @@ impl<'p> Checker<'p> {
         let obj = self.reduced(obj);
         let index = self.key_into_string_index_only(obj, index);
         if self.is_generic(index) || self.defers_access(obj, index, is_expression) {
-            if obj == TypeId::ANY || obj == TypeId::UNKNOWN {
+            if obj.is_any() || obj == TypeId::UNKNOWN {
                 return Some(obj);
             }
             return Some(self.intern(TypeData::IndexedAccess {
@@ -541,7 +541,7 @@ impl<'p> Checker<'p> {
                 undefined: include_undefined,
             }));
         }
-        if obj == TypeId::ANY || obj == TypeId::NEVER {
+        if obj.is_any() || obj == TypeId::NEVER {
             return Some(obj);
         }
         if let TypeData::Union(keys) = self.data(index) {
@@ -960,7 +960,7 @@ impl<'p> Checker<'p> {
             );
             return Some(self.or_missing(value, include_undefined && !is_own_member));
         }
-        (index == TypeId::NEVER || index == TypeId::ANY).then_some(index)
+        (index == TypeId::NEVER || index.is_any()).then_some(index)
     }
 
     // ───────────────────────────── conditional types ─────────────────────────────
@@ -1091,7 +1091,7 @@ impl<'p> Checker<'p> {
         let parents = self.type_parents(file);
         let narrowed = self.conditional_flow_type(file, declared, check, &parents);
         // `getSubstitutionType` returns the base type for a constraint that is `any`, `unknown` or the base type itself.
-        narrowed == declared || narrowed == TypeId::ANY || narrowed == TypeId::UNRESOLVED
+        narrowed == declared || narrowed.is_any() || narrowed == TypeId::UNRESOLVED
     }
 
     /// `for_constraint`: what is checked is not the type itself but what it extends, so that failing the test does not
@@ -1204,7 +1204,7 @@ impl<'p> Checker<'p> {
                 return TypeId::UNRESOLVED;
             }
             // `checkType == c.errorType`. There is no separate error type: `any` is one if computing it hit an instantiation limit.
-            if check_ty == TypeId::ANY && self.deep_events != events {
+            if check_ty.is_any() && self.deep_events != events {
                 return TypeId::ANY;
             }
             // `[A] extends [B]` waits for its elements like `A extends B` would.
@@ -1244,7 +1244,7 @@ impl<'p> Checker<'p> {
                 return TypeId::UNRESOLVED;
             }
             // `extendsType == c.errorType`
-            if extends_ty == TypeId::ANY && self.deep_events != events {
+            if extends_ty.is_any() && self.deep_events != events {
                 return TypeId::ANY;
             }
             if check_is_generic
@@ -1253,7 +1253,7 @@ impl<'p> Checker<'p> {
             {
                 break self.intern(TypeData::Cond { file, node, mapper });
             }
-            let extends_is_top = extends_ty == TypeId::ANY || extends_ty == TypeId::UNKNOWN;
+            let extends_is_top = extends_ty.is_any() || extends_ty == TypeId::UNKNOWN;
             // `getPermissiveInstantiation` leaves a type without type variables as it is. `Relation::Permissive` would take the type
             // parameters of a generic signature in it for the wildcard.
             let permissive =
@@ -1263,10 +1263,10 @@ impl<'p> Checker<'p> {
                     Relation::Assignable
                 };
             let (branch, branch_mapper, is_false_branch) = if !extends_is_top
-                && (check_ty == TypeId::ANY || !self.related(check_ty, extends_ty, permissive))
+                && (check_ty.is_any() || !self.related(check_ty, extends_ty, permissive))
             {
                 // `any` may pass. So may what extends `check_ty`, if something that passes is one of the things `check_ty` can be.
-                let with_true = check_ty == TypeId::ANY
+                let with_true = check_ty.is_any()
                     || for_constraint
                         && extends_ty != TypeId::NEVER
                         && self
@@ -1277,7 +1277,7 @@ impl<'p> Checker<'p> {
                     // In the true branch the type parameter that is checked is a substitution type. What it stands for did not pass,
                     // so it comes to that and what it is checked against, both (`instantiateTypeWorker`). `any` passes all but
                     // `never`.
-                    let in_true_branch = if (check_ty != TypeId::ANY || extends_ty == TypeId::NEVER)
+                    let in_true_branch = if (!check_ty.is_any() || extends_ty == TypeId::NEVER)
                         && matches!(self.data(check_declared), TypeData::TypeParam(..))
                     {
                         let narrowed = self.intersection(&[extends_ty, check_ty]);
@@ -1685,7 +1685,7 @@ impl<'p> Checker<'p> {
             }
         };
         // `hasArrayOrTypeTypeConstraint`: `any` for a `T` that can only be an array or a tuple is mapped as an array.
-        let any_as_array = t == TypeId::ANY
+        let any_as_array = t.is_any()
             && !self.stack.contains(&Query::Constraint(source))
             && match self.constraint_of_type_param(source) {
                 Some(constraint) => {
@@ -1703,7 +1703,7 @@ impl<'p> Checker<'p> {
             let events = self.deep_events;
             let element = template(self, one, TypeId::NUMBER, true);
             // `isErrorType(elementType)`: `any` is the error type if computing it hit an instantiation limit.
-            if element == TypeId::ANY && self.deep_events != events {
+            if element.is_any() && self.deep_events != events {
                 return TypeId::ANY;
             }
             let readonly = match mapped.readonly {
@@ -1755,7 +1755,7 @@ impl<'p> Checker<'p> {
                     template(self, of_list, TypeId::NUMBER, true)
                 };
                 // `slices.Contains(newElementTypes, c.errorType)`
-                if elem == TypeId::ANY && self.deep_events != events {
+                if elem.is_any() && self.deep_events != events {
                     return TypeId::ANY;
                 }
                 let flag = match mapped.optional {
@@ -2153,7 +2153,9 @@ impl<'p> Checker<'p> {
                 List::Own(keys)
             }
             // What can be anything is gone over as if it had any string for a name.
-            _ if over_keyof && modifiers_ty == Some(TypeId::ANY) => List::One(TypeId::STRING),
+            _ if over_keyof && modifiers_ty.is_some_and(TypeId::is_any) => {
+                List::One(TypeId::STRING)
+            }
             // Only `T` is looked at: `never`, `unknown` and the like have nothing to go over, whatever `keyof` makes of them.
             _ if over_keyof => List::Kept(&[]),
             _ if self.is_generic(constraint) => {
@@ -2388,7 +2390,7 @@ impl<'p> Checker<'p> {
                     None => {
                         // `isValidIndexKeyType`, `any` and enums: a name that can be anything is any string, one that is some member of
                         // an enum any number. Anything else, like a type parameter or a template with one in it, adds nothing.
-                        let index_key = if name_ty == TypeId::ANY || name_ty == TypeId::STRING {
+                        let index_key = if name_ty.is_any() || name_ty == TypeId::STRING {
                             TypeId::STRING
                         } else if name_ty == TypeId::NUMBER
                             || matches!(self.data(name_ty), TypeData::Enum { .. })
@@ -2641,7 +2643,7 @@ impl<'p> Checker<'p> {
             }
             // Twice is once.
             TypeData::StringMapping { kind: same, .. } if *same == kind => ty,
-            TypeData::Intrinsic(Intrinsic::Any | Intrinsic::String)
+            TypeData::Intrinsic(Intrinsic::Any | Intrinsic::Error | Intrinsic::String)
             | TypeData::StringMapping { .. } => self.intern(TypeData::StringMapping { kind, ty }),
             _ if self.is_generic(ty) => self.intern(TypeData::StringMapping { kind, ty }),
             // A number is mapped as the string it makes.

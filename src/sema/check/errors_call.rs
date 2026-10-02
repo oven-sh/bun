@@ -737,7 +737,7 @@ impl Checker<'_> {
                 return false;
             }
             match self.constraint_of_type_param(ty) {
-                Some(TypeId::ANY) => return true,
+                Some(TypeId::ANY | TypeId::ERROR) => return true,
                 Some(constraint) => ty = constraint,
                 None => return false,
             }
@@ -948,7 +948,7 @@ impl Checker<'_> {
             _ => return false,
         };
         annotation.is_some()
-            && self.type_from_node(of, annotation) == TypeId::ANY
+            && self.type_from_node(of, annotation).is_any()
             && self.is_error_type_as_written(of, annotation, 0)
     }
 
@@ -1009,7 +1009,7 @@ impl Checker<'_> {
         };
         // `getPropertyTypeForIndexType`: every index signature applies to a key of type `any`. Without one an expression gets nil, as
         // for any other key; only a type gets the key back, which is what `indexed_access_for_read` answers for both.
-        let finds_nothing = if key == TypeId::ANY {
+        let finds_nothing = if key.is_any() {
             let apparent = self.apparent_type(receiver);
             let apparent = self.reduced(apparent);
             !self.is_any(apparent)

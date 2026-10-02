@@ -921,7 +921,7 @@ impl Checker<'_> {
             }
             // What is refused is `any`.
             let whole = self.type_of_expr(file, ExprId(i as u32));
-            if !self.is_tuple(whole) && whole != TypeId::ANY {
+            if !self.is_tuple(whole) && !whole.is_any() {
                 continue;
             }
             let mut count = 0;
@@ -2716,7 +2716,7 @@ impl Checker<'_> {
             }
             // `checkIndexedAccessIndexType` is given the flow type of every element access, generic key or not, before the optional
             // chain adds `undefined`. It returns the error type for an index it refuses, so `checked` is `any` then.
-            let whole = if chain == Chain::No && checked != TypeId::ANY {
+            let whole = if chain == Chain::No && !checked.is_any() {
                 checked
             } else {
                 self.type_of_element_access_unchecked(file, e).0

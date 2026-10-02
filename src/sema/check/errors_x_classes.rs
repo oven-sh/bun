@@ -281,7 +281,7 @@ impl Checker<'_> {
         }
         // `resolveBaseTypesOfClass`: the error type is no base type. In JavaScript `is_callee_in_error` takes the `anyType` of an
         // unresolved `require("m")` for it.
-        if constructor == TypeId::ANY && !hir.is_js && self.is_callee_in_error(file, extends) {
+        if constructor.is_any() && !hir.is_js && self.is_callee_in_error(file, extends) {
             return nothing;
         }
         // A type parameter that is not in scope here is left over from an incomplete resolution.
@@ -297,13 +297,10 @@ impl Checker<'_> {
             return ClassBase::Unknown;
         }
         // `isConstructorType`
-        if constructor != TypeId::ANY && self.signatures(apparent, true).is_empty() {
+        if !constructor.is_any() && self.signatures(apparent, true).is_empty() {
             return nothing;
         }
-        if !(self.is_object_type(apparent)
-            || self.is_intersection(apparent)
-            || apparent == TypeId::ANY)
-        {
+        if !(self.is_object_type(apparent) || self.is_intersection(apparent) || apparent.is_any()) {
             return nothing;
         }
         let args = self.types_from_nodes(file, class.extends_args);
@@ -335,7 +332,7 @@ impl Checker<'_> {
                     self.type_reference(target, &args)
                 }
             }
-            _ if apparent == TypeId::ANY => TypeId::ANY,
+            _ if apparent.is_any() => TypeId::ANY,
             _ => {
                 let Some(list) = self.base_constructor_returns(apparent, &args) else {
                     return ClassBase::Unknown;
@@ -373,7 +370,7 @@ impl Checker<'_> {
         }
         // What is like a class without being one has to make the same thing whichever way it is called. An `any` that comes first
         // may stand for what is in error, and then nothing is extended.
-        if base_class.is_none() && !self.is_type_variable(constructor) && base != TypeId::ANY {
+        if base_class.is_none() && !self.is_type_variable(constructor) && !base.is_any() {
             let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
             let mut all_the_same = true;
             for &returned in &returns {
@@ -558,7 +555,7 @@ impl Checker<'_> {
         if !self.is_known(param.ty) {
             return None;
         }
-        Some(param.ty == TypeId::ANY || self.array_element(param.ty) == Some(TypeId::ANY))
+        Some(param.ty.is_any() || self.array_element(param.ty) == Some(TypeId::ANY))
     }
 
     /// 2545 2797: a class that extends a value whose type is a type variable. Its static side is `typeof C & T`, whose construct
@@ -715,7 +712,7 @@ impl Checker<'_> {
                 parts.iter().all(|&part| self.is_valid_base_type(part))
             }
             _ => {
-                (self.is_object_type(ty) || ty == TypeId::OBJECT || ty == TypeId::ANY)
+                (self.is_object_type(ty) || ty == TypeId::OBJECT || ty.is_any())
                     && !self.is_generic_mapped_base(ty)
             }
         }
@@ -931,7 +928,7 @@ impl Checker<'_> {
         };
         // What a constructor that is not `any` itself makes, and in JavaScript every `any`, may be the error type, and then nothing
         // is extended: 4112, not 4113.
-        if base == TypeId::ANY && (is_js || constructor != TypeId::ANY) {
+        if base.is_any() && (is_js || !constructor.is_any()) {
             return;
         }
         // A name that is only known when the program runs is the name of no property that could be looked up.
@@ -1216,7 +1213,7 @@ impl Checker<'_> {
                                 // a reference to the class does not keep. `base_types` knows nothing of mixin constructors.
                                 ClassBase::Is { constructor, base } => {
                                     if self.has_type_variables_except_this(f, c, constructor)
-                                        || base != TypeId::ANY && !bases.contains(&base)
+                                        || !base.is_any() && !bases.contains(&base)
                                     {
                                         return false;
                                     }

@@ -1004,7 +1004,7 @@ impl Checker<'_> {
                 if !self.is_known(ty) || self.is_uncertain(file, spread) || self.is_array(ty) {
                     continue;
                 }
-                if ty == TypeId::ANY && !self.is_error_type_expr(file, spread) {
+                if ty.is_any() && !self.is_error_type_expr(file, spread) {
                     continue;
                 }
                 // The error span is the whole `{...e}`.
@@ -1194,7 +1194,7 @@ impl Checker<'_> {
                         Decl::Class(c) if hir[c].extends.is_some() => {
                             let base = self.type_of_expr(file, hir[c].extends);
                             if !self.is_known(base)
-                                || base != TypeId::ANY && self.base_types(target).is_empty()
+                                || !base.is_any() && self.base_types(target).is_empty()
                             {
                                 return false;
                             }

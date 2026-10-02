@@ -127,7 +127,7 @@ impl<'p> Checker<'p> {
     fn type_flags(&self, ty: TypeId) -> u32 {
         match self.data(ty) {
             TypeData::Intrinsic(intrinsic) => match intrinsic {
-                Intrinsic::Unresolved | Intrinsic::Any => tf::ANY,
+                Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error => tf::ANY,
                 Intrinsic::Unknown => tf::UNKNOWN,
                 Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
                     tf::UNDEFINED
@@ -829,7 +829,7 @@ impl<'p> Checker<'p> {
         }
         matches!(
             ty,
-            TypeId::ANY | TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT
+            TypeId::ANY | TypeId::ERROR | TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT
         ) || self.is_pattern_literal(ty)
     }
 

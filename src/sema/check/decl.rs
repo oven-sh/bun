@@ -861,7 +861,9 @@ impl<'p> Checker<'p> {
         if node.is_some() {
             return match self.p.type_node_types.get(of, node.idx()) {
                 // `may_be_error_type` looks into what the `any` comes from, unless it is written.
-                Some(TypeId::ANY) => matches!(self.hir(of)[node].kind, TypeNodeKind::Keyword(_)),
+                Some(TypeId::ANY | TypeId::ERROR) => {
+                    matches!(self.hir(of)[node].kind, TypeNodeKind::Keyword(_))
+                }
                 kept => kept.is_some(),
             };
         }
@@ -891,7 +893,7 @@ impl<'p> Checker<'p> {
         }
         let mut constraint = self.type_from_node(of, node);
         // To extend `any` is to extend nothing in particular. What a mapped type ranges over are keys all the same.
-        if constraint == TypeId::ANY && !self.may_be_error_type(of, node, 0) {
+        if constraint.is_any() && !self.may_be_error_type(of, node, 0) {
             constraint = if self.hir(of).mapped.iter().any(|m| m.param == written) {
                 self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL])
             } else {
@@ -1092,7 +1094,7 @@ impl<'p> Checker<'p> {
                     .type_flags_of_symbol(sym)
                     .contains(SymFlags::TYPE_ALIAS)
                 {
-                    return self.type_from_node(file, node) == TypeId::ANY;
+                    return self.type_from_node(file, node).is_any();
                 }
                 let (least, most) = self.type_argument_arity(sym);
                 if args.len() < least || args.len() > most {
@@ -1132,7 +1134,7 @@ impl<'p> Checker<'p> {
     /// The same of what is made of `nodes`: those that come to `any` themselves are where it has it from.
     fn any_may_be_error_type(&mut self, file: FileId, nodes: &[TypeNodeId], depth: u32) -> bool {
         nodes.iter().any(|&t| {
-            self.type_from_node(file, t) == TypeId::ANY && self.may_be_error_type(file, t, depth)
+            self.type_from_node(file, t).is_any() && self.may_be_error_type(file, t, depth)
         })
     }
 
@@ -1186,7 +1188,7 @@ impl<'p> Checker<'p> {
                     .type_flags_of_symbol(sym)
                     .contains(SymFlags::TYPE_ALIAS)
                 {
-                    return self.type_from_node(file, node) == TypeId::ANY;
+                    return self.type_from_node(file, node).is_any();
                 }
                 let (least, most) = self.type_argument_arity(sym);
                 if args.len() < least || args.len() > most {
@@ -1224,8 +1226,7 @@ impl<'p> Checker<'p> {
         depth: u32,
     ) -> bool {
         nodes.iter().any(|&t| {
-            self.type_from_node(file, t) == TypeId::ANY
-                && self.is_error_type_as_written(file, t, depth)
+            self.type_from_node(file, t).is_any() && self.is_error_type_as_written(file, t, depth)
         })
     }
 
@@ -1250,7 +1251,7 @@ impl<'p> Checker<'p> {
             | TypeNodeKind::Typeof { .. } => self.is_error_type_as_written(file, node, depth),
             // `getIndexedAccessTypeOrUndefined`: whatever is looked up in `any` is that `any`.
             TypeNodeKind::IndexedAccess { obj, .. } => {
-                self.type_from_node(file, obj) == TypeId::ANY
+                self.type_from_node(file, obj).is_any()
                     && self.is_error_type_itself_as_written(file, obj, depth + 1)
             }
             TypeNodeKind::Ref { name, args } => {
@@ -1308,7 +1309,7 @@ impl<'p> Checker<'p> {
                 };
                 let is_itself = |c: &mut Self, n: TypeNodeId| {
                     let (f, n) = written_for(c, n);
-                    c.type_from_node(f, n) == TypeId::ANY
+                    c.type_from_node(f, n).is_any()
                         && c.is_error_type_itself_as_written(f, n, depth + 1)
                 };
                 match self.hir(of)[alias.ty].kind {
@@ -1316,7 +1317,7 @@ impl<'p> Checker<'p> {
                         let types: Vec<TypeNodeId> = self.hir(of).ids(types).collect();
                         types.into_iter().any(|t| {
                             let (f, n) = written_for(self, t);
-                            self.type_from_node(f, n) == TypeId::ANY
+                            self.type_from_node(f, n).is_any()
                                 && self.is_error_type_as_written(f, n, depth + 1)
                         })
                     }
@@ -2761,16 +2762,16 @@ impl<'p> Checker<'p> {
                 }
                 if !is_class_or_interface
                     && flags.contains(SymFlags::TYPE_ALIAS)
-                    && args.contains(&TypeId::ANY)
+                    && args.iter().any(|arg| arg.is_any())
                     && self.is_mapped_over_error_type(file, node, sym, flags, &args)
                 {
                     return TypeId::ANY;
                 }
                 // `getConditionalType`: `errorType` if the check type or the extends type is `errorType` itself.
                 if !is_class_or_interface
-                    && ty != TypeId::ANY
+                    && !ty.is_any()
                     && flags.contains(SymFlags::TYPE_ALIAS)
-                    && args.contains(&TypeId::ANY)
+                    && args.iter().any(|arg| arg.is_any())
                     && self.is_error_type_itself_as_written(file, node, 0)
                 {
                     return TypeId::ANY;

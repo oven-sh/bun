@@ -908,7 +908,7 @@ impl<'p> Checker<'p> {
         let own = self.hir(file)[func].type_params;
         let may_differ = !own.is_empty()
             && self.p.types.mapping(mapper).iter().any(|pair| {
-                matches!(pair.1, TypeId::ANY | TypeId::NEVER)
+                matches!(pair.1, TypeId::ANY | TypeId::ERROR | TypeId::NEVER)
                     && self.is_declared_among(pair.0, file, own)
             });
         if !may_differ {

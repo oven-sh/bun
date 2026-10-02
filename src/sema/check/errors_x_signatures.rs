@@ -2809,7 +2809,7 @@ impl Checker<'_> {
                 let start = start_of_written_type(&hir.text, hir[func.ret].pos);
                 // What is in error is `any` here too: only an `any` that is written out is known not to be.
                 if self.is_known(ret)
-                    && (ret != TypeId::ANY
+                    && (!ret.is_any()
                         || matches!(hir[func.ret].kind, TypeNodeKind::Keyword(Keyword::Any)))
                 {
                     if has_promise_type && self.is_global_ref(ret, known::Promise).is_none() {

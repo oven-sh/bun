@@ -172,7 +172,7 @@ impl Checker<'_> {
         param: TypeId,
         constraint: TypeId,
     ) -> String {
-        if constraint == TypeId::ANY
+        if constraint.is_any()
             && let TypeData::TypeParam(file, tp, _) = *self.data(param)
         {
             let node = self.hir(file)[tp].constraint;
@@ -686,7 +686,7 @@ impl<'p> Printer<'_, 'p> {
         match self.c.data(ty) {
             TypeData::Intrinsic(intrinsic) => {
                 let (text, length) = match intrinsic {
-                    Intrinsic::Unresolved | Intrinsic::Any => ("any", 3),
+                    Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error => ("any", 3),
                     Intrinsic::Unknown => ("unknown", 0),
                     Intrinsic::Never => ("never", 5),
                     Intrinsic::Void => ("void", 4),
@@ -2116,7 +2116,7 @@ impl<'p> Printer<'_, 'p> {
     fn sort_order_flags(&self, ty: TypeId) -> u32 {
         match self.c.data(ty) {
             TypeData::Intrinsic(intrinsic) => match intrinsic {
-                Intrinsic::Unresolved | Intrinsic::Any => 1 << 0,
+                Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error => 1 << 0,
                 Intrinsic::Unknown => 1 << 1,
                 Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => 1 << 2,
                 Intrinsic::Null | Intrinsic::NullDeclared => 1 << 3,
@@ -3674,7 +3674,7 @@ impl<'p> Printer<'_, 'p> {
         let (file, p) = parameter.declaration?;
         let declared = &self.c.hir(file)[p];
         // `getOptionalType` of an error type is the plain one, which has no name.
-        if parameter.ty != TypeId::ANY
+        if !parameter.ty.is_any()
             || declared.default.is_some()
             || parameter.optional && self.c.p.files.options.strict_null_checks
         {
@@ -3697,7 +3697,7 @@ impl<'p> Printer<'_, 'p> {
         let annotation = self.c.hir(file)[func].ret;
         if annotation.is_none()
             || self.c.sig_predicate(signature).is_some()
-            || self.c.sig_return_for_inference(signature) != TypeId::ANY
+            || !self.c.sig_return_for_inference(signature).is_any()
         {
             return None;
         }

@@ -28,7 +28,11 @@ describe("the 'upgrade' event of a request with a body", () => {
     tunnel: string;
   };
   type Send = (client: net.Socket, upgraded: Promise<void>) => Promise<void>;
-  type Options = ServerOptions & { onUpgrade?: (req: IncomingMessage, socket: Duplex) => void };
+  type Options = ServerOptions & {
+    onUpgrade?: (req: IncomingMessage, socket: Duplex) => void;
+    // false: the listener reads the socket and not the request.
+    readRequest?: boolean;
+  };
 
   const inOneRead = (bytes: string): Send => {
     return async client => void client.write(bytes);
@@ -53,7 +57,8 @@ describe("the 'upgrade' event of a request with a body", () => {
   };
 
   /** Serves one Upgrade request. The client ends when it has sent everything, and the server answers that with its own end. */
-  async function upgrade(secure: boolean, send: Send, { onUpgrade, ...serverOptions }: Options = {}): Promise<Seen> {
+  async function upgrade(secure: boolean, send: Send, options: Options = {}): Promise<Seen> {
+    const { onUpgrade, readRequest = true, ...serverOptions } = options;
     const { promise, resolve, reject } = Promise.withResolvers<Seen>();
     const upgraded = Promise.withResolvers<void>();
     const server = secure
@@ -68,7 +73,7 @@ describe("the 'upgrade' event of a request with a body", () => {
         body: "",
         tunnel: "",
       };
-      req.on("data", chunk => (seen.body += chunk));
+      if (readRequest) req.on("data", chunk => (seen.body += chunk));
       socket.on("data", chunk => (seen.tunnel += chunk));
       socket.on("error", reject);
       socket.on("end", () => socket.end());
@@ -152,18 +157,43 @@ describe("the 'upgrade' event of a request with a body", () => {
     });
   });
 
-  // Not as Node.js here. A request that shouldUpgradeCallback pauses or begins to read has a reader before its
-  // 'upgrade', and that reader would get the end of the request inside the read. So the event does not wait for the
-  // read: the listener gets no head, and the bytes behind the body reach the socket. Node.js: head "AFTER", complete.
+  test.concurrent("a read of the socket leaves a complete request as it is", async () => {
+    let request: IncomingMessage | undefined;
+    const onUpgrade = (req: IncomingMessage) => void (request = req);
+    const send = thenInALaterRead(fixed + "HELLOAFTER", "MORE");
+    const { tunnel } = await upgrade(false, send, { onUpgrade, readRequest: false });
+    expect({ tunnel, readableLength: request?.readableLength, readableFlowing: request?.readableFlowing }).toEqual({
+      tunnel: "MORE",
+      readableLength: 5,
+      readableFlowing: null,
+    });
+  });
+
+  test.concurrent(
+    "a request that shouldUpgradeCallback paused is complete in the listener and stays paused",
+    async () => {
+      const shouldUpgradeCallback = (req: IncomingMessage) => {
+        req.pause();
+        return true;
+      };
+      expect(await upgrade(false, inOneRead(fixed + "HELLOAFTER"), { shouldUpgradeCallback })).toEqual({
+        ...wholeBodyAndMore,
+        body: "",
+      });
+    },
+  );
+
+  // Not as Node.js here. A request that shouldUpgradeCallback began to read has a reader before its 'upgrade', and
+  // that reader would get the end of the request inside the read. So the event does not wait for the read: the
+  // listener gets no head, and the bytes behind the body reach the socket. Node.js: head "AFTER", complete.
   const readers: [string, (req: IncomingMessage, order: string[]) => void, string[]][] = [
-    ["pauses", req => void req.pause(), ["upgrade", "end"]],
     [
-      "reads with 'data'",
+      "'data'",
       (req, order) => void req.on("data", chunk => order.push(`data ${chunk}`)),
       ["upgrade", "data HELLO", "end"],
     ],
     [
-      "reads with 'readable'",
+      "'readable'",
       (req, order) =>
         void req.on("readable", () => {
           const chunk = req.read();
@@ -173,8 +203,8 @@ describe("the 'upgrade' event of a request with a body", () => {
     ],
   ];
   test.concurrent.each(readers)(
-    "a request that shouldUpgradeCallback %s gets its 'upgrade' first",
-    async (_what, read, expected) => {
+    "a request that shouldUpgradeCallback reads with %s gets its 'upgrade' first",
+    async (_event, read, expected) => {
       const order: string[] = [];
       const shouldUpgradeCallback = (req: IncomingMessage) => {
         read(req, order);
@@ -183,7 +213,6 @@ describe("the 'upgrade' event of a request with a body", () => {
       };
       const onUpgrade = () => void order.push("upgrade");
       const seen = await upgrade(false, inOneRead(fixed + "HELLOAFTER"), { shouldUpgradeCallback, onUpgrade });
-      // A read of the upgrade socket resumes the paused request.
       expect({ order, ...seen }).toEqual({
         order: expected,
         head: "",
@@ -196,30 +225,55 @@ describe("the 'upgrade' event of a request with a body", () => {
     },
   );
 
-  test.concurrent("a request that shouldUpgradeCallback destroyed gets its 'upgrade' once", async () => {
-    const upgrades: object[] = [];
-    const shouldUpgradeCallback = (req: IncomingMessage) => {
-      req.destroy();
-      return true;
-    };
-    const onUpgrade = (req: IncomingMessage, socket: Duplex) => {
-      upgrades.push({ request: req.destroyed, socket: socket.destroyed });
-    };
-    await upgrade(false, inOneRead(fixed + "HELLOAFTER"), { shouldUpgradeCallback, onUpgrade });
-    expect(upgrades).toEqual([{ request: true, socket: true }]);
-  });
+  // The listener gets the request once, also when the socket does not live to the end of the read.
+  const stops: [string, (req: IncomingMessage) => void, { request: boolean; socket: boolean; writable: boolean }][] = [
+    ["destroys the request", req => void req.destroy(), { request: true, socket: true, writable: false }],
+    [
+      "destroys the socket in a tick",
+      req => void process.nextTick(() => req.socket.destroy()),
+      { request: false, socket: true, writable: false },
+    ],
+    [
+      "ends the socket in a tick",
+      req => void process.nextTick(() => req.socket.end()),
+      { request: false, socket: false, writable: false },
+    ],
+  ];
+  test.concurrent.each(stops)(
+    "a shouldUpgradeCallback that %s still gets its 'upgrade'",
+    async (_what, stop, expected) => {
+      const upgrades: object[] = [];
+      const shouldUpgradeCallback = (req: IncomingMessage) => {
+        stop(req);
+        return true;
+      };
+      const onUpgrade = (req: IncomingMessage, socket: Duplex) => {
+        upgrades.push({ request: req.destroyed, socket: socket.destroyed, writable: socket.writable });
+      };
+      await upgrade(false, inOneRead(fixed + "HELLOAFTER"), { shouldUpgradeCallback, onUpgrade });
+      expect(upgrades).toEqual([expected]);
+    },
+  );
 
-  test.concurrent("a listener that destroys the socket gets the head first, and the request keeps its body", async () => {
-    const onUpgrade = (_req: IncomingMessage, socket: Duplex) => void socket.destroy();
-    expect(await upgrade(false, inOneRead(fixed + "HELLOAFTER"), { onUpgrade })).toEqual(wholeBodyAndMore);
-  });
+  test.concurrent(
+    "a listener that destroys the socket gets the head first, and the request keeps its body",
+    async () => {
+      const onUpgrade = (_req: IncomingMessage, socket: Duplex) => void socket.destroy();
+      expect(await upgrade(false, inOneRead(fixed + "HELLOAFTER"), { onUpgrade })).toEqual(wholeBodyAndMore);
+    },
+  );
 
   test.concurrent("a body that does not parse, in the read of the head, comes after 'upgrade'", async () => {
     const upgrades: object[] = [];
     const server = http.createServer();
     // With no 'clientError' listener the server answers 400 and destroys the socket.
-    server.on("upgrade", (req, _socket, head) => {
-      upgrades.push({ head: head.toString(), complete: req.complete, readableLength: req.readableLength });
+    server.on("upgrade", (req, socket, head) => {
+      upgrades.push({
+        head: head.toString(),
+        complete: req.complete,
+        readableLength: req.readableLength,
+        destroyed: socket.destroyed,
+      });
       req.on("error", () => {});
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -230,7 +284,7 @@ describe("the 'upgrade' event of a request with a body", () => {
       await once(client, "connect");
       client.write(`${chunked}5\r\nHELLO\r\nnot a chunk size\r\n`);
       await once(client, "close");
-      expect(upgrades).toEqual([{ head: "", complete: false, readableLength: 5 }]);
+      expect(upgrades).toEqual([{ head: "", complete: false, readableLength: 5, destroyed: false }]);
     } finally {
       client.destroy();
       server.close();

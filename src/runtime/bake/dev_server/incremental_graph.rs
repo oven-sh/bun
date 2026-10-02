@@ -1827,6 +1827,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         list.extend_from_slice(&end_list);
 
+        let _ = start;
         Ok(())
     }
 
@@ -1851,6 +1852,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let end: &[u8] = b"})";
 
         let runtime_code = runtime.code.as_bytes();
+        let start = list.len();
         list.reserve_exact(self.current_chunk_len + runtime_code.len() + end.len());
         list.extend_from_slice(runtime_code);
         for code in &self.current_chunk_code {
@@ -1858,6 +1860,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         list.extend_from_slice(end);
 
+        let _ = start;
         Ok(())
     }
 

@@ -31,6 +31,7 @@ pub enum ErrorCategory {
     Immutability,
     Globals,
     Refs,
+    EffectDependencies,
     EffectExhaustiveDependencies,
     EffectSetState,
     EffectDerivationsOfState,
@@ -60,7 +61,8 @@ impl ErrorCategory {
     pub fn severity(&self) -> ErrorSeverity {
         match self {
             // These map to "Compilation Skipped" (Warning severity)
-            ErrorCategory::IncompatibleLibrary
+            ErrorCategory::EffectDependencies
+            | ErrorCategory::IncompatibleLibrary
             | ErrorCategory::PreserveManualMemo
             | ErrorCategory::UnsupportedSyntax => ErrorSeverity::Warning,
 
@@ -236,6 +238,13 @@ impl CompilerErrorDetail {
 #[derive(Debug, Clone)]
 pub struct CompilerError {
     pub details: Vec<CompilerErrorOrDiagnostic>,
+    /// When false, this error was accumulated on the Environment via
+    /// `record_error()` / `record_diagnostic()` and returned at the end
+    /// of the pipeline. In TS, `CompileUnexpectedThrow` is only emitted
+    /// for errors that are **thrown** (not accumulated). Defaults to `true`
+    /// because errors created directly (e.g., via `?` from a pass) are
+    /// analogous to thrown errors in the TS code.
+    pub is_thrown: bool,
 }
 
 /// Either a new-style diagnostic or legacy error detail
@@ -265,6 +274,7 @@ impl CompilerError {
     pub fn new() -> Self {
         Self {
             details: Vec::new(),
+            is_thrown: true,
         }
     }
 
@@ -379,7 +389,8 @@ impl std::error::Error for CompilerError {}
 
 pub fn format_category_heading(category: ErrorCategory) -> &'static str {
     match category {
-        ErrorCategory::IncompatibleLibrary
+        ErrorCategory::EffectDependencies
+        | ErrorCategory::IncompatibleLibrary
         | ErrorCategory::PreserveManualMemo
         | ErrorCategory::UnsupportedSyntax => "Compilation Skipped",
         ErrorCategory::Invariant => "Invariant",

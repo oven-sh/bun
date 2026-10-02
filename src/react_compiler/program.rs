@@ -596,6 +596,10 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
                         source: "react-compiler-runtime".to_owned(),
                         import_specifier_name: "useRenderCounter".to_owned(),
                     },
+                    gating: Some(ExternalFunctionConfig {
+                        source: "react-compiler-runtime".to_owned(),
+                        import_specifier_name: "shouldInstrument".to_owned(),
+                    }),
                     global_gating: Some("DEV".to_owned()),
                 });
             }

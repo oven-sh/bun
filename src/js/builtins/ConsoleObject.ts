@@ -693,6 +693,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       }
 
       const setIter = isSetIterator(tabularData);
+      // if (setIter) tabularData = previewEntries(tabularData);
 
       const setlike = setIter || mapIter || $isSet(tabularData);
       if (setlike) {

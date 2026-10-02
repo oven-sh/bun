@@ -25,6 +25,10 @@ pub struct ByteStream {
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
     pub(crate) done: Cell<bool>,
+    /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
+    // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
+    // `pending_value: Strong`. Never freed by Rust.
+    pub(crate) pending_buffer: Cell<*mut [u8]>,
     pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub offset: Cell<usize>,
     pub(crate) high_water_mark: blob::SizeType,
@@ -46,6 +50,7 @@ impl Default for ByteStream {
                 ..Default::default()
             }),
             done: Cell::new(false),
+            pending_buffer: Cell::new(Self::empty_pending_buffer()),
             pending_value: JsCell::new(StrongOptional::empty()),
             offset: Cell::new(0),
             high_water_mark: 0,
@@ -241,6 +246,11 @@ impl readable_stream::SourceContext for ByteStream {
 bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
 
 impl ByteStream {
+    #[inline]
+    const fn empty_pending_buffer() -> *mut [u8] {
+        core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
+    }
+
     /// Init-time reset. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
     pub(crate) fn setup(&mut self) {
@@ -572,10 +582,10 @@ impl ByteStream {
 
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
-            // Re-derive the destination from the GC-rooted view instead of trusting a
+            // Re-derive the destination from the GC-rooted view instead of trusting the
             // raw pointer captured at pull time: JS can detach or transfer the backing
             // ArrayBuffer between the pull and the data arriving, leaving
-            // such a pointer dangling. A detached view re-derives to an empty slice.
+            // `pending_buffer` dangling. A detached view re-derives to an empty slice.
             let global = self.parent_const().global_this();
             let mut pending_view = self
                 .pending_value
@@ -589,6 +599,7 @@ impl ByteStream {
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
             pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
             let has_remaining = chunk.len() > to_copy_len;
+            self.pending_buffer.set(Self::empty_pending_buffer());
 
             let is_really_done =
                 self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
@@ -771,6 +782,8 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
+        // Raw borrow of a JS-owned buffer; rooted by `set_value`.
+        self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
         self.set_value(view);
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
@@ -814,6 +827,7 @@ impl ByteStream {
         }
 
         if !view.is_empty() {
+            self.pending_buffer.set(Self::empty_pending_buffer());
             self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;
@@ -857,6 +871,7 @@ impl ByteStream {
         if !self.done.get() {
             self.done.set(true);
 
+            self.pending_buffer.set(Self::empty_pending_buffer());
             let is_promise = self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;

@@ -1373,6 +1373,7 @@ pub enum BindingKind {
     Var,
     Let,
     Const,
+    Param,
     Module,
     Hoisted,
     Local,

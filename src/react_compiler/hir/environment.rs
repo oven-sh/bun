@@ -325,7 +325,11 @@ impl Environment {
     }
 
     pub fn take_errors(&mut self) -> CompilerError {
-        std::mem::take(&mut self.errors)
+        let mut errors = std::mem::take(&mut self.errors);
+        // Mark as not thrown — these are accumulated errors returned at the end
+        // of the pipeline, not errors thrown by a pass.
+        errors.is_thrown = false;
+        errors
     }
 
     /// Take only the Invariant errors, leaving non-Invariant errors in place.

@@ -25,10 +25,16 @@
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
+// #include "JSDocument.h"
 #include "JSEvent.h"
 #include "JSEventTarget.h"
 #include "ModuleGraph.h"
 #include "WebCoreJSClientData.h"
+// #include "JSExecState.h"
+// #include "JSExecStateInstrumentation.h"
+// #include "JSWorkerGlobalScope.h"
+// #include "ScriptController.h"
+// #include "WorkerGlobalScope.h"
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/Watchdog.h>
@@ -202,6 +208,8 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     args.append(toJS(lexicalGlobalObject, globalObject, &event));
     ASSERT(!args.hasOverflowed());
 
+    // JSExecState::instrumentFunction(&scriptExecutionContext, callData);
+
     JSValue thisValue = [&]() -> JSValue {
         if (handleEventFunction != jsFunction)
             return jsFunction;
@@ -212,6 +220,8 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     }();
     NakedPtr<JSC::Exception> uncaughtException;
     JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args, uncaughtException);
+
+    // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
     auto handleExceptionIfNeeded = [&](JSC::Exception* exception) -> bool {
         if (exception) {

@@ -1209,6 +1209,7 @@ impl ServerConfig {
             && (args.static_routes.len() + args.user_routes_to_build.len()) == 0
             && !opts.previous_fetch
             && !(opts.previous_routes && !args.had_routes_object)
+            && opts.is_fetch_required
         {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.serve() needs either:\n\n\
@@ -1465,6 +1466,7 @@ impl ServerConfig {
 #[derive(Clone, Copy)]
 pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
+    pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
     /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays
     /// unless the new config replaces it, and callback routes stay as long as

@@ -32,6 +32,10 @@ declare function $debug(...args: any[]): void;
  */
 declare function $assert(check: any, ...message: any[]): asserts check;
 
+/** Asserts the input is a promise. Returns `true` if the promise is resolved */
+declare function $isPromiseFulfilled(promise: Promise<any>): boolean;
+/** Asserts the input is a promise. Returns `true` if the promise is rejected */
+declare function $isPromiseRejected(promise: Promise<any>): boolean;
 /** Asserts the input is a promise. Returns `true` if the promise is pending */
 declare function $isPromisePending(promise: Promise<any>): boolean;
 

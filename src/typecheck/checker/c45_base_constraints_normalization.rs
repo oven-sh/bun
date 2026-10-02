@@ -1,15 +1,16 @@
-// checker.go:27551-28310 (layers T-CONSTRAINT, K-PRED, T-UIMEMBERS, T-SIGSHAPE, K-INDEXED, T-WIDEN): the functions of 27551-27827, 27855-27986, 28025-28033 and 28278-28310: base constraints, kind tests over types, const enum tests, the comparison of two properties, signature parameters expanded from a tuple rest type, rest parameter tests, the cached union predicates, the dispatcher of type simplification, extractTypesOfKind and the regular type of an object literal.
+// checker.go:27551-28310 (layers T-CONSTRAINT, K-PRED, T-UIMEMBERS, E-ACCESS, T-SIGSHAPE, K-INDEXED, K-COND, T-MAPPED, T-WIDEN): base constraints, kind tests over types, const enum tests, the comparison of two properties, the mark of a referenced private member, signature parameters expanded from a tuple rest type, rest parameter tests, the cached union predicates, the simplification of indexed access and conditional types, the modifiers type of a mapped type, extractTypesOfKind and the regular type of an object literal. The normalization functions of 27988-28023 and 28163-28248 are in relater.rs.
 use crate::ast::{
-    Arg, Ast, CheckFlags, ModifierFlags, NodeId, SymbolFlags, SymbolId, SymbolTable,
-    is_node_descendant_of,
+    Arg, Ast, CheckFlags, ModifierFlags, NodeId, SymbolFlags, SymbolId, SymbolTable, find_ancestor,
+    has_modifier, is_function_like_declaration, is_node_descendant_of, is_private_identifier,
+    is_write_only_access,
 };
 use crate::checker::{
-    CachedTypeKey, CachedTypeKind, Checker, ElementFlags, IndexFlags, IndexInfoId, ObjectFlags,
-    RecursionId, SignatureId, Ternary, TypeAliasId, TypeFlags, TypeId, TypeSystemEntity,
-    TypeSystemPropertyName, every_type, get_declaration_modifier_flags_from_symbol,
-    get_recursion_identity, is_object_literal_type,
+    CachedTypeKey, CachedTypeKind, Checker, ElementFlags, IndexFlags, IndexInfoId,
+    MappedTypeNameTypeKind, ObjectFlags, RecursionId, SignatureId, Ternary, TypeAliasId, TypeFlags,
+    TypeId, TypeSystemEntity, TypeSystemPropertyName, every_type,
+    get_declaration_modifier_flags_from_symbol, get_recursion_identity, is_object_literal_type,
 };
-use crate::core::List;
+use crate::core::{List, if_else};
 use crate::diagnostics;
 use crate::scanner::declaration_name_to_string;
 use std::collections::BTreeMap;
@@ -430,6 +431,47 @@ pub fn compare_types_equal(_c: &mut Checker<'_>, s: TypeId, t: TypeId) -> Ternar
 }
 
 impl<'a> Checker<'a> {
+    pub fn mark_property_as_referenced(
+        &mut self,
+        prop: SymbolId,
+        node_for_check_write_only: NodeId,
+        is_self_type_access: bool,
+    ) {
+        let a = self.ast;
+        let value_declaration = a.sym(prop).value_declaration;
+        if !a.sym(prop).flags.intersects(SymbolFlags::CLASS_MEMBER) || value_declaration.is_nil() {
+            return;
+        }
+        let has_private_modifier = has_modifier(a, value_declaration, ModifierFlags::PRIVATE);
+        let name = a.name(value_declaration);
+        let has_private_identifier = !name.is_nil() && is_private_identifier(a, name);
+        if !has_private_modifier && !has_private_identifier {
+            return;
+        }
+        if !node_for_check_write_only.is_nil()
+            && is_write_only_access(a, node_for_check_write_only)
+            && !a.sym(prop).flags.intersects(SymbolFlags::SET_ACCESSOR)
+        {
+            return;
+        }
+        if is_self_type_access {
+            // Find any FunctionLikeDeclaration because those create a new 'this' binding. But this should only matter for methods (or getters/setters).
+            let containing_method = find_ancestor(a, node_for_check_write_only, |n| {
+                is_function_like_declaration(a, n)
+            });
+            if !containing_method.is_nil() && a.symbol(containing_method) == prop {
+                return;
+            }
+        }
+        let mut target = prop;
+        if a.sym(prop).check_flags.intersects(CheckFlags::INSTANTIATED) {
+            let links = self.value_symbol_links_get(prop);
+            target = self.value_symbol_links[links].target;
+        }
+        let links = self.symbol_reference_links.get(target);
+        self.symbol_reference_links[links].reference_kinds |= SymbolFlags::ALL;
+    }
+
     pub fn expand_signature_parameters_with_tuple_members(
         &mut self,
         signature: SignatureId,
@@ -654,6 +696,229 @@ impl<'a> Checker<'a> {
             return self.get_simplified_conditional_type(t, writing);
         }
         t
+    }
+
+    // Transform an indexed access to a simpler form, if possible. Return the simpler form, or return the type itself if no transformation is possible. The writing flag indicates that the type is the target of an assignment.
+    pub fn get_simplified_indexed_access_type(&mut self, t: TypeId, writing: bool) -> TypeId {
+        let key = CachedTypeKey {
+            kind: if_else(
+                writing,
+                CachedTypeKind::INDEXED_ACCESS_FOR_WRITING,
+                CachedTypeKind::INDEXED_ACCESS_FOR_READING,
+            ),
+            type_id: t,
+        };
+        let cached = self.cached_types.get(&key);
+        if !cached.is_nil() {
+            return if_else(cached == self.circular_constraint_type, t, cached);
+        }
+        let ok = self.cached_types.set(key, t);
+        self.map_set(ok);
+        let mut result = self.get_simplified_indexed_access_type_worker(t, writing);
+        if result != t {
+            // If the simplification is a union type that includes t, remove t from the type.
+            result = self.remove_type(result, t);
+            let ok = self.cached_types.set(key, result);
+            self.map_set(ok);
+        }
+        result
+    }
+
+    pub fn get_simplified_indexed_access_type_worker(
+        &mut self,
+        t: TypeId,
+        writing: bool,
+    ) -> TypeId {
+        // We recursively simplify the object type as it may in turn be an indexed access type. For example, with '{ [P in T]: { [Q in U]: number } }[T][U]' we want to first simplify the inner indexed access type.
+        let object_type = self.as_indexed_access_type(t).object_type;
+        let object_type = self.get_simplified_type(object_type, writing);
+        let index_type = self.as_indexed_access_type(t).index_type;
+        let index_type = self.get_simplified_type(index_type, writing);
+        // T[A | B] -> T[A] | T[B] (reading) T[A | B] -> T[A] & T[B] (writing)
+        let distributed_over_index =
+            self.distribute_object_over_index_type(object_type, index_type, writing);
+        if !distributed_over_index.is_nil() {
+            return distributed_over_index;
+        }
+        // Only do the inner distributions if the index can no longer be instantiated to cause index distribution again
+        if !self.types[index_type]
+            .flags
+            .intersects(TypeFlags::INSTANTIABLE)
+        {
+            // (T | U)[K] -> T[K] | U[K] (reading) (T | U)[K] -> T[K] & U[K] (writing) (T & U)[K] -> T[K] & U[K]
+            let distributed_over_object =
+                self.distribute_index_over_object_type(object_type, index_type, writing);
+            if !distributed_over_object.is_nil() {
+                return distributed_over_object;
+            }
+        }
+        // So ultimately (reading): ((A & B) | C)[K1 | K2] -> ((A & B) | C)[K1] | ((A & B) | C)[K2] -> (A & B)[K1] | C[K1] | (A & B)[K2] | C[K2] -> (A[K1] & B[K1]) | C[K1] | (A[K2] & B[K2]) | C[K2] A generic tuple type indexed by a number exists only when the index type doesn't select a fixed element. We simplify to either the combined type of all elements (when the index type the actual number type) or to the combined type of all non-fixed elements.
+        if self.is_generic_tuple_type(object_type)
+            && self.types[index_type]
+                .flags
+                .intersects(TypeFlags::NUMBER_LIKE)
+        {
+            let index = if_else(
+                self.types[index_type].flags.intersects(TypeFlags::NUMBER),
+                0,
+                self.type_target_tuple_type(object_type).fixed_length,
+            );
+            let element_type =
+                self.get_element_type_of_slice_of_tuple_type(object_type, index, 0, writing, false);
+            if !element_type.is_nil() {
+                return element_type;
+            }
+        }
+        // If the object type is a mapped type { [P in K]: E }, where K is generic, or { [P in K as N]: E }, where K is generic and N is assignable to P, instantiate E using a mapper that substitutes the index type for P. For example, for an index access { [P in K]: Box<T[P]> }[X], we construct the type Box<T[X]>.
+        if self.is_generic_mapped_type(object_type) {
+            if self.get_mapped_type_name_type_kind(object_type) != MappedTypeNameTypeKind::REMAPPING
+            {
+                let index_type = self.as_indexed_access_type(t).index_type;
+                let substituted = self.substitute_indexed_mapped_type(object_type, index_type);
+                return self.map_type(substituted, &mut |c, t| c.get_simplified_type(t, writing));
+            }
+        }
+        t
+    }
+
+    pub fn distribute_object_over_index_type(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+        writing: bool,
+    ) -> TypeId {
+        // T[A | B] -> T[A] | T[B] (reading) T[A | B] -> T[A] & T[B] (writing)
+        if self.types[index_type].flags.intersects(TypeFlags::UNION) {
+            let index_types = self.type_types(index_type);
+            let types = self.map_list(index_types, |c, t| {
+                let indexed_access = c.get_indexed_access_type(object_type, t);
+                c.get_simplified_type(indexed_access, writing)
+            });
+            if writing {
+                return self.get_intersection_type(types);
+            }
+            return self.get_union_type(types);
+        }
+        TypeId::NIL
+    }
+
+    pub fn distribute_index_over_object_type(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+        writing: bool,
+    ) -> TypeId {
+        // (T | U)[K] -> T[K] | U[K] (reading) (T | U)[K] -> T[K] & U[K] (writing) (T & U)[K] -> T[K] & U[K]
+        let flags = self.types[object_type].flags;
+        if flags.intersects(TypeFlags::UNION)
+            || flags.intersects(TypeFlags::INTERSECTION)
+                && !self.should_defer_index_type(object_type, IndexFlags::NONE)
+        {
+            let object_types = self.type_types(object_type);
+            let types = self.map_list(object_types, |c, t| {
+                let indexed_access = c.get_indexed_access_type(t, index_type);
+                c.get_simplified_type(indexed_access, writing)
+            });
+            if flags.intersects(TypeFlags::INTERSECTION) || writing {
+                return self.get_intersection_type(types);
+            }
+            return self.get_union_type(types);
+        }
+        TypeId::NIL
+    }
+
+    pub fn get_simplified_conditional_type(&mut self, t: TypeId, writing: bool) -> TypeId {
+        let check_type = self.as_conditional_type(t).check_type;
+        let extends_type = self.as_conditional_type(t).extends_type;
+        let true_type = self.get_true_type_from_conditional_type(t);
+        let false_type = self.get_false_type_from_conditional_type(t);
+        // Simplifications for types of the form `T extends U ? T : never` and `T extends U ? never : T`.
+        if self.types[false_type].flags.intersects(TypeFlags::NEVER)
+            && self.get_actual_type_variable(true_type) == self.get_actual_type_variable(check_type)
+        {
+            if self.types[check_type].flags.intersects(TypeFlags::ANY) || {
+                let restrictive_check_type = self.get_restrictive_instantiation(check_type);
+                let restrictive_extends_type = self.get_restrictive_instantiation(extends_type);
+                self.is_type_assignable_to(restrictive_check_type, restrictive_extends_type)
+            } {
+                return self.get_simplified_type(true_type, writing);
+            } else if self.is_intersection_empty(check_type, extends_type) {
+                return self.never_type;
+            }
+        } else if self.types[true_type].flags.intersects(TypeFlags::NEVER)
+            && self.get_actual_type_variable(false_type)
+                == self.get_actual_type_variable(check_type)
+        {
+            if !self.types[check_type].flags.intersects(TypeFlags::ANY) && {
+                let restrictive_check_type = self.get_restrictive_instantiation(check_type);
+                let restrictive_extends_type = self.get_restrictive_instantiation(extends_type);
+                self.is_type_assignable_to(restrictive_check_type, restrictive_extends_type)
+            } {
+                return self.never_type;
+            } else if self.types[check_type].flags.intersects(TypeFlags::ANY)
+                || self.is_intersection_empty(check_type, extends_type)
+            {
+                return self.get_simplified_type(false_type, writing);
+            }
+        }
+        t
+    }
+
+    // Invokes union simplification logic to determine if an intersection is considered empty as a union constituent
+    pub fn is_intersection_empty(&mut self, type1: TypeId, type2: TypeId) -> bool {
+        let intersection = self.intersect_types(type1, type2);
+        let union = self.get_union_type(List::from_slice(&[intersection, self.never_type]));
+        self.types[union].flags.intersects(TypeFlags::NEVER)
+    }
+
+    pub fn get_simplified_type_or_constraint(&mut self, t: TypeId) -> TypeId {
+        let simplified = self.get_simplified_type(t, false);
+        if simplified != t {
+            return simplified;
+        }
+        self.get_constraint_of_type(t)
+    }
+
+    pub fn get_modifiers_type_from_mapped_type(&mut self, t: TypeId) -> TypeId {
+        let a = self.ast;
+        if self.as_mapped_type(t).modifiers_type.is_nil() {
+            if self.is_mapped_type_with_keyof_constraint_declaration(t) {
+                // If the constraint declaration is a 'keyof T' node, the modifiers type is T. We check AST nodes here because, when T is a non-generic type, the logic below eagerly resolves 'keyof T' to a literal union type and we can't recover T from that type.
+                let constraint_declaration = self.get_constraint_declaration_for_mapped_type(t);
+                let declared_type =
+                    self.get_type_from_type_node(a.type_node(constraint_declaration));
+                let mapper = self.as_mapped_type(t).mapper;
+                let modifiers_type = self.instantiate_type(declared_type, mapper);
+                self.as_mapped_type_mut(t).modifiers_type = modifiers_type;
+            } else {
+                // Otherwise, get the declared constraint type, and if the constraint type is a type parameter, get the constraint of that type parameter. If the resulting type is an indexed type 'keyof T', the modifiers type is T. Otherwise, the modifiers type is unknown.
+                let declaration = self.as_mapped_type(t).declaration;
+                let declared_type = self.get_type_from_mapped_type_node(declaration);
+                let constraint = self.get_constraint_type_from_mapped_type(declared_type);
+                let mut extended_constraint = constraint;
+                if !constraint.is_nil()
+                    && self.types[constraint]
+                        .flags
+                        .intersects(TypeFlags::TYPE_PARAMETER)
+                {
+                    extended_constraint = self.get_constraint_of_type_parameter(constraint);
+                }
+                if !extended_constraint.is_nil()
+                    && self.types[extended_constraint]
+                        .flags
+                        .intersects(TypeFlags::INDEX)
+                {
+                    let target = self.as_index_type(extended_constraint).target;
+                    let mapper = self.as_mapped_type(t).mapper;
+                    let modifiers_type = self.instantiate_type(target, mapper);
+                    self.as_mapped_type_mut(t).modifiers_type = modifiers_type;
+                } else {
+                    let unknown_type = self.unknown_type;
+                    self.as_mapped_type_mut(t).modifiers_type = unknown_type;
+                }
+            }
+        }
+        self.as_mapped_type(t).modifiers_type
     }
 
     pub fn extract_types_of_kind(&mut self, t: TypeId, kind: TypeFlags) -> TypeId {

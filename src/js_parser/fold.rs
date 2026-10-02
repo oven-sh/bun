@@ -41,8 +41,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
     if !s.is_utf16 {
         s.data == other
     } else {
-        let s16 = s.slice16();
-        s16.len() == other.len() && s16.iter().zip(other).all(|(&c, &b)| c == b as u16)
+        bun_core::strings::utf16_eql_string(s.slice16(), other)
     }
 }
 

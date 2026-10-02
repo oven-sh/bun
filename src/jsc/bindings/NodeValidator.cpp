@@ -148,14 +148,6 @@ JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name)
-{
-    if (!value.isString()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "string"_s, value);
-    }
-    return JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFiniteNumber, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -248,6 +240,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
 
     if (port.isString()) {
         auto port_str = port.getString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         auto trimmed = port_str.trim([](auto c) {
             // https://tc39.es/ecma262/multipage/text-processing.html#sec-string.prototype.trim
             // The definition of white space is the union of *WhiteSpace* and *LineTerminator*.
@@ -377,19 +370,6 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
-JSC::EncodedJSValue V::validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value,
-    ASCIILiteral name)
-{
-    if (value.isCell()) {
-        auto type = value.asCell()->type();
-        if (type >= Int8ArrayType && type <= DataViewType) {
-            return JSValue::encode(jsUndefined());
-        }
-    }
-
-    return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -513,12 +493,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
     auto encoding = callFrame->argument(1);
 
     auto normalized = WebCore::parseEnumeration<BufferEncodingType>(*globalObject, encoding);
+    RETURN_IF_EXCEPTION(scope, {});
     if (normalized == BufferEncodingType::hex) {
         auto data = callFrame->argument(0);
 
         size_t length = 0;
         if (data.isString()) {
-            length = data.toString(globalObject)->length();
+            length = asString(data)->length();
         } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
             length = view->length();
         } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(data)) {
@@ -589,59 +570,56 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * global
     return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "values"_s, "Array"_s, arrayValue);
 }
 
-JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, std::span<const ASCIILiteral> oneOf)
-{
-    if (!value.isString()) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
-    }
-
-    JSC::JSString* valueStr = value.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto valueView = valueStr->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    for (ASCIILiteral oneOfStr : oneOf) {
-
-        if (valueView == oneOfStr) {
-            return JSValue::encode(jsUndefined());
-        }
-    }
-
-    return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
-}
-
 JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, std::span<const int32_t> oneOf, int32_t* out)
 {
-    if (!value.isInt32()) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
-    }
-
-    int32_t value_num = value.asInt32();
-    for (int32_t oneOfNum : oneOf) {
-        if (value_num == oneOfNum) {
-            if (out) {
-                *out = oneOfNum;
+    // Node compares with ArrayPrototypeIncludes(), so a number matches by value whether
+    // the JSValue holds it as an int32 or as a double.
+    if (value.isNumber()) {
+        double value_num = value.asNumber();
+        for (int32_t oneOfNum : oneOf) {
+            if (value_num == static_cast<double>(oneOfNum)) {
+                if (out) {
+                    *out = oneOfNum;
+                }
+                return JSValue::encode(jsUndefined());
             }
-            return JSValue::encode(jsUndefined());
         }
     }
 
     return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
 }
 
+// validateObject(value, name[, options]) where options is Node's bitmask:
+// kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction.
+// The values must match internal/validators.ts. They are node's:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L270
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
+    int32_t options = callFrame->argument(2).isInt32() ? callFrame->argument(2).asInt32() : 0;
+    constexpr int32_t kValidateObjectAllowNullable = 1 << 0;
+    constexpr int32_t kValidateObjectAllowArray = 1 << 1;
+    constexpr int32_t kValidateObjectAllowFunction = 1 << 2;
 
-    bool isArray = JSC::isArray(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (value.isNull() || isArray || value.isCallable()) {
+    if (value.isNull()) {
+        if (options & kValidateObjectAllowNullable)
+            return JSValue::encode(jsUndefined());
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
-
+    if (value.isCallable()) {
+        if (options & kValidateObjectAllowFunction)
+            return JSValue::encode(jsUndefined());
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+    }
+    if (!(options & kValidateObjectAllowArray)) {
+        bool isArray = JSC::isArray(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isArray)
+            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+    }
     if (!value.isObject()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }

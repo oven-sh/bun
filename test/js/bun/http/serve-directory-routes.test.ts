@@ -1,8 +1,31 @@
 import { serve, type Server } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { symlinkSync } from "fs";
-import { isLinux, tempDir } from "harness";
+import { symlinkSync, utimesSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
+
+const strace = isLinux ? Bun.which("strace") : null;
+const straceEnv = {
+  ...bunEnv,
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  LSAN_OPTIONS: "detect_leaks=0",
+};
+const straceInjectArgs = (traceFile: string) => [
+  "-o",
+  traceFile,
+  "-e",
+  "trace=openat2",
+  "-e",
+  "inject=openat2:error=EPERM:when=1",
+];
+const canInjectOpenat2Error =
+  !!strace &&
+  Bun.spawnSync({
+    cmd: [strace, ...straceInjectArgs("/dev/null"), bunExe(), "--version"],
+    env: straceEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exitCode === 0;
 
 describe("Bun.serve() directory routes", () => {
   let server: Server | undefined;
@@ -305,6 +328,55 @@ describe("Bun.serve() directory routes", () => {
     expect(unsat.headers.get("content-range")).toBe("bytes */10");
   });
 
+  // RFC 9110 §13.1.5: only an If-Range validator that matches may get a 206.
+  // The ETag of a directory route is weak, and a weak tag never matches
+  // If-Range, so the date is the one validator a client can resume with.
+  it("honors If-Range", async () => {
+    using dir = tempDir("serve-dir-if-range", {
+      "public/data.bin": "0123456789",
+    });
+    const file = join(String(dir), "public", "data.bin");
+    utimesSync(file, new Date("2020-01-02T03:04:05Z"), new Date("2020-01-02T03:04:05Z"));
+
+    server = serve({
+      port: 0,
+      routes: { "/*": { dir: join(String(dir), "public") } },
+    });
+    const url = `${server.url}data.bin`;
+
+    async function get(headers: Record<string, string>, method = "GET") {
+      const res = await fetch(url, { method, headers });
+      return { status: res.status, contentRange: res.headers.get("content-range"), body: await res.text() };
+    }
+    const partial = { status: 206, contentRange: "bytes 2-5/10", body: "2345" };
+    const full = { status: 200, contentRange: null, body: "0123456789" };
+
+    const first = await fetch(url);
+    const lastModified = first.headers.get("last-modified")!;
+    const etag = first.headers.get("etag")!;
+    expect(lastModified).toBe("Thu, 02 Jan 2020 03:04:05 GMT");
+    expect(etag).toStartWith('W/"');
+    await first.text();
+
+    const range = "bytes=2-5";
+    expect(await get({ range, "if-range": lastModified })).toEqual(partial);
+    expect(await get({ range, "if-range": "Thu, 02 Jan 2020 03:04:06 GMT" })).toEqual(full);
+    expect(await get({ range, "if-range": "Thu, 02 Jan 2020 03:04:04 GMT" })).toEqual(full);
+    expect(await get({ range, "if-range": etag })).toEqual(full);
+    expect(await get({ range, "if-range": etag.slice(2) })).toEqual(full);
+    expect(await get({ range, "if-range": '"does-not-match"' })).toEqual(full);
+    expect(await get({ range: "bytes=100-200", "if-range": '"does-not-match"' })).toEqual(full);
+    expect(await get({ range, "if-range": lastModified }, "HEAD")).toEqual({ ...partial, body: "" });
+    expect(await get({ range, "if-range": etag }, "HEAD")).toEqual({ ...full, body: "" });
+
+    // The file changes on disk. A client that resumes with the old validator
+    // gets the new file in full, not its tail.
+    writeFileSync(file, "abcdefghij");
+    utimesSync(file, new Date("2021-06-07T08:09:10Z"), new Date("2021-06-07T08:09:10Z"));
+    expect(await get({ range, "if-range": lastModified })).toEqual({ ...full, body: "abcdefghij" });
+    expect(await get({ range, "if-range": "Mon, 07 Jun 2021 08:09:10 GMT" })).toEqual({ ...partial, body: "cdef" });
+  });
+
   it("rejects path traversal", async () => {
     using dir = tempDir("serve-dir-traversal", {
       "secret.txt": "SECRET",
@@ -373,6 +445,42 @@ describe("Bun.serve() directory routes", () => {
       expect(await res.text()).not.toContain("SECRET");
       expect(res.status).toBe(404);
     }
+  });
+
+  it.skipIf(!canInjectOpenat2Error)("keeps clamping symlinks to the root after an open error on one path", async () => {
+    using dir = tempDir("serve-dir-open-error", {
+      "secret.txt": "SECRET",
+      "public/ok.txt": "ok",
+    });
+    const root = String(dir);
+    symlinkSync("../secret.txt", join(root, "public", "escape-rel"));
+    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
+
+    const script = `
+        const server = Bun.serve({
+          port: 0,
+          routes: { "/static/*": { dir: ${JSON.stringify(join(root, "public"))} } },
+        });
+        const out = [];
+        for (const p of ["escape-rel", "escape-abs", "ok.txt"]) {
+          const res = await fetch(server.url + "static/" + p);
+          out.push([res.status, await res.text()]);
+        }
+        server.stop(true);
+        console.log(JSON.stringify(out));
+      `;
+    const traceFile = join(root, "strace.log");
+    await using proc = Bun.spawn({
+      cmd: [strace!, ...straceInjectArgs(traceFile), bunExe(), "-e", script],
+      env: straceEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const trace = await Bun.file(traceFile).text();
+    expect(trace, stderr).toMatch(/openat2\(.*"escape-rel".*= -1 EPERM .*\(INJECTED\)/);
+    expect(stdout.trim(), stderr).toBe(`[[404,""],[404,""],[200,"ok"]]`);
+    expect(exitCode).toBe(0);
   });
 
   it("percent-decodes file names", async () => {

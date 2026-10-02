@@ -9,7 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
-async function run(script: string) {
+async function run(script: string, expected = "ok") {
   // Spawn a subprocess so an ASAN use-after-poison report shows up as a
   // non-zero exit + stderr dump rather than killing the test runner itself.
   await using proc = Bun.spawn({
@@ -27,7 +27,7 @@ async function run(script: string) {
   // On failure stderr carries the ASAN "use-after-poison" report; include
   // it in the assertion so the diff shows the crash rather than just an
   // empty stdout.
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
 }
 
 // The freed pointer is only reliably caught under ASAN (which the debug
@@ -39,7 +39,8 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
     // frees the Handlers; UpgradedDuplex.onClose then calls duplex.end(). If
     // that throws, onError → tls.handleError → getHandlers() read the freed
     // allocation.
-    await run(`
+    await run(
+      `
       const tls = require("node:tls");
       const { Duplex } = require("node:stream");
 
@@ -54,6 +55,11 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
       duplex.end = function () {
         throw new Error("end() throws during close");
       };
+      // Only a duplex that is still open gets that end().
+      duplex.destroy = function () {
+        return this;
+      };
+      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
 
       const sock = tls.connect({
         socket: duplex,
@@ -76,7 +82,9 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
           });
         });
       });
-    `);
+    `,
+      "uncaught: end() throws during close\nok",
+    );
   });
 
   test("when a pre-open duplex error races StartTLS", async () => {
@@ -116,5 +124,111 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
         });
       });
     `);
+  });
+
+  // Serial: four debug subprocesses at once reach the default test timeout on a loaded machine.
+  test.serial("when duplex.end() throws after a close that comes before StartTLS", async () => {
+    // No SSL wrapper exists yet, so the queued .StartTLS task carries the
+    // close out: TLSSocket.onClose frees the Handlers, then duplex.end()
+    // throws into onError. Only a duplex that is still open gets that
+    // end(), so destroy() leaves these open. One process runs both closes:
+    // each socket has its own Handlers.
+    await run(
+      `
+      const tls = require("node:tls");
+      const { Duplex } = require("node:stream");
+
+      function closeBeforeStartTLS(how) {
+        const duplex = new Duplex({
+          read() {},
+          write(chunk, enc, cb) { cb(); },
+          final(cb) { cb(); },
+        });
+        let ends = 0;
+        duplex.end = function () {
+          ends++;
+          throw new Error("end() throws when " + how);
+        };
+        duplex.destroy = function () {
+          return this;
+        };
+
+        const sock = tls.connect({
+          socket: duplex,
+          rejectUnauthorized: false,
+        });
+        sock.on("error", () => {});
+        sock.on("close", () => {});
+
+        if (how === "the duplex closes") duplex.emit("close");
+        else sock.destroy();
+        return () => how + ", end() calls: " + ends;
+      }
+
+      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+      const reports = [closeBeforeStartTLS("the duplex closes"), closeBeforeStartTLS("the socket is destroyed")];
+
+      setImmediate(() => {
+        setImmediate(() => {
+          for (const report of reports) console.log(report());
+          console.log("ok");
+          process.exit(0);
+        });
+      });
+    `,
+      [
+        "uncaught: end() throws when the duplex closes",
+        "uncaught: end() throws when the socket is destroyed",
+        "the duplex closes, end() calls: 1",
+        "the socket is destroyed, end() calls: 1",
+        "ok",
+      ].join("\n"),
+    );
+  });
+
+  test.serial("when an EOF listener destroys the socket and throws before StartTLS", async () => {
+    // The transport's EOF reaches the TLS socket when the transport ends,
+    // which can be before the queued .StartTLS task has run. 'readable' is
+    // emitted from inside that dispatch and 'end' one tick after it.
+    await run(
+      `
+      const tls = require("node:tls");
+      const { Duplex } = require("node:stream");
+
+      const seen = [];
+      for (const event of ["readable", "end"]) {
+        const duplex = new Duplex({
+          read() {},
+          write(chunk, enc, cb) { cb(); },
+          final(cb) { cb(); },
+        });
+
+        const sock = tls.connect({
+          socket: duplex,
+          rejectUnauthorized: false,
+        });
+        sock.on("error", () => {});
+        sock.on("close", () => {});
+        sock.once(event, () => {
+          seen.push("eof in '" + event + "'");
+          sock.destroy();
+          throw new Error("listener throws");
+        });
+
+        duplex.push(null);
+        duplex.end();
+      }
+      process.on("uncaughtException", () => {});
+
+      setImmediate(() => {
+        setImmediate(() => {
+          for (const line of seen.sort()) console.log(line);
+          console.log("ok");
+          process.exit(0);
+        });
+      });
+    `,
+      "eof in 'end'\neof in 'readable'\nok",
+    );
   });
 });

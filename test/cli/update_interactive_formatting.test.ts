@@ -878,7 +878,7 @@ describe.concurrent("bun update --interactive", () => {
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"] });
 
     expect(stdout).toContain("Selected 2 packages to update");
-    expect(stdout).toContain("Dry run");
+    expect(stdout).toContain("would be updated");
     expect(exitCode).toBe(0);
 
     const afterContent = await Bun.file(join(dir, "package.json")).text();

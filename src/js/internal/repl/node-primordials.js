@@ -9,15 +9,11 @@
 // rather than realm bootstrap; SafePromiseRace additionally wraps its input in
 // a SafeArrayIterator because spec Promise.race reads
 // Array.prototype[Symbol.iterator] at CALL time.
-const { SafeMap, SafeSet, SafeWeakSet, SafeStringIterator, SafeArrayIterator } = require("internal/primordials");
+const { SafeSet, SafeStringIterator, SafeArrayIterator } = require("internal/primordials");
 
 const ArrayFromFn = Array.from;
 const ArrayPrototypeAtFn = Array.prototype.at;
-const ArrayPrototypeConcatFn = Array.prototype.concat;
 const ArrayPrototypeFilterFn = Array.prototype.filter;
-const ArrayPrototypeFindFn = Array.prototype.find;
-const ArrayPrototypeFindLastIndexFn = Array.prototype.findLastIndex;
-const ArrayPrototypeFlatFn = Array.prototype.flat;
 const ArrayPrototypeForEachFn = Array.prototype.forEach;
 const ArrayPrototypeIncludesFn = Array.prototype.includes;
 const ArrayPrototypeIndexOfFn = Array.prototype.indexOf;
@@ -37,9 +33,7 @@ const DateNowFn = Date.now;
 const FunctionPrototypeBindFn = Function.prototype.bind;
 const JSONStringifyFn = JSON.stringify;
 const MathMaxFn = Math.max;
-const PromisePrototypeThenFn = Promise.prototype.then;
 const PromiseRejectFn = Promise.reject;
-const PromiseResolveFn = Promise.resolve;
 const PromiseRaceFn = Promise.race;
 const RegExpPrototypeExecFn = RegExp.prototype.exec;
 const RegExpPrototypeSymbolReplaceFn = RegExp.prototype[Symbol.replace];
@@ -52,7 +46,6 @@ const StringPrototypeIncludesFn = String.prototype.includes;
 const StringPrototypeIndexOfFn = String.prototype.indexOf;
 const StringPrototypeLastIndexOfFn = String.prototype.lastIndexOf;
 const StringPrototypeRepeatFn = String.prototype.repeat;
-const StringPrototypeReplaceFn = String.prototype.replace;
 const StringPrototypeReplaceAllFn = String.prototype.replaceAll;
 const StringPrototypeSliceFn = String.prototype.slice;
 const StringPrototypeSplitFn = String.prototype.split;
@@ -64,13 +57,8 @@ const StringPrototypeTrimStartFn = String.prototype.trimStart;
 
 export default {
   ArrayFrom: (...args) => ArrayFromFn.$apply(Array, args),
-  ArrayIsArray: Array.isArray,
   ArrayPrototypeAt: (a, i) => ArrayPrototypeAtFn.$call(a, i),
-  ArrayPrototypeConcat: (a, ...args) => ArrayPrototypeConcatFn.$apply(a, args),
   ArrayPrototypeFilter: (a, fn) => ArrayPrototypeFilterFn.$call(a, fn),
-  ArrayPrototypeFind: (a, fn) => ArrayPrototypeFindFn.$call(a, fn),
-  ArrayPrototypeFindLastIndex: (a, fn) => ArrayPrototypeFindLastIndexFn.$call(a, fn),
-  ArrayPrototypeFlat: (a, d) => ArrayPrototypeFlatFn.$call(a, d),
   ArrayPrototypeForEach: (a, fn) => ArrayPrototypeForEachFn.$call(a, fn),
   ArrayPrototypeIncludes: (a, v, i) => ArrayPrototypeIncludesFn.$call(a, v, i),
   ArrayPrototypeIndexOf: (a, v, i) => ArrayPrototypeIndexOfFn.$call(a, v, i),
@@ -90,7 +78,6 @@ export default {
   Boolean,
   DateNow: () => DateNowFn.$call(Date),
   Error,
-  FunctionPrototype: function () {},
   FunctionPrototypeBind: (fn, thisArg, ...args) => {
     ArrayPrototypeUnshiftFn.$call(args, thisArg);
     return FunctionPrototypeBindFn.$apply(fn, args);
@@ -108,20 +95,14 @@ export default {
   NumberParseFloat: Number.parseFloat,
   NumberParseInt: Number.parseInt,
   ObjectAssign: Object.assign,
-  ObjectCreate: Object.create,
   ObjectDefineProperties: Object.defineProperties,
   ObjectDefineProperty: Object.defineProperty,
-  ObjectEntries: Object.entries,
-  ObjectFreeze: Object.freeze,
   ObjectGetOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
   ObjectGetOwnPropertyNames: Object.getOwnPropertyNames,
   ObjectGetPrototypeOf: Object.getPrototypeOf,
   ObjectKeys: Object.keys,
-  ObjectSetPrototypeOf: Object.setPrototypeOf,
   Promise,
-  PromisePrototypeThen: (p, onFulfilled, onRejected) => PromisePrototypeThenFn.$call(p, onFulfilled, onRejected),
   PromiseReject: v => PromiseRejectFn.$call(Promise, v),
-  PromiseResolve: v => PromiseResolveFn.$call(Promise, v),
   ReflectApply: (fn, thisArg, args) => fn.$apply(thisArg, args),
   RegExp,
   RegExpPrototypeExec: (re, s) => RegExpPrototypeExecFn.$call(re, s),
@@ -129,8 +110,6 @@ export default {
   RegExpPrototypeSymbolSplit: (re, s, limit) => RegExpPrototypeSymbolSplitFn.$call(re, s, limit),
   SafePromiseRace: promises => PromiseRaceFn.$call(Promise, new SafeArrayIterator(promises)),
   SafeSet,
-  SafeMap,
-  SafeWeakSet,
   SafeStringIterator,
   StringFromCharCode: String.fromCharCode,
   StringPrototypeCharAt: (s, i) => StringPrototypeCharAtFn.$call(s, i),
@@ -141,7 +120,6 @@ export default {
   StringPrototypeIndexOf: (s, v, i) => StringPrototypeIndexOfFn.$call(s, v, i),
   StringPrototypeLastIndexOf: (s, v, i) => StringPrototypeLastIndexOfFn.$call(s, v, i),
   StringPrototypeRepeat: (s, n) => StringPrototypeRepeatFn.$call(s, n),
-  StringPrototypeReplace: (s, a, b) => StringPrototypeReplaceFn.$call(s, a, b),
   StringPrototypeReplaceAll: (s, a, b) => StringPrototypeReplaceAllFn.$call(s, a, b),
   StringPrototypeSlice: (s, b, e) => StringPrototypeSliceFn.$call(s, b, e),
   StringPrototypeSplit: (s, sep, limit) => StringPrototypeSplitFn.$call(s, sep, limit),

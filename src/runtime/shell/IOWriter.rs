@@ -81,14 +81,12 @@ impl ChildPtr {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WriterTag {
+pub(crate) enum WriterTag {
     /// Builtin running inside a Cmd — dispatch via `Builtin::on_io_writer_chunk`.
     Builtin,
     Cmd,
-    Pipeline,
-    Subshell,
     CondExpr,
-    If,
+    Pipeline,
     /// `subproc::PipeReader::CapturedWriter` — heap-allocated, addressed via
     /// `ChildPtr::raw` rather than `node`.
     Subproc,
@@ -99,7 +97,7 @@ pub enum WriterTag {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Default)]
-pub struct Flags {
+pub(crate) struct Flags {
     pub(crate) pollable: bool,
     pub(crate) nonblock: bool,
     pub(crate) is_socket: bool,
@@ -213,7 +211,7 @@ struct State {
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
 }
 
-pub struct IOWriter {
+pub(crate) struct IOWriter {
     state: UnsafeCell<State>,
 }
 
@@ -304,10 +302,6 @@ impl IOWriter {
     /// # Safety
     /// `interp` must be null or point to the live owning `Interpreter` (which
     /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
-    // Forwards `interp` to `ParentRef::from_nullable` (shared provenance)
-    // without dereferencing it here; not_unsafe_ptr_arg_deref is a false
-    // positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.
@@ -371,12 +365,6 @@ impl IOWriter {
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
                     s.flags.is_socket = false;
-                    if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                        s.writer
-                            .handle
-                            .close_impl(None, None::<fn(*mut c_void)>, false);
-                    }
-                    s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                     return self.__start();
                 }
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -387,12 +375,6 @@ impl IOWriter {
                         s.flags.pollable = false;
                         s.flags.nonblock = false;
                         s.flags.is_socket = false;
-                        if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                            s.writer
-                                .handle
-                                .close_impl(None, None::<fn(*mut c_void)>, false);
-                        }
-                        s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                         return self.__start();
                     }
                 }
@@ -603,7 +585,6 @@ impl IOWriter {
                 return &[];
             }
             if s.writers[s.writer_idx].is_dead() {
-                let _ = s;
                 self.skip_dead();
             }
         }
@@ -1228,28 +1209,20 @@ pub(crate) fn on_io_writer_chunk(
     err: Option<sys::SystemError>,
 ) -> Yield {
     use crate::shell::builtin::Builtin;
-    use crate::shell::states::{cmd, cond_expr, pipeline, subshell};
+    use crate::shell::states::{cmd, cond_expr, pipeline};
     match child.tag {
         WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, written, err),
         WriterTag::Cmd => cmd::Cmd::on_io_writer_chunk(interp, child.node, written, err),
-        WriterTag::Pipeline => {
-            pipeline::Pipeline::on_io_writer_chunk(interp, child.node, written, err)
-        }
-        WriterTag::Subshell => {
-            subshell::Subshell::on_io_writer_chunk(interp, child.node, written, err)
-        }
         WriterTag::CondExpr => {
             cond_expr::CondExpr::on_io_writer_chunk(interp, child.node, written, err)
         }
-        // `Interpreter.If` never enqueues to an IOWriter.
-        WriterTag::If => {
-            crate::shell::interpreter::unreachable_state("IOWriter.onIOWriterChunk", "If")
+        WriterTag::Pipeline => {
+            pipeline::Pipeline::on_io_writer_chunk(interp, child.node, written, err)
         }
         // The target is the subprocess PipeReader's `CapturedWriter`; it
         // lives outside the NodeId arena (heap-allocated PipeReader), so it
         // is carried in `child.raw` instead of `child.node`.
         WriterTag::Subproc => {
-            let _ = interp;
             debug_assert!(!child.raw.is_null());
             // SAFETY: `raw` was set from `&mut CapturedWriter` in
             // `CapturedWriter::do_write`; the PipeReader (and the embedded

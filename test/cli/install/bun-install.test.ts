@@ -10275,6 +10275,129 @@ it("rejects dependency aliases containing '..' path segments", async () => {
   });
 });
 
+// Serves `bar` as a registry package whose manifest declares `dependencies`,
+// and every other name as a package with no dependencies.
+function registryWhereBarDependsOn(ctx: TestContext, urls: string[], dependencies: Record<string, string>) {
+  const bar = dummyRegistryForContext(ctx, urls, { "0.0.2": { dependencies } });
+  const others = dummyRegistryForContext(ctx, urls, { "0.0.3": {} });
+  return (request: Request) => (new URL(request.url).pathname.endsWith("/bar") ? bar(request) : others(request));
+}
+
+// The key of a dependency becomes a path under node_modules, and a registry
+// package chooses the keys of its own dependencies. A key that names an entry
+// the installer owns would unpack the target there: `.bin` is on the PATH of
+// every lifecycle script, so is the `.bin` of a nested `node_modules`, and a
+// bare `@scope` is the directory the project's own `@scope/*` packages live in.
+describe.each([".bin", "@barn/.bin", "node_modules", "Node_Modules", "@barn"])("a dependency named %p", key => {
+  it.each(["a registry package", "the project"])(
+    "declared by %s is refused before anything is installed",
+    async declarer => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        const target = { [key]: "npm:baz@0.0.3" };
+        const fromRegistry = declarer === "a registry package";
+        setContextHandler(ctx, registryWhereBarDependsOn(ctx, urls, fromRegistry ? target : {}));
+        await Promise.all([
+          writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              version: "0.0.1",
+              dependencies: fromRegistry ? { bar: "0.0.2" } : target,
+              scripts: { postinstall: [bunExe(), "foo-postinstall.js"].join(" ") },
+            }),
+          ),
+          writeFile(
+            join(ctx.package_dir, "foo-postinstall.js"),
+            'require("fs").writeFileSync("foo-postinstall.txt", "ran");',
+          ),
+        ]);
+
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(err).toContain(`error: Invalid dependency name "${key}"`);
+        expect(out).not.toContain("installed");
+        expect({
+          // baz is not unpacked at the reserved path
+          unpacked: await exists(join(ctx.package_dir, "node_modules", key, "package.json")),
+          // and no lifecycle script runs in an install that refused a name
+          postinstall: await exists(join(ctx.package_dir, "foo-postinstall.txt")),
+        }).toEqual({ unpacked: false, postinstall: false });
+        expect(exitCode).toBe(1);
+      });
+    },
+  );
+});
+
+it("still installs an alias that names no entry of the installer", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+    // npm refuses a leading underscore and a leading hyphen too. Neither names
+    // a directory the installer uses, so these keep working.
+    const aliases = ["_baz", "-baz", "baz.js", "@barn/baz"];
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: Object.fromEntries(aliases.map(alias => [alias, "npm:baz@0.0.3"])),
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).not.toContain("error:");
+    // One package, under four names.
+    expect(out).toContain("1 package installed");
+    expect(
+      await Promise.all(aliases.map(alias => exists(join(ctx.package_dir, "node_modules", alias, "package.json")))),
+    ).toEqual([true, true, true, true]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+it("still links a bin whose name starts with a period", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    // A bin name is not a node_modules entry. npm links this one, and so does bun.
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": { bin: { ".baz-run": "index.js" } } }));
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).not.toContain("error:");
+    expect(out).toContain("1 package installed");
+    expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([".baz-run"]);
+    expect(join(ctx.package_dir, "node_modules", ".bin", ".baz-run")).toBeValidBin(join("..", "baz", "index.js"));
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("does not extract a tarball for a dependency alias containing '..' path segments", async () => {
   await withContext(defaultOpts, async ctx => {
     const urls: string[] = [];

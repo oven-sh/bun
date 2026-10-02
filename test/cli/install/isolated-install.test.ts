@@ -40,6 +40,38 @@ function storeEntryName(name: string, resolution: string): string {
   return `${name}@${resolution.slice(0, CUT_RESOLUTION_LEN)}+${urlHash(resolution)}`;
 }
 
+function tarHeader(name: string, size: number, isDir: boolean): Uint8Array {
+  const header = new Uint8Array(512);
+  const encoder = new TextEncoder();
+  header.set(encoder.encode(name), 0);
+  header.set(encoder.encode(isDir ? "0000755 " : "0000644 "), 100);
+  header.set(encoder.encode("0000000 "), 108);
+  header.set(encoder.encode("0000000 "), 116);
+  header.set(encoder.encode(size.toString(8).padStart(11, "0") + " "), 124);
+  header.set(encoder.encode("00000000000 "), 136);
+  header.set(encoder.encode("        "), 148);
+  header[156] = (isDir ? "5" : "0").charCodeAt(0);
+  header.set(encoder.encode("ustar"), 257);
+  header.set(encoder.encode("00"), 263);
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.set(encoder.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
+  return header;
+}
+
+// A minimal gzipped tarball: one root directory that wraps the given files.
+function gzippedTarball(root: string, files: Record<string, string>): Uint8Array {
+  const blocks: Uint8Array[] = [tarHeader(`${root}/`, 0, true)];
+  for (const [name, contents] of Object.entries(files)) {
+    const bytes = new TextEncoder().encode(contents);
+    blocks.push(tarHeader(`${root}/${name}`, bytes.length, false));
+    blocks.push(bytes);
+    if (bytes.length % 512 !== 0) blocks.push(new Uint8Array(512 - (bytes.length % 512)));
+  }
+  blocks.push(new Uint8Array(1024));
+  return Bun.gzipSync(Buffer.concat(blocks));
+}
+
 beforeAll(async () => {
   await registry.start();
 });
@@ -963,39 +995,12 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 test("adding and removing a patch for a github dependency in a workspace completes", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
-  // Minimal gzipped tarball shaped like a github codeload tarball: a single
-  // root directory wrapping the package contents.
-  function tarHeader(name: string, size: number, isDir: boolean): Uint8Array {
-    const header = new Uint8Array(512);
-    const encoder = new TextEncoder();
-    header.set(encoder.encode(name), 0);
-    header.set(encoder.encode(isDir ? "0000755 " : "0000644 "), 100);
-    header.set(encoder.encode("0000000 "), 108);
-    header.set(encoder.encode("0000000 "), 116);
-    header.set(encoder.encode(size.toString(8).padStart(11, "0") + " "), 124);
-    header.set(encoder.encode("00000000000 "), 136);
-    header.set(encoder.encode("        "), 148);
-    header[156] = (isDir ? "5" : "0").charCodeAt(0);
-    header.set(encoder.encode("ustar"), 257);
-    header.set(encoder.encode("00"), 263);
-    let checksum = 0;
-    for (const byte of header) checksum += byte;
-    header.set(encoder.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
-    return header;
-  }
-  const blocks: Uint8Array[] = [];
-  blocks.push(tarHeader("testowner-testrepo-aaaaaaa/", 0, true));
-  for (const [name, contents] of [
-    ["package.json", JSON.stringify({ name: "gh-dep", version: "1.0.0" })],
-    ["index.js", 'console.log("original");\n'],
-  ]) {
-    const bytes = new TextEncoder().encode(contents);
-    blocks.push(tarHeader(`testowner-testrepo-aaaaaaa/${name}`, bytes.length, false));
-    blocks.push(bytes);
-    if (bytes.length % 512 !== 0) blocks.push(new Uint8Array(512 - (bytes.length % 512)));
-  }
-  blocks.push(new Uint8Array(1024));
-  const tarball = Bun.gzipSync(Buffer.concat(blocks));
+  // Shaped like a github codeload tarball: a single root directory wrapping
+  // the package contents.
+  const tarball = gzippedTarball("testowner-testrepo-aaaaaaa", {
+    "package.json": JSON.stringify({ name: "gh-dep", version: "1.0.0" }),
+    "index.js": 'console.log("original");\n',
+  });
 
   using server = Bun.serve({
     port: 0,
@@ -3593,7 +3598,7 @@ test("rejects dependency aliases that traverse outside node_modules", async () =
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("is not a valid install folder name");
+  expect(stderr).toContain('Invalid dependency name "../pwned-by-alias"');
   // Nothing may be created outside of node_modules. `lstatSync` instead of
   // `existsSync` because the escaped artifact would be a dangling symlink.
   expect(() => lstatSync(join(packageDir, "pwned-by-alias"))).toThrow();
@@ -3622,9 +3627,70 @@ test("rejects a dependency alias with more than one path component", async () =>
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain(`"somepkg/lib" is not a valid install folder name`);
+  expect(stderr).toContain('Invalid dependency name "somepkg/lib"');
   expect(() => lstatSync(join(packageDir, "node_modules", "somepkg", "lib"))).toThrow();
   expect(exitCode).not.toBe(0);
+});
+
+test("rejects a tarball that names itself after an entry of the installer", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // A tarball declares its own name in its package.json. Every hoisted store
+  // entry is also linked under that name in `.bun/node_modules`, and the
+  // `.bin` of that directory is on the PATH of every lifecycle script in the
+  // store. A tarball named `.bin` would put its files there.
+  const tarball = gzippedTarball("package", {
+    "package.json": JSON.stringify({ name: ".bin", version: "1.0.0" }),
+    "node": "#!/bin/sh\n",
+  });
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(tarball, { headers: { "Content-Type": "application/gzip" } }),
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-tarball-own-name",
+      dependencies: {
+        helper: `http://localhost:${server.port}/helper.tgz`,
+      },
+    }),
+  );
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`".bin" is not a valid install folder name`);
+  expect(() => lstatSync(join(packageDir, "node_modules", ".bun", "node_modules", ".bin"))).toThrow();
+  expect(exitCode).not.toBe(0);
+});
+
+// The project is never an entry of node_modules under its own name, so a name
+// that no dependency could have does not stop the install. npm accepts these too.
+test.each(["@acme", ".internal", "node_modules"])("installs a project whose own name is %p", async name => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(packageJson, JSON.stringify({ name, dependencies: { "no-deps": "1.0.0" } }));
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toContain("no-deps@1.0.0");
+  expect(exitCode).toBe(0);
 });
 
 test("invalid --linker value is echoed back in the error", async () => {

@@ -365,24 +365,34 @@ fn abs_node_modules_path(
 }
 
 /// A dependency alias becomes the install destination inside `node_modules`
-/// (the existing entry is renamed aside, deleted, and re-created). Reject
-/// anything that could escape `node_modules`: empty names, `.`/`..`
-/// components, absolute paths, drive letters, backslashes, NUL bytes, and any
-/// separator other than the single `/` in a scoped name (`@scope/name`).
+/// (the existing entry is renamed aside, deleted, and re-created), so it has
+/// to be a name `node_modules` can hold: no path escape, no entry the
+/// installer owns, and exactly one component (two for `@scope/name`). The
+/// length bound is this caller's own, because the alias is joined onto a path
+/// buffer here.
 pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
-    if alias.is_empty() || alias.len() >= MAX_PATH_BYTES || strings::contains_any(alias, b"\\:\0") {
+    alias.len() < MAX_PATH_BYTES && crate::dependency::is_valid_node_modules_entry_name(alias)
+}
+
+/// The path rules alone: the name stays inside the directory it is joined
+/// onto, as one component or as two for a scoped name. This is the whole check
+/// for the own name of the project, a workspace or a folder dependency. The
+/// user chose that name, and it is never an entry of `node_modules` by itself:
+/// such a package is only linked under the alias of a dependent.
+pub(crate) fn name_is_single_path_entry(name: &[u8]) -> bool {
+    if name.is_empty() || name.len() >= MAX_PATH_BYTES || strings::contains_any(name, b"\\:\0") {
         return false;
     }
 
     let mut component_count = 0usize;
-    for component in strings::split(alias, b"/") {
+    for component in strings::split(name, b"/") {
         component_count += 1;
         if component.is_empty() || component == b"." || component == b".." {
             return false;
         }
     }
 
-    component_count == 1 || (component_count == 2 && alias[0] == b'@')
+    component_count == 1 || (component_count == 2 && name[0] == b'@')
 }
 
 /// Formats the version label `PackageInstall` verifies and hashes patches

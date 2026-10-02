@@ -2121,8 +2121,23 @@ pub(crate) fn install_isolated_packages(
             {
                 let mut unsafe_folder_name: Option<&[u8]> = None;
                 let name = pkg_name.slice(string_buf);
-                if !name.is_empty() && !crate::package_installer::alias_is_safe_install_target(name)
-                {
+                // A package unpacked from a registry, an archive or a
+                // repository is also linked under its own name, by the
+                // fallback link in `.bun/node_modules`, so that name has to be
+                // a valid entry. Every other package is only linked under the
+                // alias of a dependent, which the loop below checks.
+                let own_name_is_safe = name.is_empty()
+                    || match pkg_res.tag {
+                        ResolutionTag::Npm
+                        | ResolutionTag::Git
+                        | ResolutionTag::Github
+                        | ResolutionTag::LocalTarball
+                        | ResolutionTag::RemoteTarball => {
+                            crate::package_installer::alias_is_safe_install_target(name)
+                        }
+                        _ => crate::package_installer::name_is_single_path_entry(name),
+                    };
+                if !own_name_is_safe {
                     unsafe_folder_name = Some(name);
                 } else {
                     for dep in entry_dependencies[entry_id.get() as usize].slice() {

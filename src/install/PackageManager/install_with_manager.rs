@@ -685,6 +685,12 @@ pub fn install_with_manager(
         }
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
+    // The log was reset before the clean, so an error here is a dependency the
+    // tree builder refused by name. Stop before the linker lays out
+    // `node_modules` and runs lifecycle scripts.
+    if manager.log_mut().has_errors() {
+        manager.crash();
+    }
     if manager.subcommand == Subcommand::Update && !manager.options.dry_run {
         Output::flush();
         crate::update_transitive::warn_orphaned_patches(manager);

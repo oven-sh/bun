@@ -748,14 +748,19 @@ impl Tree {
                 .name
                 .slice(lockfile.buffers.string_bytes.as_slice());
             if !dependency_name.is_empty()
-                && !crate::dependency::is_safe_install_folder_name(dependency_name)
+                && !crate::dependency::is_valid_node_modules_entry_name(dependency_name)
             {
-                builder.maybe_report_error(format_args!(
-                    "Invalid dependency name \"{}\"",
-                    dependency
-                        .name
-                        .fmt(lockfile.buffers.string_bytes.as_slice()),
-                ));
+                // A dependency that did not resolve gets no folder, and the
+                // resolver reported why. `bun add <specifier>` leaves the
+                // specifier as the name of such a dependency.
+                if pkg_id != invalid_package_id {
+                    builder.maybe_report_error(format_args!(
+                        "Invalid dependency name \"{}\"",
+                        dependency
+                            .name
+                            .fmt(lockfile.buffers.string_bytes.as_slice()),
+                    ));
+                }
                 continue 'dep;
             }
 

@@ -8,20 +8,25 @@ import { resolve } from "node:path";
 
 const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
 
-// There: every error of the document has the code RESOURCE_EXHAUSTION.
-function parseOrExhaust(src: string) {
+// There: every error of the document has the code RESOURCE_EXHAUSTION. Here: the size of the stack decides.
+function expectNestedOrExhausted(src: string, depth: number, leaf: unknown) {
+  let outcome: unknown;
   try {
-    return YAML.parse(src);
-  } catch (error) {
-    expect(error).toBeInstanceOf(RangeError);
+    let node = YAML.parse(src);
+    let nested = 0;
+    for (; Array.isArray(node); node = node[0]) nested++;
+    outcome = { depth: nested, leaf: node };
+  } catch (error: any) {
+    outcome = error.name;
   }
+  expect([{ depth, leaf }, "RangeError"]).toContainEqual(outcome);
 }
 
 describe("Resource exhaustion attacks", () => {
   describe("Excessive recursion", () => {
     test("Nested flow collections", () => {
       const depth = 5000;
-      parseOrExhaust(repeat("[", depth) + "1" + repeat("]", depth));
+      expectNestedOrExhausted(repeat("[", depth) + "1" + repeat("]", depth), depth, 1);
     });
 
     test("excessive tag indicators", () => {
@@ -30,7 +35,7 @@ describe("Resource exhaustion attacks", () => {
     });
 
     test("excessive block sequence indicators", () => {
-      parseOrExhaust(repeat("- ", 5000) + "b");
+      expectNestedOrExhausted(repeat("- ", 5000) + "b", 5000, "b");
     });
 
     test("excessive empty lines in flow collection", () => {

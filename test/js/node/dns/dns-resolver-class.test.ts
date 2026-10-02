@@ -1,5 +1,6 @@
 // node-dns.test.js resolves public hostnames. These tests need no network.
 import { describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 import dgram from "node:dgram";
 import dns from "node:dns";
 import { once } from "node:events";
@@ -42,13 +43,24 @@ describe.each([
 // the next recv() or send(), and epoll reports it as EPOLLERR with no readable
 // or writable bit. c-ares finds the error only when it is handed the socket.
 describe("a nameserver that nothing listens on", () => {
-  async function closedUdpPort(): Promise<string> {
+  // A UDP port of 127.0.0.1 that refuses datagrams. The socket that has the
+  // port is connected to port 1, so a datagram from any other sender has no
+  // socket to go to, and no other socket can get the port while the test runs.
+  // A port that is only closed again can become the source port of the query
+  // socket, which then receives its own query as the answer.
+  async function refusingUdpPort() {
     const socket = dgram.createSocket("udp4");
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
-    const { port } = socket.address();
-    await new Promise<void>(resolve => socket.close(() => resolve()));
-    return `127.0.0.1:${port}`;
+    const address = `127.0.0.1:${socket.address().port}`;
+    // Whether a port that a socket holds refuses on Windows is not verified.
+    if (isWindows) {
+      await new Promise<void>(resolve => socket.close(() => resolve()));
+      return { address, [Symbol.dispose]() {} };
+    }
+    socket.connect(1, "127.0.0.1");
+    await once(socket, "connect");
+    return { address, [Symbol.dispose]: () => socket.close() };
   }
 
   // Answers every query with one A record, 10.20.0.1.
@@ -75,8 +87,9 @@ describe("a nameserver that nothing listens on", () => {
   const options = { timeout: 1000, tries: 1 };
 
   test("dns.promises.Resolver rejects with ECONNREFUSED", async () => {
+    using dead = await refusingUdpPort();
     const resolver = new dns.promises.Resolver(options);
-    resolver.setServers([await closedUdpPort()]);
+    resolver.setServers([dead.address]);
     const error = await resolver.resolve4("refused.example.test").then(
       addresses => ({ addresses }),
       e => e,
@@ -90,16 +103,18 @@ describe("a nameserver that nothing listens on", () => {
   });
 
   test("dns.Resolver calls back with ECONNREFUSED", async () => {
+    using dead = await refusingUdpPort();
     const resolver = new dns.Resolver(options);
-    resolver.setServers([await closedUdpPort()]);
+    resolver.setServers([dead.address]);
     const { promise, resolve } = Promise.withResolvers<{ code?: string; addresses?: string[] }>();
     resolver.resolve4("refused.example.test", (err, addresses) => resolve({ code: err?.code, addresses }));
     expect(await promise).toEqual({ code: "ECONNREFUSED", addresses: undefined });
   });
 
   test("every record type reports ECONNREFUSED", async () => {
+    using dead = await refusingUdpPort();
     const resolver = new dns.promises.Resolver(options);
-    resolver.setServers([await closedUdpPort()]);
+    resolver.setServers([dead.address]);
     const outcome = (query: Promise<unknown>) =>
       query.then(
         () => "answered",
@@ -127,8 +142,10 @@ describe("a nameserver that nothing listens on", () => {
   // timeouts (2 x 30 s), this test would run into its own time limit.
   test("the query moves on to the next nameserver", async () => {
     using live = await liveNameserver();
+    using dead = await refusingUdpPort();
+    using alsoDead = await refusingUdpPort();
     const resolver = new dns.promises.Resolver({ timeout: 30_000, tries: 1 });
-    resolver.setServers([await closedUdpPort(), await closedUdpPort(), live.address]);
+    resolver.setServers([dead.address, alsoDead.address, live.address]);
     expect(await resolver.resolve4("failover.example.test")).toEqual(["10.20.0.1"]);
   });
 });

@@ -4799,12 +4799,17 @@ impl Resolver {
             let _guard = RefPtr::init_ref(parent);
             // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
             let channel = (*parent).channel.get().unwrap();
-            (*channel).process(
-                (*poll).socket,
-                events & libuv::UV_READABLE != 0,
-                events & libuv::UV_WRITABLE != 0,
-                status < 0,
-            );
+            if status < 0 {
+                // an error occurred. just pretend that the socket is both readable and writable.
+                // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+                (*channel).process((*poll).socket, true, true);
+            } else {
+                (*channel).process(
+                    (*poll).socket,
+                    events & libuv::UV_READABLE != 0,
+                    events & libuv::UV_WRITABLE != 0,
+                );
+            }
 
             // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
             if !(*parent).any_requests_pending() {
@@ -4847,20 +4852,18 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
-        // `Eof` is EPOLLERR. A connected UDP socket reports an ICMP error that
-        // way, with neither direction set.
-        let errored = poll.flags.contains(Async::PollFlag::Eof);
+        // A poll that failed or hung up reports no direction; give c-ares both, like Node:
+        // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+        let failed =
+            poll.flags.contains(Async::PollFlag::Eof) || poll.flags.contains(Async::PollFlag::Hup);
+        let readable = poll.is_readable() || failed;
+        let writable = poll.is_writable() || failed;
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
         // UnsafeCell-backed).
         unsafe {
-            (*channel).process(
-                poll.fd.native(),
-                poll.is_readable(),
-                poll.is_writable(),
-                errored,
-            );
+            (*channel).process(poll.fd.native(), readable, writable);
         }
 
         // c-ares detaches a query only *after* its callback returns, so

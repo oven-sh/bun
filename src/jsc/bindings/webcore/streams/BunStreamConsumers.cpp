@@ -549,7 +549,8 @@ static unsigned leadingBOMCount(JSGlobalObject* globalObject, const MarkedArgume
         JSString* chunk = asString(chunks.at(i));
         if (!chunk->length())
             continue;
-        if (chunk->is8Bit())
+        // view() makes the string of a rope. tryCopyWithoutLeadingBOMs() removes a BOM that starts one.
+        if (chunk->is8Bit() || chunk->isNonSubstringRope())
             break;
         auto view = chunk->view(globalObject);
         RETURN_IF_EXCEPTION(scope, 0);
@@ -562,6 +563,21 @@ static unsigned leadingBOMCount(JSGlobalObject* globalObject, const MarkedArgume
             break;
     }
     return count;
+}
+
+// `text` without the U+FEFF code units, at most `most`, that start it. Null when the copy cannot be allocated.
+static WTF::String tryCopyWithoutLeadingBOMs(const WTF::String& text, unsigned most)
+{
+    unsigned count = 0;
+    while (count < most && count < text.length() && text[count] == 0xFEFF)
+        count++;
+    if (!count)
+        return text;
+    std::span<char16_t> characters;
+    WTF::String copy = WTF::String::tryCreateUninitialized(text.length() - count, characters);
+    if (!copy.isNull())
+        StringView(text).substring(count).getCharacters(characters);
+    return copy;
 }
 
 // The string chunks as one string without its first `skip` code units, from one allocation. Null when that fails.
@@ -667,6 +683,8 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
             ? tryJoinStringChunks<Latin1Character>(globalObject, values, codeUnits.value(), skip)
             : tryJoinStringChunks<char16_t>(globalObject, values, codeUnits.value(), skip);
         RETURN_IF_EXCEPTION(scope, {});
+        if (!all8Bit && skip < 2 && !joined.isNull())
+            joined = tryCopyWithoutLeadingBOMs(joined, 2 - skip);
         if (joined.isNull()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};

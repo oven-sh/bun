@@ -291,6 +291,7 @@ describe("the text of string chunks is one allocation of its length", () => {
       `{ length: text.length, start: text.slice(0, 3), clone: structuredClone(text).length }`,
       { length: 128 * MIB, start: "xxx", clone: 128 * MIB },
     );
+    console.log("CALIBRATE bom", Math.round(peak));
     expect(peak).toBeLessThan(384);
   });
 
@@ -303,7 +304,22 @@ describe("the text of string chunks is one allocation of its length", () => {
       `{ length: text.length, start: text.slice(0, 3), end: text.slice(-3) }`,
       { length: 128 * MIB, start: "aaa", end: "bbb" },
     );
+    console.log("CALIBRATE ropes", Math.round(peak));
     expect(peak).toBeLessThan(192);
+  });
+
+  // The first chunk can start with a BOM. The consumer does not make the string of a rope to
+  // look for it: the string of this rope is 128 MiB more. The rope itself is 8 MiB.
+  test("a 16-bit rope of 128 MiB, then a string", async () => {
+    const peak = await peakOfText(
+      `let rope = Buffer.alloc(${8 * MIB}, "\\u4F60", "utf16le").toString("utf16le");
+       for (let i = 0; i < 4; i++) rope = rope + rope;
+       const chunks = [rope, "tail"];`,
+      `{ length: text.length, start: text.slice(0, 2), end: text.slice(-5) }`,
+      { length: 64 * MIB + 4, start: "\u4F60\u4F60", end: "\u4F60tail" },
+    );
+    console.log("CALIBRATE rope16", Math.round(peak));
+    expect(peak).toBeLessThan(200);
   });
 });
 

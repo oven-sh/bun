@@ -1915,6 +1915,16 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     ["a BOM after the first character", () => ["a", "\uFEFFbc"], "a\uFEFFbc"],
     ["a BOM at the start of a rope", () => ["\uFEFF" + unresolvedRopes()[1], "abc"], unresolvedRopes()[1] + "abc"],
     [
+      "a BOM, then a rope that starts with a BOM",
+      () => ["\uFEFF", "\uFEFF" + unresolvedRopes()[1], "abc"],
+      unresolvedRopes()[1] + "abc",
+    ],
+    [
+      "three BOMs at the start of a rope",
+      () => ["\uFEFF\uFEFF\uFEFF" + unresolvedRopes()[1], "abc"],
+      "\uFEFF" + unresolvedRopes()[1] + "abc",
+    ],
+    [
       "a BOM at the start of a part of another string",
       () => [("x\uFEFF" + unresolvedRopes()[0]).slice(1), "abc"],
       unresolvedRopes()[0] + "abc",

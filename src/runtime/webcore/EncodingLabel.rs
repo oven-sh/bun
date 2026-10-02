@@ -5,7 +5,7 @@ use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue};
 /// https://encoding.spec.whatwg.org/#names-and-labels
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum EncodingLabel {
+pub(crate) enum EncodingLabel {
     Utf8,
     Ibm866,
     Iso8859_2,

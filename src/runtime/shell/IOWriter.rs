@@ -81,7 +81,7 @@ impl ChildPtr {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WriterTag {
+pub(crate) enum WriterTag {
     /// Builtin running inside a Cmd — dispatch via `Builtin::on_io_writer_chunk`.
     Builtin,
     Cmd,
@@ -97,7 +97,7 @@ pub enum WriterTag {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Default)]
-pub struct Flags {
+pub(crate) struct Flags {
     pub(crate) pollable: bool,
     pub(crate) nonblock: bool,
     pub(crate) is_socket: bool,
@@ -211,7 +211,7 @@ struct State {
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
 }
 
-pub struct IOWriter {
+pub(crate) struct IOWriter {
     state: UnsafeCell<State>,
 }
 
@@ -302,10 +302,6 @@ impl IOWriter {
     /// # Safety
     /// `interp` must be null or point to the live owning `Interpreter` (which
     /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
-    // Forwards `interp` to `ParentRef::from_nullable` (shared provenance)
-    // without dereferencing it here; not_unsafe_ptr_arg_deref is a false
-    // positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.
@@ -577,7 +573,6 @@ impl IOWriter {
                 return &[];
             }
             if s.writers[s.writer_idx].is_dead() {
-                let _ = s;
                 self.skip_dead();
             }
         }
@@ -1216,7 +1211,6 @@ pub(crate) fn on_io_writer_chunk(
         // lives outside the NodeId arena (heap-allocated PipeReader), so it
         // is carried in `child.raw` instead of `child.node`.
         WriterTag::Subproc => {
-            let _ = interp;
             debug_assert!(!child.raw.is_null());
             // SAFETY: `raw` was set from `&mut CapturedWriter` in
             // `CapturedWriter::do_write`; the PipeReader (and the embedded

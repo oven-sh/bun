@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::{EventLoopHandle, FilePollKind, FilePollRef, Owner, PollTag};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -186,6 +186,8 @@ impl ReadLimit {
 
 pub struct PosixBufferedReader {
     pub handle: PollOrFd,
+    /// Set once `preadv2(RWF_NOWAIT)` said this fd's file type does not support it (tty), so we stop asking.
+    rwf_unsupported: core::cell::Cell<bool>,
     pub _buffer: Vec<u8>,
     pub(crate) _offset: usize,
     limit: ReadLimit,
@@ -210,6 +212,8 @@ bitflags::bitflags! {
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
         const KEEP_ALIVE               = 1 << 10; // default true
+        /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
+        const READ_FAILED              = 1 << 11;
     }
 }
 
@@ -223,6 +227,7 @@ impl PosixBufferedReader {
     pub fn init<T: BufferedReaderParent>() -> PosixBufferedReader {
         PosixBufferedReader {
             handle: PollOrFd::Closed,
+            rwf_unsupported: core::cell::Cell::new(false),
             _buffer: Vec::new(),
             _offset: 0,
             limit: ReadLimit::NONE,
@@ -239,6 +244,10 @@ impl PosixBufferedReader {
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
+        // An unarmed poll delivers nothing; `try_register_poll` applies KEEP_ALIVE when it arms.
+        if value && !poll.is_watching() {
+            return;
+        }
         poll.set_keeping_process_alive(self.vtable.event_loop(), value);
     }
 
@@ -257,6 +266,7 @@ impl PosixBufferedReader {
         let kind = self.vtable.kind;
         *self = PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
+            rwf_unsupported: other.rwf_unsupported.clone(),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
             limit: other.limit,
@@ -529,9 +539,8 @@ impl PosixBufferedReader {
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered)
-            && self.flags.contains(PosixFlags::KEEP_ALIVE)
-        {
+        // Re-applied on every arm: `pause()` unregisters, which drops it.
+        if self.flags.contains(PosixFlags::KEEP_ALIVE) {
             poll.enable_keeping_process_alive(ev);
         }
 
@@ -670,7 +679,10 @@ impl PosixBufferedReader {
     }
 
     fn begin_read(&self) -> Option<(Fd, FileType, BufferedReaderVTable)> {
-        if self.flags.contains(PosixFlags::IS_PAUSED) {
+        if self
+            .flags
+            .intersects(PosixFlags::IS_PAUSED | PosixFlags::READ_FAILED)
+        {
             return None;
         }
         Some((self.get_fd(), self.get_file_type(), self.vtable))
@@ -692,7 +704,26 @@ impl PosixBufferedReader {
             }
             FileType::File => sys::read(fd, buf),
             FileType::Socket => sys::recv_non_block(fd, buf),
-            FileType::NonblockingPipe | FileType::Pipe => sys::read_nonblocking(fd, buf),
+            FileType::NonblockingPipe | FileType::Pipe => {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    if !self.rwf_unsupported.get() {
+                        match sys::read_nowait(fd, buf) {
+                            Ok(None) => self.rwf_unsupported.set(true),
+                            Ok(Some(n)) => return Ok(n),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    // Poll first even when labelled nonblocking: some callers (FileResponseStream) label by fd kind, not by O_NONBLOCK.
+                    match bun_core::is_readable(fd) {
+                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::read(fd, buf),
+                        bun_core::Pollable::NotReady => Err(sys::Error::retry().with_fd(fd)),
+                    }
+                }
+                // macOS poll(2) is unreliable on FIFOs; the kqueue registration drives readiness there.
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                sys::read(fd, buf)
+            }
         }
     }
 
@@ -716,7 +747,10 @@ impl PosixBufferedReader {
                 }
             }
             sys::Result::Err(err) if err.is_retry() => ReadOnce::Stop(Stop::WouldBlock),
-            sys::Result::Err(err) => ReadOnce::Stop(Stop::Error(err)),
+            sys::Result::Err(err) => {
+                self.flags.insert(PosixFlags::READ_FAILED);
+                ReadOnce::Stop(Stop::Error(err))
+            }
         }
     }
 
@@ -1291,7 +1325,6 @@ impl WindowsBufferedReader {
 
     /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer; ownership
     /// transfers to `self.source` (later freed via `close_and_destroy`).
-    #[cfg(windows)]
     pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         // SAFETY: caller contract — Box-allocated, ownership transfers.
         self.set_source(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
@@ -1360,7 +1393,6 @@ impl WindowsBufferedReader {
         source.set_raw_mode(value)
     }
 
-    #[cfg(windows)]
     extern "C" fn on_stream_alloc(
         handle: *mut uv::Handle,
         suggested_size: usize,
@@ -1378,7 +1410,6 @@ impl WindowsBufferedReader {
         }
     }
 
-    #[cfg(windows)]
     extern "C" fn on_stream_read(
         stream: *mut uv::uv_stream_t,
         nread: uv::ReturnCodeI64,
@@ -1448,7 +1479,6 @@ impl WindowsBufferedReader {
 
     /// Callback fired when a file read operation completes or is canceled.
     /// Handles cleanup, cancellation, and normal read processing.
-    #[cfg(windows)]
     extern "C" fn on_file_read(fs: *mut uv::fs_t) {
         // SAFETY: libuv fs_cb — `fs` is the `uv_fs_t` field of a heap-boxed
         // `source::File` (separate allocation from `Self`). Invoked from the
@@ -1615,7 +1645,6 @@ impl WindowsBufferedReader {
         }
     }
 
-    #[cfg(windows)]
     fn start_reading(&mut self) -> sys::Result<()> {
         // A used-up limit stays paused: `start` has nothing to read and `unpause` reports it as EOF instead.
         if self.flags.contains(WindowsFlags::IS_DONE)
@@ -1764,7 +1793,6 @@ impl WindowsBufferedReader {
                         }
                     }
                 }
-                #[cfg(windows)]
                 Source::Pipe(pipe) => {
                     // Hand the Box off to libuv; the close cb reclaims it.
                     let raw = bun_core::heap::into_raw(pipe);
@@ -1775,7 +1803,6 @@ impl WindowsBufferedReader {
                         (*raw).close(Self::on_pipe_close);
                     }
                 }
-                #[cfg(windows)]
                 Source::Tty(tty) => {
                     let p = tty.as_ptr();
                     if crate::source::stdin_tty::is_stdin_tty(p) {
@@ -1792,8 +1819,6 @@ impl WindowsBufferedReader {
 
                     self.flags.insert(WindowsFlags::IS_PAUSED);
                 }
-                #[cfg(not(windows))]
-                _ => {}
             }
             // self.source already None via take().
             if CALL_DONE {
@@ -1851,7 +1876,6 @@ impl WindowsBufferedReader {
         self._buffer = Vec::new();
     }
 
-    #[cfg(windows)]
     extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
         // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
         // libuv passes the same pointer back, so `handle` *is* the boxed Pipe
@@ -1860,7 +1884,6 @@ impl WindowsBufferedReader {
         drop(unsafe { bun_core::heap::take(handle) });
     }
 
-    #[cfg(windows)]
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
         // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
         // libuv passes the same pointer back; `Tty::from_uv` recovers the

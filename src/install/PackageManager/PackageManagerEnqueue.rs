@@ -2417,6 +2417,17 @@ fn get_or_put_resolved_package_with_find_result(
     let this: &mut PackageManager = unsafe { &mut *guard.0 };
     // The scopeguard runs on ALL exits, never disarmed.
 
+    // `remote_package_features` only lacks groups that no remote package has.
+    let placed = behavior.is_placed(this.options.local_package_features);
+    // `is_filtered_dependency_or_workspace` filters this package and everything below it.
+    let unplaced = !this.options.runtime_auto_install
+        && (!placed
+            || package.is_disabled(this.options.cpu, this.options.os)
+            || this.lockfile.is_in_unplaced_subtree(dependency_id));
+    if unplaced {
+        this.lockfile.mark_unplaced_subtree(package.dependencies);
+    }
+
     // non-null if the package is in "patchedDependencies"
     let mut name_and_version_hash: Option<u64> = None;
     let mut patchfile_hash: Option<u64> = None;
@@ -2430,6 +2441,12 @@ fn get_or_put_resolved_package_with_find_result(
         // Is this package already in the cache?
         // We don't need to download the tarball, but we should enqueue dependencies
         install::PreinstallState::Done => Some(ResolvedPackageResult {
+            package,
+            is_first_time: true,
+            task: None,
+        }),
+        // If a placed dependency needs it too, the install phase fetches and patches it.
+        _ if unplaced => Some(ResolvedPackageResult {
             package,
             is_first_time: true,
             task: None,
@@ -2909,19 +2926,10 @@ fn get_or_put_resolved_package(
                 }
 
                 // transitive folder dependencies do not have their dependencies resolved
-                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder)) {
-                    // overrides/resolutions are only ever parsed from the root
-                    // package.json, so a folder path that reached here via an
-                    // override was written by the user and is trusted the same
-                    // as a direct dependency of the root.
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    if !this.lockfile.overrides.contains_name(
-                        dependency.name_hash,
-                        dependency.name.slice(buf),
-                        buf,
-                    ) {
-                        break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
-                    }
+                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
+                    && !this.lockfile.is_trusted_folder_dependency(dependency_id)
+                {
+                    break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
                 let mut package = Package::default();

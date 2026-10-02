@@ -5585,3 +5585,211 @@ describe("read*/write* after JIT tier-up", () => {
     expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");
   });
 });
+
+describe("Buffer.from(string, encoding)", () => {
+  // JSC holds a string as 8-bit (Latin-1) or as 16-bit code units. Each kind has its own encoder
+  // for each encoding, and which one runs depends on the length of the string.
+  const narrow = units => Buffer.from(Uint8Array.from(units)).toString("latin1");
+  const wide = units => Buffer.from(Uint16Array.from(units).buffer).toString("utf16le");
+
+  const hexDigits = "0123456789abcdefABCDEF";
+  const base64Digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const base64urlDigits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const latin1Kinds = {
+    "ASCII": i => 0x61 + (i % 26),
+    "ASCII with some U+00E9": i => (i % 7 === 3 ? 0xe9 : 0x61 + (i % 26)),
+    "U+00C0 to U+00FF": i => 0xc0 + (i % 0x40),
+    "ASCII that ends in U+00FF": (i, length) => (i === length - 1 ? 0xff : 0x61 + (i % 26)),
+    "hex digits": i => hexDigits.charCodeAt((i * 5) % hexDigits.length),
+    "hex digits with a z in the middle": (i, length) => (i === length >> 1 ? 0x7a : hexDigits.charCodeAt(i % 16)),
+    "base64 digits": i => base64Digits.charCodeAt((i * 7) % 64),
+    "base64url digits with spaces": i => (i % 11 === 5 ? 0x20 : base64urlDigits.charCodeAt((i * 5) % 64)),
+  };
+  const utf16Kinds = {
+    ...latin1Kinds,
+    "U+3042 and up": i => 0x3042 + (i % 80),
+    "1, 2 and 3 byte code points": i => [0x61, 0xe9, 0x3042, 0x7ff, 0x800][i % 5],
+    "surrogate pairs": i => (i % 2 === 0 ? 0xd83d : 0xde00 + ((i >> 1) % 64)),
+    "lone surrogates": i => [0xd800, 0x3042, 0xdc00, 0x61][i % 4],
+    "surrogates in every order": i =>
+      [0xd800, 0xd800, 0xdc00, 0xdc00, 0x61, 0xdbff, 0xdfff, 0xdfff, 0xdbff, 0x3042, 0xdc00][i % 11],
+  };
+  // The lengths on each side of every size an encoder switches at.
+  const lengths = [
+    0, 1, 15, 16, 17, 31, 32, 33, 42, 43, 44, 63, 64, 65, 66, 85, 86, 127, 128, 129, 130, 170, 171, 255, 256, 257, 258,
+    383, 384, 385, 511, 512, 513, 999, 1000, 1001, 2000, 2001, 4096,
+  ];
+  const encodings = [undefined, "utf8", "utf16le", "ucs2", "latin1", "ascii", "hex", "base64", "base64url"];
+
+  // The bytes each encoding must give, from code that shares nothing with Buffer.from.
+  // `units` is a Uint16Array of the code units of `string`.
+  function expectedBytes(string, units, encoding) {
+    switch (encoding) {
+      case undefined:
+      case "utf8":
+        return new TextEncoder().encode(string);
+      case "utf16le":
+      case "ucs2":
+        return new Uint8Array(units.buffer);
+      case "latin1":
+      case "ascii":
+        // Keeps the low byte of each code unit.
+        return new Uint8Array(units);
+      default: {
+        // The decoders skip or stop at characters outside their alphabet. Buffer.prototype.write
+        // has the same rules and decodes into memory that exists already.
+        const target = Buffer.alloc(units.length + 8);
+        return target.subarray(0, target.write(string, encoding));
+      }
+    }
+  }
+
+  describe.each([
+    ["an 8-bit string", latin1Kinds, narrow],
+    ["a 16-bit string", utf16Kinds, wide],
+  ])("of %s", (_, kinds, makeString) => {
+    it.each(Object.keys(kinds))("%s: bytes, byteOffset and .buffer", kind => {
+      const problems = [];
+      for (const length of lengths) {
+        const units = new Uint16Array(length);
+        for (let i = 0; i < length; i++) units[i] = kinds[kind](i, length);
+        const string = makeString(units);
+        for (const encoding of encodings) {
+          const where = `length ${length}, ${encoding}`;
+          const buffer = encoding === undefined ? Buffer.from(string) : Buffer.from(string, encoding);
+          const expected = expectedBytes(string, units, encoding);
+          if (!(buffer instanceof Buffer) || buffer.byteOffset !== 0)
+            problems.push(`${where}: not a Buffer at offset 0`);
+          if (!buffer.equals(expected)) problems.push(`${where}: bytes`);
+          // The first read of .buffer gives a Buffer that has its own storage an ArrayBuffer.
+          const arrayBuffer = buffer.buffer;
+          if (arrayBuffer.byteLength !== buffer.length || buffer.buffer !== arrayBuffer || buffer.byteOffset !== 0)
+            problems.push(`${where}: .buffer`);
+          if (!buffer.equals(expected) || !Buffer.from(arrayBuffer).equals(expected))
+            problems.push(`${where}: bytes after .buffer`);
+        }
+      }
+      expect(problems).toEqual([]);
+    });
+  });
+
+  // process.memoryUsage().arrayBuffers counts the bytes of the ArrayBuffers that exist. A Buffer
+  // whose bytes are in an ArrayBuffer from the start is in that count at once. A Buffer that holds
+  // its bytes in its own storage gets an ArrayBuffer when .buffer is first read.
+  // `held` keeps every result alive, so that no collection takes one out of the count. The full
+  // collection first takes out the ArrayBuffers that earlier tests left behind.
+  function arrayBufferBytesPerResult(held, count, string, encoding) {
+    Bun.gc(true);
+    const before = process.memoryUsage().arrayBuffers;
+    for (let i = 0; i < count; i++) held.push(Buffer.from(string, encoding));
+    const after = process.memoryUsage().arrayBuffers;
+    return { perResult: Math.round((after - before) / count), byteLength: held.at(-1).length };
+  }
+
+  it("keeps a result of at most 128 bytes in the Buffer's own storage", () => {
+    const cases = [
+      ["8-bit ASCII as utf8, 16 chars", narrow(Array(16).fill(0x61)), "utf8", 16],
+      ["8-bit ASCII as utf8, 128 chars", narrow(Array(128).fill(0x61)), "utf8", 128],
+      ["8-bit U+00E9 as utf8, 8 chars", narrow(Array(8).fill(0xe9)), "utf8", 16],
+      ["8-bit U+00E9 as utf8, 64 chars", narrow(Array(64).fill(0xe9)), "utf8", 128],
+      ["8-bit ASCII that ends in U+00FF as utf8, 127 chars", narrow([...Array(126).fill(0x61), 0xff]), "utf8", 128],
+      ["8-bit as utf16le, 8 chars", narrow(Array(8).fill(0x61)), "utf16le", 16],
+      ["8-bit as ucs2, 64 chars", narrow(Array(64).fill(0x61)), "ucs2", 128],
+      ["16-bit as utf8, 8 units", wide([0x3042, 0x3042, 0x3042, 0x3042, 0x61, 0x62, 0x63, 0x64]), "utf8", 16],
+      ["16-bit U+3042 as utf8, 42 units", wide(Array(42).fill(0x3042)), "utf8", 126],
+      ["16-bit ASCII that ends in U+3042 as utf8, 126 units", wide([...Array(125).fill(0x61), 0x3042]), "utf8", 128],
+      ["16-bit as latin1, 16 units", wide(Array(16).fill(0x3042)), "latin1", 16],
+      ["16-bit as ascii, 128 units", wide(Array(128).fill(0x3042)), "ascii", 128],
+    ];
+    const held = [];
+    const wrapped = [];
+    for (const [name, string, encoding, byteLength] of cases) {
+      const result = arrayBufferBytesPerResult(held, 200, string, encoding);
+      expect(result.byteLength).toBe(byteLength);
+      if (result.perResult >= 16) wrapped.push(`${name}: ${result.perResult} bytes of ArrayBuffer per result`);
+    }
+    expect(wrapped).toEqual([]);
+  });
+
+  it("gives a result above 128 bytes an ArrayBuffer from the start", () => {
+    // .buffer of such a Buffer is that ArrayBuffer, with no copy.
+    const cases = [
+      ["8-bit ASCII as utf8, 129 chars", narrow(Array(129).fill(0x61)), "utf8", 129],
+      ["8-bit U+00E9 as utf8, 65 chars", narrow(Array(65).fill(0xe9)), "utf8", 130],
+      ["8-bit U+00E9 as utf8, 128 chars", narrow(Array(128).fill(0xe9)), "utf8", 256],
+      ["8-bit U+00E9 as utf8, 129 chars", narrow(Array(129).fill(0xe9)), "utf8", 258],
+      ["8-bit ASCII that ends in U+00FF as utf8, 128 chars", narrow([...Array(127).fill(0x61), 0xff]), "utf8", 129],
+      ["8-bit as utf16le, 65 chars", narrow(Array(65).fill(0x61)), "utf16le", 130],
+      ["16-bit U+3042 as utf8, 43 units", wide(Array(43).fill(0x3042)), "utf8", 129],
+      ["16-bit U+3042 as utf8, 128 units", wide(Array(128).fill(0x3042)), "utf8", 384],
+      ["16-bit U+3042 as utf8, 129 units", wide(Array(129).fill(0x3042)), "utf8", 387],
+      ["16-bit ASCII that ends in U+3042 as utf8, 127 units", wide([...Array(126).fill(0x61), 0x3042]), "utf8", 129],
+      ["16-bit as latin1, 129 units", wide(Array(129).fill(0x3042)), "latin1", 129],
+    ];
+    const held = [];
+    const owned = [];
+    for (const [name, string, encoding, byteLength] of cases) {
+      const result = arrayBufferBytesPerResult(held, 200, string, encoding);
+      expect(result.byteLength).toBe(byteLength);
+      if (result.perResult < byteLength / 2) owned.push(`${name}: ${result.perResult} bytes of ArrayBuffer per result`);
+    }
+    expect(owned).toEqual([]);
+  });
+
+  it("gives each call its own bytes, and they transfer with .buffer", () => {
+    for (const [name, string, encoding] of [
+      ["8-bit ASCII as utf8", narrow(Array.from({ length: 16 }, (_, i) => 0x61 + i)), "utf8"],
+      ["8-bit U+00E9 as utf8", narrow(Array(8).fill(0xe9)), "utf8"],
+      ["8-bit U+00E9 as utf8, above 128 bytes", narrow(Array(100).fill(0xe9)), "utf8"],
+      ["8-bit as utf16le", narrow(Array(8).fill(0x61)), "utf16le"],
+      ["8-bit as hex", narrow(Array(32).fill(0x61)), "hex"],
+      ["8-bit as base64", Buffer.alloc(16, 7).toString("base64"), "base64"],
+      ["16-bit as utf8", wide([0x3042, 0x3042, 0x3042, 0x3042, 0x61, 0x62, 0x63, 0x64]), "utf8"],
+      ["16-bit as utf8, above 128 bytes", wide(Array(100).fill(0x3042)), "utf8"],
+      ["16-bit as latin1", wide(Array(16).fill(0x3042)), "latin1"],
+      ["16-bit as hex", wide(Array(32).fill(0x61)), "hex"],
+    ]) {
+      const first = Buffer.from(string, encoding);
+      const second = Buffer.from(string, encoding);
+      const bytes = Array.from(first);
+      first.fill(0xff);
+      expect({ name, bytes: Array.from(second) }).toEqual({ name, bytes });
+
+      const arrayBuffer = second.buffer;
+      const moved = structuredClone(arrayBuffer, { transfer: [arrayBuffer] });
+      expect({
+        name,
+        length: second.length,
+        detached: arrayBuffer.byteLength === 0,
+        moved: Array.from(new Uint8Array(moved)),
+      }).toEqual({ name, length: 0, detached: true, moved: bytes });
+    }
+  });
+
+  it("returns an empty Buffer when no byte decodes, and checks the encoding first", () => {
+    for (const [string, encoding] of [
+      ["", "utf8"],
+      ["", "hex"],
+      ["zz", "hex"],
+      ["z", "hex"],
+      ["   ", "base64"],
+      ["====", "base64"],
+      [wide([0x7a, 0x7a]), "hex"],
+      [wide([0x20, 0x20, 0x20]), "base64url"],
+    ]) {
+      const buffer = Buffer.from(string, encoding);
+      expect({
+        string,
+        encoding,
+        isBuffer: buffer instanceof Buffer,
+        length: buffer.length,
+        byteOffset: buffer.byteOffset,
+        byteLength: buffer.buffer.byteLength,
+      }).toEqual({ string, encoding, isBuffer: true, length: 0, byteOffset: 0, byteLength: 0 });
+    }
+    expect(() => Buffer.from("", "not an encoding")).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    expect(() => Buffer.from("abc", "not an encoding")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+  });
+});

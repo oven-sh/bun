@@ -48,9 +48,11 @@
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/MathExtras.h>
+#include <wtf/SIMDUTF.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/WTFString.h>
 #include <JavaScriptCore/BuiltinNames.h>
 
@@ -582,6 +584,54 @@ static JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObj
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
+// Above this size, the copy that the first `.buffer` read makes costs more than the ArrayBuffer it avoids.
+static constexpr size_t inPlaceLimit = 128;
+static_assert(inPlaceLimit <= JSC::JSArrayBufferView::fastSizeLimit);
+
+static JSC::JSUint8Array* createUninitializedBufferForShortString(JSGlobalObject* lexicalGlobalObject, size_t byteLength)
+{
+    if (byteLength <= inPlaceLimit)
+        return createUninitializedBuffer(lexicalGlobalObject, byteLength);
+
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+    auto arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
+    if (!arrayBuffer) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return nullptr;
+    }
+    RELEASE_AND_RETURN(scope, createBuffer(lexicalGlobalObject, arrayBuffer.releaseNonNull()));
+}
+
+// For a string with a char above U+007F. That char is 2 bytes of UTF-8.
+static JSC::JSUint8Array* constructShortLatin1AsUTF8(JSGlobalObject* lexicalGlobalObject, std::span<const Latin1Character> span)
+{
+    ASSERT(span.size() <= inPlaceLimit);
+    const auto* latin1 = reinterpret_cast<const char*>(span.data());
+    size_t byteLength = simdutf::utf8_length_from_latin1(latin1, span.size());
+    auto* buffer = createUninitializedBufferForShortString(lexicalGlobalObject, byteLength);
+    if (buffer) [[likely]] {
+        size_t written = simdutf::convert_latin1_to_utf8(latin1, span.size(), reinterpret_cast<char*>(buffer->typedVector()));
+        ASSERT_UNUSED(written, written == byteLength);
+    }
+    return buffer;
+}
+
+// Out of line: the stack array would give constructFromEncoding a stack protector check on macOS.
+static NEVER_INLINE JSC::JSUint8Array* constructShortUTF16AsUTF8(JSGlobalObject* lexicalGlobalObject, std::span<const char16_t> span)
+{
+    ASSERT(span.size() <= inPlaceLimit);
+    // A UTF-16 code unit is at most 3 bytes of UTF-8.
+    std::array<char, inPlaceLimit * 3> bytes;
+    auto result = simdutf::convert_utf16le_to_utf8_with_errors(span.data(), span.size(), bytes.data());
+    size_t written = result.count;
+    if (result.error) [[unlikely]] // A lone surrogate. It becomes U+FFFD.
+        written = simdutf::convert_utf16le_to_utf8_with_replacement(span.data(), span.size(), bytes.data());
+    auto* buffer = createUninitializedBufferForShortString(lexicalGlobalObject, written);
+    if (buffer && written) [[likely]]
+        memcpy(buffer->typedVector(), bytes.data(), written);
+    return buffer;
+}
+
 JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, WTF::StringView view, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -593,13 +643,34 @@ JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, W
         const auto span = view.span8();
 
         switch (encoding) {
-        case WebCore::BufferEncodingType::utf8:
+        case WebCore::BufferEncodingType::utf8: {
+            if (span.size() <= inPlaceLimit) {
+                // ASCII is UTF-8 as it is.
+                if (charactersAreAllASCII(span))
+                    result = JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size()));
+                else
+                    result = JSValue::encode(constructShortLatin1AsUTF8(lexicalGlobalObject, span));
+                break;
+            }
+            result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
+            break;
+        }
         case WebCore::BufferEncodingType::ucs2:
-        case WebCore::BufferEncodingType::utf16le:
+        case WebCore::BufferEncodingType::utf16le: {
+            size_t byteLength = span.size() * 2;
+            if (byteLength <= inPlaceLimit) {
+                auto* buffer = createUninitializedBuffer(lexicalGlobalObject, byteLength);
+                RETURN_IF_EXCEPTION(scope, {});
+                size_t written = Bun__encoding__writeLatin1(span.data(), span.size(), buffer->typedVector(), byteLength, static_cast<uint8_t>(WebCore::BufferEncodingType::utf16le));
+                ASSERT_UNUSED(written, written == byteLength);
+                result = JSValue::encode(buffer);
+                break;
+            }
+            [[fallthrough]];
+        }
         case WebCore::BufferEncodingType::base64:
         case WebCore::BufferEncodingType::base64url:
         case WebCore::BufferEncodingType::hex: {
-
             result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
             break;
         }
@@ -616,12 +687,29 @@ JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, W
     } else {
         const auto span = view.span16();
         switch (encoding) {
-        case WebCore::BufferEncodingType::utf8:
-        case WebCore::BufferEncodingType::base64:
-        case WebCore::BufferEncodingType::base64url:
-        case WebCore::BufferEncodingType::hex:
+        case WebCore::BufferEncodingType::utf8: {
+            if (span.size() <= inPlaceLimit) {
+                result = JSValue::encode(constructShortUTF16AsUTF8(lexicalGlobalObject, span));
+                break;
+            }
+            result = Bun__encoding__constructFromUTF16(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
+            break;
+        }
         case WebCore::BufferEncodingType::ascii:
         case WebCore::BufferEncodingType::latin1: {
+            if (span.size() <= inPlaceLimit) {
+                auto* buffer = createUninitializedBuffer(lexicalGlobalObject, span.size());
+                RETURN_IF_EXCEPTION(scope, {});
+                size_t written = Bun__encoding__writeUTF16(span.data(), span.size(), buffer->typedVector(), span.size(), static_cast<uint8_t>(WebCore::BufferEncodingType::latin1));
+                ASSERT_UNUSED(written, written == span.size());
+                result = JSValue::encode(buffer);
+                break;
+            }
+            [[fallthrough]];
+        }
+        case WebCore::BufferEncodingType::base64:
+        case WebCore::BufferEncodingType::base64url:
+        case WebCore::BufferEncodingType::hex: {
             result = Bun__encoding__constructFromUTF16(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
             break;
         }

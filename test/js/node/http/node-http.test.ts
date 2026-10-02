@@ -3447,7 +3447,9 @@ describe.concurrent.each(["tcp", "tls"])(
       "body-to-come": { queued: true, events: thrown("request"), response: "", closed: true },
     };
 
-    test.each(Object.keys(expected))(
+    // Windows takes the whole raw write of a plain TCP socket at once, so the first request is
+    // not queued there. Over TLS it is queued, so that transport covers Windows.
+    test.skipIf(isWindows && transport === "tcp").each(Object.keys(expected))(
       "%s",
       async mode => {
         await using proc = Bun.spawn({

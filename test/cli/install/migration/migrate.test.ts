@@ -1689,6 +1689,82 @@ describe("package-lock.json migration fixes", () => {
     expect(storeEntries(project.dir)).toStrictEqual(linker === "isolated" ? [project.o.replaceAll(/[/:]/g, "+")] : []);
   });
 
+  // A file: path written in an out-of-tree file: package's own package.json is trusted like a
+  // root dependency, the same as a fresh `bun install` does, even when it leaves the project.
+  test.concurrent("a file: dependency declared by an out-of-tree file: package migrates", async () => {
+    const dependencies = { plugin: "file:../packages/plugin" };
+    using copy = tempDir("npm-migrate-folder-declares-file-dep", {
+      "root/package.json": JSON.stringify({ name: "root", dependencies }),
+      "root/package-lock.json": npmLock("root", {
+        "": { name: "root", dependencies },
+        "../packages/plugin": { version: "1.0.0", dependencies: { "shared-lib": "file:../shared-lib" } },
+        "../packages/plugin/node_modules/shared-lib": { resolved: "../packages/shared-lib", link: true },
+        "../packages/shared-lib": { version: "1.0.0" },
+        "node_modules/plugin": { resolved: "../packages/plugin", link: true },
+      }),
+      "packages/plugin/package.json": JSON.stringify({
+        name: "plugin",
+        version: "1.0.0",
+        dependencies: { "shared-lib": "file:../shared-lib" },
+      }),
+      "packages/shared-lib/package.json": JSON.stringify({ name: "shared-lib", version: "1.0.0" }),
+    });
+    const dir = join(String(copy), "root");
+    writeExtra(dir, {});
+
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).not.toContain("outside the project");
+    expect(exitCode).toBe(0);
+    expect(lock.packages).toStrictEqual({
+      plugin: ["plugin@file:../packages/plugin", { dependencies: { "shared-lib": "file:../shared-lib" } }],
+      "plugin/shared-lib": ["shared-lib@file:../packages/shared-lib", {}],
+    });
+    await frozen(dir);
+
+    // The same lockfile a fresh `bun install` writes, and the installer links the nested package.
+    const install = await run(dir, "install", "--frozen-lockfile");
+    expect(install.stderr).not.toContain("error");
+    expect(install.exitCode).toBe(0);
+    expect(
+      await Bun.file(join(dir, "node_modules", "plugin", "node_modules", "shared-lib", "package.json")).json(),
+    ).toHaveProperty("name", "shared-lib");
+  });
+
+  // A folder that a registry package ships inside itself is a `Folder` entry too, but the registry
+  // package declared it, so a `file:` path in its package.json that leaves the project is still skipped.
+  test.concurrent("a file: dependency declared by a registry package's own folder is still skipped", async () => {
+    const dependencies = { evil: "1.0.0" };
+    using copy = tempDir("npm-migrate-registry-folder-declares-file-dep", {
+      "root/package.json": JSON.stringify({ name: "root", dependencies }),
+      "root/package-lock.json": npmLock("root", {
+        "": { name: "root", dependencies },
+        "node_modules/evil": {
+          version: "1.0.0",
+          resolved: `${OFFLINE_REGISTRY}evil/-/evil-1.0.0.tgz`,
+          dependencies: { inner: "file:./inner" },
+        },
+        "node_modules/evil/node_modules/inner": { resolved: "node_modules/evil/inner", link: true },
+        "node_modules/evil/inner": { version: "1.0.0", dependencies: { loot: "file:../../../../secret" } },
+        "node_modules/evil/inner/node_modules/loot": { resolved: "../secret", link: true },
+        "../secret": { version: "1.0.0" },
+      }),
+      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+      "secret/credentials.txt": "do-not-link-me",
+    });
+    const dir = join(String(copy), "root");
+    writeExtra(dir, {});
+
+    const { stderr, exitCode, text, lock } = await migrate(dir);
+    expect(stderr).toContain(
+      'skipped "loot" from package-lock.json: transitive folder dependency "../secret" is outside the project',
+    );
+    expect(exitCode).toBe(0);
+    expect(Object.keys(lock.packages).sort()).toStrictEqual(["evil", "evil/inner"]);
+    expect(lock.packages["evil/inner"]).toStrictEqual(["inner@file:node_modules/evil/inner", {}]);
+    expect(text).not.toContain("../secret");
+    expect(text).not.toContain("loot");
+  });
+
   test.concurrent("lockfileVersion 5 is refused, and install falls back to a fresh resolve", async () => {
     using dir = synthetic("npm-migrate-v5", {
       "package.json": JSON.stringify({ name: "v5", dependencies: { "dep-1": "file:dep-1" } }),

@@ -721,7 +721,7 @@ describe("fs.watch", () => {
       const root = fs.realpathSync(String(dir));
       // The de-privileged child must be able to traverse into `root`, read it,
       // and write inside `open/`, while `locked/` denies read so
-      // inotify_add_watch on it returns EACCES. CI's runner.node.mjs points
+      // inotify_add_watch on it returns EACCES. CI's runner.node.ts points
       // TMPDIR at a mode-0700 mkdtemp dir, so every ancestor of `root` needs
       // +x for uid 65534 or the child fails at path resolution on the root
       // itself before the recursive walk ever reaches `locked/`.

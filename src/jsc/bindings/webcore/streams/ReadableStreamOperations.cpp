@@ -1047,7 +1047,7 @@ JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStr
     return result;
 }
 
-static EncodedJSValue textDecodeCancelDeferred(JSGlobalObject* globalObject, JSValue reason, InternalFieldTuple* context)
+static void textDecodeCancelDeferred(JSGlobalObject* globalObject, JSValue reason, InternalFieldTuple* context)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1055,13 +1055,11 @@ static EncodedJSValue textDecodeCancelDeferred(JSGlobalObject* globalObject, JSV
     JSValue cancelResult = jsUndefined();
     if (auto* stream = reader->m_stream.get()) {
         cancelResult = readableStreamCancelPutOff(globalObject, stream, reason);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, void());
         readableStreamDefaultReaderRelease(globalObject, reader);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, void());
     }
-    resolvePromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), cancelResult);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
+    RELEASE_AND_RETURN(scope, resolvePromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), cancelResult));
 }
 
 void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
@@ -1179,15 +1177,13 @@ JSPromise* defaultTeeCancelAlgorithm(JSGlobalObject* globalObject, JSStreamTeeSt
     return teeState->cancelPromise();
 }
 
-static EncodedJSValue teeCancelDeferred(JSGlobalObject* globalObject, JSValue compositeReason, JSStreamTeeState* teeState)
+static void teeCancelDeferred(JSGlobalObject* globalObject, JSValue compositeReason, JSStreamTeeState* teeState)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* cancelResult = readableStreamCancelPutOff(globalObject, teeState->stream(), compositeReason);
-    RETURN_IF_EXCEPTION(scope, {});
-    resolvePromise(globalObject, teeState->cancelPromise(), cancelResult);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, resolvePromise(globalObject, teeState->cancelPromise(), cancelResult));
 }
 
 // Spec chunk steps 3.2 (an abrupt cloneResult): error both branches and cancel the source.
@@ -1623,12 +1619,14 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onByteTeeReaderClosedRejected, (JSG
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTextDecodeCancelDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return Streams::textDecodeCancelDeferred(globalObject, callFrame->argument(0), uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1)));
+    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1));
+    return Streams::enterStreams(globalObject, [&] { Streams::textDecodeCancelDeferred(globalObject, callFrame->argument(0), context); }, [&](JSValue error) { Streams::rejectPromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTeeCancelDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return Streams::teeCancelDeferred(globalObject, callFrame->argument(0), uncheckedDowncast<JSStreamTeeState>(callFrame->argument(1)));
+    auto* teeState = uncheckedDowncast<JSStreamTeeState>(callFrame->argument(1));
+    return Streams::enterStreams(globalObject, [&] { Streams::teeCancelDeferred(globalObject, callFrame->argument(0), teeState); }, [&](JSValue error) { Streams::rejectPromise(globalObject, teeState->cancelPromise(), error); });
 }
 
 } // namespace WebCore

@@ -419,14 +419,6 @@ impl Linker {
                             import_record.path =
                                 PFs::Path::init(&import_record.path.text[b"bun:".len()..]);
                             import_record.path.namespace = b"bun";
-
-                            // don't link bun
-                            continue;
-                        }
-
-                        // Resolve dynamic imports lazily for perf
-                        if import_record.kind == ImportKind::Dynamic {
-                            continue;
                         }
                     }
                 }

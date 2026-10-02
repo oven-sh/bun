@@ -5275,9 +5275,11 @@ impl VirtualMachine {
             }
         }
 
-        let specifier_utf8 = specifier.to_utf8();
+        let mut specifier = specifier;
+        let mut specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
+        let answer: bun_core::String;
         if jsc_vm.has_plugins {
             use bun_bundler::transpiler::PluginRunner;
             let spec = specifier_utf8.slice();
@@ -5288,14 +5290,21 @@ impl VirtualMachine {
                 } else {
                     &spec[namespace.len() + 1..]
                 };
-                if let Some(resolved_path) = plugin_runner_on_resolve_jsc(
+                match plugin_runner_on_resolve_jsc(
                     global,
                     &bun_core::String::from_bytes(namespace),
                     &bun_core::String::borrow_utf8(after_namespace),
                     source,
                     crate::BunPluginTarget::Bun,
                 )? {
-                    return Ok(resolved_path);
+                    None => {}
+                    Some(OnResolveAnswer::Specifier(path)) => {
+                        answer = path;
+                        specifier = &answer;
+                        specifier_utf8 = specifier.to_utf8();
+                    }
+                    Some(OnResolveAnswer::Key(key)) => return Ok(Ok(key)),
+                    Some(OnResolveAnswer::Invalid(error)) => return Ok(Err(error)),
                 }
             }
         }
@@ -7602,6 +7611,14 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
+pub(crate) enum OnResolveAnswer {
+    /// In the `file` namespace: what the resolver is asked instead, from the same importer.
+    Specifier(bun_core::String),
+    /// `namespace:path`.
+    Key(bun_core::String),
+    Invalid(JSValue),
+}
+
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
@@ -7609,7 +7626,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     specifier: &bun_core::String,
     importer: &bun_core::String,
     target: crate::BunPluginTarget,
-) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
+) -> JsResult<Option<OnResolveAnswer>> {
     let empty = bun_core::String::EMPTY;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         if namespace.length() > 0 && !namespace.eq_ascii(b"file") {
@@ -7634,32 +7651,38 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         return Ok(None);
     }
     if !path_value.is_string() {
-        return Ok(Some(Err(global.create_error_instance(format_args!(
-            "Expected \"path\" to be a string in onResolve plugin"
-        )))));
+        return Ok(Some(OnResolveAnswer::Invalid(
+            global.create_error_instance(format_args!(
+                "Expected \"path\" to be a string in onResolve plugin"
+            )),
+        )));
     }
 
     let file_path = path_value.to_bun_string(global)?;
 
     if file_path.length() == 0 {
-        return Ok(Some(Err(global.create_error_instance(format_args!(
-            "Expected \"path\" to be a non-empty string in onResolve plugin"
-        )))));
+        return Ok(Some(OnResolveAnswer::Invalid(
+            global.create_error_instance(format_args!(
+                "Expected \"path\" to be a non-empty string in onResolve plugin"
+            )),
+        )));
     } else if file_path.eq_ascii(b".")
         || file_path.eq_ascii(b"..")
         || file_path.eq_ascii(b"...")
         || file_path.eq_ascii(b" ")
     {
-        return Ok(Some(Err(global.create_error_instance(format_args!(
-            "\"path\" is invalid in onResolve plugin"
-        )))));
+        return Ok(Some(OnResolveAnswer::Invalid(
+            global.create_error_instance(format_args!("\"path\" is invalid in onResolve plugin")),
+        )));
     }
     let user_namespace: bun_core::String = 'brk: {
         if let Some(namespace_value) = on_resolve_plugin.get(global, b"namespace")? {
             if !namespace_value.is_string() {
-                return Ok(Some(Err(global.create_error_instance(format_args!(
-                    "Expected \"namespace\" to be a string"
-                )))));
+                return Ok(Some(OnResolveAnswer::Invalid(
+                    global.create_error_instance(format_args!(
+                        "Expected \"namespace\" to be a string"
+                    )),
+                )));
             }
 
             let namespace_str = namespace_value.to_bun_string(global)?;
@@ -7680,17 +7703,13 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         break 'brk bun_core::String::static_("file");
     };
 
-    // A `file`-namespace result (the default) is a filesystem path, not a new
-    // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
-    // form the module loader dispatches on.
     if user_namespace.eq_ascii(b"file") {
-        return Ok(Some(Ok(file_path)));
+        return Ok(Some(OnResolveAnswer::Specifier(file_path)));
     }
 
-    Ok(Some(Ok(bun_core::String::create_format(format_args!(
-        "{}:{}",
-        user_namespace, file_path
-    )))))
+    Ok(Some(OnResolveAnswer::Key(bun_core::String::create_format(
+        format_args!("{}:{}", user_namespace, file_path),
+    ))))
 }
 
 /// See [`VirtualMachine::enter_context`].

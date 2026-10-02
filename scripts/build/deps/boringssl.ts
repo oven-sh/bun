@@ -24,7 +24,7 @@ import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f";
+export const BORINGSSL_COMMIT = "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -36,11 +36,8 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
-  // Path building matches candidate issuers without the keyCertSign check
-  // (OpenSSL 3 semantics), so a self-signed server certificate pinned via
-  // NODE_EXTRA_CA_CERTS or `tls.ca` anchors its own chain even when its
-  // keyUsage lacks keyCertSign. The check moves to each issuer edge in
-  // internal_verify.
+  // Carried until the same change lands in oven-sh/boringssl and the pin
+  // moves past it. workarounds.ts trips at the next pin bump.
   patches: ["patches/boringssl/self-signed-anchor-without-keycertsign.patch"],
 
   build: cfg => {

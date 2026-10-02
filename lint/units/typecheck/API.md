@@ -2350,7 +2350,7 @@ NOT compiled by cargo when this was written: it does not reach the file while a 
 
 ### Verified
 
-- `sh round2-layer7-checker/c30-probe.sh` on the tree of `fdf519158d`: exit 0, "probe ok". It runs `rustc` and
+- `sh round2-layer7-checker/c30-probe.sh` on the trees of `fdf519158d` and `205dd25e8a`: exit 0, "probe ok". It runs `rustc` and
   `clippy-driver` alone, no cargo. (1) One crate holds the real `c30_type_keys.rs` and `checker/types.rs`, the real
   `core/golang.rs`, the flag and id files of `ast/` and the collections that `types.rs` names, and a stand-in for every
   other name whose signature the generator reads from the file of the tree that defines it (`Ast::sym`, `parent`,

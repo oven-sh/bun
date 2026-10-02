@@ -901,8 +901,8 @@ impl PackageManager {
         self.process_env.get_tls_reject_unauthorized()
     }
 
-    /// After a failed download or git command: names, once, the settings that only `.env*` has.
-    pub(crate) fn note_dotenv_only_vars(&self, kind: ProcessOnlyEnv) {
+    /// After a failed request or git command: names, once, the settings that only `.env*` has.
+    pub fn note_dotenv_only_vars(&self, kind: ProcessOnlyEnv) {
         static NOTED: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
         if NOTED[kind as usize].swap(true, Ordering::Relaxed) {
             return;
@@ -920,7 +920,8 @@ impl PackageManager {
             return;
         }
         bun_core::note!(
-            "bun install reads <b>{}<r> from the environment only, not from .env files.",
+            "bun {} reads <b>{}<r> from the environment only, not from .env files.",
+            <&'static str>::from(self.subcommand),
             bstr::BStr::new(&names),
         );
         Output::flush();
@@ -1358,7 +1359,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 
 /// The settings that `PackageManager::process_env` serves.
 #[derive(Clone, Copy)]
-pub(crate) enum ProcessOnlyEnv {
+pub enum ProcessOnlyEnv {
     Network,
     Git,
 }
@@ -1371,6 +1372,8 @@ impl ProcessOnlyEnv {
                 b"HTTP_PROXY",
                 b"https_proxy",
                 b"HTTPS_PROXY",
+                b"all_proxy",
+                b"ALL_PROXY",
                 b"no_proxy",
                 b"NO_PROXY",
                 b"NODE_TLS_REJECT_UNAUTHORIZED",

@@ -185,20 +185,15 @@ function writeProject(root: string, dependencies: Record<string, string>): strin
   return project;
 }
 
-// An `undefined` value in `extraEnv` removes that variable from the install's environment.
-async function runInstall(
-  cwd: string,
-  cacheDir: string,
-  extraEnv: Record<string, string | undefined>,
-  ...args: string[]
-) {
+// Runs `bun <args>`. An `undefined` value in `extraEnv` removes that variable from its environment.
+async function runBun(cwd: string, cacheDir: string, extraEnv: Record<string, string | undefined>, ...args: string[]) {
   const env = { ...gitEnv, ...extraEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
   // Set on ASAN CI lanes; it arms a subreaper around internal git spawns that
   // SIGKILLs concurrent clone tasks (see #33982). This test exercises install
   // task bookkeeping, not orphan reaping.
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), ...args],
     cwd,
     env,
     stdout: "pipe",
@@ -206,6 +201,10 @@ async function runInstall(
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string | undefined>, ...args: string[]) {
+  return runBun(cwd, cacheDir, extraEnv, "install", ...args);
 }
 
 // What `bun install` printed, as lines: its version header, `+ <name>@<resolution>`
@@ -743,10 +742,36 @@ const noProxy = {
   HTTP_PROXY: undefined,
   https_proxy: undefined,
   HTTPS_PROXY: undefined,
+  all_proxy: undefined,
+  ALL_PROXY: undefined,
   no_proxy: undefined,
   NO_PROXY: undefined,
   NODE_TLS_REJECT_UNAUTHORIZED: undefined,
 };
+
+type SeenRequest = { path: string; auth: string | null };
+
+// A registry with `leaf@1.0.0`. It records each request with the token it
+// carried. `registryUrl()` is the registry the manifest names: a forward proxy
+// receives the absolute URL and, here, answers for that registry itself.
+function serveLeaf(tarball: Uint8Array, seen: SeenRequest[], registryUrl: () => string) {
+  return Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      seen.push({ path: pathname, auth: req.headers.get("authorization") });
+      if (pathname !== "/leaf") return new Response(tarball);
+      return Response.json({
+        name: "leaf",
+        "dist-tags": { latest: "1.0.0" },
+        versions: {
+          "1.0.0": { name: "leaf", version: "1.0.0", dist: { tarball: `${registryUrl()}leaf/-/leaf-1.0.0.tgz` } },
+        },
+      });
+    },
+  });
+}
 
 // `<bun> <script> <args>` as git runs it: through `sh -c`. Forward slashes, so
 // that the sh of Git for Windows takes the paths too.
@@ -828,31 +853,11 @@ test.concurrent(
   "an HTTP_PROXY in the project's .env does not receive the requests or the registry token of the install",
   async () => {
     const tarball = await tarballOf("package", packageFiles("leaf", "leaf"));
-    type Seen = { path: string; auth: string | null };
     let registryUrl = "";
-    // Serves `leaf@1.0.0`, and records each request with the token it carried.
-    const serveLeaf = (seen: Seen[]) =>
-      Bun.serve({
-        port: 0,
-        hostname: "127.0.0.1",
-        fetch(req) {
-          const { pathname } = new URL(req.url);
-          seen.push({ path: pathname, auth: req.headers.get("authorization") });
-          if (pathname !== "/leaf") return new Response(tarball);
-          return Response.json({
-            name: "leaf",
-            "dist-tags": { latest: "1.0.0" },
-            versions: {
-              "1.0.0": { name: "leaf", version: "1.0.0", dist: { tarball: `${registryUrl}leaf/-/leaf-1.0.0.tgz` } },
-            },
-          });
-        },
-      });
-    const direct: Seen[] = [];
-    const proxied: Seen[] = [];
-    await using registry = serveLeaf(direct);
-    // A forward proxy receives the absolute URL; this one answers the request itself.
-    await using proxy = serveLeaf(proxied);
+    const direct: SeenRequest[] = [];
+    const proxied: SeenRequest[] = [];
+    await using registry = serveLeaf(tarball, direct, () => registryUrl);
+    await using proxy = serveLeaf(tarball, proxied, () => registryUrl);
     registryUrl = `http://127.0.0.1:${registry.port}/`;
     const proxyUrl = `http://127.0.0.1:${proxy.port}`;
 
@@ -936,6 +941,83 @@ test.concurrent(
     expect(downloads).toEqual(["/leaf.tgz"]);
     expectInstalled(fromRealEnv.stdout, { leaf: leafUrl });
     expect(fromRealEnv.exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// `bun info`, `bun pm view`, `bun pm diff` and `bun audit` send their requests
+// with the proxy and TLS settings of `bun install`. Here the registry closes
+// every connection, and only the project's `.env` names a proxy that answers for
+// it: each command fails without a request to that proxy, and says which
+// variable it did not take from `.env`.
+test.concurrent(
+  "a command that fails without the ALL_PROXY of the project's .env names the variable",
+  async () => {
+    const tarball = await tarballOf("package", packageFiles("leaf", "leaf"));
+    let closed = 0;
+    using down = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          closed++;
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    const registryUrl = `http://127.0.0.1:${down.port}/`;
+    const proxied: SeenRequest[] = [];
+    await using proxy = serveLeaf(tarball, proxied, () => registryUrl);
+
+    const manifest = JSON.stringify({ name: "project", version: "1.0.0", dependencies: { leaf: "1.0.0" } });
+    const dotenv = `ALL_PROXY=http://127.0.0.1:${proxy.port}\n`;
+    using dir = tempDir("registry-down-dotenv-proxy", {
+      "project/package.json": manifest,
+      "project/.env": dotenv,
+      // `bun audit` reads the lockfile.
+      "locked/package.json": manifest,
+      "locked/.env": dotenv,
+      "locked/bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "project", dependencies: { leaf: "1.0.0" } } },
+        packages: { leaf: ["leaf@1.0.0", "", {}, ""] },
+      }),
+    });
+    const root = String(dir);
+
+    const commands = [
+      { cwd: "project", args: ["install", "--ignore-scripts"] },
+      { cwd: "project", args: ["info", "leaf"] },
+      { cwd: "project", args: ["pm", "view", "leaf"] },
+      { cwd: "project", args: ["pm", "diff", "leaf@1.0.0", "1.0.0"] },
+      { cwd: "locked", args: ["audit"] },
+    ];
+    const results = await Promise.all(
+      commands.map(async ({ cwd, args }, i) => {
+        const { stderr, exitCode } = await runBun(
+          join(root, cwd),
+          join(root, `cache-${i}`),
+          { ...noProxy, BUN_CONFIG_REGISTRY: registryUrl },
+          ...args,
+        );
+        return { command: args.join(" "), note: /^note: .*$/m.exec(stderr)?.[0] ?? null, exitCode };
+      }),
+    );
+    const noteFor = (subcommand: string) =>
+      `note: bun ${subcommand} reads ALL_PROXY from the environment only, not from .env files.`;
+    expect(results).toEqual([
+      { command: "install --ignore-scripts", note: noteFor("install"), exitCode: 1 },
+      { command: "info leaf", note: noteFor("info"), exitCode: 1 },
+      { command: "pm view leaf", note: noteFor("pm"), exitCode: 1 },
+      { command: "pm diff leaf@1.0.0 1.0.0", note: noteFor("pm"), exitCode: 1 },
+      { command: "audit", note: noteFor("audit"), exitCode: 1 },
+    ]);
+    expect({ proxied, registryClosedAConnection: closed > 0 }).toEqual({
+      proxied: [],
+      registryClosedAConnection: true,
+    });
   },
   30_000,
 );

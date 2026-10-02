@@ -314,8 +314,8 @@ pub use tarball_stream::TarballStream;
 // `package_manager_real` so `crate::PackageManager` and
 // `package_manager_real::PackageManager` are the SAME type.
 pub use package_manager_real::{
-    AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, RootPackageId,
-    Subcommand,
+    AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, ProcessOnlyEnv,
+    RootPackageId, Subcommand,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

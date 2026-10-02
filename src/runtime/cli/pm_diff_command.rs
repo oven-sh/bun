@@ -15,7 +15,7 @@ use bun_install::dependency;
 use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::npm::{self, PackageManifest};
-use bun_install::{PackageManager, resolution};
+use bun_install::{PackageManager, ProcessOnlyEnv, resolution};
 use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_semver as Semver;
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
@@ -903,6 +903,7 @@ fn registry_get(
         Err(err) => {
             Status::clear();
             Output::err(err, "GET {} failed", (BStr::new(&display_url),));
+            pm.note_dotenv_only_vars(ProcessOnlyEnv::Network);
             Global::exit(1);
         }
     };

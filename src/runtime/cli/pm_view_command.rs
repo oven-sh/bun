@@ -6,9 +6,9 @@ use bun_core::fmt as bun_fmt;
 use bun_core::strings;
 use bun_core::{Global, Output, prettyln};
 use bun_http as http;
-use bun_install::PackageManager;
 use bun_install::dependency;
 use bun_install::npm::{self, PackageManifest};
+use bun_install::{PackageManager, ProcessOnlyEnv};
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
@@ -136,6 +136,7 @@ pub(crate) fn view(
         Ok(r) => r,
         Err(err) => {
             Output::err(err, "view request failed to send", ());
+            manager.note_dotenv_only_vars(ProcessOnlyEnv::Network);
             Global::crash();
         }
     };

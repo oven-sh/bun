@@ -12,7 +12,9 @@ use bun_install::lockfile::reachable;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::package_manager_real::{ROOT_PACKAGE_JSON_PATH, install_with_manager};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{CommandLineArguments, LogLevel, PackageManager, PackageNameHash, Subcommand};
+use bun_install::{
+    CommandLineArguments, LogLevel, PackageManager, PackageNameHash, ProcessOnlyEnv, Subcommand,
+};
 use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
 use bun_url::URL;
@@ -764,7 +766,10 @@ fn send_audit_request(
             }
             SkipReason::NotJson
         }
-        Err(err) => SkipReason::Send(err.name()),
+        Err(err) => {
+            pm.note_dotenv_only_vars(ProcessOnlyEnv::Network);
+            SkipReason::Send(err.name())
+        }
     };
 
     if !registry.is_default {

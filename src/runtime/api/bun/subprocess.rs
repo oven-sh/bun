@@ -70,7 +70,10 @@ pub(crate) mod js {
         exitedPromise,
         onExitCallback,
         onDisconnectCallback,
-        ipcCallback
+        ipcCallback,
+        ipcWorker,
+        ipcInternalCallback,
+        ipcAckCallbacks
     );
 }
 
@@ -1473,6 +1476,10 @@ impl Subprocess<'_> {
 
         if !this_jsvalue.is_empty() {
             // The ipc callback is kept: a server/dgram handle still adopting at EOF is delivered afterwards, as in node.
+            js::ipc_worker_set_cached(this_jsvalue, global_this, JSValue::ZERO);
+            js::ipc_internal_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
+            js::ipc_ack_callbacks_set_cached(this_jsvalue, global_this, JSValue::ZERO);
+
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) =
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)

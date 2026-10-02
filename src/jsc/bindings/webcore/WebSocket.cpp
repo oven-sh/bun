@@ -1874,3 +1874,19 @@ extern "C" void WebSocket__setProtocol(WebCore::WebSocket* webSocket, BunString 
 {
     webSocket->setProtocol(protocol.transferToWTFString());
 }
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::sendFrame(WebCore::JSBlob* blob, Opcode opcode)
+{
+    auto encoded = JSC::JSValue::encode(blob);
+    return sendFrame(std::span { static_cast<const uint8_t*>(Blob__getDataPtr(encoded)), Blob__getSize(encoded) }, opcode);
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::didNotSendFrame(size_t payloadSize)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    // No exception is raised if the connection was once established but has subsequently been closed.
+    m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+    m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+    return {};
+}

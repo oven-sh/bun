@@ -216,6 +216,58 @@ pub(super) fn blob_payload<'a>(
     Ok(Some(blob.shared_view()))
 }
 
+/// `(socket, data, binary, compress)`: the frame entry of the built-in `ws` module, which binds it with
+/// `$newRustFunction`. `send()` takes the frame type from the JS type of `data`; npm ws takes it from
+/// `options.binary`, so here the caller names it.
+///
+/// Returns `false` for a frame that uWS dropped, which the caller sends again on `drain`, and `true` for one
+/// that uWS wrote or buffered. An empty payload is not a drop, which `send()`'s byte count cannot tell apart.
+/// Returns `undefined` for a `data` that is not a string, an ArrayBuffer, a view or a Blob.
+#[bun_jsc::host_fn]
+pub(crate) fn js_send_frame(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [socket, data, binary, compress_value] = callframe.arguments_as_array::<4>();
+    let Some(this) = socket.as_class_ref::<ServerWebSocket>() else {
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a ServerWebSocket")));
+    };
+
+    if this.is_closed() {
+        return Ok(JSValue::FALSE);
+    }
+
+    let compress = ServerWebSocket::parse_compress_arg(
+        global_this,
+        "send",
+        compress_value,
+        callframe.arguments_count() as usize,
+    )?;
+    // The `ws` module passes a boolean.
+    let opcode = if binary == JSValue::TRUE {
+        Opcode::Binary
+    } else {
+        Opcode::Text
+    };
+
+    let status = if data.is_string_literal() {
+        let view = data.to_js_string_view(global_this)?;
+        let utf8 = view.to_utf8();
+        this.websocket().send(utf8.slice(), opcode, compress, true)
+    } else if let Some(buffer) = data.as_array_buffer(global_this) {
+        this.websocket()
+            .send(buffer.slice(), opcode, compress, true)
+    } else if let Some(slice) = blob_payload(global_this, "send", data)? {
+        let status = this.websocket().send(slice, opcode, compress, true);
+        data.ensure_still_alive();
+        status
+    } else {
+        return Ok(JSValue::UNDEFINED);
+    };
+
+    Ok(JSValue::js_boolean(!matches!(status, SendStatus::Dropped)))
+}
+
 /// Handler state a `publish*` method reads once up front (`publish_ctx`).
 #[derive(Clone, Copy)]
 struct PublishCtx {

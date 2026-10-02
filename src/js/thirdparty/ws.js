@@ -121,21 +121,34 @@ function emitWarning(type, message) {
   console.warn("[bun] Warning:", message);
 }
 
-// TODO: add private method on WebSocket to avoid these allocations
-function normalizeData(data, opts) {
-  const isBinary = opts?.binary;
+// The frame entries of the two native sockets: (socket, data, binary) and (socket, data, binary, compress).
+// The public send() of each takes the frame type from the JS type of `data`. These take it from the caller, and
+// return undefined for a `data` that is not a string, bytes or a Blob.
+const sendClientFrame = $newCppFunction("JSWebSocket.cpp", "jsWebSocketSendFrame", 3);
+const sendServerFrame = $newRustFunction("ServerWebSocket.rs", "jsSendFrame", 4);
 
-  if (typeof data === "number") {
-    data = data.toString();
-  }
+const propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 
-  if (isBinary === true && typeof data === "string") {
-    data = Buffer.from(data);
-  } else if (isBinary === false && $isTypedArrayView(data)) {
-    data = new Buffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8");
-  }
+// npm ws: `{ binary: typeof data !== "string", ...options }.binary ? 2 : 1`. The spread copies own properties, so
+// an inherited `binary` does not count, and an own `binary: undefined` is a text frame.
+// https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L465-L471
+// Not as npm ws: an own `binary` that is not enumerable counts here. To leave it out takes a call of
+// propertyIsEnumerable() for each frame whose `binary` differs from what the type of the data gives.
+function isBinaryFrame(data, opts) {
+  const byType = typeof data !== "string";
+  if (!$isObject(opts) || !("binary" in opts)) return byType;
+  const binary = $getByIdDirect(opts, "binary");
+  if (binary !== undefined) return !!binary;
+  // An own `binary: undefined`, or a `binary` that `opts` only inherits.
+  return byType && !propertyIsEnumerable.$call(opts, "binary");
+}
 
-  return data;
+// What npm ws frames for a value that is not a string, bytes or a Blob: no bytes for a falsy value
+// (`data || EMPTY_BUFFER`), Buffer.from(data) for any other. Buffer.from() throws for a value that has no bytes,
+// and send() throws that error, as in npm ws.
+// https://github.com/websockets/ws/blob/8.18.3/lib/buffer-util.js#L87-L105
+function toFramePayload(data) {
+  return data ? Buffer.from(data) : Buffer.alloc(0);
 }
 
 // npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
@@ -504,13 +517,20 @@ class BunWebSocket extends EventEmitter {
       opts = undefined;
     }
 
+    if (typeof data === "number") data = data.toString();
+    this.#frame(data, isBinaryFrame(data, opts), cb);
+  }
+
+  #frame(data, binary, cb) {
+    let framed;
     try {
-      this.#ws.send(normalizeData(data, opts), opts?.compress);
+      framed = sendClientFrame(this.#ws, data, binary);
     } catch (error) {
       // Node.js APIs expect callback arguments to be called after the current stack pops
       if (typeof cb === "function") process.nextTick(cb, error);
       return;
     }
+    if (framed === undefined) return this.#frame(toFramePayload(data), binary, cb);
     // deviation: this should be called once the data is written, not immediately
     // Node.js APIs expect callback arguments to be called after the current stack pops
     if (typeof cb === "function") process.nextTick(cb, null);
@@ -1077,17 +1097,17 @@ class BunWebSocketMocked extends EventEmitter {
   #drain(ws) {
     let chunk;
     while ((chunk = this.#enquedMessages[0]) && this.#state === 1) {
-      const [data, compress, cb] = chunk;
-      const written = ws.send(data, compress);
-      if (written < 1) {
-        // backpressure wait until next drain event
-        return;
-      }
+      const [data, compress, cb, binary] = chunk;
+      const taken = sendServerFrame(ws, data, binary, compress);
+      // dropped again: wait for the next drain event
+      if (taken === false) return;
 
-      this.#bufferedAmount -= chunk.length;
+      this.#bufferedAmount -= data.length;
       this.#enquedMessages.shift();
 
-      if (typeof cb === "function") queueMicrotask(cb);
+      // Only a send() before the socket opened queues a value that is not a string, bytes or a Blob.
+      if (taken === undefined) this.#frame(toFramePayload(data), binary, compress, cb);
+      else if (typeof cb === "function") queueMicrotask(cb);
     }
   }
 
@@ -1145,28 +1165,26 @@ class BunWebSocketMocked extends EventEmitter {
       opts = undefined;
     }
 
-    if (this.#state === ReadyState_OPEN) {
-      const compress = opts?.compress;
-      data = normalizeData(data, opts);
-      // send returns:
-      // 1+ - The number of bytes sent is always the byte length of the data never less
-      // 0 - dropped due to backpressure (not sent)
-      // -1 - enqueue the data internaly
-      // we dont need to do anything with the return value here
-      const written = this.#ws.send(data, compress);
-      if (written === 0) {
-        // dropped
-        this.#enquedMessages.push([data, compress, cb]);
-        this.#bufferedAmount += data.length;
+    if (typeof data === "number") data = data.toString();
+    this.#frame(data, isBinaryFrame(data, opts), opts?.compress, cb);
+  }
+
+  #frame(data, binary, compress, cb) {
+    const state = this.#state;
+    if (state === ReadyState_OPEN) {
+      const taken = sendServerFrame(this.#ws, data, binary, compress);
+      // Buffer.from() can run code of the caller that closes the socket, so the state is read again.
+      if (taken === undefined) return this.#frame(toFramePayload(data), binary, compress, cb);
+      if (taken) {
+        if (typeof cb === "function") process.nextTick(cb);
         return;
       }
-
-      if (typeof cb === "function") process.nextTick(cb);
-    } else if (this.#state === ReadyState_CONNECTING) {
-      // not connected yet
-      this.#enquedMessages.push([data, opts?.compress, cb]);
-      this.#bufferedAmount += data.length;
+    } else if (state !== ReadyState_CONNECTING) {
+      return;
     }
+    // Not open yet, or over the backpressure limit: #drain sends it.
+    this.#enquedMessages.push([data, compress, cb, binary]);
+    this.#bufferedAmount += data.length;
   }
 
   close(code, reason) {

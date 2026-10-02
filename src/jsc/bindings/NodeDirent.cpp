@@ -12,6 +12,7 @@
 #include "JavaScriptCore/ObjectInitializationScope.h"
 
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JSBuffer.h"
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Identifier.h>
@@ -327,7 +328,8 @@ extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Zig::GlobalObject*
     return JSValue::encode(globalobject->m_JSDirentClassStructure.constructor(globalobject));
 }
 
-extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString name, BunString path, JSString** previousPath)
+// Consumes `path`.
+static JSC::EncodedJSValue createDirentObject(Zig::GlobalObject* globalObject, int type, JSValue nameValue, BunString path, JSString** previousPath)
 {
     auto& vm = globalObject->vm();
 
@@ -358,15 +360,32 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
         }
     }
 
-    auto nameString = name.transferToWTFString();
-    auto nameValue = jsString(vm, WTF::move(nameString));
-    auto typeValue = jsNumber(type);
     object->putDirectOffset(vm, 0, nameValue);
     object->putDirectOffset(vm, 1, pathValue);
-    object->putDirectOffset(vm, 2, typeValue);
+    object->putDirectOffset(vm, 2, jsNumber(type));
     object->putDirectOffset(vm, 3, pathValue);
 
     return JSValue::encode(object);
+}
+
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString name, BunString path, JSString** previousPath)
+{
+    auto& vm = globalObject->vm();
+    auto nameString = name.transferToWTFString();
+    return createDirentObject(globalObject, type, jsString(vm, WTF::move(nameString)), path, previousPath);
+}
+
+// `name` is a Node Buffer holding the raw entry bytes; `path` is still a string.
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJSWithBufferName(Zig::GlobalObject* globalObject, int type, const uint8_t* nameBytes, size_t nameLen, BunString path, JSString** previousPath)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* nameValue = WebCore::createBuffer(globalObject, nameBytes, nameLen);
+    if (scope.exception()) [[unlikely]] {
+        path.deref();
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, createDirentObject(globalObject, type, nameValue, path, previousPath));
 }
 
 const ClassInfo JSDirentPrototype::s_info = { "Dirent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDirentPrototype) };

@@ -807,40 +807,55 @@ describe("conversions between color spaces", () => {
 // The CSS parser and printer take an arena. Bun.color reuses one mimalloc heap
 // per VM for it; creating and destroying a heap costs more than the conversion.
 describe.concurrent("mimalloc heaps", () => {
-  test("a string to css conversion does not create a heap per call", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          import { heapStats } from "bun:jsc";
-          const seqs = () => heapStats({ dump: true }).mimallocDump.heaps.map(h => h.seq);
-          // Heaps are numbered in creation order, and a live Bun.Transpiler owns one,
-          // so a new Transpiler shows how many heaps the process has created so far.
-          const keep = [];
-          const newestHeap = () => {
-            const before = new Set(seqs());
-            const transpiler = new Bun.Transpiler();
-            transpiler.transformSync("1");
-            keep.push(transpiler);
-            return Math.max(...seqs().filter(seq => !before.has(seq)));
-          };
-          Bun.color("red", "css");
-          const a = newestHeap();
-          // Nothing runs between these two, so the difference is what the probe itself creates.
-          const b = newestHeap();
-          for (let i = 0; i < 1000; i++) Bun.color("#ff8800", "css");
-          const c = newestHeap();
-          console.log(JSON.stringify({ observed: b > a, heapsPerThousandCalls: c - b - (b - a) }));
-        `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
+  // Heaps are numbered in creation order, and a live Bun.Transpiler owns one,
+  // so a new Transpiler shows how many heaps the process has created so far.
+  const probe = `
+    import { heapStats } from "bun:jsc";
+    const seqs = () => heapStats({ dump: true }).mimallocDump.heaps.map(h => h.seq);
+    const keep = [];
+    const newestHeap = () => {
+      const before = new Set(seqs());
+      const transpiler = new Bun.Transpiler();
+      transpiler.transformSync("1");
+      keep.push(transpiler);
+      return Math.max(...seqs().filter(seq => !before.has(seq)));
+    };
+    // Nothing runs between the first two probes, so their difference is what a probe creates.
+    const heapsCreatedBy = fn => {
+      const a = newestHeap();
+      const b = newestHeap();
+      if (!(b > a)) throw new Error("the probe did not see its own heap");
+      fn();
+      return newestHeap() - b - (b - a);
+    };
+    Bun.color("red", "css");
+    newestHeap();
+  `;
+
+  async function run(program: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", probe + program], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ observed: true, heapsPerThousandCalls: 0 });
-    expect(exitCode).toBe(0);
+    return { stderr, stdout: stdout.trim(), exitCode };
+  }
+
+  test("a string to css conversion does not create a heap per call", async () => {
+    const program = `
+      console.log(heapsCreatedBy(() => { for (let i = 0; i < 1000; i++) Bun.color("#ff8800", "css"); }));
+    `;
+    expect(await run(program)).toEqual({ stderr: "", stdout: "0", exitCode: 0 });
+  });
+
+  // An escaped token is copied into the arena and stays there after the call.
+  // put_back_scratch_arena keeps an arena that holds at most 64 KiB and recycles a fuller one.
+  test("the arena is kept after small tokens and recycled after a token over the limit", async () => {
+    const program = `
+      const small = "\\\\72 ed";
+      const large = "\\\\72 " + Buffer.alloc(256 * 1024, "a").toString();
+      const afterSmall = heapsCreatedBy(() => { for (let i = 0; i < 100; i++) Bun.color(small, "css"); });
+      const afterLarge = heapsCreatedBy(() => { for (let i = 0; i < 5; i++) Bun.color(large, "css"); });
+      console.log(JSON.stringify({ afterSmall, afterLarge }));
+    `;
+    expect(await run(program)).toEqual({ stderr: "", stdout: '{"afterSmall":0,"afterLarge":5}', exitCode: 0 });
   });
 
   test("a Worker that called Bun.color leaves no heap behind when it exits", async () => {

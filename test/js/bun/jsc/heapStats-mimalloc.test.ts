@@ -1,6 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, tempDir } from "harness";
+import { join } from "node:path";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -293,4 +294,105 @@ describe("heapStats() mimalloc integration", () => {
       expect(perRequest).toBeLessThan(20);
     },
   );
+});
+
+// RLIMIT_AS (`ulimit -v`, systemd `LimitAS=`) caps the address space a process may reserve, committed or not. At
+// startup bun reserves a mimalloc arena, the JSC structure heap and the JIT pool. Each had a fixed size (1 GiB, up to
+// 4 GiB, and 1 GiB on x64): under a limit of a couple of GiB the JIT pool did not fit and bun ran interpreter-only
+// with no message, and at some limits the structure heap did not fit either and bun aborted at startup. Not ASAN or
+// debug: the shadow memory and the unoptimized code do not fit these limits.
+describe.skipIf(!isLinux || isASAN || isDebug)("under an address-space limit (ulimit -v)", () => {
+  const jitScript = /* js */ `
+    import { numberOfDFGCompiles } from "bun:jsc";
+    function hot(n) { let s = 0; for (let i = 0; i < n; i++) s = (s + i * 7) % 1000003; return s; }
+    for (let i = 0; i < 30; i++) hot(10000);
+    // numberOfDFGCompiles() reports 1000000 for any function while the JIT tiers are unavailable.
+    process.stdout.write(JSON.stringify({ jit: numberOfDFGCompiles(hot) !== 1000000 }));
+  `;
+  // Allocates untouched 16 MB buffers until the address space runs out and reports how far it got.
+  const heapScript = /* js */ `
+    const buffers = [];
+    let mb = 0;
+    try {
+      for (;;) { buffers.push(new Uint8Array(16 << 20)); mb += 16; }
+    } catch (e) {
+      process.stdout.write(JSON.stringify({ error: e.constructor.name, mb }));
+    }
+  `;
+  // 200_000 objects with distinct shapes: each takes a Structure from the structure heap.
+  const structureScript = /* js */ `
+    const objects = [];
+    for (let i = 0; i < 200_000; i++) objects.push({ ["k" + i]: i });
+    process.stdout.write(JSON.stringify({ structures: objects.length }));
+  `;
+  // What a service does: it answers requests and keeps the work pool busy, and the stack of each thread counts
+  // against the limit.
+  const serviceScript = /* js */ `
+    import { numberOfDFGCompiles } from "bun:jsc";
+    import { pbkdf2 } from "node:crypto";
+    import { readFile } from "node:fs/promises";
+    import { promisify } from "node:util";
+    const server = Bun.serve({ port: 0, fetch: async request => new Response((await request.text()) + "!") });
+    let answered = 0;
+    for (let i = 0; i < 20; i++) {
+      const response = await fetch("http://127.0.0.1:" + server.port + "/", { method: "POST", body: "x" });
+      if ((await response.text()) === "x!") answered++;
+    }
+    await Promise.all(Array.from({ length: 32 }, (_, i) => promisify(pbkdf2)("pw" + i, "salt", 2000, 32, "sha256")));
+    await Promise.all(Array.from({ length: 32 }, () => readFile(import.meta.path)));
+    function hot(n) { let s = 0; for (let i = 0; i < n; i++) s = (s + i * 7) % 1000003; return s; }
+    for (let i = 0; i < 30; i++) hot(10000);
+    process.stdout.write(JSON.stringify({ answered, jit: numberOfDFGCompiles(hot) !== 1000000 }));
+    await server.stop(true);
+  `;
+
+  // Runs `bun ...args`, under `ulimit -v` when there is a limit.
+  async function run(limitMB: number | undefined, ...args: string[]) {
+    const cmd =
+      limitMB === undefined
+        ? [bunExe(), ...args]
+        : ["sh", "-c", `ulimit -v ${limitMB * 1024} && exec "$0" "$@"`, bunExe(), ...args];
+    await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+  // One object: a failure shows the crash banner or the allocation error on stderr beside the exit code.
+  const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+
+  test.concurrent("without a limit the JIT is available", async () => {
+    expect(await run(undefined, "-e", jitScript)).toEqual(ok(`{"jit":true}`));
+  });
+
+  test.concurrent.each([768, 1024, 1200, 1536, 2048, 2250])(
+    "ulimit -v %dM: bun starts and keeps the JIT",
+    async limitMB => {
+      expect(await run(limitMB, "-e", jitScript)).toEqual(ok(`{"jit":true}`));
+    },
+  );
+
+  // `bun -e` is a one-shot start: no concurrent JIT, one GC marker. A script file gets the threads of a service.
+  test.concurrent.each([512, 768])("ulimit -v %dM: a service in a file runs with the JIT", async limitMB => {
+    using dir = tempDir("address-space-limit", { "service.mjs": serviceScript });
+    expect(await run(limitMB, join(String(dir), "service.mjs"))).toEqual(ok(`{"answered":20,"jit":true}`));
+  });
+
+  // Below 512 MB the JIT pool and its compiler threads would take address space that the program needs.
+  test.concurrent("ulimit -v 384M: bun runs without the JIT", async () => {
+    expect(await run(384, "-e", jitScript)).toEqual(ok(`{"jit":false}`));
+  });
+
+  // The startup reservations have to leave room for the program: under 1.5 GB it gets a catchable out-of-memory
+  // error, and not before it has allocated a quarter of the limit (about 600 MB is what fits).
+  test.concurrent("ulimit -v 1536M: the reservations leave room for the heap", async () => {
+    const { stdout, stderr, exitCode, signalCode } = await run(1536, "-e", heapScript);
+    expect(stderr).toBe("");
+    const { error, mb } = JSON.parse(stdout);
+    expect(error).toBe("RangeError");
+    expect(mb).toBeGreaterThanOrEqual(384);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  test.concurrent("ulimit -v 512M: the structure heap still holds 200k shapes", async () => {
+    expect(await run(512, "-e", structureScript)).toEqual(ok(`{"structures":200000}`));
+  });
 });

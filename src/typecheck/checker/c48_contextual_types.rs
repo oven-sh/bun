@@ -499,8 +499,8 @@ impl<'a> Checker<'a> {
                     if iteration_return_type.is_nil() {
                         return TypeId::NIL;
                     }
-                    // The iteration return type goes on to the unwrapping of a Promise for AsyncGenerators
                     contextual_return_type = iteration_return_type;
+                    // falls through to unwrap Promise for AsyncGenerators
                 }
                 if function_flags.intersects(FunctionFlags::ASYNC) {
                     // Get the awaited type without the `Awaited<T>` alias

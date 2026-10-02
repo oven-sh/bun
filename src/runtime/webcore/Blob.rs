@@ -5150,6 +5150,17 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
                             "number",
                         ));
                     }
+                    // `to_int64` maps NaN to 0 and truncates a fraction, which would chmod to 000.
+                    if !mode_value.is_integer() {
+                        return Err(global_this.throw_range_error(
+                            mode_value.as_number(),
+                            jsc::RangeErrorOptions {
+                                field_name: b"mode",
+                                msg: b"an integer",
+                                ..Default::default()
+                            },
+                        ));
+                    }
                     let mode_int = mode_value.to_int64();
                     if mode_int < 0 || mode_int > 0o777 {
                         return Err(global_this.throw_range_error(

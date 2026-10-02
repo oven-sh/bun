@@ -1648,6 +1648,42 @@ describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
     expect(modeOf(dest)).toBe(0o000);
   });
 
+  // NaN and 0.5 used to convert to 0 and write the file with mode 000.
+  for (const [mode, reason] of [
+    [NaN, "It must be an integer"],
+    [0.5, "It must be an integer"],
+    [384.5, "It must be an integer"],
+    [Infinity, "It must be an integer"],
+    [-Infinity, "It must be an integer"],
+    [-1, "It must be >= 0 and <= 511"],
+    [0o1000, "It must be >= 0 and <= 511"],
+  ]) {
+    test(`rejects mode ${mode} and leaves the destination alone`, async () => {
+      using dir = tempDir("bun-write-mode", { "src.txt": "source", "existing.txt": "old" });
+      const existing = join(String(dir), "existing.txt");
+      const created = join(String(dir), "created.txt");
+      fs.chmodSync(existing, 0o644);
+
+      for (const make of [() => "hello", () => Bun.file(join(String(dir), "src.txt"))]) {
+        for (const dest of [existing, created]) {
+          // The async wrapper turns a synchronous throw into a rejection.
+          const write = async () => await Bun.write(dest, make(), { mode });
+          await expect(write()).rejects.toMatchObject({
+            name: "RangeError",
+            code: "ERR_OUT_OF_RANGE",
+            message: expect.stringContaining(reason),
+          });
+        }
+      }
+
+      expect(fs.existsSync(created)).toBe(false);
+      expect({ mode: modeOf(existing), content: fs.readFileSync(existing, "utf8") }).toEqual({
+        mode: 0o644,
+        content: "old",
+      });
+    });
+  }
+
   // 0o646's group/other write bits are cleared by a typical umask, so only a
   // post-open chmod can produce it. This is the path createPath recovery uses.
   test("mode is not masked by the umask when the parent directory is created", async () => {

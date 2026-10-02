@@ -209,10 +209,18 @@ private:
             h.name = base + (uintptr_t) h.name;
             h.value = base + (uintptr_t) h.value;
         }
-        us_quic_stream_send_headers((us_quic_stream_t *) this,
+        int r = us_quic_stream_send_headers((us_quic_stream_t *) this,
             d->hdrs.mutableSpan().data(), (unsigned) d->hdrs.size(), endStream);
         d->hdrBuf.shrink(0);
         d->hdrs.shrink(0);
+        /* lsquic refused the block: it is over lsquic's 64 KB encode buffer,
+         * or a 1xx block is still unwritten. Nothing was sent and the stream
+         * stays open, so the response can never complete: a body write fails
+         * (and drain() re-arms on_write for it on every tick), or follows the
+         * 1xx with no final HEADERS. Abandon the response as RFC 9114 4.1.1
+         * has a server do, with RESET_STREAM(H3_REQUEST_CANCELLED);
+         * on_stream_close then ends the request through onAborted. */
+        if (r != 0) us_quic_stream_reset((us_quic_stream_t *) this);
     }
 
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional,

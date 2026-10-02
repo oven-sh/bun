@@ -2719,7 +2719,8 @@ pub struct WorkerExecArgvFlags {
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
     /// Where a flag is that is the process's, which a Worker cannot be given
-    /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
+    /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`,
+    /// and `--experimental-linear-regexp` in a process that does not have it.
     pub invalid: Option<usize>,
 }
 

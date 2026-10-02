@@ -371,6 +371,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.runtime_options.experimental_http2_fetch {
         argv.push(lit(b"--experimental-http2-fetch\0"));
     }
+    if ctx.runtime_options.experimental_linear_regexp {
+        argv.push(lit(b"--experimental-linear-regexp\0"));
+    }
     if ctx.runtime_options.experimental_http3_fetch {
         argv.push(lit(b"--experimental-http3-fetch\0"));
     }

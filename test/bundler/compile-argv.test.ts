@@ -99,6 +99,42 @@ describe("bundler", () => {
     });
   }
 
+  // --experimental-linear-regexp baked into the executable: it is on with no arguments, a Worker has
+  // it, and the JavaScriptCore option it sets does not take it away.
+  itBundled("compile/CompileExecArgvLinearRegExp", {
+    compile: {
+      execArgv: ["--experimental-linear-regexp"],
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        import { Worker } from "node:worker_threads";
+        // A backtracking engine takes 2^64 ways through this subject, stops at its limit, and
+        // answers false. The non-backtracking matcher answers true.
+        const matches = /(a*)*b|a*!/.test(Buffer.alloc(64, "a").toString() + "!");
+        const worker = await new Promise((resolve, reject) => {
+          const worker = new Worker("./worker.ts");
+          worker.on("message", resolve);
+          worker.on("error", reject);
+        });
+        console.log(JSON.stringify({ execArgv: process.execArgv, matches, worker }));
+        process.exit(0);
+      `,
+      "/worker.ts": /* js */ `
+        import { parentPort } from "node:worker_threads";
+        parentPort.postMessage(/(a*)*b|a*!/.test(Buffer.alloc(64, "a").toString() + "!"));
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: {
+      file: "dist/out",
+      setCwd: true,
+      env: { BUN_JSC_useRegExpLinearEngine: "0" },
+      stdout: JSON.stringify({ execArgv: ["--experimental-linear-regexp"], matches: true, worker: true }),
+    },
+  });
+
   // Test that the --compile-exec-argv flag works for both runtime processing and execArgv
   itBundled("compile/CompileExecArgvDualBehavior", {
     compile: {

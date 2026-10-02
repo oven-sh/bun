@@ -1185,6 +1185,29 @@ test("--parallel forwards --experimental-http2-fetch to workers", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel forwards --experimental-linear-regexp to workers", async () => {
+  // JavaScriptCore takes the option when it starts, so a worker has the matcher only when its own
+  // command line has the flag.
+  const fixture = `import {test,expect} from "bun:test";
+    import {jscInternals} from "bun:internal-for-testing";
+    test("linear", () => {
+      expect(jscInternals.regExpMatchStatistics(/(a*)*b/, "aa!", 0).engine).toBe("linear");
+    });`;
+  using dir = tempDir("parallel-linear-regexp-flag", { "a.test.js": fixture, "b.test.js": fixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--experimental-linear-regexp"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_FEATURE_FLAG_EXPERIMENTAL_LINEAR_REGEXP: undefined },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel forwards --conditions to workers", async () => {
   using dir = tempDir("parallel-conditions", {
     "node_modules/condpkg/package.json": JSON.stringify({

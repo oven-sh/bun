@@ -231,6 +231,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--experimental-http3-fetch        Honor Alt-Svc: h3 in fetch() and upgrade to HTTP/3. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1"
     ),
     parse_param!(
+        "--experimental-linear-regexp      Match a RegExp without backtracking when its pattern allows it, so that one match takes time linear in its input. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_LINEAR_REGEXP=1"
+    ),
+    parse_param!(
         "--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB"
     ),
     parse_param!(
@@ -1255,6 +1258,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
+        ctx.runtime_options.experimental_linear_regexp = args.flag(b"--experimental-linear-regexp");
+        if ctx.runtime_options.experimental_linear_regexp {
+            // Read by the first `bun_jsc::initialize`, which no command runs before its arguments are parsed.
+            bun_jsc::EXPERIMENTAL_LINEAR_REGEXP_FROM_CLI
+                .store(true, core::sync::atomic::Ordering::Relaxed);
+        }
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
         if args.flag(b"--expose-internals") {

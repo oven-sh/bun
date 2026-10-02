@@ -1581,6 +1581,11 @@ unsafe fn parse_worker_exec_argv_flags(
             Some([] | [b'=', ..])
         ) {
             flags.invalid.get_or_insert(index);
+        } else if bytes == b"--experimental-linear-regexp" && !bun_jsc::experimental_linear_regexp()
+        {
+            // JavaScriptCore took the switch when it started, so a Worker has what its
+            // process has. In a process that has it, `execArgv: process.execArgv` works.
+            flags.invalid.get_or_insert(index);
         }
     }
     Some(flags)

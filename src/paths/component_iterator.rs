@@ -484,4 +484,50 @@ mod tests {
         let r = make_path_with(it, |p| Ok(MakePathStep::NotFound(p)));
         assert_eq!(r, Err(&b"a"[..]));
     }
+
+    #[test]
+    fn make_path_does_not_recreate_a_prefix_removed_after_it_was_created() {
+        // `a` is created, then removed by someone else before `a/b` is tried.
+        let it = ComponentIterator::init(&b"a/b"[..], PathFormat::Posix).unwrap();
+        let mut attempts: Vec<&[u8]> = vec![];
+        let r = make_path_with(it, |p| {
+            attempts.push(p);
+            match p {
+                b"a" => Ok(MakePathStep::Created),
+                b"a/b" => Ok(MakePathStep::NotFound(p)),
+                _ => unreachable!(),
+            }
+        });
+        assert_eq!(r, Err(&b"a/b"[..]));
+        assert_eq!(attempts, vec![&b"a/b"[..], &b"a"[..], &b"a/b"[..]]);
+    }
+
+    #[test]
+    fn make_path_makes_at_most_2n_minus_1_calls_for_any_answers() {
+        // Every answer sequence for 1 to 4 components: at most n calls back,
+        // then n - 1 forward.
+        for (i, path) in [&b"a"[..], b"a/b", b"a/b/c", b"a/b/c/d"]
+            .into_iter()
+            .enumerate()
+        {
+            let n = i + 1;
+            let bound = 2 * n - 1;
+            for script in 0..3u32.pow(bound as u32) {
+                let it = ComponentIterator::init(path, PathFormat::Posix).unwrap();
+                let mut calls = 0;
+                let mut answers = script;
+                let _ = make_path_with::<u8, ()>(it, |_| {
+                    calls += 1;
+                    assert!(calls <= bound, "call {calls} for {n} components");
+                    let answer = answers % 3;
+                    answers /= 3;
+                    Ok(match answer {
+                        0 => MakePathStep::Created,
+                        1 => MakePathStep::Exists,
+                        _ => MakePathStep::NotFound(()),
+                    })
+                });
+            }
+        }
+    }
 }

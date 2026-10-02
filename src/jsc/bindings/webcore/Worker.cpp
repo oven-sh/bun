@@ -467,8 +467,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     return JSValue::encode(jsUndefined());
 }
 
-// https://html.spec.whatwg.org/multipage/workers.html#dom-workerglobalscope-close: the calling script runs to
-// the end of its task, then the worker stops (GlobalObject::drainMicrotasks) as process.exit() stops it.
+// https://html.spec.whatwg.org/multipage/workers.html#dom-workerglobalscope-close, consumed by GlobalObject::drainMicrotasks.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionWorkerGlobalScopeClose,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
 {

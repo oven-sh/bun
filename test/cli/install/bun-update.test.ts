@@ -584,6 +584,36 @@ it("--filter pkg-a removes the nested copy whose row it collapsed", async () => 
   expect(code).toBe(0);
 });
 
+// The update collapses pkg-a's row, and the download of another package fails. A run that fails removes nothing.
+it("keeps the nested copy whose row it collapsed when the run fails", async () => {
+  await nestedBazRepo("0.0.5", "0.0.3", { pkgA: "~0.0.3" });
+  const registry = dummyRegistry([], { "0.0.2": {}, "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" });
+  setHandler(request =>
+    request.url.endsWith("bar-0.0.2.tgz") ? new Response("not found", { status: 404 }) : registry(request),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      dependencies: { bar: "0.0.2", baz: "0.0.5" },
+    }),
+  );
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([stderr.text(), exited]);
+  expect(err).toContain("404");
+  expect(await pkgABazVersion()).toBe("0.0.3");
+  expect(code).toBe(1);
+});
+
 // The collapsed-copy pass compares node_modules with a tree of every dependency type, so a copy
 // under a dependency this run skips is not mistaken for one the root now provides.
 it("--omit dev keeps the nested copies of the dev dependencies it skips", async () => {

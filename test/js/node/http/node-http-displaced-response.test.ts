@@ -165,7 +165,7 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
             // Winsock can take the whole write in one send(). Then no tail is held and no drain handler is armed.
             heldTail: isWindows ? expect.any(Boolean) : true,
             collected: 1,
-            receivedAtLeastTheWrite: true,
+            afterTheWrite: "HTTP/1.1 ",
           },
         ],
         stderr: "",

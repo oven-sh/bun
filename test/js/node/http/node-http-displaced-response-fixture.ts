@@ -478,14 +478,19 @@ async function draining() {
   // The write of response 1 on the wire: its head, the chunk size line, the chunk and its CRLF.
   let head = "";
   let writeLength = Infinity;
+  // The bytes that follow that write. Response 2 starts there, and nowhere else.
+  let afterTheWrite = "";
   let tail = "";
   const bodies = Promise.withResolvers<void>();
   client.on("data", chunk => {
+    const from = writeLength + afterTheWrite.length - received;
     received += chunk.length;
     if (writeLength === Infinity && head.length < 1024) {
       head += chunk.toString("latin1", 0, 1024 - head.length);
       const headEnd = head.indexOf("\r\n\r\n");
       if (headEnd !== -1) writeLength = headEnd + 4 + `${size.toString(16)}\r\n`.length + size + 2;
+    } else if (from >= 0 && from < chunk.length && afterTheWrite.length < 9) {
+      afterTheWrite += chunk.toString("latin1", from, from + 9 - afterTheWrite.length);
     }
     tail = (tail + chunk.toString("latin1")).slice(-64);
     if (tail.includes("second-body")) bodies.resolve();
@@ -516,7 +521,7 @@ async function draining() {
   await closed;
   server.close();
   server.closeAllConnections();
-  return { displaced, pending, heldTail, collected, receivedAtLeastTheWrite: received >= writeLength };
+  return { displaced, pending, heldTail, collected, afterTheWrite };
 }
 
 // Request 2 waits in the queue behind response 1, which has written nothing. req.destroy() on it

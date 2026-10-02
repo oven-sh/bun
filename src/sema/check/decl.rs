@@ -794,7 +794,7 @@ impl<'p> Checker<'p> {
             TypeNodeKind::Keyword(keyword) => out.this |= keyword == Keyword::This,
             TypeNodeKind::Ref { name, args } => {
                 if name.len() == 1 {
-                    let name = hir.ids(name).next().unwrap();
+                    let name = hir.texts(name).next().unwrap();
                     // `getSymbolFromTypeReference`: a type parameter declared further in can have the name of one further out.
                     if out.candidates.contains(&name) {
                         let bound = self.bound(file);
@@ -1161,36 +1161,6 @@ impl<'p> Checker<'p> {
         )
     }
 
-    /// From the type parameters of one declaration of `sym` to those the symbol goes by: the ones of the same name.
-    pub fn decl_params_mapper(
-        &mut self,
-        sym: Sym,
-        file: FileId,
-        params: Span<TypeParamId>,
-    ) -> MapperId {
-        if params.is_empty() {
-            return MapperId::IDENTITY;
-        }
-        let canonical = self.local_type_params_of_symbol(sym);
-        let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
-        for tp in params.iter() {
-            let own = self.type_param(file, tp);
-            let name = self.hir(file)[tp].name;
-            if let Some(target) = canonical.iter().copied().find(|&c| {
-                self.type_param_decl(c)
-                    .is_some_and(|(_, decl)| decl.name == name)
-            }) && target != own
-            {
-                pairs.push((own, target));
-            }
-        }
-        if pairs.is_empty() {
-            MapperId::IDENTITY
-        } else {
-            self.p.types.mapper(pairs)
-        }
-    }
-
     pub(super) fn type_param_decl(&self, param: TypeId) -> Option<(FileId, &'p TypeParam)> {
         match *self.data(param) {
             TypeData::TypeParam(file, tp, _) => Some((file, &self.hir(file)[tp])),
@@ -1510,7 +1480,7 @@ impl<'p> Checker<'p> {
                     let TypeNodeKind::Ref { name, args } = hir[node].kind else {
                         continue;
                     };
-                    let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+                    let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                     let Some(sym) = self.files().resolve_entity(
                         file,
                         bound.type_scope[node.idx()],
@@ -2026,7 +1996,7 @@ impl<'p> Checker<'p> {
     /// `isConstantVariable(symbol)` and what `evaluateEntity` asks of its `ValueDeclaration`: a constant declared by name, its type left to
     /// its initializer, before `location`.
     fn constant_variable_declaration(
-        &self,
+        &mut self,
         symbol: Sym,
         location: Location,
     ) -> Option<(FileId, VarDeclId)> {
@@ -2459,12 +2429,13 @@ impl<'p> Checker<'p> {
                     }
                 }
                 // `checkPropertyAccessExpressionOrQualifiedName`: the missing name of `typeof a.` finds no property: the error type.
-                if narrowed == TypeId::UNRESOLVED && hir.ids(name).next_back() == Some(known::empty)
+                if narrowed == TypeId::UNRESOLVED
+                    && hir.texts(name).next_back() == Some(known::empty)
                 {
                     return TypeId::ERROR;
                 }
                 let ty = if narrowed == TypeId::UNRESOLVED {
-                    let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+                    let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                     self.type_of_entity(file, scope, &names)
                 } else {
                     self.regular(narrowed)
@@ -2488,7 +2459,7 @@ impl<'p> Checker<'p> {
                 let Some(module) = self.files().module_of_specifier_as(file, spec, mode) else {
                     return TypeId::ERROR;
                 };
-                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                 // `resolveExternalModuleSymbol`: the module, or what it says it is with `export =`. One that could not be followed is
                 // `unknownSymbol`.
                 let value = self.files().module_value(module);
@@ -2624,7 +2595,7 @@ impl<'p> Checker<'p> {
                 {
                     return intended;
                 }
-                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                 // `resolveTypeReferenceName`: `getUnresolvedSymbolForEntityName`
                 let Some(found) = self.resolve_entity(file, scope, &names, SymFlags::TYPE) else {
                     let args = self.types_from_nodes(file, args);
@@ -2694,7 +2665,7 @@ impl<'p> Checker<'p> {
         if name.len() != 1 || !hir.is_in_jsdoc(hir[node].pos) {
             return None;
         }
-        let name = hir.id_at(name, 0);
+        let name = hir[name.at(0)].text;
         let no_implicit_any = self.p.files.options.no_implicit_any;
         let ty = match self.files().atoms.bytes(name) {
             b"String" => TypeId::STRING,
@@ -2886,7 +2857,7 @@ impl<'p> Checker<'p> {
         let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
             return None;
         };
-        let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+        let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
         let files = self.files();
         let alias = files.resolve_entity(file, scope, &names, SymFlags::ALIAS)?;
         // Of `a.b` the first name is looked up as a namespace, as it was before.
@@ -2964,7 +2935,7 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         match hir[node].kind {
             TypeNodeKind::Ref { name, .. } => {
-                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                 let scope = self.bound(file).type_scope[node.idx()];
                 let found = self
                     .files()
@@ -3205,20 +3176,11 @@ impl<'p> Checker<'p> {
         // `resolveAnonymousTypeMembers` instantiates the signatures with what the type parameters around the class stand for too,
         // and `instantiate_sig` only carries on what the mapper of a signature is about.
         let scope = self.bound(file).class_scope[class.idx()];
-        let outer = if scope.is_some() {
+        let mapper = if scope.is_some() {
             let parent = self.bound(file).scopes[scope.idx()].parent;
             self.identity_mapper(file, parent)
         } else {
             MapperId::IDENTITY
-        };
-        // Where an interface of the same name declares the type parameters the symbol goes by, those of the class stand for them.
-        let own = self.decl_params_mapper(sym, file, self.hir(file)[class].type_params);
-        let mapper = if own == MapperId::IDENTITY {
-            outer
-        } else {
-            let mut pairs = self.p.types.mapping(outer).to_vec();
-            pairs.extend_from_slice(self.p.types.mapping(own));
-            self.p.types.mapper(pairs)
         };
         self.p.types.intern_sig(SigData::Construct {
             class: sym,

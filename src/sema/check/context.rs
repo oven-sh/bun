@@ -1223,8 +1223,7 @@ impl<'p> Checker<'p> {
             && !self.is_innermost_tainted()
             && !matches!(self.stack.last(), Some(Query::Call(..)))
             // These are raised for whoever asked, each time.
-            && !(self.uncertain
-                || self.relation_gave_up
+            && !(self.relation_gave_up
                 || self.relation_too_complex
                 || self.union_too_complex)
             && self.reliability == 0
@@ -1495,7 +1494,7 @@ impl<'p> Checker<'p> {
             }
             // `getContextualTypeForYieldOperand`
             ExprKind::Yield { star: false, .. } => {
-                let func = self.get_containing_function(file, parent).flatten()?;
+                let func = self.get_containing_function(file, parent)?;
                 let declared = self.declared_or_contextual_return_type(file, func)?;
                 let is_async = hir[func].flags.contains(Flags::ASYNC);
                 let declared = self.alternatives_to_go_through(declared, is_async);
@@ -1504,7 +1503,7 @@ impl<'p> Checker<'p> {
             // Something to go through that yields what is to be yielded. Where nothing is said there is a hole, which nothing is
             // inferred from (`silentNeverType`).
             ExprKind::Yield { star: true, .. } => {
-                let func = self.get_containing_function(file, parent).flatten()?;
+                let func = self.get_containing_function(file, parent)?;
                 let declared = self.declared_or_contextual_return_type(file, func)?;
                 let is_async = hir[func].flags.contains(Flags::ASYNC);
                 let types = self.iteration_types(declared, is_async);

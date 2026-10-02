@@ -2,7 +2,7 @@
 
 use super::Checker;
 use super::explain::Related;
-use crate::bind::{Decl, SymFlags};
+use crate::bind::Decl;
 use crate::program::{FileId, Sym};
 use crate::types::{Prop, PropSource};
 
@@ -26,19 +26,9 @@ impl Checker<'_> {
 
     /// `symbol.ValueDeclaration`, or else the first declaration there is.
     pub(super) fn place_of_symbol(&self, sym: Sym) -> Option<Place> {
-        let decls = self.files().decls_of(sym);
-        let is_value = |decl: Decl| {
-            !matches!(
-                decl,
-                Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_) | Decl::File
-            )
-        };
-        let has_value = self.files().flags(sym).intersects(SymFlags::VALUE);
-        let (file, decl) = decls
-            .iter()
-            .find(|d| has_value && is_value(d.1))
-            .or_else(|| decls.iter().next())
-            .copied()?;
+        let files = self.files();
+        let value_declaration = files.value_declaration(files.canonical(sym));
+        let (file, decl) = value_declaration.or_else(|| files.decls_of(sym).first().copied())?;
         self.place_of_declaration(file, decl)
     }
 

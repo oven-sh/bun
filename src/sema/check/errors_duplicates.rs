@@ -1,5 +1,5 @@
 //! One name declared twice in ways that do not go together: 2300 2451 2528 2567 2649 2699. And what goes together in some ways only:
-//! 2323 2433 2434 2813 2814.
+//! 2323 2433 2434.
 //!
 //! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` of binder.go, which refuse a declaration that
 //! what is in the table excludes, `mergeSymbol` of checker.go, which does the same between files,
@@ -241,9 +241,17 @@ impl Checker<'_> {
     }
 
     /// Whether the name of `decl` is an identifier that is not there.
-    fn is_declaration_name_missing(&self, file: FileId, decl: Decl) -> bool {
+    pub(super) fn is_declaration_name_missing(&self, file: FileId, decl: Decl) -> bool {
         let hir = self.hir(file);
         let name = match decl {
+            // Nothing is written where the name would be, not even `""` or `[""]`.
+            Decl::Member(m) => {
+                return hir[m].key == PropKey::Name(known::empty)
+                    && !matches!(
+                        hir.text.get(hir[m].name_pos as usize),
+                        Some(b'"' | b'\'' | b'[')
+                    );
+            }
             Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => match hir[pat].kind {
                 PatKind::Ident(name) => name,
                 _ => return false,
@@ -456,7 +464,6 @@ impl Checker<'_> {
     }
 
     /// From `checkModuleDeclaration`: 2433 2434, a namespace comes after the class or function it adds to, in the same file.
-    /// From `checkFunctionOrConstructorSymbol`: 2813 2814, a function merges with a class only if the class is ambient.
     fn check_what_merges(&mut self, file: FileId, sym: Sym, out: &mut Vec<Diagnostic>) {
         let files = self.files();
         let mut decls: Vec<Declaration> = Vec::new();
@@ -517,73 +524,6 @@ impl Checker<'_> {
                 }
             }
         }
-        let has_class = decls.iter().any(
-            |&(of, d, _)| matches!(d, Decl::Class(c) if !is_ambient(of, self.hir(of)[c].flags)),
-        );
-        // The symbol has to be a function, which what is only listed with it does not make it.
-        if has_class && decls.iter().any(|d| d.2 && matches!(d.1, Decl::Fn(_))) {
-            let classes: Vec<(FileId, u32)> = decls
-                .iter()
-                .filter(|d| matches!(d.1, Decl::Class(_)))
-                .filter_map(|&(of, decl, _)| {
-                    Some((of, self.error_range_of_declaration(of, decl)?.0))
-                })
-                .collect();
-            for &(of, decl, _) in decls {
-                if of != file {
-                    continue;
-                }
-                let Some((start, _)) = self.error_range_of_declaration(of, decl) else {
-                    continue;
-                };
-                match decl {
-                    Decl::Class(c) => {
-                        let class = &self.hir(of)[c];
-                        // `symbol.Name`
-                        let name = if class.flags.contains(Flags::DEFAULT) {
-                            known::default
-                        } else {
-                            class.name
-                        };
-                        self.report_class_with_function(start, 2813, name, &classes, out);
-                    }
-                    Decl::Fn(_) => {
-                        self.report_class_with_function(start, 2814, Atom::NONE, &classes, out);
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    /// 2813, which names the symbol `name`, or 2814, which names nothing. Both say of each of `classes`, the class declarations of the
-    /// symbol, that it could be declared only.
-    fn report_class_with_function(
-        &mut self,
-        start: u32,
-        code: u32,
-        name: Atom,
-        classes: &[(FileId, u32)],
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let is_again = out.iter().any(|d| d.start == start && d.code == code);
-        out.push(Diagnostic { start, code });
-        if is_again {
-            return;
-        }
-        if name.is_some() {
-            self.note(start, 0, code, vec![self.atom_text(name)]);
-        }
-        self.relate(start, code, |c| {
-            classes
-                .iter()
-                .map(|&(of, at)| super::explain::Related {
-                    at: Some(c.place_of_token(of, at)),
-                    code: 6506,
-                    args: Vec::new(),
-                })
-                .collect()
-        });
     }
 
     /// `checkExternalModuleExports`: 2323. "It is a Syntax Error if the ExportedNames of ModuleItemList contains any duplicate entries.
@@ -610,12 +550,21 @@ impl Checker<'_> {
             // `isNotOverload`
             let is_not_overload = |&&(of, decl): &&(FileId, Decl)| match decl {
                 Decl::Fn(f) => !matches!(self.hir(of)[f].body, FnBody::None),
+                Decl::Member(m) if self.hir(of)[m].kind == MemberKind::Method => {
+                    !matches!(self.hir(of)[self.hir(of)[m].func].body, FnBody::None)
+                }
                 _ => true,
             };
+            // `!ast.IsAccessor(d) && !ast.IsInterfaceDeclaration(d)`
+            let is_counted = |&&(of, decl): &&(FileId, Decl)| match decl {
+                Decl::Member(m) => !matches!(
+                    self.hir(of)[m].kind,
+                    MemberKind::Getter | MemberKind::Setter
+                ),
+                _ => !matches!(decl, Decl::Interface(_)),
+            };
             let counted = declarations.iter().filter(is_not_overload);
-            let count = counted
-                .filter(|d| !matches!(d.1, Decl::Interface(_)))
-                .count();
+            let count = counted.filter(is_counted).count();
             // "it is legal to merge type alias with other values"
             if count < 2 || flags.contains(SymFlags::TYPE_ALIAS) && count == 2 {
                 continue;
@@ -711,16 +660,13 @@ impl Checker<'_> {
                     };
                     // `name := memberName`, `DeclarationNameToString(declName)` for a unique symbol.
                     let name = if self.files().atoms.is_symbol_name(*name) {
-                        self.source_text(of, from, to)
+                        Arg::Bytes(&self.hir(of).text[from as usize..to as usize])
                     } else {
-                        self.atom_text(*name)
+                        Arg::Atom(*name)
                     };
                     for at in earlier.iter().chain(std::iter::once(refused)) {
-                        if let Some((of, start, end)) = self.place_of_declaration(at.0, at.1)
-                            && of == file
-                        {
-                            out.push(Diagnostic { start, code: 2300 });
-                            self.note(start, end, 2300, vec![name.clone()]);
+                        if let Some(place) = self.place_of_declaration(at.0, at.1) {
+                            self.error(place, 2300, &[name]);
                         }
                     }
                 }
@@ -781,7 +727,7 @@ impl Checker<'_> {
                     None => names.push((name, is_static, kind)),
                     Some(state) if state.2 == 1 || state.2 == 2 && kind != 2 => {
                         state.2 = 3;
-                        self.report_duplicate_member_errors(file, members, name, is_static, out);
+                        self.report_duplicate_member_errors(file, members, name, is_static);
                     }
                     Some(_) => {}
                 }
@@ -796,7 +742,6 @@ impl Checker<'_> {
         members: Span<MemberId>,
         name: Atom,
         is_static: bool,
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         for m in members.iter() {
@@ -817,21 +762,16 @@ impl Checker<'_> {
                 named.push(Decl::Member(m));
             }
             for declaration in named {
-                let Some((_, start, end)) = self.place_of_declaration(file, declaration) else {
+                let Some(place) = self.place_of_declaration(file, declaration) else {
                     continue;
                 };
-                out.push(Diagnostic { start, code: 2300 });
                 // `symbolToString(symbol)`: as its first declaration writes it.
-                let first = self
-                    .declarations_of_member(file, declaration)
-                    .first()
-                    .copied();
-                let (of, first) = first.unwrap_or((file, declaration));
-                let text = match self.place_of_declaration(of, first) {
-                    Some((of, from, to)) => self.source_text(of, from, to),
-                    None => self.source_text(file, start, end),
-                };
-                self.note(start, end, 2300, vec![text]);
+                let declarations = self.declarations_of_member(file, declaration);
+                let first = declarations.first().copied();
+                let first = first.and_then(|(of, first)| self.place_of_declaration(of, first));
+                let (of, from, to) = first.unwrap_or(place);
+                let text = Arg::Bytes(&self.hir(of).text[from as usize..to as usize]);
+                self.error(place, 2300, &[text]);
             }
         }
     }

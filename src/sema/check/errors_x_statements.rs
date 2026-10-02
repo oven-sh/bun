@@ -276,12 +276,10 @@ enum AwaitPlace {
     Allowed,
     /// The function-like thing it is in is a class static block.
     StaticBlock,
-    /// `IsInTopLevelContext`, and in no await context so far: in this statement of the file.
-    TopLevel(StmtId),
+    /// `IsInTopLevelContext`, and in no await context.
+    TopLevel,
     /// In a function that is not `async`, the initializer of a property, an enum or a namespace.
     Elsewhere,
-    /// It is not kept track of.
-    Unknown,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -471,7 +469,7 @@ impl Checker<'_> {
                     });
                     // `checkWithStatement`
                     if parses {
-                        let place = self.place_of_await_in(file, Parent::Stmt(s), rules);
+                        let place = self.place_of_await_in(file, hir.node(s), rules);
                         if !refused.contains(&s)
                             && matches!(place, AwaitPlace::Allowed | AwaitPlace::StaticBlock)
                         {
@@ -557,12 +555,12 @@ impl Checker<'_> {
                     let is_refused = refused.contains(&s);
                     let mut is_await_misplaced = false;
                     if parses && let Some(start) = await_after_for(text, pos) {
-                        match self.place_of_await_in(file, Parent::Stmt(s), rules) {
+                        match self.place_of_await_in(file, hir.node(s), rules) {
                             AwaitPlace::StaticBlock => {
                                 out.retain(|d| d.start != start || d.code != 1103);
                                 out.push(Diagnostic { start, code: 18038 });
                             }
-                            AwaitPlace::TopLevel(_) if !is_refused => {
+                            AwaitPlace::TopLevel if !is_refused => {
                                 // The parser's, from the parse of a script in which `await` is a name.
                                 out.retain(|d| d.start != start || d.code != 1103);
                                 rules.object(start, 1431, 1432, out);
@@ -570,7 +568,7 @@ impl Checker<'_> {
                             AwaitPlace::Elsewhere if !is_refused => {
                                 out.push(Diagnostic { start, code: 1103 });
                                 self.relate(start, 1103, |c| {
-                                    c.function_to_mark_async(file, Parent::Stmt(s), true)
+                                    c.function_to_mark_async(file, hir.node(s), true)
                                 });
                                 is_await_misplaced = true;
                             }
@@ -586,8 +584,8 @@ impl Checker<'_> {
                         && Some(name) == self.files().atoms.lookup(b"async")
                         && !is_parenthesized(self.hir(file), target)
                         && matches!(
-                            self.place_of_await_in(file, Parent::Stmt(s), rules),
-                            AwaitPlace::TopLevel(_) | AwaitPlace::Elsewhere
+                            self.place_of_await_in(file, hir.node(s), rules),
+                            AwaitPlace::TopLevel | AwaitPlace::Elsewhere
                         )
                     {
                         // Outside an await context the left side cannot be the identifier `async`.
@@ -634,7 +632,7 @@ impl Checker<'_> {
             return;
         }
         let wanted = self.type_of_expr(file, target);
-        if !self.is_known(wanted) || self.is_uncertain(file, target) {
+        if !self.is_known(wanted) {
             // What is unknown here is `any` to TypeScript where it could not find a name either, and anything fits in that.
             let end = self.start_of(file, object);
             if out
@@ -647,7 +645,7 @@ impl Checker<'_> {
         }
         // `getIndexTypeOrString`. All that is known of the keys of what is not known is that they are strings of some kind.
         let given = self.type_of_expr(file, object);
-        let mut is_sure = self.is_known(given) && !self.is_uncertain(file, object);
+        let mut is_sure = self.is_known(given);
         let mut keys = TypeId::STRING;
         if is_sure {
             let given = self.non_nullable(given);
@@ -738,12 +736,12 @@ impl Checker<'_> {
             && let Some(p) = around
             && matches!(hir[p].kind, StmtKind::ForOf { left, .. } if left == s)
             && await_after_for(&hir.text, hir[p].pos).is_some()
-            && self.place_of_await_in(file, Parent::Stmt(p), rules) == AwaitPlace::Elsewhere
+            && self.place_of_await_in(file, hir.node(p), rules) == AwaitPlace::Elsewhere
         {
             return;
         }
         // In a static block it is said whether or not the file parses.
-        let has_error = match self.place_of_await_in(file, Parent::Stmt(s), rules) {
+        let has_error = match self.place_of_await_in(file, hir.node(s), rules) {
             AwaitPlace::StaticBlock => {
                 out.push(Diagnostic { start, code: 18054 });
                 self.note(
@@ -754,26 +752,15 @@ impl Checker<'_> {
                 );
                 true
             }
-            AwaitPlace::TopLevel(_) if parses => {
+            AwaitPlace::TopLevel if parses => {
                 rules.object(start, 2853, 2854, out);
                 rules.is_error()
             }
             AwaitPlace::Elsewhere if parses => {
                 out.push(Diagnostic { start, code: 2852 });
-                // `checkAwaitGrammar`
-                if let Some(function) = self.enclosing_fn(file, Parent::Stmt(s))
-                    && hir[function].kind != FnKind::Constructor
-                    && !hir[function].flags.contains(Flags::ASYNC)
-                {
-                    self.relate(start, 2852, |c| {
-                        let (from, to) = c.error_range_of_fn(file, function);
-                        vec![super::explain::Related {
-                            at: Some((file, from, to)),
-                            code: 1356,
-                            args: Vec::new(),
-                        }]
-                    });
-                }
+                self.relate(start, 2852, |c| {
+                    c.function_to_mark_async(file, hir.node(s), false)
+                });
                 true
             }
             _ => false,
@@ -941,196 +928,82 @@ impl Checker<'_> {
     /// The statement of the file whose `statementHasAwaitIdentifier` a name `await` at `e` sets. `None`: it is put back on the way
     /// out, or `await` is a keyword there to begin with.
     fn statement_noting_await(&self, file: FileId, e: ExprId) -> Option<StmtId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = bound.expr_parent[e.idx()];
-        let mut statement = StmtId::NONE;
+        let hir = self.hir(file);
+        let mut below = hir.node(e);
         loop {
-            match at {
-                Parent::File => return statement.some(),
-                Parent::FnBody(f)
-                    if hir[f].flags.contains(Flags::ASYNC)
-                        || matches!(hir[f].body, FnBody::Block(_)) =>
-                {
-                    return None;
+            let above = hir.parent(below);
+            let kind = hir.kind(above);
+            let is_lost = match kind {
+                Kind::SourceFile => match hir.data(below) {
+                    NodeData::Stmt(s) => return Some(s),
+                    _ => return None,
+                },
+                Kind::Unknown
+                | Kind::ModuleDeclaration
+                | Kind::EnumDeclaration
+                | Kind::ComputedPropertyName
+                | Kind::ExportAssignment => true,
+                // `parseFunctionBlock`
+                Kind::Block => above.part() == Some(Part::Body),
+                Kind::ClassDeclaration => hir.flags(above).contains(Flags::AMBIENT),
+                _ => {
+                    kind.is_function_like()
+                        && hir.flags(above).contains(Flags::ASYNC)
+                        && (matches!(hir.data(below), NodeData::Param(_))
+                            || below == hir.body(above))
                 }
-                Parent::ParamDefault(p)
-                    if hir[bound.param_fn[p.idx()]].flags.contains(Flags::ASYNC) =>
-                {
-                    return None;
-                }
-                Parent::None
-                | Parent::Module(_)
-                | Parent::EnumInit(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_)
-                | Parent::PropKey(..)
-                | Parent::PatKey(_) => return None,
-                Parent::Expr(x) if x.is_none() => return None,
-                Parent::Stmt(s) if s.is_none() => return None,
-                Parent::Stmt(s) => {
-                    let is_put_back = match hir[s].kind {
-                        StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) => true,
-                        StmtKind::Class(c) => hir[c].flags.contains(Flags::AMBIENT),
-                        _ => false,
-                    };
-                    if is_put_back {
-                        return None;
-                    }
-                    statement = s;
-                }
-                _ => {}
+            };
+            if is_lost {
+                return None;
             }
-            at = self.outward(file, at);
+            below = above;
         }
     }
 
-    fn place_of_await_in(
-        &self,
-        file: FileId,
-        from: Parent,
-        rules: &TopLevelAwait<'_>,
-    ) -> AwaitPlace {
-        let place = self.place_of_await(file, from);
-        let AwaitPlace::TopLevel(s) = place else {
-            return place;
+    /// `getContainingFunctionOrClassStaticBlock`, `NodeFlagsAwaitContext`, `IsInTopLevelContext`, of `node`.
+    fn place_of_await_in(&self, file: FileId, node: Node, rules: &TopLevelAwait<'_>) -> AwaitPlace {
+        let hir = self.hir(file);
+        let container = hir.get_containing_function_or_class_static_block(node);
+        if hir.kind(container) == Kind::ClassStaticBlockDeclaration {
+            return AwaitPlace::StaticBlock;
+        }
+        let is_parsed_again = |statement: Node| {
+            let parsed_again = rules.parsed_again.get_or_init(|| {
+                // `parseSourceFileWorker`: a declaration file is not parsed again.
+                if rules.is_module && hir.kind != FileKind::Declaration {
+                    self.statements_parsed_again_for_await(file, rules.index)
+                } else {
+                    Vec::new()
+                }
+            });
+            matches!(hir.data(statement), NodeData::Stmt(s) if parsed_again.binary_search(&s).is_ok())
         };
-        let parsed_again = rules.parsed_again.get_or_init(|| {
-            // `parseSourceFileWorker`: a declaration file is not parsed again.
-            if rules.is_module && self.hir(file).kind != FileKind::Declaration {
-                self.statements_parsed_again_for_await(file, rules.index)
-            } else {
-                Vec::new()
-            }
-        });
-        if parsed_again.binary_search(&s).is_ok() {
+        if hir.await_context(node).unwrap_or_else(is_parsed_again) {
             AwaitPlace::Allowed
+        } else if hir.is_in_top_level_context(node) {
+            AwaitPlace::TopLevel
         } else {
-            place
+            AwaitPlace::Elsewhere
         }
     }
 
-    /// Where the expression or statement `from` stands for is written: what the parser has for `NodeFlagsAwaitContext` there,
-    /// `getContainingFunctionOrClassStaticBlock` and `IsInTopLevelContext`.
-    fn place_of_await(&self, file: FileId, from: Parent) -> AwaitPlace {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_exported = |c: ClassId| hir[c].flags.contains(Flags::EXPORT);
-        let of_function = |f: FnId| {
-            if f.is_some() && hir[f].flags.contains(Flags::ASYNC) {
-                AwaitPlace::Allowed
-            } else {
-                AwaitPlace::Elsewhere
-            }
-        };
-        let mut at = from;
-        // The statement and the expression that were gone through last.
-        let (mut statement, mut expression) = (StmtId::NONE, ExprId::NONE);
-        // What it comes to unless a static block is what it is in.
-        let mut settled: Option<AwaitPlace> = None;
-        loop {
-            match at {
-                Parent::FnBody(f) if hir[f].kind == FnKind::StaticBlock => {
-                    return AwaitPlace::StaticBlock;
-                }
-                Parent::FnBody(f) => return settled.unwrap_or(of_function(f)),
-                Parent::ParamDefault(p) => {
-                    return settled.unwrap_or(of_function(bound.param_fn[p.idx()]));
-                }
-                Parent::EnumInit(_) | Parent::Module(_) => {
-                    return settled.unwrap_or(AwaitPlace::Elsewhere);
-                }
-                Parent::File => return settled.unwrap_or(AwaitPlace::TopLevel(statement)),
-                Parent::None => return AwaitPlace::Unknown,
-                // The initializer of a property is parsed as if nothing were around it.
-                Parent::MemberInit(_) => settled = settled.or(Some(AwaitPlace::Elsewhere)),
-                // What follows `export default` and `export =` is parsed in an await context, and so is what follows the name of an
-                // exported class.
-                Parent::ClassExtends(c) if is_exported(c) => {
-                    settled = settled.or(Some(AwaitPlace::Allowed))
-                }
-                Parent::Decorator(c, DecoratorOwner::Member(_) | DecoratorOwner::Param(_))
-                    if is_exported(c) =>
-                {
-                    settled = settled.or(Some(AwaitPlace::Allowed));
-                }
-                Parent::Stmt(s) if s.is_none() => return AwaitPlace::Unknown,
-                Parent::Stmt(s) => {
-                    if matches!(
-                        hir[s].kind,
-                        StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
-                    ) {
-                        settled = settled.or(Some(AwaitPlace::Allowed));
-                    }
-                    statement = s;
-                }
-                Parent::Expr(e) if e.is_none() => return AwaitPlace::Unknown,
-                Parent::Expr(e) => expression = e,
-                Parent::PatKey(_) => return AwaitPlace::Unknown,
-                Parent::PropKey(object, _) => {
-                    at = Parent::Expr(object);
-                    continue;
-                }
-                // A computed name is where the class or the object literal is.
-                Parent::MemberKey(_) | Parent::MethodKey(_) => {
-                    let key = PropKey::Computed(expression);
-                    if let Some(m) = hir.members.iter().position(|m| m.key == key) {
-                        let MemberOwner::Class(c) = bound.member_owner[m] else {
-                            return AwaitPlace::Unknown;
-                        };
-                        at = Parent::ClassExtends(c);
-                    } else if let Some(p) = hir.props.iter().position(|p| p.key == key) {
-                        at = Parent::Prop(PropId(p as u32));
-                    } else {
-                        return AwaitPlace::Unknown;
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-            at = self.outward(file, at);
-        }
-    }
-
-    /// 1356 at the function that what `from` stands for is written in: `getContainingFunctionOrClassStaticBlock`,
-    /// `GetContainingFunction`. Nothing for a constructor. `is_loop`: a `for await` does not ask whether the function says `async`.
+    /// 1356 at the function `node` is written in: `getContainingFunctionOrClassStaticBlock`, `GetContainingFunction`. Nothing for a
+    /// constructor. `is_loop`: a `for await` does not ask whether the function says `async`.
     fn function_to_mark_async(
         &self,
         file: FileId,
-        from: Parent,
+        node: Node,
         is_loop: bool,
     ) -> Vec<super::explain::Related> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = from;
-        let func = loop {
-            at = match at {
-                Parent::FnBody(f) => break f,
-                Parent::ParamDefault(p) => break bound.param_fn[p.idx()],
-                Parent::PropKey(object, _) if object.is_some() => Parent::Expr(object),
-                // The name and the decorators of a method are written in the method, and which one that is is not kept track of.
-                Parent::None
-                | Parent::File
-                | Parent::Module(_)
-                | Parent::EnumInit(_)
-                | Parent::PropKey(..)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_)
-                | Parent::Decorator(_, DecoratorOwner::Member(_) | DecoratorOwner::Param(_)) => {
-                    return Vec::new();
-                }
-                Parent::Expr(x) if x.is_none() => return Vec::new(),
-                other => self.outward(file, other),
-            };
-        };
-        if func.is_none() {
-            return Vec::new();
-        }
-        let f = &hir[func];
-        if matches!(f.kind, FnKind::Constructor | FnKind::StaticBlock)
-            || !is_loop && f.flags.contains(Flags::ASYNC)
+        let hir = self.hir(file);
+        let container = hir.get_containing_function(node);
+        if container.is_none()
+            || hir.kind(container) == Kind::Constructor
+            || !is_loop && hir.flags(container).contains(Flags::ASYNC)
         {
             return Vec::new();
         }
-        let (start, end) = self.error_range_of_fn(file, func);
+        let (start, end) = self.error_range_of_fn(file, hir.function_of(container));
         vec![super::explain::Related {
             at: Some((file, start, end)),
             code: 1356,
@@ -1153,7 +1026,7 @@ impl Checker<'_> {
             if bound.is_unchecked(e.idx()) || !is_word_at(&hir.text, start as usize, b"await") {
                 continue;
             }
-            let place = self.place_of_await_in(file, Parent::Expr(e), rules);
+            let place = self.place_of_await_in(file, hir.node(e), rules);
             // Where nothing makes a keyword of it, `await (x)` is a call of something by that name.
             if !matches!(place, AwaitPlace::Allowed | AwaitPlace::StaticBlock)
                 && after_await(&hir.text, start) != AfterAwait::Operand
@@ -1167,16 +1040,16 @@ impl Checker<'_> {
                     let end = self.end_inside_parentheses(file, e);
                     self.note(start, end, 18037, Vec::new());
                 }
-                AwaitPlace::TopLevel(_) if parses => rules.object(start, 1375, 1378, out),
+                AwaitPlace::TopLevel if parses => rules.object(start, 1375, 1378, out),
                 AwaitPlace::Elsewhere if parses => {
                     out.push(Diagnostic { start, code: 1308 });
                     self.relate(start, 1308, |c| {
-                        c.function_to_mark_async(file, Parent::Expr(e), false)
+                        c.function_to_mark_async(file, hir.node(e), false)
                     });
                 }
                 _ => {}
             }
-            if self.xs_is_in_parameter_initializer(file, e) {
+            if hir.is_in_parameter_initializer_before_containing_function(hir.node(e)) {
                 out.push(Diagnostic { start, code: 2524 });
                 let end = self.end_inside_parentheses(file, e);
                 self.note(start, end, 2524, Vec::new());
@@ -1194,48 +1067,14 @@ impl Checker<'_> {
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &e in index.of(ExprTag::Yield) {
-            if !bound.is_unchecked(e.idx()) && self.xs_is_in_parameter_initializer(file, e) {
+            if !bound.is_unchecked(e.idx())
+                && hir.is_in_parameter_initializer_before_containing_function(hir.node(e))
+            {
                 out.push(Diagnostic {
                     start: hir[e].pos,
                     code: 2523,
                 });
             }
-        }
-    }
-
-    /// `isInParameterInitializerBeforeContainingFunction`
-    fn xs_is_in_parameter_initializer(&self, file: FileId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (mut at, mut expression) = (bound.expr_parent[e.idx()], e);
-        loop {
-            at = match at {
-                Parent::ParamDefault(_) => return true,
-                // A static block is not function-like.
-                Parent::FnBody(f) if hir[f].kind != FnKind::StaticBlock => return false,
-                Parent::None | Parent::File | Parent::Module(_) | Parent::EnumInit(_) => {
-                    return false;
-                }
-                Parent::Expr(x) if x.is_none() => return false,
-                Parent::Stmt(s) if s.is_none() => return false,
-                Parent::Expr(x) => {
-                    expression = x;
-                    bound.expr_parent[x.idx()]
-                }
-                Parent::PropKey(object, _) => Parent::Expr(object),
-                Parent::PatKey(_) => Parent::Expr(ExprId::NONE),
-                // A method or an accessor is function-like, a property is not.
-                Parent::MemberKey(_) | Parent::MethodKey(_) => match hir
-                    .members
-                    .iter()
-                    .position(|m| m.key == PropKey::Computed(expression))
-                {
-                    Some(m) if hir.members[m].kind == MemberKind::Property => {
-                        Parent::MemberInit(MemberId(m as u32))
-                    }
-                    _ => return false,
-                },
-                other => self.outward(file, other),
-            };
         }
     }
 
@@ -1313,9 +1152,6 @@ impl Checker<'_> {
                 continue;
             }
             let source = self.type_of_expr(file, decl.init);
-            if self.is_uncertain(file, decl.init) {
-                continue;
-            }
             // `widenTypeForVariableLikeDeclaration`: an object literal may well have more than it takes.
             let source = self.regular_object(source);
             if !self.is_known(source) || self.is_assignable(source, target) {
@@ -1511,38 +1347,11 @@ impl Checker<'_> {
         Some(self.hir(file)[owner].stmt).filter(|s| s.is_some())
     }
 
-    /// `GetContainingFunction`: the nearest function-like node around `e`. Static blocks and properties are not function-like.
-    /// `Some(None)`: there is none. `None`: the parent chain is not tracked.
-    pub(super) fn get_containing_function(&self, file: FileId, e: ExprId) -> Option<Option<FnId>> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = bound.expr_parent[e.idx()];
-        loop {
-            at = match at {
-                Parent::FnBody(f) if hir[f].kind != FnKind::StaticBlock => return Some(Some(f)),
-                Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                    return bound.param_fn[p.idx()].some().map(Some);
-                }
-                Parent::File | Parent::Module(_) => return Some(None),
-                Parent::EnumInit(member) => Parent::Stmt(self.xs_enum_statement(file, member)?),
-                Parent::None => return None,
-                Parent::Expr(x) if x.is_none() => return None,
-                Parent::Stmt(s) if s.is_none() => return None,
-                Parent::PropKey(object, _) => Parent::Expr(object),
-                Parent::PatKey(p) => Parent::PatPropDefault(p),
-                // The computed name and the decorators of a method or an accessor are inside it.
-                Parent::MemberKey(m) | Parent::Decorator(_, DecoratorOwner::Member(m))
-                    if hir[m].func.is_some() =>
-                {
-                    return Some(Some(hir[m].func));
-                }
-                Parent::MemberKey(m) => Parent::MemberInit(m),
-                Parent::MethodKey(p) => match hir[p].value.some().map(|value| hir[value].kind) {
-                    Some(ExprKind::Fn(f)) => return Some(Some(f)),
-                    _ => return None,
-                },
-                other => self.outward(file, other),
-            };
-        }
+    /// `GetContainingFunction`
+    pub(super) fn get_containing_function(&self, file: FileId, e: ExprId) -> Option<FnId> {
+        let hir = self.hir(file);
+        hir.function_of(hir.get_containing_function(hir.node(e)))
+            .some()
     }
 
     /// Removes the checker errors reported in code that tsgo never checks. `checkWithStatement` skips the body, `checkReturnStatement`
@@ -1604,12 +1413,7 @@ impl Checker<'_> {
             if value.is_none() || bound.is_unchecked(yield_expr.idx()) {
                 continue;
             }
-            let is_operand_checked = match self.get_containing_function(file, yield_expr) {
-                Some(Some(f)) => hir[f].flags.contains(Flags::GENERATOR),
-                Some(None) => false,
-                None => true,
-            };
-            if !is_operand_checked {
+            if self.containing_generator(file, yield_expr).is_none() {
                 skipped.push((
                     self.start_of(file, value),
                     self.next_start_outside(file, e.pos, Parent::Expr(yield_expr)),

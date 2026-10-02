@@ -5,7 +5,6 @@
 //! declarations are those the binder and `lateBindMember` have put together with the first of them.
 
 use super::enclosing_declaration::Enclosing;
-use super::errors_misc::QueriedThisContainer;
 use super::print::{quoted, to_valid_utf8};
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
@@ -350,7 +349,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 if scope.is_none() {
                     return None;
                 }
-                let names: Vec<Atom> = hir.ids(name).take(index as usize + 1).collect();
+                let names: Vec<Atom> = hir.texts(name).take(index as usize + 1).collect();
                 let meaning = if names.len() == name.len() {
                     SymFlags::TYPE
                 } else {
@@ -397,13 +396,13 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 if is_typeof {
                     let mut ty = self.c.type_of_symbol(found);
                     let mut last = None;
-                    for part in hir.ids(name).take(index as usize + 1) {
+                    for part in hir.texts(name).take(index as usize + 1) {
                         last = self.get_property_of_type(ty, part);
                         ty = self.c.type_of_property(ty, part)?;
                     }
                     return last;
                 }
-                for (at, part) in hir.ids(name).enumerate().take(index as usize + 1) {
+                for (at, part) in hir.texts(name).enumerate().take(index as usize + 1) {
                     let meaning = if at + 1 < name.len() {
                         SymFlags::NAMESPACE
                     } else {
@@ -434,7 +433,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 let ImportEqualsTarget::Entity(list) = hir[import].target else {
                     return None;
                 };
-                let names: Vec<Atom> = hir.ids(list).take(index as usize + 1).collect();
+                let names: Vec<Atom> = hir.texts(list).take(index as usize + 1).collect();
                 let meaning = if index > 0 && names.len() == list.len() {
                     SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE
                 } else {
@@ -517,16 +516,9 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             ExprKind::This => {
                 let is_queried = bound.is_in_type_query(e);
                 // `GetThisContainer`
-                let function = if is_queried {
-                    match self.c.this_container_of_type_query(file, e, false) {
-                        Some(QueriedThisContainer::Fn(function)) => Some(function),
-                        _ => None,
-                    }
-                } else {
-                    match self.c.this_container(file, e) {
-                        Some(Ok(function)) => Some(function),
-                        _ => None,
-                    }
+                let function = match self.c.this_container(file, e) {
+                    Some(Ok(function)) => Some(function),
+                    _ => None,
                 };
                 if let Some(found) =
                     function.and_then(|function| self.this_parameter_of_function(function))

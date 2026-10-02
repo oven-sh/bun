@@ -146,6 +146,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     self.b.file.fns[func.idx()].body = body;
                 }
                 PendingPart::PatternKey(property, key) => {
+                    self.b.file.pat_props[property.idx()].name_kind = self.name_kind(&key, true);
                     let key = self.key(&key, true);
                     self.b.file.pat_props[property.idx()].key = key;
                 }
@@ -233,7 +234,10 @@ impl<'p, 'a> Lower<'p, 'a> {
             None => {
                 let name = self.b.atoms.intern(&param.name);
                 TypeNodeKind::Ref {
-                    name: self.b.file.list(&[name]),
+                    name: self
+                        .b
+                        .file
+                        .entity_name([(name, self.pos_of(param.loc))].into_iter()),
                     args: IdList::EMPTY,
                 }
             }
@@ -843,6 +847,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                     };
                     members.push(EnumMember {
                         name,
+                        name_kind: match self.note(value.loc, Mark::NameKind) {
+                            Some(1) => NameKind::StringLiteral,
+                            Some(2) => NameKind::NumericLiteral,
+                            Some(3) => NameKind::ComputedString,
+                            Some(4) => NameKind::ComputedNumber,
+                            _ => NameKind::Identifier,
+                        },
                         computed_name,
                         init,
                         pos: member_pos,
@@ -1002,6 +1013,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     let pos = dots.filter(|_| is_rest).unwrap_or(key_pos);
                     props.push(PatProp {
                         key,
+                        name_kind: self.name_kind(&property.key, is_computed),
                         value,
                         default,
                         is_rest,
@@ -1021,6 +1033,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         let file = &mut self.b.file;
         let member = &mut file.members[member.idx()];
         member.key = key;
+        member.flags |= Flags::COMPUTED_NAME;
         if matches!((&name.data, key), (Data::EString(_), PropKey::Name(_))) {
             member.flags |= Flags::STRING_NAME;
         }
@@ -1051,6 +1064,19 @@ impl<'p, 'a> Lower<'p, 'a> {
             // Only for a binding pattern, where a bigint is no index type (2538). As it is written, `0n` does not find `0`.
             Data::EBigInt(n) => PropKey::Name(self.b.atom(&[n.value.slice(), &b"n"[..]].concat())),
             _ => PropKey::None,
+        }
+    }
+
+    /// How the name `key` is written.
+    fn name_kind(&self, key: &Expr, is_computed: bool) -> NameKind {
+        match (&key.data, is_computed) {
+            (Data::EString(_), true) => NameKind::ComputedString,
+            (Data::ENumber(_), true) => NameKind::ComputedNumber,
+            (Data::ENumber(_), false) => NameKind::NumericLiteral,
+            (Data::EString(_), false) if self.note(key.loc, Mark::StringLiteralName).is_some() => {
+                NameKind::StringLiteral
+            }
+            _ => NameKind::Identifier,
         }
     }
 
@@ -1500,6 +1526,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             member.flags |= Flags::STRING_NAME;
         }
         if is_computed {
+            member.flags |= Flags::COMPUTED_NAME;
             member.name_pos = self.start_of_computed_name(key);
         } else if is_quoted || matches!(key.data, Data::ENumber(_) | Data::EBigInt(_)) {
             member.flags |= Flags::LITERAL_NAME;
@@ -1731,7 +1758,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                             TypeNodeKind::Ref { name, args }
                                 if args.is_empty()
                                     && name.len() == 1
-                                    && self.b.file.id_at(name, 0)
+                                    && self.b.file[name.at(0)].text
                                         == bun_sema::atom::known::r#const =>
                             {
                                 ExprKind::AsConst(id)
@@ -2193,6 +2220,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.list_props.push(Prop {
                     kind: PropKind::Spread,
                     key: PropKey::None,
+                    name_kind: NameKind::Identifier,
                     value,
                     pos,
                     start,
@@ -2266,6 +2294,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             let mut prop = Prop {
                 kind,
                 key,
+                name_kind: self.name_kind(written_key, is_computed),
                 value,
                 pos,
                 start,

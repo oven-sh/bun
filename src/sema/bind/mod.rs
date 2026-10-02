@@ -327,6 +327,8 @@ pub struct Symbol {
     pub flags: SymFlags,
     /// `Declarations`, in the order they are bound.
     pub decls: Decls,
+    /// `ValueDeclaration`: which of `Declarations`, those of all its parts for a symbol `mergeSymbol` has put together. `u32::MAX`: none.
+    pub value_declaration: u32,
     /// `Parent`, as `declareSymbolEx` sets it: the module, namespace or enum among whose exports it is declared, be it refused there.
     /// `NONE` for a local.
     pub parent: SymbolId,
@@ -337,27 +339,53 @@ pub struct Symbol {
     pub export_symbol: SymbolId,
 }
 
+const _: () = assert!(size_of::<Symbol>() <= 48);
+
 /// The declarations of a symbol. Nearly every symbol has one, which needs no block of its own.
+#[derive(Clone, Default)]
 pub enum Decls {
+    #[default]
+    None,
     One(Decl),
-    Many(Box<[Decl]>),
+    Many(Box<Vec<Decl>>),
 }
 
 impl Decls {
     #[inline]
     pub fn as_slice(&self) -> &[Decl] {
         match self {
+            Decls::None => &[],
             Decls::One(decl) => std::slice::from_ref(decl),
             Decls::Many(decls) => &decls[..],
         }
     }
 
     fn push(&mut self, decl: Decl) {
-        *self = match self.as_slice() {
-            [] => Decls::One(decl),
-            all => Decls::Many(all.iter().copied().chain([decl]).collect()),
-        };
+        match self {
+            Decls::None => *self = Decls::One(decl),
+            Decls::One(first) => *self = Decls::Many(Box::new(vec![*first, decl])),
+            Decls::Many(all) => all.push(decl),
+        }
     }
+}
+
+/// `SetValueDeclaration`: whether `node` takes the place of `value_declaration`. "Non-assignment declarations take precedence over
+/// assignment declarations and non-namespace declarations take precedence over namespace declarations."
+pub fn takes_over_as_value_declaration(value_declaration: Option<Decl>, node: Decl) -> bool {
+    // `isAssignmentDeclaration`
+    let is_assignment = |decl: Decl| {
+        matches!(
+            decl,
+            Decl::ModuleExports(_)
+                | Decl::ExportsProperty(_)
+                | Decl::Expando(_)
+                | Decl::ThisProperty(_)
+        )
+    };
+    value_declaration.is_none_or(|it| {
+        is_assignment(it) && !is_assignment(node)
+            || matches!(it, Decl::Module(_)) && !matches!(node, Decl::Module(_))
+    })
 }
 
 impl std::ops::Deref for Decls {
@@ -838,6 +866,47 @@ impl Bound {
             && [container.members, container.exports]
                 .iter()
                 .all(|&table| self.lookup(table, symbol.name) != Some(self.member_symbol[m.idx()]))
+    }
+
+    /// `GetCombinedModifierFlags`
+    pub fn modifier_flags(&self, f: &File, decl: Decl) -> Flags {
+        match decl {
+            Decl::Var(mut pat) => loop {
+                match self.pat_parent[pat.idx()] {
+                    PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
+                    PatParent::Var(d) => break f[d].flags,
+                    _ => break Flags::empty(),
+                }
+            },
+            Decl::Fn(it) => f[it].flags,
+            Decl::Class(it) => f[it].flags,
+            Decl::Interface(it) => f[it].flags,
+            Decl::Alias(it) => f[it].flags,
+            Decl::Enum(it) => f[it].flags,
+            Decl::Module(it) => f[it].flags,
+            Decl::ImportEquals(it) => f[it].flags,
+            _ => Flags::empty(),
+        }
+    }
+
+    /// The nearest scope that is more than a block: `container`, where `scope` is `blockScopeContainer`.
+    pub fn container_scope(&self, mut scope: ScopeId) -> ScopeId {
+        loop {
+            let s = &self.scopes[scope.idx()];
+            let is_container = matches!(
+                s.kind,
+                ScopeKind::File
+                    | ScopeKind::Module(_)
+                    | ScopeKind::Fn(_)
+                    | ScopeKind::Class(_)
+                    | ScopeKind::Interface(_)
+                    | ScopeKind::Enum(_)
+            );
+            if is_container || s.parent.is_none() {
+                return scope;
+            }
+            scope = s.parent;
+        }
     }
 
     /// `GetAssignmentTarget`: what gives `e` a value, if `e` is what it is given to or part of a pattern that is.

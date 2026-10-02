@@ -3,7 +3,7 @@
 use super::explain::Related;
 use super::related::Place;
 use super::*;
-use crate::bind::{Decl, FnOwner};
+use crate::bind::Decl;
 
 impl Checker<'_> {
     /// The end of `elaborateElement`: the related information of the error about the property or the element `name` of what is held
@@ -71,13 +71,6 @@ impl Checker<'_> {
         (file, start, end)
     }
 
-    /// `getReducedApparentType`
-    fn apparent_type_reduced(&mut self, ty: TypeId) -> TypeId {
-        let ty = self.reduced(ty);
-        let ty = self.apparent_type(ty);
-        self.reduced(ty)
-    }
-
     /// `GetErrorRangeForNode` of `getPropertyOfType(ty, name).Declarations[0]`. `None`: there is no such property. `Some(None)`:
     /// nothing declares it.
     fn first_declaration_of_property(
@@ -89,7 +82,7 @@ impl Checker<'_> {
         if depth > 8 {
             return None;
         }
-        let ty = self.apparent_type_reduced(ty);
+        let ty = self.reduced_apparent_type(ty);
         if self.is_union(ty) {
             // `createUnionOrIntersectionProperty`: the declarations of what the members have, one member after the other.
             let is_late_bound = self.files().atoms.is_symbol_name(name);
@@ -211,7 +204,7 @@ impl Checker<'_> {
         target: TypeId,
         name: Atom,
     ) -> Option<Place> {
-        let ty = self.apparent_type_reduced(target);
+        let ty = self.reduced_apparent_type(target);
         let members = self.members(ty)?;
         let key_type = self.key_type_of_name(name)?;
         let info = self.applicable_index(&members, key_type, Some(name))?;

@@ -35,14 +35,6 @@ struct Overrider {
     param: ParamId,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Sought {
-    /// `findFirstSuperCall`
-    SuperCall,
-    /// `nodeImmediatelyReferencesSuperOrThis`
-    SuperOrThis,
-}
-
 /// The modifier that ends right before `pos`, and its start. Whitespace and `/* .. */` comments in between are skipped.
 fn modifier_before(text: &[u8], pos: u32) -> Option<(u32, &[u8])> {
     let mut before = text.get(..pos as usize)?.trim_ascii_end();
@@ -191,11 +183,9 @@ impl Checker<'_> {
                 }
             ) {
                 // What is like a class without being one has to make the same thing whichever way it is called.
-                let mapper = self.decl_params_mapper(sym, file, class.type_params);
                 let mut returns = Vec::new();
                 for sig in self.super_constructor_sigs(sym) {
-                    let returned = self.sig_return(sig);
-                    returns.push(self.instantiate(returned, mapper));
+                    returns.push(self.sig_return(sig));
                 }
                 let are_known = returns.iter().all(|&returned| self.is_known(returned));
                 let all_the_same = self.answer_if_sure(|checker| {
@@ -252,9 +242,7 @@ impl Checker<'_> {
             return ClassBase::Nothing;
         }
         let constructor = self.base_constructor_type_of_class(sym);
-        if !self.is_error_type(constructor)
-            && (!self.is_known(constructor) || self.is_uncertain(file, class.extends))
-        {
+        if !self.is_error_type(constructor) && (!self.is_known(constructor)) {
             return ClassBase::Unknown;
         }
         if let Some(&base) = self.base_types(sym).first() {
@@ -631,7 +619,7 @@ impl Checker<'_> {
             return Some(false);
         }
         let ty = self.type_of_expr(file, e);
-        if !self.is_known(ty) || self.is_uncertain(file, e) {
+        if !self.is_known(ty) {
             return None;
         }
         // `isValidESSymbolDeclaration`: `static readonly k = Symbol()` holds a symbol of its own, where here it is any symbol.
@@ -760,7 +748,8 @@ impl Checker<'_> {
             }
             let class_extends_null = self.class_declaration_extends_null(self.class_sym(file, c));
             // `findFirstSuperCall`
-            let Some(first) = self.sought_in_stmts(file, body, Sought::SuperCall) else {
+            let block = hir.node(FnId(f as u32)).with(Part::Body);
+            let NodeData::Expr(first) = hir.data(self.find_first_super_call(hir, block)) else {
                 if !class_extends_null {
                     // `GetErrorRangeForNode`: up to the keyword.
                     let end = self.end_of_name_at(file, hir[m].name_pos);
@@ -826,7 +815,7 @@ impl Checker<'_> {
                         break;
                     }
                 }
-                if self.sought_in_stmt(file, s, Sought::SuperOrThis).is_some() {
+                if self.node_immediately_references_super_or_this(hir, hir.node(s)) {
                     break;
                 }
             }
@@ -844,258 +833,47 @@ impl Checker<'_> {
         }
     }
 
-    fn sought_in_stmts(&self, file: FileId, list: IdList<StmtId>, what: Sought) -> Option<ExprId> {
-        self.hir(file)
-            .ids(list)
-            .find_map(|s| self.sought_in_stmt(file, s, what))
+    /// `findFirstSuperCall`
+    fn find_first_super_call(&self, hir: &File, node: Node) -> Node {
+        if hir.kind(node) == Kind::CallExpression
+            && hir.kind(hir.expression(node)) == Kind::SuperKeyword
+        {
+            return node;
+        }
+        let mut found = Node::NONE;
+        if !hir.kind(node).is_function_like() && !self.is_stack_low() {
+            hir.for_each_child(node, &mut |child| {
+                found = self.find_first_super_call(hir, child);
+                found.is_some()
+            });
+        }
+        found
     }
 
-    fn sought_in_exprs(&self, file: FileId, list: IdList<ExprId>, what: Sought) -> Option<ExprId> {
-        self.hir(file)
-            .ids(list)
-            .find_map(|e| self.sought_in_expr(file, e, what))
-    }
-
-    /// The first `what` in the statement `s`, in the order things are written, leaving out what `what` does not look into.
-    fn sought_in_stmt(&self, file: FileId, s: StmtId, what: Sought) -> Option<ExprId> {
-        if s.is_none() || self.is_stack_low() {
-            return None;
-        }
-        let hir = self.hir(file);
-        let expr = |e: ExprId| self.sought_in_expr(file, e, what);
-        let stmt = |inner: StmtId| self.sought_in_stmt(file, inner, what);
-        let var = |d: VarDeclId| {
-            self.sought_in_pat(file, hir[d].pat, what)
-                .or_else(|| expr(hir[d].init))
-        };
-        match hir[s].kind {
-            StmtKind::Expr(e)
-            | StmtKind::Return(e)
-            | StmtKind::Throw(e)
-            | StmtKind::ExportDefault(e)
-            | StmtKind::ExportAssign(e) => expr(e),
-            StmtKind::Var(decls) => decls.iter().find_map(var),
-            StmtKind::Class(c) => self.sought_in_class(file, c, what),
-            StmtKind::Enum(e) => hir[e].members.iter().find_map(|m| expr(hir[m].init)),
-            StmtKind::Module(m) => self.sought_in_stmts(file, hir[m].body, what),
-            StmtKind::If { test, yes, no } => expr(test).or_else(|| stmt(yes)).or_else(|| stmt(no)),
-            StmtKind::For {
-                init,
-                test,
-                update,
-                body,
-            } => stmt(init)
-                .or_else(|| expr(test))
-                .or_else(|| expr(update))
-                .or_else(|| stmt(body)),
-            StmtKind::ForIn {
-                left,
-                expr: of,
-                body,
-            }
-            | StmtKind::ForOf {
-                left,
-                expr: of,
-                body,
-                ..
-            } => stmt(left).or_else(|| expr(of)).or_else(|| stmt(body)),
-            StmtKind::While { test, body } => expr(test).or_else(|| stmt(body)),
-            StmtKind::DoWhile { body, test } => stmt(body).or_else(|| expr(test)),
-            StmtKind::Block(list) => self.sought_in_stmts(file, list, what),
-            StmtKind::Switch { expr: on, cases } => expr(on).or_else(|| {
-                cases.iter().find_map(|case| {
-                    expr(hir[case].test)
-                        .or_else(|| self.sought_in_stmts(file, hir[case].body, what))
-                })
-            }),
-            StmtKind::Try {
-                block,
-                param,
-                handler,
-                finalizer,
-            } => stmt(block)
-                .or_else(|| if param.is_some() { var(param) } else { None })
-                .or_else(|| stmt(handler))
-                .or_else(|| stmt(finalizer)),
-            StmtKind::Labeled { body, .. } => stmt(body),
-            // A function declaration is looked into by neither, and the rest has nothing that runs.
-            _ => None,
-        }
-    }
-
-    fn sought_in_expr(&self, file: FileId, e: ExprId, what: Sought) -> Option<ExprId> {
-        if e.is_none() || self.is_stack_low() {
-            return None;
-        }
-        let hir = self.hir(file);
-        let expr = |inner: ExprId| self.sought_in_expr(file, inner, what);
-        match hir[e].kind {
-            ExprKind::This | ExprKind::Super => (what == Sought::SuperOrThis).then_some(e),
-            ExprKind::Template { exprs, .. } | ExprKind::Array(exprs) => {
-                self.sought_in_exprs(file, exprs, what)
-            }
-            ExprKind::Call(c)
-                if what == Sought::SuperCall
-                    && matches!(hir[hir[c].callee].kind, ExprKind::Super) =>
+    /// `nodeImmediatelyReferencesSuperOrThis`
+    fn node_immediately_references_super_or_this(&self, hir: &File, node: Node) -> bool {
+        match hir.kind(node) {
+            Kind::SuperKeyword | Kind::ThisKeyword => return true,
+            Kind::ArrowFunction
+            | Kind::FunctionDeclaration
+            | Kind::FunctionExpression
+            | Kind::PropertyDeclaration => return false,
+            Kind::Block
+                if matches!(
+                    hir.kind(hir.parent(node)),
+                    Kind::Constructor
+                        | Kind::MethodDeclaration
+                        | Kind::GetAccessor
+                        | Kind::SetAccessor
+                ) =>
             {
-                Some(e)
+                return false;
             }
-            ExprKind::TaggedTemplate(c) | ExprKind::Call(c) | ExprKind::New(c) => {
-                expr(hir[c].callee).or_else(|| self.sought_in_exprs(file, hir[c].args, what))
-            }
-            ExprKind::Object(props) => self.sought_in_props(file, props, what),
-            ExprKind::Fn(f) => self.sought_in_fn(file, f, what),
-            ExprKind::Class(c) => self.sought_in_class(file, c, what),
-            ExprKind::Dot { obj, .. } => expr(obj),
-            ExprKind::Index { obj, index, .. } => expr(obj).or_else(|| expr(index)),
-            ExprKind::Binary { left, right, .. }
-            | ExprKind::Assign {
-                target: left,
-                value: right,
-                ..
-            } => expr(left).or_else(|| expr(right)),
-            ExprKind::Cond { test, yes, no } => {
-                expr(test).or_else(|| expr(yes)).or_else(|| expr(no))
-            }
-            ExprKind::Unary { operand: inner, .. }
-            | ExprKind::Spread(inner)
-            | ExprKind::Await(inner)
-            | ExprKind::Yield { value: inner, .. }
-            | ExprKind::As { expr: inner, .. }
-            | ExprKind::Satisfies { expr: inner, .. }
-            | ExprKind::AsConst(inner)
-            | ExprKind::NonNull(inner) => expr(inner),
-            ExprKind::ImportCall { args, .. } => expr(hir.id_at(args, 0)),
-            ExprKind::Jsx(j) => {
-                let jsx = &hir[j];
-                expr(jsx.tag)
-                    .or_else(|| self.sought_in_props(file, jsx.attrs, what))
-                    .or_else(|| self.sought_in_exprs(file, jsx.children, what))
-            }
-            _ => None,
+            _ => {}
         }
-    }
-
-    /// In the properties of an object literal, or the attributes of a JSX element.
-    fn sought_in_props(&self, file: FileId, props: Span<PropId>, what: Sought) -> Option<ExprId> {
-        let hir = self.hir(file);
-        props.iter().find_map(|p| {
-            let prop = &hir[p];
-            // The name of a method is part of the method.
-            if what == Sought::SuperCall
-                && matches!(
-                    prop.kind,
-                    PropKind::Method | PropKind::Getter | PropKind::Setter
-                )
-            {
-                return None;
-            }
-            let in_name = match prop.key {
-                PropKey::Computed(name) => self.sought_in_expr(file, name, what),
-                _ => None,
-            };
-            in_name.or_else(|| self.sought_in_expr(file, prop.value, what))
-        })
-    }
-
-    fn sought_in_pat(&self, file: FileId, pat: PatId, what: Sought) -> Option<ExprId> {
-        if pat.is_none() || self.is_stack_low() {
-            return None;
-        }
-        let hir = self.hir(file);
-        match hir[pat].kind {
-            PatKind::Missing | PatKind::Ident(_) => None,
-            PatKind::Object(props) => props.iter().find_map(|p| {
-                let prop = &hir[p];
-                let in_name = match prop.key {
-                    PropKey::Computed(name) => self.sought_in_expr(file, name, what),
-                    _ => None,
-                };
-                in_name
-                    .or_else(|| self.sought_in_pat(file, prop.value, what))
-                    .or_else(|| self.sought_in_expr(file, prop.default, what))
-            }),
-            PatKind::Array(elems) => elems.iter().find_map(|x| {
-                self.sought_in_pat(file, hir[x].pat, what)
-                    .or_else(|| self.sought_in_expr(file, hir[x].default, what))
-            }),
-        }
-    }
-
-    fn sought_in_decorators(
-        &self,
-        file: FileId,
-        of: DecoratorOwner,
-        what: Sought,
-    ) -> Option<ExprId> {
-        self.hir(file)
-            .decorators
-            .iter()
-            .filter(|d| d.0 == of)
-            .find_map(|d| self.sought_in_expr(file, d.1, what))
-    }
-
-    /// A call of `super` is not looked for in a function of any kind. `this` and `super` are not looked for in a function that is
-    /// no member, nor in the body of one that is; a static block is no function.
-    fn sought_in_fn(&self, file: FileId, f: FnId, what: Sought) -> Option<ExprId> {
-        let hir = self.hir(file);
-        let func = &hir[f];
-        match (what, func.kind) {
-            (
-                Sought::SuperOrThis,
-                FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor,
-            ) => func.params.iter().find_map(|p| {
-                self.sought_in_decorators(file, DecoratorOwner::Param(p), what)
-                    .or_else(|| self.sought_in_pat(file, hir[p].pat, what))
-                    .or_else(|| self.sought_in_expr(file, hir[p].default, what))
-            }),
-            (_, FnKind::StaticBlock) => match func.body {
-                FnBody::Block(list) => self.sought_in_stmts(file, list, what),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn sought_in_class(&self, file: FileId, c: ClassId, what: Sought) -> Option<ExprId> {
-        let hir = self.hir(file);
-        let class = &hir[c];
-        self.sought_in_decorators(file, DecoratorOwner::Class(c), what)
-            .or_else(|| self.sought_in_expr(file, class.extends, what))
-            .or_else(|| {
-                class.members.iter().find_map(|m| {
-                    let member = &hir[m];
-                    // The whole of the declaration, with its name and what decorates it.
-                    let is_left_out = match what {
-                        Sought::SuperOrThis => member.kind == MemberKind::Property,
-                        Sought::SuperCall => {
-                            matches!(
-                                member.kind,
-                                MemberKind::Method
-                                    | MemberKind::Getter
-                                    | MemberKind::Setter
-                                    | MemberKind::Constructor
-                            )
-                        }
-                    };
-                    if is_left_out {
-                        return None;
-                    }
-                    let in_name = |c: &Self| match member.key {
-                        PropKey::Computed(name) => c.sought_in_expr(file, name, what),
-                        _ => None,
-                    };
-                    self.sought_in_decorators(file, DecoratorOwner::Member(m), what)
-                        .or_else(|| in_name(self))
-                        .or_else(|| {
-                            if member.func.is_some() {
-                                self.sought_in_fn(file, member.func, what)
-                            } else {
-                                None
-                            }
-                        })
-                        .or_else(|| self.sought_in_expr(file, member.init, what))
-                })
+        !self.is_stack_low()
+            && hir.for_each_child(node, &mut |child| {
+                self.node_immediately_references_super_or_this(hir, child)
             })
     }
 

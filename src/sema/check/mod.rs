@@ -32,7 +32,6 @@ mod errors_misc;
 mod errors_modules;
 mod errors_order;
 mod errors_overloads;
-mod errors_reflect_collision;
 mod errors_small;
 mod errors_unused;
 mod errors_x_aliases;
@@ -129,23 +128,13 @@ impl Slots {
     fn new(bases: &Bases) -> Slots {
         Slots(ByNode::new(bases))
     }
-    /// Set in a slot whose type rests on something that could not be found out.
-    const UNCERTAIN: u32 = 1 << 31;
 
     #[inline]
     fn get(&self, file: FileId, index: usize) -> Option<TypeId> {
-        match self.0.raw((file, index as u32)) & !Self::UNCERTAIN {
+        match self.0.raw((file, index as u32)) {
             0 => None,
             n => Some(TypeId(n - 1)),
         }
-    }
-    #[inline]
-    fn set_uncertain(&self, file: FileId, index: usize, ty: TypeId) {
-        self.0.set_raw(
-            (file, index as u32),
-            (ty.0 + 1) | Self::UNCERTAIN,
-            ty.is_local(),
-        );
     }
     #[inline]
     fn set(&self, file: FileId, index: usize, ty: TypeId) {
@@ -201,7 +190,6 @@ pub struct Program {
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
     initializer_is_undefined: ByNode<(FileId, ParamId), bool>,
     declared_types: ByNode<Sym, TypeId>,
-    /// The unions that have been seen to have no intersection among their members.
     shapes: ByIdKept<TypeId, shape::Resolved>,
     /// `intersectionTypes`, for those that have a union among them.
     distributed_intersections: ByKey<(Box<[TypeId]>, bool), (TypeId, bool)>,
@@ -498,7 +486,6 @@ impl Program {
             ),
             keeps_arg_contexts: false,
             context_checked_for: FxHashMap::default(),
-            uncertain: false,
             union_too_complex: false,
             recent_unions: Default::default(),
             deadline: None,
@@ -806,9 +793,6 @@ pub struct Checker<'p> {
     /// whose attempt checked the function first. Only that attempt infers from the function's annotations. `None` once the attempt
     /// has ended.
     pub(super) context_checked_for: FxHashMap<(FileId, ExprId), Option<SigId>>,
-    /// Since it was last reset, narrowing went by something whose type could not be found out: an assigned value, what may
-    /// be a type guard. What came of it is a guess, and nothing is to be reported on the strength of it.
-    pub(super) uncertain: bool,
     /// Set when `union_reduced` or `intersection_ex` gives up on a union that is too complex to represent (2590). The caller
     /// clears it first.
     pub(super) union_too_complex: bool,

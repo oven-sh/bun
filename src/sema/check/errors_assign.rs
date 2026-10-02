@@ -348,9 +348,6 @@ impl Checker<'_> {
             let wanted = if reference != target {
                 // What it is asserted to be.
                 let asserted = self.type_of_expr(file, target);
-                if self.is_uncertain(file, target) {
-                    continue;
-                }
                 asserted
             } else if is_arguments {
                 // `IArguments`. In the initializer of a property it is an error, and what is in error can be anything.
@@ -450,7 +447,7 @@ impl Checker<'_> {
     }
 
     /// `needCheckWidenedType` of `checkVariableLikeDeclaration`: a pattern none of whose elements has a name.
-    fn pattern_binds_nothing(hir: &hir::File, pat: PatId) -> bool {
+    pub(super) fn pattern_binds_nothing(hir: &hir::File, pat: PatId) -> bool {
         match hir[pat].kind {
             PatKind::Object(props) => props.is_empty(),
             PatKind::Array(elems) => elems
@@ -485,7 +482,7 @@ impl Checker<'_> {
             }
             let given = self.type_of_expr(file, expr);
             let target = self.type_from_node(file, ty);
-            if !self.is_known(given) || !self.is_known(target) || self.is_uncertain(file, expr) {
+            if !self.is_known(given) || !self.is_known(target) {
                 continue;
             }
             let given = self.base_of_literal(given);
@@ -796,7 +793,7 @@ impl Checker<'_> {
             return Ok(None);
         }
         let ty = self.type_of_expr(file, k);
-        if !self.is_known(ty) || self.is_uncertain(file, k) {
+        if !self.is_known(ty) {
             return Err(());
         }
         Ok(self.member_name(file, key))
@@ -901,42 +898,21 @@ impl Checker<'_> {
         }
     }
 
-    /// `symbol.ValueDeclaration` of the symbol the name `pat` declares. `declareSymbolEx` merges a `var` with the `var`s and the
-    /// parameter of that name. Any other redeclaration gets a symbol of its own.
+    /// `symbol.ValueDeclaration` of the symbol the name `pat` declares.
     pub(super) fn value_declaration_of_variable_name(
         &self,
         file: FileId,
         pat: PatId,
     ) -> (FileId, PatId) {
         use crate::bind::Decl;
-        let own = (file, pat);
         let id = self.bound(file).pat_symbol[pat.idx()];
-        let Some(written) = self.var_decl_of_pat(file, pat) else {
-            return own;
-        };
-        if id.is_none() || self.hir(file)[written].kind != VarKind::Var {
-            return own;
+        if id.is_none() {
+            return (file, pat);
         }
-        let sym = self.files().sym(file, id);
-        let is_value_module = self.files().flags(sym).contains(SymFlags::VALUE_MODULE);
-        let mut first = None;
-        for (of, decl) in self.files().decls(sym) {
-            match decl {
-                Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_) => {}
-                Decl::Module(_) if !is_value_module => {}
-                Decl::Var(name) | Decl::Param(name) => {
-                    let other = self.var_decl_of_pat(of, name);
-                    if other.is_some_and(|d| self.hir(of)[d].kind != VarKind::Var) {
-                        return own;
-                    }
-                    if first.is_none() && self.is_symbol_of_declaration(sym, (of, decl)) {
-                        first = Some((of, name));
-                    }
-                }
-                _ => return own,
-            }
+        match self.files().value_declaration(self.files().sym(file, id)) {
+            Some((of, Decl::Var(name) | Decl::Param(name))) => (of, name),
+            _ => (file, pat),
         }
-        first.unwrap_or(own)
     }
 
     /// The declaration `pat` is the name of, or a part of the name of. `None` for a parameter.
@@ -967,13 +943,13 @@ impl Checker<'_> {
         &self,
         file: FileId,
         spec: Atom,
-        name: IdList<Atom>,
+        name: Span<NameId>,
         mode: ResolutionMode,
     ) -> Option<Sym> {
         let (hir, files) = (self.hir(file), self.files());
         let module = files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
         let mut sym = files.module_value(module);
-        for (k, part) in hir.ids(name).enumerate() {
+        for (k, part) in hir.texts(name).enumerate() {
             let wanted = if k + 1 == name.len() {
                 SymFlags::TYPE
             } else {
@@ -1007,7 +983,7 @@ impl Checker<'_> {
                     {
                         continue;
                     }
-                    for (slot, part) in names.iter_mut().zip(hir.ids(name)) {
+                    for (slot, part) in names.iter_mut().zip(hir.texts(name)) {
                         *slot = part;
                     }
                     let Some(sym) = self.files().resolve_entity(
@@ -1095,7 +1071,7 @@ impl Checker<'_> {
                 continue;
             }
             let constructor = self.base_constructor_type_of_class(sym);
-            if !self.is_known(constructor) || self.is_uncertain(file, class.extends) {
+            if !self.is_known(constructor) {
                 continue;
             }
             // `getConstructorsForTypeArguments`
@@ -1437,17 +1413,15 @@ impl Checker<'_> {
                     let sym = self.files().sym(file, bound.class_symbol[c.idx()]);
                     let instance = self.declared_type(sym);
                     let ty = self.type_of_expr(file, e);
-                    if !self.is_uncertain(file, e)
-                        && !self.check_type_assignable_to_and_optionally_elaborate(
-                            ty,
-                            instance,
-                            Some(node),
-                            Some((file, e)),
-                            false,
-                            None,
-                            None,
-                        )
-                    {
+                    if !self.check_type_assignable_to_and_optionally_elaborate(
+                        ty,
+                        instance,
+                        Some(node),
+                        Some((file, e)),
+                        false,
+                        None,
+                        None,
+                    ) {
                         self.error(node, 2409, &[]);
                     }
                 }
@@ -1558,9 +1532,6 @@ impl Checker<'_> {
             return;
         }
         let ty = self.type_of_expr(file, e);
-        if self.is_uncertain(file, e) {
-            return;
-        }
         let ty = if hir[container].flags.contains(Flags::ASYNC) {
             self.check_awaited_type(ty, false, node, 1058)
         } else {
@@ -1661,7 +1632,7 @@ impl Checker<'_> {
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        let Some(is_too_complex) = self.finds_unassignable(file, source, target, e) else {
+        let Some(is_too_complex) = self.finds_unassignable(source, target) else {
             return true;
         };
         let (at, end) = place(&*self);
@@ -1681,13 +1652,7 @@ impl Checker<'_> {
 
     /// `None`: `source` fits `target`, or there is no telling. Otherwise there is something to complain of, and it is said whether
     /// that is that the comparison got too complex.
-    fn finds_unassignable(
-        &mut self,
-        file: FileId,
-        source: TypeId,
-        target: TypeId,
-        e: ExprId,
-    ) -> Option<bool> {
+    fn finds_unassignable(&mut self, source: TypeId, target: TypeId) -> Option<bool> {
         if !self.is_known(source) || !self.is_known(target) {
             return None;
         }
@@ -1699,9 +1664,6 @@ impl Checker<'_> {
             // Cut short for another reason than complexity: the result is unknown. tsgo's own depth limit (2321) is among those.
             None if !is_too_complex => return None,
             _ => {}
-        }
-        if e.is_some() && self.is_uncertain(file, e) {
-            return None;
         }
         Some(is_too_complex)
     }
@@ -2067,7 +2029,7 @@ impl Checker<'_> {
                         }
                         _ => self.type_of_expr(file, inner),
                     };
-                    if !self.is_known(spread) || self.is_uncertain(file, inner) {
+                    if !self.is_known(spread) {
                         return None;
                     }
                     if self.is_array_like(spread) {
@@ -2191,10 +2153,7 @@ impl Checker<'_> {
             } else {
                 self.widen_literal_for_context(written, Some(given))
             };
-            if !self.is_known(specific)
-                || self.is_uncertain(file, next)
-                || self.is_assignable(specific, wanted)
-            {
+            if !self.is_known(specific) || self.is_assignable(specific, wanted) {
                 given
             } else {
                 specific
@@ -2579,7 +2538,7 @@ impl Checker<'_> {
     /// (`getDeclaredTypeOfClassOrInterface`): all are but the interfaces without type parameters, their own or from around them,
     /// that are sure not to mention `this` (`isThislessInterface`).
     fn is_declared_as_reference(&mut self, sym: Sym, depth: u32) -> bool {
-        use crate::bind::{Decl, ScopeKind};
+        use crate::bind::Decl;
         if depth > 32 || self.files().flags(sym).contains(SymFlags::CLASS) {
             return true;
         }
@@ -2620,7 +2579,7 @@ impl Checker<'_> {
                 let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
                     continue;
                 };
-                let names: Vec<Atom> = hir.ids(name).collect();
+                let names: Vec<Atom> = hir.texts(name).collect();
                 let base = self
                     .files()
                     .resolve_entity(file, bound.type_scope[node.idx()], &names, SymFlags::TYPE)

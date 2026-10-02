@@ -8,7 +8,7 @@
 
 use super::errors::{Diagnostic, is_close};
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
+use crate::bind::{Decl, MemberOwner, Parent, PatParent, ScopeId};
 use crate::util::number_repeated;
 use smallvec::SmallVec;
 
@@ -45,7 +45,7 @@ impl Checker<'_> {
                 continue;
             }
             let ty = self.type_of_expr(file, e);
-            if !self.is_known(ty) || self.is_any(ty) || self.is_uncertain(file, e) {
+            if !self.is_known(ty) || self.is_any(ty) {
                 continue;
             }
             // `TypeFlagsNullable`: every kind of `undefined` and `null`, widening or declared.
@@ -700,117 +700,27 @@ impl Checker<'_> {
     /// look at in a signature without a body: the defaults of its parameters, and a property that is given another name there,
     /// `({ [a]: b }) => void`.
     fn is_only_declared(&self, file: FileId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // The expression the way out has just left.
-        let mut inner = e;
-        // What is around it. On the way `VarInit`, `FnBody`, `MemberInit` and `ClassExtends` stand for any place in the declaration,
-        // the function, the member and the class.
-        let mut around = bound.expr_parent[e.idx()];
-        loop {
-            around = match around {
-                Parent::Expr(x) | Parent::PropKey(x, _) if x.is_some() => {
-                    inner = x;
-                    bound.expr_parent[x.idx()]
-                }
-                Parent::Prop(p) => Parent::Expr(bound.prop_owner[p.idx()]),
-                Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                Parent::VarInit(d) if !hir[d].flags.contains(Flags::AMBIENT) => {
-                    Parent::Stmt(bound.var_stmt[d.idx()])
-                }
-                Parent::ParamDefault(p)
-                    if matches!(hir[bound.param_fn[p.idx()]].body, FnBody::None) =>
-                {
-                    return true;
-                }
-                Parent::ParamDefault(p) => Parent::FnBody(bound.param_fn[p.idx()]),
-                Parent::FnBody(f) if !hir[f].flags.contains(Flags::AMBIENT) => {
-                    match bound.fns[f.idx()].owner {
-                        FnOwner::Expr(x) => Parent::Expr(x),
-                        FnOwner::Stmt(s) => Parent::Stmt(s),
-                        FnOwner::Member(m) => Parent::MemberInit(m),
-                        FnOwner::Type(_) | FnOwner::None => return false,
-                    }
-                }
-                Parent::MemberKey(_) | Parent::MethodKey(_) => match hir
-                    .members
-                    .iter()
-                    .position(|m| m.key == PropKey::Computed(inner))
-                {
-                    Some(m) => Parent::MemberInit(MemberId(m as u32)),
-                    None => return false,
-                },
-                Parent::MemberInit(m) if !hir[m].flags.contains(Flags::AMBIENT) => {
-                    match bound.member_owner[m.idx()] {
-                        MemberOwner::Class(c) => Parent::ClassExtends(c),
-                        _ => return false,
-                    }
-                }
-                Parent::ClassExtends(c) | Parent::Decorator(c, _)
-                    if !hir[c].flags.contains(Flags::AMBIENT) =>
-                {
-                    match bound.class_owner[c.idx()] {
-                        ClassOwner::Expr(x) => Parent::Expr(x),
-                        ClassOwner::Stmt(s) => Parent::Stmt(s),
-                    }
-                }
-                Parent::VarInit(_)
-                | Parent::FnBody(_)
-                | Parent::MemberInit(_)
-                | Parent::ClassExtends(_)
-                | Parent::Decorator(..) => return true,
-                // What is in something that is only declared says so itself.
-                Parent::EnumInit(m) => {
-                    return hir[bound.enum_member_owner[m.idx()]]
-                        .flags
-                        .contains(Flags::AMBIENT);
-                }
-                Parent::Module(m) => return hir[m].flags.contains(Flags::AMBIENT),
-                Parent::PropKey(..)
-                | Parent::PatKey(_)
-                | Parent::PatPropDefault(_)
-                | Parent::PatElemDefault(_) => {
-                    // The property of a pattern it is the name or the default of, and the pattern it is written in.
-                    let prop = match around {
-                        Parent::PatPropDefault(p) => Some(p),
-                        Parent::PropKey(..) | Parent::PatKey(_) => hir
-                            .pat_props
-                            .iter()
-                            .position(|p| p.key == PropKey::Computed(inner))
-                            .map(|p| PatPropId(p as u32)),
-                        _ => None,
-                    };
-                    let holds_it = |pat: &Pat| match (pat.kind, around, prop) {
-                        (PatKind::Array(elems), Parent::PatElemDefault(x), _) => {
-                            elems.range().contains(&x.idx())
-                        }
-                        (PatKind::Object(props), _, Some(p)) => props.range().contains(&p.idx()),
-                        _ => false,
-                    };
-                    let Some(pat) = hir.pats.iter().position(holds_it) else {
-                        return false;
-                    };
-                    match root_declaration(bound, PatId(pat as u32)) {
-                        PatParent::Var(d) => Parent::VarInit(d),
-                        PatParent::Param(p) => {
-                            let f = bound.param_fn[p.idx()];
-                            let is_default =
-                                !matches!(around, Parent::PropKey(..) | Parent::PatKey(_));
-                            let is_renamed = prop.is_some_and(|x| {
-                                let value = &hir[hir[x].value];
-                                matches!(value.kind, PatKind::Ident(_)) && value.pos != hir[x].pos
-                            });
-                            if matches!(hir[f].body, FnBody::None) && (is_default || is_renamed) {
-                                return true;
-                            }
-                            Parent::FnBody(f)
-                        }
-                        _ => return false,
-                    }
-                }
-                _ => return false,
+        let hir = self.hir(file);
+        let is_left_out = |n: Node| {
+            let declaration = hir.parent(n);
+            let is_renamed = |p: PatPropId| {
+                let value = &hir[hir[p].value];
+                matches!(value.kind, PatKind::Ident(_)) && value.pos != hir[p].pos
             };
-        }
+            let is_part = match hir.data(declaration) {
+                NodeData::Param(_) | NodeData::PatElem(_) => hir.initializer(declaration) == n,
+                NodeData::PatProp(p) => {
+                    hir.initializer(declaration) == n
+                        || hir.property_name(declaration) == n && is_renamed(p)
+                }
+                _ => false,
+            };
+            let root = hir.get_root_declaration(declaration);
+            is_part
+                && hir.kind(root) == Kind::Parameter
+                && matches!(hir.fns.get(hir.function_of(hir.parent(root)).idx()), Some(function) if matches!(function.body, FnBody::None))
+        };
+        hir.is_ambient(hir.node(e)) || hir.find_ancestor(hir.node(e), is_left_out).is_some()
     }
 }
 

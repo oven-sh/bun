@@ -5,25 +5,11 @@
 //! and `checkSwitchStatement` of TypeScript 7.0.2's checker.go.
 
 use super::*;
-use crate::bind::{FnOwner, Parent, ScopeKind, UNREACHABLE};
+use crate::bind::{FnOwner, Parent, UNREACHABLE};
 
 const ALWAYS: u8 = 1;
 const NEVER: u8 = 2;
 const SOMETIMES: u8 = ALWAYS | NEVER;
-
-/// What `getThisContainer` finds around the `this` of `typeof this.x`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum QueriedThisContainer {
-    /// A function that is not an arrow function, a method, an accessor, a constructor, a static block, or a signature.
-    Fn(FnId),
-    /// A property of a class.
-    Property,
-    /// A property of an interface or of a type literal.
-    PropertySignature,
-    Module,
-    Enum,
-    File,
-}
 
 impl Checker<'_> {
     /// `checkNullishCoalesceOperands`, of `e`, which is `left ?? right`.
@@ -71,11 +57,7 @@ impl Checker<'_> {
     /// `checkSwitchStatement`, of one `case test:` of a `switch (expr)`: 2678.
     pub(super) fn check_case_clause(&mut self, file: FileId, expr: ExprId, test: ExprId) {
         let (subject, case) = (self.type_of_expr(file, expr), self.type_of_expr(file, test));
-        if !self.is_known(subject)
-            || !self.is_known(case)
-            || self.is_uncertain(file, expr)
-            || self.is_uncertain(file, test)
-        {
+        if !self.is_known(subject) || !self.is_known(case) {
             return;
         }
         // `isTypeEqualityComparableTo`, then the other way round.
@@ -231,87 +213,6 @@ impl Checker<'_> {
         elsewhere.unwrap_or_else(|| self.start_inside_parentheses(file, e))
     }
 
-    /// `getThisContainer`, for the `this` of `typeof this.x`: it goes by where the type is written, which is not where the binder
-    /// puts the operand. `None`: `this` is not the operand of a `typeof` in a type.
-    pub(super) fn this_container_of_type_query(
-        &self,
-        file: FileId,
-        this: ExprId,
-        include_arrow_functions: bool,
-    ) -> Option<QueriedThisContainer> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let query = hir.types.iter().position(|t| {
-            let TypeNodeKind::Typeof { expr, .. } = t.kind else {
-                return false;
-            };
-            let mut at = expr;
-            while at.is_some()
-                && let ExprKind::Dot { obj, .. } = hir[at].kind
-            {
-                at = obj;
-            }
-            at == this
-        })?;
-        // Out of the types it is written in. What a type literal has are containers, and only signatures have a scope.
-        let parents = Self::type_node_parents(hir, bound);
-        let mut root = TypeNodeId(query as u32);
-        loop {
-            let parent = parents[root.idx()];
-            if parent.is_none() {
-                break;
-            }
-            if let TypeNodeKind::Object(members) = hir[parent].kind {
-                let scope = bound.type_scope[root.idx()];
-                return Some(
-                    match scope.is_some().then(|| bound.scopes[scope.idx()].kind) {
-                        Some(ScopeKind::Fn(f)) if matches!(bound.fns[f.idx()].owner, FnOwner::Member(m) if members.range().contains(&m.idx())) => {
-                            QueriedThisContainer::Fn(f)
-                        }
-                        _ => QueriedThisContainer::PropertySignature,
-                    },
-                );
-            }
-            root = parent;
-        }
-        let mut scope = bound.type_scope[query];
-        while scope.is_some() {
-            let s = &bound.scopes[scope.idx()];
-            match s.kind {
-                // These have the `this` of what is around them.
-                ScopeKind::Fn(f)
-                    if matches!(hir[f].kind, FnKind::FunctionType | FnKind::ConstructorType)
-                        || hir[f].kind == FnKind::Arrow && !include_arrow_functions => {}
-                ScopeKind::Fn(f) => return Some(QueriedThisContainer::Fn(f)),
-                // Its type parameters, and what it extends and implements, are not in a member of it.
-                ScopeKind::Class(c) => {
-                    let class = &hir[c];
-                    let is_in_the_head = class
-                        .type_params
-                        .iter()
-                        .any(|p| hir[p].constraint == root || hir[p].default == root)
-                        || hir
-                            .ids(class.extends_args)
-                            .chain(hir.ids(class.implements))
-                            .any(|t| t == root);
-                    if !is_in_the_head {
-                        return Some(QueriedThisContainer::Property);
-                    }
-                }
-                ScopeKind::Interface(i) => {
-                    if hir[i].members.iter().any(|m| hir[m].ty == root) {
-                        return Some(QueriedThisContainer::PropertySignature);
-                    }
-                }
-                ScopeKind::Module(_) => return Some(QueriedThisContainer::Module),
-                ScopeKind::Enum(_) => return Some(QueriedThisContainer::Enum),
-                ScopeKind::File => return Some(QueriedThisContainer::File),
-                _ => {}
-            }
-            scope = s.parent;
-        }
-        None
-    }
-
     /// `getSyntacticTruthySemantics`
     fn syntactic_truthiness(&self, file: FileId, e: ExprId) -> u8 {
         let hir = self.hir(file);
@@ -421,7 +322,7 @@ impl Checker<'_> {
                 let key = self.type_of_expr(file, index);
                 (
                     obj,
-                    if self.is_known(key) && !self.is_uncertain(file, index) {
+                    if self.is_known(key) {
                         self.property_name_of_type(key)
                     } else {
                         None
@@ -439,7 +340,7 @@ impl Checker<'_> {
             self.error((file, start, end), 18011, &[]);
         }
         let object = self.type_of_expr(file, obj);
-        if !self.is_known(object) || self.is_any(object) || self.is_uncertain(file, obj) {
+        if !self.is_known(object) || self.is_any(object) {
             return;
         }
         let object = self.non_nullable(object);

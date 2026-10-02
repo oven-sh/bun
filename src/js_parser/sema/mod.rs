@@ -79,6 +79,8 @@ pub(crate) enum Mark {
     MemberEnd,
     /// Of the name of a member of a class that is a string literal: where the token after it is.
     StringLiteralName,
+    /// Of a member of an enum: which `hir::NameKind` its name is, if no identifier.
+    NameKind,
     /// Of the `key` of the name `[key]` of a member or of a property in a pattern: where the `[` is. Of a member of an enum: the `key`
     /// that is neither a string nor a number (`ts::Id<Expr>`).
     ComputedName,

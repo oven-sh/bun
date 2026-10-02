@@ -810,7 +810,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The property that makes the intersection `ty` one that nothing can be, and which of 18031 and 18032 says so.
-    fn why_never_intersection(&mut self, ty: TypeId) -> Option<(u32, Prop)> {
+    pub(super) fn why_never_intersection(&mut self, ty: TypeId) -> Option<(u32, Prop)> {
         let members = self.members(ty)?;
         // `isDiscriminantWithNeverType`
         for prop in &members.shape().props {

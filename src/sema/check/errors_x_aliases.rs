@@ -262,7 +262,7 @@ impl Checker<'_> {
                     .resolve_name(
                         file,
                         bound.import_equals_scope[i],
-                        hir.id_at(names, 0),
+                        hir[names.at(0)].text,
                         meaning,
                     )
                     .is_none()
@@ -696,12 +696,12 @@ impl Checker<'_> {
         &mut self,
         file: FileId,
         x: ImportEqualsId,
-        names: IdList<Atom>,
+        names: Span<NameId>,
         out: &mut Vec<Diagnostic>,
     ) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let names: Vec<Atom> = hir.ids(names).collect();
+        let names: Vec<Atom> = hir.texts(names).collect();
         for end in (1..=names.len()).rev() {
             // `getTypeOnlyDeclarationOfEntityName`
             let scope = bound.import_equals_scope[x.idx()];
@@ -1038,7 +1038,7 @@ impl Checker<'_> {
                     SymFlags::NAMESPACE
                 };
             let scope = bound.type_scope[reference.idx()];
-            let Some(root) = files.resolve_name(file, scope, hir.id_at(name, 0), meaning) else {
+            let Some(root) = files.resolve_name(file, scope, hir[name.at(0)].text, meaning) else {
                 continue;
             };
             if !files.flags(root).contains(SymFlags::ALIAS) {
@@ -1077,7 +1077,7 @@ impl Checker<'_> {
                     Some(at) => vec![super::explain::Related {
                         at: Some(at),
                         code: 1376,
-                        args: vec![c.atom_text(hir.id_at(name, 0))],
+                        args: vec![c.atom_text(hir[name.at(0)].text)],
                     }],
                     None => Vec::new(),
                 }
@@ -1126,7 +1126,7 @@ impl Checker<'_> {
             else {
                 return None;
             };
-            if a.len() != 1 || b.len() != 1 || hir.id_at(a, 0) != hir.id_at(b, 0) {
+            if a.len() != 1 || b.len() != 1 || hir[a.at(0)].text != hir[b.at(0)].text {
                 return None;
             }
         }
@@ -1583,7 +1583,7 @@ impl Checker<'_> {
                     return;
                 }
                 let ty = self.type_of_expr(file, argument);
-                if !self.is_known(ty) || self.is_uncertain(file, argument) {
+                if !self.is_known(ty) {
                     return;
                 }
                 if ty.is_undefined() || ty.is_null() || !self.is_assignable(ty, TypeId::STRING) {
@@ -1617,7 +1617,8 @@ impl Checker<'_> {
             }
             // `checkNewTargetMetaProperty`
             ExprKind::NewTarget(_) => {
-                if self.xa_has_new_target_container(file, e) == Some(false) {
+                let node = self.hir(file).node(e);
+                if self.hir(file).get_new_target_container(node).is_none() {
                     let start = hir[e].pos;
                     out.push(Diagnostic { start, code: 17013 });
                     let end = meta_property_end(&hir.text, start, b"new");
@@ -1625,69 +1626,6 @@ impl Checker<'_> {
                 }
             }
             _ => {}
-        }
-    }
-
-    /// `GetNewTargetContainer`: whether `e` is in a function or a constructor, which know how they were called, going through
-    /// arrow functions. `None`: where `e` is cannot be told.
-    fn xa_has_new_target_container(&self, file: FileId, e: ExprId) -> Option<bool> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // The expression last gone out of.
-        let mut below = e;
-        let mut parent = bound.expr_parent[e.idx()];
-        loop {
-            parent = match parent {
-                Parent::None => return None,
-                Parent::Stmt(s) if s.is_none() => return None,
-                Parent::Expr(x) if x.is_none() => return None,
-                Parent::File | Parent::Module(_) | Parent::MemberInit(_) | Parent::EnumInit(_) => {
-                    return Some(false);
-                }
-                Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                    let f = match parent {
-                        Parent::ParamDefault(p) => bound.param_fn[p.idx()],
-                        Parent::FnBody(f) => f,
-                        _ => return None,
-                    };
-                    match hir[f].kind {
-                        FnKind::Arrow => self.outward(file, parent),
-                        FnKind::Decl | FnKind::Expr | FnKind::Constructor => return Some(true),
-                        _ => return Some(false),
-                    }
-                }
-                Parent::Expr(x) => {
-                    below = x;
-                    bound.expr_parent[x.idx()]
-                }
-                // A computed name is worked out where the object, the pattern or the class is.
-                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
-                Parent::PropKey(..) | Parent::PatKey(_) => {
-                    let p = hir
-                        .pat_props
-                        .iter()
-                        .position(|p| p.key == PropKey::Computed(below))?;
-                    self.outward(file, Parent::PatPropDefault(PatPropId(p as u32)))
-                }
-                Parent::MemberKey(_) | Parent::MethodKey(_) => {
-                    if let Some(m) = hir
-                        .members
-                        .iter()
-                        .position(|m| m.key == PropKey::Computed(below))
-                    {
-                        let MemberOwner::Class(c) = bound.member_owner[m] else {
-                            return None;
-                        };
-                        self.outward(file, Parent::ClassExtends(c))
-                    } else {
-                        let p = hir
-                            .props
-                            .iter()
-                            .position(|p| p.key == PropKey::Computed(below))?;
-                        Parent::Expr(bound.prop_owner[p])
-                    }
-                }
-                _ => self.outward(file, parent),
-            };
         }
     }
 
@@ -1717,7 +1655,12 @@ impl Checker<'_> {
             }
         }
         // `IsValidTypeOnlyAliasUseSite`
-        if bound.is_in_type_query(e) || self.xa_is_in_ambient_context(file, e) {
+        // Nothing leads to it: nothing is said of it.
+        let node = self.hir(file).node(e);
+        if bound.is_in_type_query(e)
+            || self.hir(file).parent(node).is_none()
+            || self.hir(file).is_ambient(node)
+        {
             return;
         }
         let mut top = e;
@@ -1777,72 +1720,6 @@ impl Checker<'_> {
                 2748,
                 vec![flag_name],
             );
-        }
-    }
-
-    /// `NodeFlagsAmbient`. Where the way out is lost track of, it is taken to be set.
-    fn xa_is_in_ambient_context(&self, file: FileId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.kind == FileKind::Declaration {
-            return true;
-        }
-        // The expression last gone out of.
-        let mut below = e;
-        let mut parent = bound.expr_parent[e.idx()];
-        loop {
-            parent = match parent {
-                Parent::File => return false,
-                Parent::None => return true,
-                Parent::Stmt(s) if s.is_none() => return true,
-                Parent::Expr(x) if x.is_none() => return true,
-                Parent::Module(m) => return hir[m].flags.contains(Flags::AMBIENT),
-                Parent::EnumInit(m) => {
-                    return hir[bound.enum_member_owner[m.idx()]]
-                        .flags
-                        .contains(Flags::AMBIENT);
-                }
-                Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return true,
-                Parent::MemberInit(m) if matches!(bound.member_owner[m.idx()], MemberOwner::Class(c) if hir[c].flags.contains(Flags::AMBIENT)) =>
-                {
-                    return true;
-                }
-                Parent::Expr(x) => {
-                    below = x;
-                    bound.expr_parent[x.idx()]
-                }
-                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
-                Parent::PropKey(..) | Parent::PatKey(_) => match hir
-                    .pat_props
-                    .iter()
-                    .position(|p| p.key == PropKey::Computed(below))
-                {
-                    Some(p) => self.outward(file, Parent::PatPropDefault(PatPropId(p as u32))),
-                    None => return true,
-                },
-                Parent::MemberKey(_) | Parent::MethodKey(_) => {
-                    if let Some(m) = hir
-                        .members
-                        .iter()
-                        .position(|m| m.key == PropKey::Computed(below))
-                    {
-                        match bound.member_owner[m] {
-                            MemberOwner::Class(c) if !hir[c].flags.contains(Flags::AMBIENT) => {
-                                self.outward(file, Parent::ClassExtends(c))
-                            }
-                            _ => return true,
-                        }
-                    } else if let Some(p) = hir
-                        .props
-                        .iter()
-                        .position(|p| p.key == PropKey::Computed(below))
-                    {
-                        Parent::Expr(bound.prop_owner[p])
-                    } else {
-                        return true;
-                    }
-                }
-                _ => self.outward(file, parent),
-            };
         }
     }
 
@@ -1939,7 +1816,7 @@ impl Checker<'_> {
             }
             let e = ExprId(i as u32);
             let ty = self.type_at(file, e);
-            if !self.is_known(ty) || self.is_uncertain(file, e) {
+            if !self.is_known(ty) {
                 return false;
             }
         }

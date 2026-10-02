@@ -18,11 +18,9 @@ pub(super) enum DeferredNode {
 impl Checker<'_> {
     /// `checkSourceFile`
     pub(super) fn check_source_file(&mut self, file: FileId) {
-        let uncertain = self.uncertain;
         self.check_source_elements(file, self.hir(file).body);
         self.check_deferred_nodes(file);
         self.reported_unreachable_nodes.clear();
-        self.uncertain = uncertain;
         if self.trace_cycles {
             self.report_what_was_not_looked_at(file);
         }

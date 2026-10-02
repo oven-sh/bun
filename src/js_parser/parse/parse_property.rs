@@ -324,10 +324,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TStringLiteral => {
                     key = p.parse_string_literal()?;
-                    if opts.is_class {
-                        let next = p.lexer.loc();
-                        p.note_loc(&mut key.loc, crate::sema::Mark::StringLiteralName, next);
-                    }
+                    let next = p.lexer.loc();
+                    p.note_loc(&mut key.loc, crate::sema::Mark::StringLiteralName, next);
                 }
                 T::TBigIntegerLiteral => {
                     key = p.new_expr(

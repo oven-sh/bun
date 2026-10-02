@@ -10,12 +10,13 @@
 //!
 //! Rows that are no node: the statement around what is in the head of a `for`, the `Pat` of an omitted element, the `TupleElem` of a
 //! plain element, the `Assign` of `{ a = 1 }`. What a class extends after the first has no `ExpressionWithTypeArguments` around it.
-//! tsgo's nodes that are not there yet, so `parent` goes past them: `ParenthesizedExpression`, `ParenthesizedType`, `JsxExpression`,
-//! `QualifiedName` and the identifiers of an entity name in a type, the literal of a `LiteralType`, of `["a"]` and of a template, module
-//! specifiers, `ImportAttributes`, `WithStatement` (a `Block` of two), directives, tokens.
+//! tsgo's nodes that are not there yet, so `parent` goes past them: `ParenthesizedType`, `JsxExpression`,
+//! the literal of a `LiteralType` and of a template, module specifiers, `ImportAttributes`, `WithStatement` (a `Block` of two), directives, tokens.
 
-use crate::atom::Atom;
+use crate::atom::{Atom, known};
+use crate::bind::{Decl, Parent};
 use crate::hir::*;
+use std::ops::ControlFlow;
 
 macro_rules! kinds {
     ($($name:ident)*) => {
@@ -175,6 +176,12 @@ parts! {
     Attributes = 17,
     /// The `TemplateSpan` around a substitution. It belongs to the row of the expression.
     Span = 18,
+    /// The literal in the brackets of `["a"]` and `[0]`.
+    NameLiteral = 19,
+    /// The `ParenthesizedExpression` around an expression, all levels as one. It belongs to the row of the expression.
+    Paren = 20,
+    /// The `QualifiedName` that ends with a name, a `PropertyAccessExpression` in a heritage clause. It belongs to the row of that name.
+    Qualified = 21,
 }
 
 impl Node {
@@ -197,6 +204,9 @@ impl Node {
     /// That part of the row.
     #[inline]
     pub fn with(self, part: Part) -> Node {
+        if self.is_none() {
+            return Node::NONE;
+        }
         Node(self.row().0 | (part as u32) << ROW_BITS)
     }
     #[inline]
@@ -233,7 +243,20 @@ macro_rules! node_vectors {
                 NodeBases(bases)
             }
 
+            #[inline]
             pub fn data(&self, node: Node) -> NodeData {
+                let bases = &self.bases.0;
+                // Most of what is asked about is an expression or a statement.
+                if node.0.wrapping_sub(bases[0]) < bases[1] - bases[0] {
+                    return NodeData::Expr(ExprId(node.0 - bases[0]));
+                }
+                if node.0.wrapping_sub(bases[1]) < bases[2] - bases[1] {
+                    return NodeData::Stmt(StmtId(node.0 - bases[1]));
+                }
+                self.data_of_the_rest(node)
+            }
+
+            fn data_of_the_rest(&self, node: Node) -> NodeData {
                 let bases = &self.bases.0;
                 if node == Node::FILE {
                     return NodeData::File;
@@ -282,11 +305,26 @@ node_vectors! {
     14 export_specs ExportSpecId ExportSpec;
     15 tuple_elems TupleElemId TupleElem;
     16 modifiers ModifierId Modifier;
+    17 names NameId Name;
+}
+
+/// `node.Parent`, of every node of a file.
+pub struct Parents {
+    /// By row: one load.
+    rows: Box<[Node]>,
+    /// Of the `ParenthesizedExpression` and the `TemplateSpan` around an expression and of the `QualifiedName` that ends with a name, which
+    /// are what `rows` has for it. Sorted.
+    around: Box<[(Node, Node)]>,
 }
 
 /// A typed id that is, or belongs to, a node.
 pub trait ToNode: Copy {
     fn to_node(self, file: &File) -> Node;
+    /// What stands for it in its parent: an expression with the parentheses around it.
+    #[inline]
+    fn to_child(self, file: &File) -> Node {
+        self.to_node(file)
+    }
 }
 
 macro_rules! rows_are_nodes {
@@ -301,7 +339,18 @@ macro_rules! rows_are_nodes {
 }
 rows_are_nodes! {
     StmtId TypeNodeId PatId PatPropId PatElemId ParamId TypeParamId MemberId PropId VarDeclId CaseId EnumMemberId ImportSpecId
-    ExportSpecId ModifierId
+    ExportSpecId ModifierId NameId
+}
+
+impl ToNode for Span<NameId> {
+    /// `EntityName`: the one name, or the `QualifiedName` that ends with the last.
+    fn to_node(self, file: &File) -> Node {
+        match self.iter().next_back() {
+            Some(last) if self.len() > 1 => last.row(file).with(Part::Qualified),
+            Some(only) => only.row(file),
+            None => Node::NONE,
+        }
+    }
 }
 
 impl ToNode for TupleElemId {
@@ -332,6 +381,14 @@ impl ToNode for ExprId {
             None => Node::NONE,
         }
     }
+
+    fn to_child(self, file: &File) -> Node {
+        if self.is_some() && is_parenthesized(file, self) {
+            self.row(file).with(Part::Paren)
+        } else {
+            self.to_node(file)
+        }
+    }
 }
 
 impl ToNode for FnId {
@@ -359,18 +416,94 @@ macro_rules! statements_are_nodes {
         })*
     };
 }
-statements_are_nodes! { InterfaceId interfaces AliasId aliases EnumId enums ModuleId modules ImportEqualsId import_equals }
+statements_are_nodes! {
+    InterfaceId interfaces AliasId aliases EnumId enums ModuleId modules ImportEqualsId import_equals ImportId imports
+    ExportId exports
+}
+
+impl ToNode for Decl {
+    /// One of `symbol.Declarations`.
+    fn to_node(self, file: &File) -> Node {
+        match self {
+            // The `VariableDeclaration`, `Parameter` or `BindingElement` it is the name of.
+            Decl::Var(name) | Decl::Param(name) | Decl::Require(name) => {
+                file.parent(file.node(name))
+            }
+            Decl::Fn(f) => file.node(f),
+            Decl::Class(c) => file.node(c),
+            Decl::Interface(i) => file.node(i),
+            Decl::Alias(a) => file.node(a),
+            Decl::Enum(e) => file.node(e),
+            Decl::EnumMember(m) => file.node(m),
+            Decl::Module(m) => file.node(m),
+            Decl::TypeParam(p) => file.node(p),
+            Decl::ImportDefault(i) => file.node(i).with(Part::ImportClause),
+            Decl::ImportNamespace(i) => file.node(i).with(Part::NamedBindings),
+            Decl::ImportSpec(s) => file.node(s),
+            Decl::ImportEquals(i) => file.node(i),
+            Decl::ExportSpec(s) => file.node(s),
+            Decl::ExportStarAs(s) => file.node(s).with(Part::ExportClause),
+            Decl::ExportExpr(s) | Decl::UmdGlobal(s) => file.node(s),
+            Decl::File | Decl::CommonJsVariable => Node::FILE,
+            Decl::ModuleExports(e)
+            | Decl::ExportsProperty(e)
+            | Decl::Expando(e)
+            | Decl::ObjectLiteral(e)
+            | Decl::ThisProperty(e) => file.node(e),
+            Decl::Member(m) => file.node(m),
+            Decl::ParameterProperty(p) => file.node(p),
+            Decl::Property(p) => file.node(p),
+            Decl::TypeLiteral(t) => file.node(t),
+        }
+    }
+}
+
+impl ToNode for Parent {
+    /// What an expression or a statement whose `Parent` it is lies directly in. For who still has a `Parent` in hand.
+    fn to_node(self, file: &File) -> Node {
+        match self {
+            Parent::None => Node::NONE,
+            Parent::Expr(e) => file.node(e),
+            Parent::Stmt(s) => file.node(s),
+            Parent::VarInit(d) => file.node(d),
+            Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
+                file.node(p)
+            }
+            Parent::PatPropDefault(p) => file.node(p),
+            Parent::PatElemDefault(e) => file.node(e),
+            Parent::Prop(p) => file.node(p),
+            Parent::PropKey(_, p) | Parent::MethodKey(p) => file.node(p).with(Part::Name),
+            Parent::PatKey(p) => file.node(p).with(Part::PropertyName),
+            Parent::MemberKey(m) => file.node(m).with(Part::Name),
+            Parent::MemberInit(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => file.node(m),
+            Parent::FnBody(f) => file.node(f),
+            Parent::EnumInit(m) => file.node(m),
+            Parent::Case(c) => file.node(c),
+            Parent::ClassExtends(c) | Parent::Decorator(_, DecoratorOwner::Class(c)) => {
+                file.node(c)
+            }
+            Parent::Module(m) => file.node(m),
+            Parent::File => Node::FILE,
+        }
+    }
+}
 
 /// `Visitor`, and the file whose ids it is handed.
 struct Children<'a> {
     file: &'a File,
     visit: &'a mut dyn FnMut(Node) -> bool,
+    /// Whether an expression in parentheses is handed over as the `ParenthesizedExpression`, which takes a search.
+    with_parentheses: bool,
 }
 
 impl Children<'_> {
     /// `visit`
     fn one(&mut self, id: impl ToNode) -> bool {
-        let node = id.to_node(self.file);
+        let node = if self.with_parentheses {
+            id.to_child(self.file)
+        } else {
+            id.to_node(self.file)
+        };
         node.is_some() && (self.visit)(node)
     }
 
@@ -562,15 +695,21 @@ impl Children<'_> {
             StmtKind::Labeled { body, .. } => self.one(node.with(Part::Label)) || self.one(body),
             StmtKind::Import(i) => {
                 let import = &file[i];
+                // `import {} from "m"` has one too.
                 let has_clause = import.default.is_some()
                     || import.namespace.is_some()
-                    || !import.named.is_empty();
+                    || !import.named.is_empty()
+                    || import.clause_end > import.clause_start;
                 self.part(node, Part::ImportClause, has_clause)
             }
             StmtKind::ImportEquals(i) => {
-                let is_external = matches!(file[i].target, ImportEqualsTarget::Require(_));
                 self.one(node.with(Part::Name))
-                    || self.part(node, Part::ModuleReference, is_external)
+                    || match file[i].target {
+                        ImportEqualsTarget::Require(_) => {
+                            self.one(node.with(Part::ModuleReference))
+                        }
+                        ImportEqualsTarget::Entity(name) => self.one(name),
+                    }
             }
             StmtKind::ExportNamed(_) => self.one(node.with(Part::ExportClause)),
             StmtKind::ExportStar { alias, .. } => {
@@ -591,7 +730,9 @@ impl Children<'_> {
             | TypeNodeKind::BoolLit(_)
             | TypeNodeKind::UniqueSymbol => false,
             TypeNodeKind::Heritage(e) => self.one(e),
-            TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. } => self.list(args),
+            TypeNodeKind::Ref { name, args } | TypeNodeKind::Import { name, args, .. } => {
+                self.one(name) || self.list(args)
+            }
             TypeNodeKind::Template { types, .. }
             | TypeNodeKind::Union(types)
             | TypeNodeKind::Intersection(types) => self.list(types),
@@ -635,13 +776,13 @@ impl Children<'_> {
             _ => None,
         };
         match part {
-            Part::Label | Part::BindingsName => false,
+            Part::Label | Part::BindingsName | Part::NameLiteral => false,
             // `ComputedPropertyName`
-            Part::Name | Part::PropertyName => match file.data(row) {
-                NodeData::Member(m) => matches!(file[m].key, PropKey::Computed(e) if self.one(e)),
-                NodeData::Prop(p) => matches!(file[p].key, PropKey::Computed(e) if self.one(e)),
-                NodeData::PatProp(p) => matches!(file[p].key, PropKey::Computed(e) if self.one(e)),
-                NodeData::EnumMember(m) => self.one(file[m].computed_name),
+            Part::Name | Part::PropertyName => match file.key_of(row) {
+                (PropKey::Computed(e), _) => self.one(e),
+                (_, NameKind::ComputedString | NameKind::ComputedNumber) => {
+                    self.one(row.with(Part::NameLiteral))
+                }
                 _ => false,
             },
             Part::Body => match statement {
@@ -674,14 +815,30 @@ impl Children<'_> {
                 Some(class) => self.one(class.extends) || self.list(class.extends_args),
                 None => false,
             },
-            Part::Span => (self.visit)(row),
+            // `Left`, `Right`
+            Part::Qualified => {
+                let left = Node(row.0 - 1);
+                let is_qualified =
+                    matches!(file.data(left), NodeData::Name(n) if file[n].is_qualified());
+                self.one(if is_qualified {
+                    left.with(Part::Qualified)
+                } else {
+                    left
+                }) || self.one(row)
+            }
+            Part::Span => matches!(file.data(row), NodeData::Expr(e) if self.one(e)),
+            Part::Paren => {
+                matches!(file.data(row), NodeData::Expr(e) if (self.visit)(file.node(e)))
+            }
             Part::DeclarationList => match statement {
                 Some(StmtKind::Var(declarations)) => self.span(declarations),
                 _ => false,
             },
             Part::ImportClause => match statement {
                 Some(StmtKind::Import(i)) => {
-                    let has_bindings = file[i].namespace.is_some() || !file[i].named.is_empty();
+                    let has_bindings = file[i].namespace.is_some()
+                        || !file[i].named.is_empty()
+                        || file[i].default.is_none();
                     self.part(row, Part::Name, file[i].default.is_some())
                         || self.part(row, Part::NamedBindings, has_bindings)
                 }
@@ -723,31 +880,37 @@ impl File {
         id.to_node(self)
     }
 
-    /// What `parents` has for the row `row`: the nearest node above that does not belong to `row` itself.
     #[inline]
-    fn row_above(&self, row: Node) -> Node {
-        let parents = self.parents.get_or_init(|| self.parents_of_all());
-        parents.get(row.idx()).copied().unwrap_or(Node::NONE)
+    fn parents(&self) -> &Parents {
+        self.parents.get_or_init(|| self.parents_of_all())
     }
 
     /// `node.Parent`. `NONE` for the file, and for a row nothing in the file leads to.
+    #[inline]
     pub fn parent(&self, node: Node) -> Node {
+        match self.parents().rows.get(node.idx()) {
+            Some(&parent) => parent,
+            None => self.parent_of_part(node),
+        }
+    }
+
+    fn parent_of_part(&self, node: Node) -> Node {
         let row = node.row();
         let is_import = || matches!(self.data(row), NodeData::Stmt(s) if matches!(self[s].kind, StmtKind::Import(_)));
         match node.part() {
-            None => {
-                let above = self.row_above(row);
-                match self.data(above) {
-                    NodeData::Expr(e) if matches!(self[e].kind, ExprKind::Template { .. }) => {
-                        row.with(Part::Span)
-                    }
-                    _ => above,
-                }
+            None => Node::NONE,
+            Some(Part::Paren | Part::Span | Part::Qualified) => {
+                let around = &self.parents().around;
+                let at = around.binary_search_by_key(&node, |&(wrapper, _)| wrapper);
+                at.map_or(Node::NONE, |at| around[at].1)
             }
-            Some(Part::Span) => self.row_above(row),
             Some(Part::Base) => row.with(Part::Extends),
+            Some(Part::NameLiteral) if matches!(self.data(row), NodeData::PatProp(_)) => {
+                row.with(Part::PropertyName)
+            }
+            Some(Part::NameLiteral) => row.with(Part::Name),
             // In the head of a `for`.
-            Some(Part::DeclarationList) if self.is_for_initializer(row) => self.row_above(row),
+            Some(Part::DeclarationList) if self.is_for_initializer(row) => self.parent(row),
             Some(Part::Name) if is_import() => row.with(Part::ImportClause),
             Some(Part::NamedBindings) => row.with(Part::ImportClause),
             Some(Part::BindingsName) if is_import() => row.with(Part::NamedBindings),
@@ -761,7 +924,7 @@ impl File {
 
     /// Whether the statement `row` is what is in the head of the `for` statement above it.
     fn is_for_initializer(&self, row: Node) -> bool {
-        match (self.data(row), self.data(self.row_above(row))) {
+        match (self.data(row), self.data(self.parent(row))) {
             (NodeData::Stmt(s), NodeData::Stmt(above)) => matches!(
                 self[above].kind,
                 StmtKind::For { init: head, .. }
@@ -772,26 +935,76 @@ impl File {
         }
     }
 
+    /// Half of all nodes are leaves: the walk does not come back to them.
+    #[inline]
+    fn may_have_rows_under_it(&self, node: Node) -> bool {
+        match self.data(node) {
+            NodeData::Expr(e) => !matches!(
+                self[e].kind,
+                ExprKind::Missing
+                    | ExprKind::Ident(_)
+                    | ExprKind::This
+                    | ExprKind::Super
+                    | ExprKind::Null
+                    | ExprKind::True
+                    | ExprKind::False
+                    | ExprKind::Number(_)
+                    | ExprKind::String(_)
+                    | ExprKind::BigInt(_)
+                    | ExprKind::Regex
+                    | ExprKind::ImportMeta
+                    | ExprKind::NewTarget(_)
+            ),
+            NodeData::Pat(p) => !matches!(self[p].kind, PatKind::Missing | PatKind::Ident(_)),
+            NodeData::Type(t) => !matches!(self[t].kind, TypeNodeKind::Keyword(_)),
+            NodeData::Modifier(m) => matches!(self[m].kind, ModifierKind::Decorator(_)),
+            NodeData::Name(_) => false,
+            NodeData::Part(Part::Label | Part::BindingsName | Part::NameLiteral, _) => false,
+            NodeData::Part(Part::Name | Part::PropertyName, row) => {
+                matches!(self.key_of(row).0, PropKey::Computed(_))
+            }
+            _ => true,
+        }
+    }
+
     /// One walk, when the first parent is asked for: most files of a program are never asked.
     #[cold]
-    fn parents_of_all(&self) -> Box<[Node]> {
-        let mut parents = vec![Node::NONE; self.bases.0[VECTORS] as usize];
+    fn parents_of_all(&self) -> Parents {
+        let mut rows = vec![Node::NONE; self.bases.0[VECTORS] as usize];
+        let mut around = Vec::new();
         let mut open = vec![Node::FILE];
         while let Some(node) = open.pop() {
-            self.for_each_child(node, &mut |child| {
-                // A part has no place of its own. One that is around its row, or stands for it, takes that of the row.
-                let is_around_its_row = matches!(
-                    child.part(),
-                    None | Some(Part::Span | Part::DeclarationList)
-                );
-                if is_around_its_row && child.row() != node.row() {
-                    parents[child.row().idx()] = node;
+            self.for_each_child_with(node, false, &mut |child| {
+                match child.part() {
+                    None => rows[child.idx()] = node,
+                    Some(Part::Span | Part::Qualified) => around.push((child, node)),
+                    // In the head of a `for` it stands for its row, which is no node.
+                    Some(Part::DeclarationList) if child.row() != node.row() => {
+                        rows[child.row().idx()] = node;
+                    }
+                    // Told from the row.
+                    Some(_) => {}
                 }
-                open.push(child);
+                if self.may_have_rows_under_it(child) {
+                    open.push(child);
+                }
                 false
             });
         }
-        parents.into()
+        // The parentheses go between afterwards: the list of them is short, and to ask of every expression whether it is in it is not.
+        for &(e, ..) in &self.parens {
+            let (row, parentheses) = (e.row(self), e.row(self).with(Part::Paren));
+            // All levels are one.
+            if rows[row.idx()].is_some() && rows[row.idx()] != parentheses {
+                around.push((parentheses, rows[row.idx()]));
+                rows[row.idx()] = parentheses;
+            }
+        }
+        around.sort_unstable();
+        Parents {
+            rows: rows.into(),
+            around: around.into(),
+        }
     }
 
     /// `FindAncestor`
@@ -862,6 +1075,101 @@ impl File {
         }
     }
 
+    /// The key of a member, a property, a binding element or a member of an enum, and how it is written.
+    fn key_of(&self, row: Node) -> (PropKey, NameKind) {
+        match self.data(row) {
+            NodeData::Member(m) => {
+                let flags = self[m].flags;
+                let is_string = flags.contains(Flags::STRING_NAME);
+                let kind = match flags.contains(Flags::COMPUTED_NAME) {
+                    true if is_string => NameKind::ComputedString,
+                    true => NameKind::ComputedNumber,
+                    false if is_string => NameKind::StringLiteral,
+                    false if flags.contains(Flags::LITERAL_NAME) => NameKind::NumericLiteral,
+                    false => NameKind::Identifier,
+                };
+                (self[m].key, kind)
+            }
+            NodeData::Prop(p) => (self[p].key, self[p].name_kind),
+            NodeData::PatProp(p) => (self[p].key, self[p].name_kind),
+            NodeData::EnumMember(m) if self[m].computed_name.is_some() => (
+                PropKey::Computed(self[m].computed_name),
+                NameKind::Identifier,
+            ),
+            NodeData::EnumMember(m) => (PropKey::Name(self[m].name), self[m].name_kind),
+            _ => (PropKey::None, NameKind::Identifier),
+        }
+    }
+
+    /// `node.Text()`, of a name, an identifier or a string. `NONE`: it has none, or the tree does not keep it.
+    pub fn text(&self, node: Node) -> Atom {
+        let statement = |row: Node| match self.data(row) {
+            NodeData::Stmt(s) => Some(self[s].kind),
+            _ => None,
+        };
+        match self.data(node) {
+            NodeData::Expr(e) => match self[e].kind {
+                ExprKind::Ident(text) | ExprKind::String(text) | ExprKind::BigInt(text) => text,
+                _ => Atom::NONE,
+            },
+            NodeData::Pat(p) => match self[p].kind {
+                PatKind::Ident(text) => text,
+                _ => Atom::NONE,
+            },
+            NodeData::Name(n) => self[n].text,
+            NodeData::Part(Part::Label, row) => match statement(row) {
+                Some(
+                    StmtKind::Labeled { label, .. }
+                    | StmtKind::Break(label)
+                    | StmtKind::Continue(label),
+                ) => label,
+                _ => Atom::NONE,
+            },
+            NodeData::Part(Part::BindingsName, row) => match statement(row) {
+                Some(StmtKind::Import(i)) => self[i].namespace,
+                Some(StmtKind::ExportStar { alias, .. }) => alias,
+                _ => Atom::NONE,
+            },
+            NodeData::Part(Part::PropertyName, row) => match self.data(row) {
+                NodeData::ImportSpec(s) => self[s].imported,
+                NodeData::ExportSpec(s) => self[s].local,
+                _ => self.key_of(row).0.name().unwrap_or(Atom::NONE),
+            },
+            NodeData::Part(Part::NameLiteral, row) => {
+                self.key_of(row).0.name().unwrap_or(Atom::NONE)
+            }
+            NodeData::Part(Part::Name, row) => match self.data(row) {
+                NodeData::Expr(e) => match self[e].kind {
+                    ExprKind::Dot { name, .. } | ExprKind::NewTarget(name) => name,
+                    ExprKind::Fn(f) => self[f].name,
+                    ExprKind::Class(c) => self[c].name,
+                    _ => Atom::NONE,
+                },
+                NodeData::Stmt(s) => match self[s].kind {
+                    StmtKind::Fn(f) => self[f].name,
+                    StmtKind::Class(c) => self[c].name,
+                    StmtKind::Interface(i) => self[i].name,
+                    StmtKind::TypeAlias(a) => self[a].name,
+                    StmtKind::Enum(e) => self[e].name,
+                    StmtKind::Module(m) => match self[m].name {
+                        ModuleName::Ident(name) | ModuleName::String(name) => name,
+                        ModuleName::Global => known::global,
+                    },
+                    StmtKind::ImportEquals(i) => self[i].name,
+                    StmtKind::Import(i) => self[i].default,
+                    StmtKind::ExportAsNamespace(name) => name,
+                    _ => Atom::NONE,
+                },
+                NodeData::TypeParam(p) => self[p].name,
+                NodeData::ImportSpec(s) => self[s].local,
+                NodeData::ExportSpec(s) => self[s].exported,
+                NodeData::TupleElem(e) => self[e].name,
+                _ => self.key_of(row).0.name().unwrap_or(Atom::NONE),
+            },
+            _ => Atom::NONE,
+        }
+    }
+
     /// `node.Name()`
     pub fn name(&self, node: Node) -> Node {
         let named = |name: Atom| {
@@ -898,6 +1206,7 @@ impl File {
                 | StmtKind::ExportAsNamespace(_) => node.with(Part::Name),
                 _ => Node::NONE,
             },
+            NodeData::Member(m) if self[m].kind == MemberKind::Constructor => Node::NONE,
             NodeData::Member(m) => keyed(self[m].key),
             // The name of `{ a }` and of `{ a = 1 }` is an expression.
             NodeData::Prop(p) if self[p].kind == PropKind::Shorthand => {
@@ -954,7 +1263,20 @@ impl File {
 
     /// `node.ForEachChild`: the children in the order they are written, until `visit` says true.
     pub fn for_each_child(&self, node: Node, visit: &mut dyn FnMut(Node) -> bool) -> bool {
-        let mut v = Children { file: self, visit };
+        self.for_each_child_with(node, true, visit)
+    }
+
+    fn for_each_child_with(
+        &self,
+        node: Node,
+        with_parentheses: bool,
+        visit: &mut dyn FnMut(Node) -> bool,
+    ) -> bool {
+        let mut v = Children {
+            file: self,
+            visit,
+            with_parentheses,
+        };
         match self.data(node) {
             NodeData::None => false,
             NodeData::File => {
@@ -991,7 +1313,8 @@ impl File {
                 v.span(member.modifiers)
                     || v.one(self.name(node))
                     || member.func.is_some() && v.function(member.func, node)
-                    || v.one(member.ty)
+                    // Of an accessor and an index signature it is what the function returns, once more.
+                    || member.func.is_none() && v.one(member.ty)
                     || v.one(member.init)
             }
             NodeData::Prop(p) => {
@@ -1019,6 +1342,7 @@ impl File {
             NodeData::Modifier(m) => {
                 matches!(self[m].kind, ModifierKind::Decorator(e) if v.one(e))
             }
+            NodeData::Name(_) => false,
         }
     }
 
@@ -1125,6 +1449,7 @@ impl File {
                 ModifierKind::Decorator(_) => Kind::Decorator,
                 ModifierKind::Keyword(flag) => kind_of_modifier(flag),
             },
+            NodeData::Name(_) => Kind::Identifier,
         }
     }
 
@@ -1137,6 +1462,10 @@ impl File {
         match part {
             Part::Name | Part::PropertyName => self.kind_of_name(part, row),
             Part::Label | Part::BindingsName => Kind::Identifier,
+            Part::NameLiteral if self.key_of(row).1 == NameKind::ComputedString => {
+                Kind::StringLiteral
+            }
+            Part::NameLiteral => Kind::NumericLiteral,
             Part::Body => match statement {
                 Some(StmtKind::Module(_)) => Kind::ModuleBlock,
                 Some(StmtKind::Switch { .. }) => Kind::CaseBlock,
@@ -1162,16 +1491,20 @@ impl File {
             Part::Closing => Kind::JsxClosingElement,
             Part::Attributes => Kind::JsxAttributes,
             Part::Span => Kind::TemplateSpan,
+            Part::Paren => Kind::ParenthesizedExpression,
+            // The expression of an `ExpressionWithTypeArguments` is an expression.
+            Part::Qualified => {
+                let around =
+                    self.find_ancestor(row.with(part), |n| n.part() != Some(Part::Qualified));
+                match self.kind(around) {
+                    Kind::ExpressionWithTypeArguments => Kind::PropertyAccessExpression,
+                    _ => Kind::QualifiedName,
+                }
+            }
         }
     }
 
-    /// Of a name that is written as a literal only a member says so: the others are taken for identifiers.
     fn kind_of_name(&self, part: Part, row: Node) -> Kind {
-        let of_key = |key: PropKey| match key {
-            PropKey::Private(_) => Kind::PrivateIdentifier,
-            PropKey::Computed(_) => Kind::ComputedPropertyName,
-            _ => Kind::Identifier,
-        };
         match self.data(row) {
             NodeData::Expr(e) => match self[e].kind {
                 ExprKind::Dot { name_pos, .. } if is_private_name_at(self, name_pos) => {
@@ -1185,27 +1518,24 @@ impl File {
                 }
                 _ => Kind::Identifier,
             },
-            NodeData::Member(m) => {
-                let flags = self[m].flags;
-                match self[m].key {
-                    PropKey::Name(_)
-                        if flags.contains(Flags::LITERAL_NAME | Flags::STRING_NAME) =>
-                    {
-                        Kind::StringLiteral
-                    }
-                    PropKey::Name(_) if flags.contains(Flags::LITERAL_NAME) => Kind::NumericLiteral,
-                    PropKey::Name(_) if flags.contains(Flags::STRING_NAME) => {
-                        Kind::ComputedPropertyName
-                    }
-                    key => of_key(key),
+            NodeData::PatProp(_) if part == Part::Name => Kind::Identifier,
+            // `ModuleExportName`
+            NodeData::ImportSpec(_) | NodeData::ExportSpec(_) => {
+                match self.text.get(self.start_of_part(part, row) as usize) {
+                    Some(b'"' | b'\'') => Kind::StringLiteral,
+                    _ => Kind::Identifier,
                 }
             }
-            NodeData::Prop(p) => of_key(self[p].key),
-            NodeData::PatProp(p) if part == Part::PropertyName => of_key(self[p].key),
-            NodeData::EnumMember(m) if self[m].computed_name.is_some() => {
-                Kind::ComputedPropertyName
-            }
-            _ => Kind::Identifier,
+            _ => match self.key_of(row) {
+                (PropKey::Private(_), _) => Kind::PrivateIdentifier,
+                (PropKey::Computed(_), _)
+                | (_, NameKind::ComputedString | NameKind::ComputedNumber) => {
+                    Kind::ComputedPropertyName
+                }
+                (_, NameKind::StringLiteral) => Kind::StringLiteral,
+                (_, NameKind::NumericLiteral) => Kind::NumericLiteral,
+                (_, NameKind::Identifier) => Kind::Identifier,
+            },
         }
     }
 
@@ -1217,6 +1547,8 @@ impl File {
                 Kind::OmittedExpression
             }
             ExprKind::Missing | ExprKind::Ident(_) => Kind::Identifier,
+            // `typeof this.a` is an entity name.
+            ExprKind::This if self.is_in_type_query(node) => Kind::Identifier,
             ExprKind::This => Kind::ThisKeyword,
             ExprKind::Super => Kind::SuperKeyword,
             ExprKind::Null => Kind::NullKeyword,
@@ -1230,15 +1562,22 @@ impl File {
                 Kind::Identifier
             }
             ExprKind::String(_) => match self.data(parent()) {
-                NodeData::Expr(parent) => match self[parent].kind {
-                    ExprKind::Jsx(j) if self[j].tag == e => Kind::Identifier,
-                    ExprKind::Jsx(_) => Kind::JsxText,
-                    _ => Kind::StringLiteral,
-                },
+                NodeData::Expr(parent) if matches!(self[parent].kind, ExprKind::Jsx(_)) => {
+                    match self[parent].kind {
+                        ExprKind::Jsx(j) if self[j].tag == e => Kind::Identifier,
+                        _ => Kind::JsxText,
+                    }
+                }
+                _ if self.text.get(self[e].pos as usize) == Some(&b'`') => {
+                    Kind::NoSubstitutionTemplateLiteral
+                }
                 _ => Kind::StringLiteral,
             },
             ExprKind::BigInt(_) => Kind::BigIntLiteral,
             ExprKind::Regex => Kind::RegularExpressionLiteral,
+            ExprKind::Template { exprs, .. } if exprs.is_empty() => {
+                Kind::NoSubstitutionTemplateLiteral
+            }
             ExprKind::Template { .. } => Kind::TemplateExpression,
             ExprKind::TaggedTemplate(_) => Kind::TaggedTemplateExpression,
             ExprKind::Array(_) => Kind::ArrayLiteralExpression,
@@ -1246,6 +1585,7 @@ impl File {
             ExprKind::Fn(f) if self[f].kind == FnKind::Arrow => Kind::ArrowFunction,
             ExprKind::Fn(_) => Kind::FunctionExpression,
             ExprKind::Class(_) => Kind::ClassExpression,
+            ExprKind::Dot { .. } if self.is_in_type_query(self.parent(node)) => Kind::QualifiedName,
             ExprKind::Dot { .. } => Kind::PropertyAccessExpression,
             ExprKind::Index { .. } => Kind::ElementAccessExpression,
             ExprKind::Call(_) | ExprKind::ImportCall { .. } => Kind::CallExpression,
@@ -1376,7 +1716,7 @@ impl File {
         match self.data(node) {
             NodeData::None | NodeData::File => 0,
             NodeData::Part(part, row) => self.start_of_part(part, row),
-            NodeData::Expr(e) => self[e].pos,
+            NodeData::Expr(e) => start_inside_parentheses(self, e),
             NodeData::Stmt(s) => self[s].start,
             NodeData::Type(t) => self[t].pos,
             NodeData::Pat(p) => self[p].pos,
@@ -1393,6 +1733,7 @@ impl File {
             NodeData::ExportSpec(s) => self[s].start,
             NodeData::TupleElem(e) => self[self[e].ty].pos,
             NodeData::Modifier(m) => self[m].pos,
+            NodeData::Name(n) => self[n].pos(),
         }
     }
 
@@ -1401,6 +1742,13 @@ impl File {
         let is_property_name = part == Part::PropertyName;
         match (part, self.data(row)) {
             (Part::Span, _) => self.start(row),
+            (Part::Paren, NodeData::Expr(e)) => open_parenthesis(self, e).unwrap_or(0),
+            (Part::Qualified, NodeData::Name(mut first)) => {
+                while self[first].is_qualified() {
+                    first = NameId(first.0 - 1);
+                }
+                self[first].pos()
+            }
             (Part::Base, _) => self.start(self.node(self[self.class_of(row)].extends)),
             (Part::Name, NodeData::Expr(e)) => match self[e].kind {
                 ExprKind::Dot { name_pos, .. } => name_pos,
@@ -1436,6 +1784,618 @@ impl File {
             (_, NodeData::ExportSpec(s)) if is_property_name => self[s].local_pos,
             (_, NodeData::ExportSpec(s)) => self[s].pos,
             _ => 0,
+        }
+    }
+}
+
+// ───────────────────────────── ast.go: accessors ─────────────────────────────
+
+impl File {
+    /// What stands for the expression `e` in its parent.
+    #[inline]
+    pub fn child(&self, e: ExprId) -> Node {
+        e.to_child(self)
+    }
+
+    /// `node.Expression()`
+    pub fn expression(&self, node: Node) -> Node {
+        match self.data(node) {
+            NodeData::Expr(e) => match self[e].kind {
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => self.child(obj),
+                ExprKind::Call(c) | ExprKind::New(c) => self.child(self[c].callee),
+                ExprKind::Unary { operand: e, .. }
+                | ExprKind::Spread(e)
+                | ExprKind::Await(e)
+                | ExprKind::AsConst(e)
+                | ExprKind::NonNull(e)
+                | ExprKind::Yield { value: e, .. }
+                | ExprKind::As { expr: e, .. }
+                | ExprKind::Satisfies { expr: e, .. }
+                | ExprKind::Instantiation { expr: e, .. } => self.child(e),
+                _ => Node::NONE,
+            },
+            NodeData::Stmt(s) => match self[s].kind {
+                StmtKind::Expr(e)
+                | StmtKind::Return(e)
+                | StmtKind::Throw(e)
+                | StmtKind::ExportDefault(e)
+                | StmtKind::ExportAssign(e)
+                | StmtKind::If { test: e, .. }
+                | StmtKind::While { test: e, .. }
+                | StmtKind::DoWhile { test: e, .. }
+                | StmtKind::ForIn { expr: e, .. }
+                | StmtKind::ForOf { expr: e, .. }
+                | StmtKind::Switch { expr: e, .. } => self.child(e),
+                _ => Node::NONE,
+            },
+            NodeData::Type(t) => match self[t].kind {
+                TypeNodeKind::Heritage(e) => self.child(e),
+                _ => Node::NONE,
+            },
+            NodeData::Case(c) => self.child(self[c].test),
+            NodeData::Prop(p) if self[p].kind == PropKind::Spread => self.child(self[p].value),
+            NodeData::Modifier(m) => match self[m].kind {
+                ModifierKind::Decorator(e) => self.child(e),
+                ModifierKind::Keyword(_) => Node::NONE,
+            },
+            NodeData::Part(Part::Paren, row) => row,
+            NodeData::Part(Part::Span, row) => match self.data(row) {
+                NodeData::Expr(e) => self.child(e),
+                _ => Node::NONE,
+            },
+            NodeData::Part(Part::Base, row) => self.child(self[self.class_of(row)].extends),
+            NodeData::Part(Part::Name | Part::PropertyName, row) => match self.key_of(row).0 {
+                PropKey::Computed(e) => self.child(e),
+                _ => Node::NONE,
+            },
+            _ => Node::NONE,
+        }
+    }
+
+    /// `node.Initializer()`
+    pub fn initializer(&self, node: Node) -> Node {
+        match self.data(node) {
+            NodeData::VarDecl(d) => self.child(self[d].init),
+            NodeData::Param(p) => self.child(self[p].default),
+            NodeData::PatProp(p) => self.child(self[p].default),
+            NodeData::PatElem(e) => self.child(self[e].default),
+            NodeData::Member(m) => self.child(self[m].init),
+            NodeData::EnumMember(m) => self.child(self[m].init),
+            NodeData::Prop(p) if self[p].kind == PropKind::Init => self.child(self[p].value),
+            _ => Node::NONE,
+        }
+    }
+
+    /// `node.Type()`
+    pub fn type_node(&self, node: Node) -> Node {
+        if let Some(function) = self.fns.get(self.function_of(node).idx()) {
+            return self.node(function.ret);
+        }
+        self.node(match self.data(node) {
+            NodeData::VarDecl(d) => self[d].ty,
+            NodeData::Param(p) => self[p].ty,
+            NodeData::Member(m) => self[m].ty,
+            NodeData::TupleElem(e) => self[e].ty,
+            NodeData::Stmt(s) => match self[s].kind {
+                StmtKind::TypeAlias(a) => self[a].ty,
+                _ => TypeNodeId::NONE,
+            },
+            NodeData::Expr(e) => match self[e].kind {
+                ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => ty,
+                _ => TypeNodeId::NONE,
+            },
+            NodeData::Type(t) => match self[t].kind {
+                TypeNodeKind::Keyof(ty)
+                | TypeNodeKind::Readonly(ty)
+                | TypeNodeKind::Predicate { ty, .. } => ty,
+                TypeNodeKind::Mapped(m) => self[m].ty,
+                _ => TypeNodeId::NONE,
+            },
+            _ => TypeNodeId::NONE,
+        })
+    }
+
+    /// `node.Body()`
+    pub fn body(&self, node: Node) -> Node {
+        match self.fns.get(self.function_of(node).idx()).map(|f| f.body) {
+            Some(FnBody::Block(_)) => node.with(Part::Body),
+            Some(FnBody::Expr(e)) => self.child(e),
+            Some(FnBody::None) => Node::NONE,
+            None => match self.data(node) {
+                NodeData::Stmt(s) => match self[s].kind {
+                    StmtKind::Module(m) => match self.nested_namespace(m) {
+                        Some(nested) => self.node(nested),
+                        None if self[m].has_body => node.with(Part::Body),
+                        None => Node::NONE,
+                    },
+                    _ => Node::NONE,
+                },
+                _ => Node::NONE,
+            },
+        }
+    }
+
+    /// `node.ModifierFlags()`, and what else [`Flags`] says of a declaration.
+    pub fn flags(&self, node: Node) -> Flags {
+        match self.data(node) {
+            NodeData::Expr(e) => match self[e].kind {
+                ExprKind::Fn(f) => self[f].flags,
+                ExprKind::Class(c) => self[c].flags,
+                _ => Flags::empty(),
+            },
+            NodeData::Type(_) | NodeData::Prop(_) => {
+                let function = self.fns.get(self.function_of(node).idx());
+                function.map_or(Flags::empty(), |function| function.flags)
+            }
+            NodeData::Stmt(s) => match self[s].kind {
+                StmtKind::Var(declarations) => declarations
+                    .iter()
+                    .next()
+                    .map_or(Flags::empty(), |d| self[d].flags),
+                StmtKind::Fn(f) => self[f].flags,
+                StmtKind::Class(c) => self[c].flags,
+                StmtKind::Interface(i) => self[i].flags,
+                StmtKind::TypeAlias(a) => self[a].flags,
+                StmtKind::Enum(e) => self[e].flags,
+                StmtKind::Module(m) => self[m].flags,
+                StmtKind::ImportEquals(i) => self[i].flags,
+                _ => Flags::empty(),
+            },
+            NodeData::VarDecl(d) => self[d].flags,
+            NodeData::Param(p) => self[p].flags,
+            NodeData::TypeParam(p) => self[p].flags,
+            NodeData::Member(m) => self[m].flags,
+            _ => Flags::empty(),
+        }
+    }
+}
+
+// ───────────────────────────── ast/utilities.go ─────────────────────────────
+
+impl Kind {
+    /// `IsClassElement`
+    pub fn is_class_element(self) -> bool {
+        use Kind::*;
+        matches!(
+            self,
+            Constructor
+                | PropertyDeclaration
+                | MethodDeclaration
+                | GetAccessor
+                | SetAccessor
+                | IndexSignature
+                | ClassStaticBlockDeclaration
+                | SemicolonClassElement
+        )
+    }
+
+    /// `IsAccessExpression`
+    pub fn is_access_expression(self) -> bool {
+        matches!(
+            self,
+            Kind::PropertyAccessExpression | Kind::ElementAccessExpression
+        )
+    }
+}
+
+impl File {
+    /// `FindAncestorKind`
+    pub fn find_ancestor_kind(&self, node: Node, kind: Kind) -> Node {
+        self.find_ancestor(node, |n| self.kind(n) == kind)
+    }
+
+    /// `FindAncestorOrQuit`. `Break(true)`: `FindAncestorTrue`. `Break(false)`: `FindAncestorQuit`.
+    pub fn find_ancestor_or_quit(
+        &self,
+        mut node: Node,
+        mut callback: impl FnMut(Node) -> ControlFlow<bool>,
+    ) -> Node {
+        while node.is_some() {
+            match callback(node) {
+                ControlFlow::Break(true) => return node,
+                ControlFlow::Break(false) => return Node::NONE,
+                ControlFlow::Continue(()) => node = self.parent(node),
+            }
+        }
+        Node::NONE
+    }
+
+    /// `GetContainingClass`
+    pub fn get_containing_class(&self, node: Node) -> Node {
+        self.find_ancestor(self.parent(node), |n| self.kind(n).is_class_like())
+    }
+
+    /// `getContainingClassExcludingClassDecorators`
+    pub fn get_containing_class_excluding_class_decorators(&self, node: Node) -> Node {
+        let decorator = self.find_ancestor_or_quit(self.parent(node), |n| match self.kind(n) {
+            kind if kind.is_class_like() => ControlFlow::Break(false),
+            Kind::Decorator => ControlFlow::Break(true),
+            _ => ControlFlow::Continue(()),
+        });
+        if decorator.is_none() {
+            self.get_containing_class(node)
+        } else if self.kind(self.parent(decorator)).is_class_like() {
+            self.get_containing_class(self.parent(decorator))
+        } else {
+            self.get_containing_class(decorator)
+        }
+    }
+
+    /// `GetContainingFunction`
+    pub fn get_containing_function(&self, node: Node) -> Node {
+        self.find_ancestor(self.parent(node), |n| self.kind(n).is_function_like())
+    }
+
+    /// `getContainingFunctionOrClassStaticBlock`
+    pub fn get_containing_function_or_class_static_block(&self, node: Node) -> Node {
+        self.find_ancestor(self.parent(node), |n| {
+            let kind = self.kind(n);
+            kind.is_function_like() || kind == Kind::ClassStaticBlockDeclaration
+        })
+    }
+
+    /// `GetEnclosingBlockScopeContainer`
+    pub fn get_enclosing_block_scope_container(&self, node: Node) -> Node {
+        self.find_ancestor(self.parent(node), |current| self.is_block_scope(current))
+    }
+
+    /// `IsBlockScope(node, node.Parent)`
+    pub fn is_block_scope(&self, node: Node) -> bool {
+        use Kind::*;
+        match self.kind(node) {
+            SourceFile
+            | CaseBlock
+            | CatchClause
+            | ModuleDeclaration
+            | ForStatement
+            | ForInStatement
+            | ForOfStatement
+            | Constructor
+            | MethodDeclaration
+            | GetAccessor
+            | SetAccessor
+            | FunctionDeclaration
+            | FunctionExpression
+            | ArrowFunction
+            | PropertyDeclaration
+            | ClassStaticBlockDeclaration => true,
+            // `IsFunctionLikeOrClassStaticBlockDeclaration`
+            Block => {
+                let parent = self.kind(self.parent(node));
+                !parent.is_function_like() && parent != ClassStaticBlockDeclaration
+            }
+            _ => false,
+        }
+    }
+
+    /// `GetThisContainer`
+    pub fn get_this_container(
+        &self,
+        node: Node,
+        include_arrow_functions: bool,
+        include_class_computed_property_name: bool,
+    ) -> Node {
+        self.this_container_from(
+            self.parent(node),
+            include_arrow_functions,
+            include_class_computed_property_name,
+        )
+    }
+
+    /// The same, of what is directly in `node`.
+    pub fn this_container_from(
+        &self,
+        mut node: Node,
+        include_arrow_functions: bool,
+        include_class_computed_property_name: bool,
+    ) -> Node {
+        use Kind::*;
+        loop {
+            match self.kind(node) {
+                Unknown => return Node::NONE,
+                ComputedPropertyName => {
+                    let class = self.parent(self.parent(node));
+                    if include_class_computed_property_name && self.kind(class).is_class_like() {
+                        return node;
+                    }
+                    node = class;
+                }
+                Decorator => {
+                    let parent = self.parent(node);
+                    if self.kind(parent) == Parameter
+                        && self.kind(self.parent(parent)).is_class_element()
+                    {
+                        node = self.parent(parent);
+                    } else if self.kind(parent).is_class_element() {
+                        node = parent;
+                    }
+                }
+                ArrowFunction if include_arrow_functions => return node,
+                FunctionDeclaration
+                | FunctionExpression
+                | ModuleDeclaration
+                | ClassStaticBlockDeclaration
+                | PropertyDeclaration
+                | PropertySignature
+                | MethodDeclaration
+                | MethodSignature
+                | Constructor
+                | GetAccessor
+                | SetAccessor
+                | CallSignature
+                | ConstructSignature
+                | IndexSignature
+                | EnumDeclaration
+                | SourceFile => return node,
+                _ => {}
+            }
+            node = self.parent(node);
+        }
+    }
+
+    /// `GetNewTargetContainer`
+    pub fn get_new_target_container(&self, node: Node) -> Node {
+        let container = self.get_this_container(node, false, false);
+        match self.kind(container) {
+            Kind::Constructor | Kind::FunctionDeclaration | Kind::FunctionExpression => container,
+            _ => Node::NONE,
+        }
+    }
+
+    /// `IsInTopLevelContext`
+    pub fn is_in_top_level_context(&self, mut node: Node) -> bool {
+        let parent = self.parent(node);
+        if matches!(
+            self.kind(parent),
+            Kind::ClassDeclaration | Kind::FunctionDeclaration
+        ) && self.name(parent) == node
+        {
+            node = parent;
+        }
+        self.get_this_container(node, true, false) == Node::FILE
+    }
+
+    /// `isInParameterInitializerBeforeContainingFunction`
+    pub fn is_in_parameter_initializer_before_containing_function(&self, mut node: Node) -> bool {
+        let mut in_binding_initializer = false;
+        loop {
+            let parent = self.parent(node);
+            let kind = self.kind(parent);
+            if parent.is_none() || kind.is_function_like() {
+                return false;
+            }
+            let is_initializer = || self.initializer(parent) == node;
+            if kind == Kind::Parameter && (in_binding_initializer || is_initializer()) {
+                return true;
+            }
+            in_binding_initializer |= kind == Kind::BindingElement && is_initializer();
+            node = parent;
+        }
+    }
+
+    /// `GetRootDeclaration`
+    pub fn get_root_declaration(&self, mut node: Node) -> Node {
+        while self.kind(node) == Kind::BindingElement {
+            node = self.parent(self.parent(node));
+        }
+        node
+    }
+
+    /// `GetImmediatelyInvokedFunctionExpression`
+    pub fn get_immediately_invoked_function_expression(&self, function: Node) -> Node {
+        if !matches!(
+            self.kind(function),
+            Kind::FunctionExpression | Kind::ArrowFunction
+        ) {
+            return Node::NONE;
+        }
+        let (mut previous, mut parent) = (function, self.parent(function));
+        while self.kind(parent) == Kind::ParenthesizedExpression {
+            (previous, parent) = (parent, self.parent(parent));
+        }
+        if self.kind(parent) == Kind::CallExpression && self.expression(parent) == previous {
+            parent
+        } else {
+            Node::NONE
+        }
+    }
+
+    /// `IsStatic`
+    pub fn is_static(&self, node: Node) -> bool {
+        let kind = self.kind(node);
+        kind.is_class_element() && self.flags(node).contains(Flags::STATIC)
+            || kind == Kind::ClassStaticBlockDeclaration
+    }
+
+    /// `IsParameterPropertyDeclaration(node, node.Parent)`
+    pub fn is_parameter_property_declaration(&self, node: Node) -> bool {
+        matches!(self.data(node), NodeData::Param(p) if self[p].flags.contains(Flags::PARAMETER_PROPERTY))
+            && self.kind(self.parent(node)) == Kind::Constructor
+    }
+
+    /// `IsBlockOrCatchScoped`
+    pub fn is_block_or_catch_scoped(&self, declaration: Node) -> bool {
+        match self.data(self.get_root_declaration(declaration)) {
+            NodeData::VarDecl(d) => self[d].kind != VarKind::Var,
+            _ => false,
+        }
+    }
+
+    /// `node.Flags&NodeFlagsAmbient != 0`. What is ambient makes all that is in it ambient, but for its own decorators and modifiers,
+    /// which the parser has read by the time it knows.
+    pub fn is_ambient(&self, mut node: Node) -> bool {
+        let mut is_modifier = false;
+        while node.is_some() {
+            if !is_modifier && self.flags(node).contains(Flags::AMBIENT) {
+                return true;
+            }
+            is_modifier = matches!(self.data(node), NodeData::Modifier(_));
+            node = self.parent(node);
+        }
+        self.kind == FileKind::Declaration
+    }
+
+    /// `node.Flags&NodeFlagsAwaitContext != 0`, as the parser has it the first time through. `Err`: as that statement of the file has it,
+    /// which `reparseTopLevelAwait` may parse again.
+    pub fn await_context(&self, node: Node) -> Result<bool, Node> {
+        self.context_of(node, Flags::ASYNC)
+    }
+
+    /// `node.Flags&NodeFlagsYieldContext != 0`
+    pub fn is_in_yield_context(&self, node: Node) -> bool {
+        self.context_of(node, Flags::GENERATOR) == Ok(true)
+    }
+
+    /// `node.Flags&NodeFlagsInWithStatement != 0`
+    pub fn is_in_with_statement(&self, node: Node) -> bool {
+        self.is_in_with(self.start(node))
+    }
+
+    /// What `setContextFlags` left of `NodeFlagsAwaitContext` (`ASYNC`) or `NodeFlagsYieldContext` (`GENERATOR`) where `node` was parsed.
+    fn context_of(&self, node: Node, modifier: Flags) -> Result<bool, Node> {
+        let is_await = modifier == Flags::ASYNC;
+        let (mut below, mut above) = (node, self.parent(node));
+        loop {
+            let kind = self.kind(above);
+            match kind {
+                Kind::SourceFile => return Err(below),
+                Kind::Unknown | Kind::EnumDeclaration | Kind::ModuleDeclaration => {
+                    return Ok(false);
+                }
+                Kind::ExportAssignment | Kind::ExportDeclaration if is_await => return Ok(true),
+                Kind::ClassStaticBlockDeclaration if below == self.body(above) => {
+                    return Ok(is_await);
+                }
+                Kind::PropertyDeclaration if below == self.initializer(above) => return Ok(false),
+                // Its decorators are parsed in the outer context.
+                Kind::Parameter
+                    if is_await && matches!(self.data(below), NodeData::Modifier(_)) =>
+                {
+                    above = self.parent(above);
+                }
+                // What follows the type parameters of an exported class.
+                Kind::ClassDeclaration | Kind::ClassExpression
+                    if is_await
+                        && self.flags(above).contains(Flags::EXPORT)
+                        && (matches!(self.data(below), NodeData::Member(_))
+                            || matches!(below.part(), Some(Part::Extends | Part::Implements))) =>
+                {
+                    return Ok(true);
+                }
+                _ if kind.is_function_like()
+                    && (matches!(self.data(below), NodeData::Param(_))
+                        || below == self.body(above)) =>
+                {
+                    return Ok(self.flags(above).contains(modifier));
+                }
+                _ => {}
+            }
+            (below, above) = (above, self.parent(above));
+        }
+    }
+
+    /// `isInAmbientOrTypeNode`, in one walk.
+    pub fn is_in_ambient_or_type_node(&self, mut node: Node) -> bool {
+        let mut is_modifier = false;
+        while node.is_some() {
+            let is_type = match self.data(node) {
+                NodeData::Stmt(s) => {
+                    matches!(
+                        self[s].kind,
+                        StmtKind::Interface(_) | StmtKind::TypeAlias(_)
+                    )
+                }
+                NodeData::Type(t) => matches!(self[t].kind, TypeNodeKind::Object(_)),
+                _ => false,
+            };
+            if is_type || !is_modifier && self.flags(node).contains(Flags::AMBIENT) {
+                return true;
+            }
+            is_modifier = matches!(self.data(node), NodeData::Modifier(_));
+            node = self.parent(node);
+        }
+        self.kind == FileKind::Declaration
+    }
+
+    /// `isThisProperty`
+    pub fn is_this_property(&self, node: Node) -> bool {
+        self.kind(node).is_access_expression()
+            && self.kind(self.expression(node)) == Kind::ThisKeyword
+    }
+
+    /// `isInPropertyInitializerOrClassStaticBlock`
+    pub fn is_in_property_initializer_or_class_static_block(
+        &self,
+        node: Node,
+        ignore_arrow_functions: bool,
+    ) -> bool {
+        use Kind::*;
+        let found = self.find_ancestor_or_quit(node, |node| match self.kind(node) {
+            PropertyDeclaration | ClassStaticBlockDeclaration => ControlFlow::Break(true),
+            TypeQuery | JsxClosingElement => ControlFlow::Break(false),
+            ArrowFunction if !ignore_arrow_functions => ControlFlow::Break(false),
+            Block => {
+                let parent = self.kind(self.parent(node));
+                if parent.is_function_like_declaration() && parent != ArrowFunction {
+                    ControlFlow::Break(false)
+                } else {
+                    ControlFlow::Continue(())
+                }
+            }
+            _ => ControlFlow::Continue(()),
+        });
+        found.is_some()
+    }
+
+    /// `IsInTypeQuery`. The operand of a `typeof` in a type is kept as an expression.
+    pub fn is_in_type_query(&self, mut node: Node) -> bool {
+        loop {
+            match self.data(node) {
+                NodeData::Expr(e)
+                    if matches!(
+                        self[e].kind,
+                        ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. }
+                    ) => {}
+                NodeData::Part(Part::Name, _) => {}
+                NodeData::Type(t) => return matches!(self[t].kind, TypeNodeKind::Typeof { .. }),
+                _ => return false,
+            }
+            node = self.parent(node);
+        }
+    }
+
+    /// `getSuperContainer`
+    pub fn get_super_container(&self, mut node: Node, stop_on_functions: bool) -> Node {
+        use Kind::*;
+        loop {
+            node = self.parent(node);
+            match self.kind(node) {
+                Unknown => return Node::NONE,
+                ComputedPropertyName => node = self.parent(node),
+                FunctionDeclaration | FunctionExpression | ArrowFunction if !stop_on_functions => {}
+                FunctionDeclaration
+                | FunctionExpression
+                | ArrowFunction
+                | PropertyDeclaration
+                | PropertySignature
+                | MethodDeclaration
+                | MethodSignature
+                | Constructor
+                | GetAccessor
+                | SetAccessor
+                | ClassStaticBlockDeclaration => return node,
+                Decorator => {
+                    let parent = self.parent(node);
+                    if self.kind(parent) == Parameter
+                        && self.kind(self.parent(parent)).is_class_element()
+                    {
+                        node = self.parent(parent);
+                    } else if self.kind(parent).is_class_element() {
+                        node = parent;
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

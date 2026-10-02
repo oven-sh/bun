@@ -267,7 +267,7 @@ impl Checker<'_> {
                     return Some(false);
                 }
                 let ty = self.type_of_expr(file, e);
-                if !self.is_known(ty) || self.is_uncertain(file, e) {
+                if !self.is_known(ty) {
                     return None;
                 }
                 Some(is_enum_like(self, ty))

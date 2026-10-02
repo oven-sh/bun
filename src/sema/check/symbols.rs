@@ -188,7 +188,7 @@ impl<'p> Checker<'p> {
                 Some((file, self.hir(file)[stmt].pos, self.end_of_stmt(file, stmt)))
             }
             Some(&(Decl::ModuleExports(_) | Decl::ExportsProperty(_))) => {
-                let assignment = self.commonjs_value_declaration(file, symbol)?;
+                let assignment = self.commonjs_value_declaration(symbol)?;
                 Some((
                     file,
                     self.start_inside_parentheses(file, assignment),
@@ -216,7 +216,7 @@ impl<'p> Checker<'p> {
                 Decl::Var(pat) | Decl::Param(pat) => self.type_annotation_of_pat(file, pat),
                 Decl::ExportExpr(stmt) => hir.jsdoc_type(JsDocTypeOwner::Export(stmt)),
                 Decl::ModuleExports(_) | Decl::ExportsProperty(_) => {
-                    match self.commonjs_value_declaration(file, self.files().symbol(sym)) {
+                    match self.commonjs_value_declaration(self.files().symbol(sym)) {
                         Some(assignment) => hir.jsdoc_type(JsDocTypeOwner::Assign(assignment)),
                         None => TypeNodeId::NONE,
                     }
@@ -394,7 +394,7 @@ impl<'p> Checker<'p> {
             return Some(self.type_of_assigned_prop(sym.file, name, &expandos));
         }
         let value_declaration = self
-            .commonjs_value_declaration(sym.file, self.files().symbol(sym))
+            .commonjs_value_declaration(self.files().symbol(sym))
             .or(exports.first().copied())?;
         Some(self.get_widened_type_for_assignment_declaration(
             sym.file,
@@ -1856,11 +1856,9 @@ impl<'p> Checker<'p> {
             return ty;
         }
         // `getTypeOfInitializer` is asked whatever `ty` is: an initializer that reads a name of the pattern is a circle.
-        let uncertain = self.uncertain;
         let given = self.type_of_declaration_initializer(file, initializer);
         let there = self.type_with_ne_undefined(ty);
         if there == ty {
-            self.uncertain = uncertain;
             return ty;
         }
         if self.can_equal_undefined(given) {
@@ -3278,8 +3276,7 @@ impl<'p> Checker<'p> {
             && self.held_for_now.is_empty()
             && self.provisional == 0
             // These are raised for whoever asked, each time.
-            && !(self.uncertain
-                || self.relation_gave_up
+            && !(self.relation_gave_up
                 || self.relation_too_complex
                 || !self.relations_too_deep.is_empty()
                 || self.union_too_complex)
@@ -3729,7 +3726,6 @@ impl<'p> Checker<'p> {
     /// The generator that `e`, a `yield`, is written in. Where there is none `checkYieldExpression` returns `any` at once.
     pub(super) fn containing_generator(&self, file: FileId, e: ExprId) -> Option<FnId> {
         self.get_containing_function(file, e)
-            .flatten()
             .filter(|&func| self.hir(file)[func].flags.contains(Flags::GENERATOR))
     }
 

@@ -146,7 +146,7 @@ impl Checker<'_> {
             // `hasBindableName`: a name that is worked out and is no literal or unique symbol makes a property of its own.
             PropKey::Computed(k) if self.member_name(file, key).is_none() => {
                 let ty = self.type_of_expr(file, k);
-                if !self.is_known(ty) || self.is_uncertain(file, k) {
+                if !self.is_known(ty) {
                     return None;
                 }
             }
@@ -211,7 +211,7 @@ impl Checker<'_> {
                 Parent::Expr(parent) => match hir[parent].kind {
                     ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee != e => {
                         let callee = self.type_of_expr(file, hir[c].callee);
-                        return self.is_known(callee) && !self.is_uncertain(file, hir[c].callee);
+                        return self.is_known(callee);
                     }
                     ExprKind::Object(_)
                     | ExprKind::Array(_)
@@ -245,7 +245,7 @@ impl Checker<'_> {
                         // Otherwise it is the `children` of what the tag takes, which is looked up by name for `<div>`.
                         if self.jsx_intrinsic_tag_name(file, tag).is_none() {
                             let component = self.type_of_expr(file, tag);
-                            if !self.is_known(component) || self.is_uncertain(file, tag) {
+                            if !self.is_known(component) {
                                 return false;
                             }
                         }

@@ -60,7 +60,7 @@ pub fn format(text: &str, args: &[String]) -> String {
     out
 }
 
-use Category::{Error as E, Message as M, Suggestion as S, Warning as W};
+use Category::{Error as E, Message as M};
 
 #[rustfmt::skip]
 static MESSAGES: &[(u32, Category, &str)] = &[

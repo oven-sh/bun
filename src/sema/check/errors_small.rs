@@ -603,7 +603,7 @@ impl Checker<'_> {
         // Only a right operand is judged by its own type: anything else by that of the whole condition.
         let judged_by = if location == test { whole } else { location };
         let ty = self.type_of_expr(file, judged_by);
-        if !self.is_known(ty) || self.is_uncertain(file, judged_by) {
+        if !self.is_known(ty) {
             return;
         }
         let start = self.start_inside_parentheses(file, location);
@@ -934,7 +934,7 @@ impl Checker<'_> {
                 continue;
             }
             let ty = self.type_of_expr(file, prop.value);
-            if !self.is_known(ty) || self.is_uncertain(file, prop.value) {
+            if !self.is_known(ty) {
                 continue;
             }
             let ty = self.reduced(ty);
@@ -1007,11 +1007,7 @@ impl Checker<'_> {
                 self.type_of_expr(file, left),
                 self.type_of_expr(file, right),
             );
-            if self.is_known(l)
-                && !self.is_any(l)
-                && !self.is_uncertain(file, left)
-                && self.is_all_assignable_to_primitives(l)
-            {
+            if self.is_known(l) && !self.is_any(l) && self.is_all_assignable_to_primitives(l) {
                 let start = self.error_start_of(file, left);
                 out.push(Diagnostic { start, code: 2358 });
                 let end = self.error_end_of(file, left);
@@ -1019,7 +1015,6 @@ impl Checker<'_> {
             }
             if !self.is_known(r)
                 || self.is_any(r)
-                || self.is_uncertain(file, right)
                 || self.symbol_has_instance_method_of_object_type(r).is_some()
             {
                 continue;

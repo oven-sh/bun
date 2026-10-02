@@ -58,6 +58,7 @@ define_id!(
     MappedId,
     ImportEqualsId,
     ModifierId,
+    NameId,
 );
 
 impl From<Atom> for u32 {
@@ -294,6 +295,8 @@ bitflags::bitflags! {
         const MISSING_BODY = 1 << 24;
         /// `NodeFlagsReparsed`: a declaration, or the `?` of a parameter, that is made from a tag of a JSDoc comment in JavaScript.
         const REPARSED = 1 << 25;
+        /// A member whose name is written in brackets.
+        const COMPUTED_NAME = 1 << 26;
     }
 }
 
@@ -619,11 +622,25 @@ pub enum PropKind {
     Setter,
 }
 
+/// How a name is written that `PropKey::Name` has the text of.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum NameKind {
+    #[default]
+    Identifier,
+    StringLiteral,
+    NumericLiteral,
+    /// `["a"]`
+    ComputedString,
+    /// `[0]`
+    ComputedNumber,
+}
+
 /// A property of an object literal, or an attribute of a JSX element.
 #[derive(Copy, Clone, Debug)]
 pub struct Prop {
     pub kind: PropKind,
     pub key: PropKey,
+    pub name_kind: NameKind,
     pub value: ExprId,
     pub pos: u32,
     /// Where its first token is: a modifier, `get`, `set`, `*`, `...`, or `pos`.
@@ -673,6 +690,7 @@ pub enum PatKind {
 #[derive(Copy, Clone, Debug)]
 pub struct PatProp {
     pub key: PropKey,
+    pub name_kind: NameKind,
     pub value: PatId,
     pub default: ExprId,
     pub is_rest: bool,
@@ -1008,6 +1026,7 @@ pub struct Enum {
 #[derive(Copy, Clone, Debug)]
 pub struct EnumMember {
     pub name: Atom,
+    pub name_kind: NameKind,
     /// The `e` of `[e]` (`HasDynamicName`). `name` is `NONE` then. The checker objects to such a name and never looks at `e`.
     pub computed_name: ExprId,
     pub init: ExprId,
@@ -1105,6 +1124,8 @@ pub struct Import {
     pub is_deferred: bool,
     /// As in [`SpecifierUse`].
     pub mode: ResolutionMode,
+    /// The statement it is.
+    pub stmt: StmtId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1131,7 +1152,7 @@ impl ImportSpec {
 #[derive(Copy, Clone, Debug)]
 pub enum ImportEqualsTarget {
     Require(Atom),
-    Entity(IdList<Atom>),
+    Entity(Span<NameId>),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1154,6 +1175,8 @@ pub struct Export {
     pub type_only: bool,
     /// As in [`SpecifierUse`].
     pub mode: ResolutionMode,
+    /// The statement it is.
+    pub stmt: StmtId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1214,6 +1237,30 @@ pub struct Mapped {
     pub members: Span<MemberId>,
 }
 
+/// An `Identifier` of an entity name that is no expression: of `A.B.C` in a type reference, in a heritage clause, after `import("m")`,
+/// in `import x = A.B.C`. The names of one entity name are next to each other.
+#[derive(Copy, Clone, Debug)]
+pub struct Name {
+    pub text: Atom,
+    /// Where it is written. The top bit: a dot and a name stand before it.
+    place: u32,
+}
+
+impl Name {
+    const QUALIFIED: u32 = 1 << 31;
+
+    #[inline]
+    pub fn pos(self) -> u32 {
+        self.place & !Name::QUALIFIED
+    }
+
+    /// Whether it is the `Right` of a `QualifiedName`.
+    #[inline]
+    pub fn is_qualified(self) -> bool {
+        self.place & Name::QUALIFIED != 0
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct TupleElem {
     pub ty: TypeNodeId,
@@ -1231,7 +1278,7 @@ pub enum TypeNodeKind {
     Keyword(Keyword),
     /// `A.B.C<Args>`
     Ref {
-        name: IdList<Atom>,
+        name: Span<NameId>,
         args: IdList<TypeNodeId>,
     },
     StringLit(Atom),
@@ -1270,7 +1317,8 @@ pub enum TypeNodeKind {
     /// `typeof a.b.c<Args>`
     /// `expr` is `name` as an expression: what it is where it is written depends on the tests made on the way there.
     Typeof {
-        name: IdList<Atom>,
+        /// These rows are no nodes: `expr` is.
+        name: Span<NameId>,
         args: IdList<TypeNodeId>,
         /// `TypeArguments != nil`: `typeof f<>` has a list, which is empty.
         has_type_arguments: bool,
@@ -1279,7 +1327,7 @@ pub enum TypeNodeKind {
     /// `import("spec").A.B<Args>`, `typeof import("spec")`
     Import {
         spec: Atom,
-        name: IdList<Atom>,
+        name: Span<NameId>,
         args: IdList<TypeNodeId>,
         is_typeof: bool,
         mode: ResolutionMode,
@@ -1491,12 +1539,13 @@ pub struct File {
     pub tuple_elems: Few<TupleElem>,
     pub mapped: Few<Mapped>,
     pub modifiers: Vec<Modifier>,
+    pub names: Vec<Name>,
     /// See node.rs. Set by `finish_nodes`.
     pub bases: NodeBases,
     pub fn_nodes: Vec<Node>,
     pub class_nodes: Vec<Node>,
     /// `node.Parent`, by `Node`: `File::parent`.
-    pub parents: std::sync::OnceLock<Box<[Node]>>,
+    pub parents: std::sync::OnceLock<crate::node::Parents>,
 }
 
 macro_rules! arenas {
@@ -1566,6 +1615,7 @@ arenas! {
     tuple_elems: TupleElem => TupleElemId, add_tuple_elem, add_tuple_elems;
     mapped: Mapped => MappedId, add_mapped, add_mappeds;
     modifiers: Modifier => ModifierId, add_modifier, add_modifiers;
+    names: Name => NameId, add_name, add_names;
 }
 
 impl File {
@@ -1618,6 +1668,8 @@ impl File {
             StmtKind::Enum(enumeration) => self[enumeration].stmt = stmt,
             StmtKind::Module(module) => self[module].stmt = stmt,
             StmtKind::ImportEquals(import) => self[import].stmt = stmt,
+            StmtKind::Import(import) => self[import].stmt = stmt,
+            StmtKind::ExportNamed(export) => self[export].stmt = stmt,
             _ => {}
         }
     }
@@ -1702,6 +1754,26 @@ impl File {
         self.ids[list.range()].iter().map(|&i| T::from(i))
     }
 
+    /// `A.B.C`: each name, and where it is written.
+    pub fn entity_name(&mut self, names: impl Iterator<Item = (Atom, u32)>) -> Span<NameId> {
+        let start = self.names.len();
+        self.names
+            .extend(names.map(|(text, place)| Name { text, place }));
+        for name in self.names.iter_mut().skip(start + 1) {
+            name.place |= Name::QUALIFIED;
+        }
+        Span::new(start as u32, (self.names.len() - start) as u32)
+    }
+
+    /// What the names of an entity name say.
+    #[inline]
+    pub fn texts(
+        &self,
+        names: Span<NameId>,
+    ) -> impl DoubleEndedIterator<Item = Atom> + ExactSizeIterator + Clone + '_ {
+        self.names[names.range()].iter().map(|name| name.text)
+    }
+
     #[inline]
     pub fn id_at<T: From<u32>>(&self, list: IdList<T>, i: usize) -> T {
         debug_assert!(i < list.len());
@@ -1783,7 +1855,8 @@ impl File {
             export_specs,
             specifier_uses,
             parens,
-            modifiers
+            modifiers,
+            names
         );
     }
 }

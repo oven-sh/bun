@@ -443,7 +443,6 @@ fn with_printer<'p, T>(
     print: impl FnOnce(&mut Printer<'_, 'p>) -> T,
 ) -> T {
     let saved = (
-        checker.uncertain,
         checker.relation_gave_up,
         checker.relation_too_complex,
         checker.union_too_complex,
@@ -483,7 +482,6 @@ fn with_printer<'p, T>(
     };
     checker.eager.pop();
     (
-        checker.uncertain,
         checker.relation_gave_up,
         checker.relation_too_complex,
         checker.union_too_complex,

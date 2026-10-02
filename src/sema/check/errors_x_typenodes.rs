@@ -1796,9 +1796,7 @@ impl Checker<'_> {
                 self.explain_to(self.start_of(file, expr), end, 2848, |_| vec![]);
             }
             let ty = self.type_of_expr(file, expr);
-            if !self.is_uncertain(file, expr) {
-                self.check_type_arguments_apply(file, ty, type_args, out);
-            }
+            self.check_type_arguments_apply(file, ty, type_args, out);
         }
     }
 
@@ -1864,7 +1862,7 @@ impl Checker<'_> {
             }
             let mut ty = self.type_of_expr(file, expr);
             if ty == TypeId::UNRESOLVED {
-                let names: Vec<Atom> = hir.ids(name).collect();
+                let names: Vec<Atom> = hir.texts(name).collect();
                 ty = self.type_of_entity(file, scope, &names);
             }
             self.check_type_arguments_apply(file, ty, args, out);
@@ -2074,7 +2072,7 @@ impl Checker<'_> {
         let fits = self.answer_if_sure(|c| {
             c.parts(keys).iter().all(|&key| {
                 c.is_assignable(key, object_keys)
-                    || has_number_index && c.is_key_for_index_signature(key, TypeId::NUMBER)
+                    || has_number_index && c.is_applicable_index_type(key, TypeId::NUMBER)
                     || {
                         // `A extends B ? A : never` is an `A` that is a `B`.
                         matches!(c.data(key), TypeData::Cond { .. }) && {
@@ -2188,20 +2186,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `isApplicableIndexType`
-    fn is_key_for_index_signature(&mut self, source: TypeId, target: TypeId) -> bool {
-        if self.is_assignable(source, target)
-            || target == TypeId::STRING && self.is_assignable(source, TypeId::NUMBER)
-        {
-            return true;
-        }
-        target == TypeId::NUMBER
-            && match *self.data(source) {
-                TypeData::StringLit { value, .. } => self.is_numeric_name(value),
-                _ => source == self.template_type(&[known::empty, known::empty], &[TypeId::NUMBER]),
-            }
-    }
-
     /// From `getPropertyTypeForIndexType`: `[a, b][-1]`.
     fn is_negative_index_of_a_tuple(&mut self, object: TypeId, keys: TypeId) -> bool {
         if !self.is_known(object) || !self.is_known(keys) || self.is_generic(keys) {
@@ -2238,11 +2222,7 @@ impl Checker<'_> {
                 continue;
             }
             let (object, keys) = (self.type_of_expr(file, obj), self.type_of_expr(file, index));
-            if !self.is_known(object)
-                || !self.is_known(keys)
-                || self.is_uncertain(file, obj)
-                || self.is_uncertain(file, index)
-            {
+            if !self.is_known(object) || !self.is_known(keys) {
                 continue;
             }
             // That it may be null or undefined is an error of its own, and does not stand in the way. `unknown` does.
@@ -2283,9 +2263,6 @@ impl Checker<'_> {
                 continue;
             }
             let checked = self.type_of_expr(file, e);
-            if self.is_uncertain(file, e) {
-                continue;
-            }
             // `checkIndexedAccessIndexType` is given the flow type of every element access, generic key or not, before the optional
             // chain adds `undefined`. It returns the error type for an index it refuses, so `checked` is `any` then.
             let whole = if chain == Chain::No && !self.has_any_flag(checked) {
@@ -2365,7 +2342,7 @@ impl Checker<'_> {
             }
             // `getApplicableIndexInfo`, or else the signature for strings, which stands in for what has none.
             let mut applicable = members.shape().index.iter().filter(|info| {
-                info.key != TypeId::STRING && self.is_key_for_index_signature(key, info.key)
+                info.key != TypeId::STRING && self.is_applicable_index_type(key, info.key)
             });
             match (applicable.next(), applicable.next()) {
                 (Some(only), None) => only.key != TypeId::NUMBER,

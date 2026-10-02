@@ -6,10 +6,9 @@
 //! `getBindingElementTypeFromParentType` as far as the elements of patterns go, of TypeScript 7.0.2's checker.go.
 
 use super::errors::{Diagnostic, is_close};
-use super::errors_order::Named;
 use super::explain::Line;
 use super::*;
-use crate::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
+use crate::bind::{FnOwner, MemberOwner, Parent, PatParent};
 use smallvec::{SmallVec, smallvec};
 
 /// What a type of the standard library got with each version of it: `(lib, properties)`.
@@ -329,7 +328,7 @@ impl Checker<'_> {
             }
             // `checkNonNullExpression`: that the object is there comes first, whatever the key.
             let (receiver, _) = self.chain_receiver(file, obj, chain);
-            if !self.is_known(receiver) || self.is_uncertain(file, obj) {
+            if !self.is_known(receiver) {
                 continue;
             }
             let object = self.check_not_nullish(file, obj, receiver, out);
@@ -341,7 +340,7 @@ impl Checker<'_> {
             };
             // `checkIdentifier`: the missing argument of `a[]` is `errorType`, a key of type `any`.
             let mut keys = self.type_of_expr(file, index);
-            if !self.is_known(keys) || self.is_uncertain(file, index) {
+            if !self.is_known(keys) {
                 continue;
             }
             // `getIndexedAccessTypeOrUndefined`: before it is asked whether the key puts the answer off.
@@ -889,58 +888,35 @@ impl Checker<'_> {
         if symbol.is_none() {
             return false;
         }
-        // The expression and the statement gone out of last. A computed name is known by the one; by the other, whether it is the body
-        // of a loop that is come out of, which is all of it that counts.
-        let (mut below, mut child) = (index, StmtId::NONE);
-        let mut parent = bound.expr_parent[index.idx()];
-        loop {
-            parent = match parent {
-                Parent::None | Parent::File => return false,
-                Parent::Expr(x) if x.is_none() => return false,
-                Parent::Expr(x) => {
-                    below = x;
-                    bound.expr_parent[x.idx()]
-                }
-                Parent::PropKey(..)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
-                    Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
-                    Named::Element(element) => Parent::PatPropDefault(element),
-                    Named::Member(member) => Parent::MemberInit(member),
-                    Named::Unknown => return false,
-                },
-                Parent::Stmt(s) if s.is_some() => {
-                    if let StmtKind::ForIn { left, expr, body } = hir[s].kind
-                        && child.is_some()
-                        && child == body
-                    {
-                        // `getForInVariableSymbol`
-                        let variable = match hir[left].kind {
-                            StmtKind::Var(decls) => decls
-                                .iter()
-                                .next()
-                                .map(|d| bound.pat_symbol[hir[d].pat.idx()]),
-                            StmtKind::Expr(x) if matches!(hir[x].kind, ExprKind::Ident(_)) => {
-                                Some(bound.expr_symbol[x.idx()])
-                            }
-                            _ => None,
-                        };
-                        if variable == Some(symbol) {
-                            // `hasNumericPropertyNames`: the one index signature it has is for numbers.
-                            let over = self.type_of_expr(file, expr);
-                            let over = self.reduced_apparent_type(over);
-                            if matches!(self.index_signatures_of(over)[..], [(TypeId::NUMBER, _)]) {
-                                return true;
-                            }
-                        }
+        let (mut child, mut node) = (hir.child(index), hir.parent(hir.child(index)));
+        while node.is_some() {
+            if let NodeData::Stmt(s) = hir.data(node)
+                && let StmtKind::ForIn { left, expr, body } = hir[s].kind
+                && child == hir.node(body)
+            {
+                // `getForInVariableSymbol`
+                let variable = match hir[left].kind {
+                    StmtKind::Var(decls) => decls
+                        .iter()
+                        .next()
+                        .map(|d| bound.pat_symbol[hir[d].pat.idx()]),
+                    StmtKind::Expr(x) if matches!(hir[x].kind, ExprKind::Ident(_)) => {
+                        Some(bound.expr_symbol[x.idx()])
                     }
-                    child = s;
-                    bound.stmt_parent[s.idx()]
+                    _ => None,
+                };
+                if variable == Some(symbol) {
+                    // `hasNumericPropertyNames`: the one index signature it has is for numbers.
+                    let over = self.type_of_expr(file, expr);
+                    let over = self.reduced_apparent_type(over);
+                    if matches!(self.index_signatures_of(over)[..], [(TypeId::NUMBER, _)]) {
+                        return true;
+                    }
                 }
-                _ => self.outward(file, parent),
-            };
+            }
+            (child, node) = (node, hir.parent(node));
         }
+        false
     }
 
     /// `typeHasStaticProperty`
@@ -1096,71 +1072,11 @@ impl Checker<'_> {
 
     /// `GetErrorRangeForNode(symbol.ValueDeclaration)`. `None`: nothing declares `sym` as a value.
     pub(super) fn place_where_value_is_declared(&self, sym: Sym) -> Option<(FileId, u32, u32)> {
-        use crate::bind::Decl;
-        let sym = self.files().canonical(sym);
-        let flags = self.files().flags(sym);
-        let is_assignment = |decl: Decl| matches!(decl, Decl::ExportsProperty(_));
-        // `SetValueDeclaration`: the first that declares a value. An assignment gives way to any other declaration, and a namespace
-        // to what is no namespace.
-        let mut found: Option<(FileId, Decl)> = None;
-        for &(file, decl) in self.files().decls_of(sym).iter() {
-            let declares = match decl {
-                Decl::Var(_)
-                | Decl::Param(_)
-                | Decl::ExportsProperty(_)
-                | Decl::CommonJsVariable => SymFlags::VARIABLE,
-                Decl::Fn(_) => SymFlags::FUNCTION,
-                Decl::Class(_) => SymFlags::CLASS,
-                Decl::Enum(_) => SymFlags::ENUM,
-                Decl::EnumMember(_) => SymFlags::ENUM_MEMBER,
-                Decl::Module(m)
-                    if self.bound(file).module_instance_state[m.idx()]
-                        != ModuleInstanceState::NonInstantiated =>
-                {
-                    SymFlags::VALUE_MODULE
-                }
-                _ => continue,
-            };
-            // What the name refuses is listed among its declarations, and adds nothing to its flags.
-            if !flags.intersects(declares) {
-                continue;
-            }
-            let takes_over = found.is_none_or(|(_, first)| {
-                is_assignment(first) && !is_assignment(decl)
-                    || matches!(first, Decl::Module(_)) && !matches!(decl, Decl::Module(_))
-            });
-            if takes_over {
-                found = Some((file, decl));
-            }
-        }
-        let (file, decl) = found?;
-        let hir = self.hir(file);
-        let start = match decl {
-            Decl::Var(pat) => hir[pat].pos,
-            Decl::Param(pat) => match self.bound(file).pat_parent[pat.idx()] {
-                // All of the parameter, with what is written before its name.
-                PatParent::Param(param) => {
-                    return Some((file, hir[param].pos, self.end_of_param(file, param)));
-                }
-                _ => hir[pat].pos,
-            },
-            Decl::Fn(f) => hir[f].name_pos,
-            Decl::Class(c) => hir[c].name_pos,
-            Decl::Enum(e) => hir[e].name_pos,
-            Decl::EnumMember(m) => hir[m].pos,
-            Decl::Module(m) => hir[m].name_pos,
-            // All of the assignment, or of the call.
-            Decl::ExportsProperty(e) => {
-                return Some((file, self.start_of(file, e), self.end_of_expr(file, e)));
-            }
-            // `declareCommonJSVariable`: the file, which goes by its first token.
-            Decl::CommonJsVariable => {
-                let start = self.skip_trivia_from(file, 0);
-                return Some((file, start, self.end_of_token_at(file, start)));
-            }
-            _ => return None,
-        };
-        Some(self.place_of_token(file, start))
+        let (file, decl) = self
+            .files()
+            .value_declaration(self.files().canonical(sym))?;
+        let (start, end) = self.error_range_of_declaration(file, decl)?;
+        Some((file, start, end))
     }
 
     /// The position of `Declarations[0]` of the symbol of the member `written` of an object literal.
@@ -1315,8 +1231,7 @@ impl Checker<'_> {
         // Whether that is a parameter of what has no body; one that nothing types, so that it is what its pattern makes of it
         // (`getTypeFromBindingPattern`); one that was widened before its pattern was looked at.
         let (mut has_no_body, mut is_implied, mut is_widened) = (false, false, false);
-        // The default of the parameter, where that is all that says what it is.
-        let mut says = ExprId::NONE;
+
         if let Parent::ParamDefault(param) = around {
             let func = bound.param_fn[param.idx()];
             let owner = bound.fns[func.idx()].owner;
@@ -1354,8 +1269,7 @@ impl Checker<'_> {
                             // `assignParameterType`: its parameters get their types, widened, before their patterns are looked at.
                             is_widened = true;
                         }
-                        says = hir[param].default;
-                        is_implied = says.is_none();
+                        is_implied = hir[param].default.is_none();
                     }
                 }
             }
@@ -1367,10 +1281,7 @@ impl Checker<'_> {
         } else {
             self.type_for_binding_element_parent(file, first, pattern)
         };
-        if !self.is_known(given)
-            || self.is_any(given)
-            || says.is_some() && self.is_uncertain(file, says)
-        {
+        if !self.is_known(given) || self.is_any(given) {
             return;
         }
         let Some(declared) = self.type_looked_into(given) else {
@@ -1416,7 +1327,7 @@ impl Checker<'_> {
             && self.some_type(given, |_, m| m.is_undefined())
         {
             let ty = self.type_of_expr(file, initializer);
-            if !self.is_known(ty) || self.is_uncertain(file, initializer) {
+            if !self.is_known(ty) {
                 return;
             }
         }
@@ -1452,7 +1363,7 @@ impl Checker<'_> {
                 PropKey::Name(name) => (self.string_literal(name, false), prop.pos),
                 PropKey::Computed(k) => {
                     let keys = self.type_of_expr(file, k);
-                    if !self.is_known(keys) || self.is_uncertain(file, k) {
+                    if !self.is_known(keys) {
                         continue;
                     }
                     (self.regular(keys), prop.pos)
@@ -1602,8 +1513,6 @@ impl Checker<'_> {
             return;
         }
         self.reporting_nonexistent.push((file, e, self.stack.len()));
-        // How sure what is printed is says nothing about what is in error.
-        let uncertain = self.uncertain;
         // Printing is behind a barrier that no circle passes (`with_printer`). In tsgo it closes them.
         self.resolve_as_printed(containing, 0, &mut Vec::new());
         let at = self.place_of_token(file, start);
@@ -1668,7 +1577,6 @@ impl Checker<'_> {
             };
             self.new_diagnostic_chain(chain, at, code, &args)
         };
-        self.uncertain = uncertain;
         self.reporting_nonexistent.pop();
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
     }
@@ -1765,101 +1673,41 @@ impl Checker<'_> {
         at: (FileId, u32, u32),
         ty: TypeId,
     ) -> Option<Reported> {
-        let TypeData::Intersection(parts) = self.data(ty) else {
-            return chain;
-        };
-        if !self.is_never_intersection(ty) {
+        if !self.is_intersection(ty) || !self.is_never_intersection(ty) {
             return chain;
         }
-        let Some(members) = self.members(ty) else {
+        let Some((code, prop)) = self.why_never_intersection(ty) else {
             return chain;
         };
-        let (mut discriminant, mut private) = (None, None);
-        for prop in &members.shape().props {
-            let PropSource::Intersected(_, of) = &prop.source else {
-                continue;
-            };
-            // `isConflictingPrivateProperty`
-            if private.is_none()
-                && prop.flags.contains(PropFlags::PRIVATE)
-                && Self::value_declaration(prop).is_none()
-            {
-                private = Some(prop);
-            }
-            // `isDiscriminantWithNeverType`
-            if prop.flags.contains(PropFlags::OPTIONAL)
-                || !self.type_of_prop(prop, members.mapper).is_never()
-            {
-                continue;
-            }
-            let mut types = Vec::with_capacity(of.len());
-            for part in of.iter() {
-                types.push(self.type_of_prop(part, MapperId::IDENTITY));
-            }
-            if !types.iter().any(|t| t.is_never())
-                && types.iter().any(|&t| t != types[0])
-                && types.iter().any(|&t| {
-                    self.is_boolean(t)
-                        || self.is_pattern_literal(t)
-                        || self.every_type(t, |c, m| c.is_unit(m))
-                })
-            {
-                discriminant = Some(prop);
-                break;
-            }
-        }
-        let (code, prop) = match (discriminant, private) {
-            (Some(prop), _) => (18031, prop),
-            (None, Some(prop)) => (18032, prop),
-            (None, None) => return chain,
-        };
-        // `TypeFormatFlagsNoTypeReduction`: the members as they are written down, and not `never`.
-        let mut written = Vec::with_capacity(parts.len());
-        for &part in parts.iter() {
-            written.push(self.type_to_string(part));
-        }
-        let (written, prop) = (written.join(" & "), self.prop_to_string(prop));
-        let args = [Arg::Text(&written), Arg::Text(&prop)];
+        let written = self.type_to_string_without_reduction(ty);
+        let args = [Arg::Text(&written), Arg::Prop(&prop)];
         Some(self.new_diagnostic_chain(chain, at, code, &args))
     }
 
     /// The classes `e` is written in, from the inside out.
     pub(super) fn enclosing_classes(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // The operand of a `typeof` in a type hangs on the function, namespace or file around, whatever class it is written in.
-        if bound.is_in_type_query(e) {
-            let mut top = e;
-            while let Parent::Expr(x) = bound.expr_parent[top.idx()]
-                && x.is_some()
-            {
-                top = x;
-            }
-            if let Some(node) = hir
-                .types
-                .iter()
-                .position(|t| matches!(t.kind, TypeNodeKind::Typeof { expr, .. } if expr == top))
-            {
-                return Self::classes_around_scope(bound, bound.type_scope[node]);
-            }
-        }
-        self.classes_around(file, Parent::Expr(e))
+        let hir = self.hir(file);
+        Self::classes_from(hir, hir.get_containing_class(hir.node(e)))
     }
 
-    /// The classes `scope` is in, from the inside out.
-    fn classes_around_scope(bound: &Bound, mut scope: ScopeId) -> Vec<ClassId> {
+    /// `class`, and `GetContainingClass` again and again.
+    fn classes_from(hir: &File, mut class: Node) -> Vec<ClassId> {
         let mut classes = Vec::new();
-        while scope.is_some() {
-            if let ScopeKind::Class(class) = bound.scopes[scope.idx()].kind {
-                classes.push(class);
-            }
-            scope = bound.scopes[scope.idx()].parent;
+        while class.is_some() {
+            classes.push(hir.class_of(class));
+            class = hir.get_containing_class(class);
         }
         classes
     }
 
-    /// `GetContainingClass`, again and again. `Parent::Expr(e)` stands for `e` itself: it is what is around it that counts.
+    /// The same, of what is directly in `parent`. `Parent::Expr(e)` stands for `e` itself: it is what is around it that counts.
     pub(super) fn classes_around(&self, file: FileId, parent: Parent) -> Vec<ClassId> {
-        self.classes_around_from(file, parent, false)
+        let hir = self.hir(file);
+        let innermost = match parent {
+            Parent::Expr(e) => hir.get_containing_class(hir.node(e)),
+            _ => hir.find_ancestor(hir.node(parent), |n| hir.kind(n).is_class_like()),
+        };
+        Self::classes_from(hir, innermost)
     }
 
     /// `lookupSymbolForPrivateIdentifierDeclaration`: the class around the `a.#b` at `e` that declares `#b`, and the declaration.
@@ -1970,122 +1818,11 @@ impl Checker<'_> {
     /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` again and again: the classes the private name of `e`,
     /// an `a.#b`, is looked up in.
     pub(super) fn classes_around_private_name(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
-        self.classes_around_from(file, Parent::Expr(e), true)
-    }
-
-    /// `excludes_class_decorators`: a decorator of a class is not in that class, if no other class is in between.
-    fn classes_around_from(
-        &self,
-        file: FileId,
-        mut parent: Parent,
-        excludes_class_decorators: bool,
-    ) -> Vec<ClassId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut classes = Vec::new();
-        let around_class = |class: ClassId| match bound.class_owner[class.idx()] {
-            ClassOwner::Expr(x) => Parent::Expr(x),
-            ClassOwner::Stmt(s) => bound.stmt_parent[s.idx()],
-        };
-        let in_member =
-            |member: MemberId, classes: &mut Vec<ClassId>| match bound.member_owner[member.idx()] {
-                MemberOwner::Class(class) => {
-                    classes.push(class);
-                    around_class(class)
-                }
-                _ => Parent::None,
-            };
-        // An enum, an interface or a type literal has no place among the expressions: the scopes tell what it is written in.
-        let scope_of = |kind: ScopeKind| {
-            bound
-                .scopes
-                .iter()
-                .position(|s| s.kind == kind)
-                .map_or(ScopeId::NONE, |s| ScopeId(s as u32))
-        };
-        // The expression gone out of last: a computed name is known by it.
-        let mut top = ExprId::NONE;
-        loop {
-            parent = match parent {
-                Parent::Expr(x) if x.is_some() => {
-                    top = x;
-                    bound.expr_parent[x.idx()]
-                }
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-                Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => self.outward(file, parent),
-                Parent::Prop(p) => Parent::Expr(bound.prop_owner[p.idx()]),
-                Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
-                Parent::MemberInit(member) => in_member(member, &mut classes),
-                Parent::EnumInit(member) => {
-                    let scope = scope_of(ScopeKind::Enum(bound.enum_member_owner[member.idx()]));
-                    classes.extend(Self::classes_around_scope(bound, scope));
-                    return classes;
-                }
-                // What a class extends and its decorators are part of it.
-                Parent::ClassExtends(class) | Parent::Decorator(class, _) => {
-                    let is_excluded = excludes_class_decorators
-                        && classes.is_empty()
-                        && matches!(parent, Parent::Decorator(_, DecoratorOwner::Class(_)));
-                    if !is_excluded {
-                        classes.push(class);
-                    }
-                    around_class(class)
-                }
-                // So is the computed name of a member.
-                Parent::MemberKey(_) | Parent::MethodKey(_) if top.is_some() => match hir
-                    .members
-                    .iter()
-                    .position(|m| m.key == PropKey::Computed(top))
-                {
-                    Some(m) => {
-                        let scope = match bound.member_owner[m] {
-                            MemberOwner::Class(_) => {
-                                parent = in_member(MemberId(m as u32), &mut classes);
-                                continue;
-                            }
-                            MemberOwner::Interface(x) => scope_of(ScopeKind::Interface(x)),
-                            MemberOwner::TypeLiteral(t) => bound.type_scope[t.idx()],
-                            MemberOwner::None => ScopeId::NONE,
-                        };
-                        classes.extend(Self::classes_around_scope(bound, scope));
-                        return classes;
-                    }
-                    // Of a method or an accessor of an object literal.
-                    None => match hir
-                        .props
-                        .iter()
-                        .position(|p| p.key == PropKey::Computed(top))
-                    {
-                        Some(p) => Parent::Expr(bound.prop_owner[p]),
-                        None => return classes,
-                    },
-                },
-                Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
-                // In a pattern.
-                Parent::PropKey(..) | Parent::PatKey(_) if top.is_some() => match hir
-                    .pat_props
-                    .iter()
-                    .position(|p| p.key == PropKey::Computed(top))
-                {
-                    Some(p) => self.outward(file, Parent::PatPropDefault(PatPropId(p as u32))),
-                    None => return classes,
-                },
-                Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                    let f = match parent {
-                        Parent::FnBody(f) => f,
-                        Parent::ParamDefault(p) => bound.param_fn[p.idx()],
-                        _ => unreachable!(),
-                    };
-                    match bound.fns[f.idx()].owner {
-                        FnOwner::Expr(x) if x.is_some() => Parent::Expr(x),
-                        FnOwner::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                        FnOwner::Member(member) => in_member(member, &mut classes),
-                        _ => return classes,
-                    }
-                }
-                _ => return classes,
-            };
-        }
+        let hir = self.hir(file);
+        Self::classes_from(
+            hir,
+            hir.get_containing_class_excluding_class_decorators(hir.node(e)),
+        )
     }
 
     /// `IsWriteAccess`: the left of `=` or of an operator that assigns, the operand of `++` or `--`, the variable of `for..in/of`, or
@@ -2247,7 +1984,7 @@ impl Checker<'_> {
         for &member in self.parts(containing) {
             let member = self.apparent_type(member);
             let (prop, _) = self.prop_ref(member, name)?;
-            properties_intersected(prop, &mut parts);
+            super::relate::for_each_property(prop, &mut |p| parts.push(p));
         }
         let first = *parts.first()?;
         let found = |code: u32, class: Option<Sym>, containing: TypeId| Inaccessible {
@@ -2398,16 +2135,6 @@ impl Checker<'_> {
         };
         (!self.has_base(through, enclosing_class, 0))
             .then(|| found(2446, Some(enclosing_class), through))
-    }
-}
-
-/// `forEachProperty`: the properties a property of an intersection is made of; any other, itself.
-fn properties_intersected<'a>(prop: &'a Prop, out: &mut SmallVec<[&'a Prop; 4]>) {
-    match &prop.source {
-        PropSource::Intersected(_, parts) => parts
-            .iter()
-            .for_each(|part| properties_intersected(part, out)),
-        _ => out.push(prop),
     }
 }
 

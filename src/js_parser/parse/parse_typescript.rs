@@ -741,6 +741,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TNumericLiteral => {
                 let text = bun_sema::atom::number_to_string(p.lexer.number);
                 value.name = js_ast::StoreStr::new(p.arena.alloc_slice_copy(text.as_bytes()));
+                p.note(&mut value.loc, crate::sema::Mark::NameKind, 2);
             }
             T::TBigIntegerLiteral => value.name = js_ast::StoreStr::new(p.lexer.raw()),
             T::TPrivateIdentifier => value.name = js_ast::StoreStr::new(p.lexer.identifier),
@@ -753,12 +754,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = name?;
                 match name.data {
                     js_ast::ExprData::EString(string) if !string.is_utf16 => {
-                        value.name = string.data
+                        value.name = string.data;
+                        p.note(&mut value.loc, crate::sema::Mark::NameKind, 3);
                     }
                     js_ast::ExprData::ENumber(number) => {
                         let text = bun_sema::atom::number_to_string(number.value());
                         value.name =
                             js_ast::StoreStr::new(p.arena.alloc_slice_copy(text.as_bytes()));
+                        p.note(&mut value.loc, crate::sema::Mark::NameKind, 4);
                     }
                     js_ast::ExprData::EString(_) => {}
                     // `checkEnumMember` never looks at it.
@@ -861,6 +864,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let estr = p.lexer.to_utf8_e_string()?;
                 debug_assert!(!estr.is_utf16);
                 value.name = estr.data;
+                p.note(&mut value.loc, crate::sema::Mark::NameKind, 1);
                 js_lexer::is_identifier(value.name.slice())
             } else if p.lexer.is_identifier_or_keyword() {
                 value.name = js_ast::StoreStr::new(p.lexer.identifier);

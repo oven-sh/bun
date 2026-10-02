@@ -127,7 +127,7 @@ impl Checker<'_> {
         } else {
             self.chain_receiver(file, data.callee, data.chain).0
         };
-        if !self.is_known(called) || self.is_uncertain(file, data.callee) {
+        if !self.is_known(called) {
             return;
         }
         let mut said = Vec::new();
@@ -629,7 +629,7 @@ impl Checker<'_> {
         // In a class without a base type `super` is in error too, and its type is `any`.
         let callee = hir[c].callee;
         let called = self.type_of_expr(file, callee);
-        if !self.is_known(called) || self.is_any(called) || self.is_uncertain(file, callee) {
+        if !self.is_known(called) || self.is_any(called) {
             return;
         }
         // `getInstantiatedConstructorsForTypeArguments`: the constructors of the base that take as many type arguments as the
@@ -671,7 +671,7 @@ impl Checker<'_> {
         let data = hir[c];
         let resolved = self.resolve_call(file, e);
         let tag = self.type_of_expr(file, data.callee);
-        if !self.is_known(tag) || self.is_uncertain(file, data.callee) {
+        if !self.is_known(tag) {
             return;
         }
         let apparent = self.apparent_type(tag);
@@ -918,7 +918,7 @@ impl Checker<'_> {
                 Some(param) => self.arg_type_under(file, arg, param),
                 None => self.arg_type(file, arg),
             };
-            self.is_known(ty) && !matches!(arg, Arg::Expr(x) if self.is_uncertain(file, x))
+            self.is_known(ty)
         })
     }
 
@@ -946,7 +946,6 @@ impl Checker<'_> {
         sigs: &[SigId],
         resolved: ResolvedCall,
     ) -> Option<Failed> {
-        let hir = self.hir(file);
         let candidates = self.candidates_in_order(sigs);
         let args = self.effective_call_arguments(file, e, node);
         // A call that is being resolved cannot say what it expects of an argument. The candidate at hand does, in
@@ -1053,7 +1052,7 @@ impl Checker<'_> {
             return;
         }
         let called = self.chain_receiver(file, data.callee, data.chain).0;
-        if !self.is_known(called) || self.is_uncertain(file, data.callee) {
+        if !self.is_known(called) {
             return;
         }
         let apparent = self.apparent_type(called);
@@ -1488,10 +1487,7 @@ impl Checker<'_> {
             && self.checks_this_argument(file, e, node)
         {
             let given = self.this_argument_type(file, this_arg);
-            if !self.is_known(given)
-                || !self.is_known(wanted)
-                || this_arg.is_some_and(|obj| self.is_uncertain(file, obj))
-            {
+            if !self.is_known(given) || !self.is_known(wanted) {
                 return Applicable::Unknown;
             }
             if !self.related(given, wanted, relation) {
@@ -1542,10 +1538,7 @@ impl Checker<'_> {
                 continue;
             };
             let given = self.arg_type_under(file, arg, wanted);
-            if !self.is_known(given)
-                || !self.is_known(wanted)
-                || matches!(arg, Arg::Expr(x) if self.is_uncertain(file, x))
-            {
+            if !self.is_known(given) || !self.is_known(wanted) {
                 return Applicable::Unknown;
             }
             // `getRegularTypeOfObjectLiteral`: properties there are too many of do not count before everything is looked at.

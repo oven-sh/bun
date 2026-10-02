@@ -11,8 +11,8 @@ use crate::hir::{
     CallId, CaseId, ClassId, EnumMemberId, ExportSpecId, Expr, ExprId, ExprKind, File, FileKind,
     Flags, FnBody, FnId, FnKind, Func, INCOMPLETE_TEMPLATE, IdList, ImportSpecId, Keyword,
     MemberId, MemberKind, ModifierKind, Node, NodeData, ParamId, Part, PatElemId, PatId, PatKind,
-    PatPropId, PropId, PropKey, PropKind, Span, Stmt, StmtId, StmtKind, TupleElemId, TypeNode,
-    TypeNodeId, TypeNodeKind, TypeParamId, UnOp, VarDeclId, is_parenthesized, open_parenthesis,
+    PatPropId, PropId, PropKey, Span, Stmt, StmtId, StmtKind, TupleElemId, TypeNode, TypeNodeId,
+    TypeNodeKind, TypeParamId, UnOp, VarDeclId, is_parenthesized, open_parenthesis,
     start_inside_parentheses,
 };
 use crate::program::FileId;
@@ -1045,12 +1045,12 @@ impl<'a> Spans<'a> {
     }
 
     /// `A.B.C` at `at`. An empty name stands for one that is missing.
-    fn entity_name(self, at: usize, names: IdList<Atom>) -> usize {
-        let mut end = match self.hir.ids(names).next() {
+    fn entity_name(self, at: usize, names: Span<crate::hir::NameId>) -> usize {
+        let mut end = match self.hir.texts(names).next() {
             Some(known::empty) => at,
             _ => word_end(self.text, at),
         };
-        for name in self.hir.ids(names).skip(1) {
+        for name in self.hir.texts(names).skip(1) {
             let dot = self.eat(end, b".");
             if dot == end {
                 break;
@@ -1388,7 +1388,7 @@ impl<'a> Spans<'a> {
             }
             // A type that is missing.
             TypeNodeKind::Ref { name, args }
-                if args.is_empty() && self.hir.ids(name).eq([known::empty]) =>
+                if args.is_empty() && self.hir.texts(name).eq([known::empty]) =>
             {
                 return skip_trivia_back(self.text, pos);
             }
@@ -2184,63 +2184,6 @@ impl Checker<'_> {
         self.spans(file).skip_trivia(pos as usize) as u32
     }
 
-    /// Where the qualifier of the import type `node` starts: the `A` of `import("m").A.B`, the `a` of `typeof import("m").a`.
-    pub(super) fn start_of_import_type_qualifier(
-        &self,
-        file: FileId,
-        node: TypeNodeId,
-    ) -> Option<u32> {
-        let spans = self.spans(file);
-        let &TypeNode {
-            kind: TypeNodeKind::Import { is_typeof, .. },
-            pos,
-            ..
-        } = spans.hir.types.get(node.idx())?
-        else {
-            return None;
-        };
-        let import = if is_typeof {
-            spans.skip_trivia(spans.token(pos as usize))
-        } else {
-            pos as usize
-        };
-        let open = spans.skip_trivia(spans.token(import));
-        if spans.byte(open) != b'(' {
-            return None;
-        }
-        let after = spans.bracket(open);
-        let dot = spans.eat(after, b".");
-        (dot != after).then(|| spans.skip_trivia(dot) as u32)
-    }
-
-    /// The range of each name of the entity name `A.B.C` that is written at `pos`, up to a name that is missing.
-    pub(super) fn entity_name_ranges(
-        &self,
-        file: FileId,
-        pos: u32,
-        names: IdList<Atom>,
-    ) -> Vec<(u32, u32)> {
-        let spans = self.spans(file);
-        let mut ranges = Vec::with_capacity(names.len());
-        let mut start = pos as usize;
-        for name in spans.hir.ids(names) {
-            if name == known::empty {
-                break;
-            }
-            let end = word_end(spans.text, start);
-            ranges.push((start as u32, end as u32));
-            let dot = match spans.eat(end, b"?.") {
-                dot if dot != end => dot,
-                _ => spans.eat(end, b"."),
-            };
-            if dot == end {
-                break;
-            }
-            start = spans.skip_trivia(dot);
-        }
-        ranges
-    }
-
     /// Where what `import x = a.b.c` or `import x = require("m")` refers to starts. `parseExpected`: an `=` that is left out takes no
     /// room.
     pub(super) fn start_of_import_equals_reference(
@@ -2269,19 +2212,37 @@ impl Checker<'_> {
         match hir.data(node) {
             NodeData::None => 0,
             NodeData::File => hir.source_len,
+            NodeData::Part(Part::Name, row) if matches!(hir.data(row), NodeData::Prop(_)) => {
+                match hir.data(row) {
+                    NodeData::Prop(p) => self.end_of_prop_name(file, p),
+                    _ => 0,
+                }
+            }
             NodeData::Part(Part::Name | Part::PropertyName | Part::BindingsName, _) => {
                 self.end_of_name_at(file, hir.start(node))
             }
-            NodeData::Part(Part::Base, row) => match hir
-                .ids(hir[hir.class_of(hir.parent(node).row())].extends_args)
-                .next_back()
-            {
-                Some(_) => self.end_of_class_extends(file, hir.class_of(hir.parent(node).row())),
-                None => self.end_of_node(file, row),
+            NodeData::Part(Part::Base, row) => {
+                let class = hir.class_of(row);
+                match hir.ids(hir[class].extends_args).next_back() {
+                    Some(_) => self.end_of_class_extends(file, class),
+                    None => self.end_of_expr(file, hir[class].extends),
+                }
+            }
+            NodeData::Part(Part::Qualified, row) => self.end_of_node(file, row),
+            NodeData::Part(Part::Paren, row) => match hir.data(row) {
+                NodeData::Expr(e) => self.end_of_expr(file, e),
+                _ => 0,
+            },
+            NodeData::Part(Part::ImportClause, row) => match hir.data(row) {
+                NodeData::Stmt(s) => match hir[s].kind {
+                    StmtKind::Import(i) => hir[i].clause_end,
+                    _ => 0,
+                },
+                _ => 0,
             },
             // The tree does not say.
             NodeData::Part(..) => 0,
-            NodeData::Expr(e) => self.end_of_expr(file, e),
+            NodeData::Expr(e) => self.end_inside_parentheses(file, e),
             NodeData::Stmt(s) => self.end_of_stmt(file, s),
             NodeData::Type(t) => self.end_of_type_node(file, t),
             NodeData::Pat(p) => self.end_of_pat(file, p),
@@ -2304,6 +2265,7 @@ impl Checker<'_> {
                 ModifierKind::Decorator(e) => self.end_of_expr(file, e),
                 ModifierKind::Keyword(_) => self.end_of_token_at(file, hir[m].pos),
             },
+            NodeData::Name(n) => self.end_of_token_at(file, hir[n].pos()),
         }
     }
 
@@ -2311,7 +2273,10 @@ impl Checker<'_> {
     pub(super) fn get_error_range_for_node(&self, file: FileId, node: Node) -> (u32, u32) {
         let hir = self.hir(file);
         match hir.data(node) {
-            NodeData::Expr(e) => self.error_range_of_expr(file, e),
+            NodeData::Expr(e) => (
+                self.error_start_inside_parentheses(file, e),
+                self.error_end_inside_parentheses(file, e),
+            ),
             NodeData::Stmt(s) => self.error_range_of_stmt(file, s),
             NodeData::Member(m) => self.error_range_of_member(file, m),
             NodeData::Prop(_) if hir.function_of(node).is_some() => {
@@ -2322,6 +2287,9 @@ impl Checker<'_> {
             NodeData::VarDecl(d) => self.error_range_of_var_decl(file, d),
             NodeData::Case(c) => self.error_range_of_case(file, c),
             NodeData::EnumMember(m) => self.error_range_of_enum_member(file, m),
+            NodeData::Part(Part::NamedBindings, _) if hir.name(node).is_some() => {
+                self.get_error_range_for_node(file, hir.name(node))
+            }
             _ => (hir.start(node), self.end_of_node(file, node)),
         }
     }

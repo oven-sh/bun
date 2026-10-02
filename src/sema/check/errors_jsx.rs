@@ -285,7 +285,6 @@ impl Checker<'_> {
         self.check_grammar_jsx_expression(file, spread);
         let ty = self.type_of_expr(file, spread);
         if self.is_known(ty)
-            && !self.is_uncertain(file, spread)
             && ty != TypeId::ANY
             && !self.is_array(ty)
             && let Some(brace) = brace_before(hir, self.start_of(file, spread), true)
@@ -404,10 +403,7 @@ impl Checker<'_> {
             }
             None => {
                 let component = self.type_of_expr(file, jsx.tag);
-                if !self.is_known(component)
-                    || self.is_any(component)
-                    || self.is_uncertain(file, jsx.tag)
-                {
+                if !self.is_known(component) || self.is_any(component) {
                     return;
                 }
                 let apparent = self.apparent_type(component);
@@ -511,9 +507,7 @@ impl Checker<'_> {
                 } else {
                     self.type_of_literal_prop(file, p)
                 };
-                if !self.is_known(ty)
-                    || hir[p].value.is_some() && self.is_uncertain(file, hir[p].value)
-                {
+                if !self.is_known(ty) {
                     return;
                 }
             }
@@ -1090,7 +1084,7 @@ impl Checker<'_> {
         };
         let tag = hir[j].tag;
         let component = self.type_of_expr(file, tag);
-        if !self.is_known(component) || self.is_any(component) || self.is_uncertain(file, tag) {
+        if !self.is_known(component) || self.is_any(component) {
             return;
         }
         let of_function = |c: &mut Self| {

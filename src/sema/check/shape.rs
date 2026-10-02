@@ -878,7 +878,6 @@ impl<'p> Checker<'p> {
         file: FileId,
         members: Span<MemberId>,
         want_static: bool,
-        mapper: MapperId,
         early: bool,
     ) {
         let hir = self.hir(file);
@@ -922,12 +921,10 @@ impl<'p> Checker<'p> {
                     }
                 }
                 MemberKind::CallSignature => {
-                    let sig = self.sig_of_fn(file, member.func);
-                    b.shape.call.push(self.instantiate_sig(sig, mapper));
+                    b.shape.call.push(self.sig_of_fn(file, member.func));
                 }
                 MemberKind::ConstructSignature => {
-                    let sig = self.sig_of_fn(file, member.func);
-                    b.shape.construct.push(self.instantiate_sig(sig, mapper));
+                    b.shape.construct.push(self.sig_of_fn(file, member.func));
                 }
                 MemberKind::IndexSignature => {
                     // `getIndexInfosOfIndexSymbol`: one parameter, with a type. Only what can be a key counts, as it is written.
@@ -941,7 +938,6 @@ impl<'p> Checker<'p> {
                     } else {
                         TypeId::ANY
                     };
-                    let value = self.instantiate(value, mapper);
                     for &key in self.parts(keys) {
                         // What is not known is let through.
                         if self.is_known(key) && !self.is_valid_index_key_type(key) {
@@ -995,7 +991,7 @@ impl<'p> Checker<'p> {
                             name,
                             flags,
                             source: PropSource::Parameter(file, p),
-                            mapper,
+                            mapper: MapperId::IDENTITY,
                         });
                     }
                 }
@@ -1019,9 +1015,7 @@ impl<'p> Checker<'p> {
                 )
             };
             let holds_more = !want_static && (has_type_params || members.iter().any(has_nameless));
-            self.add_index_signatures_of_computed_names(
-                b, file, &computed, &groups, holds_more, mapper,
-            );
+            self.add_index_signatures_of_computed_names(b, file, &computed, &groups, holds_more);
         }
         b.reserve(groups.len());
         for (name, group) in groups {
@@ -1032,21 +1026,19 @@ impl<'p> Checker<'p> {
                     name,
                     flags,
                     source: PropSource::Members(list.into()),
-                    mapper,
+                    mapper: MapperId::IDENTITY,
                 });
                 continue;
             };
             // Overloads of a merged interface stay in the order declared; calls reorder them (`reorder_candidates`).
-            if let PropSource::Members(existing) = &b.shape.props[i].source
-                && b.shape.props[i].mapper == mapper
-            {
+            if let PropSource::Members(existing) = &b.shape.props[i].source {
                 list.splice(0..0, existing.iter().copied());
                 let flags = self.flags_of_declarations(&list);
                 b.add(Prop {
                     name,
                     flags,
                     source: PropSource::Members(list.into()),
-                    mapper,
+                    mapper: MapperId::IDENTITY,
                 });
                 continue;
             }
@@ -1057,64 +1049,12 @@ impl<'p> Checker<'p> {
                     name,
                     flags,
                     source: PropSource::Members(list.into()),
-                    mapper,
+                    mapper: MapperId::IDENTITY,
                 });
                 continue;
             }
-            // The declarations name their type parameters each for itself, so they cannot be listed together as they are written.
             // The first says what the property is (`SetValueDeclaration`), but for whether it may be left out.
             flags = earlier.flags | flags & PropFlags::OPTIONAL;
-            if list
-                .iter()
-                .all(|&(f, m)| self.hir(f)[m].kind == MemberKind::Method)
-            {
-                // Of overloads: their signatures, in terms of the parameters of the first.
-                let so_far = self.type_of_prop(&earlier, MapperId::IDENTITY);
-                let so_far = if earlier.flags.contains(PropFlags::OPTIONAL) {
-                    self.without_undefined(so_far)
-                } else {
-                    so_far
-                };
-                let later = Prop {
-                    name,
-                    flags: PropFlags::METHOD,
-                    source: PropSource::Members(list.into()),
-                    mapper,
-                };
-                let later_type = self.type_of_prop(&later, MapperId::IDENTITY);
-                let mut call = self.signatures(so_far, false).into_vec();
-                if !call.is_empty() {
-                    call.extend(self.signatures(later_type, false));
-                    let ty = self.synth(Shape {
-                        call,
-                        ..Shape::default()
-                    });
-                    let ty = if flags.contains(PropFlags::OPTIONAL) {
-                        self.optional_property(ty)
-                    } else {
-                        ty
-                    };
-                    // One symbol, with the declarations of both.
-                    let mut declarations = match Self::value_declaration(&earlier) {
-                        Some(PropSource::Members(list)) => list.to_vec(),
-                        _ => Vec::new(),
-                    };
-                    if let PropSource::Members(list) = &later.source {
-                        declarations.extend(list.iter().copied());
-                    }
-                    let declared = Prop {
-                        source: PropSource::Members(declarations.into()),
-                        ..later
-                    };
-                    b.add(Prop {
-                        name,
-                        flags,
-                        source: Self::copy_of(ty, &[&declared], true),
-                        mapper: MapperId::IDENTITY,
-                    });
-                    continue;
-                }
-            }
             b.shape.props[i].flags = flags;
         }
     }
@@ -1220,7 +1160,6 @@ impl<'p> Checker<'p> {
         computed: &[MemberId],
         named: &[(Atom, SmallVec<[MemberId; 4]>)],
         holds_more: bool,
-        mapper: MapperId,
     ) {
         let hir = self.hir(file);
         // For strings, numbers and symbols: the values, and whether all that say so can only be read.
@@ -1315,7 +1254,6 @@ impl<'p> Checker<'p> {
             } else {
                 self.union_reduced(&values)
             };
-            let value = self.instantiate(value, mapper);
             b.shape.index.push(IndexInfo {
                 key,
                 value,
@@ -1554,16 +1492,15 @@ impl<'p> Checker<'p> {
         let mut b = Builder::default();
         for (file, decl) in self.files().decls(sym) {
             let hir = self.hir(file);
-            let (members, params) = match decl {
-                Decl::Class(c) => (hir[c].members, hir[c].type_params),
-                Decl::Interface(i) => (hir[i].members, hir[i].type_params),
+            let members = match decl {
+                Decl::Class(c) => hir[c].members,
+                Decl::Interface(i) => hir[i].members,
                 _ => continue,
             };
             if !self.is_declaration_of_symbol(sym, file, decl) {
                 continue;
             }
-            let mapper = self.decl_params_mapper(sym, file, params);
-            self.add_members(&mut b, file, members, false, mapper, early);
+            self.add_members(&mut b, file, members, false, early);
             if let Decl::Class(c) = decl {
                 self.add_this_properties(&mut b, file, c, false);
             }
@@ -1704,11 +1641,9 @@ impl<'p> Checker<'p> {
                 TypeId::UNRESOLVED
             };
         }
-        let uncertain = self.uncertain;
         let constructor = self.type_of_expr(file, self.hir(file)[c].extends);
         // `resolveStructuredTypeMembers`: the members of a class take its base constructor type, so a circle shows now.
         let _ = self.members(constructor);
-        self.uncertain = uncertain;
         let holds = self.leave();
         if self.left_a_circle {
             // `GetErrorRangeForNode`: the name, or the first token of a class expression without one.
@@ -1776,11 +1711,8 @@ impl<'p> Checker<'p> {
 
     /// `resolveAnonymousTypeMembers`: whether the base constructor type of class `sym` is `any` itself.
     fn extends_any(&mut self, sym: Sym) -> bool {
-        let Some((file, c)) = self.extending_declaration(sym) else {
-            return false;
-        };
-        self.base_constructor_type_of_class(sym) == TypeId::ANY
-            && !self.is_uncertain(file, self.hir(file)[c].extends)
+        self.extending_declaration(sym).is_some()
+            && self.base_constructor_type_of_class(sym) == TypeId::ANY
     }
 
     fn sigs_of_function_declarations(&mut self, sym: Sym) -> Vec<SigId> {
@@ -1862,9 +1794,7 @@ impl<'p> Checker<'p> {
         let mut bases = Vec::new();
         // `resolveBaseTypesOfClass`: what the class extends comes first, wherever it is written.
         if let Some((file, c)) = self.extending_declaration(sym) {
-            let mapper = self.decl_params_mapper(sym, file, self.hir(file)[c].type_params);
             let base = self.base_instance_type(sym, file, c);
-            let base = self.instantiate(base, mapper);
             let extending = (file, Decl::Class(c));
             let valid = self.as_base_type(base, extending, |checker, reduced, unreduced| {
                 let Some(at) = checker.place_to_report_base_at(file, c) else {
@@ -1888,7 +1818,6 @@ impl<'p> Checker<'p> {
             let Decl::Interface(i) = decl else { continue };
             let hir = self.hir(file);
             let interface = &hir[i];
-            let mapper = self.decl_params_mapper(sym, file, interface.type_params);
             for node in hir.ids(interface.extends) {
                 // A base that is no `A.B<C>` has the error type (2499), which is skipped.
                 if matches!(
@@ -1898,7 +1827,6 @@ impl<'p> Checker<'p> {
                     continue;
                 }
                 let base = self.type_from_node(file, node);
-                let base = self.instantiate(base, mapper);
                 let valid = self.as_base_type(base, (file, decl), |checker, _, _| {
                     let at = (file, hir[node].pos, checker.end_of_type_node(file, node));
                     checker.error(at, 2312, &[]);
@@ -2013,7 +1941,7 @@ impl<'p> Checker<'p> {
         c: ClassId,
     ) -> Option<(FileId, u32, u32)> {
         let extends = self.hir(file)[c].extends;
-        if self.bound(file).is_unchecked(extends.idx()) || self.is_uncertain(file, extends) {
+        if self.bound(file).is_unchecked(extends.idx()) {
             return None;
         }
         Some((
@@ -2032,11 +1960,7 @@ impl<'p> Checker<'p> {
         let constructor = self.base_constructor_type_of_class(sym);
         // `baseType = baseConstructorType`
         if self.has_any_flag(constructor) {
-            return if self.is_uncertain(file, class.extends) {
-                TypeId::UNRESOLVED
-            } else {
-                constructor
-            };
+            return constructor;
         }
         // `areAllOuterTypeParametersApplied`, asked of the declared type: a class declared inside something generic is gone
         // through by its construct signatures.
@@ -2171,7 +2095,7 @@ impl<'p> Checker<'p> {
         match origin {
             Origin::TypeLiteral(file, node) => {
                 if let TypeNodeKind::Object(members) = self.hir(file)[node].kind {
-                    self.add_members(&mut b, file, members, false, MapperId::IDENTITY, false);
+                    self.add_members(&mut b, file, members, false, false);
                 }
             }
             Origin::ObjectLiteral(file, expr, .., is_fresh) => {
@@ -2219,7 +2143,7 @@ impl<'p> Checker<'p> {
                         outer = self.identity_mapper(file, parent);
                     }
                     let members = hir[c].members;
-                    self.add_members(&mut b, file, members, true, MapperId::IDENTITY, false);
+                    self.add_members(&mut b, file, members, true, false);
                     self.add_this_properties(&mut b, file, c, true);
                     if hir.is_js && file == sym.file {
                         self.add_expandos(&mut b, file, sym.id);
@@ -4971,42 +4895,8 @@ impl<'p> Checker<'p> {
         }
         self.never_in_progress.push(ty);
         let cycles_before = self.cycles;
-        let mut is_never = false;
-        if let Some(members) = self.members(ty) {
-            for prop in &members.shape().props {
-                let PropSource::Intersected(_, parts) = &prop.source else {
-                    continue;
-                };
-                // `isConflictingPrivateProperty`: private in some member, and declared in several places.
-                if prop.flags.contains(PropFlags::PRIVATE)
-                    && Self::value_declaration(prop).is_none()
-                {
-                    is_never = true;
-                    break;
-                }
-                // `isDiscriminantWithNeverType`: `{ ok: true } & { ok: false }`. What may be left out tells nothing apart.
-                if prop.flags.contains(PropFlags::OPTIONAL)
-                    || !self.type_of_prop(prop, members.mapper).is_never()
-                {
-                    continue;
-                }
-                let mut list = Vec::with_capacity(parts.len());
-                for part in parts.iter() {
-                    list.push(self.type_of_prop(part, MapperId::IDENTITY));
-                }
-                if !list.iter().any(|t| t.is_never())
-                    && list.iter().any(|&t| t != list[0])
-                    && list.iter().any(|&t| {
-                        self.is_boolean(t)
-                            || self.is_pattern_literal(t)
-                            || self.every_type(t, |c, m| c.is_unit(m))
-                    })
-                {
-                    is_never = true;
-                    break;
-                }
-            }
-        }
+        // `isNeverReducedProperty`
+        let is_never = self.why_never_intersection(ty).is_some();
         self.never_in_progress.pop();
         if self.cycles == cycles_before {
             self.p.never_intersections.insert(ty, is_never);

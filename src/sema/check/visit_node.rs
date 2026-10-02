@@ -254,24 +254,17 @@ impl Visitor<'_, '_> {
         name == known::empty && !matches!(first, Some(b'"' | b'\'' | b'['))
     }
 
-    /// Takes the identifiers of the entity name `names`, which is written at `start`.
-    fn entity_name(&mut self, start: u32, names: IdList<Atom>, kind: impl Fn(u32) -> VisitedKind) {
-        let (mut start, mut names, mut first) = (start, names, 0);
-        // `parseEntityName`: a first name that is missing is where the dot is.
-        if names.len() > 1 && self.hir.id_at(names, 0) == known::empty {
-            self.missing_identifier(start, kind(0));
-            start = self.skip_trivia(self.skip_trivia(start) + 1);
-            names = IdList::new(names.start + 1, names.len - 1);
-            first = 1;
-        }
-        let ranges = self.c.entity_name_ranges(self.file, start, names);
-        // `parseRightSideOfDot`
-        if let Some(&(_, end)) = ranges.last().filter(|_| ranges.len() < names.len()) {
-            let position = first + ranges.len() as u32;
-            self.missing_identifier(self.skip_trivia(end) + 1, kind(position));
-        }
-        for (position, (start, end)) in (first..).zip(ranges) {
-            self.node(start, end, kind(position));
+    /// Takes the identifiers of the entity name `names`, up to one that is missing after a dot (`parseRightSideOfDot`).
+    fn entity_name(&mut self, names: Span<NameId>, kind: impl Fn(u32) -> VisitedKind) {
+        for (position, name) in (0..).zip(names.iter().map(|name| self.hir[name])) {
+            if name.text != known::empty {
+                self.token(name.pos(), kind(position));
+                continue;
+            }
+            self.missing_identifier(name.pos(), kind(position));
+            if position > 0 {
+                break;
+            }
         }
     }
 
@@ -732,10 +725,10 @@ impl Visitor<'_, '_> {
             if let ImportEqualsTarget::Entity(entity) = import.target
                 && let Some(start) = self.c.start_of_import_equals_reference(file, id)
             {
-                if hir.ids(entity).eq([known::empty]) {
+                if hir.texts(entity).eq([known::empty]) {
                     self.missing_identifier(start, VisitedKind::ImportEqualsName(id, 0));
                 } else {
-                    self.entity_name(start, entity, |at| VisitedKind::ImportEqualsName(id, at));
+                    self.entity_name(entity, |at| VisitedKind::ImportEqualsName(id, at));
                 }
             }
         }
@@ -797,8 +790,11 @@ impl Visitor<'_, '_> {
             let start = hir[node].pos;
             match hir[node].kind {
                 TypeNodeKind::Ref { name, .. } if heritage.binary_search(&node).is_ok() => {
-                    let ranges = self.c.entity_name_ranges(file, start, name);
-                    for (position, (from, end)) in (0..).zip(ranges) {
+                    let written = name.iter().map(|name| hir[name]);
+                    for (position, part) in
+                        (0..).zip(written.take_while(|n| n.text != known::empty))
+                    {
+                        let (from, end) = (part.pos(), self.c.end_of_token_at(file, part.pos()));
                         self.node(from, end, VisitedKind::HeritageClauseName(node, position));
                         if position > 0 {
                             let kind = VisitedKind::HeritageClausePropertyAccess(node, position);
@@ -807,13 +803,13 @@ impl Visitor<'_, '_> {
                     }
                 }
                 TypeNodeKind::Ref { name, .. }
-                    if !hir.is_in_jsdoc(start) && hir.ids(name).eq([known::empty]) =>
+                    if !hir.is_in_jsdoc(start) && hir.texts(name).eq([known::empty]) =>
                 {
                     self.missing_identifier(start, VisitedKind::TypeReferenceName(node, 0));
                 }
                 // A `QualifiedName` is neither an expression node nor an identifier.
                 TypeNodeKind::Ref { name, .. } => {
-                    self.entity_name(start, name, |at| VisitedKind::TypeReferenceName(node, at));
+                    self.entity_name(name, |at| VisitedKind::TypeReferenceName(node, at));
                 }
                 TypeNodeKind::Predicate { param, asserts, .. } if param != known::this => {
                     let start = if asserts && self.is_written_at(start, b"asserts") {
@@ -824,10 +820,7 @@ impl Visitor<'_, '_> {
                     self.name(start, VisitedKind::TypePredicateParameter(node));
                 }
                 TypeNodeKind::Import { name, .. } if !name.is_empty() => {
-                    if let Some(start) = self.c.start_of_import_type_qualifier(file, node) {
-                        let kind = |at| VisitedKind::ImportTypeQualifierName(node, at);
-                        self.entity_name(start, name, kind);
-                    }
+                    self.entity_name(name, |at| VisitedKind::ImportTypeQualifierName(node, at));
                 }
                 // `IsExpressionNode` goes by the kind alone for `true`, `false` and a `PrefixUnaryExpression`, and the operand of
                 // the `-` is in an expression context.

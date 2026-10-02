@@ -57,7 +57,6 @@ impl Checker<'_> {
                         object
                     };
                     if is_const_enum_object_type(self, object)
-                        && !self.is_uncertain(file, obj)
                         && !is_string_literal_like(hir, index)
                     {
                         if let Some(start) =
@@ -87,7 +86,7 @@ impl Checker<'_> {
                 _ => continue,
             }
             let ty = self.type_of_expr(file, e);
-            if !is_const_enum_object_type(self, ty) || self.is_uncertain(file, e) {
+            if !is_const_enum_object_type(self, ty) {
                 continue;
             }
             // `typeof E.A` is made of names, not of property accesses.
@@ -404,7 +403,7 @@ impl Checker<'_> {
                 continue;
             };
             let scope = bound.import_equals_scope[i];
-            let Some(first) = hir.ids(names).next() else {
+            let Some(first) = hir.texts(names).next() else {
                 continue;
             };
             if scope.is_none()
@@ -413,7 +412,7 @@ impl Checker<'_> {
                 continue;
             }
             // `checkImportEqualsDeclaration`: the first name is looked up as a value only once what is imported is known to be one.
-            let path: Vec<Atom> = hir.ids(names).collect();
+            let path: Vec<Atom> = hir.texts(names).collect();
             let meaning = if path.len() == 1 {
                 SymFlags::NAMESPACE
             } else {
@@ -552,193 +551,20 @@ pub(super) fn is_ambient_enum(hir: &hir::File, en: EnumId) -> bool {
 
 // ───────────────────────────── before and after ─────────────────────────────
 
-/// `isBlockScopedNameDeclaredBeforeUse`, of a member of an enum or of a variable declared by name.
+/// `isBlockScopedNameDeclaredBeforeUse`
 pub(super) fn is_declared_before_use(
-    c: &Checker<'_>,
+    c: &mut Checker<'_>,
     declaration: Location,
     usage: Location,
 ) -> bool {
-    let file = usage.file();
+    let (file, node) = (usage.file(), |location: Location| match location {
+        Location::Member(file, member) => c.hir(file).node(member),
+        Location::Variable(file, d) => c.hir(file).node(d),
+        Location::Expr(file, e) => c.hir(file).node(e),
+    });
+    let (declared, used) = (node(declaration), node(usage));
     // Between files there is no telling.
-    if declaration.file() != file || is_in_ambient_or_type_node(c, usage) {
-        return true;
-    }
-    if position(c, declaration) <= position(c, usage) {
-        return match declaration {
-            // `isImmediatelyUsedInInitializerOfBlockScopedVariable`
-            Location::Variable(_, d) => !is_in_initializer_of(c, usage, d),
-            _ => true,
-        };
-    }
-    // `export = x` only says what is to be had.
-    if let Location::Expr(_, e) = usage
-        && let Parent::Stmt(s) = c.bound(file).expr_parent[e.idx()]
-        && s.is_some()
-        && matches!(c.hir(file)[s].kind, StmtKind::ExportAssign(_))
-        && !is_parenthesized(c.hir(file), e)
-    {
-        return true;
-    }
-    is_use_deferred(c, usage, declaration)
-}
-
-fn position(c: &Checker<'_>, location: Location) -> u32 {
-    match location {
-        Location::Member(file, member) => c.hir(file)[member].pos,
-        Location::Variable(file, d) => {
-            let hir = c.hir(file);
-            hir[hir[d].pat].pos
-        }
-        Location::Expr(file, e) => c.start_of(file, e),
-    }
-}
-
-/// What `location` is directly in, for going outwards from.
-fn parent_of_location(c: &Checker<'_>, location: Location) -> Parent {
-    match location {
-        Location::Member(_, member) => Parent::EnumInit(member),
-        Location::Variable(_, d) => Parent::VarInit(d),
-        Location::Expr(file, e) => step_out(c, file, Parent::Expr(e)),
-    }
-}
-
-/// What is around what `parent` stands for, enums and the names of properties and members included.
-fn step_out(c: &Checker<'_>, file: FileId, parent: Parent) -> Parent {
-    let (hir, bound) = (c.hir(file), c.bound(file));
-    match parent {
-        Parent::EnumInit(member) => {
-            let owner = bound.enum_member_owner[member.idx()];
-            Parent::Stmt(hir[owner].stmt)
-        }
-        Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
-        // The name of a method or an accessor is part of the function; that of a property is worked out where the class is.
-        Parent::Expr(key)
-            if matches!(
-                bound.expr_parent[key.idx()],
-                Parent::MemberKey(_) | Parent::MethodKey(_)
-            ) =>
-        {
-            match hir
-                .members
-                .iter()
-                .position(|m| m.key == PropKey::Computed(key))
-            {
-                Some(m) if hir.members[m].func.is_some() => Parent::FnBody(hir.members[m].func),
-                Some(m) => c.outward(file, Parent::MemberInit(MemberId(m as u32))),
-                // Of a method of an object literal.
-                None => bound.expr_parent[key.idx()],
-            }
-        }
-        _ => c.outward(file, parent),
-    }
-}
-
-/// `isInAmbientOrTypeNode`. Where the way out is lost track of, it is taken to be.
-fn is_in_ambient_or_type_node(c: &Checker<'_>, usage: Location) -> bool {
-    let file = usage.file();
-    let (hir, bound) = (c.hir(file), c.bound(file));
-    let mut parent = parent_of_location(c, usage);
-    loop {
-        match parent {
-            // What is in something ambient says so itself.
-            Parent::EnumInit(member) => {
-                return is_ambient_enum(hir, bound.enum_member_owner[member.idx()]);
-            }
-            Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return true,
-            Parent::Stmt(s)
-                if s.is_some()
-                    && matches!(hir[s].kind, StmtKind::Class(k) if hir[k].flags.contains(Flags::AMBIENT)) =>
-            {
-                return true;
-            }
-            Parent::Module(m) => return hir[m].flags.contains(Flags::AMBIENT),
-            Parent::File => return hir.kind == FileKind::Declaration,
-            Parent::None | Parent::MemberKey(_) | Parent::MethodKey(_) => return true,
-            Parent::PatKey(_) => return true,
-            _ => {}
-        }
-        parent = step_out(c, file, parent);
-    }
-}
-
-/// `isSameScopeDescendentOf(usage, declaration, ..)`: `usage` is in the declaration `d`, with no function in between that runs later.
-fn is_in_initializer_of(c: &Checker<'_>, usage: Location, d: VarDeclId) -> bool {
-    let file = usage.file();
-    let (hir, bound) = (c.hir(file), c.bound(file));
-    let mut parent = parent_of_location(c, usage);
-    loop {
-        match parent {
-            Parent::VarInit(x) if x == d => return true,
-            Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                let f = match parent {
-                    Parent::FnBody(f) => f,
-                    Parent::ParamDefault(p) => bound.param_fn[p.idx()],
-                    _ => unreachable!(),
-                };
-                if hir[f].kind != FnKind::StaticBlock
-                    && (!c.is_immediately_invoked(file, f)
-                        || hir[f].flags.intersects(Flags::ASYNC | Flags::GENERATOR))
-                {
-                    return false;
-                }
-            }
-            Parent::File
-            | Parent::Module(_)
-            | Parent::None
-            | Parent::MemberKey(_)
-            | Parent::MethodKey(_) => return false,
-            Parent::PatKey(_) => return false,
-            _ => {}
-        }
-        parent = step_out(c, file, parent);
-    }
-}
-
-/// `isUsedInFunctionOrInstanceProperty`, of what is no member of a class and is declared further down: by the time the use is
-/// reached it may be there after all. Where the way out is lost track of, it is taken to be.
-fn is_use_deferred(c: &Checker<'_>, usage: Location, declaration: Location) -> bool {
-    let file = usage.file();
-    let (hir, bound) = (c.hir(file), c.bound(file));
-    // To get out to a function the declaration is in is to have got past the block it is declared in.
-    let container = match step_out(c, file, parent_of_location(c, declaration)) {
-        Parent::Stmt(s) if s.is_some() => c.enclosing_fn(file, Parent::Stmt(s)),
-        _ => None,
-    };
-    let encloses_declaration = |f: FnId| {
-        let mut at = container;
-        while let Some(g) = at {
-            if g == f {
-                return true;
-            }
-            let outer = bound.fns[g.idx()].enclosing;
-            at = outer.is_some().then_some(outer);
-        }
-        false
-    };
-    let mut parent = parent_of_location(c, usage);
-    loop {
-        match parent {
-            Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                let f = match parent {
-                    Parent::FnBody(f) => f,
-                    Parent::ParamDefault(p) => bound.param_fn[p.idx()],
-                    _ => unreachable!(),
-                };
-                if encloses_declaration(f) {
-                    return false;
-                }
-                if hir[f].kind != FnKind::StaticBlock && !c.is_immediately_invoked(file, f) {
-                    return true;
-                }
-            }
-            Parent::MemberInit(m) if !hir[m].flags.contains(Flags::STATIC) => return true,
-            Parent::File | Parent::Module(_) => return false,
-            Parent::None | Parent::MemberKey(_) | Parent::MethodKey(_) => return true,
-            Parent::PatKey(_) => return true,
-            _ => {}
-        }
-        parent = step_out(c, file, parent);
-    }
+    declaration.file() != file || c.is_block_scoped_name_declared_before_use(file, declared, used)
 }
 
 // ───────────────────────────── kinds of types and symbols ─────────────────────────────

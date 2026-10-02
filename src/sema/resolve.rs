@@ -359,8 +359,6 @@ pub struct Options {
     pub strips_internal_declarations: bool,
     /// `importHelpers`
     pub import_helpers: bool,
-    /// `noEmit` itself.
-    pub no_emit_said: bool,
     /// `allowArbitraryExtensions`
     pub allow_arbitrary_extensions: bool,
     /// `noEmit`
@@ -523,7 +521,6 @@ impl Options {
         options.no_error_truncation = flag("noErrorTruncation");
         options.emit_decorator_metadata = flag("emitDecoratorMetadata");
         options.import_helpers = flag("importHelpers");
-        options.no_emit_said = flag("noEmit");
         options.allow_arbitrary_extensions = flag("allowArbitraryExtensions");
         options.nothing_is_emitted = flag("noEmit");
         options.reports_unreachable_code =

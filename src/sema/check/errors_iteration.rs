@@ -8,7 +8,7 @@
 use super::errors::Diagnostic;
 use super::symbols::IterationUse;
 use super::*;
-use crate::bind::{FnOwner, MemberOwner, Parent, PatParent, ScopeKind};
+use crate::bind::{FnOwner, Parent, PatParent};
 use smallvec::SmallVec;
 
 impl Checker<'_> {
@@ -33,7 +33,7 @@ impl Checker<'_> {
                 } => {
                     let given = self.type_of_expr(file, expr);
                     let mut iterated = None;
-                    if self.is_known(given) && !self.is_uncertain(file, expr) {
+                    if self.is_known(given) {
                         // `checkRightHandSideOfForOf`: `checkNonNullExpression` comes first.
                         let given = self.check_not_nullish(file, expr, given, out);
                         // Where `null` and `undefined` are not told apart nothing has been said of them, or taken out.
@@ -74,7 +74,7 @@ impl Checker<'_> {
                 }
                 StmtKind::ForIn { left, expr, .. } => {
                     let given = self.type_of_expr(file, expr);
-                    if !self.is_known(given) || self.is_uncertain(file, expr) {
+                    if !self.is_known(given) {
                         continue;
                     }
                     // `getNonNullableTypeIfNeeded`
@@ -148,8 +148,7 @@ impl Checker<'_> {
             match hir[e].kind {
                 ExprKind::Spread(inner) => {
                     let given = self.type_of_expr(file, inner);
-                    if !self.is_uncertain(file, inner)
-                        && !self.is_nothing_but_nullish(given)
+                    if !self.is_nothing_but_nullish(given)
                         && !self.is_spread_taken_whole(file, e, given, &out[..])
                     {
                         let error_node = self.place_of_written_expr(file, inner);
@@ -163,11 +162,6 @@ impl Checker<'_> {
                 }
                 ExprKind::Assign { target, value, .. } => {
                     let given = self.type_of_expr(file, value);
-                    let given = if self.is_uncertain(file, value) {
-                        TypeId::UNRESOLVED
-                    } else {
-                        given
-                    };
                     self.check_destructuring_assignment(file, target, given, out);
                 }
                 ExprKind::Yield { value, star } => self.check_yield(file, e, value, star, out),
@@ -225,7 +219,6 @@ impl Checker<'_> {
                 out,
             );
         }
-        let mut type_parents = None;
         for p in 0..hir.pats.len() {
             let pat = PatId(p as u32);
             if matches!(hir.pats[p].kind, PatKind::Ident(_) | PatKind::Missing)
@@ -233,8 +226,8 @@ impl Checker<'_> {
             {
                 continue;
             }
-            if self.binds_no_name(file, pat) {
-                self.check_pattern_without_names(file, pat, &mut type_parents, out);
+            if Self::pattern_binds_nothing(self.hir(file), pat) {
+                self.check_pattern_without_names(file, pat, out);
                 continue;
             }
             let PatKind::Array(elems) = hir.pats[p].kind else {
@@ -272,9 +265,6 @@ impl Checker<'_> {
                             // What nothing types is what the pattern makes of it.
                             None if decl.default.is_none() => continue,
                             None => {
-                                if self.is_uncertain(file, decl.default) {
-                                    continue;
-                                }
                                 // `getTypeForBindingElementParent`: a default is taken apart as it is, `null` and `undefined` not yet
                                 // being `any`. `assignParameterType` widens it first for a function that is an expression.
                                 if !matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)) {
@@ -292,7 +282,7 @@ impl Checker<'_> {
             // What has an initializer that cannot be `undefined` is not `undefined`: whether it can has to be known.
             if strict && initializer.is_some() && self.some_type(given, |_, m| m.is_undefined()) {
                 let ty = self.type_of_expr(file, initializer);
-                if !self.is_known(ty) || self.is_uncertain(file, initializer) {
+                if !self.is_known(ty) {
                     continue;
                 }
             }
@@ -502,11 +492,6 @@ impl Checker<'_> {
         {
             let default = self.type_of_expr(file, value);
             if self.is_assignment_pattern(file, inner) {
-                let default = if self.is_uncertain(file, value) {
-                    TypeId::UNRESOLVED
-                } else {
-                    default
-                };
                 self.check_destructuring_assignment(file, inner, default, out);
             } else {
                 self.check_reference_assignment(file, inner, default, value, out);
@@ -514,11 +499,7 @@ impl Checker<'_> {
             // That of `{ a = d }` sees to it only if it cannot be `undefined` itself.
             let is_shorthand = matches!(self.bound(file).expr_parent[target.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand);
             target = inner;
-            if strict
-                && !(is_shorthand
-                    && !self.is_uncertain(file, value)
-                    && self.is_possibly_undefined(default))
-            {
+            if strict && !(is_shorthand && self.is_possibly_undefined(default)) {
                 source = self.type_with_ne_undefined(source);
             }
         }
@@ -591,9 +572,7 @@ impl Checker<'_> {
                     {
                         continue;
                     }
-                    let is_sure = is_told
-                        && self.is_known(key)
-                        && !matches!(prop.key, PropKey::Computed(k) if self.is_uncertain(file, k));
+                    let is_sure = is_told && self.is_known(key);
                     let ty = if !is_sure {
                         if self.is_any(source) {
                             source
@@ -800,7 +779,6 @@ impl Checker<'_> {
                 self.declared_type_of_reference(file, target)
             }
             // Whatever else is written there is what it is.
-            _ if self.is_uncertain(file, target) => TypeId::UNRESOLVED,
             _ => ty,
         }
     }
@@ -910,27 +888,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `pat` is a pattern in which nothing has a name: it is empty, or all holes.
-    fn binds_no_name(&self, file: FileId, pat: PatId) -> bool {
-        let hir = self.hir(file);
-        match hir[pat].kind {
-            PatKind::Object(props) => props.is_empty(),
-            PatKind::Array(elems) => elems
-                .iter()
-                .all(|e| matches!(hir[hir[e].pat].kind, PatKind::Missing)),
-            _ => false,
-        }
-    }
-
     /// `checkVariableLikeDeclaration`, of a declaration whose name is a pattern in which nothing has a name: no element asks what is
     /// taken apart, so it is asked here. 2531 2532 2533 2571, 2488.
-    fn check_pattern_without_names(
-        &mut self,
-        file: FileId,
-        pat: PatId,
-        type_parents: &mut Option<Vec<TypeNodeId>>,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_pattern_without_names(&mut self, file: FileId, pat: PatId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let initializer = match bound.pat_parent[pat.idx()] {
             PatParent::None => return,
@@ -968,7 +928,7 @@ impl Checker<'_> {
                     return;
                 }
                 // `isInAmbientOrTypeNode`
-                if self.where_parameters_are(file, func, type_parents) != (false, false) {
+                if hir.is_in_ambient_or_type_node(hir.node(q)) {
                     return;
                 }
                 if root == pat {
@@ -996,9 +956,7 @@ impl Checker<'_> {
         let strict = self.p.files.options.strict_null_checks;
         if strict && initializer.is_some() {
             let ty = self.type_of_expr(file, initializer);
-            if !self.is_uncertain(file, initializer) {
-                self.check_not_null_nor_void(ty, at, end, out);
-            }
+            self.check_not_null_nor_void(ty, at, end, out);
         }
         if is_put_off {
             return;
@@ -1056,55 +1014,6 @@ impl Checker<'_> {
         self.explain_to(at, end, code, |_| vec![]);
     }
 
-    /// The two halves of `isInAmbientOrTypeNode`, of the parameters of `func`: whether they are only declared (`NodeFlagsAmbient`),
-    /// and whether they are in an interface, a type alias or a type literal.
-    fn where_parameters_are(
-        &self,
-        file: FileId,
-        func: FnId,
-        type_parents: &mut Option<Vec<TypeNodeId>>,
-    ) -> (bool, bool) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (mut is_ambient, mut is_in_type) = (hir.kind == FileKind::Declaration, false);
-        // A type literal has no scope of its own, nor has the variable a type is written for.
-        let mut node = match bound.fns[func.idx()].owner {
-            FnOwner::Type(node) => node,
-            FnOwner::Member(m) => match bound.member_owner[m.idx()] {
-                MemberOwner::TypeLiteral(node) => node,
-                _ => TypeNodeId::NONE,
-            },
-            _ => TypeNodeId::NONE,
-        };
-        if node.is_some() {
-            let parents = type_parents.get_or_insert_with(|| Self::type_node_parents(hir, bound));
-            loop {
-                is_in_type |= matches!(hir[node].kind, TypeNodeKind::Object(_));
-                let parent = parents[node.idx()];
-                if parent.is_none() {
-                    break;
-                }
-                node = parent;
-            }
-            is_ambient |= hir
-                .var_decls
-                .iter()
-                .any(|d| d.ty == node && d.flags.contains(Flags::AMBIENT));
-        }
-        let mut scope = bound.fns[func.idx()].scope;
-        while scope.is_some() {
-            let s = &bound.scopes[scope.idx()];
-            match s.kind {
-                ScopeKind::Module(m) => is_ambient |= hir[m].flags.contains(Flags::AMBIENT),
-                ScopeKind::Fn(f) => is_ambient |= hir[f].flags.contains(Flags::AMBIENT),
-                ScopeKind::Class(c) => is_ambient |= hir[c].flags.contains(Flags::AMBIENT),
-                ScopeKind::Interface(_) | ScopeKind::TypeAlias(_) => is_in_type = true,
-                _ => {}
-            }
-            scope = s.parent;
-        }
-        (is_ambient, is_in_type)
-    }
-
     /// `checkYieldExpression`: what is yielded against what the generator says it yields.
     fn check_yield(
         &mut self,
@@ -1125,9 +1034,6 @@ impl Checker<'_> {
         } else {
             TypeId::UNDEFINED
         };
-        if value.is_some() && self.is_uncertain(file, value) {
-            return;
-        }
         let at = if value.is_some() {
             self.error_start_of(file, value)
         } else {

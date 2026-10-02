@@ -881,7 +881,7 @@ impl Checker<'_> {
                 }
                 for info in &infos {
                     if self.is_known(info.value)
-                        && self.is_index_key_applicable(name_type, info.key)
+                        && self.is_applicable_index_type(name_type, info.key)
                         && !self.is_assignable(prop_type, info.value)
                     {
                         out.push(Diagnostic {
@@ -905,7 +905,8 @@ impl Checker<'_> {
         if infos.len() > 1 {
             for check in &infos {
                 for info in &infos {
-                    if info.key == check.key || !self.is_index_key_applicable(check.key, info.key) {
+                    if info.key == check.key || !self.is_applicable_index_type(check.key, info.key)
+                    {
                         continue;
                     }
                     let mut at = local_index(self, check).or_else(|| local_index(self, info));
@@ -967,27 +968,5 @@ impl Checker<'_> {
             MemberKind::Method if is_in_class => self.end_of_member_name(file, m),
             _ => self.hir(file)[m].loc.end,
         }
-    }
-
-    /// `isApplicableIndexType`
-    fn is_index_key_applicable(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.is_assignable(source, target)
-            || target == TypeId::STRING && self.is_assignable(source, TypeId::NUMBER)
-            || target == TypeId::NUMBER
-                && match self.data(source) {
-                    // `${number}`
-                    TypeData::Template { texts, types } => {
-                        types[..] == [TypeId::NUMBER]
-                            && texts
-                                .iter()
-                                .all(|&text| self.files().atoms.bytes(text).is_empty())
-                    }
-                    TypeData::StringLit { value, .. }
-                    | TypeData::EnumLit {
-                        value: EnumValue::String(value),
-                        ..
-                    } => self.is_numeric_name(*value),
-                    _ => false,
-                }
     }
 }

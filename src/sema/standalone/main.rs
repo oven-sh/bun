@@ -59,6 +59,18 @@ fn main() {
                 };
                 let file =
                     bun_sema_standalone::parse(&files[i].to_string_lossy(), &text, &atoms, false);
+                // Only parsed and lowered: what that costs is read off `/usr/bin/time -l`.
+                if args.iter().any(|a| a == "--quiet") {
+                    return;
+                }
+                if args.iter().any(|a| a == "--nodes") {
+                    // As the checker has it: some kinds are told by how a name is written.
+                    let mut file = file;
+                    file.text = text.into();
+                    let nodes = bun_sema_standalone::hir_dump::nodes(&file);
+                    let line = format!("=== {}\n{nodes}", files[i].display());
+                    return lines.lock().unwrap().push(line);
+                }
                 let (dump, orphans) =
                     bun_sema_standalone::hir_dump::dump_and_orphans(&file, &atoms);
                 let line = if args.iter().any(|a| a == "--orphans") {

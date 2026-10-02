@@ -5,7 +5,6 @@
 use super::super::errors_isolated_declarations::{
     Emit, Pseudo, PseudoElement, PseudoElementKind, PseudoParam,
 };
-use super::super::errors_misc::QueriedThisContainer;
 use super::*;
 
 // ───────────────────────────── declarations (`nodebuilderimpl.go`) ─────────────────────────────
@@ -897,7 +896,7 @@ impl<'p> Printer<'_, 'p> {
         let target = files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
         // `tryGetResolvedSymbolFromTypeNode`
         let mut resolved = Some(files.module_value(target));
-        for part in hir.ids(name) {
+        for part in hir.texts(name) {
             resolved = resolved
                 .and_then(|container| files.resolve_alias(container))
                 .and_then(|container| files.namespace_member(container, part));
@@ -973,7 +972,7 @@ impl<'p> Printer<'_, 'p> {
                     let argument =
                         self.visit_existing_type_node(file, argument, hir[argument].pos)?;
                     let mut text = cat!(query, b"import(", argument.text, b")");
-                    for part in hir.ids(name) {
+                    for part in hir.texts(name) {
                         text.push(b'.');
                         text.extend_from_slice(&self.text(part));
                     }
@@ -998,7 +997,7 @@ impl<'p> Printer<'_, 'p> {
                     }
                 };
                 let mut text = cat!(query, b"import(", specifier, b")");
-                for part in hir.ids(name) {
+                for part in hir.texts(name) {
                     text.push(b'.');
                     text.extend_from_slice(&self.text(part));
                 }
@@ -1444,7 +1443,7 @@ impl<'p> Printer<'_, 'p> {
         let TypeNodeKind::Typeof { name, args, .. } = hir[node].kind else {
             return None;
         };
-        let names: Vec<Atom> = hir.ids(name).collect();
+        let names: Vec<Atom> = hir.texts(name).collect();
         let &first = names.first()?;
         let scope = self.c.bound(file).type_scope[node.idx()];
         let introduces_error = if first == known::this {
@@ -1483,8 +1482,8 @@ impl<'p> Printer<'_, 'p> {
         };
         let scope = bound.type_scope[query.idx()];
         let this = first_identifier(hir, expr);
-        let symbol = match self.c.this_container_of_type_query(file, this, false) {
-            Some(QueriedThisContainer::Fn(f)) => match bound.fns[f.idx()].owner {
+        let symbol = match self.c.this_container(file, this) {
+            Some(Ok(f)) => match bound.fns[f.idx()].owner {
                 FnOwner::Stmt(_) => bound.fn_symbol[f.idx()],
                 FnOwner::Member(m) => match bound.member_owner[m.idx()] {
                     MemberOwner::Class(c) => bound.class_symbol[c.idx()],
@@ -1493,18 +1492,7 @@ impl<'p> Printer<'_, 'p> {
                 },
                 _ => SymbolId::NONE,
             },
-            Some(QueriedThisContainer::Property) => {
-                let mut around = scope;
-                loop {
-                    if around.is_none() {
-                        break SymbolId::NONE;
-                    }
-                    if let ScopeKind::Class(c) = bound.scopes[around.idx()].kind {
-                        break bound.class_symbol[c.idx()];
-                    }
-                    around = bound.scopes[around.idx()].parent;
-                }
-            }
+            Some(Err((c, _))) => bound.class_symbol[c.idx()],
             _ => SymbolId::NONE,
         };
         symbol.is_some() && scope.is_some() && {
@@ -1521,7 +1509,7 @@ impl<'p> Printer<'_, 'p> {
         let TypeNodeKind::Ref { name, args } = hir[node].kind else {
             return None;
         };
-        let names: Vec<Atom> = hir.ids(name).collect();
+        let names: Vec<Atom> = hir.texts(name).collect();
         let &first = names.first()?;
         if names.contains(&known::empty) {
             return Some(Node::simple(b"any"));
@@ -1710,7 +1698,7 @@ impl<'p> Printer<'_, 'p> {
             TypeData::Ref { target, .. } => *target,
             _ => return true,
         };
-        let names: Vec<Atom> = hir.ids(name).collect();
+        let names: Vec<Atom> = hir.texts(name).collect();
         let scope = self.c.bound(file).type_scope[existing.idx()];
         let Some(found) = files.resolve_entity(file, scope, &names, SymFlags::TYPE) else {
             return true;

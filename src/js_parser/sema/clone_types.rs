@@ -414,15 +414,12 @@ impl Builder<'_> {
         self.file.list(&types)
     }
 
-    fn clone_names(&mut self, names: ts::Span<ts::Name>) -> IdList<Atom> {
-        if names.is_empty() {
-            return IdList::EMPTY;
-        }
-        let atoms: smallvec::SmallVec<[Atom; 4]> = self.ts[names]
+    fn clone_names(&mut self, names: ts::Span<ts::Name>) -> Span<bun_sema::hir::NameId> {
+        let names: smallvec::SmallVec<[(Atom, u32); 4]> = self.ts[names]
             .iter()
-            .map(|name| self.atom(&name.text))
+            .map(|name| (self.atom(&name.text), pos(name.loc)))
             .collect();
-        self.file.list(&atoms)
+        self.file.entity_name(names.into_iter())
     }
 
     /// `a.b.c` as an expression.
@@ -615,6 +612,12 @@ impl Builder<'_> {
                         } = self.ts[property];
                         PatProp {
                             key: self.clone_key(key),
+                            name_kind: match key {
+                                ts::PropertyKey::Number(_) => {
+                                    bun_sema::hir::NameKind::NumericLiteral
+                                }
+                                _ => bun_sema::hir::NameKind::Identifier,
+                            },
                             value: self.clone_pattern(value),
                             default: ExprId::NONE,
                             is_rest,
@@ -773,7 +776,7 @@ impl Builder<'_> {
             return self.clone_type(id);
         };
         let name = self.atoms.intern(super::keep::keyword_text(keyword));
-        let name = self.file.list(&[name]);
+        let name = self.file.entity_name([(name, pos(loc))].into_iter());
         let node = self.file.ty(
             TypeNodeKind::Ref {
                 name,

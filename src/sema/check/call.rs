@@ -454,7 +454,7 @@ impl<'p> Checker<'p> {
                 // the operand is only taken to be.
                 let element = match self.iterated_type_if_any(ty, false) {
                     Some(element) => element,
-                    None if self.is_known(ty) && !self.is_uncertain(file, inner) => TypeId::ANY,
+                    None if self.is_known(ty) => TypeId::ANY,
                     None => TypeId::UNRESOLVED,
                 };
                 push(Arg::Spread(element, ty, Atom::NONE, a));
@@ -667,10 +667,7 @@ impl<'p> Checker<'p> {
             let node = CallLike::Call(c);
             let args = self.effective_call_arguments(file, call, node);
             let this_arg = self.this_argument_of_call(file, call, node);
-            let is_sure = !self.is_uncertain(file, tag);
-            return self.resolve_among(
-                file, call, node, &sigs, &type_args, &args, this_arg, is_sure, true,
-            );
+            return self.resolve_among(file, call, node, &sigs, &type_args, &args, this_arg, true);
         }
         if let ExprKind::Binary {
             op: BinOp::Instanceof,
@@ -709,11 +706,9 @@ impl<'p> Checker<'p> {
     /// `resolveUntypedCall`: nothing is expected of the arguments, and they are looked at all the same. What leads back from there to
     /// something that is being worked out is a circle. The result is `anySignature`.
     fn resolve_untyped_call(&mut self, file: FileId, args: IdList<ExprId>) -> ResolvedCall {
-        let uncertain = self.uncertain;
         for arg in self.hir(file).ids(args) {
             self.type_of_expr(file, arg);
         }
-        self.uncertain = uncertain;
         ResolvedCall {
             sig: None,
             ret: TypeId::ANY,
@@ -763,7 +758,6 @@ impl<'p> Checker<'p> {
             &[],
             &args,
             None,
-            true,
             true,
         )
     }
@@ -889,7 +883,6 @@ impl<'p> Checker<'p> {
         let args = self.effective_args(file, data.args);
         let node = CallLike::Call(id);
         let this_arg = self.this_argument_of_call(file, call, node);
-        let is_sure = !self.is_uncertain(file, data.callee);
         // `resolveNewExpression` reads the return type of a call signature invoked with `new` only without `noImplicitAny` (2350).
         let wants_return = !(is_call_by_new && self.p.files.options.no_implicit_any);
         let resolved = self.resolve_among(
@@ -900,7 +893,6 @@ impl<'p> Checker<'p> {
             &type_args,
             &args,
             this_arg,
-            is_sure,
             wants_return,
         );
         // `checkCallExpression`: what `new` makes of something that is no constructor is anything.
@@ -950,19 +942,8 @@ impl<'p> Checker<'p> {
             return any_signature;
         }
         let node = CallLike::InstanceOf { left, right };
-        let is_sure = !self.is_uncertain(file, right);
         let args = self.effective_call_arguments(file, call, node);
-        self.resolve_among(
-            file,
-            call,
-            node,
-            &sigs,
-            &[],
-            &args,
-            Some(right),
-            is_sure,
-            true,
-        )
+        self.resolve_among(file, call, node, &sigs, &[], &args, Some(right), true)
     }
 
     /// `getSymbolHasInstanceMethodOfObjectType`
@@ -1056,10 +1037,8 @@ impl<'p> Checker<'p> {
             params,
             MapperId::IDENTITY,
         ));
-        let uncertain = self.uncertain;
         let (applicable, is_certain) =
             self.with_certainty(|c| c.is_signature_applicable(s, sig, None));
-        self.uncertain = uncertain;
         self.resolving.pop();
         if applicable != Applicable::Yes || !is_certain {
             self.pending_failed_call = Some(sig);
@@ -1067,7 +1046,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The end of `resolveCall`: which of `declared`, the signatures of what is called, `node`, which `call` stands for, is a
-    /// call of. `is_sure`: what is called was found out for sure, so that it can be told when none of them will do.
+    /// call of.
     /// `wants_return`: the caller reads `ret`. Otherwise `ret` is `any` and the return type of the signature is not resolved:
     /// `checkCallExpression` returns `anyType` for `new` of a call signature before it calls `getReturnTypeOfSignature`.
     pub(super) fn resolve_among(
@@ -1079,7 +1058,6 @@ impl<'p> Checker<'p> {
         type_args: &[TypeId],
         args: &[Arg],
         this_arg: Option<ExprId>,
-        is_sure: bool,
         wants_return: bool,
     ) -> ResolvedCall {
         let s = CallState {
@@ -1158,7 +1136,7 @@ impl<'p> Checker<'p> {
             self.p.calls_outside_const_context.insert((file, call), ());
         }
         // Where what does not wait rules them all out, `chooseOverload` never gets to look at the functions among the arguments.
-        if chosen.is_none() && is_sure && !self.is_provisional_here() {
+        if chosen.is_none() && !self.is_provisional_here() {
             let (ruled_out, is_certain) =
                 self.with_certainty(|c| c.ruled_out_by_plain_arguments(s, &candidates));
             if let Some(last) = ruled_out
@@ -1184,7 +1162,6 @@ impl<'p> Checker<'p> {
         // There is something to do from the second argument on. With a rest parameter questions are asked before that is found out.
         if let [only] = candidates[..]
             && (args.len() > 1 || taken.last().is_some_and(|p| p.rest))
-            && is_sure
             && !self.is_provisional_here()
         {
             self.check_sole_candidate_in_order(s, only, &taken, is_generic, sigs.len() == 1);
@@ -1210,7 +1187,7 @@ impl<'p> Checker<'p> {
         // inferred. The return type and the contextual types of the arguments can both depend on them.
         let is_inferred = type_args.is_empty() && is_generic;
         let can_differ = sigs.len() > 1 || is_inferred;
-        if !is_sure || self.is_provisional_here() {
+        if self.is_provisional_here() {
             self.pending_failed_call = Some(sig);
             return resolved;
         }
@@ -1430,9 +1407,7 @@ impl<'p> Checker<'p> {
             // held against anything.
             if i < arg_count && !self.is_assignable(ty, param) {
                 // A mismatch that rests on an unknown type says nothing about the arguments after it.
-                let is_reliable = self.is_known(ty)
-                    && self.is_known(param)
-                    && !matches!(arg, Arg::Expr(e) if self.is_uncertain(file, e));
+                let is_reliable = self.is_known(ty) && self.is_known(param);
                 if is_reliable {
                     checked = i + 1;
                 }
@@ -3214,9 +3189,7 @@ impl<'p> Checker<'p> {
                 && wanted != TypeId::VOID
             {
                 let given = self.this_argument_type(file, this_arg);
-                let is_known = self.is_known(given)
-                    && self.is_known(wanted)
-                    && !this_arg.is_some_and(|obj| self.is_uncertain(file, obj));
+                let is_known = self.is_known(given) && self.is_known(wanted);
                 let fits = if by_subtype {
                     is_known && self.is_subtype(given, wanted)
                 } else {
@@ -3503,10 +3476,7 @@ impl<'p> Checker<'p> {
                     return Some(TypeId::UNRESOLVED);
                 }
                 let given = self.type_of_expr(file, prop.value);
-                if !self.is_known(given)
-                    || self.is_uncertain(file, prop.value)
-                    || self.has_type_variables(given)
-                {
+                if !self.is_known(given) || self.has_type_variables(given) {
                     return Some(TypeId::UNRESOLVED);
                 }
                 let written = finish(self, std::mem::replace(&mut shape, partial()));
@@ -3549,7 +3519,7 @@ impl<'p> Checker<'p> {
                 && !self.contains_nested_generic_function(file, prop.value)
             {
                 let given = self.type_of_expr(file, prop.value);
-                if self.is_known(given) && !self.is_uncertain(file, prop.value) {
+                if self.is_known(given) {
                     ty = self.widen_literal_for_context(given, wanted);
                 }
             }
@@ -3616,7 +3586,7 @@ impl<'p> Checker<'p> {
                 && !self.contains_nested_generic_function(file, item)
             {
                 let given = self.type_of_expr(file, item);
-                if self.is_known(given) && !self.is_uncertain(file, item) {
+                if self.is_known(given) {
                     // `checkExpressionForMutableLocation`: what is asserted is what it is said to be.
                     ty = if matches!(hir[item].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
                         given
@@ -5282,8 +5252,7 @@ impl<'p> Checker<'p> {
             }
             if !is_sensitive[i] {
                 let given = self.arg_type_under(file, arg, param);
-                if matches!(arg, Arg::Expr(e) if matches!(hir[e].kind, ExprKind::Missing) || self.is_uncertain(file, e))
-                {
+                if matches!(arg, Arg::Expr(e) if matches!(hir[e].kind, ExprKind::Missing)) {
                     continue;
                 }
                 // `getRegularTypeOfObjectLiteral`: properties there are too many of do not count while the parameters may not be

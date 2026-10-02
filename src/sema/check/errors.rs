@@ -8,7 +8,6 @@
 //! diagnostic is a place and a number until somebody wants to read it.
 
 use super::errors_modules::fully_qualified_name;
-use super::errors_order::Named;
 use super::errors_x_modules::suggested_import_extension;
 use super::errors_x_operators::{has_empty_object_intersection, type_of_property_of_type};
 use super::errors_x_statements::{is_said_by_the_binder, is_said_by_the_parser};
@@ -174,7 +173,7 @@ impl Checker<'_> {
         self.check_duplicates(file, &mut out);
         self.check_heritage(file, &mut out);
         self.check_jsx(file, &mut out);
-        self.check_overloads(file, &mut out);
+        self.check_overloads(file);
         self.check_use_before_declaration(file, &mut out);
         self.check_iteration(file, &mut out);
         self.check_names_and_exports(file, &mut out);
@@ -195,12 +194,10 @@ impl Checker<'_> {
         }
         self.check_x_typenodes(file, &mut out);
         self.recount_type_arguments_of_circular_aliases(file, &mut out);
-        // These three put other words in the place of what has been said: of declarations that are not one symbol after all, of what is
-        // assigned, of names that are not found.
+        // The last two put other words in the place of what has been said: of what is assigned, of names that are not found.
         self.check_x_signatures(file, &mut out);
         self.check_x_operators(file, &mut out);
         self.check_x_enums_names(file, &mut out);
-        self.check_reflect_collisions(file, &mut out);
         self.check_external_emit_helpers(file, &mut out);
         // It takes back what has been said of decorators that are out of place.
         self.report_decorators(file, &mut out);
@@ -680,9 +677,6 @@ impl Checker<'_> {
                     continue;
                 }
                 let given = self.type_of_expr(file, options);
-                if self.is_uncertain(file, options) {
-                    continue;
-                }
                 let wanted = self.declared_type(sym);
                 let wanted = self.optional(wanted);
                 let at = self.start_of(file, options);
@@ -777,7 +771,7 @@ impl Checker<'_> {
     /// Whether `name` is written somewhere in the file where it may stand for an alias: as an identifier, or first in an entity name.
     fn is_name_mentioned(&self, file: FileId, name: Atom) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_first = |names: IdList<Atom>| !names.is_empty() && hir.id_at(names, 0) == name;
+        let is_first = |names: Span<NameId>| hir.texts(names).next() == Some(name);
         hir.exprs.iter().zip(&bound.expr_parent).any(|(e, parent)| {
             matches!(e.kind, ExprKind::Ident(n) if n == name) && !matches!(parent, Parent::None)
         }) || hir.types.iter().any(|t| match t.kind {
@@ -1570,42 +1564,21 @@ impl Checker<'_> {
     /// bound, and the declaration it is bound in.
     fn value_declaration_of_variable(&self, file: FileId, e: ExprId) -> Option<(PatId, VarDeclId)> {
         let bound = self.bound(file);
-        let symbol = bound.expr_symbol[e.idx()];
-        if symbol.is_none() {
-            return None;
-        }
-        let s = &bound.symbols[symbol.idx()];
+        let s = bound.symbols.get(bound.expr_symbol[e.idx()].idx())?;
         // `isParameter`, `isAlias`
         if !s.flags.intersects(SymFlags::VARIABLE)
             || s.flags.intersects(SymFlags::PARAMETER | SymFlags::ALIAS)
         {
             return None;
         }
-        // `SetValueDeclaration`: the first declaration of a value. Interfaces, type aliases and namespaces without values are none.
-        let is_of_a_value = |decl: Decl, flags: SymFlags| {
-            !matches!(
-                decl,
-                Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_)
-            ) && (flags.contains(SymFlags::VALUE_MODULE) || !matches!(decl, Decl::Module(_)))
-        };
+        let sym = self.files().sym(file, bound.expr_symbol[e.idx()]);
         // In another file it is ambient, or an outer variable: initialized either way.
-        if s.flags.contains(SymFlags::MERGED) {
-            let sym = self.files().sym(file, symbol);
-            let flags = self.files().flags(sym);
-            if self
-                .files()
-                .decls_of(sym)
-                .iter()
-                .find(|d| is_of_a_value(d.1, flags))
-                .is_some_and(|d| d.0 != file)
-            {
-                return None;
-            }
-        }
-        let Some(&Decl::Var(pat)) = s.decls.iter().find(|&&decl| is_of_a_value(decl, s.flags))
-        else {
+        let Some((of, Decl::Var(pat))) = self.files().value_declaration(sym) else {
             return None;
         };
+        if of != file {
+            return None;
+        }
         // `GetRootDeclaration`
         let mut root = pat;
         loop {
@@ -1638,11 +1611,7 @@ impl Checker<'_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         let parent = bound.expr_parent[e.idx()];
-        if hir.kind == FileKind::Declaration
-            || matches!(parent, Parent::None)
-            || !is_automatic
-                && (bound.is_in_type_query(e) || self.is_in_ambient_or_type_node(file, parent))
-        {
+        if hir.kind == FileKind::Declaration || matches!(parent, Parent::None) {
             return true;
         }
         let Some((pat, d)) = self.value_declaration_of_variable(file, e) else {
@@ -1660,6 +1629,11 @@ impl Checker<'_> {
         if let Parent::Expr(x) = parent
             && matches!(hir[x].kind, ExprKind::NonNull(_))
             && !is_parenthesized(hir, e)
+        {
+            return true;
+        }
+        if !is_automatic
+            && (bound.is_in_type_query(e) || hir.is_in_ambient_or_type_node(hir.node(e)))
         {
             return true;
         }
@@ -1817,46 +1791,6 @@ impl Checker<'_> {
                 Some(it) => parent = it,
                 None => return Container::Fn(func),
             }
-        }
-    }
-
-    /// `isInAmbientOrTypeNode`, of what is directly in `parent`.
-    fn is_in_ambient_or_type_node(&self, file: FileId, mut parent: Parent) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `IsInterfaceDeclaration`, `IsTypeLiteralNode`
-        let is_in_type =
-            |m: MemberId| !matches!(bound.member_owner[m.idx()], MemberOwner::Class(_));
-        loop {
-            // `NodeFlagsAmbient`: what is in something ambient says so itself.
-            let flags = match parent {
-                Parent::None => return false,
-                Parent::File => return hir.kind == FileKind::Declaration,
-                Parent::MemberInit(m) if is_in_type(m) => return true,
-                Parent::MemberInit(m) => hir[m].flags,
-                Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                    let f = match parent {
-                        Parent::ParamDefault(p) => bound.param_fn[p.idx()],
-                        Parent::FnBody(f) => f,
-                        _ => unreachable!(),
-                    };
-                    match bound.fns[f.idx()].owner {
-                        FnOwner::Member(m) if is_in_type(m) => return true,
-                        _ => hir[f].flags,
-                    }
-                }
-                Parent::VarInit(d) => hir[d].flags,
-                Parent::Module(m) => hir[m].flags,
-                Parent::Stmt(s) if s.is_some() => match hir[s].kind {
-                    StmtKind::Class(class) => hir[class].flags,
-                    StmtKind::Enum(enumeration) => hir[enumeration].flags,
-                    _ => Flags::empty(),
-                },
-                _ => Flags::empty(),
-            };
-            if flags.contains(Flags::AMBIENT) {
-                return true;
-            }
-            parent = self.parent_of_node(file, parent);
         }
     }
 
@@ -2060,7 +1994,7 @@ impl Checker<'_> {
             if bound.is_unchecked_type(i) {
                 continue;
             }
-            let Some(first) = hir.ids(name).next() else {
+            let Some(first) = hir.texts(name).next() else {
                 continue;
             };
             // `resolveEntityName`: `NodeIsMissing(name)`
@@ -2076,7 +2010,7 @@ impl Checker<'_> {
                 continue;
             }
             if name.len() > 1 {
-                let names: SmallVec<[Atom; 8]> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 8]> = hir.texts(name).collect();
                 self.check_entity_name(file, scope, &names, start, SymFlags::TYPE, out);
                 continue;
             }
@@ -2160,7 +2094,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let names: Vec<Atom> = hir.ids(list).collect();
+            let names: Vec<Atom> = hir.texts(list).collect();
             // `resolveEntityName`: `NodeIsMissing(name)`
             if names[0] == known::empty {
                 continue;
@@ -2367,7 +2301,7 @@ impl Checker<'_> {
         let mut ty: Option<TypeId> = None;
         // `sym` is what an `export { a }` stands for: who says so, and under which name. That alias is `currentNamespace`.
         let mut exported_by: Option<(Sym, Atom)> = None;
-        for (i, n) in hir.ids(name).enumerate() {
+        for (i, n) in hir.texts(name).enumerate() {
             at = skip_trivia(text, at);
             if text.get(at) != Some(&b'.') {
                 return;
@@ -2482,7 +2416,7 @@ impl Checker<'_> {
                     {
                         continue;
                     }
-                    for (slot, part) in names.iter_mut().zip(hir.ids(name)) {
+                    for (slot, part) in names.iter_mut().zip(hir.texts(name)) {
                         *slot = part;
                     }
                     let Some(sym) = self.files().resolve_entity(
@@ -2512,7 +2446,7 @@ impl Checker<'_> {
                         continue;
                     };
                     let mut found = Some(self.files().module_value(module));
-                    for (k, n) in hir.ids(name).enumerate() {
+                    for (k, n) in hir.texts(name).enumerate() {
                         let wanted = if k + 1 == name.len() {
                             SymFlags::TYPE
                         } else {
@@ -2580,7 +2514,7 @@ impl Checker<'_> {
             }
             let sym = self.class_sym(file, ClassId(c as u32));
             let constructor = self.base_constructor_type_of_class(sym);
-            if !self.is_known(constructor) || self.is_uncertain(file, class.extends) {
+            if !self.is_known(constructor) {
                 continue;
             }
             let constructor = self.apparent_type(constructor);
@@ -2656,7 +2590,7 @@ impl Checker<'_> {
             if bound.is_unchecked_type(i) {
                 continue;
             }
-            let names: Vec<Atom> = hir.ids(name).collect();
+            let names: Vec<Atom> = hir.texts(name).collect();
             let found = self
                 .files()
                 .resolve_entity(file, bound.type_scope[i], &names, SymFlags::TYPE)
@@ -3048,79 +2982,14 @@ impl Checker<'_> {
     /// `x` where `this.x` or `C.x` was meant: 2663, 2662. `checkAndReportErrorForMissingPrefix`
     fn member_meant_without_prefix(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<u32> {
         let hir = self.hir(file);
-        let bound = self.bound(file);
-        if bound.is_in_type_query(e) {
+        if hir.is_in_type_query(hir.node(e)) {
             return None;
         }
-        // The expression gone out of last: a computed name is known by it.
-        let mut below = e;
-        let mut parent = bound.expr_parent[e.idx()];
-        // Whether what `this` belongs to has been passed on the way out.
-        let mut past_this = false;
-        loop {
-            // What is gone out of, and the member of it whose body or initializer led there.
-            let (owner, member) = match parent {
-                Parent::Expr(x) if x.is_some() => {
-                    below = x;
-                    parent = bound.expr_parent[x.idx()];
-                    continue;
-                }
-                Parent::Stmt(_)
-                | Parent::VarInit(_)
-                | Parent::Prop(_)
-                | Parent::Case(_)
-                | Parent::PatPropDefault(_)
-                | Parent::PatElemDefault(_) => {
-                    parent = self.outward(file, parent);
-                    continue;
-                }
-                Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                    let f = match parent {
-                        Parent::FnBody(f) => f,
-                        Parent::ParamDefault(p) => bound.param_fn[p.idx()],
-                        _ => unreachable!(),
-                    };
-                    match bound.fns[f.idx()].owner {
-                        FnOwner::Member(m) => (bound.member_owner[m.idx()], Some(m)),
-                        FnOwner::Expr(x) => {
-                            past_this |= hir[f].kind != FnKind::Arrow;
-                            parent = Parent::Expr(x);
-                            continue;
-                        }
-                        FnOwner::Stmt(s) => {
-                            past_this = true;
-                            parent = Parent::Stmt(s);
-                            continue;
-                        }
-                        _ => return None,
-                    }
-                }
-                Parent::MemberInit(m) => (bound.member_owner[m.idx()], Some(m)),
-                Parent::ClassExtends(c) | Parent::Decorator(c, _) => (MemberOwner::Class(c), None),
-                Parent::PropKey(..)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
-                    Named::Property(literal) | Named::Function(literal) => {
-                        parent = Parent::Expr(literal);
-                        continue;
-                    }
-                    Named::Element(p) => {
-                        parent = self.outward(file, Parent::PatPropDefault(p));
-                        continue;
-                    }
-                    Named::Member(m) => (bound.member_owner[m.idx()], None),
-                    Named::Unknown => return None,
-                },
-                _ => return None,
-            };
-            let MemberOwner::Class(c) = owner else {
-                return None;
-            };
-            // `getThisContainer`: what a class extends, its decorators and the computed names of its members have the `this` of where
-            // the class is. Past what `this` belongs to, whatever is written in a class is in it.
-            if member.is_some() || past_this {
-                let class = self.files().sym(file, bound.class_symbol[c.idx()]);
+        let container = hir.get_this_container(hir.node(e), false, false);
+        let mut location = container;
+        while hir.parent(location).is_some() {
+            if let Some(class) = hir.class_of(hir.parent(location)).some() {
+                let class = self.class_sym(file, class);
                 let constructor = self.type_of_symbol(class);
                 if self.has_property(constructor, name) {
                     self.explain(hir[e].pos, 2662, |c| {
@@ -3128,19 +2997,16 @@ impl Checker<'_> {
                     });
                     return Some(2662);
                 }
-                if !past_this && member.is_some_and(|m| !hir[m].flags.contains(Flags::STATIC)) {
+                if location == container && !hir.is_static(location) {
                     let instance = self.declared_type(class);
                     if self.has_property(instance, name) {
                         return Some(2663);
                     }
                 }
-                past_this = true;
             }
-            parent = match bound.class_owner[c.idx()] {
-                ClassOwner::Expr(x) => Parent::Expr(x),
-                ClassOwner::Stmt(s) => Parent::Stmt(s),
-            };
+            location = hir.parent(location);
         }
+        None
     }
 }
 
@@ -4511,13 +4377,11 @@ impl Checker<'_> {
         left: ExprId,
         right: ExprId,
     ) -> (TypeId, TypeId, bool) {
-        let around = std::mem::replace(&mut self.uncertain, false);
         let (l, r) = (
             self.type_of_expr(file, left),
             self.type_of_expr(file, right),
         );
-        let is_sure = !self.uncertain && self.is_known(l) && self.is_known(r);
-        self.uncertain = around;
+        let is_sure = self.is_known(l) && self.is_known(r);
         (l, r, is_sure)
     }
 
@@ -4930,9 +4794,6 @@ impl Checker<'_> {
         ty: TypeId,
         out: &mut Vec<Diagnostic>,
     ) -> TypeId {
-        if self.is_uncertain(file, node) {
-            return ty;
-        }
         self.check_non_null_type_with_reporter(ty, |c, error| {
             let ((_, start, end), code, name) = c.object_possibly_null_error(file, node, error);
             out.push(Diagnostic { start, code });
@@ -5021,9 +4882,30 @@ impl Checker<'_> {
     ) -> Option<(u32, u32)> {
         let hir = self.hir(file);
         Some(match decl {
+            Decl::Member(m) => self.error_range_of_member(file, m),
+            Decl::EnumMember(m) => self.error_range_of_enum_member(file, m),
+            // All of a parameter, with its modifiers.
+            Decl::ParameterProperty(p) => (hir[p].pos, self.end_of_param(file, p)),
+            Decl::Param(name)
+                if let PatParent::Param(p) = self.bound(file).pat_parent[name.idx()] =>
+            {
+                (hir[p].pos, self.end_of_param(file, p))
+            }
             // `GetNameOfDeclaration`, of a variable declaration or a binding element.
-            Decl::Var(name) | Decl::Require(name) => {
+            Decl::Var(name) | Decl::Require(name) | Decl::Param(name) => {
                 (hir[name].pos, self.end_of_token_at(file, hir[name].pos))
+            }
+            // A method or an accessor is pointed at by its name.
+            Decl::Property(p) => match hir[p].kind {
+                PropKind::Method | PropKind::Getter | PropKind::Setter => {
+                    (hir[p].pos, self.end_of_prop_name(file, p))
+                }
+                _ => (hir[p].pos, self.end_of_prop(file, p)),
+            },
+            // The file goes by its first token.
+            Decl::File | Decl::CommonJsVariable => {
+                let start = self.skip_trivia_from(file, 0);
+                (start, self.end_of_token_at(file, start))
             }
             Decl::ExportSpec(it) => (hir[it].start, self.end_of_export_spec(file, it)),
             Decl::ExportStarAs(it) => match hir[it].kind {
@@ -5034,7 +4916,10 @@ impl Checker<'_> {
                 } => (star_pos, self.end_of_name_at(file, alias_pos)),
                 _ => return None,
             },
-            Decl::ModuleExports(e) | Decl::ExportsProperty(e) | Decl::Expando(e) => (
+            Decl::ModuleExports(e)
+            | Decl::ExportsProperty(e)
+            | Decl::Expando(e)
+            | Decl::ThisProperty(e) => (
                 self.error_start_inside_parentheses(file, e),
                 self.error_end_inside_parentheses(file, e),
             ),
@@ -5346,9 +5231,6 @@ impl Checker<'_> {
             return;
         }
         let keys = self.type_of_expr(file, index);
-        if self.is_uncertain(file, index) {
-            return;
-        }
         // `checkElementAccessExpression`: a `const enum` is looked into with a string literal. Anything else is 2476, and in error.
         if !is_string_literal_like(self.hir(file), index) {
             let object = self.type_of_expr(file, obj);

@@ -3,7 +3,6 @@
 //! Follows `internal/checker/relater.go` of TypeScript 7.0.2 function by function. The names in `backticks` at the head of
 //! a function are the ones there. `REPORT` is `reportErrors`. What only serves error messages is in `explain_relation.rs`. Left out:
 //! `isEmptyArrayLiteralType` (the type of `[]` is not told from a `never[]` that is written).
-//! A type does not remember the alias it was written with: `alias_of` tells from where its syntax stands.
 
 use super::explain::Related;
 use super::explain_relation::{
@@ -5550,7 +5549,7 @@ impl<'p> Checker<'p> {
                             r,
                             (source, t),
                             prop,
-                            chosen,
+                            |_| chosen,
                             target_prop,
                             target_mapper,
                             state,
@@ -5901,15 +5900,21 @@ impl<'p> Checker<'p> {
             else {
                 continue;
             };
-            if source_mapper == tm.mapper && sp.mapper == tp.mapper && sp.source == tp.source {
-                continue;
+            if sp.source == tp.source {
+                let a = self.compose(sp.mapper, source_mapper);
+                let b = self.compose(tp.mapper, tm.mapper);
+                // `H.this -> H.this` is kept in a mapper, and moves nothing.
+                let types = &self.p.types;
+                let moved = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
+                if a == b || moved(a).eq(moved(b)) {
+                    continue;
+                }
             }
-            let given = self.type_of_prop_as_read(sp, source_mapper);
             let related = self.property_related_to::<REPORT>(
                 r,
                 (source, target),
                 sp,
-                given,
+                |c| c.type_of_prop_as_read(sp, source_mapper),
                 tp,
                 tm.mapper,
                 state,
@@ -5923,15 +5928,14 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `propertyRelatedTo`. `of`: `source` and `target`, the two types the properties are of. `given`: the type of the source property, or
-    /// the one of its alternatives that is looked at.
+    /// `propertyRelatedTo`. `of`: `source` and `target`, the two types the properties are of.
     #[allow(clippy::too_many_arguments)]
     fn property_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
         of: (TypeId, TypeId),
         source_prop: &Prop,
-        given: TypeId,
+        get_type_of_source_property: impl FnOnce(&mut Self) -> TypeId,
         target_prop: &Prop,
         target_mapper: MapperId,
         state: u8,
@@ -5996,6 +6000,7 @@ impl<'p> Checker<'p> {
         {
             Ternary::TRUE
         } else {
+            let given = get_type_of_source_property(self);
             self.is_related_to_ex::<REPORT>(r, given, wanted, REC_BOTH, state)
         };
         if !related.holds() {
@@ -6051,8 +6056,8 @@ impl<'p> Checker<'p> {
             return true;
         }
         let (mut sources, mut targets) = (Vec::new(), Vec::new());
-        push_underlying_props(source_prop, &mut sources);
-        push_underlying_props(target_prop, &mut targets);
+        for_each_property(source_prop, &mut |p| sources.push(p));
+        for_each_property(target_prop, &mut |p| targets.push(p));
         for target in targets {
             if !target.flags.contains(PropFlags::PROTECTED) {
                 continue;
@@ -7555,14 +7560,13 @@ impl<'p> Checker<'p> {
     }
 }
 
-/// `forEachProperty`: appends the properties `prop` stands for. A property of an intersection stands for the properties of the
-/// constituents, any other property for itself.
-fn push_underlying_props<'a>(prop: &'a Prop, out: &mut Vec<&'a Prop>) {
+/// `forEachProperty`: a property of an intersection stands for the properties of the constituents, any other for itself.
+pub(super) fn for_each_property<'a>(prop: &'a Prop, callback: &mut impl FnMut(&'a Prop)) {
     match &prop.source {
         PropSource::Intersected(_, parts) => parts
             .iter()
-            .for_each(|part| push_underlying_props(part, out)),
-        _ => out.push(prop),
+            .for_each(|part| for_each_property(part, callback)),
+        _ => callback(prop),
     }
 }
 
@@ -7597,13 +7601,7 @@ fn is_valid_number_string(s: &[u8]) -> bool {
             return !digits.is_empty() && value.is_some_and(f64::is_finite);
         }
     }
-    let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
-    // Rust takes `inf`, `infinity` and `nan` too.
-    unsigned.starts_with(|c: char| c.is_ascii_digit() || c == '.')
-        && unsigned
-            .bytes()
-            .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'+' | b'-'))
-        && unsigned.parse::<f64>().is_ok_and(f64::is_finite)
+    bun_core::fmt::parse_f64(s.as_bytes()).is_some_and(f64::is_finite)
 }
 
 /// `isValidBigIntString(s, false)`: with an `n` after it, it is scanned as a bigint literal without separators, or `-` and one.

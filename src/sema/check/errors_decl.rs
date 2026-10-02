@@ -6,9 +6,8 @@
 //! `checkVariableLikeDeclaration` of TypeScript 7.0.2's checker.go, and `Resolve` of its nameresolver.go.
 
 use super::errors::Diagnostic;
-use super::errors_order::Named;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, SymbolId, flags_of_member};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId, flags_of_member};
 use smallvec::SmallVec;
 
 impl Checker<'_> {
@@ -143,30 +142,28 @@ impl Checker<'_> {
     /// parameter, and what the function declares after it, are there.
     fn check_parameter_references(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !hir
-            .params
-            .iter()
-            .any(|p| p.default.is_some() || !matches!(hir[p.pat].kind, PatKind::Ident(_)))
-        {
-            return;
-        }
-        // Around a statement are statements, and then a function, a namespace or the file. From there it only goes on to a parameter
-        // if the function runs where it is written, and is written in one.
-        let runs_in_place = (0..hir.fns.len() as u32).map(FnId).any(|f| {
-            (hir[f].kind == FnKind::StaticBlock || self.is_immediately_invoked(file, f))
-                && self
-                    .parameter_around(file, ExprId::NONE, Parent::FnBody(f), true)
-                    .0
-                    .is_some()
-        });
+        // Only what is written in one of these is in the default or in the pattern of a parameter: told by its position, no walk.
+        let has_more_than_a_name =
+            |p: &&Param| p.default.is_some() || !matches!(hir[p.pat].kind, PatKind::Ident(_));
+        let parameters = super::errors_order::Places::new(
+            hir.params
+                .iter()
+                .filter(has_more_than_a_name)
+                .map(|p| p.loc),
+        );
         let index = self.exprs_by_kind(file);
         for &id in index.of(ExprTag::Ident) {
             let i = id.idx();
-            let (within, param) =
-                self.parameter_around(file, id, bound.expr_parent[i], runs_in_place);
-            if within.is_none() {
+            if !parameters.contain(hir.exprs[i].pos) {
                 continue;
             }
+            let associated = Self::associated_declaration(hir, hir.node(id));
+            let (NodeData::Pat(within), NodeData::Param(param)) = (
+                hir.data(hir.name(associated)),
+                hir.data(hir.get_root_declaration(associated)),
+            ) else {
+                continue;
+            };
             let ExprKind::Ident(name) = hir.exprs[i].kind else {
                 continue;
             };
@@ -208,93 +205,58 @@ impl Checker<'_> {
         }
     }
 
-    /// Out from `parent`, which `below` is written in, to the first parameter, or element of the pattern of one, whose default or whose
-    /// pattern that is in; not through anything that runs later (`getIsDeferredContext`). What that parameter or element binds, and
-    /// the parameter: `NONE` if there is none. `past_statements`: whether to go on from a statement.
-    fn parameter_around(
-        &self,
-        file: FileId,
-        mut below: ExprId,
-        mut parent: Parent,
-        past_statements: bool,
-    ) -> (PatId, ParamId) {
-        const NOWHERE: (PatId, ParamId) = (PatId::NONE, ParamId::NONE);
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // The parameter whose pattern `pat` is part of.
-        let param_of = |mut pat: PatId| loop {
-            match bound.pat_parent[pat.idx()] {
-                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
-                PatParent::Param(p) => break Some(p),
-                _ => break None,
-            }
-        };
-        loop {
-            parent = match parent {
-                Parent::Expr(e) if e.is_none() => return NOWHERE,
-                Parent::Expr(e) => {
-                    below = e;
-                    bound.expr_parent[e.idx()]
+    /// `associatedDeclarationForContainingInitializerOrBindingName`, as `Resolve` has it when it gets from `usage` to the function whose
+    /// parameter that is. `NONE`: there is none, or `withinDeferredContext`.
+    fn associated_declaration(hir: &File, usage: Node) -> Node {
+        let (mut last, mut location) = (Node::NONE, usage);
+        while location.is_some() {
+            let kind = hir.kind(location);
+            let is_name = || last.is_some() && last == hir.name(location);
+            // `getIsDeferredContext`
+            let is_deferred = match kind {
+                Kind::ArrowFunction | Kind::FunctionExpression => {
+                    !is_name()
+                        && (hir
+                            .flags(location)
+                            .intersects(Flags::ASYNC | Flags::GENERATOR)
+                            || hir
+                                .get_immediately_invoked_function_expression(location)
+                                .is_none())
                 }
-                Parent::ParamDefault(p) => return (hir[p].pat, p),
-                Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => {
-                    let element = match parent {
-                        Parent::PatPropDefault(p) => hir[p].value,
-                        Parent::PatElemDefault(p) => hir[p].pat,
-                        _ => unreachable!(),
-                    };
-                    match param_of(element) {
-                        Some(p) => return (element, p),
-                        // Of a variable.
-                        None => self.outward(file, parent),
-                    }
-                }
-                // A name is worked out where the object literal, the pattern or the class is.
-                Parent::PropKey(..)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
-                    Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
-                    // It is no part of the element it names: it goes with what has the pattern around it for a name.
-                    Named::Element(p) => {
-                        let PatParent::Prop(pattern, _) = bound.pat_parent[hir[p].value.idx()]
-                        else {
-                            return NOWHERE;
-                        };
-                        match param_of(pattern) {
-                            Some(q) => return (pattern, q),
-                            None => self.outward(file, Parent::PatPropDefault(p)),
-                        }
-                    }
-                    Named::Member(m) => self.parent_of(file, Parent::MemberInit(m)),
-                    Named::Unknown => return NOWHERE,
-                },
-                Parent::FnBody(f) => {
-                    let runs_now = match hir[f].kind {
-                        FnKind::StaticBlock => true,
-                        FnKind::Arrow | FnKind::Expr => {
-                            !hir[f].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
-                                && self.is_immediately_invoked(file, f)
-                        }
-                        _ => false,
-                    };
-                    if !runs_now {
-                        return NOWHERE;
-                    }
-                    self.parent_of(file, parent)
-                }
-                Parent::MemberInit(m) if hir[m].flags.contains(Flags::STATIC) => {
-                    self.parent_of(file, parent)
-                }
-                Parent::Stmt(s) if s.is_none() || !past_statements => return NOWHERE,
-                Parent::Stmt(s) => bound.stmt_parent[s.idx()],
-                Parent::Prop(_)
-                | Parent::VarInit(_)
-                | Parent::Case(_)
-                | Parent::ClassExtends(_)
-                | Parent::Decorator(..) => self.outward(file, parent),
-                _ => return NOWHERE,
+                Kind::TypeQuery => true,
+                Kind::PropertyDeclaration => !hir.is_static(location) && !is_name(),
+                _ => kind.is_function_like_declaration() && !is_name(),
             };
+            if is_deferred {
+                return Node::NONE;
+            }
+            match kind {
+                Kind::Decorator => {
+                    if hir.kind(hir.parent(location)) == Kind::Parameter {
+                        location = hir.parent(location);
+                    }
+                    let parent = hir.kind(hir.parent(location));
+                    if parent.is_class_element() || parent == Kind::ClassDeclaration {
+                        location = hir.parent(location);
+                    }
+                }
+                Kind::Parameter | Kind::BindingElement
+                    if last.is_some()
+                        && (last == hir.initializer(location)
+                            || is_name()
+                                && matches!(
+                                    hir.kind(last),
+                                    Kind::ObjectBindingPattern | Kind::ArrayBindingPattern
+                                ))
+                        && hir.kind(hir.get_root_declaration(location)) == Kind::Parameter =>
+                {
+                    return location;
+                }
+                _ => {}
+            }
+            (last, location) = (location, hir.parent(location));
         }
+        Node::NONE
     }
 
     /// What several declarations make together: 2428 2374 2440.
@@ -361,7 +323,6 @@ impl Checker<'_> {
                 identical = false;
                 break;
             }
-            let mapper = self.decl_params_mapper(sym, f, params);
             for (k, tp) in params.iter().enumerate() {
                 let decl = self.hir(f)[tp];
                 let Some((_, target)) = self.type_param_decl(targets[k]) else {
@@ -379,7 +340,6 @@ impl Checker<'_> {
                         && let Some(wanted) = wanted
                     {
                         let own = self.type_from_node(f, node);
-                        let own = self.instantiate(own, mapper);
                         if self.is_known(own)
                             && self.is_known(wanted)
                             && !self.is_identical(own, wanted)
@@ -422,60 +382,9 @@ impl Checker<'_> {
         }
     }
 
-    /// From the type parameters of one declaration of `sym` to those of the same name the symbol goes by: `bindTypeParameter`
-    /// declares them among the members of the symbol, so that one name is one type parameter.
-    fn type_params_by_name(
-        &mut self,
-        sym: Sym,
-        file: FileId,
-        params: Span<TypeParamId>,
-    ) -> MapperId {
-        if params.is_empty() {
-            return MapperId::IDENTITY;
-        }
-        let canonical = self.type_params_of_symbol(sym);
-        let (mut from, mut to) = (Vec::new(), Vec::new());
-        for tp in params.iter() {
-            let own = self.type_param(file, tp);
-            let name = self.hir(file)[tp].name;
-            if let Some(&target) = canonical
-                .iter()
-                .find(|&&c| self.type_param_decl(c).is_some_and(|(_, d)| d.name == name))
-                && target != own
-            {
-                from.push(own);
-                to.push(target);
-            }
-        }
-        if from.is_empty() {
-            MapperId::IDENTITY
-        } else {
-            self.mapper_from(&from, &to)
-        }
-    }
-
-    /// From the type parameters of the declaration that `declaration` is written in to those its symbol goes by.
-    fn mapper_of_member_declaration(&mut self, file: FileId, declaration: Decl) -> MapperId {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let member = match declaration {
-            Decl::Member(m) => m,
-            Decl::ParameterProperty(p) => match bound.fns[bound.param_fn[p.idx()].idx()].owner {
-                FnOwner::Member(constructor) => constructor,
-                _ => return MapperId::IDENTITY,
-            },
-            _ => return MapperId::IDENTITY,
-        };
-        let (symbol, params) = match bound.member_owner[member.idx()] {
-            MemberOwner::Class(c) => (bound.class_symbol[c.idx()], hir[c].type_params),
-            MemberOwner::Interface(i) => (bound.interface_symbol[i.idx()], hir[i].type_params),
-            _ => return MapperId::IDENTITY,
-        };
-        self.type_params_by_name(self.files().sym(file, symbol), file, params)
-    }
-
     /// `getWidenedTypeForVariableLikeDeclaration`, of one declaration of a property.
     fn type_of_declared_member(&mut self, (file, declaration): (FileId, Decl)) -> TypeId {
-        let ty = match declaration {
+        match declaration {
             Decl::ParameterProperty(p) => self.type_of_param(file, p),
             Decl::Member(m) => {
                 let ty = self.type_of_member_declaration(file, m);
@@ -488,10 +397,8 @@ impl Checker<'_> {
                     self.optional_property(ty)
                 }
             }
-            _ => return TypeId::UNRESOLVED,
-        };
-        let mapper = self.mapper_of_member_declaration(file, declaration);
-        self.instantiate(ty, mapper)
+            _ => TypeId::UNRESOLVED,
+        }
     }
 
     /// 2717 2403, of the property or parameter property `declaration` of `file`, one of the `declarations` of its symbol.
@@ -525,13 +432,10 @@ impl Checker<'_> {
                 _ => None,
             })
             .collect();
-        let of_symbol = match accessors.first() {
-            Some(&(of, m)) => {
-                let mapper = self.mapper_of_member_declaration(of, Decl::Member(m));
-                let ty = self.type_of_member_declarations(&accessors);
-                self.instantiate(ty, mapper)
-            }
-            None => self.type_of_declared_member(first),
+        let of_symbol = if accessors.is_empty() {
+            self.type_of_declared_member(first)
+        } else {
+            self.type_of_member_declarations(&accessors)
         };
         if !self.is_known(of_symbol) || self.is_error_type(of_symbol) {
             return;

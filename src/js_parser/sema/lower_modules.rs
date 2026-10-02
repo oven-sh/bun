@@ -128,6 +128,7 @@ impl Lower<'_, '_> {
             type_only: import.is_type_only,
             is_deferred: import.is_deferred,
             mode,
+            stmt: StmtId::NONE,
         });
         self.b.file.stmt(StmtKind::Import(declaration), at)
     }
@@ -146,11 +147,11 @@ impl Lower<'_, '_> {
         let mut expression = ExprId::NONE;
         let target = match import.reference {
             ts::ModuleReference::EntityName(names) => {
-                let names: Vec<Atom> = self.b.ts[names]
+                let names: Vec<(Atom, u32)> = self.b.ts[names]
                     .iter()
-                    .map(|name| self.b.atom(&name.text))
+                    .map(|name| (self.b.atom(&name.text), pos(name.loc)))
                     .collect();
-                ImportEqualsTarget::Entity(self.b.file.list(&names))
+                ImportEqualsTarget::Entity(self.b.file.entity_name(names.into_iter()))
             }
             ts::ModuleReference::External {
                 text: Some(text),
@@ -254,6 +255,7 @@ impl Lower<'_, '_> {
             items,
             type_only: export.is_type_only,
             mode,
+            stmt: StmtId::NONE,
         });
         self.b.file.stmt(StmtKind::ExportNamed(declaration), at)
     }

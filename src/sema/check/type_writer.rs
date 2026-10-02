@@ -332,7 +332,7 @@ impl Checker<'_> {
                 let TypeNodeKind::Ref { name, .. } = hir[reference].kind else {
                     return TypeId::ERROR;
                 };
-                let names: Vec<Atom> = hir.ids(name).take(index as usize + 1).collect();
+                let names: Vec<Atom> = hir.texts(name).take(index as usize + 1).collect();
                 let scope = self.bound(file).type_scope[reference.idx()];
                 let ty = self.type_of_entity(file, scope, &names);
                 self.regular(ty)
@@ -436,7 +436,7 @@ impl Checker<'_> {
         let ImportEqualsTarget::Entity(entity) = hir[import].target else {
             return TypeId::ERROR;
         };
-        let names: Vec<Atom> = hir.ids(entity).collect();
+        let names: Vec<Atom> = hir.texts(entity).collect();
         let meaning = if names.len() == 1 || index + 1 < names.len() {
             SymFlags::NAMESPACE
         } else {

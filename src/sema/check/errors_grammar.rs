@@ -327,7 +327,7 @@ impl Checker<'_> {
     /// `checkGrammarYieldExpression`: 1163. `parsePropertyDeclaration` parses an initializer outside of the yield context around the
     /// class, where `yield` is the keyword only if a name, a keyword or a literal follows on the same line (`isYieldExpression`).
     fn check_yield_in_property_initializers(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let hir = self.hir(file);
         let index = self.exprs_by_kind(file);
         for &id in index.of(ExprTag::Yield) {
             let e = &hir[id];
@@ -336,51 +336,13 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let (mut at, mut below) = (bound.expr_parent[id.idx()], id);
-            let is_in_initializer = loop {
-                match at {
-                    Parent::MemberInit(_) => break true,
-                    Parent::Expr(x) if x.is_some() => below = x,
-                    Parent::Prop(_)
-                    | Parent::PropKey(..)
-                    | Parent::PatKey(_)
-                    | Parent::MemberKey(_)
-                    | Parent::MethodKey(_)
-                    | Parent::ClassExtends(_)
-                    | Parent::Decorator(..) => {}
-                    _ => break false,
-                }
-                at = self.outward_from_names(file, at, below);
-            };
-            if is_in_initializer {
+            let container = hir.get_this_container(hir.node(id), true, false);
+            if hir.kind(container) == Kind::PropertyDeclaration {
                 out.push(Diagnostic {
                     start: e.pos,
                     code: 1163,
                 });
             }
-        }
-    }
-
-    /// What is around what `at` stands for, as `outward` has it, computed names included. `below` is the expression gone through last.
-    fn outward_from_names(&self, file: FileId, at: Parent, below: ExprId) -> Parent {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match at {
-            Parent::PropKey(object, _) if object.is_some() => Parent::Expr(object),
-            // The name of a member is where the class is, that of a method of an object literal where the literal is.
-            Parent::MemberKey(_) | Parent::MethodKey(_) => {
-                let key = PropKey::Computed(below);
-                if let Some(m) = hir.members.iter().position(|m| m.key == key) {
-                    match bound.member_owner[m] {
-                        MemberOwner::Class(c) => Parent::ClassExtends(c),
-                        _ => Parent::None,
-                    }
-                } else if let Some(p) = hir.props.iter().position(|p| p.key == key) {
-                    Parent::Prop(PropId(p as u32))
-                } else {
-                    Parent::None
-                }
-            }
-            _ => self.outward(file, at),
         }
     }
 
@@ -432,7 +394,7 @@ impl Checker<'_> {
     /// `isInDiag2657` of `checkBinaryLikeExpression`: whether `start`, where the left operand of `comma` starts, is in the span of a
     /// 2657. The span covers the adjacent elements, which the parser joins into a comma expression that starts where the error does.
     fn is_in_adjacent_jsx_elements(&self, file: FileId, comma: ExprId, start: u32) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let hir = self.hir(file);
         if !hir.early_errors.iter().any(|&(_, code)| code == 2657) {
             return false;
         }
@@ -440,28 +402,12 @@ impl Checker<'_> {
         if is_reported_at(start) {
             return true;
         }
-        let (mut at, mut below) = (Parent::Expr(comma), comma);
-        loop {
-            at = match at {
-                Parent::None | Parent::File => return false,
-                Parent::Expr(x) if x.is_none() => return false,
-                Parent::Expr(x) => {
-                    if let ExprKind::Binary {
-                        op: BinOp::Comma,
-                        left,
-                        ..
-                    } = hir[x].kind
-                        && matches!(hir[left].kind, ExprKind::Jsx(_))
-                        && is_reported_at(hir[left].pos)
-                    {
-                        return true;
-                    }
-                    below = x;
-                    bound.expr_parent[x.idx()]
-                }
-                other => self.outward_from_names(file, other, below),
-            };
-        }
+        let joined = hir.find_ancestor(hir.node(comma), |n| {
+            matches!(hir.data(n), NodeData::Expr(x)
+                if matches!(hir[x].kind, ExprKind::Binary { op: BinOp::Comma, left, .. }
+                    if matches!(hir[left].kind, ExprKind::Jsx(_)) && is_reported_at(hir[left].pos)))
+        });
+        joined.is_some()
     }
 
     /// `isSideEffectFree`
@@ -555,7 +501,7 @@ impl Checker<'_> {
                     && is_reserved(name)
                     && !bound.is_unchecked(id.idx())
                     && !bound.is_in_type_query(id)
-                    && !self.is_ambient_expr(file, id)
+                    && !hir.is_ambient(hir.node(id))
                 {
                     out.push(Diagnostic {
                         start: e.pos,
@@ -723,7 +669,7 @@ impl Checker<'_> {
             match t.kind {
                 // `IsIdentifierName`: of `a.b.c` only `a` is looked at.
                 TypeNodeKind::Ref { name, .. } if !name.is_empty() => {
-                    in_scope(self, hir.id_at(name, 0), t.pos, scope, out)
+                    in_scope(self, hir[name.at(0)].text, t.pos, scope, out)
                 }
                 TypeNodeKind::Typeof { expr, .. } if expr.is_some() => {
                     let leftmost = first_identifier(hir, expr);
@@ -732,7 +678,7 @@ impl Checker<'_> {
                     }
                 }
                 TypeNodeKind::Import { name, .. }
-                    if !name.is_empty() && is_reserved(hir.id_at(name, 0)) =>
+                    if !name.is_empty() && is_reserved(hir[name.at(0)].text) =>
                 {
                     // Where the name is is not kept: past `import( .. )` and the dot.
                     let (mut at, mut depth) = (t.pos as usize, 0u32);
@@ -749,7 +695,7 @@ impl Checker<'_> {
                     if text.get(dot) == Some(&b'.') {
                         in_scope(
                             self,
-                            hir.id_at(name, 0),
+                            hir[name.at(0)].text,
                             skip_trivia(text, dot + 1) as u32,
                             scope,
                             out,
@@ -838,7 +784,7 @@ impl Checker<'_> {
                     // Of `a.b.c` only `a`, which comes after the `=`.
                     if let ImportEqualsTarget::Entity(path) = import.target
                         && !path.is_empty()
-                        && is_reserved(hir.id_at(path, 0))
+                        && is_reserved(hir[path.at(0)].text)
                     {
                         let equals = skip_trivia(
                             text,
@@ -847,7 +793,7 @@ impl Checker<'_> {
                         if text.get(equals) == Some(&b'=') {
                             named(
                                 self,
-                                hir.id_at(path, 0),
+                                hir[path.at(0)].text,
                                 skip_trivia(text, equals + 1) as u32,
                                 parent,
                                 out,
@@ -937,59 +883,6 @@ impl Checker<'_> {
             }
             (None, _) => false,
         }
-    }
-
-    /// `NodeFlagsAmbient`, of the expression `e`.
-    fn is_ambient_expr(&self, file: FileId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let scope_of = |kind: ScopeKind| {
-            bound
-                .scopes
-                .iter()
-                .position(|s| s.kind == kind)
-                .map_or(ScopeId::NONE, |i| ScopeId(i as u32))
-        };
-        let (mut at, mut below) = (bound.expr_parent[e.idx()], e);
-        // Out to what opens a scope, which tells the rest.
-        let scope = loop {
-            match at {
-                Parent::None | Parent::File => return false,
-                Parent::Expr(x) if x.is_none() => return false,
-                Parent::Expr(x) => below = x,
-                Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return true,
-                Parent::MemberInit(m) if hir[m].flags.contains(Flags::AMBIENT) => return true,
-                Parent::MemberKey(_) | Parent::MethodKey(_) => {
-                    if let Some(m) = hir
-                        .members
-                        .iter()
-                        .position(|m| m.key == PropKey::Computed(below))
-                    {
-                        if hir.members[m].flags.contains(Flags::AMBIENT) {
-                            return true;
-                        }
-                        match bound.member_owner[m] {
-                            MemberOwner::Interface(i) => break scope_of(ScopeKind::Interface(i)),
-                            MemberOwner::TypeLiteral(t) => break bound.type_scope[t.idx()],
-                            _ => {}
-                        }
-                    }
-                }
-                Parent::FnBody(f) => break bound.fns[f.idx()].scope,
-                Parent::ParamDefault(p) if bound.param_fn[p.idx()].is_some() => {
-                    break bound.fns[bound.param_fn[p.idx()].idx()].scope;
-                }
-                Parent::ClassExtends(c) | Parent::Decorator(c, _) => {
-                    break bound.class_scope[c.idx()];
-                }
-                Parent::EnumInit(m) => {
-                    break scope_of(ScopeKind::Enum(bound.enum_member_owner[m.idx()]));
-                }
-                Parent::Module(m) => break scope_of(ScopeKind::Module(m)),
-                _ => {}
-            }
-            at = self.outward_from_names(file, at, below);
-        };
-        self.in_class_and_ambient(file, scope).1
     }
 }
 

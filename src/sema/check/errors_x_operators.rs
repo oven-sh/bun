@@ -11,7 +11,7 @@
 use super::call::CallLike;
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{FnOwner, MemberOwner, Parent, PatParent};
+use crate::bind::{FnOwner, Parent, PatParent};
 use crate::resolve::ScriptTarget;
 
 impl Checker<'_> {
@@ -63,7 +63,7 @@ impl Checker<'_> {
                 ExprKind::BigInt(_) => {
                     if language_version(self) < ScriptTarget::ES2020
                         && !hir.has_errors
-                        && !is_in_ambient_context(self, file, e)
+                        && !hir.is_ambient(hir.node(e))
                     {
                         out.push(Diagnostic {
                             start: hir.exprs[i].pos,
@@ -286,40 +286,6 @@ fn start_of_const_asserted(c: &Checker<'_>, file: FileId, operand: ExprId) -> u3
     }
 }
 
-/// `NodeFlagsAmbient`: whether `e` is written in something that is only declared. In a computed name of which it is not kept track
-/// what it is the name of, it is taken to be.
-fn is_in_ambient_context(c: &Checker<'_>, file: FileId, e: ExprId) -> bool {
-    let (hir, bound) = (c.hir(file), c.bound(file));
-    let mut parent = bound.expr_parent[e.idx()];
-    loop {
-        let flags = match parent {
-            Parent::None | Parent::File => return false,
-            Parent::PropKey(owner, _) if owner.is_some() => {
-                parent = Parent::Expr(owner);
-                continue;
-            }
-            Parent::PropKey(..)
-            | Parent::PatKey(_)
-            | Parent::MemberKey(_)
-            | Parent::MethodKey(_) => return true,
-            Parent::VarInit(d) => hir[d].flags,
-            Parent::EnumInit(m) => hir[bound.enum_member_owner[m.idx()]].flags,
-            Parent::MemberInit(m) => match bound.member_owner[m.idx()] {
-                MemberOwner::Class(class) => hir[m].flags | hir[class].flags,
-                _ => hir[m].flags,
-            },
-            Parent::FnBody(f) => hir[f].flags,
-            Parent::ParamDefault(p) => hir[bound.param_fn[p.idx()]].flags,
-            Parent::Module(m) => hir[m].flags,
-            _ => Flags::empty(),
-        };
-        if flags.contains(Flags::AMBIENT) {
-            return true;
-        }
-        parent = c.outward(file, parent);
-    }
-}
-
 // ───────────────────────────── kinds of types ─────────────────────────────
 
 /// `TypeFlagsUndefined`
@@ -335,8 +301,7 @@ fn operand_types(
     right: ExprId,
 ) -> Option<(TypeId, TypeId)> {
     let (l, r) = (c.type_of_expr(file, left), c.type_of_expr(file, right));
-    (c.is_known(l) && c.is_known(r) && !c.is_uncertain(file, left) && !c.is_uncertain(file, right))
-        .then_some((l, r))
+    (c.is_known(l) && c.is_known(r)).then_some((l, r))
 }
 
 /// `getTypeOfPropertyOfType`, of a type that is not a union: index signatures do not count.
@@ -635,7 +600,6 @@ fn check_template_spans(
     for span in c.hir(file).ids(spans) {
         let ty = c.type_of_expr(file, span);
         if c.is_known(ty)
-            && !c.is_uncertain(file, span)
             && c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like)
         {
             let start = c.error_start_of(file, span);
@@ -656,7 +620,7 @@ fn check_tagged_template(
     let hir = c.hir(file);
     let data = hir[call];
     let tag = c.type_of_expr(file, data.callee);
-    if !c.is_known(tag) || c.is_uncertain(file, data.callee) {
+    if !c.is_known(tag) {
         return;
     }
     let apparent = c.apparent_type(tag);
@@ -703,7 +667,7 @@ fn check_instanceof(
     out: &mut Vec<Diagnostic>,
 ) {
     let r = c.type_of_expr(file, right);
-    if !c.is_known(r) || c.is_any(r) || c.is_uncertain(file, right) {
+    if !c.is_known(r) || c.is_any(r) {
         return;
     }
     // What a type parameter extends may not have been found out.
@@ -719,7 +683,7 @@ fn check_instanceof(
         return;
     }
     let l = c.type_of_expr(file, left);
-    if !c.is_known(l) || c.is_uncertain(file, left) {
+    if !c.is_known(l) {
         return;
     }
     let signatures = c.signatures(apparent, false);

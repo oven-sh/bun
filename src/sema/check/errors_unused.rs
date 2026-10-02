@@ -58,16 +58,6 @@ enum Reported {
     MemberName(MemberId),
 }
 
-/// What an expression can be written in.
-#[derive(Copy, Clone)]
-enum Around {
-    Fn(FnId),
-    Class(ClassId),
-    Enum(EnumId),
-    Module(ModuleId),
-    Return(StmtId),
-}
-
 impl Checker<'_> {
     pub(super) fn check_unused(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let options = &self.p.files.options;
@@ -164,7 +154,6 @@ impl Checker<'_> {
         }
         self.note_jsdoc_links(file, &mut u);
         if parameters {
-            u.merge_type_parameters();
             u.collect_ambient_type_scopes();
         }
         if !hir.jsx.is_empty() {
@@ -953,7 +942,7 @@ impl Unused<'_> {
             if bound.is_unchecked_type(i) || hir.is_in_with(hir.types[i].pos) {
                 continue;
             }
-            let Some(first) = hir.ids(name).next() else {
+            let Some(first) = hir.texts(name).next() else {
                 continue;
             };
             let (meaning, bit) = if name.len() == 1 {
@@ -986,7 +975,7 @@ impl Unused<'_> {
                 }
                 StmtKind::ImportEquals(id) => {
                     if let ImportEqualsTarget::Entity(names) = hir[id].target
-                        && let Some(first) = hir.ids(names).next()
+                        && let Some(first) = hir.texts(names).next()
                     {
                         self.note_name(
                             bound.import_equals_scope[id.idx()],
@@ -1013,36 +1002,6 @@ impl Unused<'_> {
         }
     }
 
-    /// The type parameters of the declarations of one class or interface are the same ones, name for name (`getMergedSymbol`): a use of
-    /// one is a use of it in all of them.
-    fn merge_type_parameters(&mut self) {
-        let (hir, bound) = (self.hir, self.bound);
-        for symbol in &bound.symbols {
-            let lists = || {
-                symbol.decls.iter().filter_map(|d| match *d {
-                    Decl::Class(c) => Some(hir[c].type_params),
-                    Decl::Interface(i) => Some(hir[i].type_params),
-                    _ => None,
-                })
-            };
-            if lists().count() < 2 {
-                continue;
-            }
-            for p in lists().flat_map(|list| list.iter()) {
-                for q in lists().flat_map(|list| list.iter()) {
-                    let (a, b) = (
-                        bound.type_param_symbol[p.idx()],
-                        bound.type_param_symbol[q.idx()],
-                    );
-                    if hir[p].name == hir[q].name && a.is_some() && b.is_some() {
-                        let uses = self.referenced[b.idx()] & TYPE;
-                        self.referenced[a.idx()] |= uses;
-                    }
-                }
-            }
-        }
-    }
-
     /// A property `name` of something that could not be worked out is got at: whatever goes by the name may be what is read.
     fn note_members_named(&mut self, name: Atom) {
         let hir = self.hir;
@@ -1061,19 +1020,25 @@ impl Unused<'_> {
 
     /// The scope `e` is written in. Unless the binder kept it, that of the innermost function, class or namespace around.
     fn scope_of(&self, e: ExprId) -> ScopeId {
-        let bound = self.bound;
+        let (hir, bound) = (self.hir, self.bound);
         if let Some(&scope) = bound.expr_scope.get(&e) {
             return scope;
         }
         let mut scope = ScopeId(0);
-        self.is_written_in(e, |around| {
-            let found = match around {
-                Around::Fn(f) => Some(bound.fns[f.idx()].scope),
-                Around::Class(class) => Some(bound.class_scope[class.idx()]),
-                Around::Module(m) => Some(bound.module_scope[m.idx()]).filter(|it| it.is_some()),
-                Around::Enum(_) | Around::Return(_) => None,
+        hir.find_ancestor(hir.parent(hir.node(e)), |around| {
+            let (function, class) = (hir.function_of(around), hir.class_of(around));
+            let found = match hir.data(around) {
+                _ if function.is_some() => bound.fns[function.idx()].scope,
+                _ if class.is_some() => bound.class_scope[class.idx()],
+                NodeData::Stmt(s) => match hir[s].kind {
+                    StmtKind::Module(m) => bound.module_scope[m.idx()],
+                    _ => ScopeId::NONE,
+                },
+                _ => ScopeId::NONE,
             };
-            scope = found.unwrap_or(scope);
+            if found.is_some() {
+                scope = found;
+            }
             found.is_some()
         });
         scope
@@ -1260,37 +1225,26 @@ impl Unused<'_> {
         bound.symbols[symbol.idx()]
             .flags
             .intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::ENUM | SymFlags::MODULE)
-            && self.is_written_in(e, |around| {
-                symbol
-                    == match around {
-                        Around::Fn(f) if hir[f].kind == FnKind::Decl => bound.fn_symbol[f.idx()],
-                        Around::Class(class)
-                            if matches!(bound.class_owner[class.idx()], ClassOwner::Stmt(_)) =>
-                        {
-                            bound.class_symbol[class.idx()]
-                        }
-                        Around::Enum(e) => bound.enum_symbol[e.idx()],
-                        Around::Module(m) => bound.module_symbol[m.idx()],
-                        _ => SymbolId::NONE,
-                    }
+            && bound.symbols[symbol.idx()].decls.iter().any(|&d| {
+                // It is around what is written in it: no walk.
+                matches!(
+                    d,
+                    Decl::Fn(_) | Decl::Class(_) | Decl::Enum(_) | Decl::Module(_)
+                ) && matches!(hir.data(hir.node(d)), NodeData::Stmt(s)
+                        if (hir[s].loc.pos..hir[s].loc.end).contains(&hir[e].pos))
             })
     }
 
     /// The method or accessor of a class `e` is directly in: `FindAncestor(e, IsFunctionLikeDeclaration)`, if that is one.
     fn enclosing_member_fn(&self, e: ExprId) -> Option<MemberId> {
-        let (hir, bound) = (self.hir, self.bound);
-        let mut found = None;
-        self.is_written_in(e, |around| match around {
-            // A static block is no function.
-            Around::Fn(f) if hir[f].kind != FnKind::StaticBlock => {
-                if let FnOwner::Member(m) = bound.fns[f.idx()].owner {
-                    found = Some(m);
-                }
-                true
-            }
-            _ => false,
+        let hir = self.hir;
+        let function = hir.find_ancestor(hir.parent(hir.node(e)), |n| {
+            hir.function_of(n).is_some() && hir.kind(n) != Kind::ClassStaticBlockDeclaration
         });
-        found
+        match hir.data(function) {
+            NodeData::Member(m) => Some(m),
+            _ => None,
+        }
     }
 
     /// Whether the checker never visits `e`, so that nothing in `e` counts as a reference. `checkWithStatement` does not check the body
@@ -1306,124 +1260,16 @@ impl Unused<'_> {
         let hir = self.hir;
         // A `return` was visited, and the function that contains it has not been reached yet.
         let mut in_return = false;
-        let is_in_static_block = self.is_written_in(e, |around| match around {
-            Around::Return(_) => {
+        let static_block = hir.find_ancestor(hir.node(e), |around| {
+            if hir.kind(around) == Kind::ReturnStatement {
                 in_return = true;
-                false
             }
-            Around::Fn(f) => std::mem::take(&mut in_return) && hir[f].kind == FnKind::StaticBlock,
-            _ => false,
+            let function = hir.function_of(around);
+            function.is_some()
+                && std::mem::take(&mut in_return)
+                && hir[function].kind == FnKind::StaticBlock
         });
-        is_in_static_block || in_return
-    }
-
-    /// Visits the functions, classes, enums, namespaces and `return` statements that contain `e`, innermost first, until `is_it` returns
-    /// true for one. Returns whether it did.
-    fn is_written_in(&self, e: ExprId, mut is_it: impl FnMut(Around) -> bool) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        // A pattern is where the variable or the parameter is.
-        let of_pattern = |part: PatId| match self.root_of(part) {
-            PatParent::Var(d) => Parent::VarInit(d),
-            PatParent::Param(p) => Parent::ParamDefault(p),
-            _ => Parent::None,
-        };
-        // The name and the decorators of a method or an accessor are part of it. Those of a property are part of the class.
-        let of_member = |m: MemberId| {
-            if hir[m].func.is_some() {
-                Parent::FnBody(hir[m].func)
-            } else {
-                Parent::MemberInit(m)
-            }
-        };
-        let mut parent = bound.expr_parent[e.idx()];
-        // The expression `parent` is the parent of, where it is that of an expression.
-        let mut below = e;
-        loop {
-            let around = match parent {
-                Parent::FnBody(f) => Around::Fn(f),
-                Parent::ParamDefault(p) => Around::Fn(bound.param_fn[p.idx()]),
-                Parent::ClassExtends(class) => Around::Class(class),
-                Parent::MemberInit(m) => match bound.member_owner[m.idx()] {
-                    MemberOwner::Class(class) => Around::Class(class),
-                    _ => return false,
-                },
-                Parent::EnumInit(member) => Around::Enum(bound.enum_member_owner[member.idx()]),
-                Parent::Module(m) => Around::Module(m),
-                Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Return(_)) => {
-                    Around::Return(s)
-                }
-                _ => {
-                    parent = match parent {
-                        Parent::Expr(x) if x.is_some() => {
-                            below = x;
-                            bound.expr_parent[x.idx()]
-                        }
-                        Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                        Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-                        Parent::Prop(p) => Parent::Expr(bound.prop_owner[p.idx()]),
-                        Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
-                        Parent::PatPropDefault(p) => of_pattern(hir[p].value),
-                        Parent::PatElemDefault(p) => of_pattern(hir[p].pat),
-                        Parent::Decorator(class, DecoratorOwner::Class(_)) => {
-                            Parent::ClassExtends(class)
-                        }
-                        Parent::Decorator(_, DecoratorOwner::Member(m)) => of_member(m),
-                        Parent::Decorator(_, DecoratorOwner::Param(p)) => Parent::ParamDefault(p),
-                        Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
-                        // In a pattern.
-                        Parent::PropKey(..) | Parent::PatKey(_) => match hir
-                            .pat_props
-                            .iter()
-                            .find(|p| p.key == PropKey::Computed(below))
-                        {
-                            Some(p) => of_pattern(p.value),
-                            None => return false,
-                        },
-                        Parent::MemberKey(_) | Parent::MethodKey(_) => {
-                            if let Some(m) = hir
-                                .members
-                                .iter()
-                                .position(|m| m.key == PropKey::Computed(below))
-                            {
-                                of_member(MemberId(m as u32))
-                            } else if let Some(p) = hir
-                                .props
-                                .iter()
-                                .position(|p| p.key == PropKey::Computed(below))
-                            {
-                                // Of a method or an accessor of an object literal.
-                                match hir.props[p].value.some().map(|value| hir[value].kind) {
-                                    Some(ExprKind::Fn(f)) => Parent::FnBody(f),
-                                    _ => Parent::Expr(bound.prop_owner[p]),
-                                }
-                            } else {
-                                return false;
-                            }
-                        }
-                        _ => return false,
-                    };
-                    continue;
-                }
-            };
-            if is_it(around) {
-                return true;
-            }
-            parent = match around {
-                Around::Fn(f) => match bound.fns[f.idx()].owner {
-                    FnOwner::Expr(x) => Parent::Expr(x),
-                    FnOwner::Stmt(s) => Parent::Stmt(s),
-                    FnOwner::Member(m) => Parent::MemberInit(m),
-                    _ => return false,
-                },
-                Around::Class(class) => match bound.class_owner[class.idx()] {
-                    ClassOwner::Expr(x) => Parent::Expr(x),
-                    ClassOwner::Stmt(s) => Parent::Stmt(s),
-                },
-                Around::Enum(e) => Parent::Stmt(self.hir[e].stmt),
-                Around::Module(m) => Parent::Stmt(self.hir[m].stmt),
-                Around::Return(s) => bound.stmt_parent[s.idx()],
-            };
-        }
+        static_block.is_some() || in_return
     }
 
     // ───────────────────────────── what is said ─────────────────────────────

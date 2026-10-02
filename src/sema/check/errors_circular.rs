@@ -282,26 +282,12 @@ impl Checker<'_> {
         self.commit(err);
     }
 
-    /// `symbol.ValueDeclaration` of the CommonJS export `symbol` of `file`: the first assignment that sets it. `None` if `symbol` has
-    /// no such assignment.
-    pub(super) fn commonjs_value_declaration(
-        &self,
-        file: FileId,
-        symbol: &Symbol,
-    ) -> Option<ExprId> {
-        let hir = self.hir(file);
-        symbol.decls.iter().find_map(|&decl| match decl {
-            // `bindModuleExportsAssignment` calls `SetValueDeclaration` for every `module.exports = e`.
-            Decl::ModuleExports(assignment) => Some(assignment),
-            // `addDeclarationToSymbol` calls it only for a declaration with a value flag, which an alias declaration lacks.
-            Decl::ExportsProperty(assignment) => match hir[assignment].kind {
-                ExprKind::Assign { value, .. } if !expression_is_alias(self.hir(file), value) => {
-                    Some(assignment)
-                }
-                _ => None,
-            },
+    /// `symbol.ValueDeclaration` of the CommonJS export `symbol`: the assignment. `None` if it is no assignment.
+    pub(super) fn commonjs_value_declaration(&self, symbol: &Symbol) -> Option<ExprId> {
+        match *symbol.decls.get(symbol.value_declaration as usize)? {
+            Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => Some(assignment),
             _ => None,
-        })
+        }
     }
 
     /// `checkExportAssignment`, `checkBinaryLikeExpression`: the types of `export default e`, `export = e`, `module.exports = e` and
@@ -598,7 +584,7 @@ impl Checker<'_> {
         if scope.is_none() {
             return None;
         }
-        let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+        let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
         let named = files
             .resolve_entity(file, scope, &names, SymFlags::TYPE)
             .and_then(|s| files.resolve_alias_if_needed(s))?;
@@ -705,7 +691,7 @@ impl Checker<'_> {
                 let found = self.files().resolve_name(
                     file,
                     bound.type_scope[node.idx()],
-                    hir.id_at(name, 0),
+                    hir[name.at(0)].text,
                     SymFlags::TYPE,
                 );
                 if let Some(found) = found
@@ -752,7 +738,7 @@ impl Checker<'_> {
                 // `getTypeFromClassOrInterfaceReference`, `getTypeFromTypeAliasReference`: the wrong number of type arguments is an
                 // error, and they are not looked at. Those of a name that means nothing are.
                 let files = self.files();
-                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+                let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                 let named = files
                     .resolve_entity(file, bound.type_scope[node.idx()], &names, SymFlags::TYPE)
                     .and_then(|s| files.resolve_alias_if_needed(s));

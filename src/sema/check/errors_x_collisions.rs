@@ -1,18 +1,16 @@
-//! Names that what is emitted needs for itself: 18027.
-//!
-//! Follows `recordPotentialCollisionWithWeakMapSetInGeneratedCode`, `needCollisionCheckForIdentifier`, `checkWeakMapSetCollision` and
-//! `setNodeLinksForPrivateIdentifierScope` of TypeScript 7.0.2's checker.go. What is imported is not looked at.
+//! Names that what is emitted needs for itself: 18027 2818.
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent};
 use crate::resolve::ScriptTarget;
 
 impl Checker<'_> {
-    pub(super) fn check_x_collisions(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    /// `recordPotentialCollisionWithWeakMapSetInGeneratedCode`, `recordPotentialCollisionWithReflectInGeneratedCode`, and what they put
+    /// off, of every declaration `checkCollisionsForDeclarationName` is called on.
+    pub(super) fn check_x_collisions(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let options = &files.options;
-        // `errorSkippedOnNoEmit`. `GetEmitScriptTarget`: no target is the latest.
+        // `errorSkippedOnNoEmit`. `languageVersion <= ES2021`: no target is the latest. All of a declaration file is ambient.
         if options.no_emit_is_set
             || options.target == ScriptTarget::None
             || options.target > ScriptTarget::ES2021
@@ -20,175 +18,197 @@ impl Checker<'_> {
         {
             return;
         }
-        // `setNodeLinksForPrivateIdentifierScope`
-        let mut with_private_names: Vec<Parent> = Vec::new();
-        for (m, member) in hir.members.iter().enumerate() {
-            if matches!(member.key, PropKey::Private(_))
-                && matches!(bound.member_owner[m], MemberOwner::Class(_))
-                && matches!(
-                    member.kind,
-                    MemberKind::Property
-                        | MemberKind::Method
-                        | MemberKind::Getter
-                        | MemberKind::Setter
-                )
-            {
-                let class = self.outward(file, Parent::MemberInit(MemberId(m as u32)));
-                for scope in self.block_scopes_around(file, class) {
-                    if !with_private_names.contains(&scope) {
-                        with_private_names.push(scope);
-                    }
-                }
-            }
-        }
-        if with_private_names.is_empty() {
-            return;
-        }
+        let reflect = files.atoms.lookup(b"Reflect");
         let names = [
             files.atoms.lookup(b"WeakMap"),
             files.atoms.lookup(b"WeakSet"),
+            reflect,
         ];
+        let mut declared: Vec<(Node, Atom)> = Vec::new();
         for symbol in &bound.symbols {
-            if !names.contains(&Some(symbol.name)) {
-                continue;
+            if names.contains(&Some(symbol.name)) {
+                declared.extend(symbol.decls.iter().map(|&d| (hir.node(d), symbol.name)));
             }
-            for &decl in &symbol.decls {
-                // `needCollisionCheckForIdentifier`: whether nothing is emitted for it. The node it is, or is directly in.
-                // `GetErrorRangeForNode`: its name, but a parameter as a whole.
-                let (is_erased, around, start, end) = match decl {
-                    Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
-                        let (name, name_end) = (hir[pat].pos, self.end_of_pat(file, pat));
-                        let mut root = pat;
-                        loop {
-                            match bound.pat_parent[root.idx()] {
-                                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
-                                    root = outer;
-                                }
-                                PatParent::Var(d) => {
-                                    break (
-                                        hir[d].flags.contains(Flags::AMBIENT),
-                                        Parent::Stmt(bound.var_stmt[d.idx()]),
-                                        name,
-                                        name_end,
-                                    );
-                                }
-                                PatParent::Param(p) => {
-                                    let f = bound.param_fn[p.idx()];
-                                    // An overload.
-                                    let is_erased =
-                                        f.is_none() || matches!(hir[f].body, FnBody::None);
-                                    break if root == pat {
-                                        (
-                                            is_erased,
-                                            Parent::ParamDefault(p),
-                                            hir[p].pos,
-                                            self.end_of_param(file, p),
-                                        )
-                                    } else {
-                                        (is_erased, Parent::ParamDefault(p), name, name_end)
-                                    };
-                                }
-                                PatParent::None => break (true, Parent::None, name, name_end),
-                            }
-                        }
-                    }
-                    Decl::Fn(f) if matches!(hir[f].kind, FnKind::Decl | FnKind::Expr) => (
-                        hir[f].flags.contains(Flags::AMBIENT),
-                        self.outward(file, Parent::FnBody(f)),
-                        hir[f].name_pos,
-                        self.end_of_token_at(file, hir[f].name_pos),
-                    ),
-                    Decl::Class(c) => (
-                        hir[c].flags.contains(Flags::AMBIENT),
-                        match bound.class_owner[c.idx()] {
-                            ClassOwner::Expr(e) => Parent::Expr(e),
-                            ClassOwner::Stmt(s) => Parent::Stmt(s),
-                        },
-                        hir[c].name_pos,
-                        self.end_of_token_at(file, hir[c].name_pos),
-                    ),
-                    Decl::Enum(e) => (
-                        hir[e].flags.contains(Flags::AMBIENT),
-                        Parent::Stmt(hir[e].stmt),
-                        hir[e].name_pos,
-                        self.end_of_token_at(file, hir[e].name_pos),
-                    ),
-                    Decl::Module(m) => (
-                        hir[m].flags.contains(Flags::AMBIENT),
-                        Parent::Stmt(hir[m].stmt),
-                        hir[m].name_pos,
-                        self.end_of_token_at(file, hir[m].name_pos),
-                    ),
-                    _ => continue,
-                };
-                if is_erased {
+        }
+        declared.retain(|&(node, _)| {
+            self.is_checked_for_collisions(file, node)
+                && need_collision_check_for_identifier(hir, node)
+        });
+        if declared.is_empty() {
+            return;
+        }
+        let with_private_identifiers = containers_of_classes_with_private_identifiers(hir);
+        let with_super = self.containers_of_super_property_in_static_initializer(file);
+        for (node, name) in declared {
+            let container = hir.get_enclosing_block_scope_container(node);
+            let text = self.atom_text(name);
+            let (code, args) = if Some(name) != reflect {
+                // `checkWeakMapSetCollision`
+                if !with_private_identifiers.contains(&container) {
                     continue;
                 }
-                let scopes = self.block_scopes_around(file, around);
-                let is_in_ambient_namespace = scopes.iter().any(
-                    |scope| matches!(*scope, Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT)),
-                );
-                // `checkWeakMapSetCollision`
-                if !is_in_ambient_namespace
-                    && scopes
-                        .first()
-                        .is_some_and(|enclosing| with_private_names.contains(enclosing))
-                {
-                    out.push(Diagnostic { start, code: 18027 });
-                    self.note(start, end, 18027, vec![self.atom_text(symbol.name)]);
+                (18027, vec![text])
+            } else {
+                // `checkReflectCollision`
+                let has_collision = match hir.kind(node) {
+                    Kind::ClassExpression => {
+                        let mut members = hir[hir.class_of(node)].members.iter();
+                        members.any(|m| with_super.contains(&hir.node(m)))
+                    }
+                    Kind::FunctionExpression => with_super.contains(&node),
+                    _ => with_super.contains(&container),
+                };
+                if !has_collision {
+                    continue;
                 }
-            }
+                (2818, vec![text.clone(), text])
+            };
+            let (start, end) = self.get_error_range_for_node(file, node);
+            out.push(Diagnostic { start, code });
+            self.note(start, end, code, args);
         }
     }
 
-    /// `GetEnclosingBlockScopeContainer`, over and over: the block scopes (`IsBlockScope`) around the node `parent` stands for, from the
-    /// inside out. Each is given as what is directly in it has for a parent. The list ends early where the way out is not kept
-    /// track of.
-    fn block_scopes_around(&self, file: FileId, mut parent: Parent) -> Vec<Parent> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut scopes = Vec::new();
-        let mut below = Parent::None;
-        loop {
-            match parent {
-                Parent::None => return scopes,
-                Parent::Expr(x) if x.is_none() => return scopes,
-                Parent::Stmt(s) if s.is_none() => return scopes,
-                Parent::File => {
-                    scopes.push(parent);
-                    return scopes;
-                }
-                Parent::FnBody(_) | Parent::MemberInit(_) | Parent::Module(_) => {
-                    scopes.push(parent);
-                }
-                Parent::ParamDefault(p) => scopes.push(Parent::FnBody(bound.param_fn[p.idx()])),
-                Parent::Stmt(s) => match hir[s].kind {
-                    StmtKind::Block(_)
-                    | StmtKind::For { .. }
-                    | StmtKind::ForIn { .. }
-                    | StmtKind::ForOf { .. } => scopes.push(parent),
-                    // The block of its cases.
-                    StmtKind::Switch { .. } if matches!(below, Parent::Case(_)) => {
-                        scopes.push(parent);
-                    }
-                    // Its `catch`.
-                    StmtKind::Try {
-                        block, finalizer, ..
-                    } if below != Parent::Stmt(block) && below != Parent::Stmt(finalizer) => {
-                        scopes.push(parent);
-                    }
-                    _ => {}
-                },
-                _ => {}
+    /// Whether `checkCollisionsForDeclarationName` is called on the declaration `node`, which has an identifier for a name.
+    fn is_checked_for_collisions(&self, file: FileId, node: Node) -> bool {
+        let (hir, files) = (self.hir(file), self.files());
+        let is_in_file = |statement: Node| hir.parent(statement) == Node::FILE;
+        // `checkGrammarModuleElementContext`
+        let is_in_module_element_context = |statement: Node| {
+            matches!(
+                hir.kind(hir.parent(statement)),
+                Kind::SourceFile | Kind::ModuleBlock | Kind::ModuleDeclaration
+            )
+        };
+        // `checkExternalImportOrExportDeclaration`. Elsewhere a module can only be named in what is ambient.
+        let is_import_checked = |i: ImportId| hir[i].spec.is_some() && is_in_file(hir.node(i));
+        match hir.data(node) {
+            // `const a = require("m")` in JavaScript is an alias, and looked at no further.
+            NodeData::VarDecl(d) => !matches!(
+                self.bound(file).required_by(hir, hir[d].pat),
+                Some((_, None))
+            ),
+            NodeData::PatProp(_) | NodeData::PatElem(_) | NodeData::Param(_) => true,
+            NodeData::Expr(_) => {
+                matches!(
+                    hir.kind(node),
+                    Kind::FunctionExpression | Kind::ClassExpression
+                )
             }
-            below = parent;
-            parent = match parent {
-                // The way out of a namespace is that of the statement that declares it.
-                Parent::Module(m) => bound
-                    .stmt_parent
-                    .get(hir[m].stmt.idx())
-                    .map_or(Parent::None, |&parent| parent),
-                _ => self.outward(file, parent),
-            };
+            NodeData::Stmt(s) => match hir[s].kind {
+                StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Enum(_) => true,
+                StmtKind::Module(_) => is_in_module_element_context(node),
+                StmtKind::ImportEquals(i) => match hir[i].target {
+                    ImportEqualsTarget::Entity(_) => is_in_module_element_context(node),
+                    ImportEqualsTarget::Require(spec) => spec.is_some() && is_in_file(node),
+                },
+                _ => false,
+            },
+            NodeData::Part(Part::ImportClause | Part::NamedBindings, row) => {
+                matches!(hir.data(row), NodeData::Stmt(s) if matches!(hir[s].kind, StmtKind::Import(i) if is_import_checked(i)))
+            }
+            // `checkImportDeclaration`: of a module that is there.
+            NodeData::ImportSpec(s) => {
+                let import = &hir[hir[s].import];
+                let mode = files.mode_of_import(file, import.mode);
+                is_import_checked(hir[s].import)
+                    && files
+                        .module_of_specifier_as(file, import.spec, mode)
+                        .is_some()
+            }
+            _ => false,
         }
     }
+
+    /// `checkSuperExpression`: what gets `NodeCheckFlagsContainsSuperPropertyInStaticInitializer`.
+    fn containers_of_super_property_in_static_initializer(&mut self, file: FileId) -> Vec<Node> {
+        let hir = self.hir(file);
+        let is_module = self.files().module(file).is_module();
+        let index = self.exprs_by_kind(file);
+        let mut marked = Vec::new();
+        for &e in index.of(ExprTag::Super) {
+            let node = hir.node(e);
+            let parent = hir.parent(node);
+            if hir.kind(parent) == Kind::CallExpression && hir.expression(parent) == node {
+                continue;
+            }
+            let mut container = hir.get_super_container(node, true);
+            while hir.kind(container) == Kind::ArrowFunction {
+                container = hir.get_super_container(container, true);
+            }
+            let class = hir.class_of(hir.parent(container));
+            if class.is_none()
+                || !matches!(
+                    hir.kind(container),
+                    Kind::PropertyDeclaration | Kind::ClassStaticBlockDeclaration
+                )
+                || !hir.is_static(container)
+                || hir[class].extends.is_none()
+            {
+                continue;
+            }
+            // It returns before it marks anything: `classDeclarationExtendsNull`, `baseClassType == nil`.
+            let sym = self.class_sym(file, class);
+            if self.class_declaration_extends_null(sym) || self.base_types(sym).is_empty() {
+                continue;
+            }
+            mark_block_scope_containers(hir, parent, &mut marked);
+        }
+        // `IsExternalOrCommonJSModule`
+        marked.retain(|&scope| scope != Node::FILE || is_module);
+        marked
+    }
+}
+
+/// `GetEnclosingBlockScopeContainer`, over and over. What is around what is marked is marked.
+fn mark_block_scope_containers(hir: &File, from: Node, marked: &mut Vec<Node>) {
+    let mut scope = hir.get_enclosing_block_scope_container(from);
+    while scope.is_some() && !marked.contains(&scope) {
+        marked.push(scope);
+        scope = hir.get_enclosing_block_scope_container(scope);
+    }
+}
+
+/// `setNodeLinksForPrivateIdentifierScope`: what gets `NodeCheckFlagsContainsClassWithPrivateIdentifiers`.
+fn containers_of_classes_with_private_identifiers(hir: &File) -> Vec<Node> {
+    let mut marked = Vec::new();
+    for (m, member) in hir.members.iter().enumerate() {
+        let node = hir.node(MemberId(m as u32));
+        if matches!(member.key, PropKey::Private(_))
+            && matches!(
+                hir.kind(node),
+                Kind::PropertyDeclaration
+                    | Kind::MethodDeclaration
+                    | Kind::GetAccessor
+                    | Kind::SetAccessor
+            )
+            && hir.class_of(hir.parent(node)).is_some()
+        {
+            mark_block_scope_containers(hir, node, &mut marked);
+        }
+    }
+    marked
+}
+
+/// `needCollisionCheckForIdentifier`, of a declaration that is no member.
+fn need_collision_check_for_identifier(hir: &File, node: Node) -> bool {
+    // `IsTypeOnlyImportOrExportDeclaration`
+    let is_type_only = match hir.data(node) {
+        NodeData::Part(Part::ImportClause, row) => {
+            matches!(hir.data(row), NodeData::Stmt(s) if matches!(hir[s].kind, StmtKind::Import(i) if hir[i].type_only))
+        }
+        NodeData::ImportSpec(s) => hir[s].type_only || hir[hir[s].import].type_only,
+        _ => {
+            hir.kind(node) == Kind::ImportEqualsDeclaration
+                && hir.flags(node).contains(Flags::TYPE_ONLY)
+        }
+    };
+    let root = hir.get_root_declaration(node);
+    // An overload.
+    let is_parameter_of_signature = hir.kind(root) == Kind::Parameter
+        && hir
+            .fns
+            .get(hir.function_of(hir.parent(root)).idx())
+            .is_none_or(|function| matches!(function.body, FnBody::None));
+    !hir.is_ambient(node) && !is_type_only && !is_parameter_of_signature
 }

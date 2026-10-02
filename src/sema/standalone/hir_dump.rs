@@ -129,6 +129,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         tuple_elems: _,
         mapped: _,
         modifiers: _,
+        names: _,
         bases: _,
         parents: _,
         fn_nodes: _,
@@ -406,6 +407,26 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     (d.out, orphans)
 }
 
+/// `forEachChild` from the file down, one line a node: how deep, its `Kind`, where it starts.
+pub fn nodes(file: &File) -> String {
+    let mut out = String::new();
+    let mut open = vec![(Node::FILE, 0)];
+    while let Some((node, depth)) = open.pop() {
+        out.push_str(&format!(
+            "{depth} {:?} {}\n",
+            file.kind(node),
+            file.start(node)
+        ));
+        let first = open.len();
+        file.for_each_child(node, &mut |child| {
+            open.push((child, depth + 1));
+            false
+        });
+        open[first..].reverse();
+    }
+    out
+}
+
 impl Dump<'_> {
     fn line(&mut self, depth: usize, label: &str, text: &str) {
         for _ in 0..depth {
@@ -456,6 +477,18 @@ impl Dump<'_> {
         }
         out.push(']');
         out
+    }
+
+    /// `A.B.C`, and where each name is.
+    fn entity_name(&self, names: Span<NameId>) -> String {
+        if names.range().end > self.file.names.len() {
+            return NO_SUCH_NODE.to_owned();
+        }
+        let names = names.iter().map(|n| self.file[n]);
+        let names: Vec<String> = names
+            .map(|n| format!("{}@{}", self.q(n.text), n.pos()))
+            .collect();
+        format!("[{}]", names.join(", "))
     }
 
     /// `label[len]:`. False if what is in the list is not to follow.
@@ -644,6 +677,12 @@ impl Dump<'_> {
         }
     }
 
+    fn name_kind(&mut self, depth: usize, kind: NameKind) {
+        if kind != NameKind::Identifier {
+            put!(self, depth, "name_kind", "{kind:?}");
+        }
+    }
+
     fn key(&mut self, depth: usize, label: &str, key: PropKey) {
         match key {
             PropKey::None => self.line(depth, label, "None"),
@@ -660,6 +699,7 @@ impl Dump<'_> {
         let Prop {
             kind,
             key,
+            name_kind,
             value,
             pos,
             start,
@@ -674,6 +714,7 @@ impl Dump<'_> {
         );
         let d = depth + 1;
         self.key(d, "key", key);
+        self.name_kind(d, name_kind);
         self.expr(d, "value", value);
     }
 
@@ -723,6 +764,7 @@ impl Dump<'_> {
     fn pat_prop(&mut self, depth: usize, label: &str, id: PatPropId) {
         let PatProp {
             key,
+            name_kind,
             value,
             default,
             is_rest,
@@ -737,6 +779,7 @@ impl Dump<'_> {
         );
         let d = depth + 1;
         self.key(d, "key", key);
+        self.name_kind(d, name_kind);
         self.pat(d, "value", value);
         self.expr(d, "default", default);
     }
@@ -1169,6 +1212,7 @@ impl Dump<'_> {
     fn enum_member(&mut self, depth: usize, label: &str, id: EnumMemberId) {
         let EnumMember {
             name,
+            name_kind,
             computed_name,
             init,
             pos,
@@ -1183,6 +1227,7 @@ impl Dump<'_> {
             loc.pos,
             loc.end
         );
+        self.name_kind(depth + 1, name_kind);
         self.expr(depth + 1, "computed_name", computed_name);
         self.expr(depth + 1, "init", init);
     }
@@ -1224,6 +1269,7 @@ impl Dump<'_> {
             type_only,
             is_deferred,
             mode,
+            stmt: _,
         } = node!(self, depth, label, imports, id);
         put!(
             self,
@@ -1274,7 +1320,7 @@ impl Dump<'_> {
         } = node!(self, depth, label, import_equals, id);
         let target = match target {
             ImportEqualsTarget::Require(spec) => format!("Require {}", self.q(spec)),
-            ImportEqualsTarget::Entity(name) => format!("Entity {}", self.names(name)),
+            ImportEqualsTarget::Entity(name) => format!("Entity {}", self.entity_name(name)),
         };
         put!(
             self,
@@ -1294,6 +1340,7 @@ impl Dump<'_> {
             items,
             type_only,
             mode,
+            stmt: _,
         } = node!(self, depth, label, exports, id);
         put!(
             self,
@@ -1337,7 +1384,7 @@ impl Dump<'_> {
             }
             TypeNodeKind::Keyword(keyword) => put!(self, depth, label, "{head} {keyword:?}"),
             TypeNodeKind::Ref { name, args } => {
-                put!(self, depth, label, "{head} name={}", self.names(name));
+                put!(self, depth, label, "{head} name={}", self.entity_name(name));
                 self.list(d, "args", args, Self::ty);
             }
             TypeNodeKind::StringLit(text) => put!(self, depth, label, "{head} {}", self.q(text)),
@@ -1417,7 +1464,7 @@ impl Dump<'_> {
                     depth,
                     label,
                     "{head} name={}{empty_list}",
-                    self.names(name)
+                    self.entity_name(name)
                 );
                 self.list(d, "args", args, Self::ty);
                 self.expr(d, "expr", expr);
@@ -1435,7 +1482,7 @@ impl Dump<'_> {
                     label,
                     "{head} spec={} name={} is_typeof={is_typeof} mode={mode:?}",
                     self.q(spec),
-                    self.names(name)
+                    self.entity_name(name)
                 );
                 self.list(d, "args", args, Self::ty);
             }

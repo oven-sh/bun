@@ -547,7 +547,7 @@ impl<'p> Checker<'p> {
             is_parenthesized,
         } = written;
         let function = self.type_of_expr(file, e);
-        if !self.is_known(function) || self.is_uncertain(file, e) {
+        if !self.is_known(function) {
             return;
         }
         let apparent = self.apparent_type(function);
@@ -603,7 +603,7 @@ impl<'p> Checker<'p> {
         let node = CallLike::Decorator(owner);
         let args = self.effective_call_arguments(file, e, node);
         let this_arg = self.this_argument_of_call(file, e, node);
-        let resolved = self.resolve_among(file, e, node, &sigs, &[], &args, this_arg, true, true);
+        let resolved = self.resolve_among(file, e, node, &sigs, &[], &args, this_arg, true);
         // A decorator has no entry in `calls`.
         if let Some(check) = self.pending_failed_call.take() {
             let check = ResolvedCall {

@@ -718,6 +718,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     type_only: true,
                     is_deferred: false,
                     mode,
+                    stmt: StmtId::NONE,
                 };
                 let declaration = self.b.file.add_import(declaration);
                 let statement = self.b.file.stmt(StmtKind::Import(declaration), tag.pos);
@@ -1022,13 +1023,13 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// `A.B<T>` as a type.
     fn reparse_class_name(&mut self, class_name: &ClassName) -> TypeNodeId {
-        let name: SmallVec<[Atom; 4]> = class_name
+        let name: SmallVec<[(Atom, u32); 4]> = class_name
             .name
             .iter()
-            .map(|&name| self.name_atom(name))
+            .map(|&name| (self.name_atom(name), name.start))
             .collect();
         let args = self.reparse_type_arguments(class_name);
-        let name = self.b.file.list(&name);
+        let name = self.b.file.entity_name(name.into_iter());
         let pos = class_name.name.first().map_or(0, |first| first.start);
         self.b.file.ty(TypeNodeKind::Ref { name, args }, pos)
     }

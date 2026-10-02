@@ -243,7 +243,6 @@ impl<'p> Checker<'p> {
         }
         // All this is asked once everything is checked: a circle that goes through here is nobody's error.
         let saved = (
-            self.uncertain,
             self.relation_gave_up,
             self.relation_too_complex,
             self.union_too_complex,
@@ -260,7 +259,6 @@ impl<'p> Checker<'p> {
         };
         self.eager.pop();
         (
-            self.uncertain,
             self.relation_gave_up,
             self.relation_too_complex,
             self.union_too_complex,
@@ -2554,7 +2552,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     && !names.is_empty()
                 {
                     let scope = self.c.bound(file).import_equals_scope[i.idx()];
-                    at = files.resolve_name(file, scope, self.c.hir(file).id_at(names, 0), any);
+                    at = files.resolve_name(file, scope, self.c.hir(file)[names.at(0)].text, any);
                 }
             }
         }
@@ -2730,7 +2728,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             let after_name = self.c.end_of_name_at(self.file(), hir[i].name_pos);
             let equals = self.c.skip_trivia_from(self.file(), after_name);
             let start = self.c.skip_trivia_from(self.file(), equals + 1);
-            self.check_entity_name_visibility(hir.id_at(names, 0), start, Meaning::Namespace);
+            self.check_entity_name_visibility(hir[names.at(0)].text, start, Meaning::Namespace);
             self.tracker.get_symbol_accessibility_diagnostic = saved;
         }
         true
@@ -3406,7 +3404,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     } else {
                         Meaning::Namespace
                     };
-                    self.check_entity_name_visibility(hir.id_at(name, 0), hir[node].pos, meaning);
+                    self.check_entity_name_visibility(hir[name.at(0)].text, hir[node].pos, meaning);
                 }
                 for argument in hir.ids(args) {
                     self.visit_type(argument, false);

@@ -2271,7 +2271,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
             }
             T::TStringLiteral => {
-                key = p.parse_string_literal()?;
+                let mut name = p.parse_string_literal()?;
+                let next = p.lexer.loc();
+                p.note_loc(&mut name.loc, Mark::StringLiteralName, next);
+                key = name;
             }
             T::TBigIntegerLiteral => {
                 key = p.new_expr(

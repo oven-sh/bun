@@ -953,11 +953,11 @@ impl Checker<'_> {
         };
         bound.expr_symbol.iter().zip(&bound.expr_parent).any(|(&s, parent)| s == symbol && !matches!(parent, Parent::None))
             || hir.types.iter().enumerate().any(|(t, node)| match node.kind {
-                TypeNodeKind::Ref { name, .. } | TypeNodeKind::Typeof { name, .. } => !name.is_empty() && means_it(bound.type_scope[t], hir.id_at(name, 0)),
+                TypeNodeKind::Ref { name, .. } | TypeNodeKind::Typeof { name, .. } => !name.is_empty() && means_it(bound.type_scope[t], hir[name.at(0)].text),
                 _ => false,
             })
             || hir.import_equals.iter().enumerate().any(|(other, import)| {
-                matches!(import.target, ImportEqualsTarget::Entity(names) if !names.is_empty() && means_it(bound.import_equals_scope[other], hir.id_at(names, 0)))
+                matches!(import.target, ImportEqualsTarget::Entity(names) if !names.is_empty() && means_it(bound.import_equals_scope[other], hir[names.at(0)].text))
             })
             || hir.exports.iter().enumerate().any(|(x, export)| export.spec.is_none() && export.items.iter().any(|s| means_it(bound.export_scope[x], hir[s].local)))
     }
@@ -966,7 +966,7 @@ impl Checker<'_> {
     fn xm_follows_a_dot_somewhere(&self, cx: &Cx<'_>, name: Atom) -> bool {
         let hir = self.hir(cx.file);
         let is_among =
-            |names: IdList<Atom>, from: usize| hir.ids(names).skip(from).any(|n| n == name);
+            |names: Span<NameId>, from: usize| hir.texts(names).skip(from).any(|n| n == name);
         hir.exprs
             .iter()
             .any(|e| matches!(e.kind, ExprKind::Dot { name: member, .. } if member == name))
@@ -1178,7 +1178,7 @@ impl Checker<'_> {
         if scope.is_none() || names.is_empty() || names.len() > path.len() {
             return;
         }
-        for (slot, name) in path.iter_mut().zip(hir.ids(names)) {
+        for (slot, name) in path.iter_mut().zip(hir.texts(names)) {
             *slot = name;
         }
         let path = &path[..names.len()];
@@ -1610,7 +1610,7 @@ impl Checker<'_> {
         for attribute in attributes.iter() {
             let (name, value) = (hir[attribute].key.name()?, hir[attribute].value);
             let ty = self.type_of_expr(file, value);
-            if !self.is_known(ty) || self.is_uncertain(file, value) {
+            if !self.is_known(ty) {
                 return None;
             }
             let ty = self.regular(ty);

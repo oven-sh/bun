@@ -664,6 +664,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                         Prop {
                             kind: PropKind::Init,
                             key: PropKey::Name(atoms.intern_str(k)),
+                            name_kind: hir::NameKind::StringLiteral,
                             value: value(f, v, member.map(|member| &member.value), end, atoms),
                             pos,
                             start: pos,
@@ -719,6 +720,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                         Prop {
                             kind,
                             key,
+                            name_kind: hir::NameKind::StringLiteral,
                             value,
                             pos: p.name_pos,
                             start: p.name_pos,
@@ -2788,7 +2790,8 @@ impl Files {
         symbols.push(Symbol {
             name,
             flags: flags | SymFlags::TRANSIENT,
-            decls: bind::Decls::Many(Box::default()),
+            decls: bind::Decls::None,
+            value_declaration: u32::MAX,
             parent: SymbolId::NONE,
             exports: bind::TableId::NONE,
             members: bind::TableId::NONE,
@@ -2857,7 +2860,8 @@ impl Files {
         let symbol = Symbol {
             name: self.symbol(target).name,
             flags,
-            decls: bind::Decls::Many(Box::default()),
+            decls: bind::Decls::None,
+            value_declaration: self.symbol(target).value_declaration,
             parent: SymbolId::NONE,
             exports: bind::TableId::NONE,
             members: bind::TableId::NONE,
@@ -3010,7 +3014,8 @@ impl Files {
         let clone = Symbol {
             name: cloned.name,
             flags: cloned.flags | SymFlags::MERGED | SymFlags::TRANSIENT,
-            decls: bind::Decls::Many(cloned.decls.as_slice().into()),
+            decls: cloned.decls.clone(),
+            value_declaration: cloned.value_declaration,
             parent: cloned.parent,
             exports: cloned.exports,
             members: cloned.members,
@@ -3140,6 +3145,16 @@ impl Files {
             target = self.clone_symbol(resolved);
         }
         self.symbol_mut(target).flags |= source_flags;
+        // `SetValueDeclaration(target, source.ValueDeclaration)`
+        let own = self.value_declaration(target).map(|it| it.1);
+        if let Some((_, declaration)) = self.value_declaration(source)
+            && bind::takes_over_as_value_declaration(own, declaration)
+        {
+            let parts = self.parts(target);
+            let before: usize = parts.iter().map(|&it| self.symbol(it).decls.len()).sum();
+            let index = before as u32 + self.symbol(source).value_declaration;
+            self.symbol_mut(target).value_declaration = index;
+        }
         let parts = self.parts(source).into_vec();
         self.merged_parts.entry(target).or_default().extend(parts);
         // `mergeSymbolTable(GetMembers(target), source.Members, ..)`
@@ -3192,7 +3207,8 @@ impl Files {
         bound.symbols.push(Symbol {
             name,
             flags: SymFlags::MERGED,
-            decls: bind::Decls::Many(Box::default()),
+            decls: bind::Decls::None,
+            value_declaration: u32::MAX,
             parent,
             exports: bind::TableId::NONE,
             members: bind::TableId::NONE,
@@ -3365,6 +3381,19 @@ impl Files {
             own: own.iter(),
             merged: merged.map_or(&[][..], |table| &table[..]).iter(),
         }
+    }
+
+    /// `symbol.ValueDeclaration`
+    pub fn value_declaration(&self, sym: Sym) -> Option<(FileId, Decl)> {
+        let mut index = self.symbol(sym).value_declaration as usize;
+        for &part in self.parts(sym).iter() {
+            let decls = &self.symbol(part).decls;
+            match decls.get(index) {
+                Some(&decl) => return Some((part.file, decl)),
+                None => index -= decls.len(),
+            }
+        }
+        None
     }
 
     pub fn parts(&self, sym: Sym) -> List<'_, Sym> {
@@ -4635,7 +4664,7 @@ impl Files {
                     .module_of_specifier_as(file, spec, ResolutionMode::Require)
                     .map(|module| self.required_module_symbol(module)),
                 ImportEqualsTarget::Entity(names) => {
-                    let names: SmallVec<[Atom; 4]> = hir.ids(names).collect();
+                    let names: SmallVec<[Atom; 4]> = hir.texts(names).collect();
                     // `getSymbolOfPartOfRightHandSideOfImportEquals`: `import a = b` is about a namespace, `import a = b.c` about anything.
                     let meaning = if names.len() == 1 {
                         SymFlags::NAMESPACE

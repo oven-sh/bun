@@ -915,7 +915,12 @@ impl<'p> Checker<'p> {
                 }
                 // What another file declares counts as declared.
                 if init.is_none()
-                    || of == file && !self.is_const_declared_before_use(file, node, pat, d)
+                    || of == file
+                        && !self.is_block_scoped_name_declared_before_use(
+                            file,
+                            self.hir(file).node(d),
+                            self.hir(file).node(node),
+                        )
                 {
                     return None;
                 }
@@ -1735,7 +1740,7 @@ impl<'p> Checker<'p> {
         }
         let (found, is_memoizable) =
             self.run_memoizable(|c| c.type_of_discriminant_uncached(ty, access));
-        if is_memoizable && !self.uncertain && !self.is_stack_low() {
+        if is_memoizable && !self.is_stack_low() {
             self.flow_memo.discriminant_types.insert(key, found);
         }
         found
@@ -1819,7 +1824,7 @@ impl<'p> Checker<'p> {
                     && c.are_comparable(narrowed, discriminant)
             })
         });
-        if is_memoizable && !self.uncertain && !self.is_stack_low() {
+        if is_memoizable && !self.is_stack_low() {
             self.flow_memo.discriminated_types.insert(key, left);
         }
         left
@@ -2474,7 +2479,6 @@ impl<'p> Checker<'p> {
         }
         let constructor = self.type_of_expr(file, identifier);
         if !self.is_known(constructor) {
-            self.uncertain = true;
             return ty;
         }
         // `isFunctionType`, `isConstructorType`
@@ -2486,7 +2490,6 @@ impl<'p> Checker<'p> {
         let Some(candidate) = self.type_of_property(constructor, known::prototype) else {
             return ty;
         };
-        self.uncertain |= !self.is_known(candidate);
         let (object, function) = (
             self.global_ref(known::Object, &[]),
             self.global_ref(known::Function, &[]),
@@ -2560,7 +2563,6 @@ impl<'p> Checker<'p> {
         let as_written = self.type_of_compared(file, value);
         let value_ty = self.regular(as_written);
         if value_ty == TypeId::UNRESOLVED {
-            self.uncertain = true;
             return ty;
         }
         let key = (ty, as_written, loose, sense);
@@ -2569,7 +2571,7 @@ impl<'p> Checker<'p> {
         }
         let (narrowed, is_memoizable) =
             self.run_memoizable(|c| c.narrow_by_equal_type(ty, as_written, value_ty, loose, sense));
-        if is_memoizable && !self.uncertain && !self.is_stack_low() {
+        if is_memoizable && !self.is_stack_low() {
             self.flow_memo.equal_types.insert(key, narrowed);
         }
         narrowed
@@ -2823,7 +2825,6 @@ impl<'p> Checker<'p> {
             return ty;
         }
         let constructor = self.type_of_expr(file, right);
-        self.uncertain |= !self.is_known(constructor);
         let object = self.global_ref(known::Object, &[]);
         if !self.is_type_derived_from(constructor, object) {
             return ty;
@@ -3082,7 +3083,6 @@ impl<'p> Checker<'p> {
                 self.declared_type(sym)
             };
             if !self.is_known(target) {
-                self.uncertain = true;
                 return ty;
             }
             return self.narrowed_to(ty, target, sense, true);
@@ -3281,7 +3281,6 @@ impl<'p> Checker<'p> {
             _ => self.type_of_expr(file, data.callee),
         };
         let callee = self.non_nullable(callee);
-        self.uncertain |= !self.is_known(callee);
         if self.is_any(callee) {
             return None;
         }
@@ -3534,7 +3533,6 @@ impl<'p> Checker<'p> {
                 TypeId::NEVER
             } else {
                 let t = self.type_of_expr(file, test);
-                self.uncertain |= !self.is_known(t);
                 self.regular(t)
             };
             if !check(self, clause) {
@@ -5259,7 +5257,6 @@ impl<'p> Checker<'p> {
                     walk.remember(flow, result);
                     // What rests on a trial, a guess or a walk that gave up is nobody else's answer.
                     if !incomplete
-                        && !self.uncertain
                         && self.provisional == 0
                         && !walk.too_deep
                         && walk.steps < MAX_STEPS
@@ -5385,7 +5382,6 @@ impl<'p> Checker<'p> {
         if declared == assigned {
             return declared;
         }
-        self.uncertain |= !self.is_known(assigned);
         if self.is_any(assigned) {
             return declared;
         }
@@ -6097,7 +6093,7 @@ impl<'p> Checker<'p> {
                     }
                     let (reachable, is_memoizable) =
                         self.run_memoizable(|c| c.is_reachable_worker(file, flow, true, reduced));
-                    if is_memoizable && !self.uncertain {
+                    if is_memoizable {
                         let kept = &mut self.flow_memo.flow_node_reachable;
                         kept.insert((file, flow), reachable);
                     }
@@ -6617,10 +6613,7 @@ impl<'p> Checker<'p> {
             self.flow_depth -= 1;
             self.walk_declared = outer;
             // `x is never` is a type guard like any other, unless that nothing is left rests on something unknown.
-            if when_true == declared
-                || !leftover.is_never()
-                || when_true.is_never() && self.uncertain
-            {
+            if when_true == declared || !leftover.is_never() {
                 continue;
             }
             return Some(Predicate {

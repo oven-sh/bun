@@ -2518,6 +2518,8 @@ NOT compiled by cargo when this was written: it does not reach the file while a 
   `c02_program_checker.rs` 715), and the two files that use a resolver name `EmitResolver` as a value and give the
   checker to its methods. So the function answers that value and does not call `newEmitResolver`. If
   `emitresolver.rs` gives the resolver fields of its own, this function and those two files change together.
+  `emitresolver.rs` of `48da5c6a89` keeps the value without fields: since `04848b7d4f` the record has the field
+  `emit_resolver`, the link stores of the resolver ("Checker: the emit resolver").
 - The switch of `getSymbolAtLocation` has four `fallthrough`. The cases that fall into each other are one arm each,
   and a test of the kind says where a kind enters: `Identifier`, `PrivateIdentifier`, `PropertyAccessExpression` and
   `QualifiedName` with `ThisKeyword` and `ThisType`; the two string literal kinds with `NumericLiteral`;

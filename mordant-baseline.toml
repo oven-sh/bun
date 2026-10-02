@@ -79,7 +79,6 @@
 "reimplemented_helper:src/libuv_sys/libuv.rs" = 1
 "unused_pub:src/libuv_sys/lib.rs" = 2
 "unused_pub:src/libuv_sys/libuv.rs" = 41
-"unused_pub:src/libuv_sys/open_handles.rs" = 1
 
 [bun_opaque]
 "unused_pub:src/opaque/lib.rs" = 2
@@ -175,7 +174,7 @@
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4
-"unused_pub:src/sys/lib.rs" = 56
+"unused_pub:src/sys/lib.rs" = 55
 "unused_pub:src/sys/windows/mod.rs" = 5
 
 [bun_uws_sys]

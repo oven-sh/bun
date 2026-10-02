@@ -501,8 +501,11 @@ function ffiRunner(fast) {
       expect(identity_ptr(cptr)).toBe(cptr);
       const second_ptr = ptr(new Buffer(8));
       expect(identity_ptr(second_ptr)).toBe(second_ptr);
-      expect(new CString(ptr(Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0])), 4).toString()).toBe("abc");
-      expect(new CString(ptr(Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0])), 4, 2).toString()).toBe("ab");
+      // Keep the buffer referenced: its storage is only valid while it is alive.
+      const strings = Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0]);
+      expect(new CString(ptr(strings), 4).toString()).toBe("abc");
+      expect(new CString(ptr(strings), 4, 2).toString()).toBe("ab");
+      expect(strings.length).toBe(9);
     });
 
     it("CFunction", () => {
@@ -700,9 +703,8 @@ it("ptr(typedArray) stays valid after DFG tier-up", async () => {
     cmd: [bunExe(), "-e", code],
     env: {
       ...bunEnv,
-      // Force deterministic, early tier-up so the loop above reliably
-      // DFG-compiles (which registers an ArrayBufferView watchpoint on the
-      // folded view; registration relocates a FastTypedArray's vector).
+      // Deterministic early tier-up: the DFG folds the view into the compiled
+      // loop, and that relocates a small view's storage on an unfixed build.
       BUN_JSC_useConcurrentJIT: "false",
       BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
       BUN_JSC_thresholdForOptimizeSoon: "100",
@@ -710,8 +712,7 @@ it("ptr(typedArray) stays valid after DFG tier-up", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("STABLE");
-  expect(exitCode).toBe(0);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "STABLE", stderr: "", exitCode: 0 });
 });
 
 describe.skipIf(!FFI_FIXTURE_PATH)("run ffi", () => {

@@ -450,7 +450,12 @@ pub(crate) fn enqueue_peer_rows(
         index_sort::sort_indices_unstable(&mut targets, &mut |a, b| a.cmp(&b));
         targets.dedup();
         populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&targets))?;
+        // Rows queued before this call resolved inside that wait; `print_log` resets the errors they logged.
+        let failed = manager.log_mut().has_errors();
         print_log(manager)?;
+        if failed {
+            return Err(crate::Error::InstallFailed);
+        }
         for &row in rows {
             moved.push((row, manager.lockfile.buffers.resolutions[row as usize]));
             reresolve(manager, row)?;

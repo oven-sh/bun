@@ -1822,3 +1822,67 @@ it("throw from a child stdio 'data' listener is an uncaughtException and the str
     exitCode: 0,
   });
 });
+
+// A writer that never pauses makes most native reads return at once. Then 'data' used to come out of flow(), from
+// a chunk buffered inside _read(), and a listener throw left that chunk buffered with no read scheduled.
+it.concurrent.each(["stdout", "stderr"] as const)(
+  "a child.%s 'data' listener that throws on every chunk still gets the whole stream",
+  async name => {
+    const SIZE = 4 * 1024 * 1024;
+    const script = `
+      const { spawn } = require("node:child_process");
+      let bytes = 0, data = 0, uncaught = 0, rejections = 0, end = 0, close = 0;
+      process.on("uncaughtException", (e, origin) => {
+        if (origin !== "uncaughtException" || e.message !== "data-throw") {
+          console.log("unexpected: origin=" + origin + " message=" + (e && e.message));
+          process.exit(1);
+        }
+        uncaught++;
+      });
+      process.on("unhandledRejection", () => { rejections++; });
+      const child = spawn(process.execPath, ["-e", "process.${name}.write(Buffer.alloc(${SIZE}, 97))"], {
+        stdio: ["ignore", "${name === "stdout" ? "pipe" : "ignore"}", "${name === "stderr" ? "pipe" : "ignore"}"],
+      });
+      // Then only the stream holds the process: one that stops reading ends the run and does not hang it.
+      child.unref();
+      child.${name}.on("data", chunk => { bytes += chunk.length; data++; throw new Error("data-throw"); });
+      child.${name}.on("end", () => end++);
+      child.${name}.on("close", () => close++);
+      process.on("exit", () => {
+        console.log(JSON.stringify({ bytes, everyThrowWasUncaught: data > 0 && uncaught === data, rejections, end, close }));
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ bytes: SIZE, everyThrowWasUncaught: true, rejections: 0, end: 1, close: 1 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+it("throw from a child stdio 'data' listener with no handler is fatal", async () => {
+  const script = `
+    const { spawn } = require("node:child_process");
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => console.log('hi'), 50)"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    child.stdout.on("data", () => { throw new Error("data-throw-fatal"); });
+    process.on("exit", code => console.log("exit " + code));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("data-throw-fatal");
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "exit 1", exitCode: 1 });
+});

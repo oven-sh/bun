@@ -348,6 +348,27 @@ console.log(
 );
 `;
 
+// Readable.fromWeb over Bun.spawn stdout, reader started at spawn: the 'data' listener attaches after the reader
+// holds the bytes and the error, so the first _read() gets both.
+const FROM_WEB_MID_FILL_FIXTURE = /* js */ `
+import { existsSync } from "node:fs";
+import { Readable } from "node:stream";
+const p = Bun.spawn(${JSON.stringify(GO_WRITER_CMD)}, { stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+p.stdin.write("go\\n");
+p.stdin.flush();
+// The failing recv() writes this file.
+while (!existsSync(process.env.SPAWN_FAULT_REPORT)) await new Promise(resolve => setImmediate(resolve));
+const events = [];
+const stream = Readable.fromWeb(p.stdout);
+stream.on("data", chunk => events.push("data:" + chunk.length));
+stream.on("error", e => events.push("error:" + e.code));
+stream.on("close", async () => {
+  p.stdin.end();
+  await p.exited;
+  console.log(JSON.stringify({ events }));
+});
+`;
+
 // Bun.spawnSync / child_process.spawnSync / execFileSync: the lost output is an error, not a success.
 const SPAWN_SYNC_FIXTURE = /* js */ `
 import { spawnSync, execFileSync } from "node:child_process";
@@ -389,6 +410,7 @@ beforeAll(async () => {
     "child-process-bytes.mjs": CHILD_PROCESS_BYTES_FIXTURE,
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
+    "from-web-mid-fill.mjs": FROM_WEB_MID_FILL_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
@@ -577,6 +599,19 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         }),
       ).toEqual({
         parsed: { received: 5, readsAfterError: 0, events: ["chunk:5", "error:EIO"] },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("Readable.fromWeb(Bun.spawn stdout): 'data' gets the chunk read before the error, then 'error'", async () => {
+      expect(
+        await runWithFault("from-web-mid-fill.mjs", {
+          SPAWN_FAULT_RECV_MID_FILL: "1",
+          SPAWN_FAULT_REPORT: join(String(dir), "recv-report-from-web-mid-fill.txt"),
+        }),
+      ).toEqual({
+        parsed: { events: ["data:5", "error:EIO"] },
         stderr: "",
         exitCode: 0,
       });

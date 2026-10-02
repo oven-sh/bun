@@ -712,6 +712,102 @@ it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web so
   });
 });
 
+// A Bun.spawn pipe is a file descriptor, like a child's stdio in node:child_process: a 'data' listener throw is
+// an uncaughtException and the stream reads on.
+it("Readable.fromWeb(Bun.spawn().stdout): a 'data' listener that throws on every chunk still gets the whole stream", async () => {
+  const SIZE = 4 * 1024 * 1024;
+  const script = `
+    const { Readable } = require("node:stream");
+    let bytes = 0, data = 0, uncaught = 0, rejections = 0, end = 0, close = 0;
+    process.on("uncaughtException", (e, origin) => {
+      if (origin !== "uncaughtException" || e.message !== "data-throw") {
+        console.log("unexpected: origin=" + origin + " message=" + (e && e.message));
+        process.exit(1);
+      }
+      uncaught++;
+    });
+    process.on("unhandledRejection", () => { rejections++; });
+    const child = Bun.spawn({
+      cmd: [process.execPath, "-e", "process.stdout.write(Buffer.alloc(${SIZE}, 97))"],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const stream = Readable.fromWeb(child.stdout);
+    // Then only the stream holds the process: one that stops reading ends the run and does not hang it.
+    child.unref();
+    stream.on("data", chunk => { bytes += chunk.length; data++; throw new Error("data-throw"); });
+    stream.on("end", () => end++);
+    stream.on("close", () => close++);
+    process.on("exit", () => {
+      console.log(JSON.stringify({ bytes, everyThrowWasUncaught: data > 0 && uncaught === data, rejections, end, close }));
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ bytes: SIZE, everyThrowWasUncaught: true, rejections: 0, end: 1, close: 1 }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Node's Readable.fromWeb pushes from a promise reaction, so there a 'data' listener throw is an unhandledRejection.
+// Node has the same source for a fetch body, so the body keeps that.
+it("Readable.fromWeb(fetch body): a 'data' listener throw is an unhandledRejection, as in Node", async () => {
+  const script = `
+    const { Readable } = require("node:stream");
+    const events = [];
+    const { promise: firstChunkSeen, resolve: sawFirstChunk } = Promise.withResolvers();
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(new Uint8Array(1024).fill(97));
+              // The second chunk leaves only after the client saw the first, so the client's read waits for it.
+              await firstChunkSeen;
+              controller.enqueue(new Uint8Array(1024).fill(98));
+              controller.close();
+            },
+          }),
+        );
+      },
+    });
+    function done(event) {
+      events.push(event);
+      server.stop(true);
+    }
+    process.on("uncaughtException", (e, origin) => done("uncaughtException(" + origin + "): " + e.message));
+    process.on("unhandledRejection", e => done("unhandledRejection: " + e.message));
+    process.on("exit", () => console.log(JSON.stringify(events)));
+    fetch(server.url).then(res => {
+      Readable.fromWeb(res.body).on("data", chunk => {
+        if (chunk[0] === 97) return sawFirstChunk();
+        throw new Error("data-throw");
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(["unhandledRejection: data-throw"]),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("#9242.5 Stream has constructor", () => {
   const s = new Stream({});
   expect(s.constructor).toBe(Stream);

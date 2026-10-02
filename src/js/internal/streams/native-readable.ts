@@ -21,6 +21,8 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kIsHandle = Symbol("isHandle");
+const kDeferredPushes = Symbol("deferredPushes");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -50,6 +52,8 @@ interface NativeReadable extends NodeReadable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
+  [kIsHandle]: boolean;
+  [kDeferredPushes]: number;
   debugId: number;
 }
 
@@ -87,6 +91,11 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+  // Only the file-descriptor source (child stdio, Bun.spawn, Bun.stdin, Bun.file) has setFlowing. In Node that is a
+  // handle stream: a 'data' listener throw is an uncaughtException and the stream reads on. The other sources keep
+  // the promise semantics of Node's Readable.fromWeb.
+  stream[kIsHandle] = typeof bunNativePtr.setFlowing === "function";
+  stream[kDeferredPushes] = 0;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -169,7 +178,15 @@ function read(this: NativeReadable, maxToRead: number) {
     }
   }
   const chunk = getRemainingChunk(this, maxToRead);
-  var result = ptr.pull(chunk, this[kCloseState]);
+  var result;
+  try {
+    result = ptr.pull(chunk, this[kCloseState]);
+  } catch (e) {
+    if (this[kDeferredPushes] === 0) throw e;
+    // The chunks this _read() deferred come before its error.
+    process.nextTick(errorOrDestroy, this, e);
+    return;
+  }
   $assert(result !== undefined);
   $debug(
     `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
@@ -219,20 +236,40 @@ function pushEof(stream: NativeReadable) {
   if (!stream.destroyed) stream.push(null);
 }
 
-// `push()` returning false means the Readable's buffer is at/above hwm (or
-// the consumer paused); stop the native reader so kernel backpressure reaches
-// the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: any) {
+  if (!stream[kIsHandle]) {
+    stream.push(chunk);
+    return;
+  }
+  const state = stream._readableState;
+  // A push inside _read() only buffers, and flow() then emits 'data' from that buffer, where a listener throw ends
+  // the read loop. Node's handle pushes one chunk per callback, outside _read().
+  if (stream[kDeferredPushes] !== 0 || (state.sync && state.flowing && stream.listenerCount("data") !== 0)) {
+    stream[kDeferredPushes]++;
+    process.nextTick(pushDeferred, stream, chunk);
+  } else {
+    pushFromHandle(stream, chunk);
+  }
+}
+
+function pushDeferred(stream: NativeReadable, chunk: any) {
+  stream[kDeferredPushes]--;
+  pushFromHandle(stream, chunk);
+}
+
+function pushFromHandle(stream: NativeReadable, chunk: any) {
   let wantMore: boolean;
   try {
     wantMore = stream.push(chunk);
   } catch (e) {
     // Node dispatches 'data' from its native read callback, where a listener throw is an uncaughtException.
     reportUncaughtException(e);
-    wantMore = true;
-    // The throw unwound addChunk before maybeReadMore; keep the stream reading.
+    // The throw left addChunk before its maybeReadMore(). Node's handle reads on.
     process.nextTick(readAfterListenerThrow, stream);
+    return;
   }
+  // `push()` returning false means the Readable's buffer is at/above hwm (or the consumer paused); stop the native
+  // reader so kernel backpressure reaches the writer (readStop, like net.Socket). The next `_read()` re-enables it.
   if (!wantMore) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
@@ -240,9 +277,7 @@ function pushAndCheck(stream: NativeReadable, chunk: any) {
 }
 
 function readAfterListenerThrow(stream: NativeReadable) {
-  // On native close, handleResult already scheduled the EOF push(null).
-  if (stream.destroyed || stream[kCloseState][0]) return;
-  stream.read(0);
+  if (!stream.destroyed) stream.read(0);
 }
 
 function handleNumberResult(stream: NativeReadable, result: number, chunk: any, isClosed: boolean) {

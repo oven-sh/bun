@@ -448,7 +448,7 @@ mod stand_ins {
 ''')
 emit = os.path.join(ROOT, 'checker/emitresolver.rs')
 if os.path.exists(emit):
-    w('    // checker/emitresolver.rs\n    ' + line('checker/emitresolver.rs', 'pub struct EmitResolver'))
+    w('    // checker/emitresolver.rs\n    ' + line('checker/emitresolver.rs', 'pub struct EmitResolver;'))
 else:
     w('    // checker/emitresolver.rs has no file yet: the value that symbolaccessibility.rs and nodebuilderimpl.rs name.\n    pub struct EmitResolver;\n')
 w('''

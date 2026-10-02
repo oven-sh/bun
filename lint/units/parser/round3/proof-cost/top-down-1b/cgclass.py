@@ -11,8 +11,9 @@ Prints: program totals; the sums over the names that match (what cgsum.py prints
 parser; the classes whose Ir, Bc or Bi differ. --names lists the cachegrind names that no symbol of the binary has.
 --src TREE (the sources of b; the .cg files must be of cgbench-raw.sh): per class also `tests`, the Bc of b on the lines of
 src/js_parser whose text matches --site (default: a line that starts with `if p.lint()` or `if self.lint()`), and a verdict:
-  ok       Bc b - a = tests and Ir b - a = 2 x tests (one compare and one jump per executed test, nothing else)
-  IR       Bc b - a = tests, the instructions differ by something else too: explain line by line (cglinediff.py)
+  ok       Bc b - a = tests and Ir b - a is between 0 and 3 per test (a test is one compare and one jump: 2; the layout
+           of the blocks around it moves an unconditional jump or two)
+  IR       Bc b - a = tests, the instructions differ by more than that: explain line by line (cglinediff.py)
   BC       Bc b - a is not the number of executed tests: a conditional jump that is no test was added or removed
   NO-SITE  no test ran in the function and its counts differ: it pays on a path that reaches no site"""
 import os, re, subprocess, sys, collections, json
@@ -114,9 +115,9 @@ for k, (dI, dC, dB, base, c) in enumerate(rows):
     extra = ''
     if SRC:
         t = tests[c]
-        v = 'ok     ' if (dC == t and dI == 2 * t and dB == 0) else 'NO-SITE' if t == 0 else 'BC     ' if dC != t or dB else 'IR     '
+        v = 'NO-SITE' if t == 0 else 'BC     ' if dC != t or dB else 'ok     ' if 0 <= dI <= 3 * t else 'IR     '
         bad += 0 if v == 'ok     ' else 1; verdicts[v.strip()] += 1
-        extra = '  tests %9d  %s' % (t, v)
+        extra = '  tests %9d  Ir/test %5s  %s' % (t, '%.2f' % (dI / t) if t else '-', v)
     if k < TOP: print('  Ir %+12d  Bc %+11d  Bi %+9d%s  (a Ir %s)  %s' % (dI, dC, dB, extra, f'{base:,}', label(c)[:150]))
 if SRC:
     print('tests %d (Bc of b on the lines of the sites); Bc b - a of the parser %+d; functions: %s' % (sum(tests.values()), class_sum(cb)[1] - class_sum(ca)[1], ', '.join('%s %d' % kv for kv in sorted(verdicts.items())) or 'none differ'))

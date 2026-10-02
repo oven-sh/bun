@@ -305,3 +305,13 @@
 10-02_15:38:34 anon=1649MB pids=46 load=494.95 top=cachegrind-amd6:295MB
 10-02_15:39:10 anon=790MB pids=52 load=536.64 top=cachegrind-amd6:302MB
 10-02_15:39:45 anon=560MB pids=56 load=594.20 top=rustc:648MB
+10-02_15:40:16 anon=781MB pids=74 load=548.82 top=ld.lld:1401MB
+10-02_15:40:50 anon=2480MB pids=80 load=583.05 top=ld.lld:2830MB
+10-02_15:41:20 anon=2863MB pids=74 load=531.64 top=ld.lld:3087MB
+10-02_15:41:51 anon=2993MB pids=77 load=505.13 top=ld.lld:3214MB
+10-02_15:42:24 anon=3109MB pids=79 load=476.23 top=ld.lld:3298MB
+10-02_15:42:55 anon=3276MB pids=74 load=456.96 top=ld.lld:3506MB
+10-02_15:43:26 anon=62MB pids=40 load=414.39 top=llvm-objdump:80MB
+10-02_15:43:58 anon=547MB pids=47 load=421.93 top=rustc:635MB
+10-02_15:44:29 anon=1112MB pids=73 load=391.96 top=ld.lld:1570MB
+10-02_15:45:01 anon=3447MB pids=82 load=405.36 top=ld.lld:3908MB

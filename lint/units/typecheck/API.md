@@ -293,6 +293,20 @@ This section says what the crate got so that cargo compiles them; the rows are i
   has no module of those paths.
 - Layer 4 changed two of these three points: `Text`, the diagnostic and its store are in the tree since `a9b14ab2d6`
   and `d0230a94c6` ("Binder: the wiring of `binder`" below).
+- Layer 7 brought `LiveList`, `Map` and `Memo` into `core/golang.rs` (`0d31a6eb0f`; their tests `ec92cd8fca`): lines
+  152 to 220, 222 to 270 and 345 to 350 of the contract's file. A caller writes them as the contract has them:
+  `Map::make()` is `make(map[K]V)` and `Map::default()` the nil map; `get(&k)` answers the zero value for a key that is
+  not there, `get_ok(&k)` an `Option`, `set(k, v)` answers `false` on the nil map where Go panics (`#[must_use]`),
+  `delete(&k)`, `clear()`, `len()` as an `isize`, `is_nil()`; `LiveList::NIL`, `from_cells`, `is_nil`, `len`, `at`,
+  `set` with its `bool`, `iter` (each value is read at its step), `same`, `sub`, `to_vec`; `Memo { value, done }`.
+  Three differences: `Map` names `bun_collections::HashMap` itself, because the tree has no `deps` module; a key of
+  `Map` needs `Hash + Eq` and not `Copy` as well, because the key of `bigint_literal_types` is `jsnum::PseudoBigInt`,
+  which owns its digits; `LiveList::sub` keeps a part of the nil list nil, as `List::sub` of the tree does. A value of
+  `Map` is `Copy + Default`. `Map` has no `Clone` and no `Debug` (`bun_collections::HashMap` has neither), `LiveList`
+  no `Debug`. No compiler has seen the three and the two tests (`live_list_shares_its_cells`, `map_is_a_go_map`) were
+  not run: they were read against `src/collections/zig_hash_map.rs` and against the calls of `checker/`, and
+  `rustfmt --check --edition 2024` passes. `SliceBuf`, `compare_strings` and `compare_f64` are still not in the tree,
+  and no file names them.
 
 ### Verified
 
@@ -319,7 +333,8 @@ This section says what the crate got so that cargo compiles them; the rows are i
   after this one name them and no file defines them (the probe of the round-4 survey). The contract's
   `tscore/golang.rs` and `ast_diagnostic.rs` hold all but `deep_clone_node`. Layer 4 brought `Text`, `DiagnosticId` and
   `DiagnosticStore`; the others wait ("Binder: the wiring of `binder`" below). Layer 6 brought `deep_clone_node`
-  ("Emit printer: the wiring of `printer`" at the end of this file).
+  ("Emit printer: the wiring of `printer`" at the end of this file). Layer 7 brought `Map`, `LiveList` and `Memo`
+  (`0d31a6eb0f`, the last point of "Differences from the contract" above).
 - `lowering::ParseDiagnostic` and `importer::javascript::ParseDiagnostic` stay two types until `ast/diagnostic.rs` has
   the diagnostic itself. It has since `d0230a94c6`; the two types are still there.
 

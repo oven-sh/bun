@@ -37,6 +37,7 @@ bin() { case $1 in base) echo $BASE ;; ref) echo $REF ;; head) echo $HEAD ;; esa
 for t in base ref head; do
   python3 $L/symsizes.py $(bin $t) > $O/$t.sym.txt
   python3 $M/grammar-syms.py $(bin $t) > $O/$t.grammar-syms.txt 2>/dev/null
+  python3 $H/symsizes2.py $(bin $t) --lint "$LINTONLY" > $O/$t.sym2.txt
 done
 STRIP='/usr/bin/strip --strip-all --strip-debug --discard-all -R .eh_frame -R .eh_frame_hdr -R .gcc_except_table'
 $STRIP $REF -o $O/ref.stripped; [ -f "$HEAD_BUN" ] || { $STRIP $HEAD -o $O/head.stripped; HEAD_BUN=$O/head.stripped; }
@@ -83,9 +84,8 @@ fi
 # 6. the text: shared files against the reference, src/ast/ts.rs against main
 python3 $H/siteaudit2.py --ref "$REF_TREE" --head "$HEAD_TREE" --sites ${ELSE:+--else} ${ALLOW:+--allow $ALLOW} --ast-base $AST_BASE --repo /workspace/bun > $O/siteaudit.txt
 # what to read
-echo "== sizes (parser text, P<false,false>, P<true,false>, P<false,true>, P<true,true>): base, ref, head; stripped"
-for t in base ref head; do head -5 $O/$t.sym.txt | awk -v t=$t '{printf "%s %s  ", t, $NF} END {print ""}'; done
-for t in base ref head; do printf '%-5s skipper: %s\n' $t "$(tail -1 $O/$t.grammar-syms.txt)"; done
+echo "== sizes by address (symbols, bytes): base | ref | head; then the stripped binaries"
+paste -d'|' $O/base.sym2.txt $O/ref.sym2.txt $O/head.sym2.txt | awk -F'|' '{printf "%s |%s |%s\n", $1, substr($2, 35), substr($3, 35)}'
 cat $O/stripped.txt
 echo "== machine code"
 printf 'strict  ref-head  %s | %s\n' "$(head -1 $O/fncmp.strict.ref-head.txt)" "$(tail -1 $O/fncmp.strict.ref-head.txt)"

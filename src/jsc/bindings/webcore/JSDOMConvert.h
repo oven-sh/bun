@@ -29,7 +29,6 @@
 #include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertBufferSource.h"
 #include "JSDOMConvertCallbacks.h"
-#include "JSDOMConvertDate.h"
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMConvertEventListener.h"

@@ -9,28 +9,27 @@ use bun_io::max_buf::MaxBuf;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
-use bun_ptr::ScopedRef;
-use bun_ptr::{IntrusiveRc, ParentRef, RefCount};
-use bun_sys;
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_ptr::{ParentRef, RefCount, RefPtr};
 
 use super::readable::Readable;
 use super::{StdioKind, StdioResult, Subprocess};
 
-pub type IOReader = BufferedReader;
+pub(crate) type IOReader = BufferedReader;
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Pending,
     Done(Vec<u8>),
-    Err(bun_sys::Error),
+    /// The read failed. The bytes read before the error come first.
+    Err(Vec<u8>, bun_sys::Error),
 }
 
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
-pub struct PipeReader {
+#[ref_count(debug_name = "PipeReader")]
+pub(crate) struct PipeReader {
     pub(crate) reader: IOReader,
     // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
     // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;
@@ -45,7 +44,6 @@ pub struct PipeReader {
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
-    /// Intrusive refcount field for `bun_ptr::IntrusiveRc<PipeReader>`.
     pub(crate) ref_count: RefCount<PipeReader>,
     pub(crate) state: State,
     pub(crate) stdio_result: StdioResult,
@@ -107,7 +105,7 @@ impl PipeReader {
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<NonNull<MaxBuf>>,
-    ) -> IntrusiveRc<PipeReader> {
+    ) -> RefPtr<PipeReader> {
         let mut this = Box::new(PipeReader {
             ref_count: RefCount::init(),
             process: Some(ParentRef::from(process)),
@@ -132,7 +130,7 @@ impl PipeReader {
         // SAFETY: `raw` is a valid, freshly-boxed PipeReader.
         unsafe {
             (*raw).reader.set_parent(raw.cast::<core::ffi::c_void>());
-            IntrusiveRc::from_raw(raw)
+            RefPtr::from_raw(raw)
         }
     }
 
@@ -172,10 +170,10 @@ impl PipeReader {
             // Hold one more ref so `self` survives the on_reader_error() teardown
             // below long enough to return; matches the POSIX keepalive.
             //
-            // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
+            // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
             // derefs on Drop. The deref may free `*self`, but no borrow of `self`
             // outlives the guard's drop on return.
-            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
+            let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
             if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
                 // Route through the same teardown as a read-callback error
                 // (matches POSIX's register_poll failure path): state=Err,
@@ -201,17 +199,17 @@ impl PipeReader {
             // just took above. Hold one more ref so `this` survives long enough to
             // check state after start() returns.
             //
-            // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
+            // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
             // derefs on Drop. The deref may free `*self`, but no borrow of `self`
             // outlives the guard's drop on return.
-            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
+            let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
 
             let _ = self.reader.start(self.stdio_result.unwrap(), true);
 
             #[cfg(unix)]
             {
-                if matches!(self.state, State::Err(_)) {
-                    // onReaderError already ran; `_keepalive`'s Drop on return
+                if matches!(self.state, State::Err(..)) {
+                    // onReaderError already ran; `_guard`'s Drop on return
                     // will drop the last ref and deinit() closes the handle.
                     return;
                 }
@@ -227,8 +225,8 @@ impl PipeReader {
     }
 
     // pub const toJS = toReadableStream;
-    pub(crate) fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        self.to_readable_stream(global_object)
+    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
+        self.to_readable_stream(cx)
     }
 
     fn on_reader_done(&mut self) {
@@ -246,13 +244,13 @@ impl PipeReader {
 
     fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
         if let Readable::Pipe(pipe) = process.stdout.get() {
-            if core::ptr::eq(pipe.data.as_ptr(), self) {
+            if core::ptr::eq(pipe.as_ptr(), self) {
                 return StdioKind::Stdout;
             }
         }
 
         if let Readable::Pipe(pipe) = process.stderr.get() {
-            if core::ptr::eq(pipe.data.as_ptr(), self) {
+            if core::ptr::eq(pipe.as_ptr(), self) {
                 return StdioKind::Stderr;
             }
         }
@@ -288,7 +286,7 @@ impl PipeReader {
         }
     }
 
-    fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_readable_stream(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         // detach() at scope exit = clear `process` backref + deref. The deref
         // may drop the last ref, so it must run after the result is computed; the backref
         // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may
@@ -305,7 +303,7 @@ impl PipeReader {
             State::Pending => {
                 // `_parent` is unused in `from_pipe`; pass the raw ptr instead
                 // of `self` so borrowck allows `&mut self.reader` alongside it.
-                let stream = ReadableStream::from_pipe(global_object, this_ptr, &mut self.reader);
+                let stream = ReadableStream::from_pipe(cx, this_ptr, &mut self.reader);
                 self.state = State::Done(Vec::new());
                 stream
             }
@@ -317,15 +315,15 @@ impl PipeReader {
                 else {
                     unreachable!()
                 };
-                ReadableStream::from_owned_slice(global_object, bytes, 0)
+                ReadableStream::from_owned_slice(cx, bytes, 0)
             }
-            State::Err(_err) => {
-                let empty = ReadableStream::empty(global_object)?;
-                ReadableStream::cancel(
-                    &ReadableStream::from_js(empty, global_object)?.unwrap(),
-                    global_object,
-                );
-                Ok(empty)
+            State::Err(..) => {
+                let State::Err(bytes, err) =
+                    core::mem::replace(&mut self.state, State::Err(Vec::new(), Default::default()))
+                else {
+                    unreachable!()
+                };
+                ReadableStream::from_bytes_then_error(cx, bytes, err)
             }
         }
     }
@@ -334,22 +332,17 @@ impl PipeReader {
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
-                // `state.done` is now empty via `take()`.
-                // `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
-                // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
-                // boxed slice so JS becomes the owner — same pattern as
-                // `MarkedArrayBuffer::from_string`.
-                let slice: &'static mut [u8] = Box::leak(bytes.into_boxed_slice());
-                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
-                    .to_node_buffer(global_this)
+                JSValue::create_buffer_from_box(global_this, bytes.into_boxed_slice())
             }
             _ => Ok(JSValue::UNDEFINED),
         }
     }
 
     fn on_reader_error(&mut self, err: bun_sys::Error) {
-        // A previous `State::Done` buffer is freed by Drop of the replaced Vec.
-        self.state = State::Err(err);
+        let owned = self.to_owned_slice();
+        // Release the fd now, as EOF does, so a child still writing gets EPIPE.
+        self.reader.deinit();
+        self.state = State::Err(owned, err);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
             let kind = self.kind(process.get());
@@ -365,7 +358,7 @@ impl PipeReader {
                 self.reader.close();
             }
             State::Done(_) => {}
-            State::Err(_) => {}
+            State::Err(..) => {}
         }
     }
 
@@ -389,23 +382,12 @@ impl PipeReader {
             uws.cast()
         }
     }
+}
 
-    /// Called when ref_count hits zero. Consumes the Box allocation.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destructor` upholds the sole-owner contract.
-    fn deinit(this: *mut PipeReader) {
+impl Drop for PipeReader {
+    fn drop(&mut self) {
         #[cfg(unix)]
-        {
-            // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
-            let this_ref = unsafe { &*this };
-            debug_assert!(this_ref.reader.is_done() || matches!(this_ref.state, State::Err(_)));
-        }
-
-        // The `state` buffer and `reader` are freed by Drop when the Box drops.
-
-        // SAFETY: `this` was created via heap::alloc in `create()`.
-        drop(unsafe { bun_core::heap::take(this) });
+        debug_assert!(self.reader.is_done() || matches!(self.state, State::Err(..)));
     }
 }
 

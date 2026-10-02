@@ -25,6 +25,7 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMException.h"
+#include "ObjectBindings.h"
 #include "ZigGlobalObject.h"
 #include "JSDOMConvertSequences.h"
 #include <JavaScriptCore/JSArray.h>
@@ -66,12 +67,10 @@ Vector<JSC::Strong<JSC::JSObject>> convertTransferList(JSGlobalObject& lexicalGl
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!step.isObject())
             return notIterable();
-        JSValue done = step.get(&lexicalGlobalObject, vm.propertyNames->done);
+        auto [done, element] = Bun::getIteratorResult(&lexicalGlobalObject, asObject(step), Bun::IteratorDoneValue::Skip);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (done.toBoolean(&lexicalGlobalObject))
             break;
-        JSValue element = step.get(&lexicalGlobalObject, vm.propertyNames->value);
-        RETURN_IF_EXCEPTION(throwScope, {});
         // The arg IS iterable, so a bad *element* is not a "must be an iterable" error.
         // node: DataCloneError from port.postMessage(), TypeError from structuredClone().
         if (!element.isObject()) {

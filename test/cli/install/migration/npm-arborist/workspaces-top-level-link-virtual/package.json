@@ -1,0 +1,10 @@
+{
+  "name": "workspaces-top-level-link",
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "a": "^1.0.0"
+  }
+}

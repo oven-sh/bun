@@ -842,7 +842,7 @@ export async function checkDarwinAgentSockets(host: DarwinAgentHost): Promise<vo
     return;
   }
 
-  if (count < limit) {
+  if (count <= limit) {
     return;
   }
   if (env.BUN_RUNNER_REBOOT_DARWIN_AGENT !== "1") {
@@ -857,7 +857,7 @@ export async function checkDarwinAgentSockets(host: DarwinAgentHost): Promise<vo
   // job a healthy machine can be over the limit too.
   const settleMs = 45_000;
   const sampleMs = 5_000;
-  for (let waited = 0; count >= limit && waited < settleMs; waited += sampleMs) {
+  for (let waited = 0; count > limit && waited < settleMs; waited += sampleMs) {
     await host.sleep(sampleMs);
     const nextCount = readCount();
     if (nextCount === undefined) {
@@ -865,7 +865,7 @@ export async function checkDarwinAgentSockets(host: DarwinAgentHost): Promise<vo
     }
     count = nextCount;
   }
-  if (count < limit) {
+  if (count <= limit) {
     return;
   }
 

@@ -87,12 +87,15 @@ const counters = (count: number, hours = "21.9") => `Up ${hours} h. TCP sockets 
 const overLimit =
   "`darwin-arm64-hardtack` holds 64728 leaked kernel TCP sockets (limit 20075). " +
   "macOS drops TCP data on it when the tests take the count past 65075.";
+const overLimitNote =
+  "darwin-arm64-hardtack is over its limit of 20075 leaked kernel TCP sockets (a socket closed in the last " +
+  "30 seconds counts too). A test job reboots such a machine when the job has BUN_RUNNER_REBOOT_DARWIN_AGENT=1.";
 const settled = Array(9).fill("sleep 5000");
 
 test("the limit leaves room for 45,000 sockets under 80% of the TCP memory cap", () => {
   // The cap is 1/32 of RAM at 3.3 KB per socket: 81,349 sockets on 8 GiB. socket() failed at about 81,300.
-  expect([8, 16].map(gib => getDarwinLeakedSocketLimit(gib * GiB))).toEqual([20_075, 85_150]);
-  expect(getDarwinLeakedSocketLimit(4 * GiB)).toBeLessThan(0);
+  // On 4 GiB the 80% mark is under 45,000, so there is no limit to speak of.
+  expect([8, 16, 4].map(gib => getDarwinLeakedSocketLimit(gib * GiB))).toEqual([20_075, 85_150, -12_463]);
 });
 
 test("ignoreTerminationSignals() silences the listeners a process had and then puts them back, once", () => {
@@ -147,9 +150,23 @@ describe("checkDarwinAgentSockets", () => {
     expect(await run({ ...where, counts: [leaked] })).toEqual({ calls: [], printed: [counters(leaked)] });
   });
 
-  test("runs the tests on a bare-metal macOS 26 agent under its limit", async () => {
-    expect(await run({ counts: [20_074] })).toEqual({ calls: [], printed: [counters(20_074)] });
+  test("tolerates a count at the limit, and not one socket more", async () => {
+    const atLimit = { calls: [], printed: [counters(20_075)] };
+    expect(await run({ counts: [20_075], env: bareMetalAgent })).toEqual(atLimit);
+    expect(await run({ counts: [20_075] })).toEqual(atLimit);
     expect(await run({ counts: [leaked], totalMemory: 16 * GiB })).toEqual({ calls: [], printed: [counters(leaked)] });
+
+    expect(await run({ counts: [20_076], env: bareMetalAgent })).toEqual({
+      calls: [],
+      printed: [counters(20_076), overLimitNote],
+    });
+    // With the reboot on: a sample back at the limit ends the wait, and a count that stays one over does not.
+    expect((await run({ counts: [20_076, 20_075] })).calls).toEqual(["sleep 5000"]);
+    expect((await run({ counts: [20_076] })).calls.slice(0, settled.length + 2)).toEqual([
+      ...settled,
+      "ignore signals",
+      "sudo -n shutdown -r now",
+    ]);
   });
 
   test("runs the tests when sysctl has no answer", async () => {
@@ -165,11 +182,7 @@ describe("checkDarwinAgentSockets", () => {
     // No wait either: the 45 seconds only matter before a reboot.
     expect(await run({ counts: [leaked], env: bareMetalAgent })).toEqual({
       calls: [],
-      printed: [
-        counters(leaked),
-        "darwin-arm64-hardtack is over its limit of 20075 leaked kernel TCP sockets (a socket closed in the last " +
-          "30 seconds counts too). A test job reboots such a machine when the job has BUN_RUNNER_REBOOT_DARWIN_AGENT=1.",
-      ],
+      printed: [counters(leaked), overLimitNote],
     });
   });
 

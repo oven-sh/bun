@@ -939,7 +939,7 @@ impl Checker<'_> {
                     .declarations_of_prop(prop)
                     .iter()
                     .find(|&&(f, m)| is_local(f, m))
-                    .map(|&(f, m)| (f, self.hir(f)[m].start, Reported::Member(m))),
+                    .map(|&(f, m)| (f, self.hir(f)[m].name_pos, Reported::Member(m))),
             };
             let prop_type = self.type_of_prop_as_read(prop, members.mapper);
             if !self.is_known(prop_type) {

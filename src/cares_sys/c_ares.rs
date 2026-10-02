@@ -685,10 +685,49 @@ const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 /// the implementor routes mutation through interior mutability.
 pub trait ChannelContainer: Sized {
     fn on_dns_socket_state(&self, socket: ares_socket_t, readable: bool, writable: bool);
-    fn set_channel(&self, channel: *mut Channel);
+    fn set_channel(&self, channel: *mut Channel, servers: InitialServers);
+    /// The channel for a query that is about to be sent, created if there is
+    /// none. [`QueryChannel::of`] is the only caller, and the only way to send
+    /// a query, so what the container does here happens before every query.
+    /// The channel must stay alive while the borrow of the container lasts.
+    fn channel_for_query(&self) -> Result<*mut Channel, Error>;
 }
 
-/// Trait for `Channel::resolve`: ties a lookup-name string to its NSType and
+/// Where the servers of a new channel came from.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum InitialServers {
+    /// The system resolver config named at least one usable nameserver.
+    System,
+    /// It named none, or c-ares could not read it. The channel has c-ares's
+    /// default server, `127.0.0.1`.
+    Fallback,
+}
+
+/// `bun:internal-for-testing`: the file c-ares reads in place of
+/// `/etc/resolv.conf` (`ARES_OPT_RESOLVCONF`). Null outside of tests.
+static RESOLV_CONF_FOR_TESTING: core::sync::atomic::AtomicPtr<c_char> =
+    core::sync::atomic::AtomicPtr::new(ptr::null_mut());
+
+/// Channels created after this call read `path` in place of `/etc/resolv.conf`,
+/// on the platforms where c-ares reads that file. A channel keeps its path.
+pub fn set_resolv_conf_for_testing(path: std::ffi::CString) {
+    // The previous path is leaked: a channel init on another thread can hold it.
+    RESOLV_CONF_FOR_TESTING.store(path.into_raw(), core::sync::atomic::Ordering::Release);
+}
+
+/// `ares_init_options` with the test override of the resolv.conf path applied.
+fn init_options(channel: &mut *mut Channel, opts: &mut Options, mut optmask: c_int) -> c_int {
+    let resolv_conf = RESOLV_CONF_FOR_TESTING.load(core::sync::atomic::Ordering::Acquire);
+    if !resolv_conf.is_null() {
+        // c-ares copies the string.
+        opts.resolvconf_path = resolv_conf;
+        optmask |= ARES_OPT_RESOLVCONF;
+    }
+    // SAFETY: c-ares FFI; `channel` and `opts` are live for the call.
+    unsafe { ares_init_options(channel, opts, optmask) }
+}
+
+/// Trait for `QueryChannel::resolve`: ties a lookup-name string to its NSType and
 /// the `extern "C"` parse-thunk used as the ares_callback.
 /// The dns_jsc consumer impls it per (T, record-type).
 pub trait ResolveHandler: Sized {
@@ -737,12 +776,6 @@ impl Channel {
         }
 
         let mut opts = Options {
-            // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
-            // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
-            // NOT set ARES_FLAG_NO_DFLT_SVR here — that makes init fail with
-            // ENOSERVER, which breaks dns.setServers() (it needs an initialized
-            // channel to call ares_set_servers_ports). Letting the 127.0.0.1
-            // default stand means setServers() works as the documented workaround.
             flags: ARES_FLAG_NOCHECKRESP,
             sock_state_cb: Some(on_sock_state::<C>),
             // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
@@ -763,8 +796,24 @@ impl Channel {
         unsafe {
             bun_libuv_sys::uv__winsock_ensure()
         };
-        // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
-        let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
+        // With ARES_FLAG_NO_DFLT_SVR, init fails with ENOSERVER when c-ares finds
+        // no nameserver, which tells that case apart. The channel then takes the
+        // default server after all: init must not fail for lack of a server, and
+        // `dns.setServers()` needs a channel. c-ares never finds one on Android
+        // (no /etc/resolv.conf, no JNI), so the first attempt is left out there.
+        let mut servers = InitialServers::System;
+        let mut rc = if cfg!(target_os = "android") {
+            ARES_ENOSERVER
+        } else {
+            opts.flags |= ARES_FLAG_NO_DFLT_SVR;
+            let rc = init_options(&mut channel, &mut opts, optmask);
+            opts.flags &= !ARES_FLAG_NO_DFLT_SVR;
+            rc
+        };
+        if rc == ARES_ENOSERVER {
+            servers = InitialServers::Fallback;
+            rc = init_options(&mut channel, &mut opts, optmask);
+        }
         if let Some(err) = Error::get(rc) {
             // Don't `ares_library_cleanup()` here: `library_init()` is `run_once!`, so
             // tearing down the library on a per-channel failure would leave every later
@@ -772,14 +821,61 @@ impl Channel {
             return Some(err);
         }
 
-        this.set_channel(channel);
+        this.set_channel(channel, servers);
         None
+    }
+
+    /// Whether the system resolver config names a nameserver that c-ares can
+    /// use, right now.
+    pub fn system_has_nameserver() -> bool {
+        let mut probe: *mut Channel = ptr::null_mut();
+        let mut opts = Options {
+            flags: ARES_FLAG_NO_DFLT_SVR,
+            ..Default::default()
+        };
+        if init_options(&mut probe, &mut opts, ARES_OPT_FLAGS) != ARES_SUCCESS {
+            return false;
+        }
+        // SAFETY: `probe` is the channel just created; nothing else has it.
+        unsafe { ares_destroy(probe) };
+        true
+    }
+
+    /// `ares_reinit`: read the system resolver config again and apply it to
+    /// this channel. Servers that the user set stay. Queries in flight on a
+    /// server that is no longer listed are sent to the new servers.
+    ///
+    /// c-ares has no thread support here (`library_init` asserts it), so the
+    /// read, the socket-state callbacks and any query callbacks all run inside
+    /// this call, on the calling thread.
+    pub fn reinit(&mut self) {
+        // SAFETY: `self` is a live channel. Without threads the status is
+        // always success, also when the config could not be read.
+        let _ = unsafe { ares_reinit(self) };
     }
 
     /// FFI destroy — `ares_destroy`.
     pub unsafe fn destroy(this: *mut Channel) {
         // SAFETY: caller guarantees `this` is a live channel returned by `ares_init_options`.
         unsafe { ares_destroy(this) };
+    }
+}
+
+/// A channel that is about to take a new query. The functions that send one
+/// are here and not on [`Channel`], and [`QueryChannel::of`] is the only
+/// constructor, so no query skips [`ChannelContainer::channel_for_query`].
+pub struct QueryChannel<'a> {
+    /// Live for `'a`: the contract of `ChannelContainer::channel_for_query`.
+    channel: *mut Channel,
+    container: core::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> QueryChannel<'a> {
+    pub fn of<C: ChannelContainer>(container: &'a C) -> Result<Self, Error> {
+        Ok(Self {
+            channel: container.channel_for_query()?,
+            container: core::marker::PhantomData,
+        })
     }
 
     /// See c-ares `ares_getaddrinfo` documentation.
@@ -812,7 +908,7 @@ impl Channel {
         // SAFETY: c-ares FFI; host/port/hints are NUL-terminated stack buffers or null; ctx outlives the channel.
         unsafe {
             ares_getaddrinfo(
-                self,
+                self.channel,
                 host_ptr,
                 port_ptr,
                 hints_,
@@ -846,7 +942,7 @@ impl Channel {
         // SAFETY: c-ares FFI; name_ptr is a NUL-terminated stack buffer; ctx outlives the channel.
         unsafe {
             ares_query(
-                self,
+                self.channel,
                 name_ptr,
                 NSClass::ns_c_in,
                 T::NS_TYPE,
@@ -879,7 +975,7 @@ impl Channel {
                 // SAFETY: c-ares FFI; addr holds a 4-byte in_addr written by ares_inet_pton; ctx outlives the channel.
                 unsafe {
                     ares_gethostbyaddr(
-                        self,
+                        self.channel,
                         addr.as_ptr().cast::<c_void>(),
                         4,
                         AF::INET,
@@ -896,7 +992,7 @@ impl Channel {
                 // SAFETY: c-ares FFI; addr holds a 16-byte in6_addr written by ares_inet_pton; ctx outlives the channel.
                 unsafe {
                     ares_gethostbyaddr(
-                        self,
+                        self.channel,
                         addr.as_ptr().cast::<c_void>(),
                         16,
                         AF::INET6,
@@ -928,7 +1024,7 @@ impl Channel {
         // SAFETY: c-ares FFI; sa is a valid sockaddr of size `salen`; ctx outlives the channel.
         unsafe {
             ares_getnameinfo(
-                self,
+                self.channel,
                 std::ptr::from_ref::<sockaddr>(sa),
                 salen,
                 // node returns ENOTFOUND for addresses like 255.255.255.255:80
@@ -939,7 +1035,9 @@ impl Channel {
             );
         }
     }
+}
 
+impl Channel {
     #[inline]
     pub fn process(&mut self, fd: ares_socket_t, readable: bool, writable: bool) {
         ares_process_fd(
@@ -997,6 +1095,7 @@ unsafe extern "C" {
         optmask: c_int,
     ) -> c_int;
     pub fn ares_destroy(channel: *mut Channel);
+    fn ares_reinit(channel: *mut Channel) -> c_int;
     // Opaque handle by exclusive reference only — `Channel` is `!Freeze`/`!Sync`
     // (UnsafeCell + PhantomData<*mut u8>). Note: `ares_cancel`/`ares_process_fd`
     // synchronously invoke stored completion callbacks which may re-enter the
@@ -1007,7 +1106,7 @@ unsafe extern "C" {
     pub safe fn ares_cancel(channel: &mut Channel);
     pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
     pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);
-    pub fn ares_getaddrinfo(
+    fn ares_getaddrinfo(
         channel: *mut Channel,
         node: *const c_char,
         service: *const c_char,
@@ -1019,7 +1118,7 @@ unsafe extern "C" {
 }
 
 unsafe extern "C" {
-    pub fn ares_query(
+    fn ares_query(
         channel: *mut Channel,
         name: *const c_char,
         dnsclass: NSClass,
@@ -1027,7 +1126,7 @@ unsafe extern "C" {
         callback: ares_callback,
         arg: *mut c_void,
     );
-    pub fn ares_gethostbyaddr(
+    fn ares_gethostbyaddr(
         channel: *mut Channel,
         addr: *const c_void,
         addrlen: c_int,
@@ -1035,7 +1134,7 @@ unsafe extern "C" {
         callback: ares_host_callback,
         arg: *mut c_void,
     );
-    pub fn ares_getnameinfo(
+    fn ares_getnameinfo(
         channel: *mut Channel,
         sa: *const sockaddr,
         salen: ares_socklen_t,
@@ -1861,10 +1960,12 @@ impl Error {
 }
 
 pub(crate) const ARES_FLAG_NOCHECKRESP: c_int = 1 << 7;
+pub(crate) const ARES_FLAG_NO_DFLT_SVR: c_int = 1 << 9;
 pub(crate) const ARES_OPT_FLAGS: c_int = 1 << 0;
 pub(crate) const ARES_OPT_TRIES: c_int = 1 << 2;
 pub(crate) const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
 pub(crate) const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
+pub(crate) const ARES_OPT_RESOLVCONF: c_int = 1 << 17;
 pub(crate) const ARES_NI_NAMEREQD: c_int = 1 << 2;
 pub(crate) const ARES_NI_LOOKUPHOST: c_int = 1 << 8;
 pub(crate) const ARES_NI_LOOKUPSERVICE: c_int = 1 << 9;

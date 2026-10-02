@@ -803,6 +803,11 @@ export const dnsGetaddrinfoError = $newRustFunction(
   2,
 ) as (code: string, hostname: string) => Error & { code: string; errno: number; syscall: string; hostname: string };
 
+/** c-ares reads `path` in place of /etc/resolv.conf for every `node:dns` resolver whose first use comes after this call. Has an effect where c-ares reads that file: Linux and FreeBSD. */
+export const dnsSetResolvConf = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.setResolvConfForTesting", 1) as (
+  path: string,
+) => void;
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

@@ -360,7 +360,7 @@ pub(crate) trait CAresRecordType: Sized {
     const NS_TYPE: c_ares::NSType;
     /// The `ares_callback` thunk that parses raw reply bytes for this record type
     /// and forwards to `ResolveInfoRequest<Self>::on_cares_complete`. Used as
-    /// `ResolveHandler::raw_callback` for the generic `Channel::resolve` dispatch.
+    /// `ResolveHandler::raw_callback` for the generic `QueryChannel::resolve` dispatch.
     const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
     fn to_js_response(
         &mut self,
@@ -502,6 +502,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
     ) {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
+            let _completing = Resolver::enter_completion((*this).resolver_for_caching, err_, false);
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
                 if let Some(pos) = (*this).pending_slot {
@@ -519,7 +520,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
     }
 }
 
-// Wires `ResolveInfoRequest<T>` into `Channel::resolve` — the per-record
+// Wires `ResolveInfoRequest<T>` into `QueryChannel::resolve` — the per-record
 // `T::RAW_CALLBACK` parses the raw DNS reply and calls back into
 // `on_cares_complete`.
 impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
@@ -533,7 +534,7 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
         buffer_length: c_int,
     ) {
         // SAFETY: `ctx` is the `*mut ResolveInfoRequest<T>` handed to `ares_query`
-        // by `Channel::resolve`; the callback owns it for this call.
+        // by `QueryChannel::resolve`; the callback owns it for this call.
         unsafe { (T::RAW_CALLBACK)(ctx, status, timeouts, buffer, buffer_length) }
     }
 }
@@ -637,6 +638,7 @@ impl GetHostByAddrInfoRequest {
     ) {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
+            let _completing = Resolver::enter_completion((*this).resolver_for_caching, err_, true);
             if let Some(resolver) = (*this).resolver_for_caching {
                 if let Some(pos) = (*this).pending_slot {
                     (*resolver).drain_pending_addr_cares(pos, err_, timeout, result);
@@ -891,6 +893,7 @@ impl GetNameInfoRequest {
         // SAFETY: `this` is the heap-allocated request c-ares calls back with;
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
+            let _completing = Resolver::enter_completion((*this).resolver_for_caching, err_, true);
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
                 if let Some(pos) = (*this).pending_slot {
@@ -1364,6 +1367,7 @@ impl GetAddrInfoRequest {
         // SAFETY: `this` is the heap-allocated request c-ares calls back with;
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
+            let _completing = Resolver::enter_completion((*this).resolver_for_caching, err_, false);
             if let Some(resolver) = (*this).resolver_for_caching {
                 if let Some(pos) = (*this).pending_slot {
                     (*resolver).drain_pending_host_cares(pos, err_, timeout, result);
@@ -1432,7 +1436,7 @@ impl GetAddrInfoRequest {
     }
 }
 
-// Wires `GetAddrInfoRequest` into `Channel::get_addr_info`.
+// Wires `GetAddrInfoRequest` into `QueryChannel::get_addr_info`.
 impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
     fn on_addr_info(
         &mut self,
@@ -3004,6 +3008,24 @@ pub(crate) mod internal {
         Ok(out)
     }
 
+    /// `bun:internal-for-testing`: c-ares reads `path` in place of
+    /// `/etc/resolv.conf` for the channels created after this call.
+    pub(crate) fn set_resolv_conf_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let path = frame.argument(0);
+        if !path.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!("expected (path: string)")));
+        }
+        let path = path.to_utf8(global)?;
+        let Ok(path) = std::ffi::CString::new(path.slice()) else {
+            return Err(global.throw_invalid_arguments(format_args!("path contains a NUL byte")));
+        };
+        c_ares::set_resolv_conf_for_testing(path);
+        Ok(JSValue::UNDEFINED)
+    }
+
     /// `bun:internal-for-testing`: the error a lookup of `hostname` reports
     /// when getaddrinfo(3) returns the `EAI_*` status named `code`.
     pub(crate) fn getaddrinfo_error_for_testing(
@@ -3720,6 +3742,12 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
+    server_source: Cell<ServerSource>,
+    /// A query failed in a way that `server_source` allows a new read of the
+    /// system resolver config for. The next query does that read first.
+    reread_servers: Cell<bool>,
+    /// How many completion callbacks of the channel are on the stack.
+    completing: Cell<u32>,
     /// The context whose script made the resolver: its channel is that context's, whoever is first
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
     /// called by then (`bun test --isolate` renews it for every file).
@@ -3958,6 +3986,21 @@ pub(crate) enum ChannelResult<'a> {
     Result(&'a mut c_ares::Channel), // BORROW_FIELD — borrows the resolver's `channel` field
 }
 
+/// Where a channel's server list came from. Decides whether a refused query
+/// makes the next query read the system resolver config again.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ServerSource {
+    /// c-ares found no nameserver when the channel was created. The channel has
+    /// c-ares's default server, 127.0.0.1, which nobody configured.
+    Fallback,
+    /// The system resolver config. Node reads the config again while the list
+    /// is one loopback server that refuses (`ChannelWrap::EnsureServers`).
+    System,
+    /// `setServers()` was called, or the system list is not one loopback
+    /// server. Final, like node's `is_servers_default_ = false`.
+    Settled,
+}
+
 // Canonical enum + parser live in `bun_dns` (lower tier so `cli` can parse
 // `--dns-result-order` without depending on the runtime). Re-export for
 // existing `crate::dns_jsc::Order` callers; `to_js` stays here as a tier-6
@@ -4046,6 +4089,9 @@ impl Resolver {
         Self {
             ref_count: bun_ptr::RefCount::init(),
             channel: Cell::new(None),
+            server_source: Cell::new(ServerSource::Settled),
+            reread_servers: Cell::new(false),
+            completing: Cell::new(0),
             made_in,
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
@@ -4766,16 +4812,18 @@ impl Resolver {
     ) -> JsResult<*mut c_ares::Channel> {
         match self.get_channel() {
             ChannelResult::Result(result) => Ok(std::ptr::from_mut(result)),
-            ChannelResult::Err(err) => {
-                let system_error = SystemError {
-                    errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
-                    ..Default::default()
-                };
-                Err(global_this.throw_value(system_error.to_error_instance(global_this)))
-            }
+            ChannelResult::Err(err) => Err(Self::throw_channel_error(global_this, err)),
         }
+    }
+
+    fn throw_channel_error(global_this: &JSGlobalObject, err: c_ares::Error) -> jsc::JsError {
+        let system_error = SystemError {
+            errno: -1,
+            code: bun_core::String::static_(err.code()),
+            message: bun_core::String::static_(err.label()),
+            ..Default::default()
+        };
+        global_this.throw_value(system_error.to_error_instance(global_this))
     }
 
     // ───────────── poll callbacks ─────────────
@@ -5178,9 +5226,9 @@ impl Resolver {
         }
 
         let ip = ip_slice.slice();
-        let channel: *mut c_ares::Channel = match self.get_channel() {
-            ChannelResult::Result(res) => res,
-            ChannelResult::Err(err) => {
+        let mut channel = match c_ares::QueryChannel::of(self) {
+            Ok(channel) => channel,
+            Err(err) => {
                 return Err(global_this.throw_value(
                     super::cares_jsc::error_to_js_with_syscall_and_hostname(
                         err,
@@ -5219,7 +5267,7 @@ impl Resolver {
         // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
         // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
         unsafe {
-            (*channel).get_host_by_addr(ip, &mut *request);
+            channel.get_host_by_addr(ip, &mut *request);
         }
 
         // SAFETY: `bun_vm()` returns the live VM back-ptr.
@@ -5404,8 +5452,22 @@ impl c_ares::ChannelContainer for Resolver {
         Resolver::on_dns_socket_state(self, socket, readable, writable);
     }
     #[inline]
-    fn set_channel(&self, channel: *mut c_ares::Channel) {
+    fn channel_for_query(&self) -> Result<*mut c_ares::Channel, c_ares::Error> {
+        if self.reread_servers.get() {
+            self.refresh_servers();
+        }
+        match self.get_channel() {
+            ChannelResult::Result(channel) => Ok(channel),
+            ChannelResult::Err(err) => Err(err),
+        }
+    }
+    #[inline]
+    fn set_channel(&self, channel: *mut c_ares::Channel, servers: c_ares::InitialServers) {
         self.channel.set(Some(channel));
+        self.server_source.set(match servers {
+            c_ares::InitialServers::System => ServerSource::System,
+            c_ares::InitialServers::Fallback => ServerSource::Fallback,
+        });
         // SAFETY: a resolver with a channel is at its final address (the
         // channel holds it); it leaves its context in `destroy_channel`.
         let context = match self.made_in {
@@ -5426,10 +5488,120 @@ impl Resolver {
         let Some(channel) = self.channel.take() else {
             return false;
         };
+        self.server_source.set(ServerSource::Settled);
+        self.reread_servers.set(false);
         self.abort_handle.leave();
         // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
         unsafe { c_ares::Channel::destroy(channel) };
         true
+    }
+
+    /// Entry of a c-ares completion callback. Records a failure for
+    /// `channel_for_query`, and counts the callback as running until the
+    /// returned guard drops: the callback can run JS that sends a query.
+    ///
+    /// # Safety
+    /// `resolver` is live and outlives the guard. Every frame that enters
+    /// c-ares holds a ref on the resolver for the whole call.
+    unsafe fn enter_completion(
+        resolver: Option<*mut Resolver>,
+        err: Option<c_ares::Error>,
+        hides_refusal: bool,
+    ) -> Option<impl Drop> {
+        // SAFETY: fn contract.
+        let this = unsafe { &*resolver? };
+        if let Some(err) = err {
+            this.query_failed(err, hides_refusal);
+        }
+        this.completing.set(this.completing.get() + 1);
+        Some(scopeguard::guard(this, |this| {
+            this.completing.set(this.completing.get() - 1)
+        }))
+    }
+
+    /// A query on the channel ended with `err`. `hides_refusal`: c-ares reports
+    /// this kind of query as ENOTFOUND when the server refused it
+    /// (`ares_gethostbyaddr`, `ares_getnameinfo`).
+    fn query_failed(&self, err: c_ares::Error, hides_refusal: bool) {
+        // c-ares cannot discover nameservers on Android: a new read finds none.
+        if cfg!(target_os = "android") {
+            return;
+        }
+        let refused = match self.server_source.get() {
+            ServerSource::Settled => return,
+            // https://github.com/nodejs/node/blob/a7a978415cc690fc1f751800a2a8052d4d02f289/src/cares_wrap.h#L397
+            ServerSource::System => err == c_ares::Error::ECONNREFUSED,
+            ServerSource::Fallback => {
+                err == c_ares::Error::ECONNREFUSED
+                    || (hides_refusal && err == c_ares::Error::ENOTFOUND)
+            }
+        };
+        if refused {
+            self.reread_servers.set(true);
+        }
+    }
+
+    /// Read the system resolver config again and apply it to the channel, in
+    /// place: the channel, its local address and its queries in flight stay.
+    /// Node destroys the channel and makes a new one here:
+    /// https://github.com/nodejs/node/blob/a7a978415cc690fc1f751800a2a8052d4d02f289/src/cares_wrap.cc#L1120-L1153
+    #[cold]
+    fn refresh_servers(&self) {
+        // A completion callback is on the stack, so c-ares holds pointers to
+        // the servers that a new config replaces. The next query does the read.
+        if self.completing.get() != 0 {
+            return;
+        }
+        self.reread_servers.set(false);
+        let Some(channel) = self.channel.get() else {
+            return;
+        };
+        if self.server_source.get() == ServerSource::System
+            && !Self::has_one_loopback_server(channel)
+        {
+            self.server_source.set(ServerSource::Settled);
+            return;
+        }
+        // `ares_reinit` also applies a server list that is empty, which a config
+        // with only unusable nameservers gives. Keep the servers the channel has.
+        if !c_ares::Channel::system_has_nameserver() {
+            return;
+        }
+        // SAFETY: `channel` is the live c-ares channel owned by `self`, and no
+        // c-ares call on it is on the stack.
+        unsafe { (*channel).reinit() };
+        self.server_source
+            .set(if Self::has_one_loopback_server(channel) {
+                ServerSource::System
+            } else {
+                ServerSource::Settled
+            });
+    }
+
+    /// Whether the channel's server list is one loopback server, 127.0.0.1 or
+    /// ::1: the list that node reads the system config again for.
+    fn has_one_loopback_server(channel: *mut c_ares::Channel) -> bool {
+        let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
+        // SAFETY: `channel` is a live handle from `ares_init_options`; `servers` is a stack out-param.
+        if unsafe { c_ares::ares_get_servers_ports(channel, &raw mut servers) }
+            != c_ares::ARES_SUCCESS
+            || servers.is_null()
+        {
+            return false;
+        }
+        scopeguard::defer! {
+            // SAFETY: `servers` was allocated by ares_get_servers_ports; ares_free_data is its deallocator.
+            unsafe { c_ares::ares_free_data(servers.cast()) }
+        };
+        // SAFETY: non-null head of the list c-ares allocated.
+        let server = unsafe { &*servers };
+        if !server.next.is_null() {
+            return false;
+        }
+        let mut buf = [0u8; INET6_ADDRSTRLEN + 1];
+        // SAFETY: `addr_ptr` type-erases the in_addr/in6_addr union arm that `family` names.
+        let ip = unsafe { bun_cares_sys::ntop(server.family, server.addr_ptr(), &mut buf) };
+        matches!(ip, Some(b"127.0.0.1" | b"::1"))
     }
 }
 
@@ -5505,9 +5677,9 @@ impl Resolver {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let channel: *mut c_ares::Channel = match self.get_channel() {
-            ChannelResult::Result(res) => res,
-            ChannelResult::Err(err) => {
+        let mut channel = match c_ares::QueryChannel::of(self) {
+            Ok(channel) => channel,
+            Err(err) => {
                 // syscall = "query" + ucfirst(TYPE_NAME) — precomputed per record type.
                 return Err(
                     global_this.throw_value(super::cares_jsc::error_to_js_with_syscall(
@@ -5546,11 +5718,11 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
-        // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
-        // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
-        // consumes the request, so the `&mut` borrow is not held past this call.
-        unsafe { (*channel).resolve(name, &mut *request) };
+        // SAFETY: `request` is the freshly heap-allocated ResolveInfoRequest.
+        // c-ares stores the ctx pointer and calls `T::RAW_CALLBACK`
+        // (→ `on_cares_complete`) which consumes the request, so the `&mut`
+        // borrow is not held past this call.
+        unsafe { channel.resolve(name, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -5563,9 +5735,9 @@ impl Resolver {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let channel: *mut c_ares::Channel = match self.get_channel() {
-            ChannelResult::Result(res) => res,
-            ChannelResult::Err(err) => {
+        let mut channel = match c_ares::QueryChannel::of(self) {
+            Ok(channel) => channel,
+            Err(err) => {
                 let syscall = bun_core::String::create_atom(&query.name);
                 let system_error = SystemError {
                     errno: -1,
@@ -5607,7 +5779,7 @@ impl Resolver {
         // pointer and calls `AddrInfo::callback_wrapper::<GetAddrInfoRequest>`
         // (→ `on_cares_complete`) which consumes the request, so the `&mut`
         // borrow is not held past this call.
-        unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
+        unsafe { channel.get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -5965,11 +6137,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_channel_servers(
-            Self::get_channel_from_vm(global_this)?,
-            global_this,
-            callframe,
-        )
+        global_resolver(global_this).set_servers(global_this, callframe)
     }
 
     #[host_fn(method)]
@@ -5978,11 +6146,15 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_channel_servers(
+        let result = Self::set_channel_servers(
             self.get_channel_or_error(global_this)?,
             global_this,
             callframe,
-        )
+        )?;
+        // https://github.com/nodejs/node/blob/a7a978415cc690fc1f751800a2a8052d4d02f289/src/cares_wrap.cc#L2309
+        self.server_source.set(ServerSource::Settled);
+        self.reread_servers.set(false);
+        Ok(result)
     }
 
     // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
@@ -6081,7 +6253,8 @@ impl Resolver {
         }
 
         let resolver = global_resolver(global_this);
-        let channel = resolver.get_channel_or_error(global_this)?;
+        let mut channel = c_ares::QueryChannel::of(resolver)
+            .map_err(|err| Self::throw_channel_error(global_this, err))?;
 
         // This string will be freed in `CAresNameInfo.deinit`
         let mut cache_name = Vec::new();
@@ -6121,7 +6294,7 @@ impl Resolver {
         // sockaddr_storage reborrowed as sockaddr; `request` was just
         // `heap::alloc`'d and is owned by c-ares until the callback fires.
         unsafe {
-            (*channel).get_name_info(
+            channel.get_name_info(
                 // See `get_sockaddr` call above — inferred `sockaddr` type is
                 // platform-dependent and unnameable on Windows from this crate.
                 &mut *(&raw mut sa).cast(),
@@ -6224,4 +6397,8 @@ export_host_fn!(
 export_host_fn!(
     internal::getaddrinfo_error_for_testing,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_getaddrinfoErrorForTesting"
+);
+export_host_fn!(
+    internal::set_resolv_conf_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_setResolvConfForTesting"
 );

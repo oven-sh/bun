@@ -654,8 +654,11 @@ What the 18 functions name and the tree of `f49ea57437` does not have, so what t
   of that `SourceFiles` (`file_name`, `path`, `text`, `ecma_line_map -> &[i32]`). If the trait comes into the tree
   with other methods or another line map type, the impl of `ProgramFiles` follows it.
 - The methods `new_diagnostic_for_node(node, message, args) -> DiagnosticId` and `check_not_canceled()` of
-  `utilities.go` 22 and 1663: `checker/utilities.rs` is one of the 15 modules without a file. `c21` does not define
-  `new_diagnostic_for_node`, which the scratch crate of the contract had in this module.
+  `utilities.go` 22 and 1663: `checker/utilities.rs` had no file at `f49ea57437`. `c21` does not define
+  `new_diagnostic_for_node`, which the scratch crate of the contract had in this module. `6349fc8157` brings
+  `utilities.rs` with both, in the signatures that `c21` calls and the probe stands in for (lines 75 and 2113:
+  `&mut self` with a slice of `Arg`, and `check_not_canceled(&self)`, which records the fault of upstream's panic).
+  `resolve_name` of the four functions of N-RESOLVE is of `c03_init.rs`, which had no file at `6349fc8157`.
 
 ## Node builder types (`nodebuilder`)
 

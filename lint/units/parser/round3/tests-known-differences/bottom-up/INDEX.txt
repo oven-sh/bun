@@ -1,0 +1,30 @@
+tests-known-differences, bottom-up. Round 3, R4 (research, 2026-10-02). Nothing here is in the worktree, nothing was committed, and the
+notes were not saved with save-notes (the phase had no git). No build ran: the Rust draft was never compiled.
+Binaries: main = /workspace/base/bun.f4d755a9c (release of f4d755a9cf); round 1 = /workspace/bun/build/release/bun (23a20afa7e).
+typescript 6.0.2 from /workspace/wt/parser/node_modules. Scratch was /tmp/tkd (volatile): run.sh makes it again.
+
+run.sh                  the whole pipeline in order; CORPORA=1 also runs the harness of round 2 on three corpora with both binaries
+rows.json               the 366 rows of the four test files: file, describe, group, loader (ts, tsx, js, deco), src, expected, key
+extract-rows.mjs        makes rows.json from test/bundler/transpiler/typescript-grammar*.test.ts (needs the files)
+side.mjs                <bun> side.mjs rows.json out.json: the output, the errors and the design value of each row
+tsc-rows.mjs            parse diagnostics, grammar errors of the checker, other codes and metadata of tsc for each row
+classify.mjs            rows.classified.json: the cause of round 2 (causes.mjs) and the class T, O-*, M, X of each row
+gen/roots.mjs           the type roots of a source and their outline, as type_sink_tests.rs prints one
+gen/erased.cjs          sidecar-erased-statements/top-down/oracle.cjs as a module (run, keptNodes)
+gen/facts.mjs           rows.facts.json: roots, kept tags, erased records, wrapper records, nodes, enums, returns; or tsc's first diagnostic
+gen/families.mjs        the family of a row, the place in main (f4d755a9cf) that decides it, and the kind of free place for a lint parse
+gen/check-families.mjs  the table of the families
+gen/rust.mjs            grammar_rows_tests.rs.draft: the tables and the six tests for src/js_parser/parse/grammar_rows_tests.rs
+gen/lint-command.mjs    lint-command-rows.json and lint-parse-grammar.test.ts.draft: the rows through `bun --lint`, for NEEDS.md N2 and N3
+corpus-lists.mjs        corpus-lists.json, runs/corpus-lists.txt: what main rejects and tsc takes, and the metadata that differs, in three corpora
+valid-plain.mjs         main on the 153 sources of round2/a1-differential/top-down/probes/valid.plain.txt: 153 rejected
+lists.mjs               api-known-differences.txt: the paste source of "Known differences of a parse without lint" for API.md
+
+runs/main.f4d755a9c.json, runs/head.23a20afa7.json, runs/tsc.json      step 2 of run.sh
+runs/base.*.jsonl.gz, runs/head.*.jsonl.gz                              the harness on testrows (301), targeted (3,952), small-sub (7,089)
+runs/diff.*.table.txt                                                   the tables of diff.mjs for the three pairs: those of round 2
+runs/valid-plain.main.json, runs/corpus-lists.txt
+
+Counts: 366 rows = 104 T + 99 M + 152 O (75 statements, 60 expressions, 10 class members, 6 parameters, 1 class header) + 11 X.
+main rejects 256 and accepts 110 with another value or output; round 1 gives the expected text of all 366. 313 distinct (loader, source).
+tsc: 356 rows parse, 346 are valid as a whole; the other 20 are 9 metadata rows with `unique`, 7 module rows and 4 X rows.

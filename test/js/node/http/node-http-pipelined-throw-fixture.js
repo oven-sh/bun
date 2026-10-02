@@ -126,6 +126,11 @@ const server = http.createServer(serverOptions.get(mode) ?? {}, (req, res) => {
         finishFirst();
       });
       break;
+    case "bad-chunk":
+      // No explicit throw: write() rejects its chunk in the call, also on a response that is queued.
+      setImmediate(finishFirst);
+      events.push(`request ${req.url}`);
+      return void res.write(123);
     case "request":
     case "large":
       setImmediate(finishFirst);
@@ -171,6 +176,7 @@ server.listen(0, "127.0.0.1", () => {
     received += chunk.toString("latin1");
     switch (mode) {
       case "request":
+      case "bad-chunk":
       case "checkContinue":
       case "checkExpectation":
         if (received.includes("first-done")) report();

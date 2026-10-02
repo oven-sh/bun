@@ -678,13 +678,24 @@ impl NodeHTTPResponse {
     }
 
     fn resume_socket(&self) {
+        self.resume_socket_if(Flags::empty());
+    }
+
+    /// end() does not leave the socket paused. A response that waits for the connection leaves
+    /// the reads to the response that has it.
+    fn resume_socket_for_end(&self) {
+        self.resume_socket_if(Flags::CURRENT);
+    }
+
+    /// `required`: the flags that the response needs for the resume.
+    #[inline]
+    fn resume_socket_if(&self, required: Flags) {
         scoped_log!(NodeHTTPResponse, "resumeSocket");
         let flags = self.flags.get();
         let Some(raw) = self.reader() else {
             return;
         };
-        if flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::UPGRADED)
+        if flags.intersection(Flags::SOCKET_CLOSED | Flags::UPGRADED | required) != required
             || raw.is_connect_request()
         {
             return;
@@ -1379,6 +1390,9 @@ impl NodeHTTPResponse {
                     auto_header_bits,
                     keep_alive_timeout_secs,
                 )?;
+                if IS_END {
+                    this.resume_socket_for_end();
+                }
                 this.deliver::<IS_END>(global_object, &args, &mut string_or_buffer, this_value)
             };
             if let Some(raw_response) = raw_response {
@@ -1773,6 +1787,9 @@ impl NodeHTTPResponse {
 
         raw_response.corked(|| {
             for item in queued.items {
+                if matches!(item, QueuedItem::End(_)) {
+                    this.resume_socket_for_end();
+                }
                 // Read again for each item: the close of the socket releases the connection.
                 let Some(raw_response) = this.writer() else {
                     return;
@@ -2655,9 +2672,6 @@ impl NodeHTTPResponse {
         self.spill_pending_pinned_write(global_object);
 
         if IS_END {
-            // We dont wanna a paused socket when we call end, so is important to resume the socket
-            self.resume_socket();
-
             if !this_value.is_empty() {
                 js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
             }
@@ -2995,6 +3009,8 @@ impl NodeHTTPResponse {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
+        // We dont wanna a paused socket when we call end, so is important to resume the socket
+        self.resume_socket_for_end();
         self.write_or_end::<true>(global_object, arguments, callframe.this())
     }
 

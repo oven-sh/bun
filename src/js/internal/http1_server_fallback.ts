@@ -293,7 +293,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     },
     // The socket's bytes while a write waits for 'drain' or an ended response is still flushing; a socket under its high water mark emits no 'drain'.
     get bufferedAmount() {
-      return onwritable || (this.ended && !this.finished) ? socket.writableLength : 0;
+      // A queued response has nothing in the socket: those bytes are of the response ahead.
+      return recorded === null && (onwritable || (this.ended && !this.finished)) ? socket.writableLength : 0;
     },
     // Native on_drain: the socket drained, so the waiting callback runs.
     socketDrained() {

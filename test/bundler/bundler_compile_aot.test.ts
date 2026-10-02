@@ -1241,9 +1241,21 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     function constructsImplicitInLoop(n: number) { let s = 0; const first = new Implicit(); for (let i = 0; i < n; i++) s += first.again().one(); return s; }
     out.push(new Twin(1).twin().v, constructsInLoop(4), constructsChildInLoop(4), constructsEitherInLoop(EitherA, 4), constructsEitherInLoop(EitherB, 4), constructsImplicitInLoop(20000));
 
+    function scaledBy(a: number, b = 2) { return a * b; }
+    function omitsOptional(n: number) { let s = 0; for (let i = 0; i < n; i++) s += scaledBy(i); return s; }
+    function passesOptional(n: number) { let s = 0; for (let i = 0; i < n; i++) s += scaledBy(i, 3); return s; }
+    function forwardsOptional(n: number, b?: number) { let s = 0; for (let i = 0; i < n; i++) s += scaledBy(i, b); return s; }
+    function countsArguments(a: number, b = 2) { return arguments.length + a + b; }
+    function takesRest(a: number, ...rest: number[]) { return a + rest.length; }
+    function keepsOptional(a: number, o: { v: number } | null = null) { keptOptional.push(o); return a; }
+    function passesLiteralToOptionalThatEscapes(i: number) { return keepsOptional(i, { v: i }); }
+    const keptOptional: ({ v: number } | null)[] = [];
+    out.push(omitsOptional(4), passesOptional(4), forwardsOptional(4), forwardsOptional(4, 5), countsArguments(1), takesRest(1, 2, 3));
+    out.push(passesLiteralToOptionalThatEscapes(7), keptOptional[0]!.v);
+
     console.log(out.join());
   `;
-  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000\n";
+  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7\n";
   const loopOptions = "useAOTLoopSplitting=1,useAOTInlineFastPathsInLoops=1";
 
   const builds = new Map<string, Promise<Map<string, string[]>>>();
@@ -1296,6 +1308,9 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     ["inlined-construct:Twin", ["constructsInLoop"], []],
     ["inlined-construct", [], ["constructsChildInLoop", "constructsEitherInLoop", "constructsImplicitInLoop", "again"]],
     ["direct-construct", [], ["again"]],
+    ["folded-comparison-of-argument", ["omitsOptional", "passesOptional"], ["forwardsOptional"]],
+    ["takes-argument-list", ["countsArguments", "takesRest"], ["scaledBy", "keepsOptional", "small", "large"]],
+    ["scalar-replaced-object", [], ["passesLiteralToOptionalThatEscapes"]],
     ["lowered-builtin:Math.floor", ["floors"], ["floorsShadowed"]],
     ["lowered-builtin:Array.isArray", ["isArray"], []],
     ["profitable-loop", ["sumsNumbers", "sumsFields"], ["callsInLoop", "hasNoLoop"], loopOptions],

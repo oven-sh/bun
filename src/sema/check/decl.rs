@@ -62,7 +62,7 @@ fn array_element_type_node(hir: &hir::File, node: TypeNodeId) -> Option<TypeNode
 }
 
 /// `isVariadicTupleElement`: `...T` where `T` is not written as an array type.
-fn is_variadic_tuple_element(hir: &hir::File, elem: &TupleElem) -> bool {
+pub(super) fn is_variadic_tuple_element(hir: &hir::File, elem: &TupleElem) -> bool {
     elem.rest && elem.ty.is_some() && array_element_type_node(hir, elem.ty).is_none()
 }
 
@@ -1455,37 +1455,8 @@ impl<'p> Checker<'p> {
         }
         if holds {
             self.p.declared_types.insert(sym, ty);
-            self.note_alias_of_union(sym, ty);
         }
         ty
-    }
-
-    /// For putting types into words: `sym` is a generic type alias written as a union, and stands for `ty`.
-    fn note_alias_of_union(&mut self, sym: Sym, ty: TypeId) {
-        if !matches!(
-            self.data(ty),
-            TypeData::Union(_) | TypeData::Intersection(_)
-        ) {
-            return;
-        }
-        let files = self.files();
-        for decl in files.decls_of(sym).iter() {
-            if let (file, Decl::Alias(alias)) = *decl {
-                let hir = self.hir(file);
-                let alias = &hir[alias];
-                if alias.ty.is_some()
-                    && matches!(
-                        hir[alias.ty].kind,
-                        TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
-                    )
-                {
-                    if !alias.type_params.is_empty() {
-                        self.p.generic_union_aliases.insert(sym, ());
-                    }
-                }
-                return;
-            }
-        }
     }
 
     /// Of declarations that cannot be one symbol, the class or the interface among them has this to itself, whichever has the name.
@@ -1619,11 +1590,7 @@ impl<'p> Checker<'p> {
         if flags.contains(SymFlags::TYPE_ALIAS) {
             for (file, decl) in declarations_of(self.files(), sym) {
                 if let Decl::Alias(a) = decl {
-                    let ty = self.type_from_node(file, self.hir(file)[a].ty);
-                    if self.is_union(ty) {
-                        self.p.named_unions.insert(ty, ());
-                    }
-                    return ty;
+                    return self.type_from_node(file, self.hir(file)[a].ty);
                 }
             }
         }
@@ -2013,6 +1980,7 @@ impl<'p> Checker<'p> {
             return self.excessively_deep();
         }
         let ty = self.type_from_node_uncached(file, node);
+        let ty = self.with_alias_for_type_node(file, node, ty);
         if self.leave() {
             self.p.type_node_types.set(file, node.idx(), ty);
         }
@@ -2131,7 +2099,16 @@ impl<'p> Checker<'p> {
                 if self.p.deferred_references.get(&inner).is_some() {
                     self.p.deferred_references.insert(ty, ());
                 }
-                ty
+                // `getAliasSymbolForTypeNode` goes out through a `readonly` operator.
+                match self.stored_alias(inner) {
+                    Some((alias, type_arguments)) if ty != inner => {
+                        let made_before = self.p.types.len();
+                        let aliased = self.with_alias(ty, *alias, type_arguments);
+                        self.p.types.mark_manifest(aliased, made_before);
+                        aliased
+                    }
+                    _ => ty,
+                }
             }
             TypeNodeKind::Tuple(elems) => {
                 let mut types = Vec::with_capacity(elems.len());
@@ -2211,14 +2188,20 @@ impl<'p> Checker<'p> {
                         || matches!(self.data(other), TypeData::Template { .. })
                             && self.is_pattern_literal(other)
                     {
-                        return self.intern(TypeData::Intersection(Box::new([a, b])));
+                        let ty = self.intern(TypeData::Intersection(Box::new([a, b])));
+                        return match self.alias_for_type_node(file, scope, node) {
+                            Some((alias, type_arguments)) => {
+                                self.with_alias(ty, alias, &type_arguments)
+                            }
+                            None => ty,
+                        };
                     }
                 }
-                let ty = self.intersection(&members);
-                if members.len() == 2 && members.contains(&TypeId::EMPTY_OBJECT) {
-                    self.p.written_with_empty_object.insert(ty, ());
-                }
-                ty
+                let alias = self.alias_for_type_node(file, scope, node);
+                let alias = alias
+                    .as_ref()
+                    .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
+                self.intersection_with_alias(&members, alias)
             }
             TypeNodeKind::Fn(func) => {
                 let mapper = self.identity_mapper_for_node(file, scope, node);
@@ -2575,9 +2558,25 @@ impl<'p> Checker<'p> {
                     && let Some(host) = self.alias_with_body(file, scope, node)
                 {
                     ty = self.with_hosting_alias(ty, (sym, flags), file, host);
+                    if let Some((alias, type_arguments)) =
+                        self.alias_for_type_node(file, scope, node)
+                        && (self.is_local_type_alias(sym) || !self.is_local_type_alias(alias))
+                    {
+                        ty = self.instantiated_under_alias(sym, &args, ty, alias, &type_arguments);
+                    }
                 }
                 if is_deferred && self.has_type_variables(ty) {
                     self.p.deferred_references.insert(ty, ());
+                }
+                // `createDeferredTypeReference`
+                if is_deferred
+                    && matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. })
+                    && let Some((alias, type_arguments)) =
+                        self.alias_for_type_node(file, scope, node)
+                {
+                    let made_before = self.p.types.len();
+                    ty = self.with_alias(ty, alias, &type_arguments);
+                    self.p.types.mark_manifest(ty, made_before);
                 }
                 // `combineValueAndTypeSymbols`: an interface imported by name from an `export =` module whose value has a property of
                 // that name is a new symbol with a new declared type. `this` in its own members is still the `this` type of the
@@ -3214,18 +3213,9 @@ impl<'p> Checker<'p> {
             let declared = self.declared_type_by_name(sym, flags);
             let mapper = self.mapper_from(&params, &args);
             let ty = self.instantiate(declared, mapper);
-            if self.is_union(ty) && self.p.named_unions.get(&ty).is_none() {
-                self.p.named_unions.insert(ty, ());
-            }
-            // `instantiateTypeWithAlias`: a union or an intersection made from a generic alias keeps the alias and its type
-            // arguments. Types are hash-consed, so the alias is recorded only for a type that other type arguments cannot produce.
-            if matches!(
-                self.data(ty),
-                TypeData::Union(_) | TypeData::Intersection(_)
-            ) && self.p.alias_of.get_ref(&ty).is_none()
-                && self.is_pinned_to_type_arguments(ty, &params, &args, 0)
-            {
-                self.p.alias_of.insert(ty, (sym, Arc::from(&args[..])));
+            // `instantiateMappedType`: `mapTypeWithAlias`, with the alias of the mapped type under `mapper`.
+            if self.is_union(ty) && self.mapped_origin(declared).is_some() {
+                return self.with_alias(ty, sym, &args);
             }
             return ty;
         }
@@ -3233,29 +3223,6 @@ impl<'p> Checker<'p> {
             return self.declared_type_by_name(sym, flags);
         }
         TypeId::UNRESOLVED
-    }
-
-    /// Whether `ty`, a member of it, or a member of a member is an object, function or conditional type whose mapper maps each of
-    /// `params` to the corresponding one of `args`.
-    pub(super) fn is_pinned_to_type_arguments(
-        &self,
-        ty: TypeId,
-        params: &[TypeId],
-        args: &[TypeId],
-        depth: u32,
-    ) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) if depth < 2 => parts
-                .iter()
-                .any(|&part| self.is_pinned_to_type_arguments(part, params, args, depth + 1)),
-            TypeData::Anon { mapper, .. }
-            | TypeData::Fns { mapper, .. }
-            | TypeData::Cond { mapper, .. } => params
-                .iter()
-                .zip(args)
-                .all(|(&param, &arg)| self.p.types.map(*mapper, param) == Some(arg)),
-            _ => false,
-        }
     }
 
     /// Whether the alias `sym` is declared `= intrinsic`.

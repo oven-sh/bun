@@ -3799,8 +3799,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     return self.symbol_to_type_node(alias, Meaning::Type);
                 }
                 // `UnionType.origin`
-                if let Some(origin) = self.c.p.union_origins.get(&ty) {
-                    return self.list_to_node(&origin);
+                if let UnionOrigin::Intersection(origin) = self.c.origin(ty) {
+                    return self.list_to_node(origin);
                 }
                 let types = self.format_union_types(ty);
                 self.list_to_node(&types);

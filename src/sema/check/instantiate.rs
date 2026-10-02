@@ -199,6 +199,7 @@ impl<'p> Checker<'p> {
         self.instantiation_depth += 1;
         let (cycles_before, events_before) = (self.cycles, self.deep_events);
         let result = self.instantiate_uncached(ty, mapper);
+        let result = self.with_instantiated_alias(ty, mapper, result);
         self.instantiation_depth -= 1;
         if self.cycles == cycles_before {
             self.note_depth(key, Some(events_before));
@@ -209,28 +210,6 @@ impl<'p> Checker<'p> {
             }
         }
         result
-    }
-
-    /// `instantiateTypeAlias`: `Type.alias` of the intersection `ty` goes along to `result`, which is what `ty` comes to under
-    /// `mapper`, with its type arguments under `mapper`.
-    fn carry_alias_along(&mut self, ty: TypeId, mapper: MapperId, result: TypeId) {
-        let Some((alias, arguments)) = self.p.alias_of.get(&ty) else {
-            return;
-        };
-        if !matches!(
-            self.data(result),
-            TypeData::Union(_) | TypeData::Intersection(_)
-        ) || self.p.alias_of.get_ref(&result).is_some()
-        {
-            return;
-        }
-        let arguments = self.instantiate_all(&arguments, mapper);
-        let params = self.local_type_params_of_symbol(alias);
-        if self.is_pinned_to_type_arguments(result, &params, &arguments, 0) {
-            self.p
-                .alias_of
-                .insert(result, (alias, Arc::from(&arguments[..])));
-        }
     }
 
     /// Whether `getOuterTypeParameters` of the object literal that `written` is a property of returns only type parameters declared
@@ -261,29 +240,8 @@ impl<'p> Checker<'p> {
     fn instantiate_uncached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         match self.data(ty) {
             // `instantiateTypeWorker`: what does not change stays as it is, unreduced if it was.
-            TypeData::Union(members) => {
-                // A union distributed from an intersection is instantiated through that intersection, its `origin`.
-                if let Some(origin) = self.p.union_origins.get(&ty) {
-                    let new = self.instantiate_all(&origin, mapper);
-                    if new[..] == origin[..] {
-                        return ty;
-                    }
-                    return self.intersection(&new);
-                }
-                let new = self.instantiate_all(members, mapper);
-                if new[..] == members[..] {
-                    return ty;
-                }
-                self.union(&new)
-            }
-            TypeData::Intersection(members) => {
-                let new = self.instantiate_all(members, mapper);
-                if new[..] == members[..] {
-                    return ty;
-                }
-                let result = self.intersection(&new);
-                self.carry_alias_along(ty, mapper, result);
-                result
+            TypeData::Union(_) | TypeData::Intersection(_) => {
+                self.instantiate_union_or_intersection(ty, mapper, None)
             }
             TypeData::Ref { target, args } => {
                 let is_deferred = self.p.deferred_references.get(&ty).is_some();

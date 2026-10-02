@@ -6,7 +6,7 @@
 //! (there is none here), and the arity a spread argument implies for `[...T, ...U]`.
 
 use super::*;
-use crate::bind::{Decl, FnOwner};
+use crate::bind::FnOwner;
 use smallvec::{SmallVec, smallvec};
 
 /// The members of a union or an intersection while they are gone through.
@@ -614,34 +614,12 @@ impl<'p> Checker<'p> {
         ) {
             return self.alias_of(ty);
         }
-        let (alias, type_arguments) = self.p.alias_of.get(&ty)?;
+        let &(alias, ref type_arguments) = self.stored_alias(ty)?;
         // As in `alias_of`: variances cannot be measured while the alias is being resolved.
-        if !self.union_keeps_alias(alias) || self.stack.contains(&Query::Declared(alias)) {
+        if type_arguments.is_empty() || self.stack.contains(&Query::Declared(alias)) {
             return None;
         }
         Some((alias, type_arguments.to_vec()))
-    }
-
-    /// Whether a union or an intersection made from `alias` has it as `Type.alias`. The body of the alias has to be a union or an
-    /// intersection type node (`getTypeFromUnionTypeNode`, `getTypeFromIntersectionTypeNode`) or a mapped type node
-    /// (`instantiateMappedType`, `mapTypeWithAlias`). A union that a conditional alias resolves to has no alias.
-    fn union_keeps_alias(&self, alias: Sym) -> bool {
-        let body = self
-            .files()
-            .decls(alias)
-            .into_iter()
-            .find_map(|(file, decl)| match decl {
-                Decl::Alias(id) => Some((file, self.hir(file)[id].ty)),
-                _ => None,
-            });
-        let Some((file, node)) = body else {
-            return false;
-        };
-        node.is_some()
-            && matches!(
-                self.hir(file)[node].kind,
-                TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_) | TypeNodeKind::Mapped(_)
-            )
     }
 
     /// `Type.alias` of an object or a conditional type made from the body of an alias without type parameters. Such a type has

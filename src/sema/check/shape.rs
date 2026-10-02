@@ -374,11 +374,21 @@ impl<'p> Checker<'p> {
                 }
                 // `instantiate` marks the object of an indexed access that waits on an alias.
                 self.note_depth(Deep::Instantiation(ty, MapperId::IDENTITY), None);
-                match self.type_reference(*sym, args) {
+                let (hosted, hosted_arguments) = (*sym, args);
+                match self.type_reference(hosted, hosted_arguments) {
                     expanded if matches!(self.data(expanded), TypeData::NoInfer(_)) => {
                         self.force(expanded)
                     }
-                    expanded => expanded,
+                    expanded => match self.stored_alias(ty) {
+                        Some((alias, type_arguments)) => self.instantiated_under_alias(
+                            hosted,
+                            hosted_arguments,
+                            expanded,
+                            *alias,
+                            type_arguments,
+                        ),
+                        None => expanded,
+                    },
                 }
             }
             TypeData::NoInfer(t) => self.force(*t),

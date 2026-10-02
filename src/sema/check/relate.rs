@@ -1391,6 +1391,10 @@ impl<'p> Checker<'p> {
                     }
                 }
                 TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force(t),
+                // `createTypeReference(t.Target(), getTypeArguments(t))`, of a deferred type reference.
+                TypeData::Ref { .. } | TypeData::Tuple { .. } => {
+                    return self.without_alias_of_reference(t);
+                }
                 data if is_fresh_literal_kind(data) => self.with_freshness(t, false),
                 _ => return t,
             };
@@ -2586,6 +2590,15 @@ impl<'p> Checker<'p> {
     /// `t.alias`, of an object or a conditional type: the generic alias whose whole right side `t` is made from, and what stands
     /// for its type parameters in `t`.
     pub(super) fn alias_of(&mut self, t: TypeId) -> Option<(Sym, Vec<TypeId>)> {
+        if let Some(&(alias, ref type_arguments)) = self.stored_alias(t)
+            && matches!(
+                self.data(t),
+                TypeData::Anon { .. } | TypeData::Cond { .. } | TypeData::Fns { .. }
+            )
+        {
+            return (!type_arguments.is_empty() && !self.stack.contains(&Query::Declared(alias)))
+                .then(|| (alias, type_arguments.to_vec()));
+        }
         let (file, node, mapper) = match *self.data(t) {
             TypeData::Anon {
                 origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
@@ -3388,12 +3401,19 @@ impl<'p> Checker<'p> {
     ) -> Ternary {
         let target_is_union = matches!(td, TypeData::Union(_));
         if matches!(sd, TypeData::Union(_)) {
-            // `A & B` is related to `A`: the source was distributed from an intersection that contains the target. `named_unions` is
-            // `target.alias != nil`.
+            // `A & B` is related to `A`: the source was distributed from an intersection that contains the target.
             if target_is_union
-                && let Some(origin) = self.p.union_origins.get_ref(&source)
+                && let UnionOrigin::Intersection(origin) = self.origin(source)
+                && self.stored_alias(target).is_some()
                 && origin.contains(&target)
-                && self.p.named_unions.get(&target).is_some()
+            {
+                return Ternary::TRUE;
+            }
+            // `A` is related to `A | B`: the list of unions the target was made of is often much shorter than what it comes to.
+            if target_is_union
+                && let UnionOrigin::Union(origin) = self.origin(target)
+                && self.stored_alias(source).is_some()
+                && origin.contains(&source)
             {
                 return Ternary::TRUE;
             }

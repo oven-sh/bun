@@ -384,7 +384,11 @@ impl<'p> Checker<'p> {
             parts.push(of_instance);
         }
         parts.push(attributes);
-        self.intersection(&parts)
+        // `intersectTypes`
+        match parts[..] {
+            [only] => only,
+            _ => self.intersection(&parts),
+        }
     }
 
     /// `createDeferredTypeReference`: `JSX.IntrinsicClassAttributes` as a type that goes by that name, if it is an alias and `ty` is

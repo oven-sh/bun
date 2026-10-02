@@ -375,32 +375,27 @@ impl<'p> Checker<'p> {
         let union = match members[..] {
             [] => TypeId::NEVER,
             [only] => only,
-            _ => {
-                // One of those given may be all of it.
-                let whole = given.iter().copied().find(
-                    |&ty| matches!(self.data(ty), TypeData::Union(all) if all[..] == members[..]),
-                );
-                match whole {
-                    Some(whole) => whole,
-                    None => self.intern(TypeData::Union(Box::from(&members[..]))),
-                }
-            }
+            _ => self.union_of_named_unions(given, &members),
         };
-        self.note_origin_of_union(given, union);
         (union, is_plain)
     }
 
-    /// `getUnionTypeWorker`: the denormalized `origin` of `union`, which was made of `given`. There is one where some of `given` are
-    /// unions that have a name, or were made of such, and no member is in two of them. Unions are hash-consed: the first stays.
-    fn note_origin_of_union(&self, given: &[TypeId], union: TypeId) {
+    /// The end of `getUnionTypeWorker`: the union of `members`, which was made of `given`. It has a denormalized `origin` where some of
+    /// `given` are unions that have a name, or were made of such, and no member is in two of them.
+    fn union_of_named_unions(&self, given: &[TypeId], members: &[TypeId]) -> TypeId {
         let mut named: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
         self.add_named_unions(&mut named, given);
-        if named.is_empty() || self.p.denormalized_unions.get_ref(&union).is_some() {
-            return;
+        if named.is_empty() {
+            // One of those given may be all of it.
+            let whole = given
+                .iter()
+                .copied()
+                .find(|&ty| matches!(self.data(ty), TypeData::Union(all) if all[..] == *members));
+            return match whole {
+                Some(whole) => whole,
+                None => self.intern(TypeData::Union(Box::from(members))),
+            };
         }
-        let TypeData::Union(members) = self.data(union) else {
-            return;
-        };
         let mut origin: Vec<TypeId> = members
             .iter()
             .copied()
@@ -410,13 +405,27 @@ impl<'p> Checker<'p> {
                     .any(|&u| self.parts(u).binary_search(m).is_ok())
             })
             .collect();
-        let in_named: usize = named.iter().map(|&u| self.parts(u).len()).sum();
-        // One named union that is all of it is `union` itself.
-        if in_named + origin.len() != members.len() || origin.is_empty() && named.len() == 1 {
-            return;
+        if let [only] = named[..]
+            && origin.is_empty()
+        {
+            return only;
         }
-        origin.extend_from_slice(&named);
-        self.p.denormalized_unions.insert(union, Arc::from(origin));
+        let in_named: usize = named.iter().map(|&u| self.parts(u).len()).sum();
+        let origin = if in_named + origin.len() == members.len() {
+            // The order they were given in is no part of what the union is.
+            named.sort_unstable();
+            origin.extend_from_slice(&named);
+            UnionOrigin::Union(origin.into())
+        } else {
+            UnionOrigin::None
+        };
+        self.p.types.intern_with(
+            TypeData::Union(Box::from(members)),
+            Provenance {
+                alias: None,
+                origin,
+            },
+        )
     }
 
     /// `addNamedUnions`. `boolean` has no alias, whatever alias stands for it.
@@ -425,33 +434,17 @@ impl<'p> Checker<'p> {
             if t == TypeId::BOOLEAN || !self.is_union(t) {
                 continue;
             }
-            if self.p.named_unions.get(&t).is_some() || self.p.union_origins.get_ref(&t).is_some() {
-                if !named.contains(&t) {
-                    named.push(t);
+            match self.origin(t) {
+                UnionOrigin::Union(origin) if self.stored_alias(t).is_none() => {
+                    self.add_named_unions(named, origin)
                 }
-            } else if let Some(origin) = self.p.denormalized_unions.get_ref(&t) {
-                self.add_named_unions(named, origin);
+                UnionOrigin::None if self.stored_alias(t).is_none() => {}
+                _ => {
+                    if !named.contains(&t) {
+                        named.push(t);
+                    }
+                }
             }
-        }
-    }
-
-    /// `filterType`: `filtered`, which is what is left of the union `ty`, keeps what is left of the origin of `ty`, unless something
-    /// inside one of the named unions went.
-    fn note_origin_of_filtered_union(&self, ty: TypeId, filtered: TypeId) {
-        let Some(origin) = self.p.denormalized_unions.get_ref(&ty) else {
-            return;
-        };
-        let left = self.parts(filtered);
-        let kept: Vec<TypeId> = origin
-            .iter()
-            .copied()
-            .filter(|u| self.is_union(*u) || left.binary_search(u).is_ok())
-            .collect();
-        if kept.len() > 1
-            && origin.len() - kept.len() == self.parts(ty).len() - left.len()
-            && self.p.denormalized_unions.get_ref(&filtered).is_none()
-        {
-            self.p.denormalized_unions.insert(filtered, Arc::from(kept));
         }
     }
 
@@ -725,20 +718,11 @@ impl<'p> Checker<'p> {
             .filter(|(_, k)| **k)
             .map(|(&m, _)| m)
             .collect();
-        // `getUnionTypeWorker`: if all that is left is from the one union among them that has a name, it is that union, whole.
-        let mut named = types
-            .iter()
-            .copied()
-            .filter(|&t| self.is_union(t) && self.p.named_unions.get(&t).is_some());
-        if let Some(only) = named.next()
-            && named.all(|other| other == only)
-            && kept.iter().all(|k| self.parts(only).contains(k))
-        {
-            return only;
+        match kept[..] {
+            [] => TypeId::NEVER,
+            [only] => only,
+            _ => self.union_of_named_unions(types, &kept),
         }
-        let union = self.union(&kept);
-        self.note_origin_of_union(types, union);
-        union
     }
 
     /// `removeSubtypes`, keyProperty: the first property of `ty` whose type is a unit type, and that type. The types of the
@@ -759,7 +743,7 @@ impl<'p> Checker<'p> {
         matches!(self.data(ty), TypeData::Ref { target, .. } if self.files().flags(*target).contains(SymFlags::CLASS))
     }
 
-    /// `ty` with the members `keep` rejects taken out.
+    /// `filterType`
     pub fn filter(
         &mut self,
         ty: TypeId,
@@ -781,9 +765,28 @@ impl<'p> Checker<'p> {
                     [] => TypeId::NEVER,
                     [only] => only,
                     _ => {
-                        let filtered = self.intern(TypeData::Union(Box::from(&kept[..])));
-                        self.note_origin_of_filtered_union(ty, filtered);
-                        filtered
+                        // What is left of a denormalized origin, unless something inside one of the unions in it went.
+                        let mut new_origin = UnionOrigin::None;
+                        if let UnionOrigin::Union(origin) = self.origin(ty) {
+                            let left: Vec<TypeId> = origin
+                                .iter()
+                                .copied()
+                                .filter(|u| self.is_union(*u) || kept.binary_search(u).is_ok())
+                                .collect();
+                            if origin.len() - left.len() == members.len() - kept.len() {
+                                if let [only] = left[..] {
+                                    return only;
+                                }
+                                new_origin = UnionOrigin::Union(left.into());
+                            }
+                        }
+                        self.p.types.intern_with(
+                            TypeData::Union(Box::from(&kept[..])),
+                            Provenance {
+                                alias: None,
+                                origin: new_origin,
+                            },
+                        )
                     }
                 }
             }
@@ -798,20 +801,52 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The union of what `f` makes of each member.
+    /// `mapType`
     pub fn map_type(
         &mut self,
         ty: TypeId,
         mut f: impl FnMut(&mut Self, TypeId) -> TypeId,
     ) -> TypeId {
+        self.map_type_ex(ty, &mut f, false)
+    }
+
+    /// `mapTypeEx` with `noReductions`: `any`, `unknown` and literals next to their base type stay members.
+    pub(super) fn map_type_unreduced(
+        &mut self,
+        ty: TypeId,
+        mut f: impl FnMut(&mut Self, TypeId) -> TypeId,
+    ) -> TypeId {
+        self.map_type_ex(ty, &mut f, true)
+    }
+
+    /// `mapTypeEx`
+    fn map_type_ex<F: FnMut(&mut Self, TypeId) -> TypeId>(
+        &mut self,
+        ty: TypeId,
+        f: &mut F,
+        no_reductions: bool,
+    ) -> TypeId {
         match self.data(ty) {
             TypeData::Union(members) => {
-                let mapped: smallvec::SmallVec<[TypeId; 8]> =
-                    members.iter().map(|&m| f(self, m)).collect();
-                if mapped[..] == members[..] {
-                    return ty;
+                let types: &[TypeId] = match self.origin(ty) {
+                    UnionOrigin::Union(origin) => origin,
+                    _ => members,
+                };
+                let mut mapped: smallvec::SmallVec<[TypeId; 8]> = smallvec::SmallVec::new();
+                for &s in types {
+                    mapped.push(if self.is_union(s) {
+                        self.map_type_ex(s, f, no_reductions)
+                    } else {
+                        f(self, s)
+                    });
                 }
-                self.union(&mapped)
+                if mapped[..] == *types {
+                    ty
+                } else if no_reductions {
+                    self.union_unreduced(&mapped)
+                } else {
+                    self.union(&mapped)
+                }
             }
             TypeData::Intrinsic(Intrinsic::Never) => ty,
             _ => f(self, ty),
@@ -938,15 +973,54 @@ impl<'p> Checker<'p> {
 
     /// `getIntersectionTypeEx`
     fn intersection_ex(&mut self, types: &[TypeId], no_constraint_reduction: bool) -> TypeId {
+        self.intersection_worker(types, no_constraint_reduction).0
+    }
+
+    /// `getIntersectionTypeEx`, with an alias.
+    pub(super) fn intersection_with_alias(
+        &mut self,
+        types: &[TypeId],
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
+        match (self.intersection_worker(types, false), alias) {
+            ((made, true), Some((alias, type_arguments))) => {
+                self.with_alias(made, alias, type_arguments)
+            }
+            ((made, _), _) => made,
+        }
+    }
+
+    /// `getUnionTypeEx`, with an alias.
+    pub(super) fn union_with_alias(
+        &mut self,
+        types: &[TypeId],
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
+        let made = self.union(types);
+        match alias {
+            Some((alias, type_arguments)) if self.is_union(made) => {
+                self.with_alias(made, alias, type_arguments)
+            }
+            _ => made,
+        }
+    }
+
+    /// `getIntersectionTypeEx`. The flag: it is made here, so that the alias given, if any, is its alias. One of `types` that is
+    /// all that is left is not.
+    fn intersection_worker(
+        &mut self,
+        types: &[TypeId],
+        no_constraint_reduction: bool,
+    ) -> (TypeId, bool) {
         self.guard("intersection");
         self.time_trap();
         let mut set: Vec<TypeId> = Vec::with_capacity(types.len());
         let includes = self.add_types_to_intersection(&mut set, 0, types);
         if includes & tf::NEVER != 0 {
-            return TypeId::NEVER;
+            return (TypeId::NEVER, false);
         }
         if includes & tf::INCLUDES_UNRESOLVED != 0 {
-            return TypeId::UNRESOLVED;
+            return (TypeId::UNRESOLVED, false);
         }
         let strict = self.p.files.options.strict_null_checks;
         // Nothing is an object and null or undefined, or in two of the domains that have nothing in common.
@@ -963,30 +1037,32 @@ impl<'p> Checker<'p> {
             || is_in_another_too(tf::ES_SYMBOL_LIKE)
             || is_in_another_too(tf::VOID_LIKE)
         {
-            return TypeId::NEVER;
+            return (TypeId::NEVER, false);
         }
         if includes & (tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) != 0
             && includes & tf::STRING_LITERAL != 0
             && !self.extract_redundant_template_literals(&mut set)
         {
-            return TypeId::NEVER;
+            return (TypeId::NEVER, false);
         }
         if includes & tf::ANY != 0 {
-            return if includes & tf::INCLUDES_ERROR != 0 {
+            let any = if includes & tf::INCLUDES_ERROR != 0 {
                 TypeId::ERROR
             } else {
                 TypeId::ANY
             };
+            return (any, false);
         }
         // Without strictNullChecks null and undefined were not taken into the set, and are all that is left of it.
         if !strict && includes & tf::NULLABLE != 0 {
-            return if includes & tf::INCLUDES_EMPTY_OBJECT != 0 {
+            let left = if includes & tf::INCLUDES_EMPTY_OBJECT != 0 {
                 TypeId::NEVER
             } else if includes & tf::UNDEFINED != 0 {
                 TypeId::UNDEFINED_DECLARED
             } else {
                 TypeId::NULL_DECLARED
             };
+            return (left, false);
         }
         // `{}` goes next to what cannot be null or undefined (`TypeFlagsDefinitelyNonNullable`), which a union is not known to be.
         // `U & {}` with a union `U` of nothing else is `U` once it is distributed over: no need to.
@@ -1016,8 +1092,8 @@ impl<'p> Checker<'p> {
             set[at] = TypeId::MISSING;
         }
         match set.len() {
-            0 => return TypeId::UNKNOWN,
-            1 => return set[0],
+            0 => return (TypeId::UNKNOWN, false),
+            1 => return (set[0], false),
             _ => {}
         }
         // `T & P` goes by what `T` extends.
@@ -1028,18 +1104,21 @@ impl<'p> Checker<'p> {
         {
             // `T & string` with `T extends "a" | "b"` is `T`.
             if self.is_strict_subtype(constraint, primitive) {
-                return variable;
+                return (variable, false);
             }
             // `T & number` is never: nothing `T` extends is a subtype of `P`, nor `P` of what `T` extends.
             let parts = self.parts(constraint);
             if !(parts.len() > 1 && parts.iter().any(|&p| self.is_strict_subtype(p, primitive)))
                 && !self.is_strict_subtype(primitive, constraint)
             {
-                return TypeId::NEVER;
+                return (TypeId::NEVER, false);
             }
         }
         if includes & tf::UNION == 0 {
-            return self.intern(TypeData::Intersection(set.into_boxed_slice()));
+            return (
+                self.intern(TypeData::Intersection(set.into_boxed_slice())),
+                true,
+            );
         }
         // `intersectionTypes`: what the same types came to before.
         let key = (Box::<[TypeId]>::from(&set[..]), no_constraint_reduction);
@@ -1063,10 +1142,10 @@ impl<'p> Checker<'p> {
         given: usize,
         mut set: Vec<TypeId>,
         no_constraint_reduction: bool,
-    ) -> TypeId {
+    ) -> (TypeId, bool) {
         if self.intersect_unions_of_primitive_types(&mut set) {
             // Once only: no more than one such union is left.
-            return self.intersection_ex(&set, no_constraint_reduction);
+            return self.intersection_worker(&set, no_constraint_reduction);
         }
         // `(A | undefined) & (B | undefined)` is `A & B | undefined`, and the same of `null`.
         if set
@@ -1082,7 +1161,8 @@ impl<'p> Checker<'p> {
                 *t = self.filter(*t, |_, m| !m.is_undefined());
             }
             let rest = self.intersection_ex(&set, no_constraint_reduction);
-            return self.union_ex(&[rest, undefined], !no_constraint_reduction);
+            let union = self.union_ex(&[rest, undefined], !no_constraint_reduction);
+            return (union, self.is_union(union));
         }
         if set
             .iter()
@@ -1092,14 +1172,15 @@ impl<'p> Checker<'p> {
                 *t = self.filter(*t, |_, m| !m.is_null());
             }
             let rest = self.intersection_ex(&set, no_constraint_reduction);
-            return self.union_ex(&[rest, TypeId::NULL], !no_constraint_reduction);
+            let union = self.union_ex(&[rest, TypeId::NULL], !no_constraint_reduction);
+            return (union, self.is_union(union));
         }
         // `A & B & C & D` is `(A & B) & (C & D)`: much of a half may come to never. Not from two types, which would go on for ever.
         if set.len() >= 3 && given > 2 {
             let middle = set.len() / 2;
             let left = self.intersection_ex(&set[..middle], no_constraint_reduction);
             let right = self.intersection_ex(&set[middle..], no_constraint_reduction);
-            return self.intersection_ex(&[left, right], no_constraint_reduction);
+            return self.intersection_worker(&[left, right], no_constraint_reduction);
         }
         // `X & (A | B) & (C | D)` is `X & A & C | X & A & D | X & B & C | X & B & D`.
         // `checkCrossProductUnion`: from 100,000 on it is too complex to represent (2590), the error type.
@@ -1112,7 +1193,7 @@ impl<'p> Checker<'p> {
         });
         if size >= 100_000 {
             self.union_too_complex = true;
-            return TypeId::ERROR;
+            return (TypeId::ERROR, false);
         }
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
@@ -1131,28 +1212,30 @@ impl<'p> Checker<'p> {
             }
         }
         let union = self.union_ex(&intersections, !no_constraint_reduction);
-        // The denormalized `origin`: recorded when a constituent is an intersection and the origin has fewer constituents than
-        // the union. Unions are hash-consed, so `set` can contain the union it normalizes to, which would make the origin cyclic.
+        // The denormalized `origin`: where a constituent is an intersection and the origin has fewer constituents than the union.
         if self.is_union(union)
-            && !set.contains(&union)
             && intersections.iter().any(|&t| self.is_intersection(t))
             && self.constituent_count_of_types(&intersections)
                 > self.constituent_count_of_types(&set)
-            && self.p.union_origins.get(&union).is_none()
         {
-            self.p.union_origins.insert(union, Arc::from(set));
+            return (
+                self.with_origin(union, UnionOrigin::Intersection(set.into())),
+                true,
+            );
         }
-        union
+        (union, self.is_union(union))
     }
 
     /// `getConstituentCount`
     fn constituent_count(&self, ty: TypeId) -> usize {
         match self.data(ty) {
-            // `t.alias != nil`
-            TypeData::Union(_) if self.p.named_unions.get(&ty).is_some() => 1,
-            TypeData::Union(members) => match self.p.union_origins.get(&ty) {
-                Some(origin) => self.constituent_count_of_types(&origin),
-                None => self.constituent_count_of_types(members),
+            TypeData::Union(_) | TypeData::Intersection(_) if self.stored_alias(ty).is_some() => 1,
+            TypeData::Union(members) => match self.origin(ty) {
+                UnionOrigin::Union(origin) | UnionOrigin::Intersection(origin) => {
+                    self.constituent_count_of_types(origin)
+                }
+                UnionOrigin::Keyof(_) => 1,
+                UnionOrigin::None => self.constituent_count_of_types(members),
             },
             TypeData::Intersection(members) => self.constituent_count_of_types(members),
             _ => 1,
@@ -1564,7 +1647,7 @@ impl<'p> Checker<'p> {
             // comes first, then the copies in the order of the imports.
             .then_with(|| originating_import(a).cmp(&originating_import(b)))
             // `compareTypeNames`: a union that a type alias stands for comes before one without a name.
-            .then_with(|| (self.is_union(a) && self.p.named_unions.get(&a).is_none()).cmp(&(self.is_union(b) && self.p.named_unions.get(&b).is_none())))
+            .then_with(|| (self.is_union(a) && self.stored_alias(a).is_none()).cmp(&(self.is_union(b) && self.stored_alias(b).is_none())))
             .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)))
             .then_with(|| match (self.data(a), self.data(b)) {
                 (TypeData::Ref { target: s, args: x }, TypeData::Ref { target: t, args: y }) => s.cmp(t).then_with(|| self.compare_type_lists(x, y)),
@@ -1580,19 +1663,25 @@ impl<'p> Checker<'p> {
                     })
                     .then_with(|| self.compare_type_lists(x, y)),
                 // The lists TypeScript compares are in this order. Those of intersections are as written.
-                // What has an `origin` comes first. Only the origins that are unions are looked at.
-                (TypeData::Union(_), TypeData::Union(_)) => match (self.p.denormalized_unions.get_ref(&a), self.p.denormalized_unions.get_ref(&b)) {
-                    (None, None) => self.compare_type_lists(&self.parts_in_order(a), &self.parts_in_order(b)),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (Some(x), Some(y)) => {
+                // What has an `origin` comes first, and origins compare as the types they are: a union, an intersection, a `keyof`.
+                (TypeData::Union(_), TypeData::Union(_)) => match (self.origin(a), self.origin(b)) {
+                    (UnionOrigin::None, UnionOrigin::None) => self.compare_type_lists(&self.parts_in_order(a), &self.parts_in_order(b)),
+                    (_, UnionOrigin::None) => std::cmp::Ordering::Less,
+                    (UnionOrigin::None, _) => std::cmp::Ordering::Greater,
+                    (UnionOrigin::Union(x), UnionOrigin::Union(y)) => {
                         let in_order = |types: &[TypeId]| {
                             let mut types = types.to_vec();
                             types.sort_by(|&s, &t| self.compare_types(s, t));
                             types
                         };
-                        self.compare_type_lists(&in_order(&x[..]), &in_order(&y[..]))
+                        self.compare_type_lists(&in_order(x), &in_order(y))
                     }
+                    (UnionOrigin::Union(_), _) => std::cmp::Ordering::Less,
+                    (_, UnionOrigin::Union(_)) => std::cmp::Ordering::Greater,
+                    (UnionOrigin::Intersection(x), UnionOrigin::Intersection(y)) => self.compare_type_lists(x, y),
+                    (UnionOrigin::Intersection(_), _) => std::cmp::Ordering::Less,
+                    (_, UnionOrigin::Intersection(_)) => std::cmp::Ordering::Greater,
+                    (UnionOrigin::Keyof(x), UnionOrigin::Keyof(y)) => self.compare_types(*x, *y),
                 },
                 (TypeData::Intersection(x), TypeData::Intersection(y)) => self.compare_type_lists(x, y),
                 (TypeData::StringLit { value: x, .. }, TypeData::StringLit { value: y, .. }) => atoms.bytes(*x).cmp(atoms.bytes(*y)),

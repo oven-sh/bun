@@ -1267,37 +1267,6 @@ impl<'p> Checker<'p> {
             })
     }
 
-    /// `mapTypeEx` with `noReductions`: the union of `f` applied to each member, built with `UnionReductionNone`, so `any`,
-    /// `unknown` and literals next to their base type stay members.
-    pub(super) fn map_type_unreduced(
-        &mut self,
-        ty: TypeId,
-        mut f: impl FnMut(&mut Self, TypeId) -> TypeId,
-    ) -> TypeId {
-        match self.data(ty) {
-            TypeData::Union(members) => {
-                let mut mapped: Option<Parts> = None;
-                for (i, &m) in members.iter().enumerate() {
-                    let to = f(self, m);
-                    if let Some(list) = &mut mapped {
-                        list.push(to);
-                    } else if to != m {
-                        let mut list = Parts::with_capacity(members.len());
-                        list.extend_from_slice(&members[..i]);
-                        list.push(to);
-                        mapped = Some(list);
-                    }
-                }
-                match mapped {
-                    Some(mapped) => self.union_unreduced(&mapped),
-                    None => ty,
-                }
-            }
-            TypeData::Intrinsic(Intrinsic::Never) => ty,
-            _ => f(self, ty),
-        }
-    }
-
     /// The mapping of `getApparentTypeOfContextualType`, of the primitives in `context`: a `string` is a `String`, with all that has.
     fn with_apparent_primitives(&mut self, context: TypeId) -> TypeId {
         self.map_type_unreduced(context, |c, m| {

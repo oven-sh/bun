@@ -4,6 +4,7 @@
 //! [`Program`] is shared by all threads and only ever grows. A [`Checker`] belongs to one thread: it has the stack of questions
 //! being answered and whatever else is only true for the moment.
 
+mod alias;
 mod call;
 mod context;
 mod decl;
@@ -199,37 +200,15 @@ pub struct Program {
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
     initializer_is_undefined: ByNode<(FileId, ParamId), bool>,
     declared_types: ByNode<Sym, TypeId>,
-    /// The unions that a type alias, or an alias with type arguments, stands for.
-    named_unions: IdSet<TypeId>,
-    /// What a type node spells out as `T & {}`. It has no alias, which what `NonNullable<T>` stands for has.
-    written_with_empty_object: IdSet<TypeId>,
     /// The unions that have been seen to have no intersection among their members.
     unions_without_intersections: IdSet<TypeId>,
     /// The generic references made from a deferred type reference node (`isDeferredTypeReferenceNode`), and their generic instantiations.
     deferred_references: IdSet<TypeId>,
-    /// `UnionType.origin` of a union that `getIntersectionTypeEx` produced by distributing an intersection over its union
-    /// members: the members of that intersection.
-    union_origins: ByIdKept<TypeId, Arc<[TypeId]>>,
-    /// `UnionType.origin` of a union that `getUnionTypeWorker` made of unions that have a name: those unions, and the members that are
-    /// in none of them.
-    denormalized_unions: ByIdKept<TypeId, Arc<[TypeId]>>,
-    /// The generic alias and the arguments a type was made from (`Type.alias`), for a type that could not have come of other
-    /// arguments or without the alias. Types are hash-consed: `T | undefined` is the same type whoever wrote it, and has none.
-    alias_of: ByIdKept<TypeId, (Sym, Arc<[TypeId]>)>,
     shapes: ByIdKept<TypeId, shape::Resolved>,
     /// `intersectionTypes`, for those that have a union among them.
-    distributed_intersections: ByKey<(Box<[TypeId]>, bool), TypeId>,
-    /// See `note_alias_of_union`.
-    /// For putting types into words: the first type alias without type parameters, in the order of the files and outside the default
-    /// library, that is written as a union or an intersection and stands for the type. Filled in at once, when it is first asked for:
-    /// what a message says does not go by what happens to have been looked at before.
-    plain_alias_of: ById<TypeId, Option<Sym>>,
+    distributed_intersections: ByKey<(Box<[TypeId]>, bool), (TypeId, bool)>,
     /// See `alias_to_sort_by`.
     aliases_to_sort_by: ById<TypeId, Option<Sym>>,
-    are_plain_aliases_known: std::sync::OnceLock<()>,
-    /// How many files somebody has taken on to find out what their aliases stand for.
-    plain_aliases_resolved: std::sync::atomic::AtomicUsize,
-    generic_union_aliases: NodeSet<Sym>,
     sig_params: ByIdKept<SigId, Box<[SigParam]>>,
     sig_type_params: ByIdKept<SigId, Box<[TypeId]>>,
     call_signatures: ByIdKept<TypeId, Box<[SigId]>>,
@@ -362,16 +341,6 @@ impl Program {
             &mut self.construct_signatures.kept().map(|b| b.len()),
             4,
         ));
-        out.push(boxes(
-            "kept: union origins",
-            &mut self.union_origins.kept().map(|b| b.len()),
-            4,
-        ));
-        out.push(boxes(
-            "kept: aliases of types",
-            &mut self.alias_of.kept().map(|b| b.1.len() + 4),
-            4,
-        ));
         let map = |name: &str, len: usize, entry: usize| (name.to_owned(), len, len * (entry + 11));
         out.push(map("map: instantiations", self.instantiations.len(), 12));
         out.push(map("map: relations", self.relations.len(), 12));
@@ -452,20 +421,11 @@ impl Program {
             circular_through_call: NodeSet::new(&pats),
             initializer_is_undefined: ByNode::new(&params),
             declared_types: ByNode::new(&symbols),
-            named_unions: Default::default(),
-            written_with_empty_object: Default::default(),
             unions_without_intersections: Default::default(),
             deferred_references: Default::default(),
-            union_origins: Default::default(),
-            denormalized_unions: Default::default(),
-            alias_of: Default::default(),
             shapes: Default::default(),
             distributed_intersections: Default::default(),
-            plain_alias_of: Default::default(),
             aliases_to_sort_by: Default::default(),
-            are_plain_aliases_known: Default::default(),
-            plain_aliases_resolved: Default::default(),
-            generic_union_aliases: NodeSet::new(&symbols),
             sig_params: Default::default(),
             sig_type_params: Default::default(),
             call_signatures: Default::default(),
@@ -612,7 +572,6 @@ impl Program {
             retracing: false,
             explaining: Vec::new(),
             keeps_arg_contexts: false,
-            keyof_origins: FxHashMap::default(),
             context_checked_for: FxHashMap::default(),
             uncertain: false,
             union_too_complex: false,
@@ -628,7 +587,6 @@ impl Program {
             shapes_for_now: Vec::new(),
             held_for_now: FxHashMap::default(),
             trials: FxHashMap::default(),
-            named_plain_aliases_of: None,
             enclosing_declaration: None,
             enclosing_module_specifier_mode: None,
             symbol_chain_cache: Default::default(),
@@ -869,8 +827,6 @@ pub struct Checker<'p> {
     pub(super) explaining: Vec<(TypeId, TypeId)>,
     /// A call that is resolved is gone over again, for its errors: what its arguments are expected to be stays what it is.
     pub(super) keeps_arg_contexts: bool,
-    /// `UnionType.origin`, where that is an index type: the `T` whose keys a union was made of as `keyof T`.
-    keyof_origins: FxHashMap<TypeId, TypeId>,
     /// `NodeCheckFlagsContextChecked` for function expressions among the arguments of a call with several candidates: the candidate
     /// whose attempt checked the function first. Only that attempt infers from the function's annotations. `None` once the attempt
     /// has ended.
@@ -904,8 +860,6 @@ pub struct Checker<'p> {
     held_for_now: FxHashMap<(FileId, PropId), Held>,
     /// The last candidate tried for a call that is being resolved: see `instantiate_for_call_as`.
     trials: FxHashMap<(FileId, ExprId), Trial>,
-    /// The file at hand whose type aliases `plain_alias_of` has been filled in for.
-    named_plain_aliases_of: Option<FileId>,
     /// `NodeBuilderContext.enclosingDeclaration` for the next printer, which takes it: the scope names are looked up from.
     enclosing_declaration: Option<(FileId, crate::bind::ScopeId)>,
     /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`, while the name of an import or an

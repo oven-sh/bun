@@ -418,54 +418,6 @@ enum Place {
 }
 
 /// `NodeBuilderImpl` and its `NodeBuilderContext`.
-impl<'p> Checker<'p> {
-    /// Finds out what the type aliases of `file` that `plain_alias_of` is about stand for and, with `fills_in`, fills it in for them.
-    fn name_plain_aliases(&mut self, file: FileId, fills_in: bool) {
-        let files = self.files();
-        let module = &files.modules[file.idx()];
-        for (a, alias) in module.hir.aliases.iter().enumerate() {
-            let symbol = module.bound.alias_symbol[a];
-            if !alias.type_params.is_empty()
-                || alias.ty.is_none()
-                || symbol.is_none()
-                || !matches!(
-                    module.hir[alias.ty].kind,
-                    TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_)
-                )
-            {
-                continue;
-            }
-            // `intersectUnionsOfPrimitiveTypes`: what unions of primitives and nothing else come to is made without the alias.
-            if let TypeNodeKind::Intersection(list) = module.hir[alias.ty].kind {
-                let mut are_primitive_unions = list.len() > 1;
-                for member in module.hir.ids(list) {
-                    let member = self.type_from_node(file, member);
-                    let member = self.force(member);
-                    are_primitive_unions &= self.is_union(member)
-                        && self
-                            .parts(member)
-                            .iter()
-                            .all(|&part| self.is_primitive(part));
-                }
-                if are_primitive_unions {
-                    continue;
-                }
-            }
-            let symbol = files.sym(file, symbol);
-            let ty = self.declared_type(symbol);
-            if fills_in
-                && matches!(
-                    self.data(ty),
-                    TypeData::Union(_) | TypeData::Intersection(_)
-                )
-                && self.p.plain_alias_of.get(&ty).is_none()
-            {
-                self.p.plain_alias_of.insert(ty, Some(symbol));
-            }
-        }
-    }
-}
-
 struct Printer<'c, 'p> {
     c: &'c mut Checker<'p>,
     flags: u32,
@@ -755,6 +707,10 @@ impl<'p> Printer<'_, 'p> {
             }
             _ => {}
         }
+        let ty = match self.c.data(ty) {
+            TypeData::LazyAlias { .. } if self.c.stored_alias(ty).is_some() => self.c.force(ty),
+            _ => ty,
+        };
         let is_written_out = self.flags & WRITTEN_OUT != 0 && self.depth == 1;
         if !is_written_out
             && let Some((alias, arguments)) = self.alias_of_type(ty)
@@ -1460,6 +1416,9 @@ impl<'p> Printer<'_, 'p> {
     /// `t.alias`. Types do not keep it. An object, function or conditional type has it if its syntax is the whole body of a type
     /// alias. A union or an intersection is looked up among what the aliases of the program stand for.
     fn alias_of_type(&mut self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
+        if let Some((alias, type_arguments)) = self.c.stored_alias(ty) {
+            return Some((*alias, type_arguments.to_vec()));
+        }
         if let Some(hosting) = self.c.hosting_alias_of(ty) {
             return Some(hosting);
         }
@@ -1470,9 +1429,6 @@ impl<'p> Printer<'_, 'p> {
                 mapper,
             } => (*file, *node, *mapper),
             TypeData::Cond { file, node, mapper } => (*file, *node, *mapper),
-            TypeData::IndexedAccess { obj, index, .. } => {
-                self.written_indexed_access(*obj, *index)?
-            }
             TypeData::Fns { decls, mapper } => {
                 let [(file, func)] = decls[..] else {
                     return None;
@@ -1481,9 +1437,6 @@ impl<'p> Printer<'_, 'p> {
                     return None;
                 };
                 (file, node, *mapper)
-            }
-            TypeData::Union(_) | TypeData::Intersection(_) => {
-                return self.alias_of_union_or_intersection(ty);
             }
             _ => return None,
         };
@@ -1513,231 +1466,6 @@ impl<'p> Printer<'_, 'p> {
             .map(|&parameter| self.c.p.types.map(mapper, parameter).unwrap_or(parameter))
             .collect();
         Some((alias, arguments))
-    }
-
-    /// Where `obj[index]` is written as the whole body of a type alias, and under which mapper: `obj` is a type literal or a mapped
-    /// type written there.
-    fn written_indexed_access(
-        &mut self,
-        obj: TypeId,
-        index: TypeId,
-    ) -> Option<(FileId, TypeNodeId, MapperId)> {
-        let TypeData::Anon {
-            origin: Origin::TypeLiteral(file, object) | Origin::Mapped(file, object),
-            mapper,
-        } = *self.c.data(obj)
-        else {
-            return None;
-        };
-        let hir = self.c.hir(file);
-        let (node, written) = hir.aliases.iter().find_map(|alias| {
-            if alias.ty.is_none() {
-                return None;
-            }
-            match hir[alias.ty].kind {
-                TypeNodeKind::IndexedAccess { obj, index } if obj == object => {
-                    Some((alias.ty, index))
-                }
-                _ => None,
-            }
-        })?;
-        let declared = self.c.type_from_node(file, written);
-        (self.c.instantiate(declared, mapper) == index).then_some((file, node, mapper))
-    }
-
-    /// The type node a type alias is declared to stand for.
-    fn body_of_alias(&self, alias: Sym) -> Option<(FileId, TypeNodeId)> {
-        self.c
-            .files()
-            .decls(alias)
-            .into_iter()
-            .find_map(|(file, decl)| match decl {
-                Decl::Alias(declaration) => {
-                    let body = self.c.hir(file)[declaration].ty;
-                    body.is_some().then_some((file, body))
-                }
-                _ => None,
-            })
-    }
-
-    fn alias_of_union_or_intersection(&mut self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
-        if ty == TypeId::BOOLEAN {
-            return None;
-        }
-        // `getTypeFromUnionTypeNode`, `getTypeFromIntersectionTypeNode`, `instantiateMappedType`: what a conditional type comes to
-        // has no alias.
-        if let Some((alias, arguments)) = self.c.p.alias_of.get(&ty)
-            && let Some((file, body)) = self.body_of_alias(alias)
-            && matches!(
-                self.c.hir(file)[body].kind,
-                TypeNodeKind::Union(_) | TypeNodeKind::Intersection(_) | TypeNodeKind::Mapped(_)
-            )
-        {
-            return Some((alias, arguments.to_vec()));
-        }
-        // `getGlobalNonNullableTypeInstantiation`: `T & {}` is nearly always made as `NonNullable<T>`.
-        if let TypeData::Intersection(members) = self.c.data(ty)
-            && let [a, b] = members[..]
-            && (a == TypeId::EMPTY_OBJECT || b == TypeId::EMPTY_OBJECT)
-            && self.c.p.written_with_empty_object.get(&ty).is_none()
-            && let Some(alias) = self.c.global_type_symbol(known::NonNullable)
-            && self.c.files().flags(alias).contains(SymFlags::TYPE_ALIAS)
-        {
-            let of = if a == TypeId::EMPTY_OBJECT { b } else { a };
-            if self.c.has_type_variables(of) {
-                return Some((alias, vec![of]));
-            }
-        }
-        let is_union = self.c.is_union(ty);
-        if (!is_union || self.c.p.named_unions.get(&ty).is_some())
-            && let Some(alias) = self.plain_alias_of(ty)
-        {
-            return Some((alias, Vec::new()));
-        }
-        if is_union {
-            self.generic_alias_of_union(ty)
-        } else {
-            None
-        }
-    }
-
-    /// The first type alias without type parameters, outside the default library, that is written as a union or an intersection
-    /// and stands for `ty`. The same members written out elsewhere are the same type here, and are named too.
-    fn plain_alias_of(&mut self, ty: TypeId) -> Option<Sym> {
-        let program = self.c.p;
-        if program.are_plain_aliases_known.get().is_none() {
-            let modules = &program.files.modules;
-            let counts = |index: usize| !modules[index].is_lib && !modules[index].is_transient;
-            // Asked from outside, whatever is under way here.
-            let mut checker = program.checker();
-            // What the aliases stand for can be found out in any order, so whoever needs the table helps instead of waiting for it.
-            loop {
-                let index = program
-                    .plain_aliases_resolved
-                    .fetch_add(1, Ordering::Relaxed);
-                if index >= modules.len() {
-                    break;
-                }
-                if counts(index) {
-                    checker.name_plain_aliases(FileId(index as u32), false);
-                }
-            }
-            program.are_plain_aliases_known.get_or_init(|| {
-                for index in (0..modules.len()).filter(|&index| counts(index)) {
-                    checker.name_plain_aliases(FileId(index as u32), true);
-                }
-            });
-        }
-        // Those of the file at hand are only known here.
-        if crate::local::is_on() {
-            let file = FileId(crate::local::file());
-            if self.c.named_plain_aliases_of != Some(file) {
-                self.c.named_plain_aliases_of = Some(file);
-                program.checker().name_plain_aliases(file, true);
-            }
-        }
-        self.c.p.plain_alias_of.get(&ty).flatten()
-    }
-
-    /// `IteratorResult<T, TReturn>` for `IteratorYieldResult<T> | IteratorReturnResult<TReturn>`: the generic type alias, written as
-    /// a union of references to classes and interfaces, that comes to `ty` with the type arguments read off the members of `ty`.
-    fn generic_alias_of_union(&mut self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
-        let TypeData::Union(members) = self.c.data(ty) else {
-            return None;
-        };
-        let is_generic_reference = |c: &Checker<'p>, t: TypeId| matches!(c.data(t), TypeData::Ref { args, .. } if !args.is_empty());
-        if !members.iter().all(|&m| is_generic_reference(&*self.c, m)) {
-            return None;
-        }
-        if self.c.p.generic_union_aliases.len() == 0 {
-            return None;
-        }
-        let files = self.c.files();
-        for (index, module) in files.modules.iter().enumerate() {
-            // Another thread may have it at hand.
-            if module.is_transient && !FileId(index as u32).is_local() {
-                continue;
-            }
-            for (a, alias) in module.hir.aliases.iter().enumerate() {
-                if alias.type_params.is_empty() || alias.ty.is_none() {
-                    continue;
-                }
-                let TypeNodeKind::Union(written) = module.hir[alias.ty].kind else {
-                    continue;
-                };
-                let symbol = module.bound.alias_symbol[a];
-                if written.len() != members.len() || symbol.is_none() {
-                    continue;
-                }
-                let symbol = files.sym(FileId(index as u32), symbol);
-                let Some(declared) = self.c.p.declared_types.get(&symbol) else {
-                    continue;
-                };
-                let TypeData::Union(patterns) = self.c.data(declared) else {
-                    continue;
-                };
-                if patterns.len() != members.len()
-                    || !patterns.iter().all(|&p| is_generic_reference(&*self.c, p))
-                {
-                    continue;
-                }
-                let parameters = self.c.type_params_of_symbol(symbol);
-                let mut arguments: Vec<Option<TypeId>> = vec![None; parameters.len()];
-                let fits = patterns.iter().all(|&pattern| {
-                    members.iter().any(|&member| {
-                        let mut attempt = arguments.clone();
-                        let fits = self.unify(pattern, member, &parameters, &mut attempt);
-                        if fits {
-                            arguments = attempt;
-                        }
-                        fits
-                    })
-                });
-                let Some(arguments) = arguments.into_iter().collect::<Option<Vec<TypeId>>>() else {
-                    continue;
-                };
-                if !fits {
-                    continue;
-                }
-                let mapper = self.c.mapper_from(&parameters, &arguments);
-                if self.c.instantiate(declared, mapper) == ty {
-                    return Some((symbol, arguments));
-                }
-            }
-        }
-        None
-    }
-
-    /// Whether `actual` is `pattern` with something for each of `parameters`, which is noted in `arguments`.
-    fn unify(
-        &self,
-        pattern: TypeId,
-        actual: TypeId,
-        parameters: &[TypeId],
-        arguments: &mut [Option<TypeId>],
-    ) -> bool {
-        if let Some(i) = parameters.iter().position(|&p| p == pattern) {
-            return *arguments[i].get_or_insert(actual) == actual;
-        }
-        if !self.c.has_type_variables(pattern) {
-            return pattern == actual;
-        }
-        match (self.c.data(pattern), self.c.data(actual)) {
-            (
-                TypeData::Ref {
-                    target: a,
-                    args: left,
-                },
-                TypeData::Ref {
-                    target: b,
-                    args: right,
-                },
-            ) if a == b && left.len() == right.len() => left
-                .iter()
-                .zip(right.iter())
-                .all(|(&l, &r)| self.unify(l, r, parameters, arguments)),
-            _ => false,
-        }
     }
 
     // ───────────────────────────── lists of types ─────────────────────────────
@@ -2317,15 +2045,15 @@ impl<'p> Printer<'_, 'p> {
     // ───────────────────────────── unions and intersections ─────────────────────────────
 
     fn union_to_node(&mut self, ty: TypeId) -> Node {
-        // `UnionType.origin`: `keyof T`.
-        if let Some(&of) = self.c.keyof_origins.get(&ty) {
-            self.approximate_length += 6;
-            let of = self.type_to_node(of);
-            return Node::new(format!("keyof {}", of.emit(TYPE_OPERATOR)), TYPE_OPERATOR);
-        }
-        // `UnionType.origin`: the intersection it was distributed from.
-        if let Some(origin) = self.c.p.union_origins.get(&ty) {
-            return self.intersection_to_node(&origin);
+        // `UnionType.origin` is written in its place.
+        match self.c.origin(ty) {
+            UnionOrigin::Keyof(of) => {
+                self.approximate_length += 6;
+                let of = self.type_to_node(*of);
+                return Node::new(format!("keyof {}", of.emit(TYPE_OPERATOR)), TYPE_OPERATOR);
+            }
+            UnionOrigin::Intersection(origin) => return self.intersection_to_node(origin),
+            UnionOrigin::Union(_) | UnionOrigin::None => {}
         }
         let types = self.format_union_types(ty);
         if let [only] = types[..] {
@@ -2345,24 +2073,10 @@ impl<'p> Printer<'_, 'p> {
 
     /// `formatUnionTypes`, of the members of `ty` in the order TypeScript keeps them in.
     fn format_union_types(&mut self, ty: TypeId) -> Vec<TypeId> {
-        let mut types = self.sorted_members(ty);
-        // `T | undefined`, of a `T` that is a union with a name (`UnionType.origin`). One of `null` and `undefined` may be part of what
-        // has the name.
-        for (without_undefined, without_null) in [(false, true), (true, false), (true, true)] {
-            let is_apart = |member: TypeId| {
-                without_undefined && member.is_undefined() || without_null && member.is_null()
-            };
-            let rest = self.c.filter(ty, |_, member| !is_apart(member));
-            if rest != ty
-                && rest != TypeId::BOOLEAN
-                && self.c.is_union(rest)
-                && self.alias_of_type(rest).is_some()
-            {
-                types.retain(|&member| is_apart(member));
-                types.insert(0, rest);
-                break;
-            }
-        }
+        let types = match self.c.origin(ty) {
+            UnionOrigin::Union(origin) => self.sorted(origin),
+            _ => self.sorted(self.c.parts(ty)),
+        };
         let mut result = Vec::with_capacity(types.len());
         let (mut has_null, mut has_undefined) = (false, false);
         let mut i = 0;
@@ -2409,7 +2123,11 @@ impl<'p> Printer<'_, 'p> {
 
     /// The members of the union `ty`, which are stored by id, in the order of `CompareTypes`.
     fn sorted_members(&mut self, ty: TypeId) -> Vec<TypeId> {
-        let parts = self.c.parts(ty);
+        self.sorted(self.c.parts(ty))
+    }
+
+    /// `parts` in the order of `CompareTypes`.
+    fn sorted(&mut self, parts: &[TypeId]) -> Vec<TypeId> {
         if parts.len() < 2 {
             return parts.to_vec();
         }
@@ -4035,12 +3753,7 @@ impl<'p> Printer<'_, 'p> {
     fn parameter_text(&mut self, parameter: &Parameter) -> String {
         let node = self.serialize_type_of_parameter(parameter);
         self.approximate_length += parameter.name_length + 3;
-        let library_alias = if self.enclosing_declaration.is_some() {
-            None
-        } else {
-            self.library_alias_of_parameter(parameter)
-        };
-        let text = library_alias.unwrap_or(node.text);
+        let text = node.text;
         format!(
             "{}{}{}: {}",
             if parameter.rest { "..." } else { "" },
@@ -4048,35 +3761,6 @@ impl<'p> Printer<'_, 'p> {
             if parameter.optional { "?" } else { "" },
             text
         )
-    }
-
-    /// `Type.alias`: a union that is got at through an alias goes by its name. `plain_alias_of` leaves out the aliases of the default
-    /// library, whose unions are written out all over. Of a parameter declared there as such an alias and nothing else it is known.
-    fn library_alias_of_parameter(&mut self, parameter: &Parameter) -> Option<String> {
-        let (file, declaration) = parameter.declaration?;
-        let hir = self.c.hir(file);
-        let written = hir[declaration].ty;
-        if written.is_none()
-            || !self.c.files().modules[file.idx()].is_lib
-            || !self.c.is_union(parameter.ty)
-        {
-            return None;
-        }
-        let TypeNodeKind::Ref { name, args } = hir[written].kind else {
-            return None;
-        };
-        if name.len() != 1 || !args.is_empty() {
-            return None;
-        }
-        let name = hir.id_at(name, 0);
-        let alias = self.c.global_type_symbol(name)?;
-        let (declared_in, body) = self.body_of_alias(alias)?;
-        if !matches!(self.c.hir(declared_in)[body].kind, TypeNodeKind::Union(_))
-            || self.c.type_from_node(file, written) != parameter.ty
-        {
-            return None;
-        }
-        Some(self.text(name))
     }
 
     /// `serializeReturnTypeForSignature`. `parameters`: those the signature declares.

@@ -396,8 +396,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `typeToString(baseWithThis)`: an intersection that `getTypeWithThisArgument` makes anew goes by no alias.
+    /// `typeToString(baseWithThis)`: a reference or an intersection that `getTypeWithThisArgument` makes anew goes by no alias.
     fn base_with_this_to_string(&mut self, base: TypeId) -> String {
+        let base = self.without_alias_of_reference(base);
         if self.is_intersection(base) && self.takes_this_argument(base) {
             self.type_to_string_written_out(base)
         } else {
@@ -407,7 +408,9 @@ impl Checker<'_> {
 
     /// Has what was last noted of the error `code` at `start` name `base` as `base_with_this_to_string` does.
     fn explain_base_with_this(&mut self, start: u32, code: u32, base: TypeId) {
-        if !self.explains || !self.is_intersection(base) {
+        if !self.explains
+            || !self.is_intersection(base) && self.without_alias_of_reference(base) == base
+        {
             return;
         }
         let (plain, with_this) = (
@@ -420,6 +423,10 @@ impl Checker<'_> {
     /// The same for 2430 and the base type `base` of the interface `sym`. One that stays the type it is goes by the alias it is
     /// written as after `extends`.
     fn explain_base_of_interface(&mut self, sym: Sym, start: u32, base: TypeId) {
+        if self.without_alias_of_reference(base) != base {
+            self.explain_base_with_this(start, 2430, base);
+            return;
+        }
         if !self.explains || !self.is_intersection(base) {
             return;
         }

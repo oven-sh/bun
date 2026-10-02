@@ -680,12 +680,22 @@ impl<'p> Checker<'p> {
             ),
             NE_UNDEFINED_OR_NULL | TRUTHY => self.map_type(reduced, |c, m| {
                 if c.has_type_facts(m, EQ_UNDEFINED_OR_NULL) {
-                    c.intersection(&[m, TypeId::EMPTY_OBJECT])
+                    c.global_non_nullable_type_instantiation(m)
                 } else {
                     m
                 }
             }),
             _ => reduced,
+        }
+    }
+
+    /// `getGlobalNonNullableTypeInstantiation`
+    fn global_non_nullable_type_instantiation(&mut self, ty: TypeId) -> TypeId {
+        match self.global_type_symbol(known::NonNullable) {
+            Some(alias) if self.files().flags(alias).contains(SymFlags::TYPE_ALIAS) => {
+                self.type_reference(alias, &[ty])
+            }
+            _ => self.intersection(&[ty, TypeId::EMPTY_OBJECT]),
         }
     }
 
@@ -4907,6 +4917,14 @@ impl<'p> Checker<'p> {
                 .all(|p| parts.contains(p))
             {
                 return TypeId::UNKNOWN;
+            }
+            // All the members of the declared type are the declared type.
+            if union != self.walk_declared
+                && let (TypeData::Union(parts), TypeData::Union(declared)) =
+                    (self.data(union), self.data(self.walk_declared))
+                && parts == declared
+            {
+                return self.walk_declared;
             }
             // `false | true` is `boolean` however fresh the two are: together they widen to it anyway.
             let parts = self.parts(union);

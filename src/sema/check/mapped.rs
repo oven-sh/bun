@@ -63,14 +63,10 @@ impl<'p> Checker<'p> {
     }
 
     /// `getIndexType`, where `keyof` is written or a `keyof T` that waited is instantiated. `getLiteralTypeFromProperties` gives the
-    /// union of the keys of a class, an interface or what has an alias the origin `keyof T`, which it is written as. Unions are
-    /// hash-consed, so that is noted on the side, and not of a union that may as well come from elsewhere.
+    /// union of the keys of a class, an interface or what has an alias the origin `keyof T`, which it is written as.
     pub(super) fn keyof_with_origin(&mut self, ty: TypeId) -> TypeId {
         let keys = self.keyof(ty);
-        if !self.is_union(keys)
-            || self.keyof_origins.contains_key(&keys)
-            || !self.every_type(keys, |c, key| c.is_unit(key))
-        {
+        if !self.is_union(keys) || !self.every_type(keys, |c, key| c.is_unit(key)) {
             return keys;
         }
         let of = self.force(ty);
@@ -84,9 +80,10 @@ impl<'p> Checker<'p> {
             _ => false,
         };
         if has_origin {
-            self.keyof_origins.insert(keys, of);
+            self.with_origin(keys, UnionOrigin::Keyof(of))
+        } else {
+            keys
         }
-        keys
     }
 
     /// `getIndexTypeEx`. `no_reducible_check` is `IndexFlagsNoReducibleCheck`.

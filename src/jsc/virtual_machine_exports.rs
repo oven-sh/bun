@@ -178,7 +178,7 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
 }
 
 // HOST_EXPORT(Bun__onDidAppendPlugin, c)
-pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, _: &JSGlobalObject) {
+pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine) {
     jsc_vm.has_plugins = true;
 }
 

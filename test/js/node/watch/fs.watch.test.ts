@@ -265,6 +265,20 @@ describe("fs.watch", () => {
     }
   });
 
+  test("throws ENOENT for an empty path instead of watching cwd", () => {
+    let watcher: FSWatcher | undefined;
+    try {
+      watcher = fs.watch("");
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(Error);
+      expect(err.code).toBe("ENOENT");
+      expect(err.syscall).toBe("watch");
+    } finally {
+      watcher?.close();
+    }
+  });
+
   test("returns an FSWatcher that inherits from EventEmitter", () => {
     const watcher = fs.watch(path.join(testDir, "watch.txt"));
     try {
@@ -962,6 +976,20 @@ describe("fs.watch", () => {
 });
 
 describe("fs.promises.watch", () => {
+  test.each(["", "file://"])("throws ENOENT for %j instead of watching cwd", input => {
+    let watcher: AsyncIterable<any> | undefined;
+    try {
+      watcher = fs.promises.watch(input);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(Error);
+      expect(err.code).toBe("ENOENT");
+      expect(err.syscall).toBe("watch");
+    } finally {
+      watcher?.[Symbol.asyncIterator]().return?.();
+    }
+  });
+
   test("add file/folder to folder", async () => {
     let count = 0;
     const root = path.join(testDir, "add-promise-directory");

@@ -1168,6 +1168,7 @@ ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
         m_binaryType = BinaryType::NodeBuffer;
         return {};
     }
+    // scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "'" + binaryType + "' is not a valid value for binaryType; binaryType remains unchanged.");
     return Exception { SyntaxError, makeString("'"_s, binaryType, "' is not a valid value for binaryType; binaryType remains unchanged."_s) };
 }
 

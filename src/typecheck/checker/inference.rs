@@ -178,7 +178,13 @@ impl<'a> Checker<'a> {
         } else if self.types[target]
             .flags
             .intersects(TypeFlags::INTERSECTION)
-            && !self.every_type_is_non_generic_object_type(target)
+            && {
+                let target_types = self.type_types(target);
+                !target_types
+                    .as_slice()
+                    .iter()
+                    .all(|&t| self.is_non_generic_object_type(t))
+            }
         {
             // We reduce intersection types unless they're simple combinations of object types. For example, when inferring from 'string[] & { extra: any }' to 'string[] & T' we want to remove string[] and infer { extra: any } for T. But when inferring to 'string[] & Iterable<T>' we want to keep the string[] on the source side and infer string for T.
             if !self.types[source].flags.intersects(TypeFlags::UNION) {
@@ -423,6 +429,405 @@ impl<'a> Checker<'a> {
             {
                 self.invoke_once(n, source, target, Self::infer_from_object_types);
             }
+        }
+    }
+
+    pub fn infer_from_type_arguments(
+        &mut self,
+        n: InferenceStateId,
+        source_types: List<'_, TypeId>,
+        target_types: List<'_, TypeId>,
+        variances: List<'_, VarianceFlags>,
+    ) {
+        for i in 0..source_types.len().min(target_types.len()) {
+            if i < variances.len()
+                && (variances.at(i) & VarianceFlags::VARIANCE_MASK) == VarianceFlags::CONTRAVARIANT
+            {
+                self.infer_from_contravariant_types(n, source_types.at(i), target_types.at(i));
+            } else {
+                self.infer_from_types(n, source_types.at(i), target_types.at(i));
+            }
+        }
+    }
+
+    pub fn infer_with_priority(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        target: TypeId,
+        new_priority: InferencePriority,
+    ) {
+        let save_priority = self.inference_states[n].priority;
+        self.inference_states[n].priority |= new_priority;
+        self.infer_from_types(n, source, target);
+        self.inference_states[n].priority = save_priority;
+    }
+
+    pub fn infer_from_contravariant_types_with_priority(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        target: TypeId,
+        new_priority: InferencePriority,
+    ) {
+        let save_priority = self.inference_states[n].priority;
+        self.inference_states[n].priority |= new_priority;
+        self.infer_from_contravariant_types(n, source, target);
+        self.inference_states[n].priority = save_priority;
+    }
+
+    pub fn infer_from_contravariant_types(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        let state = &mut self.inference_states[n];
+        state.contravariant = !state.contravariant;
+        self.infer_from_types(n, source, target);
+        let state = &mut self.inference_states[n];
+        state.contravariant = !state.contravariant;
+    }
+
+    pub fn infer_from_contravariant_types_if_strict_function_types(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        if self.strict_function_types
+            || self.inference_states[n]
+                .priority
+                .intersects(InferencePriority::ALWAYS_STRICT)
+        {
+            self.infer_from_contravariant_types(n, source, target);
+        } else {
+            self.infer_from_types(n, source, target);
+        }
+    }
+
+    // Ensure an inference action is performed only once for the given source and target types. This includes two things: avoiding inferring between the same pair of source and target types, and avoiding circularly inferring between source and target types. For an example of the last, consider inferring between source type `type Deep<T> = { next: Deep<Deep<T>> }` and target type `type Loop<U> = { next: Loop<U> }`: the types of the `next` property are ever deeper instantiations of `Deep` against `Loop<U>`, so we would go on inferring forever, even though we would never infer between the same pair of types.
+    pub fn invoke_once(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        target: TypeId,
+        action: fn(&mut Checker<'a>, InferenceStateId, TypeId, TypeId),
+    ) {
+        let key = InferenceKey {
+            s: source,
+            t: target,
+        };
+        if let Some(status) = self.inference_states[n].visited.get_ok(&key) {
+            let state = &mut self.inference_states[n];
+            state.inference_priority = state.inference_priority.min(status);
+            return;
+        }
+        if self.inference_states[n].visited.is_nil() {
+            self.inference_states[n].visited = Map::make();
+        }
+        let ok = self.inference_states[n]
+            .visited
+            .set(key, InferencePriority::CIRCULARITY);
+        self.map_set(ok);
+        let save_inference_priority = self.inference_states[n].inference_priority;
+        self.inference_states[n].inference_priority = InferencePriority::MAX_VALUE;
+        // We stop inferring and report a circularity if we encounter duplicate recursion identities on both the source side and the target side.
+        let save_expanding_flags = self.inference_states[n].expanding_flags;
+        self.inference_states[n].source_stack.push(source);
+        self.inference_states[n].target_stack.push(target);
+        let source_stack = std::mem::take(&mut self.inference_states[n].source_stack);
+        let source_is_deeply_nested = self.is_deeply_nested_type(source, &source_stack, 2);
+        self.inference_states[n].source_stack = source_stack;
+        if source_is_deeply_nested {
+            self.inference_states[n].expanding_flags |= ExpandingFlags::SOURCE;
+        }
+        let target_stack = std::mem::take(&mut self.inference_states[n].target_stack);
+        let target_is_deeply_nested = self.is_deeply_nested_type(target, &target_stack, 2);
+        self.inference_states[n].target_stack = target_stack;
+        if target_is_deeply_nested {
+            self.inference_states[n].expanding_flags |= ExpandingFlags::TARGET;
+        }
+        if self.inference_states[n].expanding_flags != ExpandingFlags::BOTH {
+            action(self, n, source, target);
+        } else {
+            self.inference_states[n].inference_priority = InferencePriority::CIRCULARITY;
+        }
+        self.inference_states[n].target_stack.pop();
+        self.inference_states[n].source_stack.pop();
+        self.inference_states[n].expanding_flags = save_expanding_flags;
+        let inference_priority = self.inference_states[n].inference_priority;
+        let ok = self.inference_states[n]
+            .visited
+            .set(key, inference_priority);
+        self.map_set(ok);
+        let state = &mut self.inference_states[n];
+        state.inference_priority = state.inference_priority.min(save_inference_priority);
+    }
+
+    // `sources` and `targets` come back as they are when nothing matched, as core.Filter answers upstream.
+    pub fn infer_from_matching_types<'s>(
+        &mut self,
+        n: InferenceStateId,
+        sources: &'s [TypeId],
+        targets: &'s [TypeId],
+        matches: fn(&mut Checker<'a>, TypeId, TypeId) -> bool,
+        sort: bool,
+    ) -> (Cow<'s, [TypeId]>, Cow<'s, [TypeId]>) {
+        let mut matched_sources: Vec<TypeId> = Vec::new();
+        let mut matched_targets: Vec<TypeId> = Vec::new();
+        for &t in targets {
+            for &s in sources {
+                if matches(self, s, t) {
+                    if !sort {
+                        self.infer_from_types(n, s, t);
+                    }
+                    matched_sources = append_if_unique(matched_sources, s);
+                    matched_targets = append_if_unique(matched_targets, t);
+                }
+            }
+        }
+        if sort {
+            // Sort target types by decreasing depth of generic instantiations. Intuitively, a successful inference from a type argument with deeper nesting is of higher quality because we've stripped away more layers of type instantiations that otherwise might skew the results. For example, when inferring from string[] | string[][] to T[] | T[][], the inference of string we make from relating string[][] to T[][] is of higher quality than the inference of string[] we make relating string[][] to T[].
+            sort_func(&mut matched_targets, &mut |t1, t2| {
+                compare_types_and_depth(self, t1, t2) < 0
+            });
+            for &t in &matched_targets {
+                for &s in &matched_sources {
+                    if matches(self, s, t) {
+                        self.infer_from_types(n, s, t);
+                    }
+                }
+            }
+        }
+        let sources = if matched_sources.is_empty() {
+            Cow::Borrowed(sources)
+        } else {
+            filter(sources, |t| !matched_sources.contains(&t))
+        };
+        let targets = if matched_targets.is_empty() {
+            Cow::Borrowed(targets)
+        } else {
+            filter(targets, |t| !matched_targets.contains(&t))
+        };
+        (sources, targets)
+    }
+}
+
+// Compare two types first by depth and then by the regular type ordering.
+pub fn compare_types_and_depth(c: &mut Checker<'_>, t1: TypeId, t2: TypeId) -> isize {
+    let d1 = get_type_depth(c, t1, 3);
+    let d2 = get_type_depth(c, t2, 3);
+    if d1 != d2 {
+        // Largest depth sorts first
+        return d2 - d1;
+    }
+    compare_types(c, t1, t2)
+}
+
+// Return the depth of the given type up to the given maximum depth. For generic aliased types and type references, the depth is one plus the largest type argument depth. For union and intersection types, the depth is the largest constituent type depth. For all other types, the depth is zero. The maximum depth limits infinite recursion of circular types.
+pub fn get_type_depth(c: &mut Checker<'_>, t: TypeId, max_depth: isize) -> isize {
+    if !c.stack_check.is_safe_to_recurse() {
+        return c.stack_limit();
+    }
+    if max_depth != 0 {
+        let alias = c.types[t].alias;
+        if !alias.is_nil() && c.type_aliases[alias].type_arguments.len() != 0 {
+            let type_arguments = c.type_aliases[alias].type_arguments;
+            return get_type_list_depth(c, type_arguments, max_depth - 1) + 1;
+        }
+        if c.types[t].object_flags.intersects(ObjectFlags::REFERENCE) {
+            let type_arguments = c.get_type_arguments(t);
+            if type_arguments.len() != 0 {
+                return get_type_list_depth(c, type_arguments, max_depth - 1) + 1;
+            }
+        }
+        if c.types[t]
+            .flags
+            .intersects(TypeFlags::UNION_OR_INTERSECTION)
+        {
+            let types = c.type_types(t);
+            return get_type_list_depth(c, types, max_depth);
+        }
+    }
+    0
+}
+
+pub fn get_type_list_depth(c: &mut Checker<'_>, types: List<'_, TypeId>, max_depth: isize) -> isize {
+    let mut depth = 0;
+    for &t in types.as_slice() {
+        depth = depth.max(get_type_depth(c, t, max_depth));
+    }
+    depth
+}
+
+impl<'a> Checker<'a> {
+    pub fn infer_to_multiple_types(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        targets: List<'_, TypeId>,
+        target_flags: TypeFlags,
+    ) {
+        let mut type_variable_count = 0;
+        if target_flags.intersects(TypeFlags::UNION) {
+            let mut naked_type_variable = TypeId::NIL;
+            let single_source = [source];
+            let sources: &[TypeId] = if self.types[source].flags.intersects(TypeFlags::UNION) {
+                self.type_types(source).as_slice()
+            } else {
+                &single_source
+            };
+            let mut matched = vec![false; sources.len()];
+            let mut inference_circularity = false;
+            // First infer to types that are not naked type variables. For each source type we track whether inferences were made from that particular type to some target with equal priority (i.e. of equal quality) to what we would infer for a naked type parameter.
+            for &t in targets.as_slice() {
+                if !get_inference_info_for_type(self, n, t).is_nil() {
+                    naked_type_variable = t;
+                    type_variable_count += 1;
+                } else {
+                    for (&s, source_matched) in sources.iter().zip(matched.iter_mut()) {
+                        let save_inference_priority = self.inference_states[n].inference_priority;
+                        self.inference_states[n].inference_priority = InferencePriority::MAX_VALUE;
+                        self.infer_from_types(n, s, t);
+                        let inference_priority = self.inference_states[n].inference_priority;
+                        if inference_priority == self.inference_states[n].priority {
+                            *source_matched = true;
+                        }
+                        inference_circularity = inference_circularity
+                            || inference_priority == InferencePriority::CIRCULARITY;
+                        self.inference_states[n].inference_priority =
+                            inference_priority.min(save_inference_priority);
+                    }
+                }
+            }
+            if type_variable_count == 0 {
+                // If every target is an intersection of types containing a single naked type variable, make a lower priority inference to that type variable. This handles inferring from 'A | B' to 'T & (X | Y)' where we want to infer 'A | B' for T.
+                let intersection_type_variable =
+                    get_single_type_variable_from_intersection_types(self, n, targets);
+                if !intersection_type_variable.is_nil() {
+                    self.infer_with_priority(
+                        n,
+                        source,
+                        intersection_type_variable,
+                        InferencePriority::NAKED_TYPE_VARIABLE,
+                    );
+                }
+                return;
+            }
+            // If the target has a single naked type variable and no inference circularities were encountered above (meaning we explored the types fully), create a union of the source types from which no inferences have been made so far and infer from that union to the naked type variable.
+            if type_variable_count == 1 && !inference_circularity {
+                let mut unmatched: Vec<TypeId> = Vec::new();
+                for (&s, &source_matched) in sources.iter().zip(matched.iter()) {
+                    if !source_matched {
+                        unmatched.push(s);
+                    }
+                }
+                if !unmatched.is_empty() {
+                    let unmatched_type = self.get_union_type(List::from_slice(&unmatched));
+                    self.infer_from_types(n, unmatched_type, naked_type_variable);
+                    return;
+                }
+            }
+        } else {
+            // We infer from types that are not naked type variables first so that inferences we make from nested naked type variables and given slightly higher priority by virtue of being first in the candidates array.
+            for &t in targets.as_slice() {
+                if !get_inference_info_for_type(self, n, t).is_nil() {
+                    type_variable_count += 1;
+                } else {
+                    self.infer_from_types(n, source, t);
+                }
+            }
+        }
+        // Inferences directly to naked type variables are given lower priority as they are less specific. For example, when inferring from Promise<string> to T | Promise<T>, we want to infer string for T, not Promise<string> | string. For intersection types we only infer to single naked type variables.
+        if target_flags.intersects(TypeFlags::INTERSECTION) && type_variable_count == 1
+            || !target_flags.intersects(TypeFlags::INTERSECTION) && type_variable_count > 0
+        {
+            for &t in targets.as_slice() {
+                if !get_inference_info_for_type(self, n, t).is_nil() {
+                    self.infer_with_priority(
+                        n,
+                        source,
+                        t,
+                        InferencePriority::NAKED_TYPE_VARIABLE,
+                    );
+                }
+            }
+        }
+    }
+}
+
+pub fn get_single_type_variable_from_intersection_types(
+    c: &Checker<'_>,
+    n: InferenceStateId,
+    types: List<'_, TypeId>,
+) -> TypeId {
+    let mut type_variable = TypeId::NIL;
+    for &t in types.as_slice() {
+        if !c.types[t].flags.intersects(TypeFlags::INTERSECTION) {
+            return TypeId::NIL;
+        }
+        let v = find(c.type_types(t).as_slice(), |t| {
+            !get_inference_info_for_type(c, n, t).is_nil()
+        });
+        if v.is_nil() || !type_variable.is_nil() && v != type_variable {
+            return TypeId::NIL;
+        }
+        type_variable = v;
+    }
+    type_variable
+}
+
+impl<'a> Checker<'a> {
+    pub fn infer_to_multiple_types_with_priority(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        targets: List<'_, TypeId>,
+        target_flags: TypeFlags,
+        new_priority: InferencePriority,
+    ) {
+        let save_priority = self.inference_states[n].priority;
+        self.inference_states[n].priority |= new_priority;
+        self.infer_to_multiple_types(n, source, targets, target_flags);
+        self.inference_states[n].priority = save_priority;
+    }
+
+    pub fn infer_to_conditional_type(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        if self.types[source].flags.intersects(TypeFlags::CONDITIONAL) {
+            let source_check_type = self.as_conditional_type(source).check_type;
+            let target_check_type = self.as_conditional_type(target).check_type;
+            self.infer_from_types(n, source_check_type, target_check_type);
+            let source_extends_type = self.as_conditional_type(source).extends_type;
+            let target_extends_type = self.as_conditional_type(target).extends_type;
+            self.infer_from_types(n, source_extends_type, target_extends_type);
+            let source_true_type = self.get_true_type_from_conditional_type(source);
+            let target_true_type = self.get_true_type_from_conditional_type(target);
+            self.infer_from_types(n, source_true_type, target_true_type);
+            let source_false_type = self.get_false_type_from_conditional_type(source);
+            let target_false_type = self.get_false_type_from_conditional_type(target);
+            self.infer_from_types(n, source_false_type, target_false_type);
+        } else {
+            let true_type = self.get_true_type_from_conditional_type(target);
+            let false_type = self.get_false_type_from_conditional_type(target);
+            let target_flags = self.types[target].flags;
+            let new_priority = if_else(
+                self.inference_states[n].contravariant,
+                InferencePriority::CONTRAVARIANT_CONDITIONAL,
+                InferencePriority::NONE,
+            );
+            self.infer_to_multiple_types_with_priority(
+                n,
+                source,
+                List::from_slice(&[true_type, false_type]),
+                target_flags,
+                new_priority,
+            );
         }
     }
 //@@NEXT@@

@@ -1,7 +1,7 @@
 import { Archive, file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { appendFile, exists } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, runBunInstall } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, @types/no-deps 1.0.0/2.0.0, a-dep 1.0.1..1.0.10, one-range-dep@1.0.0 -> no-deps ^1.0.0, dep-with-tags 1.0.0..3.0.1 (latest=3.0.0, pre-2=2.0.1).
@@ -172,6 +172,28 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
       expect((await pkg(dir))[group]).toStrictEqual({ "no-deps": "^2.0.0" });
       expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
       await expectInSync(dir);
+    },
+  );
+
+  test.each([[[]], [["-r"]]])(
+    "bun update --latest %j leaves an optional dependency that does not resolve as written",
+    async args => {
+      // verdaccio takes seconds to answer for a package it does not have.
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response("not found", { status: 404 }),
+      });
+      const optionalDependencies = { "not-in-this-registry": "^1.0.0" };
+      using tmp = tempDir("update-latest-unresolved", {
+        "package.json": json(root({ optionalDependencies })),
+        "bunfig.toml": `[install]\nregistry = "${registry.url.href}"\nsaveTextLockfile = true\n`,
+      });
+      const dir = String(tmp);
+      await run(dir, "install");
+      await run(dir, "update", "--latest", ...args);
+      expect((await pkg(dir)).optionalDependencies).toStrictEqual(optionalDependencies);
+      expect((await lock(dir)).workspaces[""].optionalDependencies).toStrictEqual(optionalDependencies);
     },
   );
 

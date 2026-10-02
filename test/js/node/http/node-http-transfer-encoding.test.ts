@@ -2,10 +2,12 @@ import { jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
-import { createServer, request } from "http";
+import { createServer, request, ServerResponse } from "http";
+import { createSecureServer } from "http2";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
 import type { Duplex } from "stream";
+import { duplexPair, Readable } from "stream";
 import { connect as tlsConnect } from "tls";
 // The llhttp binding. It has no type declarations, like in node-http-parser.test.ts.
 const { HTTPParser, calculateLenientFlags } = require("node:_http_common");
@@ -1179,6 +1181,392 @@ describe("an end() that throws keeps no trailer for the next end()", () => {
     expect(raw.toString("latin1").replace(/Date: [^\r]+\r\n/, "")).toBe(
       "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 4\r\n\r\nbody",
     );
+  });
+});
+
+// Two kinds of connection have a JS handle in the place of the native one: a socket that is given to
+// server.emit("connection"), and an HTTP/1.1 client of an http2 server with allowHTTP1. Each expected value is what
+// node v26.3.0 sends for the same handler. Node sends the same bytes on each of these connections.
+describe("response trailers on server.emit('connection') and http2 allowHTTP1 connections", () => {
+  const GET = "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+  const GET_1_0 = "GET / HTTP/1.0\r\nHost: x\r\n\r\n";
+  const HEAD = "HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+  const PIPELINED = "GET /1 HTTP/1.1\r\nHost: x\r\n\r\nGET /2 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+
+  type Listener = (req: any, res: any) => void;
+  type Respond = (res: any) => void;
+  type Entry = (listener: Listener, request: string, next?: string, options?: object) => Promise<string>;
+
+  const chunked = (res: any) => res.setHeader("Transfer-Encoding", "chunked");
+
+  // Resolves with every byte that `socket` receives until `end`. `next` is the second request of a keep-alive
+  // client: it follows the end of the first response, which is chunk-framed.
+  function receive(socket: Duplex, end: "close" | "end", next?: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let raw = "";
+    socket.on("data", (chunk: Buffer) => {
+      raw += chunk.toString("latin1");
+      if (next !== undefined && /\r\n0\r\n(?:[^\r\n]+\r\n)*\r\n$/.test(raw)) {
+        const request = next;
+        next = undefined;
+        socket.write(request);
+      }
+    });
+    socket.on("error", reject);
+    socket.on(end, () => resolve(raw));
+    return promise;
+  }
+
+  // How the connection gets to `listener`. Each one resolves with every byte that the client receives.
+  const fallback: Record<string, Entry> = {
+    "net.Socket": async (listener, request, next, options = {}) => {
+      const server = createServer(options, listener);
+      const acceptor = new Server(socket => void server.emit("connection", socket));
+      await once(acceptor.listen(0, "127.0.0.1"), "listening");
+      try {
+        const { port } = acceptor.address() as AddressInfo;
+        const socket = connect(port, "127.0.0.1", () => socket.write(request));
+        return await receive(socket, "close", next);
+      } finally {
+        acceptor.close();
+      }
+    },
+    "duplexPair() side": async (listener, request, next) => {
+      const [client, serverSide] = duplexPair();
+      createServer(listener).emit("connection", serverSide);
+      const received = receive(client, "end", next);
+      client.write(request);
+      return await received;
+    },
+    // A listening server gives the socket of a CONNECT request to its 'connect' listener.
+    "socket of a CONNECT request": async (listener, request, next) => {
+      const server = createServer(listener);
+      const proxy = createServer().on("connect", (req, socket) => {
+        socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        server.emit("connection", socket);
+      });
+      await once(proxy.listen(0, "127.0.0.1"), "listening");
+      try {
+        const { port } = proxy.address() as AddressInfo;
+        const socket = connect(port, "127.0.0.1", () => socket.write("CONNECT x:80 HTTP/1.1\r\nHost: x:80\r\n\r\n"));
+        socket.once("data", () => socket.write(request));
+        const raw = await receive(socket, "close", next);
+        return raw.slice(raw.indexOf("\r\n\r\n") + 4);
+      } finally {
+        proxy.close();
+      }
+    },
+    "http2 allowHTTP1": async (listener, request, next) => {
+      const server = createSecureServer({ ...tlsCert, allowHTTP1: true }, listener);
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const { port } = server.address() as AddressInfo;
+        const socket = tlsConnect(
+          { port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] },
+          () => socket.write(request),
+        );
+        return await receive(socket, "close", next);
+      } finally {
+        server.close();
+      }
+    },
+  };
+  const entries: Record<string, Entry> = {
+    ...fallback,
+    // The native handle. A response that waits behind a pipelined one has the same queue on both kinds of handle.
+    "listen()": async (listener, request, next) => {
+      await using server = createServer(listener);
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1", () => socket.write(request));
+      return await receive(socket, "close", next);
+    },
+  };
+
+  // The body of each response that the client receives.
+  async function wire(
+    listener: Listener,
+    { request = GET, next = undefined as string | undefined, entry = "net.Socket", options = {} } = {},
+  ) {
+    const raw = await entries[entry](listener, request, next, options);
+    return raw.split(/HTTP\/1\.1 \d{3} [^\r\n]*\r\n(?:[^\r\n]+\r\n)*\r\n/).slice(1);
+  }
+
+  test.each(Object.keys(fallback))("%s: they follow the last chunk", async entry => {
+    const bodies = await wire(
+      (req, res) => {
+        chunked(res);
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("ok");
+      },
+      { entry },
+    );
+    expect(bodies).toEqual(["2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n"]);
+  });
+
+  test.each<[string, Respond, string]>([
+    [
+      "write(), addTrailers(), end()",
+      res => {
+        res.write("ok");
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end();
+      },
+      "2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n",
+    ],
+    [
+      "addTrailers() before the first write()",
+      res => {
+        res.addTrailers({ "X-Foo": "bar" });
+        res.write("ok");
+        res.end("more");
+      },
+      "2\r\nok\r\n4\r\nmore\r\n0\r\nX-Foo: bar\r\n\r\n",
+    ],
+    [
+      "writeHead() first",
+      res => {
+        res.writeHead(200);
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("ok");
+      },
+      "2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n",
+    ],
+    [
+      "flushHeaders() first",
+      res => {
+        res.flushHeaders();
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("ok");
+      },
+      "2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n",
+    ],
+    [
+      "end() with no body",
+      res => {
+        chunked(res);
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end();
+      },
+      "0\r\nX-Foo: bar\r\n\r\n",
+    ],
+    [
+      // One byte for each character: 0xE9, and not the two bytes of UTF-8.
+      "two fields as pairs, with a latin1 value",
+      res => {
+        chunked(res);
+        res.addTrailers([
+          ["X-A", "1"],
+          ["X-B", "caf\xe9"],
+        ]);
+        res.end("ok");
+      },
+      "2\r\nok\r\n0\r\nX-A: 1\r\nX-B: caf\xe9\r\n\r\n",
+    ],
+    [
+      "the last addTrailers() call replaces the others",
+      res => {
+        chunked(res);
+        res.addTrailers({ "X-One": "1" });
+        res.addTrailers({ "X-Two": "2" });
+        res.end("ok");
+      },
+      "2\r\nok\r\n0\r\nX-Two: 2\r\n\r\n",
+    ],
+    [
+      "res._trailer set directly",
+      res => {
+        chunked(res);
+        res._trailer = "X-Direct: 1\r\n";
+        res.end("ok");
+      },
+      "2\r\nok\r\n0\r\nX-Direct: 1\r\n\r\n",
+    ],
+    [
+      "readable.pipe(res)",
+      res => {
+        res.addTrailers({ "X-Foo": "bar" });
+        Readable.from([Buffer.from("a"), Buffer.from("b")]).pipe(res);
+      },
+      "1\r\na\r\n1\r\nb\r\n0\r\nX-Foo: bar\r\n\r\n",
+    ],
+    [
+      // end() calls writeHead(), then it reads the trailers.
+      "a writeHead() wrapper that adds them",
+      res => {
+        const writeHead = res.writeHead;
+        res.writeHead = function (...args: unknown[]) {
+          this.addTrailers({ "X-Foo": "bar" });
+          return writeHead.apply(this, args);
+        };
+        chunked(res);
+        res.end("ok");
+      },
+      "2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n",
+    ],
+  ])("%s", async (_, respond, expected) => {
+    expect(await wire((req, res) => respond(res))).toEqual([expected]);
+  });
+
+  test("a ServerResponse subclass", async () => {
+    class Subclass extends ServerResponse {}
+    const bodies = await wire(
+      (req, res) => {
+        chunked(res);
+        res.addTrailers({ "X-Subclass": String(res instanceof Subclass) });
+        res.end("ok");
+      },
+      { options: { ServerResponse: Subclass } },
+    );
+    expect(bodies).toEqual(["2\r\nok\r\n0\r\nX-Subclass: true\r\n\r\n"]);
+  });
+
+  // Trailer lines after a body with other framing are the first bytes of the next response to a keep-alive client.
+  // The socket of a CONNECT request has the native socket handle too, and that handle does not decide the framing.
+  test.each(["net.Socket", "socket of a CONNECT request"])("%s: only a chunk-framed body has them", async entry => {
+    const framings: Record<string, [Respond, string?]> = {
+      "Transfer-Encoding: chunked": [res => (chunked(res), res.end("ok"))],
+      "no framing header": [res => res.end("ok")],
+      "Content-Length": [res => (res.setHeader("Content-Length", "2"), res.end("ok"))],
+      "Transfer-Encoding: identity": [res => (res.setHeader("Transfer-Encoding", "identity"), res.end("ok"))],
+      "Transfer-Encoding: gzip": [res => (res.setHeader("Transfer-Encoding", "gzip"), res.end("ok"))],
+      "HTTP/1.0 request": [res => (res.write("ok"), res.end()), GET_1_0],
+      "HEAD request": [res => (chunked(res), res.end()), HEAD],
+      "204": [res => ((res.statusCode = 204), res.end())],
+      "304": [res => ((res.statusCode = 304), chunked(res), res.end())],
+    };
+    const bodies: Record<string, string[]> = {};
+    for (const [name, [respond, request]] of Object.entries(framings)) {
+      bodies[name] = await wire(
+        (req, res) => {
+          res.addTrailers({ "X-Foo": "bar" });
+          respond(res);
+        },
+        { entry, request },
+      );
+    }
+    expect(bodies).toEqual({
+      "Transfer-Encoding: chunked": ["2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n"],
+      "no framing header": ["ok"],
+      "Content-Length": ["ok"],
+      "Transfer-Encoding: identity": ["ok"],
+      "Transfer-Encoding: gzip": ["ok"],
+      "HTTP/1.0 request": ["ok"],
+      "HEAD request": [""],
+      "204": [""],
+      "304": [""],
+    });
+  });
+
+  // Like Node's _storeHeader: a Trailer header makes a response with no framing header chunk-framed, with or
+  // without addTrailers(). addTrailers() alone does not: that is the "no framing header" row above.
+  test.each(Object.keys(fallback))("%s: a Trailer header makes end(chunk) chunk-framed", async entry => {
+    const orders: Record<string, Respond> = {
+      "addTrailers(), end(chunk)": res => {
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("ok");
+      },
+      "end(chunk)": res => res.end("ok"),
+      "addTrailers(), end()": res => {
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end();
+      },
+    };
+    const bodies: Record<string, string[]> = {};
+    for (const [name, respond] of Object.entries(orders)) {
+      bodies[name] = await wire(
+        (req, res) => {
+          res.setHeader("Trailer", "X-Foo");
+          respond(res);
+        },
+        { entry },
+      );
+    }
+    expect(bodies).toEqual({
+      "addTrailers(), end(chunk)": ["2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n"],
+      "end(chunk)": ["2\r\nok\r\n0\r\n\r\n"],
+      "addTrailers(), end()": ["0\r\nX-Foo: bar\r\n\r\n"],
+    });
+  });
+
+  test.each(["net.Socket", "duplexPair() side"])("%s: the next response of the connection has none", async entry => {
+    const bodies = await wire(
+      (req, res) => {
+        chunked(res);
+        if (req.url === "/1") res.addTrailers({ "X-Foo": "bar" });
+        res.end(req.url);
+      },
+      {
+        entry,
+        request: "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n",
+        next: "GET /2 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      },
+    );
+    expect(bodies).toEqual(["2\r\n/1\r\n0\r\nX-Foo: bar\r\n\r\n", "2\r\n/2\r\n0\r\n\r\n"]);
+  });
+
+  // The response to /2 ends while the response to /1 has the connection. Node puts the trailers in its output
+  // buffer in that end() call, so a later addTrailers() call changes nothing.
+  test.each(["net.Socket", "listen()"])(
+    "%s: a response that ends while it is queued sends the trailers of that end() call",
+    async entry => {
+      const orders: Record<string, Respond> = {
+        "addTrailers(), end()": res => {
+          res.addTrailers({ "X-Foo": "bar" });
+          res.end("two");
+        },
+        "end(), addTrailers()": res => {
+          res.end("two");
+          res.addTrailers({ "X-Late": "1" });
+        },
+        "addTrailers(A), end(), addTrailers(B)": res => {
+          res.addTrailers({ "X-A": "1" });
+          res.end("two");
+          res.addTrailers({ "X-B": "2" });
+        },
+        "addTrailers(A), end(), addTrailers({})": res => {
+          res.addTrailers({ "X-A": "1" });
+          res.end("two");
+          res.addTrailers({});
+        },
+      };
+      const bodies: Record<string, string[]> = {};
+      for (const [name, respond] of Object.entries(orders)) {
+        let first: any;
+        bodies[name] = await wire(
+          (req, res) => {
+            if (req.url === "/1") return void (first = res);
+            chunked(res);
+            respond(res);
+            first.end("one");
+          },
+          { entry, request: PIPELINED },
+        );
+      }
+      expect(bodies).toEqual({
+        "addTrailers(), end()": ["one", "3\r\ntwo\r\n0\r\nX-Foo: bar\r\n\r\n"],
+        "end(), addTrailers()": ["one", "3\r\ntwo\r\n0\r\n\r\n"],
+        "addTrailers(A), end(), addTrailers(B)": ["one", "3\r\ntwo\r\n0\r\nX-A: 1\r\n\r\n"],
+        "addTrailers(A), end(), addTrailers({})": ["one", "3\r\ntwo\r\n0\r\nX-A: 1\r\n\r\n"],
+      });
+    },
+  );
+
+  // The server answers the client's FIN with its own. Like Node's _writeRaw, a response writes nothing after that.
+  test("a response that ends after the client's FIN writes nothing", async () => {
+    const errors: unknown[] = [];
+    const server = createServer((req, res) => {
+      chunked(res);
+      res.addTrailers({ "X-Foo": "bar" });
+      req.socket.on("end", () => res.end("ok"));
+    }).on("clientError", (error: NodeJS.ErrnoException) => errors.push(error.code));
+    const [client, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    const received = receive(client, "end");
+    const closed = once(serverSide, "close");
+    client.end(GET);
+    await closed;
+    expect({ raw: await received, errors }).toEqual({ raw: "", errors: [] });
   });
 });
 

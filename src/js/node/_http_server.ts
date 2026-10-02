@@ -2953,6 +2953,8 @@ function advanceResponsePipeline(server, socket) {
         } else if (kind === "write") {
           if (ServerResponsePrototypeWrite.$call(res, op[1], op[2], op[3]) === false) hitBackpressure = true;
         } else {
+          // The trailers that the queued end() call had. Both kinds of handle send res._trailer.
+          res._trailer = op[4];
           ServerResponsePrototypeEnd.$call(res, op[1], op[2], op[3]);
         }
       }
@@ -3068,7 +3070,8 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
     }
     chunk = undefined;
   }
-  queued.ops.push(["end", chunk, encoding, callback]);
+  // Node renders the trailers into its output buffer in this call. A later addTrailers() call does not change them.
+  queued.ops.push(["end", chunk, encoding, callback, res._trailer]);
   if (chunk) {
     const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
     queued.bytes += bytes;

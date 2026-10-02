@@ -331,9 +331,7 @@ pub(crate) trait BlobExt {
         lifetime: Lifetime,
     ) -> JsResult<JSValue>;
     fn to_form_data(&self, cx: &bun_jsc::JsThread<'_>, _lifetime: Lifetime) -> JsResult<JSValue>;
-    /// `new Blob(parts)` semantics. With `REQUIRE_ARRAY = false` (body inits,
-    /// `Bun.write` sources) a bare part is accepted too. A part that is itself
-    /// a Blob shares its store. The source Blob is left untouched.
+    /// `new Blob(parts)` from `arg`. With `REQUIRE_ARRAY = false` a bare part is accepted too.
     fn get<const REQUIRE_ARRAY: bool>(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob>
     where
         Self: Sized;

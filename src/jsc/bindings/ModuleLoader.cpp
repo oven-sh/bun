@@ -31,6 +31,7 @@
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
@@ -929,11 +930,10 @@ JSC::JSPromise* resolveAndEvaluateModule(JSC::JSGlobalObject* globalObject, cons
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* loader = globalObject->moduleLoader();
-    // JSC::loadAndEvaluateModule() takes a key.
-    auto key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, specifier), JSC::Identifier(), nullptr, /* useImportMap */ true);
+    // JSC::loadAndEvaluateModule() takes a key: WebCore gives it the URL it has parsed from <script src>.
+    auto key = globalObject->globalObjectMethodTable()->moduleLoaderResolve(globalObject, globalObject->moduleLoader(), JSC::jsString(vm, specifier), JSC::jsUndefined(), nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, loader->loadModule(globalObject, key, nullptr, nullptr, { JSC::ModuleLoadFlag::Evaluate }));
+    RELEASE_AND_RETURN(scope, JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr));
 }
 
 extern "C" JSC::JSPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)

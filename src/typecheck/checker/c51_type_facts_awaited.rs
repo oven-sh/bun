@@ -1,13 +1,338 @@
-// checker.go:31097-31702 (layers E-AWAIT, K-PRED, K-SUBST): the functions of 31355-31591, 31607-31612 and 31694-31702: awaited types, the target of a reference and the type variable behind substitution types.
+// checker.go:31097-31702 (layers E-FACTS, E-AWAIT, K-PRED, K-SUBST): the functions of 31097-31591, 31607-31612 and 31694-31702: type facts, awaited types, the target of a reference and the type variable behind substitution types.
 use crate::ast::{Arg, DiagnosticId, NodeId};
 use crate::checker::{
     CachedTypeKey, CachedTypeKind, Checker, ObjectFlags, SignatureKind, TypeAliasId, TypeFacts,
-    TypeFlags, TypeId, is_type_any, some_type,
+    TypeFlags, TypeId, get_big_int_literal_value, get_number_literal_value,
+    get_string_literal_value, is_type_any, some_type,
 };
 use crate::core::List;
 use crate::diagnostics::{self, MessageId};
+use crate::jsnum::{Number, PseudoBigInt};
 
 impl<'a> Checker<'a> {
+    pub fn get_type_facts(&mut self, t: TypeId, mask: TypeFacts) -> TypeFacts {
+        self.get_type_facts_worker(t, mask) & mask
+    }
+
+    pub fn has_type_facts(&mut self, t: TypeId, mask: TypeFacts) -> bool {
+        self.get_type_facts(t, mask) != TypeFacts::NONE
+    }
+
+    pub fn get_type_facts_worker(&mut self, t: TypeId, caller_only_needs: TypeFacts) -> TypeFacts {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        let mut t = t;
+        if self.types[t]
+            .flags
+            .intersects(TypeFlags::INTERSECTION | TypeFlags::INSTANTIABLE)
+        {
+            t = self.get_base_constraint_of_type(t);
+            if t.is_nil() {
+                t = self.unknown_type;
+            }
+        }
+        let flags = self.types[t].flags;
+        if flags.intersects(TypeFlags::STRING | TypeFlags::STRING_MAPPING) {
+            if self.strict_null_checks {
+                return TypeFacts::STRING_STRICT_FACTS;
+            }
+            return TypeFacts::STRING_FACTS;
+        }
+        if flags.intersects(TypeFlags::STRING_LITERAL | TypeFlags::TEMPLATE_LITERAL) {
+            let is_empty = flags.intersects(TypeFlags::STRING_LITERAL)
+                && get_string_literal_value(self, t).is_empty();
+            if self.strict_null_checks {
+                if is_empty {
+                    return TypeFacts::EMPTY_STRING_STRICT_FACTS;
+                }
+                return TypeFacts::NON_EMPTY_STRING_STRICT_FACTS;
+            }
+            if is_empty {
+                return TypeFacts::EMPTY_STRING_FACTS;
+            }
+            return TypeFacts::NON_EMPTY_STRING_FACTS;
+        }
+        if flags.intersects(TypeFlags::NUMBER | TypeFlags::ENUM) {
+            if self.strict_null_checks {
+                return TypeFacts::NUMBER_STRICT_FACTS;
+            }
+            return TypeFacts::NUMBER_FACTS;
+        }
+        if flags.intersects(TypeFlags::NUMBER_LITERAL) {
+            let is_zero = get_number_literal_value(self, t) == Number(0.0);
+            if self.strict_null_checks {
+                if is_zero {
+                    return TypeFacts::ZERO_NUMBER_STRICT_FACTS;
+                }
+                return TypeFacts::NON_ZERO_NUMBER_STRICT_FACTS;
+            }
+            if is_zero {
+                return TypeFacts::ZERO_NUMBER_FACTS;
+            }
+            return TypeFacts::NON_ZERO_NUMBER_FACTS;
+        }
+        if flags.intersects(TypeFlags::BIG_INT) {
+            if self.strict_null_checks {
+                return TypeFacts::BIG_INT_STRICT_FACTS;
+            }
+            return TypeFacts::BIG_INT_FACTS;
+        }
+        if flags.intersects(TypeFlags::BIG_INT_LITERAL) {
+            let is_zero = is_zero_big_int(self, t);
+            if self.strict_null_checks {
+                if is_zero {
+                    return TypeFacts::ZERO_BIG_INT_STRICT_FACTS;
+                }
+                return TypeFacts::NON_ZERO_BIG_INT_STRICT_FACTS;
+            }
+            if is_zero {
+                return TypeFacts::ZERO_BIG_INT_FACTS;
+            }
+            return TypeFacts::NON_ZERO_BIG_INT_FACTS;
+        }
+        if flags.intersects(TypeFlags::BOOLEAN) {
+            if self.strict_null_checks {
+                return TypeFacts::BOOLEAN_STRICT_FACTS;
+            }
+            return TypeFacts::BOOLEAN_FACTS;
+        }
+        if flags.intersects(TypeFlags::BOOLEAN_LIKE) {
+            let is_false = t == self.false_type || t == self.regular_false_type;
+            if self.strict_null_checks {
+                if is_false {
+                    return TypeFacts::FALSE_STRICT_FACTS;
+                }
+                return TypeFacts::TRUE_STRICT_FACTS;
+            }
+            if is_false {
+                return TypeFacts::FALSE_FACTS;
+            }
+            return TypeFacts::TRUE_FACTS;
+        }
+        if flags.intersects(TypeFlags::OBJECT) {
+            let possible_facts = if self.strict_null_checks {
+                TypeFacts::EMPTY_OBJECT_STRICT_FACTS
+                    | TypeFacts::FUNCTION_STRICT_FACTS
+                    | TypeFacts::OBJECT_STRICT_FACTS
+            } else {
+                TypeFacts::EMPTY_OBJECT_FACTS | TypeFacts::FUNCTION_FACTS | TypeFacts::OBJECT_FACTS
+            };
+            if !caller_only_needs.intersects(possible_facts) {
+                // If the caller doesn't care about any of the facts that we could possibly produce, return zero so we can skip resolving members.
+                return TypeFacts::NONE;
+            }
+            if self.types[t]
+                .object_flags
+                .intersects(ObjectFlags::ANONYMOUS)
+                && self.is_empty_object_type(t)
+            {
+                if self.strict_null_checks {
+                    return TypeFacts::EMPTY_OBJECT_STRICT_FACTS;
+                }
+                return TypeFacts::EMPTY_OBJECT_FACTS;
+            }
+            if self.is_function_object_type(t) {
+                if self.strict_null_checks {
+                    return TypeFacts::FUNCTION_STRICT_FACTS;
+                }
+                return TypeFacts::FUNCTION_FACTS;
+            }
+            if self.strict_null_checks {
+                return TypeFacts::OBJECT_STRICT_FACTS;
+            }
+            return TypeFacts::OBJECT_FACTS;
+        }
+        if flags.intersects(TypeFlags::VOID) {
+            return TypeFacts::VOID_FACTS;
+        }
+        if flags.intersects(TypeFlags::UNDEFINED) {
+            return TypeFacts::UNDEFINED_FACTS;
+        }
+        if flags.intersects(TypeFlags::NULL) {
+            return TypeFacts::NULL_FACTS;
+        }
+        if flags.intersects(TypeFlags::ES_SYMBOL_LIKE) {
+            if self.strict_null_checks {
+                return TypeFacts::SYMBOL_STRICT_FACTS;
+            }
+            return TypeFacts::SYMBOL_FACTS;
+        }
+        if flags.intersects(TypeFlags::NON_PRIMITIVE) {
+            if self.strict_null_checks {
+                return TypeFacts::OBJECT_STRICT_FACTS;
+            }
+            return TypeFacts::OBJECT_FACTS;
+        }
+        if flags.intersects(TypeFlags::NEVER) {
+            return TypeFacts::NONE;
+        }
+        if flags.intersects(TypeFlags::UNION) {
+            let mut facts = TypeFacts::NONE;
+            for &t in self.type_types(t).as_slice() {
+                facts |= self.get_type_facts_worker(t, caller_only_needs);
+            }
+            return facts;
+        }
+        if flags.intersects(TypeFlags::INTERSECTION) {
+            return self.get_intersection_type_facts(t, caller_only_needs);
+        }
+        TypeFacts::UNKNOWN_FACTS
+    }
+
+    pub fn get_intersection_type_facts(
+        &mut self,
+        t: TypeId,
+        caller_only_needs: TypeFacts,
+    ) -> TypeFacts {
+        // When an intersection contains a primitive type we ignore object type constituents as they are presumably type tags. For example, in string & { __kind__: "name" } we ignore the object type.
+        let ignore_objects = self.maybe_type_of_kind(t, TypeFlags::PRIMITIVE);
+        // When computing the type facts of an intersection type, certain type facts are computed as `and` and others are computed as `or`.
+        let mut ored_facts = TypeFacts::NONE;
+        let mut anded_facts = TypeFacts::ALL;
+        for &t in self.type_types(t).as_slice() {
+            if !(ignore_objects && self.types[t].flags.intersects(TypeFlags::OBJECT)) {
+                let f = self.get_type_facts_worker(t, caller_only_needs);
+                ored_facts |= f;
+                anded_facts &= f;
+            }
+        }
+        (ored_facts & TypeFacts::OR_FACTS_MASK) | (anded_facts & TypeFacts::AND_FACTS_MASK)
+    }
+}
+
+pub fn is_zero_big_int(c: &Checker<'_>, t: TypeId) -> bool {
+    get_big_int_literal_value(c, t) == PseudoBigInt::default()
+}
+
+impl<'a> Checker<'a> {
+    pub fn is_function_object_type(&mut self, t: TypeId) -> bool {
+        if self.types[t]
+            .object_flags
+            .intersects(ObjectFlags::EVOLVING_ARRAY)
+        {
+            return false;
+        }
+        // We do a quick check for a "bind" property before performing the more expensive subtype check. This gives us a quicker out in the common case where an object type is not a function.
+        let resolved = self.resolve_structured_type_members(t);
+        let signatures = self.as_structured_type(resolved).signatures;
+        let members = self.as_structured_type(resolved).members;
+        signatures.len() != 0
+            || !self.ast.table_get(members, b"bind").is_nil()
+                && self.is_type_subtype_of(t, self.global_function_type)
+    }
+
+    pub fn get_type_with_facts(&mut self, t: TypeId, include: TypeFacts) -> TypeId {
+        self.filter_type(t, &mut |c, t| c.has_type_facts(t, include))
+    }
+
+    // This function is similar to getTypeWithFacts, except that in strictNullChecks mode it replaces type unknown with the union {} | null | undefined (and reduces that accordingly), and it intersects remaining instantiable types with {}, {} | null, or {} | undefined in order to remove null and/or undefined.
+    pub fn get_adjusted_type_with_facts(&mut self, t: TypeId, facts: TypeFacts) -> TypeId {
+        let source =
+            if self.strict_null_checks && self.types[t].flags.intersects(TypeFlags::UNKNOWN) {
+                self.unknown_union_type
+            } else {
+                t
+            };
+        let filtered = self.get_type_with_facts(source, facts);
+        let reduced = self.recombine_unknown_type(filtered);
+        if self.strict_null_checks {
+            match facts {
+                TypeFacts::NE_UNDEFINED => {
+                    return self.remove_nullable_by_intersection(
+                        reduced,
+                        TypeFacts::EQ_UNDEFINED,
+                        TypeFacts::EQ_NULL,
+                        TypeFacts::IS_NULL,
+                        self.null_type,
+                    );
+                }
+                TypeFacts::NE_NULL => {
+                    return self.remove_nullable_by_intersection(
+                        reduced,
+                        TypeFacts::EQ_NULL,
+                        TypeFacts::EQ_UNDEFINED,
+                        TypeFacts::IS_UNDEFINED,
+                        self.undefined_type,
+                    );
+                }
+                TypeFacts::NE_UNDEFINED_OR_NULL | TypeFacts::TRUTHY => {
+                    return self.map_type(reduced, &mut |c, t| {
+                        if c.has_type_facts(t, TypeFacts::EQ_UNDEFINED_OR_NULL) {
+                            return c.get_global_non_nullable_type_instantiation(t);
+                        }
+                        t
+                    });
+                }
+                _ => {}
+            }
+        }
+        reduced
+    }
+
+    pub fn remove_nullable_by_intersection(
+        &mut self,
+        t: TypeId,
+        target_facts: TypeFacts,
+        other_facts: TypeFacts,
+        other_includes_facts: TypeFacts,
+        other_type: TypeId,
+    ) -> TypeId {
+        let facts = self.get_type_facts(
+            t,
+            TypeFacts::EQ_UNDEFINED
+                | TypeFacts::EQ_NULL
+                | TypeFacts::IS_UNDEFINED
+                | TypeFacts::IS_NULL,
+        );
+        // Simply return the type if it never compares equal to the target nullable.
+        if !facts.intersects(target_facts) {
+            return t;
+        }
+        // By default we intersect with a union of {} and the opposite nullable.
+        let empty_and_other_union =
+            self.get_union_type(List::from_slice(&[self.empty_object_type, other_type]));
+        // For each constituent type that can compare equal to the target nullable, intersect with the above union if the type doesn't already include the opposite nullable and the constituent can compare equal to the opposite nullable; otherwise, just intersect with {}.
+        self.map_type(t, &mut |c, t| {
+            if c.has_type_facts(t, target_facts) {
+                if !facts.intersects(other_includes_facts) && c.has_type_facts(t, other_facts) {
+                    return c.get_intersection_type(List::from_slice(&[t, empty_and_other_union]));
+                }
+                return c.get_intersection_type(List::from_slice(&[t, c.empty_object_type]));
+            }
+            t
+        })
+    }
+
+    pub fn recombine_unknown_type(&self, t: TypeId) -> TypeId {
+        if t == self.unknown_union_type {
+            return self.unknown_type;
+        }
+        t
+    }
+
+    pub fn get_global_non_nullable_type_instantiation(&mut self, t: TypeId) -> TypeId {
+        let alias = self.get_global_non_nullable_type_alias_or_nil();
+        if !alias.is_nil() {
+            return self.get_type_alias_instantiation(
+                alias,
+                List::from_slice(&[t]),
+                TypeAliasId::NIL,
+            );
+        }
+        self.get_intersection_type(List::from_slice(&[t, self.empty_object_type]))
+    }
+
+    pub fn convert_auto_to_any(&self, t: TypeId) -> TypeId {
+        if t == self.auto_type {
+            return self.any_type;
+        }
+        if t == self.auto_array_type {
+            return self.any_array_type;
+        }
+        t
+    }
+
     // Gets the "awaited type" of a type. @param type The type to await. @param withAlias When `true`, wraps the "awaited type" in `Awaited<T>` if needed. @remarks The "awaited type" of an expression is its "promised type" if the expression is a Promise-like type; otherwise, it is the type of the expression. This is used to reflect The runtime behavior of the `await` keyword.
     pub fn check_awaited_type(
         &mut self,

@@ -738,7 +738,7 @@ export function getDarwinLeakedSocketLimit(totalMemory: number): number {
  * killed. A signal with no listener ends the process, so each one gets a listener that does
  * nothing in place of the ones it had.
  *
- * @returns puts the previous listeners back
+ * @returns puts the previous listeners back. A second call does nothing, so it is safe in a `finally`.
  */
 export function ignoreTerminationSignals(): () => void {
   const ignore = () => {};
@@ -748,7 +748,12 @@ export function ignoreTerminationSignals(): () => void {
     process.on(signal, ignore);
     return { signal, listeners };
   });
+  let restored = false;
   return () => {
+    if (restored) {
+      return;
+    }
+    restored = true;
     for (const { signal, listeners } of saved) {
       process.removeListener(signal, ignore);
       for (const listener of listeners) {
@@ -886,10 +891,13 @@ export async function checkDarwinAgentSockets(host: DarwinAgentHost): Promise<vo
   }
 
   const restoreSignals = host.ignoreSignals();
-  if (host.command(["sudo", "-n", "shutdown", "-r", "now"]) !== undefined) {
-    await host.sleep(5 * 60_000);
+  try {
+    if (host.command(["sudo", "-n", "shutdown", "-r", "now"]) !== undefined) {
+      await host.sleep(5 * 60_000);
+    }
+  } finally {
+    restoreSignals();
   }
-  restoreSignals();
   report("did not reboot when a test job asked it to", "Reboot it by hand.");
 }
 

@@ -41,12 +41,14 @@ interface Scenario {
   counts: (number | undefined)[];
   rebootStarts?: boolean;
   loggedInUsers?: number | string;
+  /** The five minute wait for the reboot throws. */
+  waitFails?: boolean;
 }
 
 /** Runs the check on a fake machine. `calls` is every side effect in order, `printed` the job log. */
 async function run(scenario: Scenario) {
   const { os = "darwin", release = "25.6.0", env = rebootTurnedOn, totalMemory = 8 * GiB, uptime = 79_000 } = scenario;
-  const { counts, rebootStarts = true, loggedInUsers = 0 } = scenario;
+  const { counts, rebootStarts = true, loggedInUsers = 0, waitFails = false } = scenario;
   const calls: string[] = [];
   const printed: string[] = [];
   let reads = 0;
@@ -72,12 +74,18 @@ async function run(scenario: Scenario) {
     annotate: content => void calls.push(`annotate ${content.trim()}`),
     group: () => {},
     ignoreSignals: () => (calls.push("ignore signals"), () => void calls.push("restore signals")),
-    sleep: async ms => void calls.push(`sleep ${ms}`),
+    async sleep(ms) {
+      calls.push(`sleep ${ms}`);
+      if (waitFails && ms === 300_000) throw new Error("the wait failed");
+    },
   };
   const print = (...args: unknown[]) => void printed.push(args.join(" "));
   const spies = [spyOn(console, "log").mockImplementation(print), spyOn(console, "warn").mockImplementation(print)];
   try {
     await checkDarwinAgentSockets(host);
+  } catch (error) {
+    if (!waitFails) throw error;
+    calls.push(`threw ${(error as Error).message}`);
   } finally {
     for (const spy of spies) spy.mockRestore();
   }
@@ -100,27 +108,35 @@ test("the limit leaves room for 45,000 sockets under 80% of the TCP memory cap",
   expect(getDarwinLeakedSocketLimit(4 * GiB)).toBeLessThan(0);
 });
 
-test("ignoreTerminationSignals() silences the listeners a process had and then puts them back", () => {
+test("ignoreTerminationSignals() silences the listeners a process had and then puts them back, once", () => {
   // process.emit() calls the listeners without sending a signal, so the test runner is never at risk.
   const signals = ["SIGTERM", "SIGHUP", "SIGINT"] as const;
   const heard: string[] = [];
   const listeners = signals.map(signal => [signal, () => void heard.push(signal)] as const);
-  const before = signals.map(signal => process.listenerCount(signal));
+  const counts = () => signals.map(signal => process.listenerCount(signal));
+  const before = counts();
   for (const [signal, listener] of listeners) process.on(signal, listener);
+  let restore = () => {};
   try {
-    const restore = ignoreTerminationSignals();
+    restore = ignoreTerminationSignals();
     for (const signal of signals) process.emit(signal);
     expect(heard).toEqual([]);
     // One listener each: with none, the signal would end the process.
-    expect(signals.map(signal => process.listenerCount(signal))).toEqual([1, 1, 1]);
+    expect(counts()).toEqual([1, 1, 1]);
 
     restore();
     for (const signal of signals) process.emit(signal);
     expect(heard).toEqual(["SIGTERM", "SIGHUP", "SIGINT"]);
+
+    // A second call does nothing: it does not bring back a listener that was removed after the first one.
+    for (const [signal, listener] of listeners) process.removeListener(signal, listener);
+    restore();
+    expect(counts()).toEqual(before);
   } finally {
+    restore();
     for (const [signal, listener] of listeners) process.removeListener(signal, listener);
   }
-  expect(signals.map(signal => process.listenerCount(signal))).toEqual(before);
+  expect(counts()).toEqual(before);
 });
 
 describe("checkDarwinAgentSockets", () => {
@@ -183,6 +199,18 @@ describe("checkDarwinAgentSockets", () => {
       "sleep 300000",
       "restore signals",
       `annotate ${overLimit} It did not reboot when a test job asked it to. Reboot it by hand.`,
+    ]);
+  });
+
+  test("puts the signal listeners back when the wait for the reboot throws", async () => {
+    // Otherwise the runner would ignore SIGTERM for the rest of the job, and a cancel would wait for SIGKILL.
+    const { calls } = await run({ counts: [leaked], waitFails: true });
+    expect(calls.slice(settled.length)).toEqual([
+      "ignore signals",
+      "sudo -n shutdown -r now",
+      "sleep 300000",
+      "restore signals",
+      "threw the wait failed",
     ]);
   });
 

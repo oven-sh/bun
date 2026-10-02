@@ -532,6 +532,24 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `core.AppendIfUnique` in `getTypeParametersFromDeclaration` and `appendTypeParameters`: whether `tp` has the name, and so the
+    /// symbol, of a type parameter before it in the list `params`.
+    fn is_repeated_type_param(
+        &self,
+        file: FileId,
+        params: Span<TypeParamId>,
+        tp: TypeParamId,
+    ) -> bool {
+        let hir = self.hir(file);
+        let name = hir[tp].name;
+        name != Atom::NONE
+            && name != known::empty
+            && params
+                .iter()
+                .take_while(|&earlier| earlier != tp)
+                .any(|earlier| hir[earlier].name == name)
+    }
+
     /// The type parameter list of what has one declaration and no more.
     fn only_type_param_list(&self, sym: Sym) -> Option<(FileId, Span<TypeParamId>)> {
         let symbol = self.files().symbol(sym);
@@ -582,11 +600,19 @@ impl<'p> Checker<'p> {
     /// The same, for whoever only looks at them.
     pub(super) fn local_type_params_of_symbol(&mut self, sym: Sym) -> SmallVec<[TypeId; 4]> {
         if let Some((file, params)) = self.only_type_param_list(sym) {
-            return params.iter().map(|tp| self.type_param(file, tp)).collect();
+            return params
+                .iter()
+                .filter(|&tp| !self.is_repeated_type_param(file, params, tp))
+                .map(|tp| self.type_param(file, tp))
+                .collect();
         }
         let lists = self.type_param_lists(sym);
         if let [(file, params)] = lists[..] {
-            return params.iter().map(|tp| self.type_param(file, tp)).collect();
+            return params
+                .iter()
+                .filter(|&tp| !self.is_repeated_type_param(file, params, tp))
+                .map(|tp| self.type_param(file, tp))
+                .collect();
         }
         // Each declaration has parameters of its own here. They are taken from one declaration as far as it has them, so that
         // what a constraint or a default mentions is among them: the one that has most, and of those the first that says what
@@ -2534,7 +2560,7 @@ impl<'p> Checker<'p> {
                     return ty;
                 }
                 let args = self.types_from_nodes(file, args);
-                self.with_type_arguments(ty, &args)
+                self.with_type_arguments(ty, &args, InstantiationExpression::TypeNode(file, node))
             }
             TypeNodeKind::Import {
                 spec,
@@ -2608,7 +2634,8 @@ impl<'p> Checker<'p> {
                         return ty;
                     }
                     let args = self.types_from_nodes(file, args);
-                    return self.with_type_arguments(ty, &args);
+                    let node = InstantiationExpression::TypeNode(file, node);
+                    return self.with_type_arguments(ty, &args, node);
                 }
                 if !is_followed {
                     return if self.is_alias_in_error(value) {
@@ -3721,6 +3748,9 @@ impl<'p> Checker<'p> {
                 params
                     .iter()
                     .filter_map(|tp| {
+                        if self.is_repeated_type_param(file, params, tp) {
+                            return None;
+                        }
                         let declared = self.type_param(file, tp);
                         match self.p.types.map(mapper, declared) {
                             None => Some(declared),

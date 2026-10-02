@@ -611,6 +611,7 @@ impl Program {
             trials: FxHashMap::default(),
             named_plain_aliases_of: None,
             enclosing_declaration: None,
+            enclosing_module_specifier_mode: None,
             symbol_chain_cache: Default::default(),
             explains: false,
             only_syntax: false,
@@ -883,6 +884,9 @@ pub struct Checker<'p> {
     named_plain_aliases_of: Option<FileId>,
     /// `NodeBuilderContext.enclosingDeclaration` for the next printer, which takes it: the scope names are looked up from.
     enclosing_declaration: Option<(FileId, crate::bind::ScopeId)>,
+    /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`, while the name of an import or an
+    /// export is printed.
+    enclosing_module_specifier_mode: Option<ResolutionMode>,
     symbol_chain_cache: errors_declaration_emit::SymbolChainCache,
     /// What is noted of errors is kept: somebody is going to read it.
     explains: bool,

@@ -943,10 +943,17 @@ impl<'p> Checker<'p> {
         };
         let (receiver, stops) = self.chain_receiver(file, obj, chain);
         // `x.a` out of `any` is `any`, tests or no tests. (Not so `x["a"]`.)
+        // `isAnyLike`: `if c.isErrorType(apparentType) { return c.errorType }`
+        if self.is_error_type(receiver) {
+            return (TypeId::ERROR, false);
+        }
         if self.is_any(receiver) {
             return (receiver, false);
         }
         let left = self.receiver_that_is_there(receiver);
+        if self.is_error_type(left) {
+            return (TypeId::ERROR, stops);
+        }
         if self.is_any(left) {
             return (left, stops);
         }
@@ -1024,6 +1031,10 @@ impl<'p> Checker<'p> {
             // It is not narrowed.
             return (TypeId::ERROR, stops);
         };
+        // 2540
+        if target.written && self.is_assignment_to_readonly_property(file, e, obj, name) {
+            return (TypeId::ERROR, stops);
+        }
         (self.flow_type_of_access(file, e, declared, target), stops)
     }
 
@@ -1355,6 +1366,16 @@ impl<'p> Checker<'p> {
                 stops,
             );
         }
+        // `getPropertyTypeForIndexType`: 2540 and nil for a key that names a read-only property.
+        if target.written {
+            for &k in self.parts(key) {
+                if let Some(name) = self.property_name_of_type(k)
+                    && self.is_assignment_to_readonly_property(file, e, obj, name)
+                {
+                    return (TypeId::ERROR, stops);
+                }
+            }
+        }
         // `AccessFlagsExpressionPosition`
         let is_read = !target.definite;
         let of_super = if matches!(hir[obj].kind, ExprKind::Super) {
@@ -1366,10 +1387,21 @@ impl<'p> Checker<'p> {
             Some(name) => self.type_of_super_property(file, obj, receiver, name),
             None => {
                 let read = self.indexed_access_if_any(receiver, key, is_read);
+                // `AssignmentKindCompound` has `AccessFlagsExpressionPosition` as well: an index signature gives what it gives a read.
+                let mut is_writing = target.written;
+                if is_writing && !target.definite {
+                    for &k in self.parts(key) {
+                        is_writing = is_writing
+                            && match self.property_name_of_type(k) {
+                                Some(name) => self.finds_property(receiver, name),
+                                None => false,
+                            };
+                    }
+                }
                 // `AccessFlagsWriting`: `getWriteTypeOfSymbol`, and the intersection over a union of keys.
                 match read {
                     Some(ty)
-                        if target.definite
+                        if is_writing
                             && !matches!(self.data(ty), TypeData::IndexedAccess { .. }) =>
                     {
                         let written =
@@ -1651,8 +1683,13 @@ impl<'p> Checker<'p> {
             ExprKind::Instantiation { expr, type_args } => {
                 let ty = self.type_of_expr(file, expr);
                 let args = self.types_from_nodes(file, type_args);
-                self.with_type_arguments(ty, &args)
+                self.with_type_arguments(ty, &args, InstantiationExpression::Expr(file, e))
             }
+            // `checkJsxFragment`: `any` where `getJsxElementTypeAt` is the error type.
+            ExprKind::Jsx(j) if hir[j].tag.is_none() => match self.jsx_element_type(file) {
+                TypeId::ERROR => TypeId::ANY,
+                ty => ty,
+            },
             ExprKind::Jsx(_) => self.jsx_element_type(file),
             ExprKind::ImportCall(spec) => self.type_of_import_call(file, spec),
             ExprKind::ImportMeta => self.global_ref(known::ImportMeta, &[]),
@@ -4276,7 +4313,7 @@ impl<'p> Checker<'p> {
 
     /// `getJsxElementTypeAt`: without a `JSX.Element` it is the error type, which can be anything.
     fn jsx_element_type(&mut self, file: FileId) -> TypeId {
-        self.jsx_type(file, known::Element).unwrap_or(TypeId::ANY)
+        self.jsx_type(file, known::Element).unwrap_or(TypeId::ERROR)
     }
 
     /// What the attributes of the JSX element `e` are expected to be, together.

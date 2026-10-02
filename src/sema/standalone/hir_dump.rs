@@ -75,6 +75,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         decorators,
         legacy_decorators,
         jsx_tag_ends: _,
+        directives: _,
         early_errors,
         error_arguments: _,
         error_ends: _,

@@ -5342,9 +5342,11 @@ impl<'p> Checker<'p> {
         let object = self.apparent_type(object);
         let object = self.reduced(object);
         // Only the keys are gone through one by one.
-        let TypeData::Union(keys) = self.data(index) else {
+        if !self.is_union(index) {
             return self.property_type_for_writing(object, index, no_index_signatures);
-        };
+        }
+        // `indexType.Types()`: in the order of `CompareTypes`. An intersection keeps the order it is given.
+        let keys = self.parts_in_order(index);
         let mut types = Vec::with_capacity(keys.len());
         for &key in keys.iter() {
             types.push(self.property_type_for_writing(object, key, no_index_signatures)?);

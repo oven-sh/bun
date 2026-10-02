@@ -60,6 +60,10 @@ impl Checker<'_> {
 
     /// `TypeToTypeNode` with the flags of `typeWriterWalker.writeTypeOrSymbol`.
     pub fn type_to_string_for_baseline(&mut self, ty: TypeId) -> String {
+        // `writeTypeOrSymbol` does not ask the node builder about it in a test without errors.
+        if ty == TypeId::ERROR {
+            return super::type_writer::ERROR_TYPE_TEXT.to_owned();
+        }
         type_to_string_with(self, ty, NO_TRUNCATION | ALLOW_UNIQUE_ES_SYMBOL_TYPE)
     }
 
@@ -1817,6 +1821,13 @@ impl<'p> Printer<'_, 'p> {
                     let member = &self.c.hir(file)[member];
                     return self.property_key_text(file, member.key, member.pos);
                 }
+                // `GetAssignedName`
+                if bound.fn_symbol[function.idx()].is_none()
+                    && let FnOwner::Expr(e) = bound.fns[function.idx()].owner
+                    && let Some(name) = self.name_of_initialized_variable(file, e)
+                {
+                    return name;
+                }
                 bound.fn_symbol[function.idx()]
             }
             ScopeKind::Class(class) => bound.class_symbol[class.idx()],
@@ -2520,6 +2531,10 @@ impl<'p> Printer<'_, 'p> {
                 continue;
             }
             let base = self.c.type_of_expr(file, extends);
+            // `getBaseConstructorTypeOfClass`, `isConstructorType`: what cannot be constructed is the error type.
+            if self.c.signatures(base, true).is_empty() {
+                return false;
+            }
             return match self.c.data(base) {
                 TypeData::Intersection(parts) => {
                     parts.iter().any(|&part| self.c.is_type_variable(part))
@@ -2620,8 +2635,48 @@ impl<'p> Printer<'_, 'p> {
         })
     }
 
+    /// `symbol.Parent` of the method `ty` is the type of.
+    fn class_of_method(&self, ty: TypeId) -> Option<Sym> {
+        let TypeData::Fns { decls, .. } = self.c.data(ty) else {
+            return None;
+        };
+        decls.iter().find_map(|&(file, func)| {
+            let bound = self.c.bound(file);
+            let FnOwner::Member(member) = bound.fns[func.idx()].owner else {
+                return None;
+            };
+            let MemberOwner::Class(class) = bound.member_owner[member.idx()] else {
+                return None;
+            };
+            let symbol = bound.class_symbol[class.idx()];
+            symbol.is_some().then(|| self.c.files().sym(file, symbol))
+        })
+    }
+
     /// `createAnonymousTypeNode`
     fn anonymous_type_to_node(&mut self, ty: TypeId) -> Node {
+        // `createAnonymousTypeNodeEx`: "Anonymous types without a symbol are never circular."
+        if matches!(self.c.data(ty), TypeData::ReverseMapped { .. }) {
+            return self.object_type_to_node(ty);
+        }
+        // An `InstantiationExpressionType` that is the type of its type query is written as that query.
+        if let TypeData::Synth(shape) = self.c.data(ty)
+            && let Some(InstantiationExpression::TypeNode(file, node)) =
+                shape.instantiation_expression
+            && matches!(self.c.hir(file)[node].kind, TypeNodeKind::Typeof { .. })
+        {
+            let declared = self.c.type_from_node(file, node);
+            if self.c.instantiate(declared, self.mapper) == ty {
+                // A query whose name cannot be used here is written from its type, which comes back to this place.
+                if self.visited_types.contains(&ty) {
+                    return self.elided_information_placeholder();
+                }
+                self.visited_types.push(ty);
+                let reused = self.type_node_to_node(file, node);
+                self.visited_types.retain(|&visited| visited != ty);
+                return reused;
+            }
+        }
         let identity = match self.c.data(ty) {
             TypeData::Anon { origin, .. } => {
                 let origin = *origin;
@@ -2641,6 +2696,14 @@ impl<'p> Printer<'_, 'p> {
             _ => Identity::Type(ty),
         };
         if self.visited_types.contains(&ty) {
+            // `getSymbolChain`: a method is reached through its class.
+            if self.enclosing_declaration.is_some()
+                && let Some(name) = self.name_of_static_method(ty)
+                && let Some(class) = self.class_of_method(ty)
+            {
+                let class = self.symbol_to_type_node(class, true, Vec::new());
+                return Node::new(format!("{}.{name}", class.text), TYPE_OPERATOR);
+            }
             if let Some(name) = self
                 .variable_of_function_expression(ty)
                 .or_else(|| self.name_of_static_method(ty))
@@ -2912,13 +2975,13 @@ impl<'p> Printer<'_, 'p> {
             Decl::ModuleExports(e) | Decl::ExportsProperty(e) => hir[e].pos,
             _ => 0,
         };
-        Place::At((!files.module(file).is_lib, file.0, pos))
+        Place::At(self.c.place_in_program_order(file, pos))
     }
 
     /// Where the first declaration of `prop` is.
     fn place_of_property(&mut self, prop: &Prop, depth: u32) -> Place {
         let at = |c: &Checker<'p>, file: FileId, pos: u32| {
-            Place::At((!c.files().module(file).is_lib, file.0, pos))
+            Place::At(c.place_in_program_order(file, pos))
         };
         match &prop.source {
             PropSource::Members(list) => match list.first() {
@@ -2965,12 +3028,12 @@ impl<'p> Printer<'_, 'p> {
         for prop in props {
             let name = self.c.files().atoms.bytes(prop.name);
             let place = match &prop.source {
-                PropSource::Literal(file, written) => Place::At((
-                    !self.c.files().module(*file).is_lib,
-                    file.0,
-                    self.c
-                        .first_declaration_pos_of_literal_property(*file, *written),
-                )),
+                PropSource::Literal(file, written) => {
+                    let pos = self
+                        .c
+                        .first_declaration_pos_of_literal_property(*file, *written);
+                    Place::At(self.c.place_in_program_order(*file, pos))
+                }
                 _ => self.place_of_property(prop, 0),
             };
             keyed.push(match place {
@@ -3486,10 +3549,14 @@ impl<'p> Printer<'_, 'p> {
                         )
                     });
                 }
+                let last = props.iter().next_back();
+                let comma = last.map_or("", |last| {
+                    self.trailing_comma_after(file, self.c.end_of_pat_prop(file, last))
+                });
                 if parts.is_empty() {
                     "{}".to_owned()
                 } else {
-                    format!("{{ {} }}", parts.join(", "))
+                    format!("{{ {}{comma} }}", parts.join(", "))
                 }
             }
             PatKind::Array(elems) => {
@@ -3502,8 +3569,21 @@ impl<'p> Printer<'_, 'p> {
                         name
                     });
                 }
-                format!("[{}]", parts.join(", "))
+                let last = elems.iter().next_back();
+                let comma = last.map_or("", |last| {
+                    self.trailing_comma_after(file, self.c.end_of_pat_elem(file, last))
+                });
+                format!("[{}{comma}]", parts.join(", "))
             }
+        }
+    }
+
+    /// `NodeList.HasTrailingComma`: the comma, if one follows the last element of a list, which ends at `end`.
+    fn trailing_comma_after(&self, file: FileId, end: u32) -> &'static str {
+        let next = self.c.skip_trivia_from(file, end);
+        match self.c.hir(file).text.get(next as usize) {
+            Some(b',') => ",",
+            _ => "",
         }
     }
 

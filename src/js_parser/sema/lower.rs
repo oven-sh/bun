@@ -796,8 +796,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                     None => self.local(local, stmt.loc),
                 }
             }
+            StmtData::SDirective(directive) => {
+                let text = self.b.atom(directive.value.slice());
+                self.b.file.directives.push((pos, text));
+                return None;
+            }
             StmtData::SComment(_)
-            | StmtData::SDirective(_)
             | StmtData::SEmpty(_)
             | StmtData::SDebugger(_)
             | StmtData::SLazyExport(_) => return None,

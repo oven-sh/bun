@@ -1955,18 +1955,26 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `f<Args>` without a call: `ty` with the signatures that take that many type arguments, given them.
-    pub fn with_type_arguments(&mut self, ty: TypeId, args: &[TypeId]) -> TypeId {
+    /// `getInstantiationExpressionType`, `f<Args>` without a call: `ty` with the signatures that take that many type arguments, given
+    /// them. `node`: where it is written, which the object types that are made keep.
+    pub fn with_type_arguments(
+        &mut self,
+        ty: TypeId,
+        args: &[TypeId],
+        node: InstantiationExpression,
+    ) -> TypeId {
         let ty = self.force(ty);
         if self.is_any(ty) {
             return ty;
         }
         match self.data(ty).clone() {
-            TypeData::Union(_) => return self.map_type(ty, |c, m| c.with_type_arguments(m, args)),
+            TypeData::Union(_) => {
+                return self.map_type(ty, |c, m| c.with_type_arguments(m, args, node));
+            }
             TypeData::Intersection(parts) => {
                 let parts: Vec<TypeId> = parts
                     .iter()
-                    .map(|&p| self.with_type_arguments(p, args))
+                    .map(|&p| self.with_type_arguments(p, args, node))
                     .collect();
                 return self.intersection(&parts);
             }
@@ -1974,7 +1982,7 @@ impl<'p> Checker<'p> {
         }
         if self.is_deferred(ty) {
             let constraint = self.base_constraint(ty);
-            let given = self.with_type_arguments(constraint, args);
+            let given = self.with_type_arguments(constraint, args, node);
             return if given == constraint { ty } else { given };
         }
         let Some(members) = self.members(ty) else {
@@ -2026,6 +2034,7 @@ impl<'p> Checker<'p> {
             call,
             construct,
             index,
+            instantiation_expression: Some(node),
             ..Shape::default()
         })
     }
@@ -3404,9 +3413,10 @@ impl<'p> Checker<'p> {
                 && !is_sensitive.contains(&true)
                 && !self.sig_type_params(candidate).is_empty();
             let mut is_generic_function_deferred = false;
-            // A context sensitive function is no type guard where `candidate` asks for one, and what it is expected to be there.
-            let mut is_guard_rejected = false;
-            let mut rejected_guard: Option<(ExprId, TypeId)> = None;
+            // A context sensitive function does not fit `candidate`, which comes out in the second round, and what it is expected to
+            // be there.
+            let mut is_rejected_in_second_round = false;
+            let mut second_round_context: Option<(ExprId, TypeId)> = None;
             for (i, &arg) in args.iter().enumerate() {
                 // `isSignatureApplicable` checks the arguments from left to right, without an inference context.
                 if let Arg::Expr(e) = arg
@@ -3427,22 +3437,23 @@ impl<'p> Checker<'p> {
                         }
                         // Where a type guard is asked for, only a type guard will do. That comes out in the second round: to the
                         // first the function is `anyFunctionType`.
-                        let is_guard =
-                            is_guard_rejected || self.is_guard_if_expected(file, e, param);
-                        // `params` lack what the deferred calls contribute.
-                        if !is_deferred.contains(&true)
-                            && !self.do_annotated_parameters_fit(file, e, param, by_subtype)
-                            || !self.do_plain_members_fit(file, e, param, by_subtype)
-                        {
+                        // So does whether the parameters it annotates take what they are given. `params` lack what the deferred calls
+                        // contribute.
+                        let fits = is_rejected_in_second_round
+                            || self.is_guard_if_expected(file, e, param)
+                                && (is_deferred.contains(&true)
+                                    || self
+                                        .do_annotated_parameters_fit(file, e, param, by_subtype));
+                        if !self.do_plain_members_fit(file, e, param, by_subtype) {
                             applicable = false;
                             break;
                         }
-                        if !is_guard {
-                            is_guard_rejected = true;
+                        if !fits {
+                            is_rejected_in_second_round = true;
                             // The second round goes from left to right, and may not get past another function.
                             if !is_sensitive[..i].contains(&true) && !self.has_type_variables(param)
                             {
-                                rejected_guard = Some((e, param));
+                                second_round_context = Some((e, param));
                             }
                         }
                     }
@@ -3527,9 +3538,9 @@ impl<'p> Checker<'p> {
             }
             self.resolving.pop();
             // The second round checks the function with what `candidate` expects of it, which stays its contextual type
-            // (`NodeCheckFlagsContextChecked`), and then finds that it is no type guard.
-            if is_guard_rejected {
-                if applicable && let Some((e, param)) = rejected_guard {
+            // (`NodeCheckFlagsContextChecked`), and then finds that it does not fit.
+            if is_rejected_in_second_round {
+                if applicable && let Some((e, param)) = second_round_context {
                     self.set_context(file, e, param);
                 }
                 applicable = false;
@@ -7740,7 +7751,10 @@ impl<'p> Checker<'p> {
                 if hir[func].ret.is_some()
                     || self.stack.contains(&Query::Return(file, func))
                     || self.stack.contains(&Query::ReturnAtFirstLook(file, func))
-                    || self.contextual_signature(file, func).is_none()
+                    // The own signature comes from the second check of the literal around, which checks no function again.
+                    || self
+                        .contextual_signature(file, func)
+                        .is_none_or(|sig| self.is_signature_of_declaration(sig, file, func))
                 {
                     return;
                 }

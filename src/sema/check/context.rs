@@ -2629,11 +2629,16 @@ impl<'p> Checker<'p> {
                             .resolving
                             .iter()
                             .any(|r| r.file == file && r.call == parent)
+                        // `resolvingSignature`: `resolving` is popped before the candidates are compared, and another thread may
+                        // have kept the call.
+                        || self.stack.contains(&Query::Call(file, parent))
                     {
                         return None;
                     }
                     let index = hir.ids(args).position(|a| a == e)?;
-                    let sig = self.p.calls.get(&(file, parent))?.sig?;
+                    // `resolveCall` stores the candidate for overload failure in `resolvedSignature` before it reports.
+                    let resolved = self.p.calls.get(&(file, parent))?;
+                    let sig = self.p.failure_sigs.get(&(file, parent)).or(resolved.sig)?;
                     let params = self.sig_params(sig);
                     let param = self.context_of_arg_at(&params, index, Some(args.len()))?;
                     self.without_no_infer(param)
@@ -2707,6 +2712,35 @@ impl<'p> Checker<'p> {
         };
         let context = self.force(context);
         (context != TypeId::UNRESOLVED).then_some(context)
+    }
+
+    /// Whether `sig` is the signature `func` declares, not an instantiation of it.
+    pub(super) fn is_signature_of_declaration(&self, sig: SigId, file: FileId, func: FnId) -> bool {
+        matches!(
+            *self.p.types.sig(sig),
+            SigData::Decl { file: f, func: g, mapper }
+                if f == file
+                    && g == func
+                    && self.p.types.mapping(mapper).iter().all(|&(from, to)| from == to)
+        )
+    }
+
+    /// `contextualSignature == c.getSignatureFromDeclaration(fn)`: a type argument of the call around was inferred as the type of
+    /// `func`, so the resolved signature expects the signature `func` declares. With another signature in what was pushed, the
+    /// return type was resolved under that one when the function was first checked.
+    pub(super) fn is_own_contextual_signature(&mut self, file: FileId, func: FnId) -> bool {
+        let Some(function) = self.takes_context(file, func) else {
+            return false;
+        };
+        if self
+            .contextual_signature(file, func)
+            .is_some_and(|pushed| !self.is_signature_of_declaration(pushed, file, func))
+        {
+            return false;
+        }
+        self.contextual_type_from_resolved_signature(file, function)
+            .and_then(|context| self.contextual_signature_in(file, func, context))
+            .is_some_and(|sig| self.is_signature_of_declaration(sig, file, func))
     }
 
     /// The type parameter `index` of `func` gets from where the function is used.

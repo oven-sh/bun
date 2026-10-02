@@ -1196,7 +1196,8 @@ fn run_one(
         );
         for found in checker.types_at_locations(file) {
             let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
-            if start >= end {
+            // A missing identifier has no text.
+            if start > end || start == end && found.kind != "missing" {
                 continue;
             }
             let line = starts.partition_point(|&s| s <= start) - 1;
@@ -1362,10 +1363,19 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                         {
                             let mut lines = types.into_inner().unwrap();
                             // `typeWriterWalker.hadErrorBaseline`: the error type goes by its intrinsic name only in a test without errors.
-                            if !report.diagnostics.is_empty() {
+                            let had_error_baseline = !report.diagnostics.is_empty();
+                            if had_error_baseline {
                                 lines =
                                     lines.replace("\terror\terror-type\n", "\tany\terror-type\n");
                             }
+                            let marked =
+                                format!("\t{}\t", bun_sema::check::type_writer::ERROR_TYPE_TEXT);
+                            let name = if had_error_baseline {
+                                "\tany\t"
+                            } else {
+                                "\terror\t"
+                            };
+                            lines = lines.replace(&marked, name);
                             let dir = format!("{out}/{}", suite.name);
                             let _ = std::fs::create_dir_all(&dir);
                             let _ = std::fs::write(format!("{dir}/{configured}.tsv"), lines);

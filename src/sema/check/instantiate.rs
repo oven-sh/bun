@@ -381,6 +381,8 @@ impl<'p> Checker<'p> {
                     .map(|&s| self.instantiate_sig(s, mapper))
                     .collect();
                 new.symbol_declared_at = shape.symbol_declared_at;
+                // `instantiateAnonymousType`
+                new.instantiation_expression = shape.instantiation_expression;
                 let instantiated = self.synth(new);
                 if self.is_generic_single_signature(shape) {
                     let holds = self.cycles == cycles_before;

@@ -1722,7 +1722,10 @@ impl<'p> Checker<'p> {
         }
         let mut bases = Vec::new();
         // `resolveBaseTypesOfClass`: what the class extends comes first, wherever it is written.
-        if let Some((file, c)) = self.extending_declaration(sym) {
+        // `getBaseConstructorTypeOfClass`: a base constructor that comes back to itself is the error type, which gives no base type.
+        if !self.extends_itself_as_written(sym)
+            && let Some((file, c)) = self.extending_declaration(sym)
+        {
             let mapper = self.decl_params_mapper(sym, file, self.hir(file)[c].type_params);
             let base = self.base_instance_type(file, c);
             let base = self.instantiate(base, mapper);
@@ -2061,6 +2064,7 @@ impl<'p> Checker<'p> {
                     if let Decl::Class(c) = decl
                         && self.hir(file)[c].extends.is_some()
                         && self.is_declaration_of_symbol(sym, file, decl)
+                        && !self.extends_itself_as_written(sym)
                     {
                         let base = self.type_of_expr(file, self.hir(file)[c].extends);
                         // `getBaseConstructorTypeOfClass`: to extend what nothing can be made with is an error, and gives nothing.
@@ -3109,7 +3113,7 @@ impl<'p> Checker<'p> {
         let mut order: Vec<usize> = (0..places.len()).collect();
         let is_sorted = places.iter().all(|place| place.0 == 0);
         if is_sorted {
-            order.sort_by_key(|&i| places[i]);
+            order.sort_by_key(|&i| self.place_in_program_order(places[i].1, places[i].2));
         }
         b.shape.declared_at = order
             .iter()

@@ -37,6 +37,16 @@ impl Checker<'_> {
                 })
                 .map(|prop| prop.value),
         );
+        // `Base<T>` after `extends` is no expression node. What the lowering first made of it is still among the expressions.
+        let mut is_extended = vec![false; hir.exprs.len()];
+        for class in &hir.classes {
+            if class.extends.is_some() {
+                is_extended[class.extends.idx()] = true;
+            }
+        }
+        extended.extend((0..hir.exprs.len() as u32).map(ExprId).filter(|&e| {
+            matches!(hir[e].kind, ExprKind::Instantiation { expr, .. } if is_extended[expr.idx()])
+        }));
         // Written by `types_at_intrinsic_jsx_tag_names`.
         extended.extend(
             hir.jsx
@@ -47,7 +57,9 @@ impl Checker<'_> {
         // `IsInExpressionContext` does not hold right under an `ExportAssignment`.
         extended.extend(hir.stmts.iter().filter_map(|stmt| match stmt.kind {
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)
+                // The one statement of a JSON file is an `ExpressionStatement`, which is kept as `export =`.
                 if e.is_some()
+                    && hir.kind != FileKind::Json
                     && hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err()
                     && match hir[e].kind {
                         ExprKind::String(_)
@@ -65,6 +77,12 @@ impl Checker<'_> {
         let (literal_types, literal_prop_types) = self.literal_types_in_resolved_context(file);
         extended.extend(self.jsx_text_and_attribute_strings(file));
         extended.extend(self.unwritten_import_attribute_exprs(file));
+        let mut is_unwritten = vec![false; hir.exprs.len()];
+        for e in extended {
+            if e.is_some() {
+                is_unwritten[e.idx()] = true;
+            }
+        }
         for index in 0..hir.exprs.len() {
             let e = ExprId(index as u32);
             let expr = hir[e];
@@ -89,7 +107,12 @@ impl Checker<'_> {
                 text_of_expr[index] = Some("any".to_owned());
                 continue;
             }
-            if matches!(expr.kind, ExprKind::Missing) || extended.contains(&e) {
+            if matches!(expr.kind, ExprKind::Missing) {
+                // Parentheses around a missing identifier get a line.
+                text_of_expr[index] = Some("any".to_owned());
+                continue;
+            }
+            if is_unwritten[index] {
                 continue;
             }
             let ty = match self.type_of_export_assignment_name(file, e) {
@@ -157,10 +180,17 @@ impl Checker<'_> {
         }
         for &(e, outermost) in &hir.parens {
             if let Some(type_text) = &text_of_expr[e.idx()] {
+                // The type of a `satisfies` that is reparsed from a tag is written before the parenthesis.
+                let is_reparsed_satisfies = matches!(hir[e].kind, ExprKind::Satisfies { ty, .. }
+                    if ty.is_some() && hir.is_in_jsdoc(hir[ty].pos));
                 for open in self.parenthesis_starts(file, e, outermost) {
                     results.push(TypeAtLocation {
                         start: open,
-                        end: self.end_of_expr_from(file, e, open),
+                        end: if is_reparsed_satisfies {
+                            self.end_of_bracket_at(file, open)
+                        } else {
+                            self.end_of_expr_from(file, e, open)
+                        },
                         type_text: type_text.clone(),
                         kind: "parenthesized",
                     });
@@ -205,6 +235,10 @@ impl Checker<'_> {
         }
         self.types_at_intrinsic_jsx_tag_names(file, &mut results);
         self.types_at_declaration_names(file, &mut results);
+        self.types_at_import_type_qualifiers(file, &mut results);
+        self.types_at_import_defer_names(file, &mut results);
+        self.types_at_missing_identifiers(file, &mut results);
+        self.types_at_directives(file, &mut results);
         self.types_at_meta_property_names(file, &mut results);
         self.types_at_namespace_export_names(file, &mut results);
         self.types_at_literal_type_expressions(file, &mut results);
@@ -219,9 +253,10 @@ impl Checker<'_> {
         self.types_at_qualified_type_names(file, &mut results);
         self.types_at_class_extends(file, &mut results);
         self.types_at_member_names(file, &mut results);
+        self.types_at_unbound_computed_member_names(file, &mut results);
         self.types_at_property_names(file, &mut results);
+        self.remove_string_property_names_of_specifiers(file, &mut results);
         self.extend_jsx_attribute_names(file, &mut results);
-        self.rewrite_import_attribute_names(file, &mut results);
         // `getTypeOfSymbol` of the property first checks its initializer when the writer asks, under the same contextual type.
         for (&p, &ty) in &literal_prop_types {
             let ty = self.widened(ty);
@@ -237,7 +272,221 @@ impl Checker<'_> {
         // `forEachASTNode` leaves out what is reparsed from a JSDoc comment, and a comment is no child of a node.
         results.retain(|found| !hir.is_in_jsdoc(found.start));
         self.remove_uninstantiated_namespace_names(file, &mut results);
+        self.write_any_for_exempt_error_types(file, &mut results);
         results
+    }
+
+    /// The `[e]` of the members that have no line yet: `e` is not written as a name (`isLateBindableAST`), so the member is no
+    /// property of its container, whatever the type of `e`.
+    fn types_at_unbound_computed_member_names(
+        &mut self,
+        file: FileId,
+        results: &mut Vec<TypeAtLocation>,
+    ) {
+        let hir = self.hir(file);
+        let mut written: Vec<u32> = results
+            .iter()
+            .filter(|found| found.kind == "member-name")
+            .map(|found| found.start)
+            .collect();
+        written.sort_unstable();
+        for index in 0..hir.members.len() {
+            let m = MemberId(index as u32);
+            let member = hir[m];
+            if !matches!(
+                member.kind,
+                MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+            ) || !matches!(member.key, PropKey::Computed(_))
+            {
+                continue;
+            }
+            let start = super::errors_x_properties_jsx::start_of_member_name(hir, m);
+            if hir.text.get(start as usize) != Some(&b'[') || written.binary_search(&start).is_ok()
+            {
+                continue;
+            }
+            let ty = self.type_of_member_declaration(file, m);
+            results.push(TypeAtLocation {
+                start,
+                end: self.end_of_bracket_at(file, start),
+                type_text: self.type_to_string_for_baseline_at(
+                    ty,
+                    file,
+                    self.enclosing_scope_of_member(file, m),
+                ),
+                kind: "member-name",
+            });
+        }
+    }
+
+    /// `isPartOfTypeNodeInParent`: of `import("m").A.B` only `B` is part of a type node, of `typeof import("m").A.b` nothing is.
+    /// Nothing in `getTypeOfNode` applies to the rest.
+    fn types_at_import_type_qualifiers(&self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let hir = self.hir(file);
+        for (index, node) in hir.types.iter().enumerate() {
+            let TypeNodeKind::Import {
+                name, is_typeof, ..
+            } = node.kind
+            else {
+                continue;
+            };
+            if name.is_empty() || hir.is_in_jsdoc(node.pos) {
+                continue;
+            }
+            let Some(qualifier) =
+                self.start_of_import_type_qualifier(file, TypeNodeId(index as u32))
+            else {
+                continue;
+            };
+            let ranges = self.entity_name_ranges(file, qualifier, name);
+            let written = if is_typeof {
+                name.len()
+            } else {
+                name.len() - 1
+            };
+            for &(start, end) in ranges.iter().take(written) {
+                let (type_text, kind) = if name.len() == 1 {
+                    ("error", "error-type")
+                } else {
+                    ("any", "qualifier")
+                };
+                results.push(TypeAtLocation {
+                    start,
+                    end,
+                    type_text: type_text.to_owned(),
+                    kind,
+                });
+            }
+        }
+    }
+
+    /// The `defer` of `import.defer(..)`, which is no expression there: an identifier with the error type.
+    fn types_at_import_defer_names(&self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let hir = self.hir(file);
+        for expr in &hir.exprs {
+            let ExprKind::ImportCall(specifier) = expr.kind else {
+                continue;
+            };
+            if !hir
+                .deferred_import_calls
+                .iter()
+                .any(|call| call.0 == specifier)
+            {
+                continue;
+            }
+            let dot = self.skip_trivia_from(file, self.end_of_token_at(file, expr.pos));
+            if hir.text.get(dot as usize) != Some(&b'.') {
+                continue;
+            }
+            let start = self.skip_trivia_from(file, dot + 1);
+            results.push(TypeAtLocation {
+                start,
+                end: self.end_of_token_at(file, start),
+                type_text: "any".to_owned(),
+                kind: "no-type",
+            });
+        }
+    }
+
+    /// The `PropertyName` of an import or export specifier is visited only if it is an identifier.
+    fn remove_string_property_names_of_specifiers(
+        &self,
+        file: FileId,
+        results: &mut Vec<TypeAtLocation>,
+    ) {
+        let hir = self.hir(file);
+        let imported = hir
+            .import_specs
+            .iter()
+            .map(|spec| (spec.imported_pos, spec.pos));
+        let exported = hir
+            .export_specs
+            .iter()
+            .map(|spec| (spec.local_pos, spec.pos));
+        let mut unwritten: Vec<u32> = imported
+            .chain(exported)
+            .filter(|&(property_name, name)| {
+                property_name != name
+                    && matches!(hir.text.get(property_name as usize), Some(b'"' | b'\''))
+            })
+            .map(|(property_name, _)| property_name)
+            .collect();
+        unwritten.sort_unstable();
+        results.retain(|found| {
+            found.kind != "declaration-name" || unwritten.binary_search(&found.start).is_err()
+        });
+    }
+
+    /// `createMissingNode`: an identifier the parser missed is a node without text, where the token before it ends. The harness puts
+    /// it on the line of the token after it (`SkipTrivia`).
+    fn types_at_missing_identifiers(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let hir = self.hir(file);
+        if !hir.has_parse_diagnostics {
+            return;
+        }
+        // An `OmittedExpression` and the empty `{}` of JSX are no identifiers.
+        let mut is_omitted = vec![false; hir.exprs.len()];
+        for expr in &hir.exprs {
+            if let ExprKind::Array(items) = expr.kind {
+                for item in hir.ids(items) {
+                    is_omitted[item.idx()] = true;
+                }
+            }
+        }
+        for jsx in hir.jsx.iter() {
+            let values = jsx.attrs.iter().map(|p| hir[p].value);
+            for e in hir.ids(jsx.children).chain(values) {
+                if e.is_some() {
+                    is_omitted[e.idx()] = true;
+                }
+            }
+        }
+        let mut missing = Vec::new();
+        for (index, expr) in hir.exprs.iter().enumerate() {
+            match expr.kind {
+                ExprKind::Missing | ExprKind::Ident(known::empty) if !is_omitted[index] => {
+                    missing.push((expr.pos, "any".to_owned()));
+                }
+                ExprKind::Dot {
+                    name: known::empty,
+                    name_pos,
+                    ..
+                } => missing.push((name_pos, "any".to_owned())),
+                _ => {}
+            }
+        }
+        for index in 0..hir.pats.len() {
+            let pat = PatId(index as u32);
+            if matches!(hir[pat].kind, PatKind::Ident(known::empty)) {
+                let ty = self.type_of_pat(file, pat);
+                let scope = self.enclosing_scope_of_pat(file, pat);
+                let type_text = self.type_to_string_for_baseline_at(ty, file, scope);
+                missing.push((hir[pat].pos, type_text));
+            }
+        }
+        for (pos, type_text) in missing {
+            let start = self.skip_trivia_from(file, self.end_of_token_before(file, pos));
+            results.push(TypeAtLocation {
+                start,
+                end: start,
+                type_text,
+                kind: "missing",
+            });
+        }
+    }
+
+    /// A directive is an `ExpressionStatement` of a string literal.
+    fn types_at_directives(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let hir = self.hir(file);
+        for &(start, text) in hir.directives.iter() {
+            let ty = self.string_literal(text, false);
+            results.push(TypeAtLocation {
+                start,
+                end: self.end_of_token_at(file, start),
+                type_text: self.type_to_string_for_baseline(ty),
+                kind: "expression",
+            });
+        }
     }
 
     /// `parseJsxAttributeName`: the name of an attribute goes on over `-` and `:name`. The two identifiers of `a:b` get a line too,
@@ -245,6 +494,14 @@ impl Checker<'_> {
     fn extend_jsx_attribute_names(&self, file: FileId, results: &mut Vec<TypeAtLocation>) {
         let hir = self.hir(file);
         let mut identifiers = Vec::new();
+        // The lines of property names, by where they start.
+        let mut names: Vec<(u32, usize)> = results
+            .iter()
+            .enumerate()
+            .filter(|(_, found)| found.kind == "property-name")
+            .map(|(index, found)| (found.start, index))
+            .collect();
+        names.sort_unstable();
         for jsx in hir.jsx.iter() {
             for p in jsx.attrs.iter() {
                 if matches!(hir[p].kind, PropKind::Spread) {
@@ -252,10 +509,9 @@ impl Checker<'_> {
                 }
                 let start = hir[p].pos;
                 let end = self.end_of_jsx_attr_name(file, p);
-                for found in results.iter_mut() {
-                    if found.kind == "property-name" && found.start == start {
-                        found.end = end;
-                    }
+                let first = names.partition_point(|name| name.0 < start);
+                for name in names[first..].iter().take_while(|name| name.0 == start) {
+                    results[name.1].end = end;
                 }
                 let written = hir
                     .text
@@ -310,28 +566,49 @@ impl Checker<'_> {
 
     /// The name in `export as namespace N`.
     fn types_at_namespace_export_names(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
-        let bound = self.bound(file);
-        for &(_, id) in bound.umd_globals.iter() {
-            for &decl in bound.symbols[id.idx()].decls.as_slice() {
-                if !matches!(decl, Decl::UmdGlobal(_)) {
-                    continue;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for index in 0..hir.stmts.len() {
+            let stmt = StmtId(index as u32);
+            if !matches!(hir[stmt].kind, StmtKind::ExportAsNamespace(_)) {
+                continue;
+            }
+            let decl = Decl::UmdGlobal(stmt);
+            let Some(start) = self.declaration_name_start(file, decl) else {
+                continue;
+            };
+            // `bindNamespaceExportDeclaration` gives it a symbol only at the top of a module.
+            let symbol = bound
+                .umd_globals
+                .iter()
+                .map(|global| global.1)
+                .find(|id| bound.symbols[id.idx()].decls.contains(&decl));
+            let ty = match symbol {
+                Some(id) => {
+                    let sym = self.files().sym(file, id);
+                    self.type_of_symbol(sym)
                 }
-                let Some(start) = self.declaration_name_start(file, decl) else {
-                    continue;
-                };
-                let sym = self.files().sym(file, id);
-                let ty = self.type_of_symbol(sym);
+                None => TypeId::ANY,
+            };
+            let end = self.end_of_token_at(file, start);
+            if ty.is_any() {
                 results.push(TypeAtLocation {
                     start,
-                    end: self.end_of_token_at(file, start),
-                    type_text: self.type_to_string_for_baseline_at(
-                        ty,
-                        file,
-                        self.enclosing_scope_of_declaration(file, decl),
-                    ),
-                    kind: "declaration-name",
+                    end,
+                    type_text: "error".to_owned(),
+                    kind: "error-type",
                 });
+                continue;
             }
+            results.push(TypeAtLocation {
+                start,
+                end,
+                type_text: self.type_to_string_for_baseline_at(
+                    ty,
+                    file,
+                    self.enclosing_scope_of_declaration(file, decl),
+                ),
+                kind: "declaration-name",
+            });
         }
     }
 
@@ -380,22 +657,17 @@ impl Checker<'_> {
         }
     }
 
-    /// The name of a `this` parameter, which is the first token after the `(`.
+    /// The name of a `this` parameter.
     fn types_at_this_parameters(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
         let hir = self.hir(file);
         for (index, func) in hir.fns.iter().enumerate() {
-            if func.this_ty.is_none() || hir.text.get(func.anchor as usize) != Some(&b'(') {
+            let Some(start) = self.start_of_this_parameter(file, FnId(index as u32)) else {
                 continue;
-            }
-            let start = self.skip_trivia_from(file, func.anchor + 1);
-            let end = self.end_of_token_at(file, start);
-            if hir.text.get(start as usize..end as usize) != Some(&b"this"[..]) {
-                continue;
-            }
+            };
             let ty = self.type_from_node(file, func.this_ty);
             results.push(TypeAtLocation {
                 start,
-                end,
+                end: start + 4,
                 type_text: self.type_to_string_for_baseline_at(
                     ty,
                     file,
@@ -539,12 +811,11 @@ impl Checker<'_> {
             let ImportEqualsTarget::Entity(entity) = import.target else {
                 continue;
             };
-            let name_end = self.end_of_token_at(file, import.name_pos);
-            let equals = self.skip_trivia_from(file, name_end);
-            if hir.text.get(equals as usize) != Some(&b'=') {
+            let Some(entity_start) =
+                self.start_of_import_equals_reference(file, ImportEqualsId(index as u32))
+            else {
                 continue;
-            }
-            let entity_start = self.skip_trivia_from(file, equals + 1);
+            };
             let ranges = self.entity_name_ranges(file, entity_start, entity);
             let names: Vec<Atom> = hir.ids(entity).collect();
             let scope = bound.import_equals_scope[index];
@@ -559,12 +830,26 @@ impl Checker<'_> {
                     .resolve_entity(file, scope, &names[..=position], meaning)
                     .and_then(|found| self.files().resolve_alias_if_needed(found));
                 let ty = match symbol {
+                    // `getDeclaredTypeOfEnumMember`
+                    Some(symbol) if self.files().flags(symbol).contains(SymFlags::ENUM_MEMBER) => {
+                        self.type_of_symbol(symbol)
+                    }
                     Some(symbol) if self.files().means(symbol, SymFlags::TYPE) => {
                         self.declared_type(symbol)
                     }
                     Some(symbol) => self.type_of_symbol(symbol),
                     None => TypeId::ANY,
                 };
+                // A lone name means a namespace, which is `any` only in error. Its parent is none of the harness's exceptions.
+                if names.len() == 1 && ty.is_any() {
+                    results.push(TypeAtLocation {
+                        start,
+                        end,
+                        type_text: "error".to_owned(),
+                        kind: "error-type",
+                    });
+                    continue;
+                }
                 results.push(TypeAtLocation {
                     start,
                     end,
@@ -610,24 +895,6 @@ impl Checker<'_> {
             }
         }
         unwritten
-    }
-
-    /// The name of an `ImportAttribute` is no declaration name: an identifier has the error type, a string gets no line.
-    fn rewrite_import_attribute_names(&self, file: FileId, results: &mut Vec<TypeAtLocation>) {
-        let hir = self.hir(file);
-        let mut names = Vec::new();
-        for &(_, attributes) in hir.import_attributes.iter() {
-            if let ExprKind::Object(props) = hir[attributes].kind {
-                names.extend(props.iter().map(|p| hir[p].pos));
-            }
-        }
-        results.retain_mut(|found| {
-            if found.kind != "property-name" || !names.contains(&found.start) {
-                return true;
-            }
-            found.type_text = "any".to_owned();
-            !matches!(hir.text.get(found.start as usize), Some(b'"' | b'\''))
-        });
     }
 
     /// What stands for `JsxText` and for the string of `name="value"`, which are no expression nodes, and for the `{...children}` of
@@ -678,8 +945,10 @@ impl Checker<'_> {
                 unwritten.push(hir.modules[index].name_pos);
             }
         }
-        results
-            .retain(|found| found.kind != "declaration-name" || !unwritten.contains(&found.start));
+        unwritten.sort_unstable();
+        results.retain(|found| {
+            found.kind != "declaration-name" || unwritten.binary_search(&found.start).is_err()
+        });
     }
 
     /// `IsAmbientModule`: the names of `declare module "m"` and `declare global`.
@@ -781,26 +1050,6 @@ impl Checker<'_> {
         }
     }
 
-    /// The range of each name of the entity name `A.B.C` that is written at `pos`, up to a name that is missing.
-    fn entity_name_ranges(&self, file: FileId, pos: u32, names: IdList<Atom>) -> Vec<(u32, u32)> {
-        let hir = self.hir(file);
-        let mut ranges = Vec::with_capacity(names.len());
-        let mut start = pos;
-        for name in hir.ids(names) {
-            if name == known::empty {
-                break;
-            }
-            let end = self.end_of_token_at(file, start);
-            ranges.push((start, end));
-            let dot = self.skip_trivia_from(file, end);
-            if hir.text.get(dot as usize) != Some(&b'.') {
-                break;
-            }
-            start = self.skip_trivia_from(file, dot + 1);
-        }
-        ranges
-    }
-
     /// `isPartOfTypeNodeInParent`: of `A.B.C` in a type only `C` and the whole are part of a type node. Nothing in `getTypeOfNode`
     /// applies to `A` and `B`, which have the error type.
     fn types_at_qualified_type_names(&self, file: FileId, results: &mut Vec<TypeAtLocation>) {
@@ -813,6 +1062,7 @@ impl Checker<'_> {
         for interface in &hir.interfaces {
             heritage.extend(hir.ids(interface.extends));
         }
+        heritage.sort_unstable();
         for index in 0..hir.types.len() {
             let node = TypeNodeId(index as u32);
             let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
@@ -822,7 +1072,7 @@ impl Checker<'_> {
                 continue;
             }
             let ranges = self.entity_name_ranges(file, hir[node].pos, name);
-            let is_in_heritage_clause = heritage.contains(&node);
+            let is_in_heritage_clause = heritage.binary_search(&node).is_ok();
             for (position, &(start, end)) in ranges.iter().enumerate().take(name.len() - 1) {
                 results.push(TypeAtLocation {
                     start,
@@ -861,7 +1111,7 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for index in 0..hir.classes.len() {
             let e = hir.classes[index].extends;
-            if e.is_none() || matches!(hir[e].kind, ExprKind::Missing | ExprKind::Null) {
+            if e.is_none() || matches!(hir[e].kind, ExprKind::Missing) {
                 continue;
             }
             let ty = self.type_of_expr(file, e);
@@ -882,11 +1132,13 @@ impl Checker<'_> {
                     nodes.push((open, self.end_of_expr_from(file, e, open), "parenthesized"));
                 }
             }
-            nodes.push((
-                self.start_inside_parentheses(file, e),
-                self.end_inside_parentheses(file, e),
-                "expression",
-            ));
+            if !matches!(hir[e].kind, ExprKind::Null) {
+                nodes.push((
+                    self.start_inside_parentheses(file, e),
+                    self.end_inside_parentheses(file, e),
+                    "expression",
+                ));
+            }
             for (depth, (start, end, kind)) in nodes.into_iter().enumerate() {
                 let type_text = if depth == 0 {
                     base_text.clone()
@@ -944,7 +1196,12 @@ impl Checker<'_> {
             if self.type_flags_of_symbol(symbol).intersects(SymFlags::TYPE) {
                 self.declared_type(symbol)
             } else {
-                self.type_of_symbol(symbol)
+                // The target of a namespace import can be a copy of the module (`resolveESModuleSymbol`): its type is that of the alias.
+                let written = bound
+                    .expr_scope
+                    .get(&e)
+                    .and_then(|&scope| files.resolve_name(file, scope, name, meaning));
+                self.type_of_symbol(written.unwrap_or(symbol))
             },
         )
     }
@@ -952,9 +1209,19 @@ impl Checker<'_> {
     /// `getTypeOfNode` of the names of the declarations that have a symbol of their own.
     fn types_at_declaration_names(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // `declareSymbolEx`: `Symbol::decls` also lists the declarations the symbol refused. Each has a symbol of its own, made later.
+        let mut symbol_of_declaration: FxHashMap<Decl, usize> = FxHashMap::default();
+        for (index, symbol) in bound.symbols.iter().enumerate() {
+            for &decl in symbol.decls.as_slice() {
+                symbol_of_declaration.insert(decl, index);
+            }
+        }
         for index in 0..bound.symbols.len() {
             let sym = self.files().sym(file, SymbolId(index as u32));
             for &decl in bound.symbols[index].decls.as_slice() {
+                if symbol_of_declaration.get(&decl) != Some(&index) {
+                    continue;
+                }
                 // `IsTypeDeclaration`: the declared type. Otherwise the type of the symbol.
                 let (name, is_type_declaration) = match decl {
                     Decl::Class(c) => (
@@ -1024,11 +1291,14 @@ impl Checker<'_> {
                     _ => None,
                 };
                 for (start, ty) in [Some((start, ty)), property_name].into_iter().flatten() {
+                    self.enclosing_module_specifier_mode =
+                        self.mode_of_module_specifier_of_declaration(file, decl);
                     let type_text = self.type_to_string_for_baseline_at(
                         ty,
                         file,
                         self.enclosing_scope_of_declaration(file, decl),
                     );
+                    self.enclosing_module_specifier_mode = None;
                     results.push(TypeAtLocation {
                         start,
                         end: end_of_name(&hir.text, start),
@@ -1048,6 +1318,44 @@ impl Checker<'_> {
             }
             _ => TypeId::ANY,
         }
+    }
+
+    /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration`, of an import or an export.
+    fn mode_of_module_specifier_of_declaration(
+        &self,
+        file: FileId,
+        decl: Decl,
+    ) -> Option<ResolutionMode> {
+        let (hir, files) = (self.hir(file), self.files());
+        let written = match decl {
+            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => hir[import].mode,
+            Decl::ImportSpec(spec) => {
+                hir.imports
+                    .iter()
+                    .find(|import| import.named.range().contains(&spec.idx()))?
+                    .mode
+            }
+            Decl::ExportSpec(spec) => {
+                let export = hir
+                    .exports
+                    .iter()
+                    .find(|export| export.items.range().contains(&spec.idx()))?;
+                if export.spec.is_none() {
+                    return None;
+                }
+                export.mode
+            }
+            Decl::ExportStarAs(stmt) => match hir[stmt].kind {
+                StmtKind::ExportStar { mode, .. } => mode,
+                _ => return None,
+            },
+            Decl::ImportEquals(import) => {
+                return matches!(hir[import].target, ImportEqualsTarget::Require(_))
+                    .then_some(ResolutionMode::Require);
+            }
+            _ => return None,
+        };
+        Some(files.mode_of_import(file, written))
     }
 
     /// The names of the members of classes, interfaces and type literals.
@@ -1268,7 +1576,7 @@ impl Checker<'_> {
                 start + written.iter().take_while(is_identifier_part).count() as u32;
             let name_start =
                 end - written.iter().rev().take_while(is_identifier_part).count() as u32;
-            let type_text = self.type_to_string_for_baseline(TypeId::ANY);
+            let type_text = self.type_to_string_for_baseline(TypeId::ERROR);
             results.push(TypeAtLocation {
                 start,
                 end: namespace_end,
@@ -1317,13 +1625,116 @@ fn start_of_jsx_closing_tag_name(text: &[u8], close_pos: u32, name: &[u8]) -> Op
         return None;
     }
     let start = skip_white_space(slash + 1);
-    text.get(start..)?.starts_with(name).then_some(start as u32)
+    // `a : b` is the name `a:b`.
+    let end = super::errors_jsx::jsx_name_end(text, start as u32) as usize;
+    let written = text.get(start..end)?;
+    written
+        .iter()
+        .filter(|c| !c.is_ascii_whitespace())
+        .eq(name)
+        .then_some(start as u32)
 }
 
 impl Checker<'_> {
     /// `symbol.ValueDeclaration` of the symbol of the member `p` of an object literal (`SetValueDeclaration`: the first declaration).
     fn value_declaration_of_literal_prop(&self, file: FileId, p: PropId) -> PropId {
         self.bound(file).declarations_of_literal_member(p)[0]
+    }
+}
+
+/// What is written for a node whose type is the error type: `error` (`IntrinsicName()`) if the test has no errors, or else `any`
+/// (`typeWriterWalker.hadErrorBaseline`). Whoever has the report of the test replaces it.
+pub const ERROR_TYPE_TEXT: &str = "\u{1}error";
+
+impl Checker<'_> {
+    /// The exceptions of `writeTypeOrSymbol`: the nodes whose error type is written `any` in a test without errors too.
+    fn write_any_for_exempt_error_types(&self, file: FileId, results: &mut [TypeAtLocation]) {
+        if !results
+            .iter()
+            .any(|found| found.type_text == ERROR_TYPE_TEXT)
+        {
+            return;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // The child an expression is of its parent: with the parentheses around it.
+        let node_range = |e: ExprId| match hir.parens.binary_search_by_key(&e.0, |p| p.0.0) {
+            Ok(found) => {
+                let open = hir.parens[found].1;
+                (open, self.end_of_expr_from(file, e, open))
+            }
+            Err(_) => (
+                self.start_inside_parentheses(file, e),
+                self.end_inside_parentheses(file, e),
+            ),
+        };
+        let mut nodes = Vec::new();
+        // `IsPropertyAccessOrQualifiedName(node.Parent)`
+        for expr in &hir.exprs {
+            if let ExprKind::Dot { obj, .. } = expr.kind {
+                nodes.push(node_range(obj));
+            }
+        }
+        // `isExportStatementName`
+        for stmt in &hir.stmts {
+            if let StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) = stmt.kind
+                && e.is_some()
+            {
+                nodes.push(node_range(e));
+            }
+        }
+        // `IsBindingElement(node.Parent)`
+        let defaults = hir
+            .pat_props
+            .iter()
+            .map(|prop| prop.default)
+            .chain(hir.pat_elems.iter().map(|element| element.default));
+        for default in defaults.filter(|default| default.is_some()) {
+            nodes.push(node_range(default));
+        }
+        let mut names = Vec::new();
+        for (index, pat) in hir.pats.iter().enumerate() {
+            if matches!(
+                bound.pat_parent[index],
+                crate::bind::PatParent::Prop(..) | crate::bind::PatParent::Elem(..)
+            ) {
+                names.push(pat.pos);
+            }
+        }
+        // `isImportStatementName`, `isExportStatementName`
+        for import in &hir.imports {
+            if import.default.is_some() {
+                names.push(import.default_pos);
+            }
+            for spec in import.named.iter() {
+                names.extend([hir[spec].pos, hir[spec].imported_pos]);
+            }
+        }
+        names.extend(hir.import_equals.iter().map(|import| import.name_pos));
+        for export in &hir.exports {
+            for spec in export.items.iter() {
+                names.extend([hir[spec].pos, hir[spec].local_pos]);
+            }
+        }
+        // `IsGlobalScopeAugmentation(node.Parent)`
+        for module in hir.modules.iter() {
+            if matches!(module.name, ModuleName::Global) {
+                names.push(module.name_pos);
+            }
+        }
+        for found in results.iter_mut() {
+            if found.type_text != ERROR_TYPE_TEXT {
+                continue;
+            }
+            let is_exempt = match found.kind {
+                "access-name" => true,
+                "expression" | "parenthesized" => nodes.contains(&(found.start, found.end)),
+                "variable" | "declaration-name" => names.contains(&found.start),
+                _ => false,
+            };
+            if is_exempt {
+                found.type_text = "any".to_owned();
+            }
+        }
     }
 }
 

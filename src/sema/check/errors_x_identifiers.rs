@@ -2497,7 +2497,7 @@ impl Pass<'_, '_> {
         .concat();
         if let Some(name) = self.c.files().atoms.lookup(&has_instance)
             && let Some(method) = self.c.type_of_property(constructor, name)
-            && let Some(sig) = self.c.single_call_signature(method, true)
+            && let Some(sig) = self.c.get_effects_signature_of_has_instance_method(method)
             && let Some(predicate) = self.c.sig_predicate(sig)
             && !predicate.asserts
             && predicate.param == Some(0)

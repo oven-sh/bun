@@ -1093,7 +1093,14 @@ impl<'a> Spans<'a> {
                     self.expr(expr)
                 }
             }
-            ExprKind::Satisfies { ty, .. } => self.ty_in(ty, 0),
+            // `x satisfies T`, or what a `@satisfies` tag before `x` makes.
+            ExprKind::Satisfies { expr, ty } => {
+                if self.type_pos(ty) > self.expr_pos(expr) {
+                    self.ty_in(ty, 0)
+                } else {
+                    self.expr(expr)
+                }
+            }
             // `x as const`, or `<const>x`.
             ExprKind::AsConst(x) => {
                 let operand_end = self.expr(x);
@@ -1695,7 +1702,8 @@ impl<'a> Spans<'a> {
             };
             self.close(inside.max(anchor + 1), closer)
         };
-        if func.ret.is_some() {
+        // The return type a JSDoc comment gives it is written before it, and is no part of it.
+        if func.ret.is_some() && self.type_pos(func.ret) >= anchor {
             self.ty_in(func.ret, 0)
         } else {
             params_end
@@ -2517,6 +2525,93 @@ impl Checker<'_> {
     /// `SkipTrivia`: from `pos`, past blanks and comments.
     pub(super) fn skip_trivia_from(&self, file: FileId, pos: u32) -> u32 {
         self.spans(file).skip_trivia(pos as usize) as u32
+    }
+
+    /// Where the qualifier of the import type `node` starts: the `A` of `import("m").A.B`, the `a` of `typeof import("m").a`.
+    pub(super) fn start_of_import_type_qualifier(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> Option<u32> {
+        let spans = self.spans(file);
+        let &TypeNode {
+            kind: TypeNodeKind::Import { is_typeof, .. },
+            pos,
+        } = spans.hir.types.get(node.idx())?
+        else {
+            return None;
+        };
+        let import = if is_typeof {
+            spans.skip_trivia(spans.token(pos as usize))
+        } else {
+            pos as usize
+        };
+        let open = spans.skip_trivia(spans.token(import));
+        if spans.byte(open) != b'(' {
+            return None;
+        }
+        let after = spans.bracket(open);
+        let dot = spans.eat(after, b".");
+        (dot != after).then(|| spans.skip_trivia(dot) as u32)
+    }
+
+    /// Where the name of the `this` parameter of `f` is written. `None`: `f` has none, or has it from a `@this` tag.
+    pub(super) fn start_of_this_parameter(&self, file: FileId, f: FnId) -> Option<u32> {
+        let spans = self.spans(file);
+        let func = spans.hir.fns.get(f.idx())?;
+        if func.this_ty.is_none() || spans.byte(func.anchor as usize) != b'(' {
+            return None;
+        }
+        // `parseParameter`: it is the first.
+        let first = spans.skip_trivia(func.anchor as usize + 1);
+        if spans.word_at(first) == b"this" {
+            return Some(first as u32);
+        }
+        // After decorators, which are an error there: it is what the `:` before its type follows.
+        let colon_end = previous_token_end(spans.text, spans.type_pos(func.this_ty));
+        if colon_end <= first || spans.byte(colon_end - 1) != b':' {
+            return None;
+        }
+        let start = previous_token_end(spans.text, colon_end - 1).checked_sub(4)?;
+        (start > first && spans.word_at(start) == b"this").then_some(start as u32)
+    }
+
+    /// The range of each name of the entity name `A.B.C` that is written at `pos`, up to a name that is missing.
+    pub(super) fn entity_name_ranges(
+        &self,
+        file: FileId,
+        pos: u32,
+        names: IdList<Atom>,
+    ) -> Vec<(u32, u32)> {
+        let spans = self.spans(file);
+        let mut ranges = Vec::with_capacity(names.len());
+        let mut start = pos as usize;
+        for name in spans.hir.ids(names) {
+            if name == known::empty {
+                break;
+            }
+            let end = word_end(spans.text, start);
+            ranges.push((start as u32, end as u32));
+            let dot = spans.eat(end, b".");
+            if dot == end {
+                break;
+            }
+            start = spans.skip_trivia(dot);
+        }
+        ranges
+    }
+
+    /// Where what `import x = a.b.c` or `import x = require("m")` refers to starts.
+    pub(super) fn start_of_import_equals_reference(
+        &self,
+        file: FileId,
+        import: crate::hir::ImportEqualsId,
+    ) -> Option<u32> {
+        let spans = self.spans(file);
+        let name_pos = spans.hir.import_equals.get(import.idx())?.name_pos;
+        let name_end = spans.token(name_pos as usize);
+        let equals = spans.eat(name_end, b"=");
+        (equals != name_end).then(|| spans.skip_trivia(equals) as u32)
     }
 
     /// Where the token before `pos` ends: back over blanks and comments. Where a missing node is, and `node.Pos()` of what starts at

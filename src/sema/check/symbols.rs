@@ -1137,7 +1137,7 @@ impl<'p> Checker<'p> {
         // `getNamedMembers`: in the order they are declared in (`compareSymbols`).
         if places.iter().all(|place| place.0 == 0) {
             let mut order: Vec<usize> = (0..places.len()).collect();
-            order.sort_by_key(|&i| places[i]);
+            order.sort_by_key(|&i| self.place_in_program_order(places[i].1, places[i].2));
             shape.props = order.into_iter().map(|i| shape.props[i].clone()).collect();
         }
         for info in &members.shape().index {
@@ -2690,7 +2690,11 @@ impl<'p> Checker<'p> {
         if !is_generator {
             // `getWidenedLiteralLikeTypeForContextualReturnTypeIfNeeded`
             if self.is_unit(ret) {
-                let mut contextual = self.return_type_of_contextual_signature(file, func);
+                let mut contextual = if self.is_own_contextual_signature(file, func) {
+                    Some(ret)
+                } else {
+                    self.return_type_of_contextual_signature(file, func)
+                };
                 if is_async {
                     // `GetPromisedTypeOfPromise`
                     contextual = contextual.and_then(|t| self.thenable_value(t));

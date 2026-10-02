@@ -348,6 +348,13 @@ pub struct IndexInfo {
     pub readonly: bool,
 }
 
+/// `InstantiationExpressionType.node`: `f<T>`, or `typeof f<T>` or `typeof import("m").f<T>`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum InstantiationExpression {
+    Expr(FileId, ExprId),
+    TypeNode(FileId, TypeNodeId),
+}
+
 /// What is in an object type.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Shape {
@@ -360,6 +367,8 @@ pub struct Shape {
     pub construct: Vec<SigId>,
     pub index: Vec<IndexInfo>,
     pub literal: Literalness,
+    /// Of what `getInstantiationExpressionType` makes.
+    pub instantiation_expression: Option<InstantiationExpression>,
     /// `symbol.Declarations[0]` of the properties that are copies (`getSpreadSymbol`, `getAnonymousPartialType`), whose `source`
     /// is only a type: the name, the file and the position. `getNamedMembers` orders by it.
     pub declared_at: Vec<(Atom, FileId, u32)>,
@@ -656,6 +665,11 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
         TypeData::Fns { decls, mapper } => mapper.is_local() || decls.iter().any(|d| d.0 == file),
         TypeData::Synth(shape) => {
             shape.symbol_declared_at.is_some_and(|at| at.0 == file)
+                || matches!(
+                    shape.instantiation_expression,
+                    Some(InstantiationExpression::Expr(f, _) | InstantiationExpression::TypeNode(f, _))
+                        if f == file
+                )
                 || shape.props.iter().any(|p| is_prop_local(p, file))
                 || shape
                     .index

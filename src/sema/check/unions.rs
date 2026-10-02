@@ -1325,7 +1325,8 @@ impl<'p> Checker<'p> {
             return TypeId::UNKNOWN_EMPTY_OBJECT;
         }
         let filtered = self.filter(ty, |c, m| {
-            if m.is_undefined() || m.is_null() || (m == TypeId::VOID && c.is_union(ty)) {
+            // `TypeFactsVoidFacts` has no `NEUndefinedOrNull` either.
+            if c.is_nullish(m) {
                 return false;
             }
             // `getTypeFactsWorker`: a type variable has the facts of its base constraint.
@@ -1505,6 +1506,17 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// What `compareNodes` orders a node at `pos` of `file` by: the index of the file in the program (`fileIndexMap`), then the
+    /// position. The libraries come first. `rank_of_file` does not order them as `getDefaultLibFilePriority` does: they go by number.
+    pub(super) fn place_in_program_order(&self, file: FileId, pos: u32) -> (bool, u32, u32) {
+        let files = self.files();
+        if files.module(file).is_lib {
+            (false, file.0, pos)
+        } else {
+            (true, files.rank_of_file(file), pos)
+        }
+    }
+
     /// `t.symbol.Declarations[0]` of an object type: the file and the position.
     pub(super) fn symbol_declaration_of_object_type(&self, ty: TypeId) -> Option<(FileId, u32)> {
         self.sort_place(ty).map(|place| (place.1, place.2))
@@ -1536,7 +1548,10 @@ impl<'p> Checker<'p> {
         self.sort_order_flags(a)
             .cmp(&self.sort_order_flags(b))
             .then_with(|| if are_of_one_symbol { Equal } else { some_first(self.sort_name(a), self.sort_name(b)) })
-            .then_with(|| if are_of_one_symbol { Equal } else { some_first(self.sort_place(a), self.sort_place(b)) })
+            .then_with(|| {
+                let place = |t: TypeId| self.sort_place(t).map(|(_, file, pos)| self.place_in_program_order(file, pos));
+                if are_of_one_symbol { Equal } else { some_first(place(a), place(b)) }
+            })
             // `compareTypeNames`: a union that a type alias stands for comes before one without a name.
             .then_with(|| (self.is_union(a) && self.p.named_unions.get(&a).is_none()).cmp(&(self.is_union(b) && self.p.named_unions.get(&b).is_none())))
             .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)))
@@ -1576,6 +1591,11 @@ impl<'p> Checker<'p> {
                     y.is_nan().cmp(&x.is_nan()).then_with(|| x.partial_cmp(&y).unwrap_or(Equal))
                 }
                 (TypeData::BoolLit { value: x, .. }, TypeData::BoolLit { value: y, .. }) => x.cmp(y),
+                // Ordered by id, and `zeroBigIntType` is made with the checker.
+                (TypeData::BigIntLit { text: x, .. }, TypeData::BigIntLit { text: y, .. }) => {
+                    let is_zero = |text: Atom| atoms.bytes(text).iter().all(|&c| c == b'0' || c == b'n');
+                    is_zero(*y).cmp(&is_zero(*x))
+                }
                 (TypeData::UniqueSymbol { name: x, .. }, TypeData::UniqueSymbol { name: y, .. }) => atoms.bytes(*x).cmp(atoms.bytes(*y)),
                 (TypeData::Marker(x), TypeData::Marker(y)) => x.cmp(y),
                 (TypeData::Keyof(x), TypeData::Keyof(y))

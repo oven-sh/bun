@@ -1564,8 +1564,9 @@ impl Checker<'_> {
             PropSource::Assigned(file, assignments) => assignments
                 .first()
                 .map(|&assignment| (*file, self.hir(*file)[assignment].pos)),
-            // The binder numbers the symbols of a file in the order it comes to their declarations.
-            PropSource::Symbol(symbol) => Some((symbol.file, symbol.id.0)),
+            // Not by the number of the symbol: the binder declares the functions of a block before the rest of it.
+            PropSource::Symbol(symbol) => super::errors::place_of_first_declaration(self, *symbol)
+                .map(|(_, file, pos)| (file, pos)),
             PropSource::Intersected(_, parts) if !parts.is_empty() => {
                 return self.order_of_property(&parts[0]);
             }

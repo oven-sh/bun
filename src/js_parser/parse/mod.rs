@@ -2693,18 +2693,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
+                        // `isPrologueDirective`: not `("use strict")`, of which the parentheses are not kept here.
+                        if !str_.prefer_template
+                            && (!p.keeps_type_syntax() || expr.value.loc == stmt.loc)
+                        {
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use strict") {
-                                skip = true;
+                                // The type checker is told of every directive.
+                                skip = !p.keeps_type_syntax();
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }
-                            } else if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
+                                if !skip {
+                                    stmt = Stmt::alloc(
+                                        S::Directive {
+                                            value: bun_ast::StoreStr::new(b"use strict"),
+                                        },
+                                        stmt.loc,
+                                    );
+                                }
+                            } else if str_.eql_comptime(b"use asm")
+                                && !p.options.repl_mode
+                                && !p.keeps_type_syntax()
+                            {
                                 // In the REPL the directive stays a string
                                 // statement so it evaluates as the result,
                                 // like node ('use asm' prints 'use asm').

@@ -11,10 +11,9 @@ use super::*;
 // ───────────────────────────── declarations (`nodebuilderimpl.go`) ─────────────────────────────
 
 impl<'p> Printer<'_, 'p> {
-    /// Whether what `file` declares is read off its syntax. Not in JavaScript: a JSDoc type is kept as the TypeScript type it stands for,
-    /// which is not always what tsgo's reparser makes of it.
+    /// Whether what `file` declares is read off its syntax. Not in a JSON file, whose nodes have no positions.
     fn reuses_nodes_of(&self, file: FileId) -> bool {
-        self.enclosing_declaration.is_some() && !self.c.hir(file).is_js
+        self.enclosing_declaration.is_some() && self.c.hir(file).kind != FileKind::Json
     }
 
     /// `symbolToParameterDeclaration`: the type of `parameter`.
@@ -567,6 +566,16 @@ impl<'p> Printer<'_, 'p> {
 
 // ───────────────────────────── type nodes that are written again (`nodecopy.go`) ─────────────────────────────
 
+/// `emitPostfixTypeOperand`, of the operand of a postfix type that is a parse tree node, as a reused one is (`updateNode` keeps the
+/// flags): a type query gets no parentheses.
+fn emit_postfix_type_operand(operand: Node) -> String {
+    if operand.precedence == TYPE_OPERATOR && operand.text.starts_with("typeof ") {
+        operand.text
+    } else {
+        operand.emit(POSTFIX)
+    }
+}
+
 impl<'p> Printer<'_, 'p> {
     /// `reuseTypeNode`
     pub(super) fn reuse_type_node(&mut self, file: FileId, node: TypeNodeId) -> Node {
@@ -684,7 +693,7 @@ impl<'p> Printer<'_, 'p> {
             }
             TypeNodeKind::Array(element) => {
                 let element = self.visit_existing_type_node(file, element, pos)?;
-                Node::new(format!("{}[]", element.emit(POSTFIX)), POSTFIX)
+                Node::new(format!("{}[]", emit_postfix_type_operand(element)), POSTFIX)
             }
             TypeNodeKind::Readonly(of) => {
                 let of = self.visit_existing_type_node(file, of, 0)?;
@@ -700,7 +709,7 @@ impl<'p> Printer<'_, 'p> {
                         let question = if elem.optional { "?" } else { "" };
                         format!("{dots}{}{question}: {}", self.text(elem.name), ty.text)
                     } else if elem.optional {
-                        format!("{}?", ty.emit(POSTFIX))
+                        format!("{}?", emit_postfix_type_operand(ty))
                     } else {
                         format!("{dots}{}", ty.text)
                     });
@@ -978,7 +987,7 @@ impl<'p> Printer<'_, 'p> {
                     Some(b'\'') => quoted(&self.text(name), '\'', false),
                     Some(b'"') => quoted(&self.text(name), '"', false),
                     Some(b'[') => self.property_key_text(file, member.key, start),
-                    None if member.flags.contains(Flags::STRING_NAME) => {
+                    _ if member.flags.contains(Flags::STRING_NAME) => {
                         quoted(&self.text(name), '"', false)
                     }
                     _ => self.text(name),
@@ -1042,7 +1051,10 @@ impl<'p> Printer<'_, 'p> {
         node: TypeNodeId,
         floor: u32,
     ) -> Option<Node> {
-        // `SkipParentheses`: these come out of theirs.
+        // `SkipParentheses` skips no `ParenthesizedType`.
+        if self.c.parenthesized_type_depth(file, node, floor) > 0 {
+            return self.visit_existing_type_node(file, node, floor);
+        }
         match self.c.hir(file)[node].kind {
             TypeNodeKind::Ref { .. } => self.try_visit_type_reference(file, node),
             TypeNodeKind::Typeof { .. } => self.try_visit_type_query(file, node),
@@ -1061,7 +1073,7 @@ impl<'p> Printer<'_, 'p> {
         let object = self.try_visit_simple_type_node(file, obj, hir[node].pos)?;
         let index = self.visit_existing_type_node(file, index, 0)?;
         Some(Node::new(
-            format!("{}[{}]", object.emit(POSTFIX), index.text),
+            format!("{}[{}]", emit_postfix_type_operand(object), index.text),
             POSTFIX,
         ))
     }

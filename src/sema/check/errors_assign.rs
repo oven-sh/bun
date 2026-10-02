@@ -1245,8 +1245,10 @@ impl Checker<'_> {
                         TypeId::UNRESOLVED
                     };
                     firsts[slot] = Some(
-                        (self.is_known(ty) && !self.is_declared_in_error(of, pat, ty))
-                            .then_some(ty),
+                        (self.is_known(ty)
+                            && !self.is_error_type(ty)
+                            && !self.is_declared_in_error(of, pat, ty))
+                        .then_some(ty),
                     );
                     first_names[slot] = (of, pat);
                     continue;
@@ -1258,6 +1260,7 @@ impl Checker<'_> {
                 }
                 let here = self.type_of_pat(of, pat);
                 if !self.is_known(here)
+                    || self.is_error_type(here)
                     || self.is_identical(declared, here)
                     || self.is_declared_in_error(of, pat, here)
                 {

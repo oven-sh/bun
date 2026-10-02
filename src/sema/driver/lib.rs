@@ -733,8 +733,8 @@ fn check_what_is_named(
         .filter(|&i| {
             let module = &program.files.modules[i];
             match module.hir.kind {
-                // Only what the parser objects to is said of JSON, and only then is its text kept.
-                FileKind::Json => !module.hir.text.is_empty(),
+                // Only what the parser objects to is said of JSON.
+                FileKind::Json => module.hir.has_parse_diagnostics,
                 _ if module.is_lib => !skip_lib_check && !skip_default_lib_check,
                 FileKind::Declaration => !skip_lib_check,
                 FileKind::Ts | FileKind::Tsx => true,
@@ -962,6 +962,27 @@ fn check_what_is_named(
         });
         report.diagnostics.append(&mut found.lock().unwrap());
         report.diagnostics.extend(global_errors());
+        // `iterateBaseline`: whoever writes something for every file does so for the files that are not checked as well.
+        if let Some(after_file) = request.after_file {
+            let mut is_checked = vec![false; program.files.modules.len()];
+            for file in &to_check {
+                is_checked[file.idx()] = true;
+            }
+            for i in 0..program.files.modules.len() {
+                let (file, module) = (FileId(i as u32), &program.files.modules[i]);
+                if module.is_lib
+                    || !matches!(module.hir.kind, FileKind::Declaration | FileKind::Json)
+                    || is_checked[i]
+                {
+                    continue;
+                }
+                let _at_hand = program.files.bring_in(host, file);
+                let mut checker = program.checker();
+                checker.set_stack_limit(bun_core::StackCheck::init().remaining());
+                checker.set_time_limit(request.file_time_limit);
+                after_file(&mut checker, file);
+            }
+        }
     }
     report.gave_up = gave_up.into_inner().unwrap();
     report.deepest_stack = deepest_stack.into_inner();

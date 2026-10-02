@@ -468,31 +468,62 @@ impl Usage for FileId {
 }
 
 fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
-    fn value(f: &mut hir::File, json: &Json, atoms: &Interner) -> ExprId {
+    // `place`: where `json` is written. What is not written is put at `end`, where the file ends.
+    fn value(
+        f: &mut hir::File,
+        json: &Json,
+        place: Option<&crate::json_places::Value>,
+        end: u32,
+        atoms: &Interner,
+    ) -> ExprId {
+        let pos = place.map_or(end, |place| place.from);
         let kind = match json {
             Json::Null => ExprKind::Null,
             Json::Bool(true) => ExprKind::True,
             Json::Bool(false) => ExprKind::False,
+            // `parsePrefixUnaryExpression`
+            Json::Number(n) if n.is_sign_negative() => {
+                let number = f.number(-*n);
+                ExprKind::Unary {
+                    op: UnOp::Minus,
+                    operand: f.expr(ExprKind::Number(number), (pos + 1).min(end)),
+                }
+            }
             Json::Number(n) => ExprKind::Number(f.number(*n)),
             Json::String(s) => ExprKind::String(atoms.intern_str(s)),
             Json::Array(items) => {
-                let items: Vec<ExprId> = items.iter().map(|i| value(f, i, atoms)).collect();
+                let items: Vec<ExprId> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, item)| {
+                        let place = place.and_then(|place| place.element(i));
+                        value(f, item, place, end, atoms)
+                    })
+                    .collect();
                 ExprKind::Array(f.list(&items))
             }
             Json::Object(entries) => {
+                let members: &[crate::json_places::Member] = match place.map(|place| &place.what) {
+                    Some(crate::json_places::Written::Object(members)) => &members[..],
+                    _ => &[],
+                };
                 let props: Vec<Prop> = entries
                     .iter()
-                    .map(|(k, v)| Prop {
-                        kind: PropKind::Init,
-                        key: PropKey::Name(atoms.intern_str(k)),
-                        value: value(f, v, atoms),
-                        pos: 0,
+                    .enumerate()
+                    .map(|(i, (k, v))| {
+                        let member = members.get(i);
+                        Prop {
+                            kind: PropKind::Init,
+                            key: PropKey::Name(atoms.intern_str(k)),
+                            value: value(f, v, member.map(|member| &member.value), end, atoms),
+                            pos: member.map_or(end, |member| member.name_from),
+                        }
                     })
                     .collect();
                 ExprKind::Object(f.add_props(&props))
             }
         };
-        f.expr(kind, 0)
+        f.expr(kind, pos)
     }
     // The same for a file with syntax errors, as TypeScript's parser recovers from them.
     fn expression(f: &mut hir::File, e: &Expression, atoms: &Interner) -> ExprId {
@@ -561,7 +592,8 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
     };
     match json {
         Some(json) => {
-            let e = value(&mut f, &json, atoms);
+            let place = crate::json_places::parse(text);
+            let e = value(&mut f, &json, place.as_ref(), text.len() as u32, atoms);
             let stmt = f.stmt(StmtKind::ExportAssign(e), 0);
             f.body = f.list(&[stmt]);
         }
@@ -1912,8 +1944,8 @@ impl Files {
         } else {
             host.parse(path, &text, atoms, options)
         };
-        // The default library is not looked into for how it is written, nor is JSON the parser has nothing against.
-        if (hir.kind != FileKind::Json || hir.has_parse_diagnostics) && !is_lib {
+        // The default library is not looked into for how it is written.
+        if !is_lib {
             hir.text = text;
         }
         // `getExternalModuleIndicator`: what else makes a module of a file that neither imports nor exports.

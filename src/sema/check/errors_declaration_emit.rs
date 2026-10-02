@@ -1411,7 +1411,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             if !ignores_qualification && decls.iter().any(|d| matches!(d.1, Decl::ExportSpec(_))) {
                 continue;
             }
-            let Some(resolved) = self.c.files().resolve_alias(alias) else {
+            let Some(resolved) = self.resolve_alias(alias) else {
                 continue;
             };
             let candidate = self.candidate_list_for_symbol(
@@ -1444,6 +1444,17 @@ impl<'p> DeclarationEmit<'_, 'p> {
             );
         }
         Vec::new()
+    }
+
+    /// `resolveAlias`: what the alias is declared to stand for, and on from there while that is an alias and nothing else
+    /// (`resolveSymbol`, `isNonLocalAlias`).
+    fn resolve_alias(&self, alias: Sym) -> Option<Sym> {
+        let files = self.c.files();
+        let target = files.canonical(files.alias_target(alias)?);
+        files.resolve_alias_as(
+            target,
+            SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
+        )
     }
 
     /// `getCandidateListForSymbol`
@@ -1500,7 +1511,18 @@ impl<'p> DeclarationEmit<'_, 'p> {
         ignores_qualification: bool,
         visited: &mut Vec<(Sym, Table)>,
     ) -> bool {
-        if symbol != from_table && Some(symbol) != resolved {
+        let mut is_like = symbol == from_table || Some(symbol) == resolved;
+        let mut stop = resolved;
+        for _ in 0..32 {
+            let Some(alias) = stop.filter(|&stop| {
+                !is_like && stop != GLOBAL_THIS && self.flags_of(stop).contains(SymFlags::ALIAS)
+            }) else {
+                break;
+            };
+            stop = self.resolve_alias(alias);
+            is_like = stop == Some(symbol);
+        }
+        if !is_like {
             return false;
         }
         !self.is_external_module_symbol(from_table)
@@ -1647,6 +1669,51 @@ impl<'p> DeclarationEmit<'_, 'p> {
         result
     }
 
+    /// The part of `getContainersOfSymbol` for the class expression `e` on the right of `a.b = class ..`: the module for
+    /// `module.exports = ..` and `exports.b = ..`, otherwise what `a` resolves to.
+    fn container_of_assigned_class_expression(&self, file: FileId, e: ExprId) -> Option<Sym> {
+        let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
+        let Parent::Expr(assignment) = bound.expr_parent[e.idx()] else {
+            return None;
+        };
+        if assignment.is_none() {
+            return None;
+        }
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[assignment].kind
+        else {
+            return None;
+        };
+        if value != e
+            || self.c.is_written_in_parentheses(file, e)
+            || self.c.is_written_in_parentheses(file, target)
+        {
+            return None;
+        }
+        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[target].kind else {
+            return None;
+        };
+        if !self.is_entity_name_expression(file, obj) {
+            return None;
+        }
+        // `IsModuleExportsAccessExpression(left) || IsExportsIdentifier(left.Expression())`
+        if crate::bind::is_module_exports(hir, target)
+            || matches!(hir[obj].kind, ExprKind::Ident(known::exports))
+        {
+            return files
+                .module(file)
+                .is_module()
+                .then(|| files.file_symbol(file));
+        }
+        match hir[obj].kind {
+            ExprKind::Ident(name) => self.c.symbol_of_identifier(file, obj, name),
+            _ => None,
+        }
+    }
+
     /// `getContainersOfSymbol`
     fn containers_of_symbol(&mut self, symbol: Sym, at: Enclosing, meaning: Meaning) -> Vec<Sym> {
         if let Some(container) = self.parent_of_symbol(symbol)
@@ -1667,6 +1734,16 @@ impl<'p> DeclarationEmit<'_, 'p> {
                         | Decl::ExportSpec(_)
                 )
             {
+                continue;
+            }
+            if let Decl::Class(class) = decl
+                && let ClassOwner::Expr(e) = self.c.bound(file).class_owner[class.idx()]
+            {
+                if let Some(candidate) = self.container_of_assigned_class_expression(file, e)
+                    && !candidates.contains(&candidate)
+                {
+                    candidates.push(candidate);
+                }
                 continue;
             }
             let Some(statement) = self.statement_of(file, decl) else {
@@ -4205,6 +4282,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 continue;
             }
             let base = self.c.type_of_expr(file, extends);
+            // `getBaseConstructorTypeOfClass`, `isConstructorType`: what cannot be constructed is the error type.
+            if self.c.signatures(base, true).is_empty() {
+                return false;
+            }
             return match self.c.data(base) {
                 TypeData::Intersection(parts) => {
                     parts.iter().any(|&part| self.c.is_type_variable(part))
@@ -5771,6 +5852,36 @@ impl<'p> DeclarationEmit<'_, 'p> {
             .collect()
     }
 
+    /// `GetDefaultResolutionModeForFile`
+    fn default_resolution_mode_for_file(&self, file: FileId) -> ResolutionMode {
+        let files = self.c.files();
+        let options = &files.options;
+        // `importSyntaxAffectsModuleResolution`
+        if options.resolves_like_node
+            || options.resolve_package_json_exports
+            || options.resolve_package_json_imports
+        {
+            files.module(file).implied_format
+        } else {
+            ResolutionMode::None
+        }
+    }
+
+    /// `resolutionMode` in `getSpecifierForModuleSymbol`. `mode`: `overrideImportMode`.
+    fn resolution_mode_for_specifier(
+        &self,
+        importing: FileId,
+        mode: ResolutionMode,
+    ) -> ResolutionMode {
+        if mode != ResolutionMode::None {
+            return mode;
+        }
+        match self.c.enclosing_module_specifier_mode {
+            Some(mode) => mode,
+            None => self.default_resolution_mode_for_file(importing),
+        }
+    }
+
     /// `getPreferredEnding`. `prefers_js`: `ImportModuleSpecifierEndingPreferenceJs`.
     fn preferred_ending(
         &self,
@@ -5780,7 +5891,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
     ) -> Ending {
         let files = self.c.files();
         let mode = if mode == ResolutionMode::None {
-            files.module(importing).default_mode
+            self.default_resolution_mode_for_file(importing)
         } else {
             mode
         };
@@ -5959,7 +6070,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
                     let mode = match known_extension(path) {
                         ".cjs" | ".cts" | ".d.cts" => ResolutionMode::Require,
                         ".mjs" | ".mts" | ".d.mts" => ResolutionMode::Import,
-                        _ if mode == ResolutionMode::None => files.module(importing).default_mode,
+                        _ if mode == ResolutionMode::None => {
+                            self.default_resolution_mode_for_file(importing)
+                        }
                         _ => mode,
                     };
                     // `GetConditions`
@@ -6077,7 +6190,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 .then(a.cmp(b))
         });
         paths.dedup();
-        let prefers_js = target_mode == ResolutionMode::Import;
+        let prefers_js =
+            self.resolution_mode_for_specifier(importing, mode) == ResolutionMode::Import;
         let is_in_node_modules = paths.iter().any(|path| path.contains("/node_modules/"));
         let mut relative_specifier = None;
         for path in &paths {
@@ -6112,7 +6226,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let files = self.c.files();
         let from = files.module(importing);
         let target_mode = if mode == ResolutionMode::None {
-            from.default_mode
+            self.default_resolution_mode_for_file(importing)
         } else {
             mode
         };
@@ -6139,7 +6253,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if !files.options.paths.is_empty() || !files.options.root_dirs.is_empty() {
             return String::new();
         }
-        let prefers_js = target_mode == ResolutionMode::Import;
+        let prefers_js =
+            self.resolution_mode_for_specifier(importing, mode) == ResolutionMode::Import;
         let path = files.module(target).path.as_str();
         let mut paths = self.paths_through_links(path, &from.path);
         if !paths.is_empty() {
@@ -6175,7 +6290,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// `getSpecifierForModuleSymbol`
     fn specifier_for_module_symbol(&mut self, symbol: Sym, mode: ResolutionMode) -> String {
         let importing = self.b.enclosing.file;
-        if let Some(known) = self.specifiers.get(&(symbol, importing, mode)) {
+        let resolution_mode = self.resolution_mode_for_specifier(importing, mode);
+        if let Some(known) = self.specifiers.get(&(symbol, importing, resolution_mode)) {
             return known.clone();
         }
         let mut target = None;
@@ -6201,7 +6317,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             (None, None) => String::new(),
         };
         self.specifiers
-            .insert((symbol, importing, mode), specifier.clone());
+            .insert((symbol, importing, resolution_mode), specifier.clone());
         specifier
     }
 

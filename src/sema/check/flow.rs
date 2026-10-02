@@ -2789,6 +2789,20 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getEffectsSignature`, of `left instanceof right`. `method`: the type of the `[Symbol.hasInstance]` of `right`.
+    /// `getSignaturesOfType` puts the signatures of the members of a union together.
+    pub(super) fn get_effects_signature_of_has_instance_method(
+        &mut self,
+        method: TypeId,
+    ) -> Option<SigId> {
+        self.single_call_signature(method, true).or_else(|| {
+            match self.signatures(method, false)[..] {
+                [only] if self.sig_type_params(only).is_empty() => Some(only),
+                _ => None,
+            }
+        })
+    }
+
     fn narrow_by_instanceof(
         &mut self,
         reference: &Reference,
@@ -2814,7 +2828,7 @@ impl<'p> Checker<'p> {
         // A `[Symbol.hasInstance]` that is a type guard has the say. `getPropertyNameForKnownSymbolName`
         let has_instance = self.files().atoms.symbol_name(b"hasInstance");
         if let Some(method) = self.type_of_property(constructor, has_instance)
-            && let Some(sig) = self.single_call_signature(method, true)
+            && let Some(sig) = self.get_effects_signature_of_has_instance_method(method)
             && let Some(Predicate {
                 param: Some(0),
                 ty: Some(guarded),
@@ -6630,7 +6644,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isAssignmentToReadonlyEntity`, of the property `name` of `obj`, which `target` writes to.
-    fn is_assignment_to_readonly_property(
+    pub(super) fn is_assignment_to_readonly_property(
         &mut self,
         file: FileId,
         target: ExprId,
@@ -6643,7 +6657,7 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether `getPropertyOfType` finds `name` in what `ty` is seen as: what an index signature stands in for is not found.
-    fn finds_property(&mut self, ty: TypeId, name: Atom) -> bool {
+    pub(super) fn finds_property(&mut self, ty: TypeId, name: Atom) -> bool {
         let apparent = self.apparent_type(ty);
         self.parts(apparent).iter().all(|&part| {
             let part = self.apparent_type(part);

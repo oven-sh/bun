@@ -1297,6 +1297,9 @@ pub struct File {
     /// The opening and closing JSX tags in which the parser objected to something: where their `<` is, and where they end
     /// (`finishNode`). Sorted.
     pub jsx_tag_ends: Few<(u32, u32)>,
+    /// The directives: where each is written, and what it says. An `ExpressionStatement` of a string literal in tsgo. No statement
+    /// is kept for one.
+    pub directives: Few<(u32, Atom)>,
     /// Where module specifiers are written, but for those of `import()`, which are expressions.
     pub specifier_uses: Vec<SpecifierUse>,
     /// The specifier of an `import()` that has a second argument, and that argument.
@@ -1562,6 +1565,7 @@ impl File {
             jsdoc_modifiers,
             jsdoc_param_errors,
             decorators,
+            directives,
             suppressed
         );
     }

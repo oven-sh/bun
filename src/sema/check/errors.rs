@@ -3787,7 +3787,7 @@ fn spelling_distance(a: &[u8], b: &[u8]) -> f64 {
 }
 
 /// Where the first declaration of `sym` is: the libraries first, then by file, then by position. `compareSymbols`, `compareNodes`
-fn place_of_first_declaration(c: &Checker<'_>, sym: Sym) -> Option<(bool, FileId, u32)> {
+pub(super) fn place_of_first_declaration(c: &Checker<'_>, sym: Sym) -> Option<(bool, FileId, u32)> {
     let (file, decl) = c.files().decls_of(sym).first().copied()?;
     let hir = c.hir(file);
     let pos = match decl {
@@ -5483,11 +5483,28 @@ impl Checker<'_> {
         // declared as, or asserted to be.
         if matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
             let is_declared = reference == target && !self.bound(file).is_arguments_object(target);
-            let wanted = if is_declared {
+            let mut wanted = if is_declared {
                 self.declared_type_of_reference(file, target)
             } else {
                 left
             };
+            // `checkAssignmentOperator`: `checkPropertyAccessExpression` with `writeOnly`.
+            if is_declared
+                && self.is_known(wanted)
+                && let ExprKind::Dot { obj, name, .. } = hir[target].kind
+            {
+                let object = self.type_of_expr(file, obj);
+                let object = self.receiver_that_is_there(object);
+                let (read, written) = (
+                    self.type_of_property(object, name),
+                    self.write_type_of_property(object, name),
+                );
+                if let Some(written) = written
+                    && read != Some(written)
+                {
+                    wanted = written;
+                }
+            }
             self.check_assignable_with_end_from(
                 file,
                 right,

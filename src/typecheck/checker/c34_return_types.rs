@@ -1,16 +1,21 @@
-// checker.go:20115-20727 (layers T-SIGDECL, T-WIDEN, T-SIGINST): the functions of 20115-20238, 20566-20647 and 20722-20727: return types of signatures, full signature types, annotated accessor types, errors from widening and the optional type marker.
+// checker.go:20115-20727 (layers T-SIGDECL, T-RETINFER, T-WIDEN, T-SIGINST): return types of signatures, full signature types, annotated accessor types, the return type that a function body gives with its promise and generator types, errors from widening, the type predicate that a function body gives, and the optional type marker.
 use crate::ast::{
-    Arg, Ast, FunctionFlags, Kind, NodeId, get_declaration_of_kind, get_function_flags,
-    get_name_of_declaration, is_constructor_declaration, is_function_declaration,
+    Arg, Ast, FlowFlags, FlowNodeId, FunctionFlags, Kind, NodeId, for_each_return_statement,
+    get_declaration_of_kind, get_function_flags, get_name_of_declaration, is_await_expression,
+    is_block, is_call_expression, is_constructor_declaration, is_function_declaration,
     is_function_expression_or_arrow_function, is_function_like_declaration,
-    is_get_accessor_declaration, is_in_js_file, is_method_declaration, node_is_missing,
+    is_get_accessor_declaration, is_identifier, is_import_call, is_in_js_file,
+    is_method_declaration, is_object_literal_expression, is_return_statement, node_is_missing,
+    skip_parentheses,
 };
 use crate::checker::{
-    CheckMode, Checker, IterationTypeKind, ObjectFlags, SignatureFlags, SignatureId, TypeFlags,
-    TypeId, TypeSystemEntity, TypeSystemPropertyName, UnionReduction, WideningKind,
-    get_set_accessor_value_parameter, is_object_literal_type,
+    CheckMode, Checker, ContextFlags, IterationTypeKind, IterationTypesResolverKind, IterationUse,
+    ObjectFlags, SignatureFlags, SignatureId, TypeAliasId, TypeFlags, TypeId, TypePredicateId,
+    TypePredicateKind, TypeSystemEntity, TypeSystemPropertyName, UnionReduction, WideningKind,
+    for_each_yield_expression, get_flow_node_of_node, get_set_accessor_value_parameter,
+    is_object_literal_type, is_rest_parameter, is_unit_type, some_type,
 };
-use crate::core::{List, find};
+use crate::core::{List, append_if_unique, find, if_else, or_else};
 use crate::diagnostics;
 use crate::scanner::declaration_name_to_string;
 

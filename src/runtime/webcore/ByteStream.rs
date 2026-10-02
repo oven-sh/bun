@@ -21,7 +21,7 @@ bun_output::declare_scope!(ByteStream, visible);
 /// across `ByteBlobLoader` / `FileReader`); the trait impl below auto-derefs
 /// to the `&self` inherent bodies.
 pub struct ByteStream {
-    pub(crate) buffer: JsCell<Vec<u8>>,
+    pub(crate) buffered: Buffered,
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
     pub(crate) done: Cell<bool>,
@@ -30,7 +30,6 @@ pub struct ByteStream {
     // `pending_value: Strong`. Never freed by Rust.
     pub(crate) pending_buffer: Cell<*mut [u8]>,
     pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
-    pub offset: Cell<usize>,
     pub(crate) high_water_mark: blob::SizeType,
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
     pub(crate) sink: JsCell<SinkHandle>,
@@ -43,7 +42,7 @@ pub struct ByteStream {
 impl Default for ByteStream {
     fn default() -> Self {
         Self {
-            buffer: JsCell::new(Vec::new()),
+            buffered: Buffered::default(),
             has_received_last_chunk: Cell::new(false),
             pending: JsCell::new(streams::Pending {
                 result: streams::Result::Done,
@@ -52,13 +51,101 @@ impl Default for ByteStream {
             done: Cell::new(false),
             pending_buffer: Cell::new(Self::empty_pending_buffer()),
             pending_value: JsCell::new(StrongOptional::empty()),
-            offset: Cell::new(0),
             high_water_mark: 0,
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
             size_hint: Cell::new(0),
             buffer_action: JsCell::new(None),
         }
+    }
+}
+
+/// The bytes a producer delivered that no consumer has taken: `bytes[consumed..]`.
+///
+/// `consumed` is an index into `bytes`, so the two are one value: every method
+/// that empties `bytes` resets it. An index left behind an emptied buffer would
+/// make [`Self::take`] cut a prefix off bytes that are not there.
+#[derive(Default)]
+pub(crate) struct Buffered {
+    bytes: JsCell<Vec<u8>>,
+    consumed: Cell<usize>,
+}
+
+impl Buffered {
+    /// Bytes delivered that no consumer has taken yet.
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.bytes.get().len() - self.consumed.get()
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Bytes the buffer holds, the already-taken prefix included. The HTMLRewriter paces its
+    /// input by this, not by [`Self::len`] (#38656): it holds its input until a consumer takes
+    /// the buffer, and a pull that leaves a remainder behind takes nothing.
+    #[inline]
+    pub(crate) fn held_len(&self) -> usize {
+        self.bytes.get().len()
+    }
+
+    /// Heap the buffer holds, including an already-taken prefix.
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.bytes.get().capacity()
+    }
+
+    /// Adopt `bytes`, of which a consumer already took the first `consumed`.
+    fn adopt(&self, bytes: Vec<u8>, consumed: usize) {
+        debug_assert!(consumed <= bytes.len());
+        self.bytes.set(bytes);
+        self.consumed.set(consumed);
+    }
+
+    /// Take the untaken bytes out. The buffer keeps no allocation.
+    fn take(&self) -> Vec<u8> {
+        let consumed = self.consumed.replace(0);
+        let mut bytes = self.bytes.replace(Vec::new());
+        if consumed > 0 {
+            bytes.drain(..consumed);
+        }
+        bytes
+    }
+
+    fn extend(&self, chunk: &[u8]) {
+        self.bytes.with_mut(|b| b.extend_from_slice(chunk));
+    }
+
+    /// Drop every buffered byte and release the allocation.
+    fn clear(&self) {
+        self.consumed.set(0);
+        if self.capacity() > 0 {
+            self.bytes.with_mut(|b| {
+                b.clear();
+                b.shrink_to_fit();
+            });
+        }
+    }
+
+    /// Copy up to `dest.len()` untaken bytes into `dest` and count them as
+    /// taken. Returns how many it copied.
+    fn copy_out(&self, dest: &mut [u8]) -> usize {
+        // R-2: confine the `&mut Vec<u8>` to a `with_mut` so no `JsCell`
+        // borrow escapes the copy.
+        self.bytes.with_mut(|b| {
+            let consumed = self.consumed.get();
+            let to_write = (b.len() - consumed).min(dest.len());
+            dest[..to_write].copy_from_slice(&b[consumed..][..to_write]);
+            if consumed + to_write == b.len() {
+                self.consumed.set(0);
+                b.clear();
+            } else {
+                self.consumed.set(consumed + to_write);
+            }
+            to_write
+        })
     }
 }
 
@@ -268,7 +355,7 @@ impl ByteStream {
                 self.size_hint.set(estimated_size as blob::SizeType);
             }
             DrainResult::Owned { list, size_hint } => {
-                self.buffer.set(list);
+                self.buffered.adopt(list, 0);
                 self.size_hint.set(size_hint as blob::SizeType);
             }
             DrainResult::Aborted => {}
@@ -281,11 +368,10 @@ impl ByteStream {
             if self.has_pending_error() {
                 return streams::Start::Ready;
             }
-            if self.buffer.get().is_empty() {
+            if self.buffered.is_empty() {
                 return streams::Start::Empty;
             }
-            let buffer = self.buffer.replace(Vec::new());
-            return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
+            return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(self.buffered.take()));
         }
 
         if self.high_water_mark == 0 {
@@ -336,7 +422,7 @@ impl ByteStream {
     /// Bytes delivered that no consumer has taken yet.
     #[inline]
     pub fn buffered_len(&self) -> usize {
-        self.buffer.get().len() - self.offset.get()
+        self.buffered.len()
     }
 
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
@@ -351,9 +437,8 @@ impl ByteStream {
             return;
         }
 
-        if !self.buffer.get().is_empty() {
-            let buffered = self.buffer.replace(Vec::new());
-            self.offset.set(0);
+        if !self.buffered.is_empty() {
+            let buffered = self.buffered.take();
             let result = if self.has_received_last_chunk.get() {
                 streams::Result::OwnedAndDone(buffered)
             } else {
@@ -413,16 +498,11 @@ impl ByteStream {
         self.parent_const().producer.get().ready(None, None);
     }
 
-    /// Take the unread buffered bytes (`buffer[offset..]`) without signalling
-    /// the producer; the caller writes them to the sink before
+    /// Take the bytes no consumer has taken yet without signalling the
+    /// producer; the caller writes them to the sink before
     /// [`Self::signal_drained`].
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
-        let consumed = self.offset.replace(0);
-        let mut list = self.buffer.replace(Vec::new());
-        if consumed > 0 {
-            list.drain(..consumed);
-        }
-        Vec::<u8>::move_from_list(list)
+        Vec::<u8>::move_from_list(self.buffered.take())
     }
 
     /// Called by native fast-paths after wiring `self.sink`: a consumer now
@@ -505,10 +585,7 @@ impl ByteStream {
                 self.signal_drained();
                 action.reject(global, err);
 
-                self.buffer.with_mut(|b| {
-                    b.clear();
-                    b.shrink_to_fit();
-                });
+                self.buffered.clear();
                 self.pending.with_mut(|p| {
                     p.result.release();
                     p.result = streams::Result::Done;
@@ -529,7 +606,7 @@ impl ByteStream {
                     return;
                 };
 
-                if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
+                if self.buffered.capacity() == 0 && matches!(stream, streams::Result::Done) {
                     bun_output::scoped_log!(
                         ByteStream,
                         "ByteStream.onData done and action.fulfill()"
@@ -539,17 +616,17 @@ impl ByteStream {
                     action.fulfill(self.parent_const().global_this(), &mut blob);
                     return;
                 }
-                if self.buffer.get().capacity() == 0 {
+                if self.buffered.capacity() == 0 {
                     if let streams::Result::OwnedAndDone(mut owned) = stream {
                         bun_output::scoped_log!(
                             ByteStream,
                             "ByteStream.onData owned_and_done and action.fulfill()"
                         );
 
-                        // Move the owned Vec<u8> into `buffer`
+                        // Move the owned Vec<u8> into the buffer
                         // directly instead of round-tripping through `chunk` (which would borrow
                         // `stream`).
-                        self.buffer.set(owned.move_to_list_managed());
+                        self.buffered.adopt(owned.move_to_list_managed(), 0);
                         let mut blob = self.to_any_blob().unwrap();
                         action.fulfill(self.parent_const().global_this(), &mut blob);
                         return;
@@ -561,8 +638,7 @@ impl ByteStream {
                     "ByteStream.onData appendSlice and action.fulfill()"
                 );
 
-                self.buffer
-                    .with_mut(|b| b.extend_from_slice(stream.slice()));
+                self.buffered.extend(stream.slice());
                 // The owned `Vec<u8>`
                 // payload of `stream` is freed by its Drop glue at the explicit `drop` below
                 // (Temporary* variants are non-owning `RawSlice` and so are left alone).
@@ -571,8 +647,7 @@ impl ByteStream {
                 action.fulfill(self.parent_const().global_this(), &mut blob);
                 return;
             } else {
-                self.buffer
-                    .with_mut(|b| b.extend_from_slice(stream.slice()));
+                self.buffered.extend(stream.slice());
                 // The owned `Vec<u8>` payload of
                 // `stream` is freed by its Drop glue (Temporary* are non-owning `RawSlice`, left alone).
                 drop(stream);
@@ -584,7 +659,7 @@ impl ByteStream {
         let chunk = stream.slice();
 
         if self.pending.get().state == streams::PendingState::Pending {
-            debug_assert!(self.buffer.get().is_empty());
+            debug_assert!(self.buffered.is_empty());
             // Re-derive the destination from the GC-rooted view instead of trusting the
             // raw pointer captured at pull time: JS can detach or transfer the backing
             // ArrayBuffer between the pull and the data arriving, leaving
@@ -666,19 +741,20 @@ impl ByteStream {
             .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
     }
 
+    /// Buffer `stream`, whose first `offset` bytes a pending pull already took.
     fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
-        if self.buffer.get().capacity() == 0 {
+        if self.buffered.capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
-                    // `move_to_list_managed` moves the buffer, no copy.
-                    self.buffer.set(owned.move_to_list_managed());
-                    self.offset.set(self.offset.get() + offset);
+                    // `move_to_list_managed` moves the buffer, no copy; the taken
+                    // prefix stays in it and counts as consumed.
+                    self.buffered.adopt(owned.move_to_list_managed(), offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
                     let chunk = &temp.slice()[offset..];
                     let mut buf = Vec::with_capacity(chunk.len());
                     buf.extend_from_slice(chunk);
-                    self.buffer.set(buf);
+                    self.buffered.adopt(buf, 0);
                 }
                 streams::Result::Err(err) => {
                     self.pending
@@ -692,12 +768,10 @@ impl ByteStream {
 
         match stream {
             streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                self.buffer
-                    .with_mut(|b| b.extend_from_slice(&temp.slice()[offset..]));
+                self.buffered.extend(&temp.slice()[offset..]);
             }
             streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                self.buffer
-                    .with_mut(|b| b.extend_from_slice(&owned.slice()[offset..]));
+                self.buffered.extend(&owned.slice()[offset..]);
                 // `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {
@@ -706,10 +780,7 @@ impl ByteStream {
                 }
                 // Erroring a stream discards queued chunks; drop the buffered
                 // bytes now instead of retaining them off-heap until GC.
-                self.buffer.with_mut(|b| {
-                    b.clear();
-                    b.shrink_to_fit();
-                });
+                self.buffered.clear();
                 self.pending
                     .with_mut(|p| p.result = streams::Result::Err(err));
             }
@@ -732,40 +803,14 @@ impl ByteStream {
         debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
 
-        if !self.buffer.get().is_empty() {
+        if !self.buffered.is_empty() {
             debug_assert!(self.value().is_empty()); // == .zero
-            // R-2: confine the `&mut Vec<u8>` to a `with_mut` so no `JsCell`
-            // borrow escapes the copy. The result tuple drives the rest.
-            let (to_write, remaining_in_buffer_len) = self.buffer.with_mut(|b| {
-                let to_write = (b.len() - self.offset.get()).min(buffer.len());
-                let remaining_in_buffer_len = to_write; // length of `this.buffer.items[this.offset..][0..to_write]`
+            let to_write = self.buffered.copy_out(buffer);
+            // Both sides are non-empty, so the copy moved at least one byte.
+            debug_assert!(to_write > 0);
 
-                buffer[..to_write].copy_from_slice(&b[self.offset.get()..][..to_write]);
-
-                if self.offset.get() + to_write == b.len() {
-                    self.offset.set(0);
-                    b.clear();
-                } else {
-                    self.offset.set(self.offset.get() + to_write);
-                }
-                (to_write, remaining_in_buffer_len)
-            });
-
-            if self.buffer.get().is_empty() {
+            if self.buffered.is_empty() {
                 self.signal_drained();
-            }
-
-            if self.has_received_last_chunk.get() && remaining_in_buffer_len == 0 {
-                self.buffer.with_mut(|b| {
-                    b.clear();
-                    b.shrink_to_fit();
-                });
-                self.done.set(true);
-
-                return streams::Result::IntoArrayAndDone(IntoArray {
-                    value: view,
-                    len: to_write as blob::SizeType, // @truncate
-                });
             }
 
             return streams::Result::IntoArray(IntoArray {
@@ -811,12 +856,7 @@ impl ByteStream {
     pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();
-        if self.buffer.get().capacity() > 0 {
-            self.buffer.with_mut(|b| {
-                b.clear();
-                b.shrink_to_fit();
-            });
-        }
+        self.buffered.clear();
         self.done.set(true);
         self.pending_value.with_mut(|pv| pv.deinit());
         // A native sink wired to this stream must fail, not later see an EOF and commit what it
@@ -850,7 +890,7 @@ impl ByteStream {
 
     fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(ByteStream)
-        self.buffer.get().capacity()
+        self.buffered.capacity()
     }
 
     /// NOTE: not `impl Drop` — `ByteStream` is the `context` payload of a `.classes.ts`
@@ -863,12 +903,7 @@ impl ByteStream {
     /// `Box` provenance.
     fn finalize(&mut self) {
         bun_jsc::mark_binding!();
-        if self.buffer.get().capacity() > 0 {
-            self.buffer.with_mut(|b| {
-                b.clear();
-                b.shrink_to_fit();
-            });
-        }
+        self.buffered.clear();
 
         self.pending_value.with_mut(|pv| pv.deinit());
         if !self.done.get() {
@@ -945,7 +980,7 @@ impl ByteStream {
 
     pub(crate) fn to_any_blob(&self) -> Option<blob::Any> {
         if self.has_received_last_chunk.get() && !self.has_pending_error() {
-            let buffer = self.buffer.replace(Vec::new());
+            let buffer = self.buffered.take();
             self.done.set(true);
             self.pending.with_mut(|p| {
                 p.result.release();
@@ -975,10 +1010,7 @@ impl ByteStream {
             err_js.ensure_still_alive();
             self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.done.set(true);
-            self.buffer.with_mut(|b| {
-                b.clear();
-                b.shrink_to_fit();
-            });
+            self.buffered.clear();
             return Ok(jsc::JSPromise::rejected_promise(cx.global(), err_js).to_js());
         }
 

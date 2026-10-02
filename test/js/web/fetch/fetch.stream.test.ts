@@ -1468,6 +1468,45 @@ test.concurrent(
   },
 );
 
+// A native body stream counts the bytes a reader already took as a consumed prefix of its
+// buffer. Every path that dropped the buffer used to keep that index, so the next `drain()`
+// read the prefix out of a buffer that was no longer there and aborted the process with
+// `panic: range end index 262144 out of range for slice of length 0`. One fixture per route:
+// node:stream taking the native source over, and the stream's own pull loop after the body
+// failed.
+test.concurrent(
+  "node:stream reading a started native body stream gets its tail instead of crashing",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "bytestream-partial-read-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("a body that fails after a partial read rejects the next read instead of crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "bytestream-partial-read-error-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/41439
 // A flushed zstd chunk that decodes to more than 4096 bytes must reach the
 // reader in full. The decoder used to hand over 4096 bytes and keep the rest

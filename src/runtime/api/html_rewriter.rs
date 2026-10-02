@@ -993,10 +993,11 @@ impl RewriterPipe {
         self.suspended_wrapper.get().is_some() || self.pending_suspension.get().is_some()
     }
 
-    /// Output emitted but not yet taken by a reader.
+    /// Output emitted but not yet taken by a reader. A pull that leaves a remainder in the
+    /// stream's buffer takes nothing out of it, so this counts the whole buffer (`held_len`).
     fn unread_output(&self) -> BlobSizeType {
         let staged = self.output_buffer.get().len();
-        let queued = self.output.get().map_or(0, |out| out.buffer.get().len());
+        let queued = self.output.get().map_or(0, |out| out.buffered.held_len());
         (staged + queued) as BlobSizeType
     }
 

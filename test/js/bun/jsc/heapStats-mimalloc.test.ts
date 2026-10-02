@@ -293,4 +293,53 @@ describe("heapStats() mimalloc integration", () => {
       expect(perRequest).toBeLessThan(20);
     },
   );
+
+  // The event loop leaves the heaps of its thread to the allocator's scavenger thread around every poll. Each time it
+  // did, it woke the scavenger with a syscall, and the scavenger found that the thread was not due (it sweeps a thread
+  // every 100 ms) and went back to sleep: one wake for every turn of the loop. A thread that the scavenger has seen
+  // inside those 100 ms wakes it no more until they are over. The kernel counts how often a thread goes to sleep, and
+  // the scavenger does for each time it was woken. Linux only: reads /proc.
+  test.skipIf(!isLinux)("the event loop does not wake the allocator's scavenger thread for every turn", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { readdirSync, readFileSync } from "node:fs";
+        // how often the scavenger thread went to sleep so far (undefined while there is none)
+        function sleeps() {
+          for (const tid of readdirSync("/proc/self/task")) {
+            let status;
+            try {
+              status = readFileSync("/proc/self/task/" + tid + "/status", "utf8");
+            } catch {
+              continue; // the thread ended
+            }
+            if (!/^Name:\\s+mi-scavenger$/m.test(status)) continue;
+            return Number(/^voluntary_ctxt_switches:\\s+(\\d+)/m.exec(status)[1]);
+          }
+        }
+        // The allocator starts its scavenger thread the first time a thread blocks, and the thread
+        // takes its name when it first runs: turn the loop until it has.
+        let before;
+        while ((before = sleeps()) === undefined) await Bun.sleep(1);
+        const turns = 500;
+        const start = performance.now();
+        // A timer of 1 ms, so that the scavenger is asleep again before the next turn whatever the
+        // machine: then each wake is a syscall, and each one shows as one more sleep.
+        for (let i = 0; i < turns; i++) await new Promise(resolve => setTimeout(resolve, 1));
+        console.log(JSON.stringify({ turns, ms: performance.now() - start, sleeps: sleeps() - before }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { turns, ms, sleeps } = JSON.parse(stdout);
+    // It was one sleep for each turn. Now it is 3 or 4 for each 100 ms, which the turns take 5 to 25 of. The second
+    // bound is for a machine so slow that the turns take longer: 10 sleeps for each 100 ms are still far fewer.
+    expect(sleeps, stdout).toBeLessThan(Math.max(turns / 4, ms / 10));
+    expect(exitCode).toBe(0);
+  });
 });

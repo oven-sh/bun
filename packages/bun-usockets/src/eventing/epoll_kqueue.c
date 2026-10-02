@@ -513,7 +513,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
      * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
-     * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
+     * _end. Every tick hands off, also one whose poll cannot block: a loop that never blocks
+     * is swept in no other way. mimalloc paces the sweeps of a thread and the wakes of its
+     * scavenger itself, so most ticks pay four atomic read-modify-writes for this and no syscall.
      * With no scavenger to hand off to, fall back to sweeping inline -- but only on a tick that
      * really parks, and rate-limited, because doing it between ticks is what we are avoiding. */
     const int handed_off = mi_on_thread_idle_start();

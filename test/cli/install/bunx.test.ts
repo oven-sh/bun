@@ -1183,6 +1183,104 @@ describe("package name aliases", () => {
   });
 });
 
+// To install a missing package, bunx runs `bun add` as a child process in the
+// bunx cache directory. BUN_OPTIONS is for the `bunx` the user ran and for the
+// bin it runs. The child must not apply it to the install.
+describe("BUN_OPTIONS and the internal install", () => {
+  const name = "bunx-options-probe";
+  const projectPackageJson = JSON.stringify({ name: "project", version: "1.0.0" });
+  let registry: string;
+
+  beforeAll(async () => {
+    dummyBeforeAll();
+    registry = `http://localhost:${getPort()}/`;
+
+    const pkgRoot = tmpdirSync();
+    const packageDir = join(pkgRoot, "package");
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(join(packageDir, "package.json"), JSON.stringify({ name, version: "1.0.0", bin: "cli.js" }));
+    // The bin reports what it finds in its own environment.
+    await writeFile(
+      join(packageDir, "cli.js"),
+      `#!/usr/bin/env node
+const { BUN_OPTIONS = null, BUN_INTERNAL_BUNX_INSTALL = null } = process.env;
+console.log(JSON.stringify({ BUN_OPTIONS, BUN_INTERNAL_BUNX_INSTALL }));
+`,
+    );
+    const tgzDir = tmpdirSync();
+    await Bun.$`tar -czf ${join(tgzDir, `${name}-1.0.0.tgz`)} -C ${pkgRoot} package`;
+    setHandler(dummyRegistry([], { "1.0.0": { bin: { [name]: "cli.js" }, as: "1.0.0" } }, 0, tgzDir));
+  });
+
+  afterAll(() => {
+    dummyAfterAll();
+  });
+
+  // Runs `bun x` for the package, which is not installed anywhere. `<project>`
+  // in `bunOptions` stands for a project that bunx has no reason to touch.
+  async function bunxWithOptions(bunOptions: string | undefined) {
+    const { x_dir, env } = setup();
+    const project = tmpdirSync();
+    await writeFile(join(project, "package.json"), projectPackageJson);
+    const globalDir = tmpdirSync();
+    const BUN_OPTIONS = bunOptions?.replace("<project>", project);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "x", name],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, BUN_OPTIONS, BUN_INSTALL: globalDir, npm_config_registry: registry },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    return {
+      BUN_OPTIONS,
+      result: {
+        errors: stderr.split(/\r?\n/).filter(line => line.startsWith("error")),
+        stdout: stdout.trim(),
+        project: await readdirSorted(project),
+        projectPackageJson: await Bun.file(join(project, "package.json")).text(),
+        global: await readdirSorted(globalDir),
+        installedInCache: Array.from(
+          new Bun.Glob(`bunx-*/node_modules/${name}/package.json`).scanSync({ cwd: env.TMPDIR }),
+        ).length,
+        exitCode,
+      },
+    };
+  }
+
+  it.concurrent.each(["--cwd=<project>", "--global", "--dry-run", "--lockfile-only", "--analyze"])(
+    "BUN_OPTIONS=%s does not change where or whether bunx installs",
+    async flag => {
+      const { BUN_OPTIONS, result } = await bunxWithOptions(flag);
+      expect(result).toEqual({
+        errors: [],
+        stdout: JSON.stringify({ BUN_OPTIONS, BUN_INTERNAL_BUNX_INSTALL: null }),
+        project: ["package.json"],
+        projectPackageJson,
+        global: [],
+        installedInCache: 1,
+        exitCode: 0,
+      });
+    },
+  );
+
+  it.concurrent("the bin does not inherit the marker of the internal install", async () => {
+    const { result } = await bunxWithOptions(undefined);
+    expect(result).toEqual({
+      errors: [],
+      stdout: JSON.stringify({ BUN_OPTIONS: null, BUN_INTERNAL_BUNX_INSTALL: null }),
+      project: ["package.json"],
+      projectPackageJson,
+      global: [],
+      installedInCache: 1,
+      exitCode: 0,
+    });
+  });
+});
+
 // Regression test: bunx should not crash on corrupted .bunx files (Windows only)
 // When the .bunx metadata file is corrupted (e.g., missing quote terminator in bin_path),
 // bunx should gracefully fall back to the slow path instead of panicking.

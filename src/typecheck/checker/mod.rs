@@ -75,6 +75,7 @@ pub mod utilities;
 // A module that holds only methods of the checker exports no name and has no glob here.
 pub use c01_data::*;
 pub use c02_program_checker::*;
+pub use c03_init::*;
 pub use c06_check_members_type_nodes::*;
 pub use c09_check_classes_interfaces::*;
 pub use c10_check_enums_modules_imports::*;

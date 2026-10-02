@@ -1050,6 +1050,26 @@ extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globa
     return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
 }
 
+// What is a key as it stands: the name of a build.module() module, or a path in a namespace that has an onLoad.
+extern "C" BunString Bun__pluginKey(Zig::GlobalObject* globalObject, const BunString* specifier, const BunString* importer)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    auto key = specifier->toWTFString(BunString::ZeroCopy);
+    if (plugins.hasVirtualModules()) {
+        if (auto name = plugins.resolveVirtualModule(key, importer->toWTFString(BunString::ZeroCopy)))
+            return Bun::toStringRef(*name);
+    }
+    // (One letter is a Windows drive.)
+    if (auto colon = key.find(':'); colon != notFound && !(colon == 1 && isASCIIAlpha(key[0]))) {
+        auto prefix = StringView(key).left(colon);
+        for (const auto& registered : plugins.namespaces) {
+            if (registered == prefix)
+                return Bun::toStringRef(key);
+        }
+    }
+    return { BunStringTag::Dead };
+}
+
 extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, BunPluginTarget target)
 {
     return globalObject->onLoadPlugins.run(globalObject, namespaceString, path);

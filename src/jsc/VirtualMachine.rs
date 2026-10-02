@@ -508,7 +508,7 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
 
 /// Module loader resolve hook: whether `onResolve` plugins could claim a specifier before the builtin/standalone fast paths.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__hasPluginRunner(vm: *mut VirtualMachine) -> bool {
+pub unsafe extern "C" fn Bun__hasPlugins(vm: *mut VirtualMachine) -> bool {
     // SAFETY: `vm` is the live per-thread VM the C++ global object holds.
     unsafe { (*vm).has_plugins }
 }
@@ -5299,13 +5299,22 @@ impl VirtualMachine {
                 )? {
                     None => {}
                     Some(OnResolveAnswer::Specifier(path)) => {
-                        answer = path;
+                        let from_url = if path.starts_with_ascii(b"file://") {
+                            bun_url::path_from_file_url(&path)
+                        } else {
+                            bun_core::String::DEAD
+                        };
+                        answer = if from_url.is_dead() { path } else { from_url };
                         specifier = &answer;
                         specifier_utf8 = specifier.to_utf8();
                     }
                     Some(OnResolveAnswer::Key(key)) => return Ok(Ok(key)),
                     Some(OnResolveAnswer::Invalid(error)) => return Ok(Err(error)),
                 }
+            }
+            let key = crate::js_global_object::Bun__pluginKey(global, specifier, source);
+            if !key.is_dead() {
+                return Ok(Ok(key));
             }
         }
 
@@ -7612,7 +7621,7 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
 }
 
 pub(crate) enum OnResolveAnswer {
-    /// In the `file` namespace: what the resolver is asked instead, from the same importer.
+    /// In the `file` namespace: what is resolved instead, from the same importer, by all but `onResolve`.
     Specifier(bun_core::String),
     /// `namespace:path`.
     Key(bun_core::String),

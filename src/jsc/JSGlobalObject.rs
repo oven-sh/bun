@@ -1506,6 +1506,11 @@ unsafe extern "C" {
         source: &BunString,
         target: BunPluginTarget,
     ) -> JSValue;
+    pub(crate) safe fn Bun__pluginKey(
+        global: &JSGlobalObject,
+        specifier: &BunString,
+        importer: &BunString,
+    ) -> BunString;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer

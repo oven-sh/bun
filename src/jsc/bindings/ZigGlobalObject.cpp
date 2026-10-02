@@ -3501,7 +3501,7 @@ extern "C" const Latin1Character* Bun__standaloneModuleKey(const Latin1Character
 extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_t);
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
-extern "C" bool Bun__hasPluginRunner(void*);
+extern "C" bool Bun__hasPlugins(void*);
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap)
@@ -3519,7 +3519,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!globalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPluginRunner(globalObject->bunVM())) {
+        if (!globalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(globalObject->bunVM())) {
             CString narrowed;
             std::span<const Latin1Character> chars;
             if (moduleName->is8Bit())
@@ -3584,7 +3584,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
 {
     // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
     auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
-    if (key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPluginRunner(zigGlobalObject->bunVM())) {
+    if (key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(zigGlobalObject->bunVM())) {
         auto* string = uncheckedDowncast<JSString>(key);
         if (!string->isRope()) {
             auto view = string->tryGetValue();
@@ -4158,7 +4158,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     bool plainJS = !parameters || parameters->type() == ScriptFetchParameters::Type::JavaScript;
-    if (!plainJS || globalObject->onLoadPlugins.hasVirtualModules() || Bun__hasPluginRunner(globalObject->bunVM()))
+    if (!plainJS || globalObject->onLoadPlugins.hasVirtualModules() || Bun__hasPlugins(globalObject->bunVM()))
         RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
 
     JSString* keyJS = key.toString(globalObject);

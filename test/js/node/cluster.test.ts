@@ -1330,6 +1330,14 @@ const fdQueryCases: Record<"SCHED_NONE" | "SCHED_RR", FdQueryCase[]> = {
       answers: [served, refused("EEXIST", "open")],
     },
     {
+      // The refused net ask leaves the descriptor open, so the third ask is the second ask of "udp4, udp4".
+      // node: the worker dies on ERR_INTERNAL_ASSERTION at the third answer.
+      name: "udp4, net, then udp4 on the datagram socket",
+      socket: "udp",
+      steps: fd => [ask("udp4", fd), ask("net", fd), ask("udp4", fd)],
+      answers: [served, refused("EINVAL", "bind"), refused("EEXIST", "open")],
+    },
+    {
       // node: 'listening'. Its primary then closes the descriptor two times.
       name: "udp4, then udp6 in a second worker",
       socket: "udp",
@@ -1466,6 +1474,62 @@ describe.skipIf(isWindows).each(["SCHED_NONE", "SCHED_RR"] as const)(
     );
   },
 );
+
+// One worker asks for descriptor 3 in the order of ASKS and closes nothing. Then the primary disconnects it.
+const fdDisconnectFixture = `
+const cluster = require("node:cluster");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", line => {
+    if (line === "asked") worker.disconnect();
+    else console.log(line);
+  });
+  worker.on("exit", (code, signal) => console.log("worker left:", code, signal));
+} else {
+  const asks = process.env.ASKS.split(",");
+  const ask = i => {
+    if (i === asks.length) return process.send("asked");
+    const kind = asks[i];
+    const target = kind === "net" ? require("node:net").createServer() : require("node:dgram").createSocket(kind);
+    const answer = result => {
+      process.send(kind + ": " + result);
+      ask(i + 1);
+    };
+    target.once("error", error => answer(error.syscall + " " + error.code));
+    if (kind === "net") target.listen({ fd: 3 }, () => answer("listening"));
+    else target.bind({ fd: 3 }, () => answer("listening"));
+  };
+  ask(0);
+}
+`;
+
+// A worker has one handle for each key, and a disconnect closes the handles that it has. With two handles under one
+// key the first one stays open, and the worker never leaves.
+test.concurrent.skipIf(isWindows).each([
+  ["udp", "udp4,net,udp4", ["udp4: listening", "net: bind EINVAL", "udp4: open EEXIST"]],
+  ["tcp", "net,udp4,net", ["net: listening", "udp4: open EINVAL", "net: bind EEXIST"]],
+] as const)("a worker leaves on disconnect after it asked for a %s descriptor: %s", async (socket, asks, answers) => {
+  using dir = tempDir("cluster-fd-disconnect", { "fixture.cjs": fdDisconnectFixture });
+  using sockets = new DisposableStack();
+  const { fd } = await socketForPrimary(sockets, socket);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.cjs"],
+    env: { ...bunEnv, ASKS: asks },
+    cwd: String(dir),
+    // Descriptor 3 of the primary.
+    stdio: ["ignore", "pipe", "pipe", fd],
+  });
+  // The primary has its copy.
+  sockets.dispose();
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lines: stdout.trim().split("\n"), stderr }).toEqual({
+    lines: [...answers, "worker left: 0 null"],
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
 
 test.skipIf(isWindows)(
   "round-robin: RST-while-queued handle is dropped, not shipped stale",

@@ -1371,7 +1371,7 @@ fn plan_hoisted(
         {
             continue;
         }
-        if let Ok(dir) = Dir::open(&folder_path) {
+        if let Some(dir) = open_workspace_folder(&folder_path) {
             scan_folder(
                 dir,
                 &folder_path,
@@ -1443,6 +1443,18 @@ struct UnplacedEntry {
     /// (`HoistedTree::removable`). Any other entry goes only when a folder above holds the same name, installed
     /// (`HoistedTree::collapsed_into_ancestor`).
     was_placed: bool,
+    kind: EntryKind,
+}
+
+impl UnplacedEntry {
+    /// A link that no lockfile placed stays: `bun link` without `--save` makes one on purpose.
+    fn is_candidate(&self) -> bool {
+        match self.kind {
+            EntryKind::Directory => true,
+            EntryKind::SymLink => self.was_placed,
+            _ => false,
+        }
+    }
 }
 
 /// Hoisted post-install pass (install_with_manager.rs): removes, from nested and workspace `node_modules` folders,
@@ -1488,7 +1500,7 @@ fn find_unplaced(
     let replaced = before.buffers.trees.len() > 1;
 
     let mut workspace_folders: Vec<Box<[u8]>> = Vec::new();
-    let mut listings: Vec<(Box<[u8]>, Dir, Vec<Box<[u8]>>)> = Vec::new();
+    let mut listings: Vec<(Box<[u8]>, Dir, Vec<(Box<[u8]>, EntryKind)>)> = Vec::new();
     for pkg_id in 0..pkg_res.len() {
         let Some(folder) = workspace_node_modules(after, pkg_id as PackageID) else {
             continue;
@@ -1502,7 +1514,7 @@ fn find_unplaced(
         {
             continue;
         }
-        let Ok(dir) = Dir::open(&folder) else {
+        let Some(dir) = open_workspace_folder(&folder) else {
             continue;
         };
         let aliases = read_aliases(&dir);
@@ -1581,11 +1593,13 @@ fn find_unplaced(
             let entries: Vec<UnplacedEntry> = old
                 .expected(old_idx)
                 .iter()
-                .filter(|&&(alias, _)| !still_placed(alias) && is_package_entry(&dir, alias))
+                .filter(|&&(alias, _)| !still_placed(alias))
                 .map(|&(alias, _)| UnplacedEntry {
                     alias: alias.into(),
                     was_placed: true,
+                    kind: entry_kind_of(&dir, alias),
                 })
+                .filter(UnplacedEntry::is_candidate)
                 .collect();
             if !entries.is_empty() {
                 unplaced.push(UnplacedFolder {
@@ -1602,17 +1616,19 @@ fn find_unplaced(
         let was = old_at.as_ref().and_then(|old_at| tree_at(old_at, &folder));
         let entries: Vec<UnplacedEntry> = aliases
             .into_iter()
-            .filter(|alias| {
+            .filter(|(alias, _)| {
                 !contains(&workspace_names, alias)
                     && !now.is_some_and(|id| placed.expected_in(id, alias).is_some())
             })
-            .map(|alias| UnplacedEntry {
+            .map(|(alias, kind)| UnplacedEntry {
                 was_placed: match (&old, was) {
                     (Some(old), Some(id)) => old.expected_in(id, &alias).is_some(),
                     _ => false,
                 },
                 alias,
+                kind,
             })
+            .filter(UnplacedEntry::is_candidate)
             .collect();
         if !entries.is_empty() {
             unplaced.push(UnplacedFolder {
@@ -1729,11 +1745,13 @@ fn find_copies_above_installed(
         let mut direct: Vec<UnplacedEntry> = Vec::new();
         while i < folder_probes.len() && folder_probes[i].1.is_empty() {
             let name = folder_probes[i].2;
-            if is_package_entry(&dir, name) {
-                direct.push(UnplacedEntry {
-                    alias: name.into(),
-                    was_placed: false,
-                });
+            let entry = UnplacedEntry {
+                alias: name.into(),
+                was_placed: false,
+                kind: entry_kind_of(&dir, name),
+            };
+            if entry.is_candidate() {
+                direct.push(entry);
             }
             i += 1;
         }
@@ -1748,11 +1766,13 @@ fn find_copies_above_installed(
                 path.extend_from_slice(ROOT_DIR);
                 path.push(SEP);
                 path.extend_from_slice(name);
-                if lstat_kind(&dir, &path) != EntryKind::Unknown {
-                    found.push(UnplacedEntry {
-                        alias: name.into(),
-                        was_placed: false,
-                    });
+                let entry = UnplacedEntry {
+                    alias: name.into(),
+                    was_placed: false,
+                    kind: lstat_kind(&dir, &path),
+                };
+                if entry.is_candidate() {
+                    found.push(entry);
                 }
                 i += 1;
             }
@@ -1901,7 +1921,7 @@ fn open_tree_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Dir> {
     while let Some(id) = chain.pop() {
         // `node_modules/<workspace>` is a link `bun link` may point anywhere; the tree lives in the workspace folder.
         if let Some(folder) = workspace_node_modules(lockfile, tree_owner(lockfile, id as usize)) {
-            dir = Dir::open(&folder).ok()?;
+            dir = open_workspace_folder(&folder)?;
             continue;
         }
         let package = descend(&dir, trees[id as usize].folder_name(deps, buf))?;
@@ -1961,6 +1981,7 @@ fn disk_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
+/// `None` for the root listed as its own workspace: its `node_modules` is the root folder.
 fn workspace_path(lockfile: &Lockfile, pkg_id: PackageID) -> Option<&[u8]> {
     let res = lockfile.packages.items_resolution().get(pkg_id as usize)?;
     if res.tag != ResolutionTag::Workspace {
@@ -1968,11 +1989,16 @@ fn workspace_path(lockfile: &Lockfile, pkg_id: PackageID) -> Option<&[u8]> {
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
     let path = strings::without_trailing_slash(res.workspace().slice(buf));
-    (!path.is_empty()).then_some(path)
+    (!path.is_empty() && path != b".").then_some(path)
 }
 
 fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<[u8]>> {
     Some(join(workspace_path(lockfile, pkg_id)?, ROOT_DIR))
+}
+
+/// A workspace's `node_modules` that is a link leads into a folder this workspace does not own, the root's for one.
+fn open_workspace_folder(folder: &[u8]) -> Option<Dir> {
+    open_real_subdir(&Dir::cwd(), folder)
 }
 
 fn descend(dir: &Dir, alias: &[u8]) -> Option<Dir> {
@@ -2055,28 +2081,21 @@ fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
 }
 
 /// The packages in a `node_modules` folder by name: `@scope/name` for one in a scope folder.
-fn read_aliases(dir: &Dir) -> Vec<Box<[u8]>> {
-    let mut out: Vec<Box<[u8]>> = Vec::new();
+fn read_aliases(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
+    let mut out: Vec<(Box<[u8]>, EntryKind)> = Vec::new();
     for (name, kind) in read_entries(dir) {
         if name.first() == Some(&b'@') && kind == EntryKind::Directory {
             let Ok(scope_dir) = dir.open_at(&name) else {
                 continue;
             };
-            for (inner, _) in read_entries(&scope_dir) {
-                out.push(join_alias(&name, &inner));
+            for (inner, inner_kind) in read_entries(&scope_dir) {
+                out.push((join_alias(&name, &inner), inner_kind));
             }
             continue;
         }
-        out.push(name);
+        out.push((name, kind));
     }
     out
-}
-
-fn is_package_entry(dir: &Dir, alias: &[u8]) -> bool {
-    matches!(
-        entry_kind_of(dir, alias),
-        EntryKind::Directory | EntryKind::SymLink
-    )
 }
 
 fn scan_folder(

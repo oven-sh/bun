@@ -28,6 +28,9 @@ export interface ProbeResult {
   reason: string;
 }
 
+// The reason of the probe for a command that does not know the flag: a runtime without the linter runs the file that it is given.
+export const ranTheFile = "the command ran the file that it was to check";
+
 // What the first file of the probe writes to stdout when a command runs it. The file holds the two parts apart: a command that prints its lines does not print this.
 const probeSays = ["bun-lint-probe: ", "the file ran"] as const;
 // A line with this code names a part that the checker reached and does not have yet.
@@ -210,7 +213,7 @@ function remove(directory: string): void {
 
 async function probeIn(given: string, options: SpawnCheckOptions): Promise<ProbeResult> {
   const no = (reason: string): ProbeResult => ({ ok: false, reason });
-  const ran = no("the command ran the file that it was to check");
+  const ran = no(ranTheFile);
   mkdirSync(given, { recursive: true });
   const directory = physical(given);
   const mark = join(directory, "ran.txt");

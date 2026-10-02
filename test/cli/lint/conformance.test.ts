@@ -15,7 +15,7 @@ import type {
 } from "./conformance/runner";
 import * as runner from "./conformance/runner";
 import { emptyCheck, replayCheck, runInstance, runInstances } from "./conformance/runner";
-import { createSpawnCheck, probe } from "./conformance/runner/check_bun_lint";
+import { createSpawnCheck, probe, ranTheFile } from "./conformance/runner/check_bun_lint";
 import { tsgoRules } from "./conformance/runner/diagnosticwriter";
 import { getErrorBaseline } from "./conformance/runner/error_baseline";
 import {
@@ -165,8 +165,19 @@ type Ending = { outcome: string; reason: string; headerOnly?: boolean };
 const endingOf = ({ outcome, reason, headerOnly }: Ending): Ending =>
   headerOnly === undefined ? { outcome, reason } : { outcome, reason, headerOnly };
 
-// One batch of listed names through a check: the names that are no run instance of their list or that do not pass.
-async function failuresOf(batch: readonly { name: string; list: "E" | "C" }[], check: Check, directory: string) {
+// The default check of a command, or undefined for a command without the linter: a binary that does not know --lint runs the file that it is given, and the probe says so. A command that fails the probe for any other reason keeps its check, which fails every instance.
+async function defaultCheckOf(command: string[]): Promise<Check | undefined> {
+  const options = { command, env: bunEnv };
+  const verdict = await probe(options);
+  return !verdict.ok && verdict.reason === ranTheFile ? undefined : createSpawnCheck(options);
+}
+
+// One batch of listed names through a check: the names that are no run instance of their list or that do not pass. Without a check no instance is run and no file is written: the names are held against the corpus alone.
+async function failuresOf(
+  batch: readonly { name: string; list: "E" | "C" }[],
+  check: Check | undefined,
+  directory: string,
+) {
   const failures: { name: string; outcome: string; reason: string }[] = [];
   const instances: CorpusInstance[] = [];
   for (const { name, list } of batch) {
@@ -183,7 +194,9 @@ async function failuresOf(batch: readonly { name: string; list: "E" | "C" }[], c
       instances.push(instance);
     }
   }
-  const results = await runInstances(instances, check, {
+  // An instance that does not run never reaches a check: its outcome needs none.
+  const taken = check === undefined ? instances.filter(i => i.status !== "run") : instances;
+  const results = await runInstances(taken, check ?? emptyCheck, {
     ...corpusRun,
     directory,
     concurrency: Math.min(8, availableParallelism()),
@@ -974,6 +987,31 @@ describe("default check", () => {
     expect(verdict.reason).toStartWith("a file without an error: the command did not start: ");
   });
 
+  // The listed instances of expectations.json go through the default check of the binary under test.
+  test.concurrent.each([
+    ["a command that lints", "lints-fixture.ts", true],
+    ["a command that runs its operand", "runs-fixture.ts", false],
+  ] as [string, string, boolean][])(
+    "only a command that does not know the flag has no default check: %s",
+    async (_label, fixture, has) => {
+      expect((await defaultCheckOf(command(fixture))) !== undefined).toBe(has);
+    },
+    spawnTimeout,
+  );
+
+  test.concurrent(
+    "a command that knows the flag and is no linter keeps its default check, and no instance passes it",
+    async () => {
+      const silent = await defaultCheckOf(command("silent-fixture.ts"));
+      expect(silent).toBeDefined();
+      expect(await ending(C, silent!, "const x: number = 1;\n")).toEqual({
+        outcome: "unavailable",
+        reason: "the command is no linter: a file with a syntax error gave no error in it (exit code 0)",
+      });
+    },
+    spawnTimeout,
+  );
+
   test.concurrent(
     "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
     async () => {
@@ -1126,6 +1164,9 @@ describe("listed instances", () => {
       ["abstractPropertyNegative(target=es5).ts", "skip"],
       ["noSuchCase.ts", "unsupported"],
     ]);
+    // Without a check, as for a binary that has no --lint: no instance is run, so no name of list E fails for what a check reports, and the same names are failures.
+    const unchecked = await failuresOf([...batch, ...wrong], undefined, String(dir));
+    expect(unchecked.map(f => [f.name, f.outcome]).sort()).toEqual(failures.map(f => [f.name, f.outcome]).sort());
   });
 });
 
@@ -1135,7 +1176,8 @@ describe("expectations.json", () => {
   const lists: Expectations = parseExpectations(text);
   // A debug or sanitizer build starts a process in about a second: it runs a sample of the lists, a release build runs them all.
   const listed = sampleListed(lists, small ? 16 : Infinity);
-  const check = lazy(() => createSpawnCheck({ command: [bunExe()], env: bunEnv }));
+  // The binary under test with --lint, probed once. A binary without that command gives no check: its batches run nothing and still hold every name against the corpus.
+  const check = lazy(() => defaultCheckOf([bunExe()]));
 
   test("is in the form that the update writes", () => {
     expect(formatExpectations(lists)).toBe(text);
@@ -1146,8 +1188,8 @@ describe("expectations.json", () => {
     "every listed instance is a run instance of its list and passes: batch %d",
     async (_k, batch) => {
       using dir = tempDir("lint-conformance", {});
-      const failures = await failuresOf(batch, check(), String(dir));
-      // The first failures in full and the number of all: a binary that cannot lint fails every name for one reason.
+      const failures = await failuresOf(batch, await check(), String(dir));
+      // The first failures in full and the number of all: a binary whose --lint is no linter fails every name for one reason.
       expect({ failed: failures.length, first: failures.slice(0, 5) }).toEqual({ failed: 0, first: [] });
     },
     small ? 120_000 : 30_000,

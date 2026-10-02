@@ -394,8 +394,7 @@ impl InitCommand {
 
         let _ = Fs::FileSystem::init(None)?;
 
-        // A React template picked by a flag leaves package.json to its writer,
-        // which creates each file exclusively and skips one that exists.
+        // The React writer never loads package.json. It skips one that exists.
         if template.is_react() {
             template.write_files_and_run_bun_dev()?;
             return Ok(());
@@ -806,8 +805,7 @@ impl InitCommand {
                             created = file;
                             (created.handle(), false)
                         }
-                        // A dangling symlink (ENOENT at the probe), or a file
-                        // created since the probe.
+                        // A dangling symlink, or a file created since the probe.
                         Err(err) if err.get_errno() == bun_sys::E::EEXIST => {
                             match bun_sys::File::openat(
                                 Fd::cwd(),
@@ -1136,100 +1134,6 @@ impl Default for PackageJSONFields {
             entry_point: Vec::new(),
             private: true,
         }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Existing package.json
-// ──────────────────────────────────────────────────────────────────────────
-
-/// What `bun init` found at `package.json` in the destination directory. A
-/// file that exists but was not loaded has no variant: `exec` leaves through
-/// `exit_unusable_package_json`, so nothing can write over it.
-enum ExistingPackageJson {
-    /// The open failed with ENOENT.
-    Absent,
-    /// A regular file with no content, filled in through this handle.
-    Empty(bun_sys::File),
-    /// Read through this handle and parsed to an object.
-    Loaded(bun_sys::File),
-}
-
-/// Why `bun init` cannot use the package.json in the destination directory.
-enum UnusablePackageJson {
-    Open(bun_sys::Error),
-    Stat(bun_sys::Error),
-    NotRegularFile,
-    Read(bun_sys::Error),
-    Parse(bun_parsers::Error),
-    RootNotObject,
-    /// Absent or empty at the probe, but not an empty regular file at the write.
-    Changed,
-    Create(bun_sys::Error),
-}
-
-/// Absolute path of the destination directory's package.json.
-fn package_json_path(buf: &mut bun_paths::PathBuffer) -> &[u8] {
-    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        Fs::FileSystem::get().top_level_dir,
-        &mut buf[..],
-        &[b"package.json"],
-    )
-}
-
-#[cold]
-#[inline(never)]
-fn exit_unusable_package_json(cause: UnusablePackageJson) -> ! {
-    let mut path_buf = path_buffer_pool::get();
-    let path = bstr::BStr::new(package_json_path(&mut path_buf));
-    match cause {
-        UnusablePackageJson::Open(err)
-            if matches!(err.get_errno(), bun_sys::E::EACCES | bun_sys::E::EPERM) =>
-        {
-            Output::err(
-                err.name(),
-                "Permission denied while opening \"{s}\"",
-                &[&path],
-            );
-            bun_core::note!("package.json must be readable and writable for bun init to update it");
-        }
-        UnusablePackageJson::Open(err) => Output::err(&err, "could not open \"{s}\"", &[&path]),
-        UnusablePackageJson::Stat(err) => Output::err(&err, "could not stat \"{s}\"", &[&path]),
-        UnusablePackageJson::NotRegularFile => {
-            Output::err_generic("\"{s}\" is not a regular file", &[&path]);
-        }
-        UnusablePackageJson::Read(err) => Output::err(&err, "could not read \"{s}\"", &[&path]),
-        UnusablePackageJson::Parse(err) => {
-            Output::err(err, "failed to parse \"{s}\"", &[&path]);
-            bun_core::note!("fix or remove this file, then run 'bun init' again");
-        }
-        UnusablePackageJson::RootNotObject => {
-            Output::err_generic("package.json root must be an object in \"{s}\"", &[&path]);
-            bun_core::note!("fix or remove this file, then run 'bun init' again");
-        }
-        UnusablePackageJson::Changed => {
-            Output::err_generic(
-                "\"{s}\" appeared or changed while bun init was running",
-                &[&path],
-            );
-            bun_core::note!("run 'bun init' again");
-        }
-        UnusablePackageJson::Create(err) => {
-            Output::err(&err, "could not create \"{s}\"", &[&path]);
-        }
-    }
-    Global::exit(1);
-}
-
-/// `bun init` writes a package.json it did not load only into a regular file
-/// with no content.
-fn exit_unless_empty_regular_file(file: &bun_sys::File) {
-    match file.stat() {
-        Ok(stat)
-            if bun_core::kind_from_mode(stat.st_mode as _) == bun_sys::FileKind::File
-                && stat.st_size == 0 => {}
-        Ok(_) => exit_unusable_package_json(UnusablePackageJson::Changed),
-        Err(err) => exit_unusable_package_json(UnusablePackageJson::Stat(err)),
     }
 }
 
@@ -2036,6 +1940,92 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
+
+/// A package.json that exists but was not loaded has no variant: `bun init` exits instead.
+enum ExistingPackageJson {
+    /// The open failed with ENOENT.
+    Absent,
+    /// A regular file with no content, filled in through this handle.
+    Empty(bun_sys::File),
+    /// Read through this handle and parsed to an object.
+    Loaded(bun_sys::File),
+}
+
+/// Why `bun init` cannot use the package.json in the destination directory.
+enum UnusablePackageJson {
+    Open(bun_sys::Error),
+    Stat(bun_sys::Error),
+    NotRegularFile,
+    Read(bun_sys::Error),
+    Parse(bun_parsers::Error),
+    RootNotObject,
+    /// Absent or empty at the probe, but not an empty regular file at the write.
+    Changed,
+    Create(bun_sys::Error),
+}
+
+/// Absolute path of the destination directory's package.json.
+fn package_json_path(buf: &mut bun_paths::PathBuffer) -> &[u8] {
+    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+        Fs::FileSystem::get().top_level_dir,
+        &mut buf[..],
+        &[b"package.json"],
+    )
+}
+
+#[cold]
+#[inline(never)]
+fn exit_unusable_package_json(cause: UnusablePackageJson) -> ! {
+    let mut path_buf = path_buffer_pool::get();
+    let path = bstr::BStr::new(package_json_path(&mut path_buf));
+    match cause {
+        UnusablePackageJson::Open(err)
+            if matches!(err.get_errno(), bun_sys::E::EACCES | bun_sys::E::EPERM) =>
+        {
+            Output::err(
+                err.name(),
+                "Permission denied while opening \"{s}\"",
+                &[&path],
+            );
+            bun_core::note!("package.json must be readable and writable for bun init to update it");
+        }
+        UnusablePackageJson::Open(err) => Output::err(&err, "could not open \"{s}\"", &[&path]),
+        UnusablePackageJson::Stat(err) => Output::err(&err, "could not stat \"{s}\"", &[&path]),
+        UnusablePackageJson::NotRegularFile => {
+            Output::err_generic("\"{s}\" is not a regular file", &[&path]);
+        }
+        UnusablePackageJson::Read(err) => Output::err(&err, "could not read \"{s}\"", &[&path]),
+        UnusablePackageJson::Parse(err) => {
+            Output::err(err, "failed to parse \"{s}\"", &[&path]);
+            bun_core::note!("fix or remove this file, then run 'bun init' again");
+        }
+        UnusablePackageJson::RootNotObject => {
+            Output::err_generic("package.json root must be an object in \"{s}\"", &[&path]);
+            bun_core::note!("fix or remove this file, then run 'bun init' again");
+        }
+        UnusablePackageJson::Changed => {
+            Output::err_generic(
+                "\"{s}\" appeared or changed while bun init was running",
+                &[&path],
+            );
+            bun_core::note!("run 'bun init' again");
+        }
+        UnusablePackageJson::Create(err) => {
+            Output::err(&err, "could not create \"{s}\"", &[&path]);
+        }
+    }
+    Global::exit(1);
+}
+
+fn exit_unless_empty_regular_file(file: &bun_sys::File) {
+    match file.stat() {
+        Ok(stat)
+            if bun_core::kind_from_mode(stat.st_mode as _) == bun_sys::FileKind::File
+                && stat.st_size == 0 => {}
+        Ok(_) => exit_unusable_package_json(UnusablePackageJson::Changed),
+        Err(err) => exit_unusable_package_json(UnusablePackageJson::Stat(err)),
+    }
+}
 
 #[inline]
 fn exists(path: &[u8]) -> bool {

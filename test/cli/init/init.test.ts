@@ -473,25 +473,21 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       devDependencies: { "@types/bun": "latest" },
     });
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 
   // Creating a symlink needs a privilege on Windows.
-  test.skipIf(isWindows)(
-    "bun init -y -m creates the target of a dangling package.json symlink",
-    async () => {
-      await using temp = tempDir("bun-init-dangling-package-json", {});
-      fs.symlinkSync("target.json", path.join(temp, "package.json"));
+  test.skipIf(isWindows)("bun init -y -m creates the target of a dangling package.json symlink", async () => {
+    await using temp = tempDir("bun-init-dangling-package-json", {});
+    fs.symlinkSync("target.json", path.join(temp, "package.json"));
 
-      const { exitCode } = await init(temp, ["-y", "-m"]);
+    const { exitCode } = await init(temp, ["-y", "-m"]);
 
-      expect(fs.readlinkSync(path.join(temp, "package.json"))).toBe("target.json");
-      expect(await Bun.file(path.join(temp, "target.json")).json()).toEqual({
-        devDependencies: { "@types/bun": "latest" },
-      });
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+    expect(fs.readlinkSync(path.join(temp, "package.json"))).toBe("target.json");
+    expect(await Bun.file(path.join(temp, "target.json")).json()).toEqual({
+      devDependencies: { "@types/bun": "latest" },
+    });
+    expect(exitCode).toBe(0);
+  });
 
   // The React templates never load package.json. Their writer skips one that exists.
   test("bun init --react skips a package.json it cannot parse", async () => {
@@ -503,23 +499,19 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(await Bun.file(path.join(temp, "package.json")).text()).toBe("{");
     expect(fs.existsSync(path.join(temp, "bunfig.toml"))).toBe(true);
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 
-  test.skipIf(!permissionBitsApply)(
-    "bun init --react skips a read-only package.json",
-    async () => {
-      const contents = '{ "name": "myapp" }\n';
-      await using temp = tempDir("bun-init-react-read-only-package-json", { "package.json": contents });
-      fs.chmodSync(path.join(temp, "package.json"), 0o444);
+  test.skipIf(!permissionBitsApply)("bun init --react skips a read-only package.json", async () => {
+    const contents = '{ "name": "myapp" }\n';
+    await using temp = tempDir("bun-init-react-read-only-package-json", { "package.json": contents });
+    fs.chmodSync(path.join(temp, "package.json"), 0o444);
 
-      const { stdout, exitCode } = await init(temp, ["--react"]);
+    const { stdout, exitCode } = await init(temp, ["--react"]);
 
-      expect(stdout.split("\n")).toContain(" ○ package.json (already exists, skipping)");
-      expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(contents);
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+    expect(stdout.split("\n")).toContain(" ○ package.json (already exists, skipping)");
+    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(contents);
+    expect(exitCode).toBe(0);
+  });
 
   // ConPTY rewrites the child's output (it wraps lines at `cols`), so the text
   // these tests read from the terminal is only stable on a POSIX pty.

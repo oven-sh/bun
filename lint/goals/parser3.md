@@ -8,6 +8,15 @@ own) and this file. This file REPLACES `parser2.md`: its part A is done by the i
   `git push origin HEAD:robobun/abbc0c92/lint-parser`.
 - Notes: `/workspace/notes/lint/units/parser/`. Save them with `/workspace/tools/save-notes "parser: <what>"`.
 
+## The base binaries now (read this first)
+
+The machine was restarted after this file was written, and the base binaries were built again, from a newer main.
+`/workspace/base/bun.bc7a813b1` and `/workspace/base/bun-profile.bc7a813b1` are release builds of main at
+`bc7a813b10`. The names `bun.f4d755a9c` and `bun-profile.f4d755a9c` that this file and your goal use are links to
+them. Your branch is merged with main at `bc7a813b10`, so a release build of your branch against these files
+compares the branch with its own base. If `/workspace/base` is empty, the machine was restarted again: say so in
+`NEEDS.md` and go on with the work that needs no base binary.
+
 ## What was measured (2026-10-01, linux-x64 release builds, the benchmark of this pull request)
 
 Base: main at `f4d755a9cf`. Head: the pull request branch merged with that main (`23a20afa7e`), which holds round 1.

@@ -150,6 +150,76 @@ describe("junit reporter", () => {
     }
   });
 
+  it("sums nested suites and sub-millisecond testcases into a describe's <testsuite time>", async () => {
+    await using tmpDir = tempDir("junit-suite-time", {
+      "package.json": "{}",
+      "suite-time.test.js": `
+        import { describe, test } from "bun:test";
+
+        function spin(ms) {
+          const end = Bun.nanoseconds() + ms * 1e6;
+          while (Bun.nanoseconds() < end) {}
+        }
+
+        describe("outer", () => {
+          describe("middle", () => {
+            test("direct", () => spin(5));
+            describe("inner", () => {
+              test("nested", () => spin(20));
+            });
+          });
+        });
+
+        describe("fast", () => {
+          for (let i = 0; i < 10; i++) {
+            test("t" + i, () => spin(0.5));
+          }
+        });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const fileSuite = result.testsuites.testsuite[0];
+    const [outer, fast] = fileSuite.testsuite;
+    const middle = outer.testsuite[0];
+    const inner = middle.testsuite[0];
+    expect([outer.$.name, middle.$.name, inner.$.name, fast.$.name]).toEqual(["outer", "middle", "inner", "fast"]);
+
+    const seconds = element => Number.parseFloat(element.$.time);
+    // <testcase time> is rounded to the microsecond; <testsuite time> is not.
+    const testcaseRounding = 1e-6;
+
+    // "middle" holds the "direct" testcase plus the nested "inner" suite;
+    // "outer" holds nothing but "middle".
+    expect(seconds(inner)).toBeGreaterThanOrEqual(0.02);
+    expect(seconds(middle)).toBeGreaterThanOrEqual(seconds(inner) + seconds(middle.testcase[0]) - testcaseRounding);
+    expect(outer.$.time).toBe(middle.$.time);
+
+    // Ten testcases of at least 0.5ms each: summing them truncated to whole
+    // milliseconds would lose most (in a release build, all) of the suite's time.
+    expect(fast.testcase).toHaveLength(10);
+    const fastTestcasesTotal = fast.testcase.reduce((total, testcase) => total + seconds(testcase), 0);
+    expect(fastTestcasesTotal).toBeGreaterThanOrEqual(0.005);
+    expect(seconds(fast)).toBeGreaterThanOrEqual(fastTestcasesTotal - fast.testcase.length * testcaseRounding);
+
+    // The file's <testsuite time> is wall-clock and encloses every describe.
+    expect(seconds(outer)).toBeLessThanOrEqual(seconds(fileSuite));
+    expect(seconds(fast)).toBeLessThanOrEqual(seconds(fileSuite));
+    expect(exitCode).toBe(0);
+  });
+
   it("more scenarios", async () => {
     await using tmpDir = tempDir("junit-comprehensive", {
       "package.json": "{}",

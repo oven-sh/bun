@@ -1,0 +1,16 @@
+        R>A              .ts "type as = 1;"
+        R>A              .ts "type satisfies = 1;"
+        R>A              .ts "interface as {}"
+        R>A              .ts "interface satisfies {}"
+        A>A output       .ts "namespace as {}"
+        R>A              .ts "const v = <out>x;"
+        R>A              .ts "const v = <in>x;"
+        R>A              .ts "function f(public a: A) {}"
+        R>A              .ts "function f(private a) {}"
+        R>A              .ts "function f(readonly a: A) {}"
+        R>A              .ts "function f(override a: A) {}"
+        R>A              .ts "abstract declare class C {}"
+        A>A output       1
+        R>A              108
+        R>R              42
+7904 records compared, 151 differ

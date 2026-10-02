@@ -1,0 +1,11 @@
+run     2026-10-02T10:42:48Z  tag self  expect zero  steps build
+base    /workspace/base/bun.f4d755a9c  sha256 e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0  1.4.3-canary.1+f4d755a9c
+next    /workspace/base/bun.f4d755a9c  sha256 e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0  1.4.3-canary.1+f4d755a9c  built 2026-10-01T22:36:05Z  workers 4
+tree    /workspace/wt/parser  23a20afa7ee95996f0d044f5df67bbca179d7667  0 modified files under src/js_parser, src/ast, src/jsc  42 commits after f4d755a9cf under src/js_parser, src/js_printer, src/ast
+tools   harness.all.mjs 1c94e1dad47a (34 configurations)  diff.mjs 7594403b9718  seams.mjs ba4bcff3def3  seams-bu.mjs cc4bb2cbe20f  run-r2.sh 0bd5df68f540
+ok    build   seams     2178 builds, 610 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 2178 builds, 610 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356  sha256 31ad32227afb24dc =
+ok    build   seams-bu  1488 builds, 463 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 1488 builds, 463 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356  sha256 87e2f014e012099e =
+ok    build   testrows  602 builds, 108 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 602 builds, 108 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356  sha256 29bdf37aadbd361f =
+ok    build   comments  244 builds, 109 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 244 builds, 109 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356  sha256 22ab91371f0fb90d =
+ok    build   targeted  7904 builds, 2266 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 7904 builds, 2266 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356  sha256 15e9c9e28c50e960 =
+RESULT  OK: ZERO differing records in 5 pairs of runs

@@ -11,6 +11,6 @@
         R>A              .ts "async function f(public a) {}"
         R>A              .ts "function* f(public a) {}"
         A>A output       6
-        R>A              421
+        R>A              424
         R>R              64
-2160 records compared, 491 differ
+2178 records compared, 494 differ

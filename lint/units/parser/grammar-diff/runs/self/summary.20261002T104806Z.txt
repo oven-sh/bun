@@ -1,0 +1,7 @@
+run     2026-10-02T10:48:06Z  tag self  expect zero  steps check
+base    /workspace/base/bun.f4d755a9c  sha256 e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0  1.4.3-canary.1+f4d755a9c
+next    /workspace/base/bun.f4d755a9c  sha256 e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0  1.4.3-canary.1+f4d755a9c  built 2026-10-01T22:36:05Z  workers 4
+tree    /workspace/wt/parser  23a20afa7ee95996f0d044f5df67bbca179d7667  0 modified files under src/js_parser, src/ast, src/jsc  42 commits after f4d755a9cf under src/js_parser, src/js_printer, src/ast
+tools   harness.all.mjs 1c94e1dad47a (34 configurations)  diff.mjs 7594403b9718  seams.mjs ba4bcff3def3  seams-bu.mjs cc4bb2cbe20f  run-r2.sh 19cc30400f05
+ok    check     sources 18390  x 34 records 625260   differ 0       crashes 0/0  corpus 15d1162dae52  sha256 of the records 4120467680510265 =
+RESULT  OK: ZERO differing records in 1 pairs of runs

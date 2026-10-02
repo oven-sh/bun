@@ -1,0 +1,88 @@
+run     2026-10-02T10:45:05Z  tag round1  expect differ  steps build
+base    /workspace/base/bun.f4d755a9c  sha256 e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0  1.4.3-canary.1+f4d755a9c
+next    /workspace/head/bun.head  sha256 d0a760e664b2ebb2dac4dd4d1ff1e9e370b57abea77eb69b0fa0c899ff80cbf9  1.4.3-canary.1+23a20afa7  built 2026-10-01T23:29:56Z  workers 4
+tree    /workspace/wt/parser  23a20afa7ee95996f0d044f5df67bbca179d7667  0 modified files under src/js_parser, src/ast, src/jsc  42 commits after f4d755a9cf under src/js_parser, src/js_printer, src/ast
+tools   harness.all.mjs 1c94e1dad47a (34 configurations)  diff.mjs 7594403b9718  seams.mjs ba4bcff3def3  seams-bu.mjs cc4bb2cbe20f  run-r2.sh 0bd5df68f540
+seen  build   seams     2178 builds, 610 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 2178 builds, 1034 built, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 31ad32227afb24dc != 8b260e8e528df24d
+        R>A              .ts "function f(public a) {}"
+        R>A              .ts "function f(private a: A, protected b?: B, readonly c = 1, override d) {}"
+        R>A              .ts "function f(public readonly a: A) {}"
+        R>A              .ts "function f(readonly public a: A) {}"
+        R>A              .ts "(function (public a) {});"
+        R>A              .ts "x = function (private a) {};"
+        R>A              .ts "x = async function (protected a) {};"
+        R>A              .ts "x = function* (readonly a) {};"
+        R>A              .ts "export default function (public a) {}"
+        R>A              .ts "export function f(public a) {}"
+        R>A              .ts "async function f(public a) {}"
+        R>A              .ts "function* f(public a) {}"
+        A>A output       6
+        R>A              424
+        R>R              64
+2178 records compared, 494 differ
+seen  build   seams-bu  1488 builds, 463 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 1488 builds, 716 built, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 87e2f014e012099e != a97e955c890b077d
+        R>A              .ts "function f(...a,): void;\nfunction f(...a: any[]) {}"
+        R>A              .ts "function f(...a,);"
+        R>A              .ts "function f(...a,)"
+        R>A              .ts "export function f(...a,): void;\nexport function f() {}"
+        R>A              .ts "export default function (...a,): void;"
+        R>A              .ts "class C { m(...a,): void; m(...a: any[]) {} }"
+        R>A              .ts "class C { m(...a,): void }"
+        R>A              .ts "class C { m?(...a,): void }"
+        R>A              .ts "class C { static m(...a,): void; static m() {} }"
+        R>A              .ts "class C { constructor(...a,); constructor(...a: any[]) {} }"
+        R>A              .ts "class C { get x(...a,): number }"
+        R>A              .ts "declare class C { m(...a,): void }"
+        A>A output       4
+        R>A              253
+        R>R              20
+1488 records compared, 277 differ
+seen  build   testrows  602 builds, 108 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 602 builds, 336 built, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 29bdf37aadbd361f != 619bd104bdbb9b60
+        R>A              .ts "let x: if;"
+        R>A              .ts "let x: class;"
+        R>A              .ts "let x: function;"
+        R>A              .ts "let x: in;"
+        R>A              .ts "let x: extends;"
+        R>A              .ts "let x: super;"
+        R>A              .ts "let x: delete;"
+        R>A              .ts "let x: if.x;"
+        R>A              .ts "let x: class<T>;"
+        R>A              .ts "let x: | if;"
+        R>A              .ts "let x: A | if;"
+        R>A              .ts "let x: A & class;"
+        A>A output       10
+        R>A              228
+602 records compared, 238 differ
+seen  build   comments  244 builds, 109 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 244 builds, 125 built, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 22ab91371f0fb90d != 2cba91d10919d275
+        R>A              .ts "type Cc = { [1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ + 2]: number }; export function g(){ let longName = 1; re
+        R>A              .ts "class X3 { [key: string = \"a\" /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */]: number } export function g(){ let long
+        R>A              .ts "let g1: (a = 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */) => void; export function g(){ let longName = 1; return l
+        R>A              .ts "type G2 = { get x(): number { return 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */; } }; export function g(){ let lo
+        R>A              .ts "type H = { a: number = 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ }; export function g(){ let longName = 1; retur
+        R>A              .ts "type as /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ = 1; export function g(){ let longName = 1; return longName; }"
+        R>A              .ts "interface as /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ { a: 1 } export function g(){ let longName = 1; return long
+        R>A              .ts "type Cc = { [1 // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n + 2]: number }; export function g(){ let longName = 1; ret
+        R>A              .ts "class X3 { [key: string = \"a\" // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n]: number } export function g(){ let longN
+        R>A              .ts "interface I3 extends A // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n [\"b\"] {} export function g(){ let longName = 1; 
+        R>A              .ts "let g1: (a = 1 // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n) => void; export function g(){ let longName = 1; return lo
+        R>A              .ts "type G2 = { get x(): number { return 1 // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n; } }; export function g(){ let lon
+        R>A              16
+244 records compared, 16 differ
+seen  build   targeted  7904 builds, 2266 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 7904 builds, 2374 built, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 15e9c9e28c50e960 != 9c3c2025c756f4f2
+        R>A              .ts "type as = 1;"
+        R>A              .ts "type satisfies = 1;"
+        R>A              .ts "interface as {}"
+        R>A              .ts "interface satisfies {}"
+        A>A output       .ts "namespace as {}"
+        R>A              .ts "const v = <out>x;"
+        R>A              .ts "const v = <in>x;"
+        R>A              .ts "function f(public a: A) {}"
+        R>A              .ts "function f(private a) {}"
+        R>A              .ts "function f(readonly a: A) {}"
+        R>A              .ts "function f(override a: A) {}"
+        R>A              .ts "abstract declare class C {}"
+        A>A output       1
+        R>A              108
+        R>R              42
+7904 records compared, 151 differ
+RESULT  OK: the run tells the two binaries apart in each of its 5 pairs of runs

@@ -1,0 +1,47 @@
+run     2026-10-02T10:49:00Z  tag round1  expect differ  steps check
+base    /workspace/base/bun.f4d755a9c  sha256 e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0  1.4.3-canary.1+f4d755a9c
+next    /workspace/head/bun.head  sha256 d0a760e664b2ebb2dac4dd4d1ff1e9e370b57abea77eb69b0fa0c899ff80cbf9  1.4.3-canary.1+23a20afa7  built 2026-10-01T23:29:56Z  workers 4
+tree    /workspace/wt/parser  23a20afa7ee95996f0d044f5df67bbca179d7667  0 modified files under src/js_parser, src/ast, src/jsc  42 commits after f4d755a9cf under src/js_parser, src/js_printer, src/ast
+tools   harness.all.mjs 1c94e1dad47a (34 configurations)  diff.mjs 7594403b9718  seams.mjs ba4bcff3def3  seams-bu.mjs cc4bb2cbe20f  run-r2.sh 19cc30400f05
+seen  check     sources 18390  x 34 records 625260   differ 199122  crashes 0/0  corpus 15d1162dae52  sha256 of the records 4120467680510265 != bec359268ce31b43
+        i.js.plain           R>A         7
+        i.js.plain           R>R         34
+        i.jsx.plain          R>A         7
+        i.jsx.plain          R>R         34
+        i.ts.plain           R>A         2093
+        i.ts.plain           R>R         5930
+        i.tsx.plain          R>A         2001
+        i.tsx.plain          R>R         5591
+        s.js.plain           R>A         5
+        s.jsx.plain          R>A         5
+        s.ts.deco            R>A         2090
+        s.ts.deco            R>R         5933
+        s.ts.plain           R>A         2065
+        s.ts.plain           R>R         5915
+        s.tsx.plain          R>A         1973
+        s.tsx.plain          R>R         5576
+        t.js.deco            R>A         5
+        t.js.exp             R>A         5
+        t.js.min.all         R>A         5
+        t.js.plain           R>A         5
+        t.jsx.plain          R>A         5
+        t.ts.bun             A>A         1
+        t.ts.bun             R>A         2065
+        t.ts.bun             R>R         5915
+        t.ts.deco            A>A         320
+        t.ts.deco            R>A         2090
+        t.ts.deco            R>R         5933
+        t.ts.deco.keep       A>A         321
+        t.ts.deco.keep       R>A         2090
+        t.ts.deco.keep       R>R         5933
+        t.ts.deco.trim       A>A         320
+        t.ts.deco.trim       R>A         2090
+        t.ts.deco.trim       R>R         5933
+        t.ts.exp             A>A         1
+        t.ts.exp             R>A         2090
+        t.ts.exp             R>R         5933
+        t.ts.fields.assign   A>A         1
+        t.ts.fields.assign   R>A         2090
+        t.ts.fields.assign   R>R         5933
+        t.ts.imports.keep    A>A         1
+RESULT  OK: the run tells the two binaries apart in each of its 1 pairs of runs

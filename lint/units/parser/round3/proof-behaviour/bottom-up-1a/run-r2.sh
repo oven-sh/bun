@@ -4,13 +4,14 @@
 #
 #   /workspace/tools/lk bash run-r2.sh <tag> <bun under test> [step ...]
 #
-# steps, default: seams seams-bu testrows comments targeted bench tscases small files runtime build
+# steps, default: seams seams-bu testrows comments targeted check bench tscases small files runtime build
 #   seams .. small   a corpus through harness.all.mjs (34 configurations of Bun.Transpiler), R2_JOBS workers
 #     seams      seams.mjs: the sites outside the type grammar that round 1 changed, from the lists of the sites
 #     seams-bu   seams-bu.mjs: the same sites, from the diff of f4d755a9cf..23a20afa7e under src/js_parser and src/ast
 #     testrows   the 301 sources of the four test files of round 1 (typescript-grammar*.test.ts)
 #     comments   122 sources with a comment inside a construct
 #     targeted   3,952 sources by construct (with the 1,547 of file 09, the grammar checks of the checker)
+#     check      18,390 sources: the 710 probe inputs of round 1, 5,957 and 7,771 sources of small, and targeted again
 #     small-sub  7,089 sources of small (not in the default: it is for a binary with debug assertions, which is slow)
 #     bench      the inputs of the transpiler benchmark (notes/lint/benchroot)
 #     tscases    the single-file units of TypeScript's own tests (ref/typescript-go/_submodules/TypeScript/tests/cases)
@@ -46,7 +47,7 @@ TSCASES=/workspace/ref/typescript-go/_submodules/TypeScript/tests/cases
 TAG=$1
 NEXT=$(readlink -f "$2")
 shift 2
-[ $# -gt 0 ] || set -- seams seams-bu testrows comments targeted bench tscases small files runtime build
+[ $# -gt 0 ] || set -- seams seams-bu testrows comments targeted check bench tscases small files runtime build
 [ -x "$BASE" ] && [ -x "$NEXT" ] || { echo "missing binary: $BASE or $NEXT"; exit 2; }
 case "$OUT" in /workspace/notes*) echo "R2_OUT must be outside the notes"; exit 2 ;; esac
 case "$EXPECT" in zero | differ) ;; *) echo "R2_EXPECT is zero or differ"; exit 2 ;; esac
@@ -65,6 +66,7 @@ corpus() {
     seams | seams-bu | bench | tscases) echo "$OUT/corpus.$1.json" ;;
     testrows | comments | small | small-sub) echo "$G/corpus.$1.json" ;;
     targeted) echo "$G/corpus.targeted-09.json" ;;
+    check) echo "$N/round2/grammar-diff-run/bottom-up/runs/corpus.check.json" ;;
   esac
 }
 # The corpora that are made here, from their sources, on every run.

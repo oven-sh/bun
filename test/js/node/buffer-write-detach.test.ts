@@ -206,6 +206,36 @@ describe.concurrent("Buffer.write on an already-detached buffer returns 0 (Node-
     expect(JSON.parse(stdout)).toEqual({ noArgs: 0, encodingOnly: 0, offsetOnly: 0, full: 0 });
     expect(exitCode).toBe(0);
   });
+
+  // The last call of each row writes a 16-bit string, which takes the other encoder entry point.
+  test("every encoding returns 0 in the forms that take one", async () => {
+    const { stdout, stderr, exitCode } = await runPoc(`
+      function detached() { const b = Buffer.alloc(16); structuredClone(b.buffer, { transfer: [b.buffer] }); return b; }
+      const out = {};
+      for (const enc of ["utf8", "ascii", "latin1", "ucs2", "utf16le", "hex", "base64", "base64url"]) {
+        out[enc] = [
+          detached().write("6162", enc),
+          detached().write("6162", 0, enc),
+          detached().write("6162", 0, 0, enc),
+          detached().write("\\u4e2d\\u6587", enc),
+        ];
+      }
+      console.log(JSON.stringify(out));
+    `);
+    expect(stderr).toBe("");
+    const zero = [0, 0, 0, 0];
+    expect(JSON.parse(stdout)).toEqual({
+      utf8: zero,
+      ascii: zero,
+      latin1: zero,
+      ucs2: zero,
+      utf16le: zero,
+      hex: zero,
+      base64: zero,
+      base64url: zero,
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Node dispatches utf8/latin1/ascii through a JS wrapper that throws on an

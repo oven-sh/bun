@@ -455,6 +455,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 namespace WebCore {
 using namespace JSC;
 
+// The caller checks offset and length against byteLength() after its last call that can run user code.
 static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, size_t offset, size_t length, BufferEncodingType encoding)
 {
     if (str->length() == 0) [[unlikely]]
@@ -465,11 +466,7 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
         return {};
     }
 
-    size_t byteLength = castedThis->byteLength();
-    if (offset >= byteLength) [[unlikely]]
-        return JSC::JSValue::encode(JSC::jsNumber(0));
-    if (length > byteLength - offset) [[unlikely]]
-        length = byteLength - offset;
+    ASSERT(offset <= castedThis->byteLength() && length <= castedThis->byteLength() - offset);
 
     size_t written = 0;
 
@@ -2379,6 +2376,17 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L325-L330
+// Node's native writers reject a non-string value and never coerce it, so its
+// toString() does not run.
+static JSString* stringArgumentOrThrow(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.isString()) [[likely]]
+        return asString(value);
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "argument must be a string"_s);
+    return nullptr;
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
 // Only utf8Write/latin1Write/asciiWrite go through this strict JS wrapper in node;
 // the other encodings use jsBufferPrototypeFunction_StringWriteWithEncoding below.
@@ -2532,6 +2540,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, text, offset, maxLength, encoding));
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L1200-L1239
 static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -2542,27 +2551,20 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     auto lengthValue = callFrame->argument(2);
     auto encodingValue = callFrame->argument(3);
 
-    size_t offset;
-    size_t length;
-
     if (offsetValue.isUndefined()) {
-        Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
+        auto* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
         RETURN_IF_EXCEPTION(scope, {});
-        auto* str = stringValue.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        offset = 0;
-        length = castedThis->byteLength();
-        RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, WebCore::BufferEncodingType::utf8));
+        RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, 0, castedThis->byteLength(), WebCore::BufferEncodingType::utf8));
     }
+
+    size_t offset = 0;
+    size_t length = castedThis->byteLength();
     if (lengthValue.isUndefined() && offsetValue.isString()) {
         encodingValue = offsetValue;
-        offset = 0;
-        length = castedThis->byteLength();
     } else {
-        length = castedThis->byteLength();
         offset = validateOffset(scope, lexicalGlobalObject, offsetValue, "offset"_s, 0, length);
         RETURN_IF_EXCEPTION(scope, {});
-        size_t remaining = castedThis->byteLength() - offset;
+        size_t remaining = length - offset;
 
         if (lengthValue.isUndefined()) {
             length = remaining;
@@ -2578,33 +2580,47 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         }
     }
 
-    // Node resolves the encoding before it checks the value. An object encoding's toString() can detach or shrink the buffer.
+    // Node resolves the encoding before its writer checks the value.
     auto encoding = WebCore::BufferEncodingType::utf8;
-    if (encodingValue.toBoolean(lexicalGlobalObject)) {
+    if (encodingValue.isString()) {
+        // A string encoding runs no user code, so offset and length still fit the buffer.
+        const auto& view = asString(encodingValue)->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        std::optional<BufferEncodingType> encoded = parseEnumerationFromView<BufferEncodingType>(view);
+        if (encoded) [[likely]] {
+            encoding = *encoded;
+        } else if (view->length()) {
+            // Only the empty string is falsy, and Node reads a falsy encoding as utf8.
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, view);
+        }
+    } else if (encodingValue.toBoolean(lexicalGlobalObject)) [[unlikely]] {
+        // Any other truthy encoding is coerced, and an object's toString() can detach or resize the buffer.
+        // So the bounds are checked again, in the order of Node's writers: utf8, latin1 and ascii check the
+        // bounds and then the value. The others check the value, then throw for offset and clamp length.
         encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
         RETURN_IF_EXCEPTION(scope, {});
+        const bool boundsBeforeValue = encoding == WebCore::BufferEncodingType::utf8
+            || encoding == WebCore::BufferEncodingType::latin1
+            || encoding == WebCore::BufferEncodingType::ascii;
+        const size_t byteLength = castedThis->byteLength();
+        if (boundsBeforeValue) {
+            if (offset > byteLength)
+                return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+            if (length > byteLength - offset)
+                return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "length"_s);
+        }
+        auto* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!boundsBeforeValue) {
+            if (offset > byteLength)
+                return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+            length = std::min(length, byteLength - offset);
+        }
+        RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
     }
 
-    // Node's utf8, latin1 and ascii writers check the bounds before the value. Its other writers check the value first.
-    const bool boundsBeforeValue = encoding == WebCore::BufferEncodingType::utf8
-        || encoding == WebCore::BufferEncodingType::latin1
-        || encoding == WebCore::BufferEncodingType::ascii;
-    const size_t byteLength = castedThis->byteLength();
-    if (boundsBeforeValue) {
-        if (offset > byteLength) [[unlikely]]
-            return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-        if (length > byteLength - offset) [[unlikely]]
-            return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "length"_s);
-    }
-
-    Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
+    auto* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
     RETURN_IF_EXCEPTION(scope, {});
-    auto* str = stringValue.toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (!boundsBeforeValue && offset > byteLength) [[unlikely]]
-        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }
 

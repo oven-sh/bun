@@ -4386,18 +4386,29 @@ describe("buf.write resolves the encoding before it checks the value", () => {
     });
   });
 
-  it("reads an empty string encoding as utf8 in the forms where the encoding replaces offset or length", () => {
+  // "é" is c3 a9 in utf8 and the single byte e9 in latin1, so the bytes show which encoding ran.
+  it("reads an empty string encoding as utf8 in every form", () => {
     expect({
-      "write(string, '')": write("6162", ""),
-      "write(string, offset, '')": write("6162", 0, ""),
+      "write(string, '')": write("h\u00e9", ""),
+      "write(string, offset, '')": write("h\u00e9", 1, ""),
+      "write(string, offset, length, '')": write("h\u00e9", 1, 1, ""),
       "write(123, '')": write(123, ""),
       "write(123, offset, '')": write(123, 0, ""),
+      "on a Uint8Array": Buffer.prototype.write.call(new Uint8Array(3), "h\u00e9", ""),
     }).toEqual({
-      "write(string, '')": "4 36313632",
-      "write(string, offset, '')": "4 36313632",
+      "write(string, '')": "3 68c3a9aa",
+      "write(string, offset, '')": "3 aa68c3a9",
+      "write(string, offset, length, '')": "1 aa68aaaa",
       "write(123, '')": "ERR_INVALID_ARG_TYPE aaaaaaaa",
       "write(123, offset, '')": "ERR_INVALID_ARG_TYPE aaaaaaaa",
+      "on a Uint8Array": 3,
     });
+  });
+
+  it("rejects every other unknown name, however short", () => {
+    for (const encoding of [" ", "x", "xx", "utf"]) {
+      everyForm("'abc'", "abc", encoding, "ERR_UNKNOWN_ENCODING aaaaaaaa");
+    }
   });
 
   it("calls an object encoding's toString() before it rejects the value", () => {
@@ -4846,6 +4857,78 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
         });
       });
     });
+  });
+});
+
+// Node checks the value in the native writer (THROW_AND_RETURN_IF_NOT_STRING in
+// src/node_buffer.cc): one static message, nothing read from the value, and the
+// check runs after write() resolves the encoding.
+describe("write() with a non-string value", () => {
+  const NOT_A_STRING = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "argument must be a string",
+  });
+  const UNKNOWN_ENCODING = expect.objectContaining({
+    code: "ERR_UNKNOWN_ENCODING",
+    message: "Unknown encoding: bogus",
+  });
+  const values = [123, undefined, null, new String("ab"), Symbol("s"), { toString: () => "ab" }];
+
+  it("throws ERR_INVALID_ARG_TYPE with Node's message in every form", () => {
+    for (const value of values) {
+      const buf = Buffer.alloc(8, 0xcc);
+      expect(() => buf.write(value)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, "utf8")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, "hex")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, 4)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, 4, "hex")).toThrow(NOT_A_STRING);
+      expect(buf.toString("hex")).toBe("cccccccccccccccc");
+    }
+  });
+
+  it("resolves the encoding before it checks the value", () => {
+    const buf = Buffer.alloc(8);
+    expect(() => buf.write(123, "bogus")).toThrow(UNKNOWN_ENCODING);
+    expect(() => buf.write(123, 0, "bogus")).toThrow(UNKNOWN_ENCODING);
+    expect(() => buf.write(123, 0, 4, "bogus")).toThrow(UNKNOWN_ENCODING);
+  });
+
+  it("checks the offset and length before the value", () => {
+    const OUT_OF_RANGE = expect.objectContaining({ code: "ERR_OUT_OF_RANGE" });
+    const buf = Buffer.alloc(8);
+    expect(() => buf.write(123, 9)).toThrow(OUT_OF_RANGE);
+    expect(() => buf.write(123, 0, 9)).toThrow(OUT_OF_RANGE);
+    expect(() => buf.write(123, 9, "hex")).toThrow(OUT_OF_RANGE);
+    expect(() => buf.write(123, 8, "hex")).toThrow(NOT_A_STRING);
+  });
+
+  it("reads nothing from the rejected value", () => {
+    const ran = [];
+    const proxy = new Proxy(
+      {},
+      {
+        get(_, key) {
+          ran.push(`get ${String(key)}`);
+        },
+      },
+    );
+    class Named {
+      static get name() {
+        ran.push("constructor.name getter");
+        return "Named";
+      }
+    }
+    const buf = Buffer.alloc(8);
+    for (const value of [proxy, new Named()]) {
+      expect(() => buf.write(value)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, "hex")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, "hex")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, 4, "hex")).toThrow(NOT_A_STRING);
+    }
+    expect(ran).toEqual([]);
   });
 });
 

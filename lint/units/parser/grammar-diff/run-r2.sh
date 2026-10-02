@@ -18,7 +18,8 @@
 #   files      every tracked TypeScript and JavaScript file under test/ and src/js of R2_TREE, by the hash of each output
 #   runtime    seams, seams-bu, testrows, comments, targeted and bench as modules that the runtime loads and never evaluates:
 #              the entries of the runtime transpiler cache (version, output, source map, module record)
-#   build      seams, seams-bu, testrows and comments through Bun.build, as a .ts and as a .js entry point: output, source map, messages
+#   build      seams, seams-bu, testrows, comments and targeted through Bun.build, as a .ts and as a .js entry point:
+#              output, source map, messages (the options of the bundler, which no configuration of Bun.Transpiler sets)
 # env: R2_BASE    the base binary                          default /workspace/base/bun.f4d755a9c
 #      R2_OUT     raw runs, never inside the notes         default /tmp/parser-r2
 #      R2_TREE    the checkout that `files` reads          default /workspace/wt/parser
@@ -456,7 +457,7 @@ main() {
         done
         ;;
       build)
-        for r in seams seams-bu testrows comments; do
+        for r in seams seams-bu testrows comments targeted; do
           pairs=$((pairs + 1))
           build_one "$r" || bad=$((bad + 1))
         done

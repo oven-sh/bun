@@ -942,11 +942,21 @@ crate write it: 46 lines for the 72 modules.
   and the method of 11328 is the one of `c18`.
 
 The list follows the files, so it changes with them. A module of the 26 that gets a `pub` item at column 0
-(`new_checker` of 908, `PredicateSemantics` of 12968, a free function of `c14` or `c18`) compiles without a line, and
-its names are then not in `crate::checker`; a module of the 46 that has no `pub` item is an error.
-`python3 round2-layer7-checker/globs.py` reads `mod.rs` and the files and prints both cases (D and A), and a `pub`
-name of two globbed modules (C). At `f49ea57437` it prints `c47`, `c49` and `c51` under A (the functions named above
-are not in those files yet), nothing under C and D, and seven globs of modules without a file.
+(`new_checker` of 908, `PredicateSemantics` of 12968, a free function of `c04`, `c14`, `c15` or `c18`) compiles
+without a line, and its names are then not in `crate::checker`; a module with a line and without a `pub` item is an
+error. `python3 round2-layer7-checker/globs.py` reads `mod.rs` and the files and prints both cases (D and A) and a
+`pub` name of two globbed modules (C); with `--names` it also prints the names that files import through
+`crate::checker` and that no globbed module exports (G). At `f49ea57437` it prints `c47`, `c49` and `c51` under A (the
+functions named above are not in those files yet), nothing under C and D, and seven globs of modules without a file.
+
+`29243aaf5a` has the 47th line, `pub use c14_expressions::*;`: the file came in that commit with the three free
+functions of its range as `pub fn`, and D named it. The files of this layer that came by `6349fc8157` (`c14`, `c37`,
+`c44`, `grammarchecks`, `utilities`) have 140 of the 142 free functions of their ranges as a `pub fn` at column 0 (the
+other two, `NewDiagnosticForNode` and `NewDiagnosticChainForNode`, are methods of the checker, as their callers write
+them). So `c03` (4 free functions), `c18` (2), `c04` (6) and `c15` (4) will probably want a line when their functions
+come, and no survey asks for it: nothing imports those names. On the tree of `6349fc8157` the script prints A as
+before, nothing under C and D, four globs of modules without a file (`c30`, `c50`, `emitresolver`, `inference`), and
+under G 22 names, each of one of those four modules or of `c47`.
 
 What the lints of the workspace make of a glob was asked of `rustc` alone (the toolchain of the worktree,
 1.100.0-nightly 574ff7d98), with `round2-layer7-checker/globprobe.rs` and variants of it, files of about 25 lines that

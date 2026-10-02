@@ -14,7 +14,11 @@ gen/erased.cjs          sidecar-erased-statements/top-down/oracle.cjs as a modul
 gen/facts.mjs           rows.facts.json: roots, kept tags, erased records, wrapper records, nodes, enums, returns; or tsc's first diagnostic
 gen/families.mjs        the family of a row, the place in main (f4d755a9cf) that decides it, and the kind of free place for a lint parse
 gen/check-families.mjs  the table of the families
-gen/rust.mjs            grammar_rows_tests.rs.draft: the tables and the six tests for src/js_parser/parse/grammar_rows_tests.rs
+gen/rust.mjs            grammar_rows_tests.rs.draft: the tables and the five tests (a sixth while NOT_READ names a family) for
+                        src/js_parser/parse/grammar_rows_tests.rs. Run rustfmt on the copy.
+gen/check-outline.mjs   gen/roots.mjs gives the 37 expectations of src/js_parser/type_sink_tests.rs, which pass in the crate today
+gen/check-facts.mjs     gen/erased.cjs with the cut of gen/facts.mjs gives the 40 cases of parse/erased_tests.rs (but the flags of `declare;`),
+                        probes/p3-3-wrappers-and-parentheses/oracle.cjs the 13 cases of parse/wrappers.rs
 gen/lint-command.mjs    lint-command-rows.json and lint-parse-grammar.test.ts.draft: the rows through `bun --lint`, for NEEDS.md N2 and N3
 corpus-lists.mjs        corpus-lists.json, runs/corpus-lists.txt: what main rejects and tsc takes, and the metadata that differs, in three corpora
 valid-plain.mjs         main on the 153 sources of round2/a1-differential/top-down/probes/valid.plain.txt: 153 rejected
@@ -28,3 +32,7 @@ runs/valid-plain.main.json, runs/corpus-lists.txt
 Counts: 366 rows = 104 T + 99 M + 152 O (75 statements, 60 expressions, 10 class members, 6 parameters, 1 class header) + 11 X.
 main rejects 256 and accepts 110 with another value or output; round 1 gives the expected text of all 366. 313 distinct (loader, source).
 tsc: 356 rows parse, 346 are valid as a whole; the other 20 are 9 metadata rows with `unique`, 7 module rows and 4 X rows.
+
+Not checked against a build: the tags of `kept`, and the facts `nodes`, `enums` and `returns` of grammar_rows_tests.rs.draft; the code and
+the range of the ten `Want::Fails` rows (they are the first diagnostic of tsc); whether the Build sink gives every outline of TYPES and
+RETURN_TYPES (the outlines are tsc's). The first `cargo test -p bun_js_parser --lib grammar_rows_tests` settles each.

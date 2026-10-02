@@ -1,11 +1,15 @@
 // Writes ../grammar_rows_tests.rs.draft: the tables and the tests that replace the four typescript-grammar*.test.ts files.
 // The draft was never compiled. Run rustfmt on it after it is copied to src/js_parser/parse/grammar_rows_tests.rs.
-// usage: node rust.mjs     (reads ../rows.facts.json)
+// usage: node rust.mjs [family ...]     (reads ../rows.facts.json)
+// The families named are those a lint parse does not read: they go into NOT_READ, and the table and the sixth test get what a parse
+// without lint makes of each source. Without a family the file has five tests and no such column.
 import { readFileSync, writeFileSync } from "node:fs";
 import { ts } from "./roots.mjs";
 import { FAMILIES, familyOf } from "./families.mjs";
 const here = new URL("..", import.meta.url).pathname;
 const rows = JSON.parse(readFileSync(here + "rows.facts.json", "utf8"));
+const notRead = process.argv.slice(2);
+for (const f of notRead) if (!FAMILIES[f]) throw new Error("no family " + f);
 
 const bytes = text => 'b"' + text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") + '"';
 const str = text => '"' + text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") + '"';
@@ -52,7 +56,7 @@ for (const r of rows) {
   else if (r.class === "T" || r.class === "M") want = "Want::Parses";
   else {
     const f = r.facts;
-    want = `Want::Reads(Facts { kept: ${list(f.kept)}, erased: ${list(f.erased)}, wrappers: ${list(f.wrappers)}, nodes: ${str(f.nodes)}, enums: ${list(f.enums)}, returns: ${f.returns} })`;
+    want = `Want::Reads(${str(`kept[${f.kept.join(" ")}] erased[${f.erased.join(" | ")}] wrappers[${f.wrappers.join(" | ")}] nodes[${f.nodes}] enums[${f.enums.join(" | ")}] returns[${f.returns}]`)})`;
   }
   let without;
   if (r.main[0] === "e") without = "None";
@@ -85,27 +89,11 @@ enum Dialect {
     Decorators,
 }
 
-/// What a lint parse shows of a source beside its types.
-struct Facts {
-    /// The tag of each statement that the file keeps.
-    kept: &'static [&'static str],
-    /// The records of the statements and class members that the parse pass drops, as \`erased_tests\` prints them.
-    erased: &'static [&'static str],
-    /// The records of \`as\`, \`satisfies\`, \`!\`, \`<T>x\` and parentheses, in the order the parse pass makes them.
-    wrappers: &'static [&'static str],
-    /// Each conditional, arrow function, call, \`import()\`, \`import.meta\` and auto-accessor of the statements that stay, by offset.
-    nodes: &'static str,
-    /// The name of each enum that stays, and the names of its members.
-    enums: &'static [&'static str],
-    /// How many functions have a return type.
-    returns: usize,
-}
-
 enum Want {
     /// tsc parses the source.
     Parses,
-    /// tsc parses the source and reads this outside its types.
-    Reads(Facts),
+    /// tsc parses the source and reads this outside its types: the line that \`facts\` makes.
+    Reads(&'static str),
     /// tsc rejects the source: the code, the start and the end of its first diagnostic.
     Fails(u32, u32, u32),
 }
@@ -231,7 +219,7 @@ impl<'ast> Visitor<'ast> for Nodes<'_, '_, '_> {
     }
 }
 
-/// The facts of a source on one line each, so that two sets compare as text.
+/// One line of what a lint parse shows beside the types: statements that stay, dropped records, wrappers, nodes by offset, enums, return types.
 fn rendered(
     kept: &[&str],
     erased: &[String],
@@ -241,7 +229,7 @@ fn rendered(
     returns: usize,
 ) -> String {
     format!(
-        "kept: {}\\nerased: {}\\nwrappers: {}\\nnodes: {nodes}\\nenums: {}\\nreturns: {returns}",
+        "kept[{}] erased[{}] wrappers[{}] nodes[{nodes}] enums[{}] returns[{returns}]",
         kept.join(" "),
         erased.join(" | "),
         wrappers.join(" | "),
@@ -249,16 +237,12 @@ fn rendered(
     )
 }
 
-fn owned(lines: &[&str]) -> Vec<String> {
-    lines.iter().map(|line| (*line).to_owned()).collect()
-}
-
 /// The tag of each statement that the file keeps.
 fn kept(parsed: &ParsedForLint<'_, '_>) -> Vec<&'static str> {
     parsed.stmts.iter().map(|stmt| stmt.data.tag().into()).collect()
 }
 
-/// What the lint parse shows of the source, rendered.
+/// What the lint parse shows of the source: the conditionals, arrow functions, calls, \`import()\`, \`import.meta\` and auto-accessors are the nodes.
 fn facts(parsed: &ParsedForLint<'_, '_>) -> String {
     let mut nodes = Nodes {
         parsed,
@@ -326,10 +310,7 @@ fn a_lint_parse_reads_a_row_as_tsc_does() {
         let found = lint_parse(row.dialect, row.text, facts);
         let passed = match (&row.want, &found) {
             (Want::Parses, Ok(_)) => true,
-            (Want::Reads(want), Ok(found)) => {
-                let (erased, wrappers, enums) = (owned(want.erased), owned(want.wrappers), owned(want.enums));
-                *found == rendered(want.kept, &erased, &wrappers, want.nodes, &enums, want.returns)
-            }
+            (Want::Reads(want), Ok(found)) => found == want,
             (Want::Fails(code, start, end), Err(found)) => *found == (*code, *start, *end),
             _ => false,
         };
@@ -368,7 +349,19 @@ emit(`/// Every source of the rows, once for each way it was read.`);
 emit(`const ROWS: &[Row] = &[`);
 for (const row of seen.values()) emit(`    Row { family: ${str(row.family)}, dialect: Dialect::${row.dialect}, text: ${bytes(row.text)}, want: ${row.want}, without_lint: ${row.without} },`);
 emit(`];`);
-writeFileSync(here + "grammar_rows_tests.rs.draft", out.join("\n") + "\n");
+let text = out.join("\n") + "\n";
+if (notRead.length === 0) {
+  // No family is left out: no column, no constant, no sixth test.
+  const drop = (from, to) => { const a = text.indexOf(from); const b = text.indexOf(to, a); if (a < 0 || b < 0) throw new Error("no " + from); text = text.slice(0, a) + text.slice(b); };
+  drop("    /// What a parse without lint makes of the source:", "}\n\n/// The families that a lint parse reads");
+  drop("/// The families that a lint parse reads", "/// What `check` makes of the lint parse");
+  drop("#[test]\nfn a_lint_parse_reads_a_row_of_a_site_without_a_route_as_a_parse_without_lint_does", "/// Each text starts with a type of a row");
+  text = text.replace("    for row in ROWS.iter().filter(|row| !NOT_READ.contains(&row.family)) {", "    for row in ROWS {");
+  text = text.replace(/, without_lint: (None|Some\(&\[[^\]]*\]\)) \},\n/g, " },\n");
+} else {
+  text = text.replace("const NOT_READ: &[&str] = &[];", `const NOT_READ: &[&str] = &[${notRead.map(str).join(", ")}];`);
+}
+writeFileSync(here + "grammar_rows_tests.rs.draft", text);
 const wants = { Parses: 0, Reads: 0, Fails: 0 };
 for (const row of seen.values()) wants[/^Want::(\w+)/.exec(row.want)[1]]++;
 console.log(`grammar_rows_tests.rs.draft: ${typeTables.type.size} types, ${typeTables.return.size} return types, ${typeTables["type-parameters"].size} type parameter lists, ${seen.size} sources (${JSON.stringify(wants)}) of ${rows.length} rows`);

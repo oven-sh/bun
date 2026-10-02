@@ -169,7 +169,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForErrorEvent { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForEvent { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForEventTarget { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForEventEmitter { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSSign { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSVerify { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSHmac { nullptr };

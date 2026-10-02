@@ -1,5 +1,5 @@
 import { sleep } from "bun";
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createRequire } from "module";
 
@@ -756,6 +756,63 @@ describe("EventEmitter error handling", () => {
 
     expect(handled).toBe(true);
   });
+
+  // The errorMonitor listeners of process see 'error' before the handlers do, as on any other EventEmitter.
+  describe("errorMonitor on process", () => {
+    const registered: Array<[event: string | symbol, listener: (...args: any[]) => void]> = [];
+    afterEach(() => {
+      for (const [event, listener] of registered.splice(0)) process.removeListener(event, listener);
+      expect(process.listenerCount(EventEmitter.errorMonitor)).toBe(0);
+      expect(process.listenerCount("error")).toBe(0);
+    });
+
+    test("runs before the 'error' handlers", () => {
+      const seen: unknown[][] = [];
+      const monitor = (...args: unknown[]) => seen.push(["monitor", ...args]);
+      const onceMonitor = (...args: unknown[]) => seen.push(["once monitor", ...args]);
+      const handler = (...args: unknown[]) => seen.push(["handler", ...args]);
+      const err = new Error("on process");
+      registered.push(
+        [EventEmitter.errorMonitor, monitor],
+        [EventEmitter.errorMonitor, onceMonitor],
+        ["error", handler],
+      );
+      process.on(EventEmitter.errorMonitor, monitor);
+      process.once(EventEmitter.errorMonitor, onceMonitor);
+      process.on("error", handler);
+      expect(process.emit("error", err, 1)).toBe(true);
+      expect(process.emit("error", err, 2)).toBe(true);
+      expect(seen).toEqual([
+        ["monitor", err, 1],
+        ["once monitor", err, 1],
+        ["handler", err, 1],
+        ["monitor", err, 2],
+        ["handler", err, 2],
+      ]);
+      expect(process.listenerCount(EventEmitter.errorMonitor)).toBe(1);
+    });
+
+    test("what a monitor throws reaches the caller of emit(), and no handler runs", () => {
+      const seen: string[] = [];
+      const thrown = new Error("monitor throws");
+      const monitor = () => {
+        seen.push("monitor");
+        throw thrown;
+      };
+      const handler = () => seen.push("handler");
+      registered.push([EventEmitter.errorMonitor, monitor], ["error", handler]);
+      process.on(EventEmitter.errorMonitor, monitor);
+      process.on("error", handler);
+      let caught: unknown;
+      try {
+        process.emit("error", new Error("boom"));
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBe(thrown);
+      expect(seen).toEqual(["monitor"]);
+    });
+  });
 });
 
 describe("EventEmitter captureRejections", () => {
@@ -1144,32 +1201,32 @@ test("once() wrapper releases its target after firing", async () => {
   });
 });
 
-describe("native EventEmitter propagates an exception from a `_events` getter", () => {
-  // The native EventEmitter prototype (process's) reads `this._events` when `this` is not a native
-  // emitter; a throwing getter must propagate rather than become "invalid this".
-  const nativeProto = Object.getPrototypeOf(process);
-
-  const cases: Array<[string, (obj: object) => void]> = [
-    ["on", obj => nativeProto.on.call(obj, "foo", () => {})],
-    ["addListener", obj => nativeProto.addListener.call(obj, "foo", () => {})],
-    ["once", obj => nativeProto.once.call(obj, "foo", () => {})],
-    ["emit", obj => nativeProto.emit.call(obj, "foo")],
-    ["removeListener", obj => nativeProto.removeListener.call(obj, "foo", () => {})],
-    ["removeAllListeners", obj => nativeProto.removeAllListeners.call(obj)],
-    ["eventNames", obj => nativeProto.eventNames.call(obj)],
-    ["listenerCount", obj => nativeProto.listenerCount.call(obj, "foo")],
-    ["listeners", obj => nativeProto.listeners.call(obj, "foo")],
-    ["getMaxListeners", obj => nativeProto.getMaxListeners.call(obj)],
-  ];
-
-  test.each(cases)("%s", (_name, invoke) => {
-    const sentinel = new Error("getter threw");
-    const obj = {};
-    Object.defineProperty(obj, "_events", {
+describe("a method that `process` inherits, on an object whose `_events` getter throws", () => {
+  // `process` has the methods of EventEmitter.prototype. A method that reads `this._events` propagates what the
+  // getter throws.
+  const inherited = Object.getPrototypeOf(process);
+  const withThrowingEvents = (sentinel: Error) =>
+    Object.defineProperty({}, "_events", {
       get() {
         throw sentinel;
       },
     });
+
+  const cases: Array<[string, (obj: object) => void]> = [
+    ["on", obj => inherited.on.call(obj, "foo", () => {})],
+    ["addListener", obj => inherited.addListener.call(obj, "foo", () => {})],
+    ["prependListener", obj => inherited.prependListener.call(obj, "foo", () => {})],
+    ["emit", obj => inherited.emit.call(obj, "foo")],
+    ["removeListener", obj => inherited.removeListener.call(obj, "foo", () => {})],
+    ["removeAllListeners", obj => inherited.removeAllListeners.call(obj)],
+    ["listenerCount", obj => inherited.listenerCount.call(obj, "foo")],
+    ["listeners", obj => inherited.listeners.call(obj, "foo")],
+    ["rawListeners", obj => inherited.rawListeners.call(obj, "foo")],
+  ];
+
+  test.each(cases)("%s", (_name, invoke) => {
+    const sentinel = new Error("getter threw");
+    const obj = withThrowingEvents(sentinel);
     let caught: unknown;
     try {
       invoke(obj);
@@ -1177,6 +1234,14 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
       caught = e;
     }
     expect(caught).toBe(sentinel);
+  });
+
+  test("once, eventNames and getMaxListeners do not read `_events`, as in node", () => {
+    const obj = withThrowingEvents(new Error("getter threw"));
+    // once() adds the listener with this.on(), which this object does not have.
+    expect(() => inherited.once.call(obj, "foo", () => {})).toThrow(TypeError);
+    expect(inherited.eventNames.call(obj)).toEqual([]);
+    expect(inherited.getMaxListeners.call(obj)).toBe(EventEmitter.defaultMaxListeners);
   });
 
   test("Proxy get trap that throws", () => {
@@ -1191,7 +1256,7 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     );
     let caught: unknown;
     try {
-      nativeProto.on.call(obj, "foo", () => {});
+      inherited.on.call(obj, "foo", () => {});
     } catch (e) {
       caught = e;
     }
@@ -1201,8 +1266,274 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
   test("a plain object receiver gets a working emitter", () => {
     const obj: any = {};
     let fired = 0;
-    nativeProto.on.call(obj, "x", () => fired++);
-    nativeProto.emit.call(obj, "x");
+    inherited.on.call(obj, "x", () => fired++);
+    inherited.emit.call(obj, "x");
     expect(fired).toBe(1);
+  });
+});
+
+describe("EventEmitter.prototype", () => {
+  // A fresh process reports the object as node:events exports it, before a test of this file can change it.
+  test.concurrent("own properties: order, attributes, and the name and length of every method", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const EventEmitter = require("node:events");
+          const prototype = EventEmitter.prototype;
+          const properties = Reflect.ownKeys(prototype).map(key => {
+            const { value, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(prototype, key);
+            return [
+              String(key),
+              typeof value === "function" ? value.name + "/" + value.length : value,
+              [writable, enumerable, configurable].join(),
+            ];
+          });
+          console.log(JSON.stringify({
+            properties,
+            aliases: [prototype.on === prototype.addListener, prototype.off === prototype.removeListener],
+            constructor: prototype.constructor === EventEmitter,
+            constructors: Object.keys(prototype).filter(key => key !== "constructor" && "prototype" in Object(prototype[key])),
+            class: Object.prototype.toString.call(prototype),
+            parent: Object.getPrototypeOf(prototype) === Object.prototype,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      properties: [
+        ["setMaxListeners", "setMaxListeners/1", "true,true,true"],
+        ["constructor", "EventEmitter/1", "true,true,true"],
+        ["getMaxListeners", "getMaxListeners/0", "true,true,true"],
+        ["emit", "emit/1", "true,true,true"],
+        ["addListener", "addListener/2", "true,true,true"],
+        ["on", "addListener/2", "true,true,true"],
+        ["prependListener", "prependListener/2", "true,true,true"],
+        ["once", "once/2", "true,true,true"],
+        ["prependOnceListener", "prependOnceListener/2", "true,true,true"],
+        ["removeListener", "removeListener/2", "true,true,true"],
+        ["off", "removeListener/2", "true,true,true"],
+        ["removeAllListeners", "removeAllListeners/1", "true,true,true"],
+        ["listeners", "listeners/1", "true,true,true"],
+        ["rawListeners", "rawListeners/1", "true,true,true"],
+        ["listenerCount", "listenerCount/2", "true,true,true"],
+        ["eventNames", "eventNames/0", "true,true,true"],
+        ["_eventsCount", 0, "true,true,true"],
+        ["Symbol(kCapture)", false, "true,true,true"],
+      ],
+      aliases: [true, true],
+      constructor: true,
+      constructors: [],
+      class: "[object Object]",
+      parent: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the methods work on an object that the constructor did not initialize", () => {
+    const emitter = Object.create(EventEmitter.prototype);
+    const calls: unknown[][] = [];
+    const listener = (...args: unknown[]) => calls.push(["on", ...args]);
+    const onceListener = (...args: unknown[]) => calls.push(["once", ...args]);
+
+    expect(emitter.eventNames()).toEqual([]);
+    expect(emitter.listenerCount("x")).toBe(0);
+    expect(emitter.emit("x")).toBe(false);
+    expect(emitter.on("x", listener)).toBe(emitter);
+    expect(emitter.prependOnceListener("x", onceListener)).toBe(emitter);
+    expect(emitter.eventNames()).toEqual(["x"]);
+    expect(emitter.listeners("x")).toEqual([onceListener, listener]);
+    expect(emitter.rawListeners("x")[0].listener).toBe(onceListener);
+    expect(emitter.listenerCount("x", listener)).toBe(1);
+    expect(emitter.emit("x", 1, 2)).toBe(true);
+    expect(emitter.emit("x", 3, 4, 5, 6, 7)).toBe(true);
+    expect(calls).toEqual([
+      ["once", 1, 2],
+      ["on", 1, 2],
+      ["on", 3, 4, 5, 6, 7],
+    ]);
+    expect(emitter.off("x", listener)).toBe(emitter);
+    expect(emitter.eventNames()).toEqual([]);
+    expect(emitter.setMaxListeners(3).getMaxListeners()).toBe(3);
+    expect(Object.keys(emitter)).toEqual(["_events", "_eventsCount", "_maxListeners"]);
+  });
+
+  test("a method calls the other methods through the receiver", () => {
+    const calls: string[] = [];
+    class Traced extends EventEmitter {
+      on(type, fn) {
+        calls.push(`on ${String(type)}`);
+        return super.on(type, fn);
+      }
+      prependListener(type, fn) {
+        calls.push(`prependListener ${String(type)}`);
+        return super.prependListener(type, fn);
+      }
+      removeListener(type, fn) {
+        calls.push(`removeListener ${String(type)}`);
+        return super.removeListener(type, fn);
+      }
+      emit(type, ...args) {
+        calls.push(`emit ${String(type)}`);
+        return super.emit(type, ...args);
+      }
+    }
+    const emitter = new Traced();
+    const noop = () => {};
+    emitter.addListener("newListener", noop);
+    emitter.addListener("removeListener", noop);
+    calls.length = 0;
+
+    emitter.once("a", noop);
+    emitter.prependOnceListener("a", noop);
+    emitter.emit("a");
+    emitter.addListener("b", noop);
+    emitter.addListener("b", noop);
+    emitter.removeAllListeners("b");
+    expect(calls).toEqual([
+      // once() adds through on(), and the add reports to 'newListener' through emit()
+      "on a",
+      "emit newListener",
+      "prependListener a",
+      "emit newListener",
+      // each wrapper removes itself through removeListener(), which reports through emit()
+      "emit a",
+      "removeListener a",
+      "emit removeListener",
+      "removeListener a",
+      "emit removeListener",
+      "emit newListener",
+      "emit newListener",
+      "removeListener b",
+      "emit removeListener",
+      "removeListener b",
+      "emit removeListener",
+    ]);
+  });
+
+  test.each([
+    [
+      "on('x', 1)",
+      "on",
+      ["x", 1],
+      "ERR_INVALID_ARG_TYPE",
+      'The "listener" argument must be of type function. Received type number (1)',
+    ],
+    [
+      "prependListener('x', null)",
+      "prependListener",
+      ["x", null],
+      "ERR_INVALID_ARG_TYPE",
+      'The "listener" argument must be of type function. Received null',
+    ],
+    [
+      "once('x')",
+      "once",
+      ["x"],
+      "ERR_INVALID_ARG_TYPE",
+      'The "listener" argument must be of type function. Received undefined',
+    ],
+    [
+      "prependOnceListener('x', 'f')",
+      "prependOnceListener",
+      ["x", "f"],
+      "ERR_INVALID_ARG_TYPE",
+      `The "listener" argument must be of type function. Received type string ('f')`,
+    ],
+    [
+      "off('x', {})",
+      "off",
+      ["x", {}],
+      "ERR_INVALID_ARG_TYPE",
+      'The "listener" argument must be of type function. Received an instance of Object',
+    ],
+    [
+      "setMaxListeners(-1)",
+      "setMaxListeners",
+      [-1],
+      "ERR_OUT_OF_RANGE",
+      'The value of "setMaxListeners" is out of range. It must be >= 0. Received -1',
+    ],
+    [
+      "setMaxListeners(NaN)",
+      "setMaxListeners",
+      [NaN],
+      "ERR_OUT_OF_RANGE",
+      'The value of "setMaxListeners" is out of range. It must be >= 0. Received NaN',
+    ],
+    [
+      "setMaxListeners('1')",
+      "setMaxListeners",
+      ["1"],
+      "ERR_INVALID_ARG_TYPE",
+      `The "setMaxListeners" argument must be of type number. Received type string ('1')`,
+    ],
+  ] as const)("%s throws", (_call, method, args, code, message) => {
+    const emitter = new EventEmitter();
+    let error: any;
+    try {
+      emitter[method](...args);
+    } catch (e) {
+      error = e;
+    }
+    expect({ code: error?.code, message: error?.message }).toEqual({ code, message });
+    expect(emitter.eventNames()).toEqual([]);
+  });
+
+  test("defaultMaxListeners is one value for the emitters that exist and the ones to come", () => {
+    const before = EventEmitter.defaultMaxListeners;
+    const existing = new EventEmitter();
+    const limited = new EventEmitter().setMaxListeners(2);
+    try {
+      EventEmitter.defaultMaxListeners = 7;
+      expect([existing.getMaxListeners(), new EventEmitter().getMaxListeners(), getMaxListeners(existing)]).toEqual([
+        7, 7, 7,
+      ]);
+      expect(limited.getMaxListeners()).toBe(2);
+      setMaxListeners(4);
+      expect([EventEmitter.defaultMaxListeners, existing.getMaxListeners()]).toEqual([4, 4]);
+    } finally {
+      EventEmitter.defaultMaxListeners = before;
+    }
+    expect(existing.getMaxListeners()).toBe(before);
+  });
+
+  test.concurrent("a Worker has its own defaultMaxListeners", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("node:worker_threads");
+          const EventEmitter = require("node:events");
+          EventEmitter.defaultMaxListeners = 3;
+          const worker = new Worker(
+            \`
+              const EventEmitter = require("node:events");
+              const inherited = new EventEmitter().getMaxListeners();
+              EventEmitter.defaultMaxListeners = 20;
+              require("node:worker_threads").parentPort.postMessage([inherited, new EventEmitter().getMaxListeners()]);
+            \`,
+            { eval: true },
+          );
+          worker.on("message", inWorker => {
+            console.log(JSON.stringify({ inWorker, after: EventEmitter.defaultMaxListeners }));
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ inWorker: [10, 20], after: 3 });
+    expect(exitCode).toBe(0);
   });
 });

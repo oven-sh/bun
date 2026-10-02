@@ -203,7 +203,8 @@ function activate() {
   if (activated) return;
   activated = true;
   initialTitle = process.title;
-  process.on("exit", flush);
+  // Not an 'exit' listener: node writes the file in native code, also when a listener of 'exit' throws.
+  $newCppFunction("BunProcess.cpp", "Process_functionAddExitCallback", 1)(flush);
   installTimerInstrumentation();
   installInstrumentation();
 }
@@ -248,8 +249,6 @@ function installInstrumentation() {
 function flush() {
   if (!fileWriteRequested) return;
   // Everything below is the agent's own fs work — keep it out of the trace.
-  // Restored on the way out so fs activity from later 'exit' listeners still
-  // traces normally (it lands in events[] post-write, but isn't dropped).
   const prevSuppress = suppressFsEvents;
   suppressFsEvents = true;
   try {

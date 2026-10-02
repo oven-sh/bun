@@ -328,6 +328,9 @@ declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 
+/** JSC's `ownKeys` link-time constant: what `Reflect.ownKeys` does, also after a program replaces it. */
+declare function $ownKeys(target: object): (string | symbol)[];
+
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;

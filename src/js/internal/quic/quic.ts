@@ -374,7 +374,8 @@ const kNilDatagramId = 0n;
 const endpointRegistry = new SafeSet();
 
 let releaseEndpointSocket;
-process.on("exit", () => {
+// Not an 'exit' listener: the sockets are released also when a listener of 'exit' throws.
+$newCppFunction("BunProcess.cpp", "Process_functionAddExitCallback", 1)(() => {
   for (const endpoint of endpointRegistry) {
     releaseEndpointSocket(endpoint);
   }

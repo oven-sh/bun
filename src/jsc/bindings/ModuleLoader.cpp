@@ -25,9 +25,6 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/JSONObject.h>
 
-#include "EventEmitter.h"
-#include "JSEventEmitter.h"
-
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/Completion.h>

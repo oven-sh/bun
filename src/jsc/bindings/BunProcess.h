@@ -4,7 +4,7 @@
 
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
-#include "JSEventEmitter.h"
+#include <JavaScriptCore/JSDestructibleObject.h>
 
 namespace Zig {
 class GlobalObject;
@@ -17,8 +17,10 @@ using namespace JSC;
 extern "C" int getRSS(size_t* rss);
 extern "C" int getPeakRSS(size_t* peak);
 
-class Process : public WebCore::JSEventEmitter {
-    using Base = WebCore::JSEventEmitter;
+// `process` is a node:events EventEmitter: the methods come from EventEmitter.prototype, and the listeners are in
+// its own `_events`, as for any other emitter.
+class Process : public JSC::JSDestructibleObject {
+    using Base = JSC::JSDestructibleObject;
 
     LazyProperty<Process, Structure> m_cpuUsageStructure;
     LazyProperty<Process, Structure> m_resourceUsageStructure;
@@ -36,12 +38,21 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Unknown> m_execArgv;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
+    // EventEmitter.prototype of node:events, which is created with `process`, and the two symbols that are keys
+    // of every emitter (src/js/node/events.ts).
+    WriteBarrier<JSObject> m_eventEmitterPrototype;
+    WriteBarrier<Symbol> m_shapeModeSymbol;
+    WriteBarrier<Symbol> m_captureSymbol;
 
-    void installDefaultWarningListener(JSC::VM&);
+    // What `_events` holds for an event: a function, an array of functions, or nothing.
+    JSValue listenersOf(const JSC::Identifier& eventName);
+    // Whether `process.emit` is the `emit` that EventEmitter.prototype starts with. Runs no JavaScript, and is
+    // false when it cannot tell.
+    bool hasEmitOfNodeEvents(JSC::VM&, Zig::GlobalObject*, const JSC::Identifier& emitName);
 
 public:
-    Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
-        : Base(structure, globalObject, WTF::move(impl))
+    Process(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
     {
     }
 
@@ -63,6 +74,8 @@ public:
     // function-local static would be shared across worker threads, so a
     // worker's exit would suppress the main thread's 'exit' event.
     bool m_isExiting = false;
+    // The functions of Process_functionAddExitCallback.
+    WriteBarrier<JSArray> m_exitCallbacks;
     // DEP0111/DEP0119 latches. Node's deprecate() closures live in each
     // Environment's own JS, so every worker warns once itself.
     bool m_warnedProcessBinding = false;
@@ -84,6 +97,22 @@ public:
 
     JSObject* ensureOnWarning(Zig::GlobalObject*);
 
+    JSObject* eventEmitterPrototype() const { return m_eventEmitterPrototype.get(); }
+    Symbol* shapeModeSymbol() const { return m_shapeModeSymbol.get(); }
+    Symbol* captureSymbol() const { return m_captureSymbol.get(); }
+
+    // `process.emit(eventName, ...args)`, as node emits the events of `process`: an `emit` that a program put on
+    // `process` or on a prototype of it gets every event. Without one, an event with no listener calls nothing.
+    // Returns true when it called `emit`. What that throws is pending on return: for a caller that JavaScript
+    // called.
+    bool emit(const JSC::Identifier& eventName, const JSC::MarkedArgumentBuffer& args);
+    // The same for an event that the runtime starts (a signal, an IPC message, the end of the event loop). What a
+    // listener throws is an uncaught exception, and the listeners after it are not called, as in node.
+    bool emitFromRuntime(const JSC::Identifier& eventName, const JSC::MarkedArgumentBuffer& args);
+    // Both read `_events` and run no JavaScript.
+    bool hasListeners(const JSC::Identifier& eventName);
+    unsigned listenerCount(const JSC::Identifier& eventName);
+
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
@@ -100,16 +129,16 @@ public:
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        // The static table has accessors with setters (exitCode, title, argv). Without this flag an assignment
+        // does not look for a setter. JavaScriptCore takes the flag from the generated table, and
+        // src/codegen/create_hash_table does not write the attributes of the properties there.
+        structure->setHasAnyKindOfGetterSetterPropertiesWithProtoCheck(false);
+        return structure;
     }
 
-    static Process* create(WebCore::JSDOMGlobalObject& globalObject, JSC::Structure* structure)
-    {
-        auto emitter = WebCore::EventEmitter::create(*globalObject.scriptExecutionContext());
-        Process* accessor = new (NotNull, JSC::allocateCell<Process>(globalObject.vm())) Process(structure, globalObject, WTF::move(emitter));
-        accessor->finishCreation(globalObject.vm());
-        return accessor;
-    }
+    // With its prototype: an object that has `constructor` and inherits from EventEmitter.prototype.
+    static Process* create(Zig::GlobalObject*);
 
     DECLARE_VISIT_CHILDREN;
 
@@ -121,7 +150,7 @@ public:
         return WebCore::subspaceForImpl<Process, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForProcessObject, m_subspaceForProcessObject));
     }
 
-    void finishCreation(JSC::VM& vm);
+    void finishCreation(JSC::VM&, JSObject* eventEmitterPrototype, Symbol* shapeModeSymbol, Symbol* captureSymbol);
 
     inline void setUncaughtExceptionCaptureCallback(JSC::JSValue callback)
     {
@@ -145,6 +174,10 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+// For src/js, via $newCppFunction: the function is called when 'exit' was emitted, also when a listener of it
+// threw. Node does this work (the trace file) in native code at the end of a process or a worker.
+JSC_DECLARE_HOST_FUNCTION(Process_functionAddExitCallback);
 
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);

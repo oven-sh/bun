@@ -109,7 +109,6 @@
 #include "JSEnvironmentVariableMap.h"
 #include "JSErrorEvent.h"
 #include "JSEvent.h"
-#include "JSEventEmitter.h"
 #include "JSEventListener.h"
 #include "JSEventTarget.h"
 #include "JSFetchHeaders.h"
@@ -2736,12 +2735,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_processObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Bun::Process>::Initializer& init) {
-            auto* globalObject = defaultGlobalObject(init.owner);
-
-            auto* process = Bun::Process::create(
-                *globalObject, Bun::Process::createStructure(init.vm, init.owner, WebCore::JSEventEmitter::prototype(init.vm, *globalObject)));
-
-            init.set(process);
+            init.set(Bun::Process::create(defaultGlobalObject(init.owner)));
         });
 
     m_streamsRuntime.initialize(this);

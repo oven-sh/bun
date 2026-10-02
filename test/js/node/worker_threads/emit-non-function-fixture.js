@@ -4,7 +4,9 @@ import assert from "node:assert";
 const { promise, resolve, reject } = Promise.withResolvers();
 
 process.on("worker", assert.fail);
-process.once("uncaughtException", exception => {
+// on() and not once(): a once() listener removes itself, and process emits 'removeListener' with process.emit,
+// which is 5 below.
+process.on("uncaughtException", exception => {
   try {
     assert.strictEqual(exception.name, "TypeError");
     assert(exception.message.includes("5 is not a function"), "message should include '5 is not a function'");

@@ -577,6 +577,54 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     expect(stdout).toBe(`error boom\n${JSON.stringify({ code: 42, out: "hello\nexit handler 1 true\n" })}\n`);
     expect(exitCode).toBe(0);
   });
+
+  // What an 'exit' listener throws is the worker's uncaught exception, as in node: it goes to the worker's
+  // 'uncaughtException' listeners, or else to the parent's 'error' listeners. The 'exit' listeners after it
+  // do not run.
+  async function runWorkerWithThrowingExitListener(prelude: string) {
+    const workerSrc = `${prelude}
+      process.on("exit", code => {
+        process.stdout.write("first " + code + "\\n");
+        throw new Error("exit listener throws");
+      });
+      process.on("exit", code => process.stdout.write("second " + code + "\\n"));`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, stdout: true });
+         let out = "";
+         const errors = [];
+         w.stdout.setEncoding("utf8").on("data", d => (out += d));
+         w.on("error", e => errors.push(e.message));
+         w.on("exit", code => console.log(JSON.stringify({ errors, out, code })));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout) as { errors: string[]; out: string; code: number };
+  }
+
+  test.concurrent("a user 'exit' handler that throws: the parent's 'error' event gets the error", async () => {
+    const { errors, out } = await runWorkerWithThrowingExitListener("");
+    expect({ errors, out }).toEqual({ errors: ["exit listener throws"], out: "first 0\n" });
+  });
+
+  test.concurrent(
+    "a user 'exit' handler that throws: the worker's 'uncaughtException' event gets the error",
+    async () => {
+      const prelude = `process.on("uncaughtException", error => process.stdout.write("uncaughtException: " + error.message + "\\n"));`;
+      expect(await runWorkerWithThrowingExitListener(prelude)).toEqual({
+        errors: [],
+        out: "first 0\nuncaughtException: exit listener throws\n",
+        code: 0,
+      });
+    },
+  );
 });
 
 describe("worker event", () => {
@@ -1156,6 +1204,45 @@ test("postMessageToThread survives a tampered Map prototype", async () => {
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("pong");
+  expect(exitCode).toBe(0);
+});
+
+// The hub delivers with process.emit("workerMessage"), which removes a once() listener before it calls it.
+test("postMessageToThread calls a once('workerMessage') listener for one message only", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const wt = require("worker_threads");
+       const w = new wt.Worker(
+         \`const wt = require("worker_threads");
+           wt.parentPort.on("message", async () => {
+             const results = [];
+             for (const value of ["first", "second"]) {
+               try {
+                 await wt.postMessageToThread(0, value);
+                 results.push("delivered");
+               } catch (error) {
+                 results.push(error.code);
+               }
+             }
+             wt.parentPort.postMessage(results);
+           });\`,
+         { eval: true },
+       );
+       process.once("workerMessage", value => console.log("once:", value));
+       w.on("message", results => {
+         console.log(results.join(","));
+         w.terminate();
+       });
+       w.postMessage("go");`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("once: first\ndelivered,ERR_WORKER_MESSAGING_FAILED\n");
   expect(exitCode).toBe(0);
 });
 

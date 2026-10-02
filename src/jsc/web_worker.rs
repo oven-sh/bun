@@ -1025,7 +1025,6 @@ impl WebWorker {
             // SAFETY: vm_ptr valid; no other thread holds a pointer to it (they
             // only ever held its handle) — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
-            vm.is_shutting_down = true;
             vm.on_exit();
             exit_code = i32::from(vm.exit_handler.exit_code);
             log!(

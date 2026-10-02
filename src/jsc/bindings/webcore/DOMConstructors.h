@@ -58,7 +58,6 @@ enum class DOMConstructorID : uint16_t {
     // --bun--
     Cookie,
     CookieMap,
-    EventEmitter,
     URLPattern,
 
     // Keep last. Sizes ConstructorArray.

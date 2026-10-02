@@ -1770,6 +1770,26 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("a listener that throws fails the run, and the listeners after it do not run", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "node-exit-throw.test.ts",
+        `
+          import { test } from "node:test";
+          process.on("exit", code => {
+            console.log("first exit listener ran with", code);
+            throw new Error("exit listener throws");
+          });
+          process.on("exit", () => console.log("second exit listener ran"));
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).toContain("first exit listener ran with 0");
+      expect(stdout).not.toContain("second exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("error: exit listener throws");
+      expect(exitCode).toBe(1);
+    });
+
     test("run for a bun:test file under BUN_TEST_DRAIN_EVENT_LOOP, which the vendored node tests set", async () => {
       using dir = tempDir("bun-test-exit-listener", { "drain.test.ts": bunTestFile(1) });
       await using proc = Bun.spawn({

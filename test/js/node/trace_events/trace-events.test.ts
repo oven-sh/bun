@@ -42,3 +42,39 @@ test("http.client.request span is closed when the proxy CONNECT tunnel fails", a
   const phases = events.filter(e => e.name === "http.client.request").map(e => e.ph);
   expect({ phases: phases.sort(), exitCode }).toEqual({ phases: ["b", "e"], exitCode: 0 });
 });
+
+// node writes the trace file in native code when the process ends. A listener of 'exit' that throws stops the
+// listeners after it. It does not stop the file.
+const throwingExitListener = `process.prependListener("exit", () => { throw new Error("exit listener throws"); });`;
+test.concurrent.each([
+  { when: "at the end of the program", args: ["--trace-event-categories", "node.perf"], script: throwingExitListener },
+  {
+    when: "at the end of the program, and an 'uncaughtException' listener handles it",
+    args: ["--trace-event-categories", "node.perf"],
+    script: `process.on("uncaughtException", () => {}); ${throwingExitListener}`,
+  },
+  {
+    when: "in process.exit(), and the caller catches it",
+    args: ["--trace-event-categories", "node.perf"],
+    script: `${throwingExitListener} try { process.exit(0); } catch {}`,
+  },
+  {
+    when: "before tracing starts",
+    args: [],
+    script: `process.on("uncaughtException", () => {});
+      process.on("exit", () => { throw new Error("exit listener throws"); });
+      require("node:trace_events").createTracing({ categories: ["node.perf"] }).enable();`,
+  },
+])("the trace file is written when an 'exit' listener throws $when", async ({ args, script }) => {
+  using dir = tempDir("trace-events-exit-listener-throws", { "main.cjs": script });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args, "main.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { traceEvents } = JSON.parse(readFileSync(join(String(dir), "node_trace.1.log"), "utf8"));
+  expect(traceEvents).toBeArray();
+});

@@ -1,9 +1,10 @@
 import { spawnSync, which } from "bun";
 import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import EventEmitter, { getEventListeners } from "node:events";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -3254,4 +3255,415 @@ it("no socket close handler runs after the 'exit' event", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
+});
+
+// `process` inherits from EventEmitter.prototype and keeps its listeners in its own `_events`, as in node.
+// Verified against node v26.3.0: every script below prints the same thing there.
+describe("process is an EventEmitter of node:events", () => {
+  const event = "process-test-emitter-event";
+  afterEach(() => {
+    process.removeAllListeners(event);
+  });
+
+  async function run(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  it("has the methods of EventEmitter.prototype", () => {
+    const names = [
+      "setMaxListeners",
+      "getMaxListeners",
+      "emit",
+      "addListener",
+      "on",
+      "prependListener",
+      "once",
+      "prependOnceListener",
+      "removeListener",
+      "off",
+      "removeAllListeners",
+      "listeners",
+      "rawListeners",
+      "listenerCount",
+      "eventNames",
+    ];
+    expect(names.filter(name => process[name] !== EventEmitter.prototype[name])).toEqual([]);
+    const prototype = Object.getPrototypeOf(process);
+    expect(Object.getPrototypeOf(prototype)).toBe(EventEmitter.prototype);
+    expect(Reflect.ownKeys(prototype)).toEqual(["constructor"]);
+    expect(process.constructor.name).toBe("process");
+    expect(process instanceof EventEmitter).toBe(true);
+    expect(process.on).toBe(process.addListener);
+    expect(process.off).toBe(process.removeListener);
+  });
+
+  it("validates its arguments and has the default of getMaxListeners()", () => {
+    expect(process.getMaxListeners()).toBe(EventEmitter.defaultMaxListeners);
+    expect(() => process.setMaxListeners(-1)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+    expect(() => process.once(event, null)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => process.prependListener(event)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(process.listenerCount(event)).toBe(0);
+  });
+
+  it("a method borrowed from EventEmitter.prototype uses the listeners of process", () => {
+    let calls = 0;
+    const listener = () => calls++;
+    EventEmitter.prototype.on.call(process, event, listener);
+    expect(process.listenerCount(event)).toBe(1);
+    expect(process.listeners(event)).toEqual([listener]);
+    expect(getEventListeners(process, event)).toEqual([listener]);
+    expect(process.emit(event)).toBe(true);
+    expect(calls).toBe(1);
+
+    process.on(event, listener);
+    expect(EventEmitter.prototype.listenerCount.call(process, event)).toBe(2);
+    EventEmitter.prototype.removeAllListeners.call(process, event);
+    expect(process.listenerCount(event)).toBe(0);
+    expect(process.emit(event)).toBe(false);
+  });
+
+  it("emits 'removeListener' with the function that was added", () => {
+    const removed = [];
+    const onRemoveListener = (name, listener) => {
+      if (name === event) removed.push(listener);
+    };
+    const a = () => {};
+    const b = () => {};
+    const c = () => {};
+    process.on("removeListener", onRemoveListener);
+    try {
+      process.on(event, a);
+      process.once(event, b);
+      process.on(event, c);
+      process.off(event, a);
+      expect(removed).toEqual([a]);
+      // The once() listener is removed before it runs.
+      process.emit(event);
+      expect(removed).toEqual([a, b]);
+      process.on(event, a);
+      // removeAllListeners() removes the last listener first.
+      process.removeAllListeners(event);
+      expect(removed).toEqual([a, b, a, c]);
+    } finally {
+      process.off("removeListener", onRemoveListener);
+    }
+  });
+
+  it("rawListeners() returns the wrapper of a once() listener", () => {
+    const listener = () => {};
+    process.once(event, listener);
+    const [wrapper] = process.rawListeners(event);
+    expect(wrapper).not.toBe(listener);
+    expect(wrapper.listener).toBe(listener);
+    expect(process.listeners(event)).toEqual([listener]);
+  });
+
+  it("what a listener throws reaches the caller of emit(), and the listeners after it do not run", () => {
+    const thrown = new Error("listener throws");
+    const calls = [];
+    process.on(event, () => {
+      calls.push("first");
+      throw thrown;
+    });
+    process.on(event, () => calls.push("second"));
+    let caught;
+    try {
+      process.emit(event);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(thrown);
+    expect(calls).toEqual(["first"]);
+  });
+
+  it("emit('error') with no listener throws the error to the caller", () => {
+    const error = new Error("no listener");
+    let caught;
+    try {
+      process.emit("error", error);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(error);
+    expect(() => process.emit("error")).toThrow(expect.objectContaining({ code: "ERR_UNHANDLED_ERROR" }));
+  });
+
+  it("a 'newListener' listener that throws: on() throws and adds nothing", () => {
+    const thrown = new Error("newListener throws");
+    const onNewListener = name => {
+      if (name === event) throw thrown;
+    };
+    process.on("newListener", onNewListener);
+    try {
+      let caught;
+      try {
+        process.on(event, () => {});
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(thrown);
+      expect(process.listenerCount(event)).toBe(0);
+    } finally {
+      process.off("newListener", onNewListener);
+    }
+  });
+
+  it.concurrent("starts with the listeners that node adds", async () => {
+    const script = `console.log(JSON.stringify({
+      eventNames: process.eventNames(),
+      hooks: [...process.listeners("newListener"), ...process.listeners("removeListener")].map(f => f.name),
+      eventsPrototype: Object.getPrototypeOf(process._events),
+      eventsCount: process._eventsCount,
+      own: ["_events", "_eventsCount", "_maxListeners"].map(key => Object.hasOwn(process, key)),
+    }));`;
+    const { stdout, stderr, exitCode } = await run(script);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      eventNames: ["newListener", "removeListener", "warning"],
+      hooks: ["startListeningIfSignal", "stopListeningIfSignal"],
+      eventsPrototype: null,
+      eventsCount: 3,
+      own: [true, true, true],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("warns about more than 10 listeners of one event", async () => {
+    const script = `process.on("warning", warning => {
+      console.log(JSON.stringify([warning.name, warning.type, warning.count, warning.emitter === process]));
+    });
+    for (let i = 0; i < 11; i++) process.on("process-test-max-listeners", () => {});`;
+    const { stdout, stderr, exitCode } = await run(script);
+    expect(stderr).toContain(
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 process-test-max-listeners listeners added to [process]. MaxListeners is 10.",
+    );
+    expect(stdout).toBe('["MaxListenersExceededWarning","process-test-max-listeners",11,true]\n');
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("an 'exit' listener that throws: the caller of process.exit() can catch it", async () => {
+    const script = `process.on("exit", code => {
+      console.log("first", code);
+      throw new Error("exit listener throws");
+    });
+    process.on("exit", code => console.log("second", code));
+    try {
+      process.exit(3);
+    } catch (error) {
+      console.log("caught:", error.message);
+    }
+    process.removeAllListeners("exit");`;
+    expect(await run(script)).toEqual({
+      stdout: "first 3\ncaught: exit listener throws\n",
+      stderr: "",
+      exitCode: 3,
+      signalCode: null,
+    });
+  });
+
+  // The runtime emits the events below, so nothing can catch what a listener throws: it is an uncaught exception.
+  it.concurrent(
+    "an 'exit' listener that throws at the end of the program: the listeners after it do not run",
+    async () => {
+      const script = `process.on("uncaughtException", error => console.log("uncaughtException:", error.message));
+    process.on("exit", code => {
+      console.log("first", code);
+      throw new Error("exit listener throws");
+    });
+    process.on("exit", code => console.log("second", code));`;
+      expect(await run(script)).toEqual({
+        stdout: "first 0\nuncaughtException: exit listener throws\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+
+  it.concurrent("a 'message' listener that throws: the listeners after it do not run", async () => {
+    using dir = tempDir("process-message-listener-throws", {
+      "parent.js": `const { fork } = require("node:child_process");
+        const child = fork(require("node:path").join(__dirname, "child.js"));
+        child.on("message", message => {
+          if (message === "ready") child.send({ hello: 1 });
+          else child.disconnect();
+        });`,
+      "child.js": `process.on("uncaughtException", error => {
+          console.log("uncaughtException:", error.message);
+          process.send("done");
+        });
+        process.on("message", message => {
+          console.log("first", JSON.stringify(message));
+          throw new Error("message listener throws");
+        });
+        process.on("message", () => console.log("second"));
+        process.send("ready");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: 'first {"hello":1}\nuncaughtException: message listener throws\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(isWindows)("a signal listener that throws: the listeners after it do not run", async () => {
+    const script = `const { promise, resolve } = Promise.withResolvers();
+      const keepAlive = setInterval(() => {}, 60_000);
+      process.on("uncaughtException", (error, origin) => {
+        console.log("uncaughtException:", error.message, origin);
+        resolve();
+      });
+      process.on("SIGUSR2", () => {
+        console.log("first");
+        throw new Error("first throws");
+      });
+      process.on("SIGUSR2", () => console.log("second"));
+      process.kill(process.pid, "SIGUSR2");
+      await promise;
+      clearInterval(keepAlive);
+      console.log("done");`;
+    expect(await run(script)).toEqual({
+      stdout: "first\nuncaughtException: first throws uncaughtException\ndone\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it.concurrent.skipIf(isWindows)("a signal listener added with a borrowed on() handles the signal", async () => {
+    const script = `const { EventEmitter } = require("node:events");
+    const { promise, resolve } = Promise.withResolvers();
+    const keepAlive = setInterval(() => {}, 60_000);
+    EventEmitter.prototype.on.call(process, "SIGUSR2", signal => {
+      console.log("handled", signal, "lc=" + process.listenerCount("SIGUSR2"));
+      resolve();
+    });
+    process.kill(process.pid, "SIGUSR2");
+    await promise;
+    clearInterval(keepAlive);
+    console.log("done");`;
+    expect(await run(script)).toEqual({
+      stdout: "handled SIGUSR2 lc=1\ndone\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The two listeners that install and remove the signal handlers are ordinary listeners. Without them a
+  // signal listener has no handler, and the signal does what it does by default.
+  it.concurrent.skipIf(isWindows)(
+    "after removeAllListeners() a new signal listener has no signal handler",
+    async () => {
+      const script = `process.removeAllListeners();
+      process.on("SIGUSR2", () => {
+        console.log("handled");
+        process.exit(0);
+      });
+      process.kill(process.pid, "SIGUSR2");`;
+      expect(await run(script)).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: expect.any(Number),
+        signalCode: "SIGUSR2",
+      });
+    },
+  );
+
+  // node emits each event of `process` with `process.emit(...)`. A program that puts its own `emit` in place
+  // gets every one of them, with or without a listener: signal-exit finds 'exit' that way.
+  describe("an `emit` that a program put in place gets the events that the runtime emits", () => {
+    const trace = `function (type, ...args) {
+      if (this === process && wanted.includes(type)) console.log("emit", type, ...args.map(String));
+      return emit.apply(this, arguments);
+    };`;
+
+    it.concurrent.each([
+      ["process", `const emit = process.emit; process.emit = ${trace}`],
+      [
+        "EventEmitter.prototype",
+        `const { EventEmitter } = require("node:events");
+         const emit = EventEmitter.prototype.emit; EventEmitter.prototype.emit = ${trace}`,
+      ],
+      ["the prototype of process", `const emit = process.emit; Object.getPrototypeOf(process).emit = ${trace}`],
+    ])("'beforeExit' and 'exit' without a listener, emit on %s", async (_, install) => {
+      expect(await run(`const wanted = ["beforeExit", "exit"]; ${install}`)).toEqual({
+        stdout: "emit beforeExit 0\nemit exit 0\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    it.concurrent("'exit' of process.exit()", async () => {
+      const script = `const wanted = ["exit"]; const emit = process.emit; process.emit = ${trace}
+        process.exit(3);`;
+      expect(await run(script)).toEqual({ stdout: "emit exit 3\n", stderr: "", exitCode: 3, signalCode: null });
+    });
+
+    it.concurrent.skipIf(isWindows)("a signal", async () => {
+      const script = `const wanted = ["SIGUSR2"]; const emit = process.emit; process.emit = ${trace}
+        const { promise, resolve } = Promise.withResolvers();
+        const keepAlive = setInterval(() => {}, 60_000);
+        process.on("SIGUSR2", signal => {
+          console.log("listener", signal);
+          resolve();
+        });
+        process.kill(process.pid, "SIGUSR2");
+        await promise;
+        clearInterval(keepAlive);`;
+      const { stdout, stderr, exitCode } = await run(script);
+      expect({ stdout: stdout.replace(/ \d+\n/, " <number>\n"), stderr, exitCode }).toEqual({
+        stdout: "emit SIGUSR2 SIGUSR2 <number>\nlistener SIGUSR2\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("'uncaughtExceptionMonitor' without a listener", async () => {
+      const script = `const wanted = ["uncaughtExceptionMonitor"]; const emit = process.emit; process.emit = ${trace}
+        process.on("uncaughtException", error => console.log("listener", error.message));
+        setImmediate(() => {
+          throw new Error("thrown");
+        });`;
+      expect(await run(script)).toEqual({
+        stdout: "emit uncaughtExceptionMonitor Error: thrown uncaughtException\nlistener thrown\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    it.concurrent("'warning': an `emit` that returns for a warning hides it", async () => {
+      const script = `const emit = process.emit;
+        process.emit = function (type, warning) {
+          if (type === "warning" && warning.name === "HiddenWarning") return false;
+          return emit.apply(this, arguments);
+        };
+        process.emitWarning("not printed", "HiddenWarning");
+        process.emitWarning("printed", "ShownWarning");`;
+      const { stdout, stderr, exitCode } = await run(script);
+      const warnings = stderr.split("\n").filter(line => line.includes("Warning: "));
+      expect({ stdout, warnings: warnings.map(line => line.replace(/^\(\w+:\d+\) /, "")), exitCode }).toEqual({
+        stdout: "",
+        warnings: ["ShownWarning: printed"],
+        exitCode: 0,
+      });
+    });
+  });
 });

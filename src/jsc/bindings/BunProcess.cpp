@@ -50,7 +50,8 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
-#include "JSEventListener.h"
+#include "JSDOMOperation.h"
+#include "NodeEventEmitterPrototype.h"
 #include <JavaScriptCore/StructureCache.h>
 
 #include <webcore/SerializedScriptValue.h>
@@ -339,21 +340,56 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (process->m_isExiting)
         return;
     process->m_isExiting = true;
-    auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
+    auto scope = DECLARE_THROW_SCOPE(vm);
     putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
-    auto event = Identifier::fromString(vm, "exit"_s);
-    if (!emitter.hasEventListeners(event)) {
-        return;
-    }
-
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    process->emit(Identifier::fromString(vm, "exit"_s), arguments);
+
+    auto* callbacks = process->m_exitCallbacks.get();
+    if (!callbacks) [[likely]]
+        RELEASE_AND_RETURN(scope, );
+    // What a listener threw is thrown again after the callbacks. A termination ends here.
+    JSC::Exception* thrown = scope.exception();
+    if (thrown && !scope.tryClearException())
+        return;
+    for (unsigned i = 0; i < callbacks->length(); ++i) {
+        JSValue callback = callbacks->getDirectIndex(globalObject, i);
+        if (scope.exception()) [[unlikely]]
+            return;
+        JSC::profiledCall(globalObject, ProfilingReason::API, callback, JSC::getCallData(callback), jsUndefined(), JSC::ArgList());
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException())
+                return;
+            if (!thrown)
+                thrown = exception;
+        }
+    }
+    if (thrown)
+        throwException(globalObject, scope, thrown);
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionAddExitCallback, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(callFrame->argument(0).isCallable());
+    auto* process = globalObject->processObject();
+    auto* callbacks = process->m_exitCallbacks.get();
+    if (!callbacks) {
+        callbacks = constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        process->m_exitCallbacks.set(vm, process, callbacks);
+    }
+    callbacks->push(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -862,7 +898,7 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
-    auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
+    auto fired = process->emitFromRuntime(Identifier::fromString(vm, "beforeExit"_s), arguments);
     RETURN_IF_EXCEPTION(scope, );
     if (fired) {
         // The ticks and the microtasks of the listeners run now, with or without a tick queue (node: MakeCallback).
@@ -871,7 +907,8 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
-extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+// Emits 'exit'. What a listener throws is pending on return.
+static void dispatchExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
         return;
@@ -881,6 +918,17 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     if (exitCode > 0)
         process->m_isExitCodeObservable = true;
     dispatchExitInternal(globalObject, process, exitCode);
+}
+
+// The same for the end of the event loop, where nothing called: what a listener throws is an uncaught exception.
+extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    dispatchExit(globalObject, exitCode);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (scope.tryClearException())
+            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -902,7 +950,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     setProcessExitCodeInner(globalObject, process, code);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    Process__dispatchOnExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
+    dispatchExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     // process.reallyExit(process.exitCode) — re-read: an 'exit' listener may have set it.
@@ -1291,7 +1339,7 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
     args.append(jsNumber(signalNumber));
 
-    return process->wrapped().emitForBindings(signalNameIdentifier, args);
+    return process->emitFromRuntime(signalNameIdentifier, args);
 }
 
 #if OS(WINDOWS)
@@ -1330,7 +1378,6 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto* process = globalObject->processObject();
-    auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
@@ -1364,9 +1411,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     }
 
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
-    if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
+    {
         auto monitorScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        wrapped.emit(uncaughtExceptionMonitor, args);
+        process->emitFromRuntime(uncaughtExceptionMonitor, args);
         RETURN_IF_EXCEPTION(monitorScope, true);
     }
 
@@ -1385,9 +1432,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
         }
-    } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
+    } else if (process->listenerCount(uncaughtExceptionIdent) > 0) {
         auto emitScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        wrapped.emit(uncaughtExceptionIdent, args);
+        process->emitFromRuntime(uncaughtExceptionIdent, args);
         RETURN_IF_EXCEPTION(emitScope, true);
     } else {
         return false;
@@ -1494,12 +1541,11 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
-    auto& wrapped = process->wrapped();
-    if (wrapped.listenerCount(eventType) > 0) {
+    if (process->listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
         args.append(reason);
         args.append(promise);
-        wrapped.emit(eventType, args);
+        process->emitFromRuntime(eventType, args);
         return true;
     }
 
@@ -1527,16 +1573,11 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return true;
     }
-    auto& wrapped = process->wrapped();
-    if (wrapped.listenerCount(eventType) > 0) {
-        MarkedArgumentBuffer args;
-        args.append(promise);
-        wrapped.emit(eventType, args);
-        RETURN_IF_EXCEPTION(scope, true);
-        return true;
-    }
-
-    return false;
+    MarkedArgumentBuffer args;
+    args.append(promise);
+    bool emitted = process->emitFromRuntime(eventType, args);
+    RETURN_IF_EXCEPTION(scope, true);
+    return emitted;
 }
 
 extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
@@ -1583,120 +1624,252 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 
-static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
+// Follows the listeners of the events that have a resource behind them: a signal handler, the IPC channel, the
+// memory pressure source. `isAdded`: a listener of `eventName` is about to be added. Otherwise one was removed.
+static void onDidChangeListeners(Zig::GlobalObject* global, const Identifier& eventName, bool isAdded)
 {
-    if (Bun__isMainThreadVM()) {
-        if (eventName == "memoryPressure") {
-            auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
-            if (isAdded) {
-                if (eventEmitter.listenerCount(eventName) == 1) {
-                    Bun__MemoryPressure__install(global);
-                }
-            } else if (eventEmitter.listenerCount(eventName) == 0) {
-                Bun__MemoryPressure__uninstall(global);
+    auto* process = global->processObject();
+    // 'newListener' is emitted before the listener is in `_events`: the counts below include it.
+    auto listenerCountOf = [&](const Identifier& name) -> unsigned {
+        return process->listenerCount(name) + (isAdded && name == eventName);
+    };
+    if (eventName == "memoryPressure") {
+        if (isAdded) {
+            if (listenerCountOf(eventName) == 1) {
+                Bun__MemoryPressure__install(global);
             }
-            return;
+        } else if (listenerCountOf(eventName) == 0) {
+            Bun__MemoryPressure__uninstall(global);
         }
+        return;
+    }
 
-        // IPC handlers
-        if (eventName == "message" || eventName == "disconnect") {
-            auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
-            auto& vm = JSC::getVM(global);
-            auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
-            auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(vm, "disconnect"_s));
-            if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
-                disconnectListenerCount--;
+    // IPC handlers
+    if (eventName == "message" || eventName == "disconnect") {
+        auto& vm = JSC::getVM(global);
+        auto messageListenerCount = listenerCountOf(vm.propertyNames->message);
+        auto disconnectListenerCount = listenerCountOf(Identifier::fromString(vm, "disconnect"_s));
+        if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
+            disconnectListenerCount--;
+        }
+        auto totalListenerCount = messageListenerCount + disconnectListenerCount;
+        if (isAdded) {
+            if (Bun__GlobalObject__hasIPC(global)
+                && totalListenerCount == 1) {
+                Bun__ensureProcessIPCInitialized(global);
+                Bun__refChannelUnlessOverridden(global);
             }
-            auto totalListenerCount = messageListenerCount + disconnectListenerCount;
-            if (isAdded) {
-                if (Bun__GlobalObject__hasIPC(global)
-                    && totalListenerCount == 1) {
-                    Bun__ensureProcessIPCInitialized(global);
-                    Bun__refChannelUnlessOverridden(global);
-                }
-            } else {
-                if (Bun__GlobalObject__hasIPC(global)
-                    && totalListenerCount == 0) {
-                    Bun__unrefChannelUnlessOverridden(global);
-                }
+        } else {
+            if (Bun__GlobalObject__hasIPC(global)
+                && totalListenerCount == 0) {
+                Bun__unrefChannelUnlessOverridden(global);
             }
-            return;
         }
+        return;
+    }
 
-        // Signal Handlers
-        loadSignalNumberMap();
-        loadSignalNumberToNameMap();
+    // Signal Handlers
+    loadSignalNumberMap();
+    loadSignalNumberToNameMap();
 
-        if (!signalToContextIdsMap) {
-            signalToContextIdsMap = new HashMap<int, SignalHandleValue>();
-        }
+    if (!signalToContextIdsMap) {
+        signalToContextIdsMap = new HashMap<int, SignalHandleValue>();
+    }
 
-        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
-            int listenerCount = eventEmitter.listenerCount(eventName);
-            // Mirror the count for the watcher thread's --watch-kill-signal check.
-            Bun__onSignalListenerCountChanged(signalNumber, listenerCount);
+    if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
+        int listenerCount = listenerCountOf(eventName);
+        // Mirror the count for the watcher thread's --watch-kill-signal check.
+        Bun__onSignalListenerCountChanged(signalNumber, listenerCount);
 #if OS(LINUX)
-            // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
-            // suspend and resume the JS thread which we must not override.
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
+        // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
+        // suspend and resume the JS thread which we must not override.
+        if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
 #elif OS(DARWIN) || OS(FREEBSD)
-            // these signals cannot be handled
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
+        // these signals cannot be handled
+        if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
 #elif OS(WINDOWS)
-            // windows has no SIGSTOP
-            if (signalNumber != SIGKILL) {
+        // windows has no SIGSTOP
+        if (signalNumber != SIGKILL) {
 #else
 #error unknown OS
 #endif
 
-                if (isAdded) {
-                    if (!signalToContextIdsMap->contains(signalNumber)) {
-                        SignalHandleValue signal_handle = {
+            if (isAdded) {
+                if (!signalToContextIdsMap->contains(signalNumber)) {
+                    SignalHandleValue signal_handle = {
 #if OS(WINDOWS)
-                            .handle = nullptr,
+                        .handle = nullptr,
 #endif
-                        };
+                    };
 #if !OS(WINDOWS)
-                        Bun__ensureSignalHandler();
-                        installForwardSignalHandler(signalNumber);
+                    Bun__ensureSignalHandler();
+                    installForwardSignalHandler(signalNumber);
 #else
-                        signal_handle.handle = Bun__UVSignalHandle__init(
-                            eventEmitter.scriptExecutionContext()->jsGlobalObject(),
-                            signalNumber,
-                            &signalHandler);
+                    signal_handle.handle = Bun__UVSignalHandle__init(
+                        global,
+                        signalNumber,
+                        &signalHandler);
 
-                        if (!signal_handle.handle) [[unlikely]]
-                            return;
+                    if (!signal_handle.handle) [[unlikely]]
+                        return;
 #endif
 
-                        signalToContextIdsMap->set(signalNumber, signal_handle);
-                    }
-                } else {
-                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && listenerCount == 0) {
-                        // The watch-mode sticky signal keeps its OS handler installed; only the
-                        // handler teardown is skipped. The map entry is still removed — it is the
-                        // "has JS listeners" source of truth that e.g. self-kill flush consults.
-                        if (signalNumber != watchModeStickySignal) {
+                    signalToContextIdsMap->set(signalNumber, signal_handle);
+                }
+            } else {
+                if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && listenerCount == 0) {
+                    // The watch-mode sticky signal keeps its OS handler installed; only the
+                    // handler teardown is skipped. The map entry is still removed — it is the
+                    // "has JS listeners" source of truth that e.g. self-kill flush consults.
+                    if (signalNumber != watchModeStickySignal) {
 #if !OS(WINDOWS)
-                            if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-                                // Don't uninstall the old handler if it's not the one we installed.
-                                signal(signalNumber, oldHandler);
-                            }
-#else
-                            SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
-                            Bun__UVSignalHandle__close(signal_handle.handle);
-#endif
+                        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+                            // Don't uninstall the old handler if it's not the one we installed.
+                            signal(signalNumber, oldHandler);
                         }
-                        signalToContextIdsMap->remove(signalNumber);
+#else
+                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
+                        Bun__UVSignalHandle__close(signal_handle.handle);
+#endif
                     }
+                    signalToContextIdsMap->remove(signalNumber);
                 }
             }
         }
     }
 }
 
+// The two listeners that the `process` of the main thread starts with, as node's does
+// (lib/internal/process/signal.js). A program can remove them like any other listener. A listener that is added
+// after that has no signal handler, as in node.
+JSC_DEFINE_HOST_FUNCTION(Process_startListeningIfSignal, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue type = callFrame->argument(0);
+    if (!type.isString())
+        return JSValue::encode(jsUndefined());
+    auto eventName = asString(type)->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    onDidChangeListeners(globalObject, eventName, true);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_stopListeningIfSignal, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue type = callFrame->argument(0);
+    if (!type.isString())
+        return JSValue::encode(jsUndefined());
+    auto eventName = asString(type)->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    onDidChangeListeners(globalObject, eventName, false);
+
+    // The listener above is gone: nothing starts the IPC channel for the 'message' listener that comes next.
+    // node reads the channel from the start, so start it now.
+    if (eventName == "newListener") {
+        auto* removed = dynamicDowncast<JSFunction>(callFrame->argument(1));
+        if (removed && removed->isHostFunction() && removed->nativeFunction() == Process_startListeningIfSignal && Bun__GlobalObject__hasIPC(globalObject))
+            Bun__ensureProcessIPCInitialized(globalObject);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 Process::~Process()
 {
+}
+
+JSValue Process::listenersOf(const Identifier& eventName)
+{
+    ASSERT(!parseIndex(eventName));
+    auto& vm = this->vm();
+    // A program can assign `_events`, and what it holds. Only data properties are read, so no JavaScript runs
+    // here: behind a getter or a Proxy there are no listeners that native code sees.
+    JSValue events = getDirect(vm, WebCore::builtinNames(vm)._eventsPublicName());
+    if (!events || !events.isObject())
+        return {};
+    JSValue listeners = asObject(events)->getDirect(vm, eventName);
+    if (!listeners || !listeners.isObject())
+        return {};
+    return listeners;
+}
+
+unsigned Process::listenerCount(const Identifier& eventName)
+{
+    JSValue listeners = listenersOf(eventName);
+    if (!listeners)
+        return 0;
+    if (listeners.isCallable())
+        return 1;
+    if (auto* array = dynamicDowncast<JSArray>(listeners))
+        return array->length();
+    return 0;
+}
+
+bool Process::hasListeners(const Identifier& eventName)
+{
+    return listenerCount(eventName) > 0;
+}
+
+bool Process::hasEmitOfNodeEvents(VM& vm, Zig::GlobalObject* globalObject, const Identifier& emitName)
+{
+    // `process`, then the object that has its `constructor`, then EventEmitter.prototype. A program can put
+    // another object in the chain: anything other than a plain object there is for the full lookup.
+    if (getDirect(vm, emitName))
+        return false;
+    auto* prototype = getPrototypeDirect().getObject();
+    auto* eventEmitterPrototype = m_eventEmitterPrototype.get();
+    if (!prototype || prototype->type() != FinalObjectType || prototype->getDirect(vm, emitName) || prototype->getPrototypeDirect() != eventEmitterPrototype)
+        return false;
+    JSValue emit = eventEmitterPrototype->getDirect(vm, emitName);
+    if (!emit)
+        return !eventEmitterPrototype->staticPropertiesReified();
+    return emit == nodeEventEmitterEmitIfEvaluated(globalObject);
+}
+
+bool Process::emit(const Identifier& eventName, const MarkedArgumentBuffer& args)
+{
+    auto* globalObject = defaultGlobalObject(this->globalObject());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto emitName = Identifier::fromString(vm, "emit"_s);
+
+    // The `emit` of node:events does nothing for an event that has no listener, and most events that the
+    // runtime emits have none. The read of that `emit` evaluates a module the first time: skip both.
+    bool listenedTo = hasListeners(eventName);
+    if (!listenedTo && hasEmitOfNodeEvents(vm, globalObject, emitName))
+        return false;
+
+    JSValue emit = get(globalObject, emitName);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!emit.isCallable()) {
+        if (!listenedTo)
+            return false;
+        emit = nodeEventEmitterEmit(globalObject);
+        RETURN_IF_EXCEPTION(scope, true);
+    }
+
+    MarkedArgumentBuffer emitArguments;
+    emitArguments.append(JSC::identifierToSafePublicJSValue(vm, eventName));
+    for (size_t i = 0; i < args.size(); ++i)
+        emitArguments.append(args.at(i));
+    JSC::profiledCall(globalObject, ProfilingReason::API, emit, JSC::getCallData(emit), this, emitArguments);
+    RELEASE_AND_RETURN(scope, true);
+}
+
+bool Process::emitFromRuntime(const Identifier& eventName, const MarkedArgumentBuffer& args)
+{
+    auto* globalObject = defaultGlobalObject(this->globalObject());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    bool called = emit(eventName, args);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        // A termination stays pending: it is the end of the thread, and the caller has to see it.
+        if (scope.tryClearException())
+            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    }
+    return called;
 }
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
@@ -1752,8 +1925,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDefaultOnWarning, (JSC::JSGlobalObject 
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The emitter invokes with the process it was registered on (setThisObject below);
-    // fall back for a listener plucked out of listeners('warning') and called bare.
+    // emit() calls it with the process as `this`. A program can also take it out of listeners('warning') and
+    // call it bare.
     auto* process = dynamicDowncast<Process>(callFrame->thisValue());
     if (!process)
         process = defaultGlobalObject(lexicalGlobalObject)->processObject();
@@ -1763,22 +1936,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDefaultOnWarning, (JSC::JSGlobalObject 
     JSC::MarkedArgumentBuffer args;
     args.append(callFrame->argument(0));
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, onWarning, JSC::getCallData(onWarning), process, args)));
-}
-
-// Node registers its printer as an ordinary 'warning' listener during bootstrap
-// (lib/internal/process/pre_execution.js setupWarningHandler), so user code observes
-// listenerCount('warning') === 1 and removeAllListeners('warning') silences it. Only this
-// stub is registered up front; the printer behind it is built on the first warning.
-void Process::installDefaultWarningListener(JSC::VM& vm)
-{
-    if (Bun__NODE_NO_WARNINGS() || Bun__Node__ProcessNoWarnings)
-        return;
-    auto* globalObject = defaultGlobalObject(this->globalObject());
-    auto* onWarning = JSFunction::create(vm, globalObject, 1, "onWarning"_s, Process_functionDefaultOnWarning, ImplementationVisibility::Public);
-    wrapped().addListener(builtinNames(vm).warningPublicName(), WebCore::JSEventListener::create(*onWarning, *this, false, globalObject->world()), false, false);
-    // The listener map holds the function weakly and is only marked through this object.
-    vm.writeBarrier(this, onWarning);
-    wrapped().setThisObject(this);
 }
 
 // Node's doEmitWarning: process.emit('warning', warning). The default print is a real
@@ -1794,7 +1951,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
     auto ident = builtinNames(vm).warningPublicName();
     JSC::MarkedArgumentBuffer args;
     args.append(value);
-    process->wrapped().emit(ident, args);
+    process->emit(ident, args);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -2300,7 +2457,7 @@ JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalOb
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsNumber(Bun__getExitCode(process->globalObject()->bunVM())));
+    return JSValue::encode(jsNumber(Bun__getExitCode(bunVM(process->globalObject()))));
 }
 
 bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code)
@@ -2324,7 +2481,7 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
         RETURN_IF_EXCEPTION(throwScope, false);
 
         process->m_isExitCodeObservable = true;
-        void* ptr = process->globalObject()->bunVM();
+        void* ptr = bunVM(process->globalObject());
         Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt % 256));
     }
     return true;
@@ -3779,6 +3936,10 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
+    visitor.append(thisObject->m_eventEmitterPrototype);
+    visitor.append(thisObject->m_shapeModeSymbol);
+    visitor.append(thisObject->m_captureSymbol);
+    visitor.append(thisObject->m_exitCallbacks);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -4968,46 +5129,39 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
         }
     }
 
-    if (process->wrapped().hasEventListeners(ident)) {
-        JSC::MarkedArgumentBuffer args;
-        args.append(message);
-        args.append(JSValue::decode(handle));
-        process->wrapped().emit(ident, args);
-    }
+    JSC::MarkedArgumentBuffer args;
+    args.append(message);
+    args.append(JSValue::decode(handle));
+    process->emitFromRuntime(ident, args);
 }
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
-    auto ident = Identifier::fromString(vm, "disconnect"_s);
-    if (process->wrapped().hasEventListeners(ident)) {
-        JSC::MarkedArgumentBuffer args;
-        process->wrapped().emit(ident, args);
-    }
+    JSC::MarkedArgumentBuffer args;
+    process->emitFromRuntime(Identifier::fromString(vm, "disconnect"_s), args);
 }
 
 extern "C" void Process__emitMemoryPressureEvent(Zig::GlobalObject* global, int level)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
-    auto ident = Identifier::fromString(vm, "memoryPressure"_s);
-    if (process->wrapped().hasEventListeners(ident)) {
-        JSC::MarkedArgumentBuffer args;
-        // Level values match NOTE_MEMORYSTATUS_PRESSURE_WARN (2) / _CRITICAL (4).
-        args.append(jsString(vm, level == 2 ? String("warning"_s) : String("critical"_s)));
-        process->wrapped().emit(ident, args);
-    }
+    JSC::MarkedArgumentBuffer args;
+    // Level values match NOTE_MEMORYSTATUS_PRESSURE_WARN (2) / _CRITICAL (4).
+    args.append(jsString(vm, level == 2 ? String("warning"_s) : String("critical"_s)));
+    process->emitFromRuntime(Identifier::fromString(vm, "memoryPressure"_s), args);
 }
 
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
-    if (process->wrapped().hasEventListeners(vm.propertyNames->error)) {
+    // Without a listener `emit` throws the error. That is not for a failed send that nothing observes.
+    if (process->hasListeners(vm.propertyNames->error)) {
         JSC::MarkedArgumentBuffer args;
         args.append(JSValue::decode(value));
-        process->wrapped().emit(vm.propertyNames->error, args);
+        process->emitFromRuntime(vm.propertyNames->error, args);
     }
 }
 
@@ -5107,13 +5261,70 @@ const JSC::ClassInfo Process::s_info
     = { "Process"_s, &Base::s_info, &processObjectTable, nullptr,
           CREATE_METHOD_TABLE(Process) };
 
-void Process::finishCreation(JSC::VM& vm)
+// `process.constructor`, as in node: a call returns what it was called on, and `new` creates an object that has
+// the prototype of `process`.
+JSC_DEFINE_HOST_FUNCTION(Process_callConstructor, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(callFrame->thisValue().toThis(globalObject, ECMAMode::sloppy()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_constructConstructor, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue prototype = asObject(callFrame->newTarget())->get(globalObject, vm.propertyNames->prototype);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyObject(globalObject, prototype.isObject() ? asObject(prototype) : globalObject->objectPrototype())));
+}
+
+Process* Process::create(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* shapeModeSymbol = Symbol::createWithDescription(vm, "shapeMode"_s);
+    auto* captureSymbol = Symbol::createWithDescription(vm, "kCapture"_s);
+    auto* eventEmitterPrototype = createNodeEventEmitterPrototype(vm, globalObject, captureSymbol);
+
+    // node: lib/internal/bootstrap/node.js setupProcessObject.
+    auto* prototype = constructEmptyObject(globalObject, eventEmitterPrototype);
+    auto* constructor = JSFunction::create(vm, globalObject, 0, "process"_s, Process_callConstructor, ImplementationVisibility::Public, NoIntrinsic, Process_constructConstructor);
+    constructor->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    prototype->putDirect(vm, vm.propertyNames->constructor, constructor, PropertyAttribute::DontEnum | 0);
+
+    auto* structure = createStructure(vm, globalObject, prototype);
+    Process* process = new (NotNull, JSC::allocateCell<Process>(vm)) Process(vm, structure);
+    process->finishCreation(vm, eventEmitterPrototype, shapeModeSymbol, captureSymbol);
+    return process;
+}
+
+void Process::finishCreation(JSC::VM& vm, JSObject* eventEmitterPrototype, Symbol* shapeModeSymbol, Symbol* captureSymbol)
 {
     Base::finishCreation(vm);
+    m_eventEmitterPrototype.set(vm, this, eventEmitterPrototype);
+    m_shapeModeSymbol.set(vm, this, shapeModeSymbol);
+    m_captureSymbol.set(vm, this, captureSymbol);
 
-    // Before the hook below: onDidChangeListeners loads the signal tables on any add.
-    installDefaultWarningListener(vm);
-    wrapped().onDidChangeListener = &onDidChangeListeners;
+    // The listeners that node's bootstrap adds: on the main thread the two that follow the listeners of signals,
+    // and the printer of warnings (lib/internal/process/pre_execution.js setupWarningHandler). Only a stub of the
+    // printer is here: the first warning creates the printer behind it.
+    auto* events = constructEmptyObject(vm, globalObject()->nullPrototypeObjectStructure());
+    unsigned eventsCount = 0;
+    auto addListener = [&](const Identifier& eventName, ASCIILiteral name, NativeFunction function) {
+        events->putDirect(vm, eventName, JSFunction::create(vm, globalObject(), 1, name, function, ImplementationVisibility::Public));
+        eventsCount++;
+    };
+    if (Bun__isMainThreadVM()) {
+        addListener(Identifier::fromString(vm, "newListener"_s), "startListeningIfSignal"_s, Process_startListeningIfSignal);
+        addListener(Identifier::fromString(vm, "removeListener"_s), "stopListeningIfSignal"_s, Process_stopListeningIfSignal);
+    }
+    if (!Bun__NODE_NO_WARNINGS() && !Bun__Node__ProcessNoWarnings)
+        addListener(builtinNames(vm).warningPublicName(), "onWarning"_s, Process_functionDefaultOnWarning);
+
+    // The own properties of a new emitter, in the order that the EventEmitter constructor defines them.
+    putDirect(vm, builtinNames(vm)._eventsPublicName(), events);
+    putDirect(vm, Identifier::fromString(vm, "_eventsCount"_s), jsNumber(eventsCount));
+    putDirect(vm, Identifier::fromUid(shapeModeSymbol->privateName()), jsBoolean(false));
+    putDirect(vm, Identifier::fromString(vm, "_maxListeners"_s), jsUndefined());
+    putDirect(vm, Identifier::fromUid(captureSymbol->privateName()), jsBoolean(false));
 
     m_cpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
         init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));

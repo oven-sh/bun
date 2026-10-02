@@ -1034,6 +1034,10 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
     [resolve(cfg.cwd, "src/jsc/bindings/JSBuffer.cpp"), resolve(cfg.codegenDir, "JSBuffer.lut.h")],
     [resolve(cfg.cwd, "src/jsc/bindings/BunProcess.cpp"), resolve(cfg.codegenDir, "BunProcess.lut.h")],
     [
+      resolve(cfg.cwd, "src/jsc/bindings/NodeEventEmitterPrototype.cpp"),
+      resolve(cfg.codegenDir, "NodeEventEmitterPrototype.lut.h"),
+    ],
+    [
       resolve(cfg.cwd, "src/jsc/bindings/ProcessBindingBuffer.cpp"),
       resolve(cfg.codegenDir, "ProcessBindingBuffer.lut.h"),
     ],

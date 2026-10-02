@@ -846,7 +846,7 @@ impl<'a> Checker<'a> {
 }
 
 pub fn create_file_index_map(files: List<'_, NodeId>) -> Map<NodeId, isize> {
-    let mut result = Map::make();
+    let mut result: Map<NodeId, isize> = Map::make();
     for (i, file) in files.iter().enumerate() {
         // The map was just made, so the write is not refused.
         let _ = result.set(file, i as isize);

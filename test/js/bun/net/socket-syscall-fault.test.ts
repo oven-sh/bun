@@ -306,6 +306,23 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
   },
 );
 
+// A socket that waits in the low-priority handshake queue leaves epoll the
+// same way when its peer hangs up, and the queue registers it again when it
+// hands the socket back. The fixture makes the first registration fail: that
+// socket closes with the error, and the other 15 read what their peer sent.
+test.concurrent.skipIf(!fault.available() || !isLinux)(
+  "a socket that the TLS handshake queue cannot register again closes with the error",
+  async () => {
+    expect(await runFixture("tls-parked-hangup-fixture.ts")).toEqual({
+      summary: { outcomes: { "handshake, data last words, close": 15, "close ENOMEM": 1 } },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
+
 // An injected send() errno that is neither would-block/transient
 // (EAGAIN/ENOBUFS/ENOMEM) nor a known peer-gone error (EPIPE/ECONNRESET/...)
 // exercises the bounded unclassified-errno retry in

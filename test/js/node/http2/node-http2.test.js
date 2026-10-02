@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -14,6 +15,7 @@ import tls from "node:tls";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
+import { countTimerRefreshes } from "./http2-session-timer-refresh.fixture.js";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx, mock } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
 // there; the 10k-request maxSessionMemory stress test takes ~105s under
@@ -6590,4 +6592,301 @@ it("originSet is undefined on a destroyed TLS session that never read it", async
   } finally {
     server.close();
   }
+});
+
+describe.concurrent("http2 session idle timer", () => {
+  // A session keeps the timer of setTimeout() under this symbol, like net.Socket does.
+  const kTimeout = Symbol.for("::buntimeout::");
+  const period = 50;
+  // For a timer that must not expire by itself.
+  const never = 2 ** 30;
+
+  // Counts the runs of the timer's expiry handler and the refresh() calls on the timer.
+  function watchIdleTimer(session) {
+    const timer = session[kTimeout];
+    const counts = { expiries: 0, refreshes: 0 };
+    const { _onTimeout, refresh } = timer;
+    timer._onTimeout = function (...args) {
+      counts.expiries++;
+      return _onTimeout.apply(this, args);
+    };
+    timer.refresh = function () {
+      counts.refreshes++;
+      return refresh.call(this);
+    };
+    return counts;
+  }
+
+  // Arms the idle timer of `session`. Resolves with the count of expiries at its 'timeout' event.
+  function expiriesAtTimeout(session) {
+    const { promise, resolve } = Promise.withResolvers();
+    session.setTimeout(period, () => resolve(counts.expiries));
+    const counts = watchIdleTimer(session);
+    return promise;
+  }
+
+  // The transports of a session: a native TCP socket, a native TLS socket, a JS stream.
+  const transports = ["tcp", "tls", "duplexPair"];
+  const createServer = transport => (transport === "tls" ? http2.createSecureServer(TLS_CERT) : http2.createServer());
+
+  // Resolves with a function that starts a client session to `server`.
+  async function dialer(server, transport = "tcp") {
+    if (transport === "duplexPair") {
+      return () => {
+        const [clientSide, serverSide] = duplexPair();
+        server.emit("connection", serverSide);
+        return http2.connect("http://localhost", { createConnection: () => clientSide });
+      };
+    }
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    return transport === "tls"
+      ? () => http2.connect(`https://127.0.0.1:${port}`, TLS_OPTIONS)
+      : () => http2.connect(`http://127.0.0.1:${port}`);
+  }
+
+  // Resolves with a client session that has connected to `server`.
+  async function connectTo(server, transport) {
+    const client = (await dialer(server, transport))();
+    client.on("error", () => {});
+    await once(client, "connect");
+    return client;
+  }
+
+  for (const scheme of ["https", "http"]) {
+    it(`emits 'timeout' at the first expiry when the peer never answers (${scheme})`, async () => {
+      // The peer accepts the TCP connection. It reads nothing and writes nothing.
+      const sockets = [];
+      const peer = net.createServer(socket => {
+        sockets.push(socket);
+        socket.on("error", () => {});
+      });
+      await new Promise(resolve => peer.listen(0, "127.0.0.1", resolve));
+      const client = http2.connect(`${scheme}://127.0.0.1:${peer.address().port}`, { rejectUnauthorized: false });
+      client.on("error", () => {});
+      try {
+        expect(await expiriesAtTimeout(client)).toBe(1);
+      } finally {
+        client.destroy();
+        for (const socket of sockets) socket.destroy();
+        peer.close();
+      }
+    });
+  }
+
+  for (const transport of transports) {
+    it(`emits 'timeout' at the first expiry of an idle client session (${transport})`, async () => {
+      const server = createServer(transport);
+      const client = await connectTo(server, transport);
+      try {
+        expect(await expiriesAtTimeout(client)).toBe(1);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    it(`emits 'timeout' at the first expiry of an idle server session (${transport})`, async () => {
+      const server = createServer(transport);
+      const { promise, resolve } = Promise.withResolvers();
+      let counts;
+      server.on("session", session => {
+        counts = watchIdleTimer(session);
+      });
+      server.setTimeout(period, () => resolve(counts.expiries));
+      const client = await connectTo(server, transport);
+      try {
+        expect(await promise).toBe(1);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+  }
+
+  it("destroys an idle server session at the first expiry when the server has no 'timeout' listener", async () => {
+    const server = http2.createServer();
+    const { promise, resolve } = Promise.withResolvers();
+    server.timeout = period;
+    server.on("session", session => {
+      const counts = watchIdleTimer(session);
+      session.on("close", () => resolve(counts.expiries));
+    });
+    const client = await connectTo(server);
+    try {
+      expect(await promise).toBe(1);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("holds an expiry back only while a stream write is in flight and frames leave", async () => {
+    const server = http2.createServer();
+    const { promise: written, resolve: onWritten } = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.session.setTimeout(never);
+      stream.respond({ ":status": 200 });
+      // The client reads nothing at first, so flow control stops this write after one window.
+      stream.write(Buffer.alloc(1024 * 1024, "a"));
+      onWritten(stream.session);
+    });
+    const client = await connectTo(server);
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      const session = await written;
+      let timeouts = 0;
+      session.on("timeout", () => timeouts++);
+      // Runs the expiry handler of the timer. The test then does not depend on the transfer speed.
+      const expire = () => {
+        session[kTimeout]._onTimeout(session);
+        return timeouts;
+      };
+
+      // Frames left since the write went out.
+      expect(expire()).toBe(0);
+      // No frame left since the last expiry.
+      expect(expire()).toBe(1);
+
+      // More than one window of data at the client means that frames left after that expiry.
+      const window = client.localSettings.initialWindowSize;
+      for (let received = 0; received <= window; ) {
+        const chunk = req.read();
+        if (chunk === null) await once(req, "readable");
+        else received += chunk.length;
+      }
+      expect(expire()).toBe(1);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  // http2-session-timer-refresh.fixture.js takes the same steps in Node.js and in Bun. For each
+  // step it counts the refresh() calls on the idle timer of the client session and of the server
+  // session. These are the counts of Node.js v18.20.8 to v26.10.0 on a TCP or TLS socket.
+  const refreshesInNode = {
+    "connect": { client: 1, server: 0 },
+    "request()": { client: 1, server: 1 },
+    "write() on the client": { client: 2, server: 1 },
+    "additionalHeaders()": { client: 1, server: 1 },
+    "origin() and additionalHeaders()": { client: 2, server: 1 },
+    "altsvc() and additionalHeaders(), no 'altsvc' listener": { client: 1, server: 1 },
+    "altsvc(), 'altsvc' listener": { client: 1, server: 0 },
+    "pushStream() and respond() on the pushed stream": { client: 2, server: 2 },
+    "respond()": { client: 1, server: 1 },
+    "write() on the server": { client: 1, server: 2 },
+    "end() and sendTrailers()": { client: 1, server: 1 },
+    "end() on the client": { client: 0, server: 1 },
+    "end() with data, request not read": { client: 4, server: 4 },
+    "end() with data, request read to its end": { client: 6, server: 5 },
+    "resume(), respond() and end() with data in the 'stream' event": { client: 4, server: 3 },
+    "end() with data, request ended by an empty DATA frame and not read": { client: 4, server: 4 },
+    "end() with data on the client, response ended by an empty DATA frame and not read": { client: 4, server: 4 },
+    "respondWithFD()": { client: 4, server: 2 },
+    "respondWithFile()": { client: 4, server: 2 },
+    "respondWithFD(), statCheck responds and returns false": { client: 2, server: 3 },
+    "respondWithFile() of a missing file, onError responds": { client: 2, server: 3 },
+    "close() with a code, on a stream with a write that waits for window": { client: 4, server: 3 },
+    "settings() on the server, no 'remoteSettings' listener": { client: 0, server: 1 },
+    "settings() on the server, 'remoteSettings' listener": { client: 1, server: 1 },
+    "ping() on the server, no 'ping' listener": { client: 0, server: 0 },
+    "ping() on the server, 'ping' listener": { client: 1, server: 0 },
+    "settings() on the client, no 'remoteSettings' listener": { client: 1, server: 0 },
+    "settings() on the client, 'remoteSettings' listener": { client: 1, server: 1 },
+    "ping() on the client, no 'ping' listener": { client: 0, server: 0 },
+    "ping() on the client, 'ping' listener": { client: 0, server: 1 },
+    "close()": { client: 1, server: 1 },
+  };
+
+  for (const transport of transports) {
+    it(
+      `refreshes the timers as often as node for each call and frame (${transport})`,
+      async () => {
+        const server = createServer(transport);
+        try {
+          const counts = await countTimerRefreshes(server, await dialer(server, transport));
+          // node sets up a session on a stream that has connected already inside connect(). The
+          // client has no timer at that time, so node counts no refresh for the connect.
+          const connect = transport === "duplexPair" ? { client: 0, server: 0 } : refreshesInNode.connect;
+          expect(counts).toEqual({ ...refreshesInNode, connect });
+        } finally {
+          server.close();
+        }
+      },
+      // The fixture has 31 steps. A debug build on a busy machine needs 1 to 5 s for them. Every
+      // other build keeps the default.
+      isDebug ? 30_000 : undefined,
+    );
+  }
+
+  it.skipIf(!nodeExe())("node gives the refresh counts that the tests above expect", async () => {
+    const fixture = path.join(import.meta.dir, "http2-session-timer-refresh.fixture.js");
+    await using proc = Bun.spawn({ cmd: [nodeExe(), fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(refreshesInNode);
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not emit 'timeout' for the timer of its socket", async () => {
+    const server = http2.createServer();
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    socket.setTimeout(period);
+    const client = http2.connect("http://127.0.0.1", { createConnection: () => socket });
+    client.on("error", () => {});
+    try {
+      let timeouts = 0;
+      client.on("timeout", () => timeouts++);
+      await once(socket, "timeout");
+      expect(timeouts).toBe(0);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("arms a timer that has fired again on a request without a body", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => stream.respond({ ":status": 204 }, { endStream: true }));
+    const client = await connectTo(server);
+    try {
+      client.setTimeout(period);
+      await once(client, "timeout");
+
+      const { promise, resolve } = Promise.withResolvers();
+      client.once("timeout", () => resolve("timeout"));
+      const req = client.request({ ":path": "/" });
+      req.resume();
+      await once(req, "close");
+      // The response was the last activity. The idle timer, if the request armed it, is due
+      // before this timer, which starts later and runs longer.
+      const reference = setTimeout(resolve, period * 4, "the request did not arm the idle timer");
+      try {
+        expect(await promise).toBe("timeout");
+      } finally {
+        clearTimeout(reference);
+      }
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("removes the 'timeout' listeners when the session is destroyed", async () => {
+    const server = http2.createServer();
+    const client = await connectTo(server);
+    try {
+      client.setTimeout(never, () => {});
+      expect(client.listenerCount("timeout")).toBe(1);
+      client.destroy();
+      expect(client.listenerCount("timeout")).toBe(0);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
 });

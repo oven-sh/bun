@@ -12,6 +12,7 @@
 # env: S (scratch, default /tmp/costproof)  BASE REF HEAD (binaries)  REFTREE HEADTREE (trees that hold src/js_parser)
 #      BASEBUN HEADBUN (stripped binaries)  COUNT (dir with <group>.err of a counting build) SITES (its sites.tsv)  ALLOW (siteaudit)
 #      NOLINT (bun-profile of the head tree with the predicate a constant false: it must be the reference, function by function)
+#      EXCEPT (regex of the names that are accepted exceptions of tsdiff.py)
 S=${S:-/tmp/costproof}
 O=${1:-$S/report}
 BASE=${BASE:-/workspace/base/bun-profile.bc7a813b1}; HEAD=${HEAD:-/workspace/bun/build/release/bun-profile}; REF=${REF:-$S/link/ref/bun-profile}
@@ -34,14 +35,14 @@ done
 [ -f $O/ref.bun ] || /usr/bin/strip --strip-all --strip-debug --discard-all -R .eh_frame -R .eh_frame_hdr -R .gcc_except_table $REF -o $O/ref.bun
 { stat -L -c 'base %s %n' $BASEBUN; stat -L -c 'ref  %s %n' $O/ref.bun; [ -f "$HEADBUN" ] && stat -L -c 'head %s %n' $HEADBUN; } > $O/stripped.txt
 # 2. machine code, function by function
-python3 $P2/tsdiff.py $REF $HEAD > $O/tsdiff.ref-head.txt; echo "tsdiff exit $?" >> $O/tsdiff.ref-head.txt
+python3 $P2/tsdiff.py $REF $HEAD --trees $REFTREE,$HEADTREE ${EXCEPT:+--except "$EXCEPT"} > $O/tsdiff.ref-head.txt; echo "tsdiff exit $?" >> $O/tsdiff.ref-head.txt
 python3 $P/fncmp.py $BASE $REF --inst . --all > $O/fncmp.all.base-ref.txt
 python3 $P/fncmp.py $REF $HEAD --inst 'skip_type_?script|skip_typescript' --all > $O/fncmp.skipper.ref-head.txt
 python3 $P/fncmp.py $BASE $REF --inst 'skip_type_?script|skip_typescript' --all > $O/fncmp.skipper.base-ref.txt
 python3 $P/fnclass.py $BASE $REF --inst . > $O/fnclass.all.base-ref.txt
 python3 $P/lintcalls.py $HEAD --inst 'P<false, ?(false|true)>|P<true, ?true>' > $O/lintcalls.shared.head.txt
 python3 $P/optsites.py $REF > $O/optsites.js.ref.txt; python3 $P/optsites.py $HEAD > $O/optsites.js.head.txt
-if [ -n "$NOLINT" ]; then python3 $P2/tsdiff.py $REF $NOLINT > $O/tsdiff.ref-nolint.txt; echo "tsdiff exit $?" >> $O/tsdiff.ref-nolint.txt; fi
+if [ -n "$NOLINT" ]; then python3 $P2/tsdiff.py $REF $NOLINT --trees $REFTREE,$HEADTREE ${EXCEPT:+--except "$EXCEPT"} > $O/tsdiff.ref-nolint.txt; echo "tsdiff exit $?" >> $O/tsdiff.ref-nolint.txt; fi
 # 3. counts in both VEX modes, transpiler cache of the run time off
 if [ -z "$NOCG" ]; then
   for t in base ref head; do

@@ -29,8 +29,9 @@ test/cli/run/transpiler-cache.test.ts|20 pass;0 fail
 test/js/bun/typescript/type-export.test.ts|70 pass;18 skip;0 fail
 test/bundler/transpiler/transpiler.test.js|237 pass;1 skip;21 todo;0 fail"
 summary=$out/summary.txt
-changed=$(echo "$LIST" | cut -d'|' -f1 | xargs git diff --stat origin/main -- | tail -1)
-echo "# $mode  HEAD $(git rev-parse --short=10 HEAD)  $(date -u +%FT%TZ)  the eight files against origin/main: ${changed:-identical}" | tee "$summary"
+main=$(git merge-base HEAD origin/main)
+changed=$(echo "$LIST" | cut -d'|' -f1 | xargs git diff --stat "$main" -- | tail -1)
+echo "# $mode  HEAD $(git rev-parse --short=10 HEAD)  $(date -u +%FT%TZ)  the eight files against main at ${main:0:10}: ${changed:-identical}" | tee "$summary"
 bad=0
 [ -z "$changed" ] || bad=1
 while IFS='|' read -r f want; do

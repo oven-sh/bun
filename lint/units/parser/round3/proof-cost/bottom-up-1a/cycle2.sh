@@ -39,7 +39,8 @@ t2=$(date +%s)
 echo "$TAG: compile $((t1 - t0)) s, link $((t2 - t1)) s"
 rc=0
 if [ "$TAG" != ref ] && [ -x $S/link/ref/bun-profile ]; then
-  python3 $P2/tsdiff.py $S/link/ref/bun-profile $S/link/$TAG/bun-profile --lint "$LINTONLY" > $S/check/$TAG.tsdiff.txt; rc=$?
+  TREES=; [ -d $S/root/ref/src/js_parser ] && TREES="--trees $S/root/ref,$ROOT"
+  python3 $P2/tsdiff.py $S/link/ref/bun-profile $S/link/$TAG/bun-profile --lint "$LINTONLY" $TREES ${EXCEPT:+--except "$EXCEPT"} > $S/check/$TAG.tsdiff.txt; rc=$?
   grep -E '^(SHARED|MOVED|OTHER|GONE)' $S/check/$TAG.tsdiff.txt | head -20
   tail -2 $S/check/$TAG.tsdiff.txt
   python3 $P/fncmp.py $S/link/ref/bun-profile $S/link/$TAG/bun-profile --inst 'skip_type_?script|skip_typescript' > $S/check/$TAG.fncmp.skipper.txt

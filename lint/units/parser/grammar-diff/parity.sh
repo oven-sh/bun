@@ -6,7 +6,7 @@
 #   /workspace/tools/lk bash parity.sh <tag> <bun under test> [step ...]
 #
 # steps, default all of them in this order:
-#   seams seams-bu testrows comments targeted small-sub check bench tscases repo-ts repo-js small
+#   seams seams-bu testrows comments targeted probes small-sub check bench tscases repo-ts repo-js small
 #            a corpus through harness.all.mjs: 34 configurations of Bun.Transpiler (the 15 of harness.mjs, the 7 of
 #            harness.extra-apis.mjs, 12 more), an error with message, line, column, length, offset, level and notes
 #     seams      1,089 sources, seams.mjs: the sites outside the type grammar that round 1 changed, from the lists of the sites
@@ -14,6 +14,7 @@
 #     testrows     301 sources: the four test files of round 1 (typescript-grammar*.test.ts)
 #     comments     122 sources with a comment inside a construct
 #     targeted   3,952 sources by construct
+#     probes     3,361 sources, probes.mjs: the probe inputs of round 2, written at the sites where round 1 and main differ
 #     small-sub  7,089 sources of small (the part for a binary with debug assertions, which is slow)
 #     check     18,390 sources: the probe inputs of round 1, two parts of small, targeted again
 #     bench        329 sources: the inputs of the transpiler benchmark (notes/lint/benchroot)
@@ -45,7 +46,7 @@
 # A binary with debug assertions ends the message of Lexer::expect_contextual_keyword with " (token: T...)": the
 # harness and the workers cut that text, and the steps runtime and pmdiff are left out for it (its cache entries
 # have another name). Give it the steps by name: small takes hours with it. A first check of a debug build, about 20 minutes:
-#   parity.sh <tag> build/debug/bun-debug seams seams-bu testrows comments targeted order bundle
+#   parity.sh <tag> build/debug/bun-debug seams seams-bu testrows comments targeted probes order bundle
 # The body is functions, so that an edit of this file during a run does not reach the run.
 set -u
 
@@ -447,7 +448,7 @@ JS
 
 corpus_file() {
   case $1 in
-    seams | seams-bu | testrows | comments | small-sub | small) echo "$G/corpus.$1.json" ;;
+    seams | seams-bu | testrows | comments | probes | small-sub | small) echo "$G/corpus.$1.json" ;;
     targeted) echo "$G/corpus.targeted-09.json" ;;
     check) echo "$N/round2/grammar-diff-run/bottom-up/runs/corpus.check.json" ;;
     bench | tscases | repo-ts | repo-js) echo "$OUT/corpus.$1.json" ;;
@@ -459,6 +460,7 @@ corpus_pin() {
   case $1 in
     seams) echo 140755828465cf395762eaeb73ffb94d6fdc991d2373e17e63158ea5ed1412d5 ;;
     seams-bu) echo 77db46ce594296f0e7992e5beeb063535cb9668f4ff80768d6c35a812650b0a9 ;;
+    probes) echo 61a16b1defb4bd90108083b06457fac0f234947ca0b95aafe498eee90142bcfb ;;
     small) echo 19d140cdf29b4cfcc6682bf827642a0c3e138ad34a120867b0e0e21e35e3dc81 ;;
     small-sub) echo edb744ab7286d2fc7d774bea188dde4eb861f3bfd97160ba108de5b68f279bc4 ;;
     targeted) echo 68d65cd91163a1d165a2f68da19054bf895024e4459ef6cce03977fc56b63487 ;;
@@ -470,7 +472,8 @@ corpus_pin() {
   esac
 }
 # sha256 of the records (the run without its first line) that a release build of main gives with harness.all.mjs.
-# main at f4d755a9cf and main at bc7a813b10 give the same records: no commit between them is in the parser.
+# main at f4d755a9cf (runs of 2026-10-02 before the restart) and main at bc7a813b10 give the same records: no commit
+# between them is in the parser. A base run that gives other records is not main, or the harness changed: FAIL.
 golden() {
   case $1 in
     seams) echo 255aa6be3c2c722dba39f36a197391940ffe268a33eea4dc53dd4cbe2a1711f7 ;;
@@ -478,11 +481,12 @@ golden() {
     testrows) echo 672f1e03d5b5f0145b5a7167568662580e6a1c007cada017d9ffa3b26b7873e8 ;;
     comments) echo 13f998485d2a2c5624809047cb291ea9daa8a34fde56aa5bcb54082cbce2e638 ;;
     targeted) echo 579fa4af21be4379b33eae28247bbac13e87c30a8528a1196c310c27e35b3152 ;;
+    probes) echo 34890ad0f98ae7284d244a2efdc4db0e98131a74ed18b534fa3cf9c5c1706c21 ;;
     small-sub) echo 08aaea3bb89bfe09f4de3f8f0b3a495b7cf49bca0b91e3b2afdd73afc87600ee ;;
     check) echo 4120467680510265b2b5346dd612def70a53499a1c3282c0e6d0ca1dfa348af5 ;;
     bench) echo 28db6ef12b8fa47f1c78a588e4d63f81119eb72445d9009ef6c47d2d4f256eb6 ;;
     tscases) echo 52b0e193992ea0d3d9e5af3ff8a3222aac1ffd15f24a6a766cc2f5296f3c24d4 ;;
-    small) echo "$GOLDEN_SMALL" ;;
+    small) echo 37ffa4cd917453e093a82df1004dd2c7c01cd689cf6df766a4125817379a346d ;;
   esac
 }
 
@@ -667,6 +671,10 @@ run_steps() {
   echo "base    $BASE  sha256 $(sha256sum "$BASE" | cut -d' ' -f1)  $BASE_VERSION"
   echo "next    $NEXT  sha256 $(sha256sum "$NEXT" | cut -d' ' -f1)  $NEXT_VERSION  built $(date -u -r "$NEXT" +%FT%TZ)  workers $JOBS"
   echo "tree    $TREE  $(git -C "$TREE" rev-parse HEAD)  $(timeout 300 git -C "$TREE" status --short -uno -- src test | wc -l) modified files under src and test  EXPECTED_VERSION $(sed -nE 's/^const EXPECTED_VERSION: u32 = ([0-9]+);.*/\1/p' "$TREE/src/jsc/RuntimeTranspilerCache.rs")"
+  # The base is main as the tree holds it: a newer main in the tree would show as differences that are not of this work.
+  local base_rev=${BASE_VERSION##*+} tree_main
+  tree_main=$(git -C "$TREE" merge-base HEAD origin/main 2>/dev/null | cut -c1-9)
+  case "$tree_main" in "$base_rev"*) echo "main    the tree holds main up to $tree_main, which the base binary is a build of" ;; *) echo "WARN    the base binary is a build of main at $base_rev, the tree holds main up to ${tree_main:-?}: build the base again from that commit" ;; esac
   echo "tools   parity.sh $(sha "$SELF")  harness.all.mjs $(sha "$HARNESS") ($NAPIS configurations)  diff.mjs $(sha "$G/diff.mjs")  seams-seen.mjs $(sha "$G/seams-seen.mjs")  causes none"
   for c in "$@"; do
     case $c in
@@ -685,7 +693,7 @@ run_steps() {
       order)
         for r in $ORDER_CORPORA; do order_one "$r"; done
         ;;
-      seams | seams-bu | testrows | comments | targeted | small-sub | check | bench | tscases | repo-ts | repo-js | small) pair "$c" ;;
+      seams | seams-bu | testrows | comments | targeted | probes | small-sub | check | bench | tscases | repo-ts | repo-js | small) pair "$c" ;;
       *) echo "FAIL  unknown step $c"; BAD=$((BAD + 1)) ;;
     esac
   done
@@ -721,17 +729,16 @@ parity() {
   JOBS=${JOBS:-4}
   PIN_BENCH=8e8640fec3fa7c9d2c7cdef9f5d46f5e1fff8e56a035cb39fc8d58e98e21ab99
   PIN_TSCASES=cdddef44e6e6a317e29581949261b4dca3679420e6f4df4fa34a008f00cc5d78
-  GOLDEN_SMALL=
-  MUST_SEE=${MUST_SEE:-seams seams-bu testrows comments targeted small-sub check tscases small files runtime.seams runtime.seams-bu runtime.testrows bundle.seams bundle.seams-bu bundle.testrows pmdiff.seams pmdiff.testrows}
-  RUNTIME_CORPORA=${RUNTIME_CORPORA:-seams seams-bu testrows comments targeted small-sub bench}
-  BUNDLE_CORPORA=${BUNDLE_CORPORA:-seams seams-bu testrows comments targeted}
-  PMDIFF_CORPORA=${PMDIFF_CORPORA:-seams seams-bu testrows comments targeted}
-  ORDER_CORPORA=${ORDER_CORPORA:-seams seams-bu testrows comments targeted bench repo-js}
+  MUST_SEE=${MUST_SEE:-seams seams-bu testrows comments targeted probes small-sub check tscases small files runtime.seams runtime.seams-bu runtime.testrows bundle.seams bundle.seams-bu bundle.testrows pmdiff.seams pmdiff.testrows}
+  RUNTIME_CORPORA=${RUNTIME_CORPORA:-seams seams-bu testrows comments targeted probes small-sub bench}
+  BUNDLE_CORPORA=${BUNDLE_CORPORA:-seams seams-bu testrows comments targeted probes}
+  PMDIFF_CORPORA=${PMDIFF_CORPORA:-seams seams-bu testrows comments targeted probes}
+  ORDER_CORPORA=${ORDER_CORPORA:-seams seams-bu testrows comments targeted probes bench repo-js}
   [ $# -ge 2 ] || { echo "usage: parity.sh <tag> <bun under test> [step ...]"; return 2; }
   TAG=$1
   NEXT=$(readlink -f "$2")
   shift 2
-  [ $# -gt 0 ] || set -- seams seams-bu testrows comments targeted small-sub check bench tscases repo-ts repo-js small files runtime bundle pmdiff order
+  [ $# -gt 0 ] || set -- seams seams-bu testrows comments targeted probes small-sub check bench tscases repo-ts repo-js small files runtime bundle pmdiff order
   [ -x "$BASE" ] && [ -x "$NEXT" ] || { echo "missing binary: $BASE or $NEXT"; return 2; }
   case "$OUT" in /workspace/notes*) echo "OUT must be outside the notes"; return 2 ;; esac
   case "$EXPECT" in zero | differ) ;; *) echo "EXPECT is zero or differ"; return 2 ;; esac

@@ -2973,9 +2973,8 @@ has seen the file. "Verified" below says what was checked instead.
   context (10261, 10264, 10282) are those of the zero record of the store, which counts the read; a parameter symbol
   without a value declaration (10332, 10459) reads the nil node, which has no type node (where 10462 then asks for its
   initializer, `Ast::initializer` records the fault); `node.FunctionLikeData()` of a node without it (10233) is no
-  full signature, as `c07` 56 reads it;
-  the last parameter of a signature that is flagged as having a rest parameter and has no parameter (10476) is the nil
-  symbol.
+  full signature, as `c07` 56 reads it; the last parameter of a signature that is flagged as having a rest parameter
+  and has no parameter (10476) is the nil symbol.
 - Comments: a comment of several lines is one line.
 
 ### Verified
@@ -2989,18 +2988,18 @@ No compiler has seen the file, and nothing ran a function of it. What was checke
 - Scripts over the file: the 28 functions are in upstream's order; each of the 66 imported names is used and no free
   function is called without an import; no two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`,
   `unimplemented`, `unreachable`, `unsafe` or `allow(`, and every `[...]` indexes a store of records or a link store of
-  the checker; the 8 messages are constants of `diagnostics/diagnostics_generated.rs`. `c04-callseq.py` with the range
-  and the file of `c16`: each function calls the same methods of the checker as upstream's body, the same number of
-  times (`list_of`, `map_set`, `type_types` and `value_symbol_links_get` stand for a slice, a map write, `t.Types()`
-  and `valueSymbolLinks.Get`).
+  the checker; the 8 messages are constants of `diagnostics/diagnostics_generated.rs`.
+- `python3 round2-layer7-checker/c16-callseq.py`: each of the 28 functions calls the same methods of the checker as
+  upstream's body, the same number of times (`list_of`, `map_set`, `type_types` and `value_symbol_links_get` stand for
+  a slice that is kept, a map write, `t.Types()` and `valueSymbolLinks.Get`, and are not counted).
 - Read at their definitions in the tree, name, receiver, parameter order and types, and result: the 55 methods of
   the checker that the file calls and the tree defines (`c05`, `c06`, `c07`, `c08`, `c09`, `c13`, `c14`, `c21`, `c22`,
   `c28`, `c31`, `c33`, `c34`, `c35`, `c36`, `c37`, `c38`, `c41`, `c46`, `c50`, `grammarchecks.rs`, `inference.rs`,
   `links.rs`, `relater.rs`, `types.rs`, `c02_program_checker.rs`), the 37 free functions of `ast/`, `checker/`,
   `core/core.rs` and `scanner/utilities.rs`, the 18 accessors of `Ast`, `Program::get_emit_module_format_of_file`,
   `CompilerOptions::get_use_define_for_class_fields`, `ModuleKind::string`, and the fields, records, flags and stores
-  of the data model (`c01_data.rs`, `c02_program_checker.rs`, `types.rs`, `core/linkstore.rs`, `core/golang.rs`).
-  `Map` and `LiveList` are used as the contract has them.
+  of the data model (`c01_data.rs`, `c02_program_checker.rs`, `types.rs`, `core/linkstore.rs`, and `List`, `LiveList`
+  and `Map` with `get_ok` and `set` of `core/golang.rs`).
 - The 20 calls that 10 other files make into these functions (`c05` 309 and 315, `c06` 135, 303 and 541, `c07` 23 and
   62, `c09` 69, `c10` 36, 139 and 469, `c11` 318 and 470, `c14` 725-728, `c20` 1099 and 1198, `c35` 642, `c46` 60) match
   the signatures by name, number and kind of arguments, and by what they do with the result.
@@ -3014,8 +3013,6 @@ At `f0097bcc09`, two callees, each called by its upstream name with upstream's p
 
 - `c34` (its range holds them, its file does not): `get_return_type_from_body(node, check_mode) -> TypeId` (20240) and
   `unwrap_return_type(return_type, function_flags: FunctionFlags) -> TypeId` (20502), the nil type for upstream's nil.
-- `crate::core::Map` as the contract has it (`get_ok`, and `set` with its `bool`), for `context_free_types`, and
-  `crate::core::LiveList`, for the inferences of a context.
 
 What waits in another file: `c46_mark_references.rs` 31 says that `check_class_expression_external_helpers` is kept
 there until the file of its upstream range exists. That file exists now, and the function is still in `c46`.

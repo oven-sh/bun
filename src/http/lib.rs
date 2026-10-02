@@ -3485,7 +3485,7 @@ impl<'a> HTTPClient<'a> {
                             }
                             #[cfg(not(windows))]
                             crate::send_file::Status::Err(err) => {
-                                self.close_and_fail::<IS_SSL>(err, socket);
+                                self.close_and_retry_or_fail::<IS_SSL>(err, socket);
                                 return;
                             }
                             crate::send_file::Status::Again => {
@@ -3725,6 +3725,29 @@ impl<'a> HTTPClient<'a> {
             GenHttpContext::<IS_SSL>::terminate_socket(socket);
         }
         self.fail(err);
+    }
+
+    /// `close_and_fail` for a failed file body write. `sendfile(2)` can report a reused
+    /// keep-alive socket that the peer closed (EPIPE/ECONNRESET) before `on_close` runs, so
+    /// that error gets the same one retry as `on_close`.
+    #[cfg(not(windows))]
+    fn close_and_retry_or_fail<const IS_SSL: bool>(
+        &mut self,
+        err: crate::Error,
+        socket: HttpSocket<IS_SSL>,
+    ) {
+        let peer_closed = matches!(
+            err,
+            crate::Error::Sys(bun_errno::SystemErrno::EPIPE | bun_errno::SystemErrno::ECONNRESET)
+        );
+        if peer_closed && !self.state.flags.is_redirect_pending {
+            GenHttpContext::<IS_SSL>::terminate_socket(socket);
+            if !self.retry_on_closed_socket() {
+                self.fail(err);
+            }
+            return;
+        }
+        self.close_and_fail::<IS_SSL>(err, socket);
     }
 
     fn start_proxy_handshake<const IS_SSL: bool>(

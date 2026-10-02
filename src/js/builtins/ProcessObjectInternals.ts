@@ -708,7 +708,8 @@ export function loadEnvFile(path) {
   for (const key of Object.keys(parsed)) {
     // Node: existing env keys win; the file only fills in missing ones.
     // Compare against undefined rather than `in`: accessor-backed keys (TZ,
-    // HTTP_PROXY) always exist but read back undefined while unset.
+    // NODE_TLS_REJECT_UNAUTHORIZED, BUN_CONFIG_VERBOSE_FETCH) always exist
+    // but read back undefined while unset.
     if (env[key] === undefined) {
       env[key] = parsed[key];
     }

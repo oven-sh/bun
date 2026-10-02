@@ -137,6 +137,103 @@ it("process.loadEnvFile can set accessor-backed keys and respects empty values",
   expect({ stdout, exitCode }).toEqual({ stdout: 'http://from-dotenv:8080\n""\nfresh\n', exitCode: 0 });
 });
 
+// https://github.com/oven-sh/bun/issues/44379
+describe.concurrent("TZ, NODE_TLS_REJECT_UNAUTHORIZED and BUN_CONFIG_VERBOSE_FETCH set to an empty string", () => {
+  const names = ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"];
+  const setTo = value => Object.fromEntries(names.map(name => [name, value]));
+
+  async function run(files, env) {
+    using dir = tempDir("process-env-empty", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: stdout ? JSON.parse(stdout) : stderr, exitCode };
+  }
+
+  const read = `
+    const result = {};
+    for (const name of ${JSON.stringify(names)}) {
+      result[name] = {
+        read: process.env[name],
+        bunEnv: Bun.env[name],
+        importMetaEnv: import.meta.env[name],
+        listed: Object.keys(process.env).includes(name),
+        spread: { ...process.env }[name],
+        json: JSON.parse(JSON.stringify(process.env))[name],
+        clone: structuredClone(process.env)[name],
+      };
+    }
+    console.log(JSON.stringify(result));
+  `;
+  const empty = { read: "", bunEnv: "", importMetaEnv: "", listed: true, spread: "", json: "", clone: "" };
+
+  it.each([
+    ["the environment", { "index.js": read }, setTo("")],
+    [".env", { ".env": names.map(name => `${name}=\n`).join(""), "index.js": read }, setTo(undefined)],
+  ])("process.env reads them from %s", async (_, files, env) => {
+    expect(await run(files, env)).toEqual({ result: setTo(empty), exitCode: 0 });
+  });
+
+  const load = {
+    "vars.env": "TZ=Asia/Tokyo\nNODE_TLS_REJECT_UNAUTHORIZED=0\nBUN_CONFIG_VERBOSE_FETCH=curl\n",
+    "index.js": `
+      const offset = () => new Date("2024-07-15T12:00:00Z").getTimezoneOffset();
+      const before = offset();
+      process.loadEnvFile("vars.env");
+      console.log(JSON.stringify({
+        values: ${JSON.stringify(names)}.map(name => process.env[name]),
+        timeZoneChanged: offset() !== before,
+        offset: offset(),
+      }));
+    `,
+  };
+
+  it("process.loadEnvFile keeps them", async () => {
+    const { result, exitCode } = await run(load, setTo(""));
+    expect({ values: result.values, timeZoneChanged: result.timeZoneChanged, exitCode }).toEqual({
+      values: ["", "", ""],
+      timeZoneChanged: false,
+      exitCode: 0,
+    });
+  });
+
+  it("process.loadEnvFile fills them in when they are not set", async () => {
+    const { result, exitCode } = await run(load, setTo(undefined));
+    // Asia/Tokyo is UTC+9 all year.
+    expect({ values: result.values, offset: result.offset, exitCode }).toEqual({
+      values: ["Asia/Tokyo", "0", "curl"],
+      offset: -540,
+      exitCode: 0,
+    });
+  });
+
+  it("child processes inherit them", async () => {
+    const print = `console.log(JSON.stringify(${JSON.stringify(names)}.map(name => process.env[name] ?? null)))`;
+    const children = {
+      "index.js": `
+        import { execFile } from "node:child_process";
+        import { promisify } from "node:util";
+        const cmd = [process.execPath, "-e", ${JSON.stringify(print)}];
+        const [childProcess, bunSpawn, shell] = await Promise.all([
+          promisify(execFile)(cmd[0], cmd.slice(1)).then(({ stdout }) => JSON.parse(stdout)),
+          Bun.spawn({ cmd, env: process.env, stdout: "pipe" }).stdout.json(),
+          Bun.$\`\${cmd}\`.json(),
+        ]);
+        console.log(JSON.stringify({ childProcess, bunSpawn, shell }));
+      `,
+    };
+    expect(await run(children, setTo(""))).toEqual({
+      result: { childProcess: ["", "", ""], bunSpawn: ["", "", ""], shell: ["", "", ""] },
+      exitCode: 0,
+    });
+  });
+});
+
 it("process.env defineProperty matches assignment semantics", () => {
   // Node's EnvDefiner delegates to the env setter after validating the
   // descriptor: symbol keys throw a TypeError...

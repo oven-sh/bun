@@ -1761,6 +1761,54 @@ test("env: process.env reads in a worker module are evaluated at runtime against
   });
 });
 
+// https://github.com/oven-sh/bun/issues/44379
+test.concurrent.each([
+  "default env",
+  "default env, after the main thread read process.env",
+  "env: process.env",
+  "env: SHARE_ENV",
+])(
+  "env: a worker reads an empty TZ, NODE_TLS_REJECT_UNAUTHORIZED and BUN_CONFIG_VERBOSE_FETCH as an empty string (%s)",
+  async mode => {
+    using dir = tempDir("worker-threads-env-empty", {
+      "main.js": `
+        const { Worker, SHARE_ENV, isMainThread, parentPort } = require("node:worker_threads");
+        const read = () =>
+          ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"].map(name => process.env[name] ?? null);
+        if (isMainThread) {
+          const mode = process.argv[2];
+          if (mode === "default env, after the main thread read process.env") read();
+          const worker = new Worker(
+            __filename,
+            mode === "env: process.env" ? { env: process.env } : mode === "env: SHARE_ENV" ? { env: SHARE_ENV } : {},
+          );
+          worker.on("error", err => { console.error(err); process.exit(1); });
+          worker.on("message", fromWorker => console.log(JSON.stringify({ worker: fromWorker, main: read() })));
+        } else {
+          parentPort.postMessage(read());
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js", mode],
+      env: { ...bunEnv, TZ: "", NODE_TLS_REJECT_UNAUTHORIZED: "", BUN_CONFIG_VERBOSE_FETCH: "" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      message: stdout ? JSON.parse(stdout) : stdout,
+      stderr: exitCode === 0 ? "" : stderr,
+      exitCode,
+    }).toEqual({
+      message: { worker: ["", "", ""], main: ["", "", ""] },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
   async function run(mode: string) {
     const proc = Bun.spawn({

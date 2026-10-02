@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -2889,3 +2889,55 @@ it.skipIf(!sqliteAllowsMoreThan65535Parameters)(
     expect(db.query("SELECT a FROM t").all()).toEqual([{ a: 7 }]);
   },
 );
+
+it("new Database() does not leak the sqlite3 handle when open fails", async () => {
+  using dir = tempDir("sqlite-open-fail", {});
+  const badPath = path.join(String(dir), "nonexistent", "x.sqlite");
+
+  // The error is built from the handle, so it must keep its SQLite code.
+  expect(() => new Database(badPath)).toThrow(expect.objectContaining({ code: "SQLITE_CANTOPEN" }));
+
+  // Runs 200 failed opens to warm up and then `count` more in a child. Returns the
+  // RSS growth over the `count`, and the bytes that LeakSanitizer reports at exit
+  // (0 on a build without it).
+  async function failedOpens(count) {
+    const src = `
+      import { Database } from "bun:sqlite";
+      const step = () => { try { new Database(${JSON.stringify(badPath)}); } catch {} };
+      for (let i = 0; i < 200; i++) step();
+      Bun.gc(true);
+      const start = process.memoryUsage.rss();
+      for (let i = 0; i < ${count}; i++) step();
+      Bun.gc(true);
+      console.log((process.memoryUsage.rss() - start) / 1024 / 1024);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        // symbolize=0 keeps the child fast. It also turns the LSAN suppressions off.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "symbolize=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const summary = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
+    // The child prints the growth last, so a number on stdout means that every open ran.
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: expect.stringMatching(/^-?\d/) });
+    // A leak report makes the child exit with 1.
+    if (!summary) expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    return { rssGrowthMB: parseFloat(stdout), leakedBytes: Number(summary?.[1] ?? 0) };
+  }
+
+  if (isASAN) {
+    // Each handle that is not closed adds about 1400 bytes. The difference of
+    // two runs leaves out what every bun process leaks once.
+    const [none, many] = await Promise.all([failedOpens(0), failedOpens(500)]);
+    expect(many.leakedBytes - none.leakedBytes).toBeLessThan(100_000);
+  } else if (!isDebug) {
+    // 40000 handles that are not closed grow RSS by about 68 MB. With them
+    // closed it grows by less than 10 MB.
+    expect((await failedOpens(40_000)).rssGrowthMB).toBeLessThan(32);
+  }
+});

@@ -1512,7 +1512,7 @@ pub mod bv2_impl {
                 table: core::ptr::NonNull<EncoderStringTable>,
                 hot_strings: &[u64],
             ) -> Box<[u8]>;
-            safe fn __bun_jsc_build_static_heap(
+            safe fn __bun_jsc_build_program_data(
                 strings: &[u8],
                 original_position: &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>,
             ) -> Vec<u8>;
@@ -1662,13 +1662,13 @@ pub mod bv2_impl {
             }
         }
 
-        /// `JSC::StaticHeap` for a program with these strings (`EncoderStringTableHandle::take`).
+        /// `JSC::AOT::ProgramData` for a program with these strings (`EncoderStringTableHandle::take`).
         #[inline]
-        pub(crate) fn build_static_heap(
+        pub(crate) fn build_program_data(
             strings: &[u8],
             original_position: &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>,
         ) -> Vec<u8> {
-            __bun_jsc_build_static_heap(strings, original_position)
+            __bun_jsc_build_program_data(strings, original_position)
         }
 
         /// Owns a `JSC::BytecodeLinkEncoder`. Lives and dies on the thread that created it (it uses that thread's bytecode VM).

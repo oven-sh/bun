@@ -734,7 +734,7 @@ pub struct File {
     pub bytecode: *mut [u8],
     pub bytecode_entry_offset: u32,
     /// The module was compiled ahead of time (`Flags::HAS_AOT_IMAGE`).
-    pub number_in_static_heap: Option<u32>,
+    pub number_in_program_data: Option<u32>,
     pub module_info: *mut [u8],
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
@@ -984,7 +984,7 @@ bitflags::bitflags! {
         /// read). A module's `bytecode` then runs from its cache entry to the end of that payload.
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked payload's record (there is none): `StringPointer` to the machine code of the executable's functions
-        /// (`JSC::AOT::Image`) and the objects after it (`JSC::StaticHeap`), which starts on a page boundary of the file.
+        /// (`JSC::AOT::Image`) and the objects after it (`JSC::AOT::ProgramData`), which starts on a page boundary of the file.
         /// Then a `u32`, the size of the bytecode that it was compiled from, as a measure of the program. Then a `u32` for
         /// each file: zero, or one more than the number of the module in the static heap. Such a module has neither
         /// `contents` nor `bytecode`. An internal module's `bytes` holds its number, with length zero.
@@ -1000,17 +1000,17 @@ bitflags::bitflags! {
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 unsafe extern "C" {
-    fn Bun__StaticHeap__stringTableInImage(bytes: *const u8, len: usize, result: *mut usize) -> bool;
+    fn Bun__AOT__stringTableInImage(bytes: *const u8, len: usize, result: *mut usize) -> bool;
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
     fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
 }
 /// Where the bytecode string table is in the static heap that follows the machine code in `image`, which keeps a copy that its
 /// objects refer to. The executable does not need a second one: a `StringPointer` can point into the image as well as
 /// anywhere else.
-fn find_string_table_in_static_heap(image: &[u8], wanted: &[u8]) -> Option<usize> {
+fn find_string_table_in_program_data(image: &[u8], wanted: &[u8]) -> Option<usize> {
     let mut found = [0usize; 2];
     // SAFETY: reads `len` bytes from `bytes`, writes two `usize` to `result`.
-    if !unsafe { Bun__StaticHeap__stringTableInImage(image.as_ptr(), image.len(), found.as_mut_ptr()) } {
+    if !unsafe { Bun__AOT__stringTableInImage(image.as_ptr(), image.len(), found.as_mut_ptr()) } {
         return None;
     }
     let [offset, length] = found;
@@ -1257,14 +1257,14 @@ impl StandaloneModuleGraph {
         }
         let mut aot_image: &'static [u8] = &[];
         let mut aot_program_size = 0usize;
-        let mut numbers_in_static_heap: Option<usize> = None;
+        let mut numbers_in_program_data: Option<usize> = None;
         if has_aot_image && record_at + 12 + 4 * modules_list_count <= raw_len {
             let ptr = StringPointer {
                 offset: read_u32(record_at),
                 length: read_u32(record_at + 4),
             };
             aot_program_size = read_u32(record_at + 8) as usize;
-            numbers_in_static_heap = Some(record_at + 12);
+            numbers_in_program_data = Some(record_at + 12);
             record_at += 12 + 4 * modules_list_count;
             if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len {
                 // SAFETY: bounds checked; a read-only subrange disjoint from the writable ones, never freed.
@@ -1315,8 +1315,8 @@ impl StandaloneModuleGraph {
                         .wrapping_sub(linked_bytecode_payload.offset)
                 })
                 .filter(|&entry_offset| entry_offset < linked_bytecode_payload.length);
-            let number_in_static_heap =
-                numbers_in_static_heap.and_then(|at| read_u32(at + 4 * i).checked_sub(1));
+            let number_in_program_data =
+                numbers_in_program_data.and_then(|at| read_u32(at + 4 * i).checked_sub(1));
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
             // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
             // subranges; section bytes are a live 'static allocation.
@@ -1357,7 +1357,7 @@ impl StandaloneModuleGraph {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     bytecode_entry_offset: linked_entry_offset.unwrap_or(0),
-                    number_in_static_heap,
+                    number_in_program_data,
                     module_info: if module.module_info.length > 0 {
                         // SAFETY: see bytecode above.
                         unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
@@ -1715,7 +1715,7 @@ pub(crate) fn to_bytes(
             .find(|f| f.output_kind == options::OutputKind::BytecodeStringTable)?
             .value
             .as_slice();
-        Some((find_string_table_in_static_heap(image, table)?, table.len()))
+        Some((find_string_table_in_program_data(image, table)?, table.len()))
     });
 
     // `Flags::HAS_PRELINKED_MODULE_GRAPH`: graph module index -> file-table position, so the runtime registers a whole
@@ -1916,7 +1916,7 @@ pub(crate) fn to_bytes(
         }
     }
     let mut builtin_bytecode_table = builtin_bytecode_table;
-    let mut numbers_in_static_heap: Vec<u8> = Vec::new();
+    let mut numbers_in_program_data: Vec<u8> = Vec::new();
     if aot_image.is_some() {
         // (The record already holds the number.)
         for record in builtin_bytecode_table[4..].as_chunks_mut::<12>().0 {
@@ -1928,7 +1928,7 @@ pub(crate) fn to_bytes(
             } else {
                 0
             };
-            numbers_in_static_heap.extend_from_slice(&entry.to_le_bytes());
+            numbers_in_program_data.extend_from_slice(&entry.to_le_bytes());
             module.bytecode = StringPointer::default();
         }
     } else if linked_payload.is_some() {
@@ -1975,14 +1975,14 @@ pub(crate) fn to_bytes(
     let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
     for (index, (module, output_file)) in modules.iter_mut().zip(&module_files).enumerate() {
         let mut hash = 0u32;
-        let is_in_static_heap = numbers_in_static_heap
+        let is_compiled_ahead_of_time = numbers_in_program_data
             .get(index * 4..index * 4 + 4)
             .is_some_and(|number| number != [0u8; 4]);
         if is_stored_as_string(output_file) {
             let before = string_builder.len;
             (module.contents, module.encoding, hash) =
                 encode_text_module(&mut string_builder, output_file.value.as_slice());
-            if is_in_static_heap && output_file.loader.is_javascript_like() {
+            if is_compiled_ahead_of_time && output_file.loader.is_javascript_like() {
                 string_builder.len = before;
                 module.contents = StringPointer::default();
                 hash = 0;
@@ -2095,7 +2095,7 @@ pub(crate) fn to_bytes(
         let program_size = linked_payload.map_or(0, |(payload, _)| payload.len() as u32);
         record[8..12].copy_from_slice(&program_size.to_le_bytes());
         let _ = string_builder.append_count(&record);
-        let _ = string_builder.append_count(&numbers_in_static_heap);
+        let _ = string_builder.append_count(&numbers_in_program_data);
         flags |= Flags::HAS_AOT_IMAGE;
     }
     if flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
@@ -3389,7 +3389,7 @@ impl StandaloneModuleGraph {
         let startup = &self.files.values()[..self.startup_module_count as usize];
         let span = if startup
             .iter()
-            .any(|f| !f.bytecode.is_empty() || f.number_in_static_heap.is_some())
+            .any(|f| !f.bytecode.is_empty() || f.number_in_program_data.is_some())
         {
             // A linked payload follows the string table; its hot front is what any module reads at startup.
             let linked_hot = self.linked_bytecode_payload.map(|(payload, region_ends)| {

@@ -17,7 +17,7 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/InitializeThreading.h>
-#include <JavaScriptCore/StaticHeap.h>
+#include <JavaScriptCore/AOTProgramData.h>
 #include <JavaScriptCore/AOTFunction.h>
 #include <zstd.h>
 #include "BunBuiltinNames.h"
@@ -117,23 +117,12 @@ Ref<SourceProvider> SourceProvider::create(
 
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         auto origin = getSourceOrigin();
-        if (resolvedSource.is_in_static_heap) {
+        if (resolvedSource.is_compiled_ahead_of_time) {
             if (getenv("BUN_AOT_VERBOSE")) [[unlikely]]
                 fprintf(stderr, "[aot] module: %s\n", byteCast<char>(sourceURLString.utf8().data()));
-            JSC::SourceProvider* made = nullptr;
-            void* place = JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made);
-            if (made && !resolvedSource.module_info)
-                return Ref { *static_cast<SourceProvider*>(made) };
-            auto provider = adoptRef(place
-                    ? *new (NotNull, place) SourceProvider(globalObject->bunVM(), resolvedSource, Ref { *StringImpl::empty() }, JSC::SourceTaintedOrigin::Untainted, origin, WTF::move(sourceURLString), TextPosition(), sourceType)
-                    : *new SourceProvider(globalObject->bunVM(), resolvedSource, Ref { *StringImpl::empty() }, JSC::SourceTaintedOrigin::Untainted, origin, WTF::move(sourceURLString), TextPosition(), sourceType));
+            auto provider = adoptRef(*new SourceProvider(globalObject->bunVM(), resolvedSource, Ref { *StringImpl::empty() }, JSC::SourceTaintedOrigin::Untainted, origin, WTF::move(sourceURLString), TextPosition(), sourceType));
             provider->setHasNoText();
             provider->setAOTModuleID(resolvedSource.bytecode_cache_entry_offset + 1);
-            if (place) {
-                provider->ref();
-                provider->becomeShareableBetweenThreads();
-                JSC::StaticHeap::didMakeSourceProvider(place);
-            }
             return provider;
         }
         if (resolvedSource.bytecode_cache != nullptr) {
@@ -268,7 +257,7 @@ extern "C" void JSC__Heap__setInitialAllocationBudget(JSC::VM* vm, size_t bytes)
 extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* bytes, size_t len)
 {
     ASSERT(vm->clientData);
-    static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(*vm, std::span<const uint8_t>(bytes, len));
+    static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(std::span<const uint8_t>(bytes, len));
 }
 
 extern "C" uint32_t Bun__EncoderStringTable__slotForLatin1(JSC::EncoderStringTable* table, const Latin1Character* chars, size_t length)
@@ -397,21 +386,21 @@ extern "C" void Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(JSC::BytecodeL
 // JSC::BytecodeLinkEncoder::numberOfRegions.
 static_assert(JSC::BytecodeLinkEncoder::numberOfRegions == 6, "bun_resolver::LINKED_BYTECODE_REGION_COUNT");
 static thread_local Vector<uint8_t> s_aotImageOfLastLink;
-// Kept until Bun__StaticHeap__build, which runs once all of the strings are known.
+// Kept until Bun__AOT__buildProgramData, which runs once all of the strings are known.
 static thread_local RefPtr<JSC::CachedBytecode> s_payloadOfLastLink;
 static thread_local Vector<uint32_t> s_modulesOfLastLink;
 static thread_local Vector<JSC::ReportableSitesOfFunction> s_reportableSitesOfLastLink;
 static thread_local Vector<std::optional<Vector<uint32_t>>> s_variablesExportedByModulesOfLastLink;
-static thread_local Vector<uint8_t> s_aotImageForStaticHeap;
+static thread_local Vector<uint8_t> s_aotImageForProgramData;
 extern "C" const uint8_t* Bun__BytecodeLinkEncoder__aotImage(size_t* size)
 {
-    // (The data after the image is for Bun__StaticHeap__build.)
+    // (The data after the image is for Bun__AOT__buildProgramData.)
     *size = JSC::aotImageSize(s_aotImageOfLastLink.span()).value_or(s_aotImageOfLastLink.size());
     return s_aotImageOfLastLink.span().data();
 }
 extern "C" void Bun__BytecodeLinkEncoder__freeAOTImage()
 {
-    s_aotImageForStaticHeap = std::exchange(s_aotImageOfLastLink, { });
+    s_aotImageForProgramData = std::exchange(s_aotImageOfLastLink, { });
 }
 extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encoder, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, uint32_t* entryOffsets, size_t entryOffsetCount, uint32_t* regionEnds, uint32_t* namedHotFunctions, uint32_t* placedHotFunctions, uint32_t* functionsWithoutName)
 {
@@ -504,22 +493,21 @@ extern "C" void Bun__AOT__setCodecOfImages()
 #endif
 }
 
-// For AOT builds: creates, at build time, the objects that the program needs however it is run (JSC::StaticHeap). Runs on the
-// bundler's bytecode thread. The result is placed after the image of the code, which ends on a page boundary.
+// For AOT builds: what the program consists of besides its code (JSC::AOT::ProgramData). Runs on the bundler's bytecode thread.
+// The result is placed after the image of the code, which ends on a page boundary.
 // `find`, if given, maps a position in a module's text to a position in the executable's original sources. Lines and columns
-// count from one. The static heap then stores those positions, for the places that a stack trace can report, and no other
-// position information is kept.
-extern "C" void Bun__StaticHeap__build(const uint8_t* strings, size_t stringsSize, void* ctx, void (*append)(void* ctx, const uint8_t* bytes, size_t size),
+// count from one. Those positions are kept, for the places that a stack trace can report, and no other position information is.
+extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t stringsSize, void* ctx, void (*append)(void* ctx, const uint8_t* bytes, size_t size),
     void* findCtx, bool (*find)(void* ctx, uint32_t entryOffsetOfModule, uint32_t line, uint32_t column, const uint8_t** name, size_t* nameLength, uint32_t* lineInSource, uint32_t* columnInSource))
 {
     Vector<JSC::ReportableSitesOfFunction> reportableSites = std::exchange(s_reportableSitesOfLastLink, { });
-    Vector<uint8_t> imageOfCode = std::exchange(s_aotImageForStaticHeap, { });
+    Vector<uint8_t> imageOfCode = std::exchange(s_aotImageForProgramData, { });
     JSC::VM& vm = vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
     RefPtr payload = std::exchange(s_payloadOfLastLink, nullptr);
     Vector<uint32_t> modules = std::exchange(s_modulesOfLastLink, { });
     Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules = std::exchange(s_variablesExportedByModulesOfLastLink, { });
-    JSC::StaticHeap::PositionsToKeep positions { reportableSites, [&](uint32_t entryOffsetOfModule, JSC::LineColumn inModule, CString& nameOfSource, JSC::LineColumn& inSource) {
+    JSC::AOT::ProgramData::PositionsToKeep positions { reportableSites, [&](uint32_t entryOffsetOfModule, JSC::LineColumn inModule, CString& nameOfSource, JSC::LineColumn& inSource) {
         const uint8_t* name = nullptr;
         size_t nameLength = 0;
         uint32_t line = 0;
@@ -530,7 +518,7 @@ extern "C" void Bun__StaticHeap__build(const uint8_t* strings, size_t stringsSiz
         inSource = { line, column };
         return true;
     } };
-    Vector<uint8_t> image = JSC::StaticHeap::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> { }, modules.span(), imageOfCode.span(), positions, reportableSites.span(), variablesExportedByModules.span());
+    Vector<uint8_t> image = JSC::AOT::ProgramData::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> { }, modules.span(), imageOfCode.span(), positions, reportableSites.span(), variablesExportedByModules.span());
     append(ctx, image.span().data(), image.size());
 }
 
@@ -547,12 +535,12 @@ static int openExecutable()
     return open(path, O_RDONLY | O_CLOEXEC);
 }
 
-extern "C" bool Bun__StaticHeap__stringTableInImage(const uint8_t* bytes, size_t length, size_t* result)
+extern "C" bool Bun__AOT__stringTableInImage(const uint8_t* bytes, size_t length, size_t* result)
 {
     auto sizeOfCodeImage = JSC::aotImageSize({ bytes, length });
     if (!sizeOfCodeImage || *sizeOfCodeImage >= length)
         return false;
-    auto found = JSC::StaticHeap::stringTableIn({ bytes + *sizeOfCodeImage, length - *sizeOfCodeImage });
+    auto found = JSC::AOT::ProgramData::stringTableIn({ bytes + *sizeOfCodeImage, length - *sizeOfCodeImage });
     if (!found)
         return false;
     result[0] = *sizeOfCodeImage + found->first;
@@ -560,7 +548,7 @@ extern "C" bool Bun__StaticHeap__stringTableInImage(const uint8_t* bytes, size_t
     return true;
 }
 
-// `bytes` is the image of the code and the static heap that follows it. On the main thread, before it has a VM.
+// `bytes` is the image of the code and the program data that follows it. They stay mapped. Before there is a VM.
 // `fileDescriptor`, `offsetInFile`: the file that `bytes` is mapped from, and the offset of `bytes` in it. A negative
 // descriptor means the executable's own file.
 extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int fileDescriptor, int64_t offsetInFile)
@@ -579,10 +567,10 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
         close(fileDescriptor);
     if (!verbose)
         return;
-    if (use.whyNoStaticHeap)
-        fprintf(stderr, "[aot] not using the static heap: %s\n", use.whyNoStaticHeap);
+    if (use.whyNoProgramData)
+        fprintf(stderr, "[aot] not using the program data: %s\n", use.whyNoProgramData);
     else
-        fprintf(stderr, "[aot] static heap: %zu bytes\n", use.sizeOfStaticHeap);
+        fprintf(stderr, "[aot] program data: %zu bytes\n", use.sizeOfProgramData);
     if (use.whyNoImage) {
         fprintf(stderr, "[aot] not using the image: %s\n", use.whyNoImage);
         return;

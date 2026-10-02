@@ -168,14 +168,6 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
-    // WTF's empty string is at a fixed address, which has to be mapped before anything uses a WTF string.
-    {
-        unsafe extern "C" {
-            safe fn WTF__StringImpl__constructEmpty();
-        }
-        WTF__StringImpl__constructEmpty();
-    }
-
     use_mimalloc_in_dependencies();
 
     // SIGPIPE/SIGXFSZ → SIG_IGN.

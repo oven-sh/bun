@@ -541,10 +541,10 @@ pub(crate) fn __bun_jsc_encoder_string_table_take(
     bytes
 }
 
-/// Builds the static heap (`JSC::StaticHeap`), which is placed after the image of the program's code. Returns an empty
+/// Builds the static heap (`JSC::AOT::ProgramData`), which is placed after the image of the program's code. Returns an empty
 /// buffer on failure. Must be called on the thread that owns the bytecode VM.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_build_static_heap(
+pub(crate) fn __bun_jsc_build_program_data(
     strings: &[u8],
     // Maps the offset of a module's cache entry in the linked payload, and a line and column in its text (counting from
     // one), to the name of the original source and the line and column there.
@@ -561,7 +561,7 @@ pub(crate) fn __bun_jsc_build_static_heap(
         *mut u32,
     ) -> bool;
     unsafe extern "C" {
-        fn Bun__StaticHeap__build(
+        fn Bun__AOT__buildProgramData(
             strings: *const u8,
             strings_size: usize,
             ctx: *mut core::ffi::c_void,
@@ -606,7 +606,7 @@ pub(crate) fn __bun_jsc_build_static_heap(
     let mut out: Vec<u8> = Vec::new();
     // SAFETY: `strings` is valid for its length; `out` outlives the call.
     unsafe {
-        Bun__StaticHeap__build(
+        Bun__AOT__buildProgramData(
             strings.as_ptr(),
             strings.len(),
             (&raw mut out).cast(),

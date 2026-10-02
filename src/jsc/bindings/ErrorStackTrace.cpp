@@ -285,7 +285,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
     if (m_codeBlock && hasBytecodeIndex()) {
         if (auto function = JSC::AOT::FunctionRef::of(m_codeBlock)) {
             if (auto position = function.reportedPositionFor(m_bytecodeIndex); position && position->source)
-                return JSC::StaticHeap::nameOfSource(position->source);
+                return JSC::AOT::ProgramData::get()->nameOfSource(position->source);
         }
     }
 #endif
@@ -428,7 +428,7 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 
     // Code that was compiled ahead of time may say where it is in the sources the executable was made from.
     if (auto position = frame.reportedPosition(); position && position->source)
-        return JSC::StaticHeap::nameOfSource(position->source);
+        return JSC::AOT::ProgramData::get()->nameOfSource(position->source);
 
     auto* executable = frame.ownerExecutable();
     return executable ? sourceURL(executable->source()) : String();
@@ -444,7 +444,7 @@ String sourceURL(JSC::StackVisitor& visitor)
 #if ENABLE(AOT)
         if (auto function = visitor->aotFunction()) {
             if (auto position = function.reportedPositionFor(visitor->bytecodeIndex()); position && position->source)
-                return JSC::StaticHeap::nameOfSource(position->source);
+                return JSC::AOT::ProgramData::get()->nameOfSource(position->source);
         }
 #endif
         return sourceURL(visitor->codeBlock());

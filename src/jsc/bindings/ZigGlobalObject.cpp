@@ -186,7 +186,6 @@
 #include "EventLoopTask.h"
 #include "NodeModuleModule.h"
 #include <JavaScriptCore/JSCBytecodeCacheVersion.h>
-#include <JavaScriptCore/StaticHeap.h>
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
@@ -515,7 +514,6 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
-    JSC::StaticHeap::prepareThread();
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
     if (!vmPtr) [[unlikely]] {
         BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");

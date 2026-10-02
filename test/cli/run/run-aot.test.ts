@@ -13,7 +13,7 @@ type Options = { args?: string[]; env?: Record<string, string>; stdin?: string; 
 // A run that did not use its compiled code would still work, from the bytecode, and nothing else here would notice. So
 // each run logs what it uses, which is checked and then removed from the output.
 function expectToHaveUsedImage(stderr: string) {
-  expect(stderr).toContain("[aot] static heap: ");
+  expect(stderr).toContain("[aot] program data: ");
   expect(stderr).toContain("[aot] image: ");
   expect(stderr).not.toContain("[aot] not using");
   return stderr.replace(/^\[aot\] .*\n/gm, "");

@@ -1526,7 +1526,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
     let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
     let mut aot_image: Vec<u8> = Vec::new();
-    let mut has_static_heap = false;
+    let mut has_program_data = false;
     if let Some(mut linked) = linked_bytecode {
         if let Some((path, names_out)) = &linked.names_out {
             let path = bun_core::ZBox::from_bytes(path);
@@ -1693,9 +1693,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let maps = SourceMapsByEntryOffset::of(&result);
             let find =
                 |entry_offset: u32, line: u32, column: u32| maps.find(entry_offset, line, column);
-            let static_heap = crate::bundle_v2::dispatch::build_static_heap(&bytes, &find);
-            has_static_heap = !static_heap.is_empty();
-            aot_image.extend_from_slice(&static_heap);
+            let program_data = crate::bundle_v2::dispatch::build_program_data(&bytes, &find);
+            has_program_data = !program_data.is_empty();
+            aot_image.extend_from_slice(&program_data);
         }
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".bytecode-strings".to_vec().into_boxed_slice(),
@@ -1714,7 +1714,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }));
     }
     // Without both, the executable would still run, from its bytecode, with nothing to show that it was not compiled.
-    if c.options.aot && !has_static_heap {
+    if c.options.aot && !has_program_data {
         c.log_mut().add_error(
             None,
             bun_ast::Loc::EMPTY,
@@ -2027,7 +2027,7 @@ use crate::options::SourceMapOption;
 use crate::output_file::{BakeExtra, BakeRouteKind};
 
 /// The source map of each chunk that has one, by where the chunk's cache entry is in the linked bytecode payload: which is how
-/// `JSC::StaticHeap` says which module it means.
+/// `JSC::AOT::ProgramData` says which module it means.
 struct SourceMapsByEntryOffset {
     maps: std::collections::HashMap<u32, (Box<[u8]>, Vec<Box<[u8]>>)>,
 }

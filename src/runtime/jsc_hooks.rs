@@ -3715,8 +3715,8 @@ export default db;
             } else {
                 bun_core::String::from_bytes(file.bytecode_origin_path)
             },
-            bytecode_cache: match file.number_in_static_heap {
-                Some(number) => Bytecode::in_static_heap(number),
+            bytecode_cache: match file.number_in_program_data {
+                Some(number) => Bytecode::compiled_ahead_of_time(number),
                 None => Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
             },
             source_code_hash: file.source_hash,

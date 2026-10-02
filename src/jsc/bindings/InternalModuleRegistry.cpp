@@ -23,7 +23,7 @@
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/ParserError.h>
-#include <JavaScriptCore/StaticHeap.h>
+#include <JavaScriptCore/AOTProgramData.h>
 
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
 // (StandaloneModuleGraph, Flags::HAS_BUILTIN_BYTECODE); those bytes live in the executable for the life of the process.
@@ -115,8 +115,9 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
     uint32_t cachedEntryOffset = 0;
     bool hasBytecode = Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset);
     // What the executable's build made ahead of time may have the function itself, with nothing left to decode.
-    FunctionExecutable* linked = hasBytecode
-        ? JSC::StaticHeap::builtinFunctionFor(globalObject, cachedEntryOffset, bun_internal_modules_header.sourceStamp, internalModuleSource(id), SourceOrigin(WTF::URL(internalModuleString(m.urlOffset, m.urlLength))), moduleName)
+    auto* program = hasBytecode ? JSC::AOT::ProgramOfVM::of(vm) : nullptr;
+    FunctionExecutable* linked = program
+        ? program->builtinFunctionFor(cachedEntryOffset, bun_internal_modules_header.sourceStamp, internalModuleSource(id), SourceOrigin(WTF::URL(internalModuleString(m.urlOffset, m.urlLength))), moduleName)
         : nullptr;
     SourceCode source = linked ? SourceCode { Ref { *linked->source().provider() } } : makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
     maybeAddCodeCoverage(vm, source);

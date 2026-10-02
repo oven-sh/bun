@@ -652,7 +652,7 @@ test.skipIf(!supported).each(["forEach", "map"])(
   },
 );
 
-test.skipIf(!supported)("code is position-independent", async () => {
+test.skipIf(!supported)("image and program data are used", async () => {
   using dir = tempDir("compile-aot-address", {
     "entry.ts": `function add(a: number, b: number) { return a + b; } console.log(new (function Made(this: any) { this.sum = add(1, 2); } as any)().sum);`,
   });
@@ -671,18 +671,15 @@ test.skipIf(!supported)("code is position-independent", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const address = Number(stderr.match(/of code at (0x[0-9a-f]+)/)?.[1]);
-  // bmalloc::StaticRegion: eight arenas of 4 GB.
-  const start = isMacOS ? 0x200000000000 : 0x2000000000;
   expect({
     stdout,
-    usesStaticHeap: stderr.includes("[aot] static heap: "),
-    isInRegion: !(address < start || address >= start + 8 * 2 ** 32),
+    usesProgramData: /\[aot\] program data: \d+ bytes/.test(stderr),
+    usesImage: /\[aot\] image: \d+ bytes, \d+ of code at 0x[0-9a-f]+/.test(stderr),
     exitCode,
   }).toEqual({
     stdout: "3\n",
-    usesStaticHeap: true,
-    isInRegion: false,
+    usesProgramData: true,
+    usesImage: true,
     exitCode: 0,
   });
 });

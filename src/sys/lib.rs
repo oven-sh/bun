@@ -2379,17 +2379,20 @@ mod posix_impl {
         );
         Ok(())
     }
-    pub fn mkdirat(dir: impl AsFd, path: &ZStr, mode: Mode) -> Maybe<()> {
-        let dir = dir.as_fd();
+    /// `mkdirat` whose error carries no path, so a caller that expects the
+    /// errno (the recursive walk and its EEXIST) does not box one to drop it.
+    fn mkdirat_no_path(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()> {
         // Tag errors as `.mkdir` (not `.mkdirat`).
-        check_p!(
+        check!(
             // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
             // valid NUL-terminated C string.
             unsafe { libc::mkdirat(dir.native(), path.as_ptr(), mode as libc::mode_t) },
-            Tag::mkdir,
-            path
+            Tag::mkdir
         );
         Ok(())
+    }
+    pub fn mkdirat(dir: impl AsFd, path: &ZStr, mode: Mode) -> Maybe<()> {
+        mkdirat_no_path(dir.as_fd(), path, mode).map_err(|e| e.with_path(path.as_bytes()))
     }
     /// `bun.makePath` — `mkdirat` walking up parents on ENOENT, like `mkdir -p`.
     #[inline]
@@ -2413,11 +2416,17 @@ mod posix_impl {
             }
             buf[..p.len()].copy_from_slice(p);
             buf[p.len()] = 0;
-            match mkdirat(dir, ZStr::from_buf(&buf[..], p.len()), mode) {
+            match mkdirat_no_path(dir, ZStr::from_buf(&buf[..], p.len()), mode) {
                 Ok(()) => Ok(MakePathStep::Created),
                 Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
-                Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
-                Err(e) => Err(e),
+                Err(e) => {
+                    let e = e.with_path(p);
+                    if e.get_errno() == E::ENOENT {
+                        Ok(MakePathStep::NotFound(e))
+                    } else {
+                        Err(e)
+                    }
+                }
             }
         })
     }
@@ -4082,16 +4091,49 @@ mod windows_impl {
         let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
             .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
         let mut z = bun_paths::path_buffer_pool::get();
-        bun_paths::make_path_with(it, |p| {
+        let mut not_found_len = 0usize;
+        let result = bun_paths::make_path_with(it, |p| {
             z.0[..p.len()].copy_from_slice(p);
             z.0[p.len()] = 0;
             match mkdirat(dir, ZStr::from_buf(&z.0[..], p.len()), mode) {
                 Ok(()) => Ok(MakePathStep::Created),
                 Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
-                Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
+                Err(e) if e.get_errno() == E::ENOENT => {
+                    not_found_len = p.len();
+                    Ok(MakePathStep::NotFound(e))
+                }
                 Err(e) => Err(e),
             }
-        })
+        });
+        match result {
+            Err(e) if e.get_errno() == E::ENOENT => Err(not_dir_if_parent_is_file(
+                dir,
+                &buf.0[..not_found_len],
+                root_end,
+                e,
+            )),
+            result => result,
+        }
+    }
+    /// `NtCreateFile` reports a regular file above the target as
+    /// `OBJECT_PATH_NOT_FOUND` (ENOENT), where POSIX `mkdirat` says ENOTDIR.
+    /// `prefix` is the one whose mkdir failed. Its parent is queried once. A
+    /// link there keeps ENOENT, as a dangling symlink does on POSIX.
+    #[cold]
+    fn not_dir_if_parent_is_file(dir: Fd, prefix: &[u8], root_end: usize, err: Error) -> Error {
+        let Some(sep) = bun_core::strings::last_index_of_char(&prefix[root_end..], b'\\') else {
+            return err;
+        };
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let parent =
+            bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], &prefix[..root_end + sep])
+                .as_slice();
+        match file_attributes_nt(dir, parent) {
+            Ok(attrs) if !attrs.is_directory && !attrs.is_reparse_point => {
+                Error::new(E::ENOTDIR, Tag::mkdir)
+            }
+            _ => err,
+        }
     }
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
@@ -7077,7 +7119,22 @@ pub enum ExistsAtType {
 /// width dispatch does not
 /// duplicate the syscall body.
 #[cfg(windows)]
-fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
+    // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
+    // marker (OneDrive sets it) and does not affect directory-ness; only
+    // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
+    file_attributes_nt(dir, path).map(|attrs| {
+        if attrs.is_directory {
+            ExistsAtType::Directory
+        } else {
+            ExistsAtType::File
+        }
+    })
+}
+/// The `NtQueryAttributesFile` call behind `exists_at_type_nt`. A symlink or
+/// junction answers for itself here, not for its target.
+#[cfg(windows)]
+fn file_attributes_nt(dir: Fd, mut path: &[u16]) -> Maybe<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
     // without it.
@@ -7113,16 +7170,10 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
         // `directory_exists_at()` branches on.
         return Err(Error::new(rc, Tag::access));
     }
-    // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
-    // marker (OneDrive sets it) and does not affect directory-ness; only
-    // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
-    Ok(
-        if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
-            ExistsAtType::Directory
-        } else {
-            ExistsAtType::File
-        },
-    )
+    Ok(WindowsFileAttributes {
+        is_directory: (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
+        is_reparse_point: (basic_info.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+    })
 }
 /// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {

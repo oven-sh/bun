@@ -74,25 +74,6 @@ enum Written {
     AnnotationOf(ExprId),
 }
 
-/// What `levenshteinWithMax` measures: changing a letter costs two, and changing its case next to nothing.
-fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
-    let mut previous: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();
-    let mut current = vec![0.0; b.len() + 1];
-    for (i, x) in a.iter().enumerate() {
-        current[0] = (i + 1) as f64;
-        for (j, y) in b.iter().enumerate() {
-            current[j + 1] = if x == y {
-                previous[j]
-            } else {
-                let change = previous[j] + if x.eq_ignore_ascii_case(y) { 0.1 } else { 2.0 };
-                (previous[j + 1] + 1.0).min(current[j] + 1.0).min(change)
-            };
-        }
-        std::mem::swap(&mut previous, &mut current);
-    }
-    previous[b.len()]
-}
-
 impl Checker<'_> {
     pub(super) fn check_assignments(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);

@@ -367,7 +367,7 @@ impl<'p> Checker<'p> {
                     new.index.push(IndexInfo {
                         key: self.instantiate(i.key, mapper),
                         value: self.instantiate(i.value, mapper),
-                        readonly: i.readonly,
+                        ..*i
                     });
                 }
                 new.call = shape
@@ -396,18 +396,6 @@ impl<'p> Checker<'p> {
                 mapper: own,
             } => {
                 let new = self.map_mapper(*own, mapper);
-                // `getConditionalType` returns the error type for a check type that is the error type. The error type is `any`
-                // here, and a tuple type argument instantiates to `any` only as the error type.
-                if self.p.types.mapping(*own).iter().any(|before| {
-                    self.is_tuple(before.1)
-                        && self
-                            .p
-                            .types
-                            .map(new, before.0)
-                            .is_some_and(|ty| self.has_any_flag(ty))
-                }) {
-                    return TypeId::ANY;
-                }
                 self.conditional_type(*file, *node, new)
             }
             // `instantiateReverseMappedType`
@@ -580,7 +568,7 @@ impl<'p> Checker<'p> {
                     {
                         self.p.too_large_tuples.insert((file, node), ());
                     }
-                    return TypeId::ANY;
+                    return TypeId::ERROR;
                 }
                 out_elems.extend_from_slice(inner);
                 out_flags.extend_from_slice(inner_flags);
@@ -609,7 +597,7 @@ impl<'p> Checker<'p> {
                             found = Some(self.instantiate(info.value, members.mapper));
                         }
                     }
-                    found.unwrap_or(TypeId::ANY)
+                    found.unwrap_or(TypeId::ERROR)
                 }
             };
             out_elems.push(element);
@@ -917,7 +905,7 @@ impl<'p> Checker<'p> {
         let own = self.hir(file)[func].type_params;
         let may_differ = !own.is_empty()
             && self.p.types.mapping(mapper).iter().any(|pair| {
-                matches!(pair.1, TypeId::ANY | TypeId::ERROR | TypeId::NEVER)
+                (self.has_any_flag(pair.1) || pair.1 == TypeId::NEVER)
                     && self.is_declared_among(pair.0, file, own)
             });
         if !may_differ {

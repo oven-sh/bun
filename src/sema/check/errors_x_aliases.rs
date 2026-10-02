@@ -1637,7 +1637,7 @@ impl Checker<'_> {
                             .text
                             .get(start as usize)
                             .copied()
-                            .is_some_and(is_word_byte) =>
+                            .is_some_and(is_identifier_part) =>
                     {
                         hir[p].key.name().unwrap_or(symbol.name)
                     }
@@ -2743,7 +2743,7 @@ impl Checker<'_> {
         if directives.is_empty() {
             return;
         }
-        let line_starts = line_starts(text);
+        let line_starts = compute_ecma_line_starts(text);
         let line_of = |pos: u32| line_starts.partition_point(|&start| start <= pos) - 1;
         // `directivesByLine`: the line, where the directive starts, whether an error is expected, and whether one came.
         let mut by_line: Vec<(usize, u32, bool, bool)> = Vec::new();
@@ -2839,36 +2839,11 @@ impl Checker<'_> {
 
 // ───────────────────────────── how things are written ─────────────────────────────
 
-/// `SkipTrivia`: past white space and comments.
-fn skip_trivia(text: &[u8], at: usize) -> usize {
-    let mut at = at.min(text.len());
-    loop {
-        while at < text.len() && text[at].is_ascii_whitespace() {
-            at += 1;
-        }
-        if text[at..].starts_with(b"//") {
-            while at < text.len() && text[at] != b'\n' && text[at] != b'\r' {
-                at += 1;
-            }
-        } else if text[at..].starts_with(b"/*") {
-            match text[at + 2..].windows(2).position(|w| w == b"*/") {
-                Some(n) => at += n + 4,
-                None => return text.len(),
-            }
-        } else {
-            return at;
-        }
-    }
-}
-
-fn is_word_byte(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
-}
-
 /// Where `word` ends, if it is what is written at `at`.
 fn eat_word(text: &[u8], at: usize, word: &[u8]) -> Option<usize> {
     let end = at + word.len();
-    (text.get(at..end)? == word && !text.get(end).is_some_and(|&c| is_word_byte(c))).then_some(end)
+    (text.get(at..end)? == word && !text.get(end).is_some_and(|&c| is_identifier_part(c)))
+        .then_some(end)
 }
 
 /// Past `c`, if it is the next token from `at` on.
@@ -2891,7 +2866,7 @@ fn meta_property_end(text: &[u8], pos: u32, keyword: &[u8]) -> u32 {
         return 0;
     };
     let mut end = skip_trivia(text, dot_end);
-    while text.get(end).copied().is_some_and(is_word_byte) {
+    while text.get(end).copied().is_some_and(is_identifier_part) {
         end += 1;
     }
     end as u32
@@ -3100,14 +3075,14 @@ fn type_import_in_javascript(
 fn entity_name_end(text: &[u8], start: usize) -> usize {
     let mut end = start;
     loop {
-        while text.get(end).copied().is_some_and(is_word_byte) {
+        while text.get(end).copied().is_some_and(is_identifier_part) {
             end += 1;
         }
         let Some(after_dot) = eat(text, end, b'.') else {
             return end;
         };
         let next = skip_trivia(text, after_dot);
-        if !text.get(next).copied().is_some_and(is_word_byte) {
+        if !text.get(next).copied().is_some_and(is_identifier_part) {
             return end;
         }
         end = next;
@@ -3132,38 +3107,6 @@ fn require_call_argument(hir: &hir::File, call: ExprId) -> Option<(ExprId, Atom)
     };
     let is_parenthesized = |e: ExprId| hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok();
     (!is_parenthesized(hir[c].callee) && !is_parenthesized(argument)).then_some((argument, spec))
-}
-
-/// How many bytes the line break at `at` takes; 0 if there is none. `\r\n` is two of them.
-fn line_break_len(text: &[u8], at: usize) -> usize {
-    match text[at] {
-        b'\n' | b'\r' => 1,
-        0xE2 if text[at..].starts_with(&[0xE2, 0x80, 0xA8])
-            || text[at..].starts_with(&[0xE2, 0x80, 0xA9]) =>
-        {
-            3
-        }
-        _ => 0,
-    }
-}
-
-/// `ComputeECMALineStarts`
-fn line_starts(text: &[u8]) -> Vec<u32> {
-    let mut starts = vec![0];
-    let mut at = 0;
-    while at < text.len() {
-        let mut len = line_break_len(text, at);
-        if len == 0 {
-            at += 1;
-            continue;
-        }
-        if text[at] == b'\r' && text.get(at + 1) == Some(&b'\n') {
-            len = 2;
-        }
-        at += len;
-        starts.push(at as u32);
-    }
-    starts
 }
 
 /// `isCommentOrBlankLine`
@@ -3212,10 +3155,10 @@ fn can_start_regular_expression(before: &[u8]) -> bool {
     let Some(&last) = before.last() else {
         return true;
     };
-    if is_word_byte(last) {
+    if is_identifier_part(last) {
         let word = &before[before
             .iter()
-            .rposition(|&c| !is_word_byte(c))
+            .rposition(|&c| !is_identifier_part(c))
             .map_or(0, |i| i + 1)..];
         return matches!(
             word,

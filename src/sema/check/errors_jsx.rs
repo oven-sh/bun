@@ -691,23 +691,23 @@ impl Checker<'_> {
             return;
         };
         let apparent = self.apparent_type(fragment);
-        if !self.is_known(apparent) || self.is_any(apparent) {
+        if !self.is_known(apparent) {
+            return;
+        }
+        // `resolveErrorCall`
+        if self.is_error_type(apparent) {
             return;
         }
         let Some((sigs, _)) = self.jsx_signatures_of_tag(file, fragment) else {
             return;
         };
+        if self.is_untyped_function_call(fragment, apparent, sigs.len(), 0) {
+            return;
+        }
         if sigs.is_empty() {
-            // `isUntypedFunctionCall`: a `Function` can be called, with whatever.
-            let function = self.global_ref(known::Function, &[]);
-            if self.is_union(apparent)
-                || self.reduced(apparent) == TypeId::NEVER
-                || !self.is_assignable(fragment, function)
-            {
-                let (start, end) = (hir[e].pos, self.end_of_jsx_opening(file, e, j));
-                out.push(Diagnostic { start, code: 2604 });
-                self.explain_to(start, end, 2604, |c| vec![c.source_text(file, start, end)]);
-            }
+            let (start, end) = (hir[e].pos, self.end_of_jsx_opening(file, e, j));
+            out.push(Diagnostic { start, code: 2604 });
+            self.explain_to(start, end, 2604, |c| vec![c.source_text(file, start, end)]);
             return;
         }
         let [sig] = sigs[..] else {
@@ -833,8 +833,11 @@ impl Checker<'_> {
                     }
                 } else {
                     let apparent = self.apparent_type(component);
-                    // `isUntypedFunctionCall`
-                    if !self.is_known(apparent) || self.is_any(apparent) {
+                    if !self.is_known(apparent) {
+                        return;
+                    }
+                    // `resolveErrorCall`
+                    if self.is_error_type(apparent) {
                         return;
                     }
                     let (mut sigs, construct) = self.jsx_signatures(component);
@@ -860,18 +863,15 @@ impl Checker<'_> {
                             return;
                         }
                     }
+                    if self.is_untyped_function_call(component, apparent, sigs.len(), 0) {
+                        return;
+                    }
                     if sigs.is_empty() {
-                        // `isUntypedFunctionCall`: a `Function` can be called, with whatever.
-                        let function = self.global_ref(known::Function, &[]);
-                        if self.reduced(apparent) == TypeId::NEVER
-                            || !self.is_assignable(component, function)
-                        {
-                            out.push(Diagnostic {
-                                start: tag_name,
-                                code: 2604,
-                            });
-                            self.explain_by_tag_name(file, e, 2604);
-                        }
+                        out.push(Diagnostic {
+                            start: tag_name,
+                            code: 2604,
+                        });
+                        self.explain_by_tag_name(file, e, 2604);
                         return;
                     }
                     // `chooseOverload` skips every signature then, so `reportCallResolutionErrors` has no argument error to report.
@@ -2178,39 +2178,4 @@ fn brace_before(hir: &hir::File, start: u32, is_spread: bool) -> Option<u32> {
 fn dots_before(hir: &hir::File, start: u32) -> Option<u32> {
     let before = trim_trivia_end(hir.text.get(..start as usize)?);
     before.ends_with(b"...").then(|| before.len() as u32 - 3)
-}
-
-/// `SkipTrivia`: past white space and comments.
-fn skip_trivia(text: &[u8], mut at: usize) -> usize {
-    loop {
-        match text.get(at) {
-            Some(c) if c.is_ascii_whitespace() => at += 1,
-            Some(b'/') if text.get(at + 1) == Some(&b'/') => {
-                while text.get(at).is_some_and(|&c| c != b'\n' && c != b'\r') {
-                    at += 1;
-                }
-            }
-            Some(b'/') if text.get(at + 1) == Some(&b'*') => {
-                match text[at + 2..].windows(2).position(|w| w == b"*/") {
-                    Some(end) => at += end + 4,
-                    None => return text.len(),
-                }
-            }
-            _ => return at,
-        }
-    }
-}
-
-/// `text` less the white space and the `/* */` comments it ends with.
-fn trim_trivia_end(mut text: &[u8]) -> &[u8] {
-    loop {
-        text = text.trim_ascii_end();
-        let Some(rest) = text.strip_suffix(b"*/") else {
-            return text;
-        };
-        match rest.windows(2).rposition(|w| w == b"/*") {
-            Some(open) => text = &text[..open],
-            None => return text,
-        }
-    }
 }

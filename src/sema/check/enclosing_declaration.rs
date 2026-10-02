@@ -2,10 +2,10 @@
 //! included if it has locals.
 
 use super::*;
-use crate::bind::{Decl, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
+use crate::bind::{Decl, Parent, PatParent, ScopeId, ScopeKind};
 
 /// The scope of the file stands in for a scope the binder did not record.
-fn or_file_scope(scope: ScopeId) -> ScopeId {
+pub(super) fn or_file_scope(scope: ScopeId) -> ScopeId {
     if scope.is_some() { scope } else { ScopeId(0) }
 }
 
@@ -56,6 +56,10 @@ impl Checker<'_> {
 
     /// Of the computed property name `[e]`.
     fn enclosing_scope_of_computed_name(&self, file: FileId, e: ExprId) -> ScopeId {
+        // Of a member of a class or an interface.
+        if let Some(&computed_name) = self.bound(file).expr_scope.get(&e) {
+            return computed_name;
+        }
         let hir = self.hir(file);
         let key = PropKey::Computed(e);
         if let Some(m) = hir.members.iter().position(|member| member.key == key) {
@@ -119,7 +123,13 @@ impl Checker<'_> {
                     }
                     return or_file_scope(bound.stmt_scope[s.idx()]);
                 }
-                Parent::ClassExtends(c) => return or_file_scope(bound.class_scope[c.idx()]),
+                // `node.Parent` of the expression itself is the `ExpressionWithTypeArguments`, which is not in the expression.
+                Parent::ClassExtends(c) => {
+                    return or_file_scope(match bound.expr_scope.get(&at) {
+                        Some(&base_expression) if at != e => base_expression,
+                        _ => bound.class_scope[c.idx()],
+                    });
+                }
                 Parent::Decorator(c, owner) => {
                     return match owner {
                         DecoratorOwner::Class(_) => or_file_scope(bound.class_scope[c.idx()]),
@@ -159,19 +169,11 @@ impl Checker<'_> {
 
     /// Of the name and the initializer of the member `m` of a class, an interface or a type literal.
     pub(super) fn enclosing_scope_of_member(&self, file: FileId, m: MemberId) -> ScopeId {
-        let bound = self.bound(file);
         let func = self.hir(file)[m].func;
         if func.is_some() {
             return self.enclosing_scope_of_function(file, func);
         }
-        match bound.member_owner[m.idx()] {
-            MemberOwner::Class(c) => or_file_scope(bound.class_scope[c.idx()]),
-            MemberOwner::Interface(i) => {
-                self.enclosing_scope_of_kind(file, ScopeKind::Interface(i))
-            }
-            MemberOwner::TypeLiteral(node) => or_file_scope(bound.type_scope[node.idx()]),
-            MemberOwner::None => ScopeId(0),
-        }
+        or_file_scope(self.bound(file).member_scope[m.idx()])
     }
 
     /// Of the name of the property `p` of an object literal, or of the JSX attribute `p`.

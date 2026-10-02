@@ -78,19 +78,31 @@ impl<'p> Printer<'_, 'p> {
         kind: MemberKind,
         ty: TypeId,
     ) -> Node {
-        if self.enclosing_declaration.is_some()
-            && let PropSource::Members(list) = &prop.source
-            && let Some(&(file, member)) = list
+        // `GetDeclarationOfKind`
+        let declaration = match prop.source {
+            PropSource::Members(ref list) => list
                 .iter()
                 .find(|&&(file, member)| self.c.hir(file)[member].kind == kind)
+                .map(|&(file, member)| (file, SyntaxNode::Member(member))),
+            PropSource::Literal(file, p) => {
+                let kind = match kind {
+                    MemberKind::Getter => PropKind::Getter,
+                    _ => PropKind::Setter,
+                };
+                self.c
+                    .bound(file)
+                    .declarations_of_literal_member(p)
+                    .into_iter()
+                    .find(|&declaration| self.c.hir(file)[declaration].kind == kind)
+                    .map(|declaration| (file, SyntaxNode::Prop(declaration)))
+            }
+            _ => None,
+        };
+        if self.enclosing_declaration.is_some()
+            && let Some((file, declaration)) = declaration
             && self.reuses_nodes_of(file)
         {
-            return self.serialize_type_for_declaration(
-                file,
-                SyntaxNode::Member(member),
-                ty,
-                false,
-            );
+            return self.serialize_type_for_declaration(file, declaration, ty, false);
         }
         self.type_to_node(ty)
     }
@@ -383,6 +395,7 @@ impl<'p> Printer<'_, 'p> {
                     ExprKind::String(value) => {
                         let quote = match hir.text.get(hir[*e].pos as usize) {
                             Some(b'\'') => '\'',
+                            Some(b'`') => '`',
                             _ => '"',
                         };
                         self.string_literal_to_node(value, quote)
@@ -654,8 +667,42 @@ impl<'p> Printer<'_, 'p> {
             TypeNodeKind::Typeof { .. } => return self.try_visit_type_query(file, node),
             TypeNodeKind::IndexedAccess { .. } => return self.try_visit_indexed_access(file, node),
             TypeNodeKind::Keyof(_) => return self.try_visit_key_of(file, node),
-            // What the module is called depends on where it is called that.
-            TypeNodeKind::Import { .. } => return None,
+            TypeNodeKind::Import {
+                spec,
+                name,
+                args,
+                is_typeof,
+                mode,
+            } => {
+                // `getModuleSpecifierOverride`: what the module is called depends on where it is called that.
+                let is_in_enclosing_file = self
+                    .enclosing_declaration
+                    .is_none_or(|enclosing| enclosing.0 == file);
+                let declared = self.c.type_from_node(file, node);
+                // `IsLiteralImportTypeNode`
+                if spec.is_none()
+                    || !is_in_enclosing_file
+                    || mode != ResolutionMode::None
+                    || self.c.instantiate(declared, self.mapper) != declared
+                {
+                    return None;
+                }
+                let is_quote = |&&byte: &&u8| byte == b'\'' || byte == b'"';
+                let quote = match hir.text.get(pos as usize..) {
+                    Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => '\'',
+                    _ => '"',
+                };
+                let query = if is_typeof { "typeof " } else { "" };
+                let specifier = self.string_literal_to_node(spec, quote);
+                let mut text = format!("{query}import({})", specifier.text);
+                for part in hir.ids(name) {
+                    text.push('.');
+                    text.push_str(&self.text(part));
+                }
+                let arguments = self.visit_existing_type_nodes(file, args, 0)?;
+                text.push_str(&type_arguments_text(arguments));
+                Node::simple(text)
+            }
             // Out of the scope it is written in it is written from its type, which reads the same.
             TypeNodeKind::UniqueSymbol => Node::new("unique symbol", TYPE_OPERATOR),
             TypeNodeKind::StringLit(value) => {
@@ -770,7 +817,7 @@ impl<'p> Printer<'_, 'p> {
                     .into_iter()
                     .map(|parameter| self.c.type_param(file, parameter))
                     .collect();
-                let outer_scope = self.enter_new_scope(&infer_type_parameters, false);
+                let outer_scope = self.enter_new_scope(&[], &infer_type_parameters, None, false);
                 let extends = self.visit_existing_type_node(file, extends, 0);
                 let yes = self.visit_existing_type_node(file, yes, 0);
                 self.leave_scope(outer_scope);
@@ -803,7 +850,7 @@ impl<'p> Printer<'_, 'p> {
             TypeNodeKind::Mapped(m) => {
                 let mapped = hir[m];
                 let key = self.c.type_param(file, mapped.param);
-                let outer_scope = self.enter_new_scope(&[key], false);
+                let outer_scope = self.enter_new_scope(&[], &[key], None, false);
                 let name = self.type_parameter_to_name(key);
                 let constraint =
                     self.visit_existing_type_node(file, hir[mapped.param].constraint, 0);
@@ -862,13 +909,16 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `enterNewScope`, of the function-like `f`. What it returns is for `leave_scope`.
-    fn enter_scope_of_function(&mut self, file: FileId, f: FnId) -> (usize, usize, usize) {
-        let type_parameters: Vec<TypeId> = self.c.hir(file)[f]
+    fn enter_scope_of_function(&mut self, file: FileId, f: FnId) -> (usize, usize, usize, usize) {
+        let function = self.c.hir(file)[f];
+        let parameters: Vec<Option<(FileId, ParamId)>> =
+            function.params.iter().map(|p| Some((file, p))).collect();
+        let type_parameters: Vec<TypeId> = function
             .type_params
             .iter()
             .map(|tp| self.c.type_param(file, tp))
             .collect();
-        self.enter_new_scope(&type_parameters, false)
+        self.enter_new_scope(&parameters, &type_parameters, None, false)
     }
 
     /// A `TypeParameterDeclaration`
@@ -1172,9 +1222,32 @@ impl<'p> Printer<'_, 'p> {
         })
     }
 
+    /// `reuseNode`, of the computed property name `[name]` written in `file`, where `name` is an entity name expression. `None`: it
+    /// does not mean the same, or cannot be used, where the type is wanted.
+    pub(super) fn reuse_computed_property_name(
+        &mut self,
+        file: FileId,
+        name: ExprId,
+    ) -> Option<String> {
+        let hir = self.c.hir(file);
+        let mut first = name;
+        while let ExprKind::Dot { obj, .. } = hir[first].kind {
+            first = obj;
+        }
+        let ExprKind::Ident(first) = hir[first].kind else {
+            return None;
+        };
+        let scope = self.c.enclosing_scope_of_expr(file, name);
+        if self.track_existing_entity_name(file, scope, first, SymFlags::VALUE) {
+            return None;
+        }
+        let text = format!("[{}]", self.entity_name_text(file, name)?);
+        self.approximate_length += text.len();
+        Some(text)
+    }
+
     /// `trackExistingEntityName`, of a name that starts with `first` and is written in `scope` of `file`: whether it does not mean the
-    /// same, or cannot be used, where the type is wanted. A type parameter is not looked up again, and a parameter is in the scope
-    /// made up for the signature.
+    /// same, or cannot be used, where the type is wanted.
     fn track_existing_entity_name(
         &mut self,
         file: FileId,
@@ -1183,23 +1256,26 @@ impl<'p> Printer<'_, 'p> {
         meaning: SymFlags,
     ) -> bool {
         let files = self.c.files();
-        let is_local_to_signature = |symbol: Sym| {
-            files
-                .flags(symbol)
-                .intersects(SymFlags::TYPE_PARAMETER | SymFlags::PARAMETER)
-        };
         let here = files.resolve_name(file, scope, first, meaning);
-        if here.is_some_and(is_local_to_signature) {
+        // A type parameter is not looked up again.
+        if here.is_some_and(|symbol| files.flags(symbol).contains(SymFlags::TYPE_PARAMETER)) {
             return false;
         }
         // `IsSymbolAccessible`: from nowhere everything is.
         let Some((enclosing_file, enclosing_scope)) = self.enclosing_declaration else {
             return false;
         };
-        let symbol = match (
-            files.resolve_name(enclosing_file, enclosing_scope, first, meaning),
-            here,
-        ) {
+        let parameter = self
+            .fake_scope_parameters
+            .iter()
+            .rev()
+            .find(|local| local.0 == first && meaning == SymFlags::VALUE);
+        let there = match parameter {
+            Some(&(_, Some(parameter))) => Some(parameter),
+            Some(&(_, None)) => return here.is_some(),
+            None => files.resolve_name(enclosing_file, enclosing_scope, first, meaning),
+        };
+        let symbol = match (there, here) {
             (None, Some(_)) => return true,
             (None, None) => return false,
             // `getSymbolIfSameReference`
@@ -1213,7 +1289,8 @@ impl<'p> Printer<'_, 'p> {
             }
             (Some(there), _) => there,
         };
-        !is_local_to_signature(symbol)
+        // A parameter that is found is visible.
+        !files.flags(symbol).contains(SymFlags::PARAMETER)
             && !self.c.is_symbol_accessible_at(
                 symbol,
                 meaning,

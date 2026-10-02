@@ -1179,11 +1179,9 @@ impl<'p> Checker<'p> {
             }
         }
         if ty == TypeId::STRING {
-            shape.index.push(IndexInfo {
-                key: TypeId::STRING,
-                value: TypeId::EMPTY_OBJECT,
-                readonly: false,
-            });
+            shape
+                .index
+                .push(IndexInfo::new(TypeId::STRING, TypeId::EMPTY_OBJECT, false));
         }
         self.synth(shape)
     }
@@ -2142,11 +2140,11 @@ impl<'p> Checker<'p> {
             let value = self
                 .infer_reverse_mapped_type(value, target, of)
                 .unwrap_or(TypeId::UNKNOWN);
-            shape.index.push(IndexInfo {
-                key: TypeId::STRING,
+            shape.index.push(IndexInfo::new(
+                TypeId::STRING,
                 value,
-                readonly: !adds_readonly && info.readonly,
-            });
+                !adds_readonly && info.readonly,
+            ));
         }
         shape
     }

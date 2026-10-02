@@ -233,50 +233,6 @@ fn quoted(text: &str) -> String {
     out
 }
 
-/// `levenshteinWithMax`. `None`: further apart than `max`.
-fn levenshtein_with_max(s1: &[char], s2: &[char], max: f64) -> Option<f64> {
-    let mut previous: Vec<f64> = (0..=s2.len()).map(|i| i as f64).collect();
-    let mut current: Vec<f64> = vec![0.0; s2.len() + 1];
-    let big = max + 0.01;
-    for i in 1..=s1.len() {
-        let c1 = s1[i - 1];
-        let at = i as f64;
-        let min_j = ((at - max).ceil() as i64).max(1) as usize;
-        let max_j = ((max + at).floor() as usize).min(s2.len());
-        let mut col_min = at;
-        current[0] = col_min;
-        for cell in &mut current[1..min_j.min(s2.len() + 1)] {
-            *cell = big;
-        }
-        for j in min_j..=max_j {
-            let c2 = s2[j - 1];
-            let substitution = if c1.to_lowercase().eq(c2.to_lowercase()) {
-                previous[j - 1] + 0.1
-            } else {
-                previous[j - 1] + 2.0
-            };
-            let distance = if c1 == c2 {
-                previous[j - 1]
-            } else {
-                (previous[j] + 1.0)
-                    .min(current[j - 1] + 1.0)
-                    .min(substitution)
-            };
-            current[j] = distance;
-            col_min = col_min.min(distance);
-        }
-        for cell in &mut current[(max_j + 1).min(s2.len() + 1)..] {
-            *cell = big;
-        }
-        if col_min > max {
-            return None;
-        }
-        std::mem::swap(&mut previous, &mut current);
-    }
-    let result = previous[s2.len()];
-    (result <= max).then_some(result)
-}
-
 /// `GetSpellingSuggestion`: which of `candidates` `name` is most likely meant to be. They come in the order of its `compare`, so of
 /// two that are as close the first stays.
 fn spelling_suggestion(name: &str, candidates: &[String]) -> Option<usize> {
@@ -559,7 +515,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSingleBaseForNonAugmentingSubtype`
-    fn single_base_for_non_augmenting_subtype(&mut self, ty: TypeId) -> Option<TypeId> {
+    pub(super) fn single_base_for_non_augmenting_subtype(&mut self, ty: TypeId) -> Option<TypeId> {
         if !self.has_single_base_for_non_augmenting_subtype(ty) {
             return None;
         }
@@ -985,7 +941,7 @@ impl<'p> Checker<'p> {
             };
             match base_constraint {
                 Some(constraint) if self.is_assignable(generalized_source, constraint) => {
-                    let constraint = self.base_constraint_to_string(target, constraint);
+                    let constraint = self.type_to_string(constraint);
                     x.report(
                         5075,
                         vec![
@@ -996,7 +952,7 @@ impl<'p> Checker<'p> {
                     );
                 }
                 Some(constraint) if self.is_assignable(source, constraint) => {
-                    let constraint = self.base_constraint_to_string(target, constraint);
+                    let constraint = self.type_to_string(constraint);
                     x.report(
                         5075,
                         vec![source_type.clone(), target_type.clone(), constraint],

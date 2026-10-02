@@ -5,6 +5,15 @@ use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeKind, UNREACHABLE};
 use smallvec::SmallVec;
 
+/// What `reportCircularityError` returns for a declaration with the type annotation `annotation`.
+pub(super) fn circularity_error_type(annotation: TypeNodeId) -> TypeId {
+    if annotation.is_some() {
+        TypeId::ERROR
+    } else {
+        TypeId::ANY
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct IterationTypes {
     pub yielded: TypeId,
@@ -56,7 +65,7 @@ impl<'p> Checker<'p> {
     fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
         if !self.enter(Query::Symbol(sym)) {
             return if self.came_full_circle {
-                TypeId::ANY
+                self.type_of_circular_symbol(sym, None)
             } else {
                 TypeId::UNRESOLVED
             };
@@ -66,12 +75,43 @@ impl<'p> Checker<'p> {
         let holds = self.leave();
         if self.left_a_circle {
             self.p.circular_symbols.insert(sym, ());
-            return self.p.symbol_types.insert(sym, TypeId::ANY);
+            let ty = self.type_of_circular_symbol(sym, Some(ty));
+            return self.p.symbol_types.insert(sym, ty);
         }
         if holds {
             self.p.symbol_types.insert(sym, ty);
         }
         ty
+    }
+
+    /// The type of `sym` when the resolution of its type depends on itself. `resolved`: what it came to, if `popTypeResolution` found
+    /// the circle. `None`: `pushTypeResolution` did.
+    fn type_of_circular_symbol(&self, sym: Sym, resolved: Option<TypeId>) -> TypeId {
+        let flags = self.files().flags(sym);
+        // `getTypeOfAlias`
+        if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE) {
+            return resolved
+                .filter(|&ty| self.is_known(ty))
+                .unwrap_or(TypeId::ERROR);
+        }
+        // `symbol.ValueDeclaration`
+        if flags.intersects(SymFlags::VARIABLE) {
+            for (file, decl) in declarations_of(self.files(), sym) {
+                if let Decl::Var(pat) | Decl::Param(pat) = decl {
+                    return circularity_error_type(self.type_annotation_of_pat(file, pat));
+                }
+            }
+        }
+        TypeId::ANY
+    }
+
+    /// `declaration.Type()` of the variable declaration, parameter or binding element whose name is `pat`.
+    pub(super) fn type_annotation_of_pat(&self, file: FileId, pat: PatId) -> TypeNodeId {
+        match self.bound(file).pat_parent[pat.idx()] {
+            PatParent::Var(d) => self.hir(file)[d].ty,
+            PatParent::Param(p) => self.hir(file)[p].ty,
+            _ => TypeNodeId::NONE,
+        }
     }
 
     fn type_of_symbol_uncached(&mut self, sym: Sym) -> TypeId {
@@ -195,10 +235,12 @@ impl<'p> Checker<'p> {
             if let Some(class) = self.files().static_member_of_same_name(sym) {
                 let statics = self.type_of_class_value(class);
                 let name = self.files().symbol(sym).name;
-                return self.type_of_property(statics, name).unwrap_or(TypeId::ANY);
+                return self
+                    .type_of_property(statics, name)
+                    .unwrap_or(TypeId::ERROR);
             }
             // A symbol that is not a value has the error type.
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         TypeId::UNRESOLVED
     }
@@ -299,7 +341,7 @@ impl<'p> Checker<'p> {
         match self.files().alias_target(sym) {
             Some(next) if next != sym => {
                 if self.is_kept_next_to_an_exported_value(sym, next) {
-                    return TypeId::ANY;
+                    return TypeId::ERROR;
                 }
                 // `combineValueAndTypeSymbols`: when the export has no value flag of its own, the property of the `export =` value
                 // with the same name is the value side.
@@ -386,7 +428,7 @@ impl<'p> Checker<'p> {
                 }
                 // `unknownSymbol`
                 Some(if self.is_known(object) {
-                    TypeId::ANY
+                    TypeId::ERROR
                 } else {
                     TypeId::UNRESOLVED
                 })
@@ -1190,7 +1232,7 @@ impl<'p> Checker<'p> {
         }
         if !self.enter(Query::Pat(file, pat)) {
             return if self.came_full_circle {
-                TypeId::ANY
+                circularity_error_type(self.type_annotation_of_pat(file, pat))
             } else {
                 TypeId::UNRESOLVED
             };
@@ -1200,8 +1242,9 @@ impl<'p> Checker<'p> {
         let holds = self.leave();
         if self.left_a_circle {
             self.p.circular_pats.insert((file, pat), ());
-            self.p.pat_types.set(file, pat.idx(), TypeId::ANY);
-            return TypeId::ANY;
+            let ty = circularity_error_type(self.type_annotation_of_pat(file, pat));
+            self.p.pat_types.set(file, pat.idx(), ty);
+            return ty;
         }
         // `getTypeOfVariableOrParameterOrProperty`: what was settled meanwhile stands. Whoever asked is told what this came to.
         if holds && self.p.pat_types.get(file, pat.idx()).is_none() {
@@ -1662,9 +1705,9 @@ impl<'p> Checker<'p> {
                         return TypeId::UNRESOLVED;
                     };
                     let parent_ty = self.reduced(parent_ty);
-                    // 2700, and what is in error is anything.
+                    // 2700
                     if self.is_rest_of_invalid_type(parent_ty) {
-                        return TypeId::ANY;
+                        return TypeId::ERROR;
                     }
                     // `getLiteralTypeFromPropertyName`: a name that is worked out and is not the name of one property stands for
                     // whatever its type allows. One that reads as a number is the number or the string, whichever is written, and
@@ -1720,8 +1763,8 @@ impl<'p> Checker<'p> {
                                 match self.indexed_access_if_any(parent_ty, key, true) {
                                     Some(ty) => ty,
                                     None if allows_missing => missing,
-                                    // An error, and what is in error is anything.
-                                    None if self.is_known(parent_ty) => TypeId::ANY,
+                                    // `getIndexedAccessTypeEx`
+                                    None if self.is_known(parent_ty) => TypeId::ERROR,
                                     None => TypeId::UNRESOLVED,
                                 }
                             }
@@ -1733,8 +1776,9 @@ impl<'p> Checker<'p> {
                             let key = self.regular(key);
                             match self.indexed_access_if_any(parent_ty, key, true) {
                                 // `getPropertyTypeForIndexType`: that a key of type `any` finds anything comes after what may be missing.
-                                Some(TypeId::ANY)
-                                    if allows_missing
+                                Some(found)
+                                    if found.is_any()
+                                        && allows_missing
                                         && self.has_any_flag(key)
                                         && self
                                             .members(parent_ty)
@@ -1754,9 +1798,9 @@ impl<'p> Checker<'p> {
                                     }
                                     self.union(&types)
                                 }
-                                // An error, and what is in error is anything.
+                                // `getIndexedAccessTypeEx`
                                 None if self.is_known(parent_ty) && self.is_known(key) => {
-                                    TypeId::ANY
+                                    TypeId::ERROR
                                 }
                                 None => TypeId::UNRESOLVED,
                             }
@@ -1834,12 +1878,11 @@ impl<'p> Checker<'p> {
             return self.array_of(element);
         }
         // Only of a list are elements looked up by number: `interface RegExpExecArray extends Array<string> { 0: string }`.
-        // Nothing there is an error, and what is in error is anything.
         if self.is_array_like(ty) {
             let key = self.number_literal(index as f64, false);
             return self
                 .indexed_access_if_any(ty, key, true)
-                .unwrap_or(TypeId::ANY);
+                .unwrap_or(TypeId::ERROR);
         }
         // Of anything else it is what the whole yields, if it gets that far (`includeUndefinedInIndexSignature`).
         let element = self.iterated_type(ty, false);
@@ -1936,9 +1979,8 @@ impl<'p> Checker<'p> {
             if keys == TypeId::NEVER {
                 return ty;
             }
-            // Without an `Omit` it is an error, and what is in error can be anything.
             let Some(omit) = self.global_type_symbol(known::Omit) else {
-                return TypeId::ANY;
+                return TypeId::ERROR;
             };
             return self.type_reference(omit, &[ty, keys]);
         }
@@ -1982,18 +2024,18 @@ impl<'p> Checker<'p> {
         self.synth(shape)
     }
 
-    /// `checkNonNullType`, less what it reports: `ty` without `null` and `undefined`. `unknown`, or nothing left, is an error: anything.
+    /// `checkNonNullType`, less what it reports: `ty` without `null` and `undefined`. `unknown`, or nothing left, is the error type.
     pub(super) fn non_null_type(&mut self, ty: TypeId) -> TypeId {
         // Without strictNullChecks `GetNonNullableType` returns its argument, so only `null` and `undefined` themselves are errors.
         if !self.p.files.options.strict_null_checks {
             return if ty.is_undefined() || ty.is_null() {
-                TypeId::ANY
+                TypeId::ERROR
             } else {
                 ty
             };
         }
         if ty == TypeId::UNKNOWN {
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         // `GetNonNullableType` changes every type that has one of `TypeFactsIsUndefinedOrNull`.
         let rest = self.non_nullable_type_if_needed(ty);
@@ -2001,7 +2043,7 @@ impl<'p> Checker<'p> {
             return ty;
         }
         if rest == TypeId::NEVER || self.every_type(rest, |_, m| m.is_undefined() || m.is_null()) {
-            TypeId::ANY
+            TypeId::ERROR
         } else {
             rest
         }
@@ -2080,13 +2122,10 @@ impl<'p> Checker<'p> {
             }
             let declared = self.type_from_node(file, decl.ty);
             let declared = self.force(declared);
-            return if matches!(
-                declared,
-                TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::UNRESOLVED
-            ) {
+            return if self.is_any(declared) || declared == TypeId::UNKNOWN {
                 declared
             } else {
-                TypeId::ANY
+                TypeId::ERROR
             };
         }
         // `isValidESSymbolDeclaration`: a `const` with a name, in a statement of its own. To anything else a `unique symbol` is a `symbol`.
@@ -2569,8 +2608,9 @@ impl<'p> Checker<'p> {
             }
         }
         if !self.enter(Query::Return(file, func)) {
+            // `getReturnTypeOfSignature`
             return if self.came_full_circle {
-                TypeId::ANY
+                TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
             };
@@ -3063,9 +3103,9 @@ impl<'p> Checker<'p> {
         Some(self.instantiate(param, mapper))
     }
 
-    /// `checkAwaitedType`: what `await` gives for a value of type `ty`. Where that is an error it can be anything.
+    /// `checkAwaitedType`: what `await` gives for a value of type `ty`.
     pub fn awaited(&mut self, ty: TypeId) -> TypeId {
-        self.awaited_or_none(ty).unwrap_or(TypeId::ANY)
+        self.awaited_or_none(ty).unwrap_or(TypeId::ERROR)
     }
 
     /// `getAwaitedType`. `None`: to await a `ty` is an error.
@@ -3688,8 +3728,9 @@ impl<'p> Checker<'p> {
         if !types.has_types() || (types.y == any && types.r == any && types.n == any) {
             return types;
         }
-        let y = types.y.map_or(TypeId::ANY, |y| self.awaited(y));
-        let r = types.r.map_or(TypeId::ANY, |r| self.awaited(r));
+        let y = types.y.and_then(|y| self.awaited_or_none(y));
+        let r = types.r.and_then(|r| self.awaited_or_none(r));
+        let (y, r) = (y.unwrap_or(TypeId::ANY), r.unwrap_or(TypeId::ANY));
         Iter3 {
             y: Some(y),
             r: Some(r),
@@ -3886,7 +3927,7 @@ impl<'p> Checker<'p> {
                 next = Some(parameter);
             } else {
                 returned.push(if is_async {
-                    self.awaited(parameter)
+                    self.awaited_or_none(parameter).unwrap_or(TypeId::ANY)
                 } else {
                     parameter
                 });
@@ -3894,7 +3935,7 @@ impl<'p> Checker<'p> {
         }
         let result = self.intersection(&results);
         let result = if is_async {
-            self.awaited(result)
+            self.awaited_or_none(result).unwrap_or(TypeId::ANY)
         } else {
             result
         };

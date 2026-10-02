@@ -293,7 +293,7 @@ impl<'p> Checker<'p> {
                 self.p.circular_returns.insert((f, func), ());
             }
         }
-        Some(TypeId::ANY)
+        Some(TypeId::ERROR)
     }
 
     /// `getTypeOfExpression` has no guard against re-entry. A reference that a back edge of its own loop evaluates again is checked
@@ -949,6 +949,40 @@ impl<'p> Checker<'p> {
             })
     }
 
+    /// `leftType` of `checkPropertyAccessExpressionOrQualifiedName`: what the property of `obj.name` is looked up in, and whether the
+    /// chain may stop before. `Err`: `isAnyLike`, and the type of the access.
+    pub(super) fn left_type_of_property_access(
+        &mut self,
+        file: FileId,
+        obj: ExprId,
+        chain: Chain,
+    ) -> (Result<TypeId, TypeId>, bool) {
+        let (receiver, stops) = self.chain_receiver(file, obj, chain);
+        // `x.a` out of `any` is `any`, tests or no tests. (Not so `x["a"]`.)
+        // `if c.isErrorType(apparentType) { return c.errorType }`
+        if self.is_error_type(receiver) {
+            return (Err(TypeId::ERROR), false);
+        }
+        if self.is_any(receiver) {
+            return (Err(receiver), false);
+        }
+        let left = self.receiver_that_is_there(receiver);
+        if self.is_error_type(left) {
+            return (Err(TypeId::ERROR), stops);
+        }
+        if self.is_any(left) {
+            return (Err(left), stops);
+        }
+        (Ok(left), stops)
+    }
+
+    /// `getApparentType`: what may be anything at all has nothing that can be counted on, not even what every object has.
+    pub(super) fn is_apparently_unknown(&mut self, ty: TypeId) -> bool {
+        self.p.files.options.strict_null_checks
+            && self.is_deferred(ty)
+            && self.base_constraint(ty) == TypeId::UNKNOWN
+    }
+
     /// `checkPropertyAccessExpressionOrQualifiedName`: the type of `a.b` when it is got to, and whether the chain may stop before.
     fn type_of_property_access(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let hir = self.hir(file);
@@ -958,22 +992,11 @@ impl<'p> Checker<'p> {
         else {
             return (TypeId::UNRESOLVED, false);
         };
-        let (receiver, stops) = self.chain_receiver(file, obj, chain);
-        // `x.a` out of `any` is `any`, tests or no tests. (Not so `x["a"]`.)
-        // `isAnyLike`: `if c.isErrorType(apparentType) { return c.errorType }`
-        if self.is_error_type(receiver) {
-            return (TypeId::ERROR, false);
-        }
-        if self.is_any(receiver) {
-            return (receiver, false);
-        }
-        let left = self.receiver_that_is_there(receiver);
-        if self.is_error_type(left) {
-            return (TypeId::ERROR, stops);
-        }
-        if self.is_any(left) {
-            return (left, stops);
-        }
+        let (left, stops) = self.left_type_of_property_access(file, obj, chain);
+        let left = match left {
+            Ok(left) => left,
+            Err(any) => return (any, stops),
+        };
         let target = self.target_kind(file, e);
         // `getWidenedType(leftType)`: what is written to or called is looked up in what a variable holding the object would be.
         let receiver = if target.written || self.is_called(file, e) {
@@ -995,11 +1018,7 @@ impl<'p> Checker<'p> {
         }
         let found = if is_private && !self.is_private_name_in_reach(file, e, left, name) {
             None
-        } else if self.p.files.options.strict_null_checks
-            && self.is_deferred(receiver)
-            && self.base_constraint(receiver) == TypeId::UNKNOWN
-        {
-            // `getApparentType`: what may be anything at all has nothing that can be counted on, not even what every object has.
+        } else if self.is_apparently_unknown(receiver) {
             None
         } else if matches!(hir[obj].kind, ExprKind::Super) {
             self.type_of_super_property(file, obj, receiver, name)
@@ -1029,6 +1048,16 @@ impl<'p> Checker<'p> {
             let is_unchecked_js =
                 self.is_plain_js(file) && !matches!(hir[obj].kind, ExprKind::This);
             if !is_unchecked_js && self.is_js_literal_type(left) {
+                return (TypeId::ANY, stops);
+            }
+            // `leftType.symbol == c.globalThisSymbol`: 2339 or 7017, and `anyType`.
+            if matches!(
+                self.data(left),
+                TypeData::Anon {
+                    origin: Origin::GlobalThis,
+                    ..
+                }
+            ) {
                 return (TypeId::ANY, stops);
             }
             // `reportNonexistentProperty` records the access before it prints the containing type, and prints once.
@@ -1146,11 +1175,13 @@ impl<'p> Checker<'p> {
         }
         // `getTypeOfPropertyInBaseClass`
         let (class, _) = self.class_of_member_fn(file, container)?;
-        if let Some(&base) = self.base_types(self.class_sym(file, class)).first()
-            && let Some(base_members) = self.members(base)
-            && let Some((inherited, mapper)) = self.property_of_type(&base_members, name)
-        {
-            return Some(self.type_of_prop(&inherited, mapper));
+        if let Some(&base) = self.base_types(self.class_sym(file, class)).first() {
+            let base = self.apparent_type(base);
+            if let Some(base_members) = self.members(base)
+                && let Some((inherited, mapper)) = self.property_of_type(&base_members, name)
+            {
+                return Some(self.type_of_prop(&inherited, mapper));
+            }
         }
         Some(self.undefined_as_declared())
     }
@@ -1303,7 +1334,6 @@ impl<'p> Checker<'p> {
         };
         let (object, stops) = self.chain_receiver(file, obj, chain);
         let receiver = self.receiver_that_is_there(object);
-        let is_in_error = self.is_any(receiver) && !self.is_any(object);
         let target = self.target_kind(file, e);
         // `getWidenedType(exprType)`: what is written to or called is looked up in what a variable holding the object would be.
         let receiver = if target.written || self.is_called(file, e) {
@@ -1312,8 +1342,8 @@ impl<'p> Checker<'p> {
             receiver
         };
         let key = self.type_of_expr(file, index);
-        // What is in error is not looked into, nor narrowed.
-        if is_in_error {
+        // `isErrorType(objectType)`: it is the result, not looked into nor narrowed.
+        if self.is_error_type(receiver) {
             return (receiver, stops);
         }
         // A `const` enum is only looked into by a name that is written out (2476).
@@ -1327,7 +1357,7 @@ impl<'p> Checker<'p> {
                 _ => false,
             };
         if !is_string_literal_like && self.is_const_enum_object(receiver) {
-            return (TypeId::ANY, stops);
+            return (TypeId::ERROR, stops);
         }
         // `isForInVariableForNumericPropertyNames`: the variable of a `for..in` over what has numbers for names is a number here.
         let key = if self.is_for_in_variable_for_numeric_names(file, index) {
@@ -1436,16 +1466,18 @@ impl<'p> Checker<'p> {
         };
         let declared = match found {
             Some(found) => found,
+            // `isJSLiteralType(objectType)`: `anyType`, not nil.
+            None if self.is_js_literal_type(receiver) => TypeId::ANY,
             // An object literal that is read on the spot answers for what it lacks.
             None if is_read && self.is_object_literal_type(receiver) => {
                 self.indexed_access_for_read(receiver, key)
             }
-            // `getIndexedAccessTypeOrUndefined` gives nil: an error, and what is in error can be anything.
+            // `core.OrElse(c.getIndexedAccessTypeOrUndefined(..), c.errorType)`
             None if self.is_known(key)
                 && !self.is_uncertain(file, index)
                 && self.is_certainly_missing(file, obj, receiver, cycles_before) =>
             {
-                TypeId::ANY
+                TypeId::ERROR
             }
             None => TypeId::UNRESOLVED,
         };
@@ -1453,7 +1485,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `checkIndexedAccessIndexType`, of the type `ty` of `e`: `T[K]` where `K` cannot be used to look into `T` is an error (2536,
-    /// 4105), and what is in error can be anything.
+    /// 4105), and `errorType`.
     fn checked_indexed_access_index_type(&mut self, file: FileId, e: ExprId, ty: TypeId) -> TypeId {
         let TypeData::IndexedAccess { obj, index, .. } = *self.data(ty) else {
             return ty;
@@ -1464,7 +1496,7 @@ impl<'p> Checker<'p> {
             && self.is_in_generic_context(file, e)
             && self.why_not_a_key_of(obj, index).is_some();
         if is_refused && self.cycles == cycles_before {
-            TypeId::ANY
+            TypeId::ERROR
         } else {
             ty
         }
@@ -1647,8 +1679,15 @@ impl<'p> Checker<'p> {
                 self.union_reduced(&[yes, no])
             }
             ExprKind::Spread(x) => self.type_of_expr(file, x),
+            // `checkSatisfiesExpression`
             ExprKind::Satisfies { expr: x, ty } => {
                 let source = self.type_of_expr(file, x);
+                let uncertain = self.uncertain;
+                let target = self.type_from_node(file, ty);
+                self.uncertain = uncertain;
+                if self.is_error_type(target) {
+                    return target;
+                }
                 self.print_unsatisfied_types(file, source, ty);
                 source
             }
@@ -1704,7 +1743,7 @@ impl<'p> Checker<'p> {
             }
             // `checkJsxFragment`: `any` where `getJsxElementTypeAt` is the error type.
             ExprKind::Jsx(j) if hir[j].tag.is_none() => match self.jsx_element_type(file) {
-                TypeId::ERROR => TypeId::ANY,
+                ty if self.is_error_type(ty) => TypeId::ANY,
                 ty => ty,
             },
             ExprKind::Jsx(_) => self.jsx_element_type(file),
@@ -1746,9 +1785,9 @@ impl<'p> Checker<'p> {
 
     /// `checkImportCallExpression`, for `import(spec)`.
     fn type_of_import_call(&mut self, file: FileId, spec: ExprId) -> TypeId {
-        // `createPromiseReturnType`: without a `Promise` to give it is an error, and what is in error can be anything.
+        // `createPromiseReturnType`: 2711 without a `Promise` to give.
         if self.global_type_symbol(known::Promise).is_none() {
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         let ExprKind::String(spec) = self.hir(file)[spec].kind else {
             return self.promise_of(TypeId::ANY);
@@ -1884,6 +1923,8 @@ impl<'p> Checker<'p> {
     fn type_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> TypeId {
         let Some(sym) = self.symbol_of_identifier(file, e, name) else {
             return match name {
+                // `undefinedSymbol` and `globalThisSymbol` are no variables: 2539, 2631.
+                known::undefined | known::globalThis if self.is_written(file, e) => TypeId::ERROR,
                 known::undefined => TypeId::UNDEFINED,
                 // In a property initializer or a static block the arguments object is an error (2815).
                 known::arguments
@@ -2340,9 +2381,9 @@ impl<'p> Checker<'p> {
 
     /// `checkNewTargetMetaProperty`
     fn type_of_new_target(&mut self, file: FileId, e: ExprId) -> TypeId {
-        // `GetNewTargetContainer`. Anywhere else it is an error, and what is in error can be anything.
+        // `GetNewTargetContainer` is nil anywhere else: 17013.
         let Some(Ok(func)) = self.this_container(file, e) else {
-            return TypeId::ANY;
+            return TypeId::ERROR;
         };
         match self.hir(file)[func].kind {
             FnKind::Constructor => match self.class_of_member_fn(file, func) {
@@ -2364,7 +2405,7 @@ impl<'p> Checker<'p> {
                 FnOwner::Expr(owner) => self.type_of_expr(file, owner),
                 _ => TypeId::ANY,
             },
-            _ => TypeId::ANY,
+            _ => TypeId::ERROR,
         }
     }
 
@@ -2546,7 +2587,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isContextSensitiveFunctionOrObjectLiteralMethod`, which an accessor is not.
-    fn is_context_sensitive_function_or_method(
+    pub(super) fn is_context_sensitive_function_or_method(
         &self,
         file: FileId,
         func: FnId,
@@ -2967,9 +3008,18 @@ impl<'p> Checker<'p> {
                                 f,
                                 matches!(parent, Parent::ParamDefault(_)) && !through_function,
                             )),
-                            // In a method or an accessor of an object literal it is `any`. In any other function it is an error, and
-                            // what is in error can be anything.
-                            _ => Err(TypeId::ANY),
+                            // `container.Parent.Kind == ast.KindObjectLiteralExpression`
+                            FnOwner::Expr(_)
+                                if !is_call
+                                    && matches!(
+                                        hir[f].kind,
+                                        FnKind::Method | FnKind::Getter | FnKind::Setter
+                                    ) =>
+                            {
+                                Err(TypeId::ANY)
+                            }
+                            // `isLegalUsageOfSuperExpression` holds in no other function.
+                            _ => Err(TypeId::ERROR),
                         };
                     }
                     through_function = true;
@@ -3020,7 +3070,7 @@ impl<'p> Checker<'p> {
             return TypeId::ERROR;
         }
         let MemberOwner::Class(class) = bound.member_owner[member.idx()] else {
-            return TypeId::ANY;
+            return TypeId::ERROR;
         };
         let extends = hir[class].extends;
         if extends.is_none() {
@@ -3033,30 +3083,20 @@ impl<'p> Checker<'p> {
         }
         let is_static = hir[member].flags.contains(Flags::STATIC);
         let sym = self.class_sym(file, class);
-        let base = match self.base_types(sym).first().copied() {
-            Some(base) => base,
-            None => {
-                // `base_types` leaves out what has no members of its own to inherit, which `getBaseTypes` has (`isValidBaseType`).
-                let sigs = self.super_constructor_sigs(sym);
-                let instance = match sigs.first() {
-                    Some(&sig) => self.sig_return(sig),
-                    None => TypeId::NEVER,
-                };
-                let is_left_out = self.has_any_flag(instance)
-                    || instance == TypeId::OBJECT
-                    || matches!(self.data(instance), TypeData::TypeParam(..));
-                if is_left_out && self.is_valid_base_type(instance) {
-                    instance
-                } else if self.is_known(constructor) && self.is_known(instance) {
-                    return TypeId::ERROR;
-                } else {
-                    return if is_static || is_call {
-                        constructor
-                    } else {
-                        TypeId::UNRESOLVED
-                    };
-                }
+        let Some(base) = self.base_types(sym).first().copied() else {
+            let sigs = self.super_constructor_sigs(sym);
+            let instance = match sigs.first() {
+                Some(&sig) => self.sig_return(sig),
+                None => TypeId::NEVER,
+            };
+            if self.is_known(constructor) && self.is_known(instance) {
+                return TypeId::ERROR;
             }
+            return if is_static || is_call {
+                constructor
+            } else {
+                TypeId::UNRESOLVED
+            };
         };
         if is_in_constructor && is_in_parameter {
             return TypeId::ERROR;
@@ -3359,12 +3399,16 @@ impl<'p> Checker<'p> {
                 run = p.0 + 1;
                 let spread = self.type_of_expr(file, prop.value);
                 let spread = self.reduced(spread);
-                // `checkObjectLiteral`: what cannot be spread is an error, and the whole literal can then be anything.
+                // 2698 and `spread = c.errorType`
                 if self.is_known(spread)
                     && !self.is_uncertain(file, prop.value)
                     && !self.is_valid_spread_type(spread)
                 {
-                    return TypeId::ANY;
+                    result = TypeId::ERROR;
+                    continue;
+                }
+                if self.is_error_type(result) {
+                    continue;
                 }
                 let spread = self.merge_object_or_nothing(spread);
                 result = self.spread_in_literal(result, spread, is_const);
@@ -3406,6 +3450,10 @@ impl<'p> Checker<'p> {
                 source: PropSource::Literal(file, source),
                 mapper: literal_mapper,
             });
+        }
+        // What is written after the last spread is not added to an error type.
+        if self.is_error_type(result) {
+            return TypeId::ERROR;
         }
         if let Some(segment) = self.written_segment(
             file,
@@ -3551,7 +3599,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getOptionalSymbolFlagForNode`: whether `p` is a method of an object literal written `name?() {}` (1162).
-    fn is_optional_method(&self, file: FileId, p: PropId) -> bool {
+    pub(super) fn is_optional_method(&self, file: FileId, p: PropId) -> bool {
         let hir = self.hir(file);
         let prop = &hir[p];
         if prop.kind != PropKind::Method || prop.value.is_none() {
@@ -3627,8 +3675,9 @@ impl<'p> Checker<'p> {
         if !wanted.contains(&true) {
             return Vec::new();
         }
-        // What each member holds, `isSymbolWithSymbolName`, `isSymbolWithNumericName`.
-        let mut held: Vec<(TypeId, bool, bool)> = Vec::with_capacity(run.len());
+        // What each member holds, `isSymbolWithSymbolName`, `isSymbolWithNumericName`, and `prop.Declarations[0]` if
+        // `isSymbolWithComputedName`.
+        let mut held: Vec<(TypeId, bool, bool, Option<PropId>)> = Vec::with_capacity(run.len());
         for p in run.iter() {
             let prop = &hir[p];
             let mut source = p;
@@ -3661,10 +3710,14 @@ impl<'p> Checker<'p> {
                     }
                 }
             };
+            let first = self.bound(file).declarations_of_literal_member(p)[0];
+            let has_computed_name = matches!(hir[first].key, PropKey::Computed(_))
+                || hir.text.get(hir[first].pos as usize) == Some(&b'[');
             held.push((
                 self.type_of_literal_prop(file, source),
                 is_symbol,
                 is_numeric,
+                has_computed_name.then_some(first),
             ));
         }
         let mut infos = Vec::new();
@@ -3675,14 +3728,17 @@ impl<'p> Checker<'p> {
             if !wanted[i] {
                 continue;
             }
-            let values: Vec<TypeId> = held
+            let counts = |h: &&(TypeId, bool, bool, Option<PropId>)| match i {
+                0 => !h.1,
+                1 => h.2,
+                _ => h.1,
+            };
+            let values: Vec<TypeId> = held.iter().filter(counts).map(|h| h.0).collect();
+            let components: Vec<IndexComponent> = held
                 .iter()
-                .filter(|h| match i {
-                    0 => !h.1,
-                    1 => h.2,
-                    _ => h.1,
-                })
-                .map(|h| h.0)
+                .filter(counts)
+                .filter_map(|h| h.3)
+                .map(|p| IndexComponent::Property(file, p))
                 .collect();
             let value = if values.is_empty() {
                 TypeId::UNDEFINED
@@ -3693,6 +3749,8 @@ impl<'p> Checker<'p> {
                 key,
                 value,
                 readonly,
+                declaration: None,
+                components: self.p.types.intern_components(&components),
             });
         }
         infos
@@ -4181,8 +4239,10 @@ impl<'p> Checker<'p> {
                     || self.is_assignable_to_kind(r, Self::is_string_like, TypeId::STRING, true)
                 {
                     TypeId::STRING
+                } else if self.is_error_type(l) || self.is_error_type(r) {
+                    TypeId::ERROR
                 } else {
-                    // Either it can be anything, or the two cannot be added, which is an error.
+                    // One of them is `any`, or the two cannot be added: 2365 and `anyType`.
                     TypeId::ANY
                 }
             }
@@ -4207,20 +4267,24 @@ impl<'p> Checker<'p> {
                     // `bothAreBigIntLike`
                     TypeId::BIGINT
                 } else {
-                    // A bigint and something else do not go together, which is an error.
-                    TypeId::ANY
+                    // A bigint and something else do not go together: 2365.
+                    TypeId::ERROR
                 }
             }
         }
     }
 
-    /// `checkNonNullType`: what is left of an operand that must not be `null` or `undefined`. Nothing at all is an error: anything.
+    /// `checkNonNullType`: what is left of an operand that must not be `null` or `undefined`. Nothing at all is `errorType`.
     fn operand_without_nullish(&mut self, ty: TypeId) -> TypeId {
         if !self.p.files.options.strict_null_checks {
-            return ty;
+            return if ty.is_null() || ty.is_undefined() {
+                TypeId::ERROR
+            } else {
+                ty
+            };
         }
         if ty == TypeId::UNKNOWN {
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         // `getTypeFacts(t, TypeFactsIsUndefinedOrNull)`: what waits for type parameters goes by what it extends.
         let by = self.base_constraint(ty);
@@ -4228,7 +4292,7 @@ impl<'p> Checker<'p> {
             return ty;
         }
         match self.non_nullable(ty) {
-            TypeId::NEVER => TypeId::ANY,
+            TypeId::NEVER => TypeId::ERROR,
             rest => rest,
         }
     }
@@ -4867,19 +4931,5 @@ impl<'p> Checker<'p> {
             ClassOwner::Expr(e) => Some(e),
             ClassOwner::Stmt(_) => None,
         }
-    }
-}
-
-/// `text` without its trailing white space and `/* */` comments.
-fn trim_trivia_end(mut text: &[u8]) -> &[u8] {
-    loop {
-        text = text.trim_ascii_end();
-        let Some(rest) = text.strip_suffix(b"*/") else {
-            return text;
-        };
-        let Some(open) = rest.windows(2).rposition(|w| w == b"/*") else {
-            return text;
-        };
-        text = &text[..open];
     }
 }

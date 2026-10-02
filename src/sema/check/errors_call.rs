@@ -118,7 +118,6 @@ impl Checker<'_> {
         }
         let mut said = Vec::new();
         let called = self.check_not_nullish(file, data.callee, called, &mut said);
-        let stops = !said.is_empty() && self.is_any(called);
         for d in said {
             let code = match d.code {
                 _ if is_new => d.code,
@@ -138,18 +137,12 @@ impl Checker<'_> {
                 self.note(d.start, end, code, Vec::new());
             }
         }
-        if stops {
-            return;
-        }
         let apparent = self.apparent_type(called);
         if !self.is_known(apparent) {
             return;
         }
-        // `resolveErrorCall`: `isErrorType(apparentType)`
-        if called == TypeId::ERROR
-            || apparent == TypeId::ERROR
-            || self.is_any(apparent) && self.is_constrained_by_error_type(called)
-        {
+        // `resolveErrorCall`
+        if self.is_error_type(apparent) {
             return;
         }
         let has_type_args = !data.type_args.is_empty();
@@ -169,7 +162,7 @@ impl Checker<'_> {
                 call_sigs.len(),
                 construct_sigs.len(),
             ) {
-                if has_type_args && called != TypeId::ERROR {
+                if has_type_args && !self.is_error_type(called) {
                     let node_start = self.start_inside_parentheses(file, e);
                     out.push(Diagnostic {
                         start: node_start,
@@ -239,7 +232,7 @@ impl Checker<'_> {
             return;
         }
         if self.is_any(apparent) {
-            if has_type_args && called != TypeId::ERROR {
+            if has_type_args {
                 let node_start = self.start_inside_parentheses(file, e);
                 out.push(Diagnostic {
                     start: node_start,
@@ -268,7 +261,7 @@ impl Checker<'_> {
                 });
                 return;
             }
-            if self.some_construct_signature_is_abstract(reduced) {
+            if self.has_abstract_construct_signature(reduced) {
                 let node_start = self.start_inside_parentheses(file, e);
                 out.push(Diagnostic {
                     start: node_start,
@@ -617,8 +610,8 @@ impl Checker<'_> {
             return;
         }
         let resolved = self.resolve_call(file, e);
-        // `base_types` omits `any`, `object` and type parameters, which `isValidBaseType` accepts. Whether the class has a base type
-        // then depends on the return type of the first base constructor (`resolveBaseTypesOfClass`), which has to be known.
+        // Whether the class has a base type depends on the return type of the first base constructor (`resolveBaseTypesOfClass`),
+        // which has to be known.
         let sym = self.class_sym(file, class);
         if self.base_types(sym).is_empty()
             && let Some(&first) = self.base_constructor_sigs(sym).first()
@@ -680,6 +673,10 @@ impl Checker<'_> {
         if !self.is_known(apparent) {
             return;
         }
+        // `resolveErrorCall`
+        if self.is_error_type(apparent) {
+            return;
+        }
         let reduced = self.reduced(apparent);
         let call_sigs = self.signatures(reduced, false);
         let constructs = self.signatures(reduced, true).len();
@@ -719,7 +716,11 @@ impl Checker<'_> {
         constructs: usize,
     ) -> bool {
         self.is_any(called)
-            || self.is_any(apparent) && matches!(self.data(called), TypeData::TypeParam(..))
+            || self.is_any(apparent)
+                && matches!(
+                    self.data(called),
+                    TypeData::TypeParam(..) | TypeData::ThisParam(_)
+                )
             || calls == 0
                 && constructs == 0
                 && !self.is_union(apparent)
@@ -728,35 +729,6 @@ impl Checker<'_> {
                     let function = self.global_ref(known::Function, &[]);
                     self.is_assignable(called, function)
                 }
-    }
-
-    /// `isErrorType` of the base constraint of the type parameter `ty`. `getConstraintFromTypeParameter` makes `unknown` of a declared
-    /// `any`, so the `any` that a type parameter extends is the error type.
-    fn is_constrained_by_error_type(&mut self, mut ty: TypeId) -> bool {
-        for _ in 0..8 {
-            if !matches!(self.data(ty), TypeData::TypeParam(..)) {
-                return false;
-            }
-            match self.constraint_of_type_param(ty) {
-                Some(TypeId::ANY | TypeId::ERROR) => return true,
-                Some(constraint) => ty = constraint,
-                None => return false,
-            }
-        }
-        false
-    }
-
-    /// `someSignature(constructSignatures, abstract)`: what is made for a union is abstract if what one of the members has is.
-    fn some_construct_signature_is_abstract(&mut self, ty: TypeId) -> bool {
-        let ty = self.apparent_type(ty);
-        if let TypeData::Union(parts) = self.data(ty) {
-            return parts
-                .iter()
-                .any(|&part| self.some_construct_signature_is_abstract(part));
-        }
-        self.signatures(ty, true)
-            .iter()
-            .any(|&sig| self.is_abstract_signature(sig))
     }
 
     /// Whether `e` is `a.b` or `a["b"]` where `b` is declared with `get` (`invocationErrorDetails`).

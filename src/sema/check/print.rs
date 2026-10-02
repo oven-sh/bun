@@ -180,54 +180,6 @@ impl Checker<'_> {
         )
     }
 
-    /// Whether `node` is a reference to a type by a name nothing goes by (`getUnresolvedSymbolForEntityName`). From its static
-    /// members and from the expression it extends, the type parameters of a class go by nothing.
-    fn is_unresolved_type_reference(&mut self, file: FileId, node: TypeNodeId) -> bool {
-        let hir = self.hir(file);
-        if node.is_none() {
-            return false;
-        }
-        let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
-            return false;
-        };
-        if self.intended_type_of_jsdoc_reference(file, node).is_some() {
-            return false;
-        }
-        let scope = self.bound(file).type_scope[node.idx()];
-        let names: Vec<Atom> = hir.ids(name).collect();
-        match self
-            .files()
-            .resolve_entity(file, scope, &names, SymFlags::TYPE)
-        {
-            None => true,
-            Some(found) => {
-                names.len() == 1
-                    && (self.is_static_reference_to_class_type_param(file, node, scope, found)
-                        || self.is_base_expression_reference_to_class_type_param(
-                            file, node, scope, found,
-                        ))
-            }
-        }
-    }
-
-    /// `typeToString` of `constraint`, the base constraint of the type parameter `param`. The error type of a name nothing goes by
-    /// is written as the name.
-    pub(super) fn base_constraint_to_string(
-        &mut self,
-        param: TypeId,
-        constraint: TypeId,
-    ) -> String {
-        if self.has_any_flag(constraint)
-            && let TypeData::TypeParam(file, tp, _) = *self.data(param)
-        {
-            let node = self.hir(file)[tp].constraint;
-            if self.is_unresolved_type_reference(file, node) {
-                return with_printer(self, 0, |printer| printer.reuse_type_node(file, node).text);
-            }
-        }
-        self.type_to_string(constraint)
-    }
-
     /// `symbolToString`
     pub fn symbol_to_string(&mut self, symbol: Sym) -> String {
         with_printer(self, 0, |printer| printer.symbol_to_text(symbol))
@@ -340,6 +292,7 @@ fn with_printer<'p, T>(
             type_parameter_names: Vec::new(),
             type_parameter_name_counts: Vec::new(),
             fake_scope_type_parameters: Vec::new(),
+            fake_scope_parameters: Vec::new(),
         };
         print(&mut printer)
     };
@@ -535,6 +488,8 @@ struct Printer<'c, 'p> {
     /// The locals of the fake scopes `enterNewScope` puts in front of `enclosing_declaration` that a search for a type finds: type
     /// parameters, and parameters that are one symbol with a type parameter. `None`: such a parameter after `instantiateSymbol`.
     fake_scope_type_parameters: Vec<(String, Option<TypeId>)>,
+    /// The locals of the fake scope of the parameters, as a search for a value finds them. `None`: after `instantiateSymbol`.
+    fake_scope_parameters: Vec<(Atom, Option<Sym>)>,
 }
 
 /// `escapeStringWorker`
@@ -578,7 +533,7 @@ fn escape_string(text: &str, quote: char, escapes_non_ascii: bool, out: &mut Str
 }
 
 /// A string literal. `escapes_non_ascii`: it is written without `EFNoAsciiEscaping`.
-fn quoted(text: &str, quote: char, escapes_non_ascii: bool) -> String {
+pub(super) fn quoted(text: &str, quote: char, escapes_non_ascii: bool) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push(quote);
     escape_string(text, quote, escapes_non_ascii, &mut out);
@@ -824,7 +779,6 @@ impl<'p> Printer<'_, 'p> {
             // `typeToTypeNode`: an `any` with an alias is written as the alias.
             TypeData::UnresolvedName { name, args } => {
                 let name = self.c.atom_text(*name).to_string();
-                self.approximate_length += name.len();
                 let arguments = self.map_to_type_nodes(args, false);
                 return Node::simple(format!("{name}{}", type_arguments_text(arguments)));
             }
@@ -1141,6 +1095,7 @@ impl<'p> Printer<'_, 'p> {
             return text;
         }
         match key {
+            PropKey::Name(known::empty) => "(Missing)".to_owned(),
             PropKey::Name(name) => {
                 let name = self.text(name);
                 let is_bare = is_identifier_text(&name)
@@ -1216,16 +1171,22 @@ impl<'p> Printer<'_, 'p> {
         if name.is_none() {
             return None;
         }
-        // `GetTextOfNode`: the unicode escapes of an identifier are part of its text, and not of the atom.
+        // `GetTextOfNode`: the unicode escapes of an identifier and the quotes of a `ModuleExportName` are part of its text, and not
+        // of the atom.
         if let Some(start) = self.c.declaration_name_start(file, decl) {
             let end = self.c.end_of_token_at(file, start);
             if hir
                 .text
                 .get(start as usize..end as usize)
-                .is_some_and(|written| written.contains(&b'\\'))
+                .is_some_and(|written| {
+                    written.contains(&b'\\') || matches!(written.first(), Some(b'"' | b'\''))
+                })
             {
                 return Some(self.c.source_text(file, start, end));
             }
+        }
+        if name == known::empty {
+            return Some("(Missing)".to_owned());
         }
         Some(self.text(name))
     }
@@ -2130,19 +2091,49 @@ impl<'p> Printer<'_, 'p> {
         text
     }
 
-    /// `enterNewScope`, as far as the names of type parameters go. What it returns is for `leave_scope`.
+    /// `enterNewScope`. What it returns is for `leave_scope`.
     fn enter_new_scope(
         &mut self,
+        expanded_parameters: &[Option<(FileId, ParamId)>],
         type_parameters: &[TypeId],
+        original_parameters: Option<&[Option<(FileId, ParamId)>]>,
         is_instantiated: bool,
-    ) -> (usize, usize, usize) {
+    ) -> (usize, usize, usize, usize) {
         let outer = (
             self.type_parameter_names.len(),
             self.type_parameter_name_counts.len(),
             self.fake_scope_type_parameters.len(),
+            self.fake_scope_parameters.len(),
         );
         // `pushFakeScope("params", ..)`, which lies around that of the type parameters.
         if self.enclosing_declaration.is_some() {
+            for (index, &parameter) in expanded_parameters.iter().enumerate() {
+                let original = original_parameters.and_then(|list| list.get(index).copied()?);
+                let is_expanded = original_parameters.is_some() && original != parameter;
+                let Some((file, declaration)) = (if is_expanded { original } else { parameter })
+                else {
+                    continue;
+                };
+                let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+                let mut pat = hir[declaration].pat;
+                // `bindPattern` goes no further than the first element.
+                while !is_expanded
+                    && let Some(first) = match hir[pat].kind {
+                        PatKind::Object(props) if !props.is_empty() => Some(hir[props.at(0)].value),
+                        PatKind::Array(elems) if !elems.is_empty() => Some(hir[elems.at(0)].pat),
+                        _ => None,
+                    }
+                {
+                    pat = first;
+                }
+                if let PatKind::Ident(name) = hir[pat].kind
+                    && bound.pat_symbol[pat.idx()].is_some()
+                {
+                    let symbol = self.c.files().sym(file, bound.pat_symbol[pat.idx()]);
+                    self.fake_scope_parameters
+                        .push((name, (!is_instantiated).then_some(symbol)));
+                }
+            }
             for &type_parameter in type_parameters {
                 let TypeData::TypeParam(file, tp, _) = *self.c.data(type_parameter) else {
                     continue;
@@ -2172,10 +2163,11 @@ impl<'p> Printer<'_, 'p> {
         outer
     }
 
-    fn leave_scope(&mut self, outer: (usize, usize, usize)) {
+    fn leave_scope(&mut self, outer: (usize, usize, usize, usize)) {
         self.type_parameter_names.truncate(outer.0);
         self.type_parameter_name_counts.truncate(outer.1);
         self.fake_scope_type_parameters.truncate(outer.2);
+        self.fake_scope_parameters.truncate(outer.3);
     }
 
     /// `getInferredTypeParameterConstraint(t, omitTypeReferences = true)`
@@ -2930,7 +2922,12 @@ impl<'p> Printer<'_, 'p> {
         for info in index {
             // The placeholder is made whether or not it is used.
             let placeholder = self.elided_information_placeholder();
-            let name = self.index_parameter_name(ty, info.key);
+            let type_node = is_reverse_mapped.then_some(&placeholder);
+            if let Some(names) = self.index_info_to_object_computed_names(info, type_node) {
+                elements.extend(names);
+                continue;
+            }
+            let name = self.get_name_from_index_info(info);
             let key = self.c.instantiate(info.key, mapper);
             let key = self.type_to_node(key);
             let value = if is_reverse_mapped {
@@ -2962,36 +2959,81 @@ impl<'p> Printer<'_, 'p> {
         elements
     }
 
-    /// `getNameFromIndexInfo`: the name of the parameter of the index signature of `owner` for `key`, where it is declared.
-    fn index_parameter_name(&mut self, owner: TypeId, key: TypeId) -> String {
-        if let TypeData::Anon {
-            origin: Origin::TypeLiteral(file, node),
-            ..
-        } = *self.c.data(owner)
-            && let TypeNodeKind::Object(members) = self.c.hir(file)[node].kind
-        {
-            let hir = self.c.hir(file);
-            for m in members.iter() {
-                let member = &hir[m];
-                if member.kind != MemberKind::IndexSignature || member.func.is_none() {
-                    continue;
-                }
-                let parameters = hir[member.func].params;
-                if parameters.len() != 1 {
-                    continue;
-                }
-                let parameter = &hir[parameters.at(0)];
-                let PatKind::Ident(name) = hir[parameter.pat].kind else {
-                    continue;
-                };
-                let keys = self.c.type_from_node(file, parameter.ty);
-                let keys = self.c.force(keys);
-                if self.c.parts(keys).contains(&key) {
-                    return self.text(name);
-                }
-            }
+    /// `getNameFromIndexInfo`
+    fn get_name_from_index_info(&self, info: &IndexInfo) -> String {
+        let Some((file, member)) = info.declaration else {
+            return "x".to_owned();
+        };
+        let hir = self.c.hir(file);
+        let parameter = &hir[hir[hir[member].func].params.at(0)];
+        match hir[parameter.pat].kind {
+            PatKind::Ident(name) => self.text(name),
+            _ => "(Missing)".to_owned(),
         }
-        "x".to_owned()
+    }
+
+    /// `indexInfoToObjectComputedNamesOrSignatureDeclaration`: the property signatures written for `info.components`. `None`: the
+    /// index signature is written instead (`indexInfoToIndexSignatureDeclarationHelper`). `type_node`: what is written for the
+    /// type of each, if not its own type.
+    fn index_info_to_object_computed_names(
+        &mut self,
+        info: &IndexInfo,
+        type_node: Option<&Node>,
+    ) -> Option<Vec<String>> {
+        let components = self.c.index_components(info.components);
+        let (enclosing_file, enclosing_scope) = self.enclosing_declaration?;
+        if components.is_empty() {
+            return None;
+        }
+        let mut names = Vec::with_capacity(components.len());
+        for &component in components {
+            let (file, key) = self.c.name_of_index_component(component);
+            let PropKey::Computed(name) = key else {
+                return None;
+            };
+            if !self.c.is_trivially_serializable_computed_name_at(
+                file,
+                name,
+                enclosing_file,
+                enclosing_scope,
+            ) {
+                return None;
+            }
+            names.push((component, file, name));
+        }
+        let modifier = if info.readonly { "readonly " } else { "" };
+        let mut results = Vec::new();
+        for (component, file, name) in names {
+            // `hasLateBindableName`
+            if self.c.member_name(file, PropKey::Computed(name)).is_some() {
+                continue;
+            }
+            let name = self.reuse_computed_property_name(file, name)?;
+            // `e.PostfixToken()`
+            let postfix_token = match component {
+                IndexComponent::Property(file, p) if self.c.is_optional_method(file, p) => "?",
+                IndexComponent::Property(..) => "",
+                IndexComponent::Member(file, m) => {
+                    let flags = self.c.hir(file)[m].flags;
+                    if flags.contains(Flags::OPTIONAL) {
+                        "?"
+                    } else if flags.contains(Flags::DEFINITE) {
+                        "!"
+                    } else {
+                        ""
+                    }
+                }
+            };
+            let ty = match type_node {
+                Some(node) => node.text.clone(),
+                None => {
+                    let ty = self.c.type_of_index_component(component);
+                    self.type_to_node(ty).text
+                }
+            };
+            results.push(format!("{modifier}{name}{postfix_token}: {ty};"));
+        }
+        Some(results)
     }
 
     // ───────────────────────────── properties ─────────────────────────────
@@ -4018,110 +4060,6 @@ impl<'p> Printer<'_, 'p> {
         text
     }
 
-    /// `getUnresolvedSymbolForEntityName`: what is written at `node`, if that is a reference by a name no type goes by. The error type it
-    /// stands for has the name and the type arguments for an alias (`errorTypes`) and is written by them. A type does not keep that
-    /// here: it can be told where the annotation is at hand and the type is all of it.
-    fn unresolved_reference_to_node(&mut self, file: FileId, node: TypeNodeId) -> Option<Node> {
-        if node.is_none() {
-            return None;
-        }
-        let (hir, files) = (self.c.hir(file), self.c.files());
-        let TypeNodeKind::Ref { name, args } = hir[node].kind else {
-            return None;
-        };
-        let scope = self.c.bound(file).type_scope[node.idx()];
-        if scope.is_none()
-            || self
-                .c
-                .intended_type_of_jsdoc_reference(file, node)
-                .is_some()
-        {
-            return None;
-        }
-        let names: Vec<Atom> = hir.ids(name).collect();
-        if names.is_empty() || names.contains(&known::empty) {
-            return None;
-        }
-        // As `type_from_node` looks for it.
-        let is_found = match files.resolve_entity(file, scope, &names, SymFlags::TYPE) {
-            None => false,
-            Some(found) if names.len() == 1 && self.is_out_of_reach(file, node, scope, found) => {
-                false
-            }
-            Some(found) => match files.resolve_alias_as(found, SymFlags::TYPE) {
-                Some(sym) => self.c.type_flags_of_symbol(sym).intersects(SymFlags::TYPE),
-                None => !self.c.is_alias_in_error(found),
-            },
-        };
-        if is_found {
-            return None;
-        }
-        let mut arguments = Vec::with_capacity(args.len());
-        for argument in hir.ids(args) {
-            arguments.push(match self.unresolved_reference_to_node(file, argument) {
-                Some(written) => written,
-                None => {
-                    let ty = self.c.type_from_node(file, argument);
-                    self.type_to_node(ty)
-                }
-            });
-        }
-        // `symbolToEntityNameNode`
-        let path: Vec<String> = names.iter().map(|&name| self.text(name)).collect();
-        Some(Node::simple(format!(
-            "{}{}",
-            path.join("."),
-            type_arguments_text(arguments)
-        )))
-    }
-
-    /// `Resolve`: `found` is a type parameter of a class, named at `node` where those are not seen.
-    fn is_out_of_reach(&self, file: FileId, node: TypeNodeId, scope: ScopeId, found: Sym) -> bool {
-        self.c
-            .is_static_reference_to_class_type_param(file, node, scope, found)
-            || self
-                .c
-                .is_base_expression_reference_to_class_type_param(file, node, scope, found)
-    }
-
-    /// `parameter_text`, of a parameter whose type is written by a name no type goes by.
-    fn unresolved_parameter_text(&mut self, parameter: &Parameter) -> Option<String> {
-        let (file, p) = parameter.declaration?;
-        let declared = &self.c.hir(file)[p];
-        // `getOptionalType` of an error type is the plain one, which has no name.
-        if !self.c.has_any_flag(parameter.ty)
-            || declared.default.is_some()
-            || parameter.optional && self.c.p.files.options.strict_null_checks
-        {
-            return None;
-        }
-        let written = self.unresolved_reference_to_node(file, declared.ty)?;
-        self.approximate_length += parameter.name_length + 3;
-        Some(format!(
-            "{}{}{}: {}",
-            if parameter.rest { "..." } else { "" },
-            parameter.name,
-            if parameter.optional { "?" } else { "" },
-            written.text
-        ))
-    }
-
-    /// `return_type_text`, of a signature whose return type is written by such a name.
-    fn unresolved_return_type_text(&mut self, signature: SigId) -> Option<String> {
-        let (file, func, _) = self.c.sig_decl(signature)?;
-        let annotation = self.c.hir(file)[func].ret;
-        if annotation.is_none()
-            || self.c.sig_predicate(signature).is_some()
-            || !{
-                let ty = self.c.sig_return_for_inference(signature);
-                self.c.has_any_flag(ty)
-            }
-        {
-            return None;
-        }
-        Some(self.unresolved_reference_to_node(file, annotation)?.text)
-    }
-
     /// `signatureToSignatureDeclarationHelper`, as the printer writes it, without the `;` of a member. `name`, `is_optional`: of a method.
     fn signature_to_text(
         &mut self,
@@ -4150,7 +4088,15 @@ impl<'p> Printer<'_, 'p> {
             let mapping = self.c.p.types.mapping(declared.2);
             mapping.iter().any(|pair| pair.0 != pair.1)
         });
-        let outer_scope = self.enter_new_scope(&own_type_parameters, is_instantiated);
+        let declarations_of = |parameters: &[Parameter]| -> Vec<Option<(FileId, ParamId)>> {
+            parameters.iter().map(|p| p.declaration).collect()
+        };
+        let outer_scope = self.enter_new_scope(
+            &declarations_of(&expanded),
+            &own_type_parameters,
+            Some(&declarations_of(&declared)),
+            is_instantiated,
+        );
         self.approximate_length += 3;
         let mut type_parameters = Vec::new();
         let mut own_type_parameters = self.c.sig_type_params(signature).into_vec();
@@ -4162,10 +4108,7 @@ impl<'p> Printer<'_, 'p> {
         }
         let mut parameters = Vec::with_capacity(expanded.len() + 1);
         for parameter in &expanded {
-            parameters.push(match self.unresolved_parameter_text(parameter) {
-                Some(text) => text,
-                None => self.parameter_text(parameter),
-            });
+            parameters.push(self.parameter_text(parameter));
         }
         let this = match self.c.sig_this_type(signature) {
             Some(this) => Some(this),
@@ -4176,10 +4119,7 @@ impl<'p> Printer<'_, 'p> {
             self.approximate_length += "this".len() + 3;
             parameters.insert(0, format!("this: {}", node.text));
         }
-        let returned = match self.unresolved_return_type_text(signature) {
-            Some(text) => text,
-            None => self.return_type_text(signature, &declared),
-        };
+        let returned = self.return_type_text(signature, &declared);
         self.mapper = saved_mapper;
         self.leave_scope(outer_scope);
         let type_parameters = if type_parameters.is_empty() {
@@ -4305,7 +4245,7 @@ impl<'p> Printer<'_, 'p> {
             }
         };
         let parameter = self.c.mapped_type_param(ty);
-        let outer_scope = self.enter_new_scope(&[parameter], false);
+        let outer_scope = self.enter_new_scope(&[], &[parameter], None, false);
         let name = if self.enclosing_declaration.is_some() {
             self.type_parameter_to_name(parameter)
         } else {
@@ -4429,13 +4369,8 @@ impl<'p> Printer<'_, 'p> {
             .map(|parameter| self.c.type_param(file, parameter))
             .collect();
         let saved = std::mem::replace(&mut self.infer_type_parameters, infer_type_parameters);
-        let extends = match self.unresolved_reference_to_node(file, extends) {
-            Some(written) => written,
-            None => {
-                let extends = self.c.cond_piece(ty, 1);
-                self.type_to_node(extends)
-            }
-        };
+        let extends = self.c.cond_piece(ty, 1);
+        let extends = self.type_to_node(extends);
         self.infer_type_parameters = saved;
         let when_true = self.c.cond_piece(ty, 2);
         let when_true = self.type_to_node_or_circularity_elision(when_true);

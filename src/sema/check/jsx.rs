@@ -131,7 +131,7 @@ impl<'p> Checker<'p> {
 
     /// `createSignatureForJSXIntrinsic`: `(props: attributes) => JSX.Element`, which is what a tag that is not a component comes to.
     fn jsx_intrinsic_signature(&mut self, file: FileId, attributes: TypeId) -> SigId {
-        let ret = self.jsx_type(file, known::Element).unwrap_or(TypeId::ANY);
+        let ret = self.jsx_type(file, known::Element).unwrap_or(TypeId::ERROR);
         let params = vec![SigParam {
             name: known::props,
             ty: attributes,

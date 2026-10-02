@@ -374,6 +374,13 @@ pub enum ScopeKind {
     Extends,
     /// Where what an `infer T extends ..` extends is written. It holds `T` once more, which can be named from here.
     InferConstraint,
+    /// Where a static member of a class is written, decorators included, a computed name not. It declares nothing: it lies in the
+    /// scope of the class, whose type parameters cannot be named from here. `Bound::type_parameter_out_of_reach`
+    StaticMember,
+    /// The same for the computed name of a member of a class or an interface.
+    ComputedName,
+    /// The same for the expression a class extends, without its type arguments.
+    BaseExpression,
 }
 
 pub struct Scope {
@@ -612,6 +619,8 @@ pub struct Bound {
     /// each of them. See `declarations_of_literal_member`.
     pub literal_member_declarations: FxHashMap<PropId, SmallVec<[PropId; 2]>>,
     pub member_owner: Vec<MemberOwner>,
+    /// The scope the type, the function and the initializer of a member are written in.
+    pub member_scope: Vec<ScopeId>,
     pub param_fn: Vec<FnId>,
     pub type_param_symbol: Vec<SymbolId>,
     /// The scope a type parameter is declared in: that of its class, interface, function, alias..
@@ -828,11 +837,39 @@ impl Bound {
         seen
     }
 
+    /// `NameResolver.Resolve`, at a class or an interface come to from a static member (`IsStatic(lastLocation)`), at
+    /// `KindComputedPropertyName` and at `KindExpressionWithTypeArguments`: the error with which a search for `meaning` that has got
+    /// to `scope` ends, finding nothing, because a type parameter of the class or interface around goes by `name`.
+    pub fn type_parameter_out_of_reach(
+        &self,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+    ) -> Option<u32> {
+        let s = &self.scopes[scope.idx()];
+        let code = match s.kind {
+            ScopeKind::StaticMember => 2302,
+            ScopeKind::ComputedName => 2467,
+            ScopeKind::BaseExpression => 2562,
+            _ => return None,
+        };
+        let symbol = self.lookup(self.scopes[s.parent.idx()].locals, name)?;
+        (meaning & self.symbols[symbol.idx()].flags)
+            .contains(SymFlags::TYPE_PARAMETER)
+            .then_some(code)
+    }
+
     /// What `name` means in `scope`, going outwards, as far as this file knows.
     pub fn resolve(&self, mut scope: ScopeId, name: Atom, meaning: SymFlags) -> Option<SymbolId> {
         // `lastLocation`: the kind of the scope the search has just left.
         let mut from = ScopeKind::Block;
         while scope.is_some() {
+            if self
+                .type_parameter_out_of_reach(scope, name, meaning)
+                .is_some()
+            {
+                return None;
+            }
             let s = &self.scopes[scope.idx()];
             if let Some(symbol) = self.lookup(s.locals, name)
                 && self.symbols[symbol.idx()]

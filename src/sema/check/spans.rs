@@ -5,6 +5,7 @@
 //! on. Only what the tree keeps nothing of is skipped token by token.
 
 use super::Checker;
+use super::errors_x_regexp_scanner as regexp_scanner;
 use crate::atom::{Atom, known};
 use crate::bind::{FnOwner, MemberOwner};
 use crate::hir::{
@@ -33,7 +34,7 @@ fn white_space_len(text: &[u8], at: usize) -> usize {
 }
 
 /// `IsLineBreak`: how many bytes the line break at `at` takes, 0 if there is none. `\r\n` is two of them.
-fn line_break_len(text: &[u8], at: usize) -> usize {
+pub(super) fn line_break_len(text: &[u8], at: usize) -> usize {
     match text.get(at) {
         Some(b'\n' | b'\r') => 1,
         Some(0xE2)
@@ -45,6 +46,30 @@ fn line_break_len(text: &[u8], at: usize) -> usize {
     }
 }
 
+/// `ComputeECMALineStarts`: where each line of `text` starts.
+pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
+    let mut starts = vec![0u32];
+    let mut i = 0;
+    // 0xE2 starts U+2028 and U+2029, which end a line too.
+    while let Some(found) = bun_core::strings::index_of_any(&text[i..], b"\n\r\xE2") {
+        i += found;
+        match text[i] {
+            b'\r' if text.get(i + 1) == Some(&b'\n') => i += 1,
+            0xE2 => {
+                if text.get(i + 1) != Some(&0x80) || !matches!(text.get(i + 2), Some(0xA8 | 0xA9)) {
+                    i += 1;
+                    continue;
+                }
+                i += 2;
+            }
+            _ => {}
+        }
+        i += 1;
+        starts.push(i as u32);
+    }
+    starts
+}
+
 /// Where the line `at` is on ends, before its line break.
 fn line_end(text: &[u8], mut at: usize) -> usize {
     while at < text.len() && line_break_len(text, at) == 0 {
@@ -54,7 +79,7 @@ fn line_end(text: &[u8], mut at: usize) -> usize {
 }
 
 /// `SkipTrivia`: from `at`, past blanks and comments.
-fn skip_trivia(text: &[u8], mut at: usize) -> usize {
+pub(super) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
     loop {
         match text.get(at) {
             Some(b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C) => at += 1,
@@ -108,7 +133,7 @@ fn line_comment_start(line: &[u8]) -> Option<usize> {
 }
 
 /// Where the token before `pos` ends: back over blanks and comments. A missing node is there (`createMissingNode`).
-fn previous_token_end(text: &[u8], pos: usize) -> usize {
+pub(super) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
     let mut at = pos.min(text.len());
     loop {
         let before = at;
@@ -144,24 +169,30 @@ fn previous_token_end(text: &[u8], pos: usize) -> usize {
     }
 }
 
-/// How long `\uXXXX` or `\u{X}` at `at` is, 0 if there is none.
-fn unicode_escape_len(text: &[u8], at: usize) -> usize {
-    let is_hex = |i: usize| text.get(i).is_some_and(u8::is_ascii_hexdigit);
+/// `text` up to where its last token ends.
+pub(super) fn trim_trivia_end(text: &[u8]) -> &[u8] {
+    &text[..skip_trivia_back(text, text.len())]
+}
+
+/// `peekUnicodeEscape`: how long `\\uXXXX` or `\\u{X}` at `at` is, and what it stands for.
+fn unicode_escape(text: &[u8], at: usize) -> Option<(usize, u32)> {
     if text.get(at) != Some(&b'\\') || text.get(at + 1) != Some(&b'u') {
-        return 0;
+        return None;
     }
-    if text.get(at + 2) == Some(&b'{') {
-        let mut end = at + 3;
-        while is_hex(end) {
-            end += 1;
-        }
-        return if end > at + 3 && text.get(end) == Some(&b'}') {
-            end + 1 - at
-        } else {
-            0
-        };
-    }
-    if (at + 2..at + 6).all(is_hex) { 6 } else { 0 }
+    let is_braced = text.get(at + 2) == Some(&b'{');
+    let start = at + 2 + usize::from(is_braced);
+    let (len, ch) = text[start.min(text.len())..]
+        .iter()
+        .take_while(|b| b.is_ascii_hexdigit())
+        .take(if is_braced { 8 } else { 4 })
+        .fold((0usize, 0u32), |(len, ch), &b| {
+            (len + 1, ch << 4 | (b as char).to_digit(16).unwrap_or(0))
+        });
+    let is_whole = match is_braced {
+        true => len > 0 && text.get(start + len) == Some(&b'}'),
+        false => len == 4,
+    };
+    is_whole.then_some((start + len + usize::from(is_braced) - at, ch))
 }
 
 fn utf8_len(first: u8) -> usize {
@@ -174,18 +205,26 @@ fn utf8_len(first: u8) -> usize {
 }
 
 /// `scanIdentifierParts`. Every character that is neither ASCII nor a blank counts as part of a name.
-fn ident_end(text: &[u8], mut at: usize) -> usize {
+pub(super) fn ident_end(text: &[u8], mut at: usize) -> usize {
     loop {
         match text.get(at) {
             Some(&b) if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' => at += 1,
-            Some(b'\\') => match unicode_escape_len(text, at) {
-                0 => return at,
-                len => at += len,
+            Some(b'\\') => match unicode_escape(text, at) {
+                Some((len, ch)) if regexp_scanner::is_identifier_part(ch) => at += len,
+                _ => return at,
             },
             Some(&b) if b >= 0x80 && white_space_len(text, at) == 0 => at += utf8_len(b),
             Some(_) => return at,
             None => return at.min(text.len()),
         }
+    }
+}
+
+/// `scanIdentifier`: the same from where a name starts, which an escape that stands for no `IsIdentifierStart` does not.
+pub(super) fn identifier_end(text: &[u8], at: usize) -> usize {
+    match unicode_escape(text, at) {
+        Some((_, ch)) if !regexp_scanner::is_identifier_start(ch) => at,
+        _ => ident_end(text, at),
     }
 }
 
@@ -441,7 +480,7 @@ fn token_end(text: &[u8], at: usize, is_jsx: bool) -> usize {
     {
         return at + operator.len();
     }
-    match ident_end(text, at) {
+    match identifier_end(text, at) {
         end if end > at => end,
         _ => (at + utf8_len(first)).min(text.len()),
     }
@@ -467,6 +506,11 @@ fn is_keyword_before_expression(word: &[u8]) -> bool {
             | b"yield"
             | b"await"
     )
+}
+
+/// `IsIdentifierPart`, of a byte: as `is_identifier_start`, and the digits.
+pub(super) fn is_identifier_part(c: u8) -> bool {
+    c.is_ascii_digit() || is_identifier_start(c)
 }
 
 fn is_identifier_start(c: u8) -> bool {
@@ -996,7 +1040,7 @@ impl<'a> Spans<'a> {
         let pos = pos as usize;
         let end = match kind {
             ExprKind::Missing | ExprKind::Ident(known::empty) => {
-                return previous_token_end(self.text, pos);
+                return skip_trivia_back(self.text, pos);
             }
             ExprKind::Ident(_) | ExprKind::This | ExprKind::Super | ExprKind::Null => {
                 self.token(pos)
@@ -1301,7 +1345,7 @@ impl<'a> Spans<'a> {
         {
             let words: [&[u8]; 2] = [b"new", b"abstract"];
             for word in words {
-                let end = previous_token_end(self.text, at);
+                let end = skip_trivia_back(self.text, at);
                 if self.text[..end].ends_with(word) {
                     at = end - word.len();
                 }
@@ -1314,7 +1358,7 @@ impl<'a> Spans<'a> {
     fn parens_before(self, floor: usize, pos: usize) -> usize {
         let (mut at, mut count) = (pos, 0);
         loop {
-            let end = previous_token_end(self.text, at);
+            let end = skip_trivia_back(self.text, at);
             if end == 0 || end <= floor {
                 return count;
             }
@@ -1377,7 +1421,7 @@ impl<'a> Spans<'a> {
                     at
                 } else {
                     // A type that is missing.
-                    return previous_token_end(self.text, pos);
+                    return skip_trivia_back(self.text, pos);
                 }
             }
             TypeNodeKind::Ref { name, args } => self.type_args(args, self.entity_name(pos, name)),
@@ -1567,7 +1611,7 @@ impl<'a> Spans<'a> {
         };
         let pos = pat.pos as usize;
         match pat.kind {
-            PatKind::Missing | PatKind::Ident(known::empty) => previous_token_end(self.text, pos),
+            PatKind::Missing | PatKind::Ident(known::empty) => skip_trivia_back(self.text, pos),
             PatKind::Ident(_) => self.token(pos),
             PatKind::Object(props) => {
                 let last = props.iter().next_back();
@@ -2038,7 +2082,7 @@ impl<'a> Spans<'a> {
             (b"finally", None) => self.braces_after(pos + b"finally".len()),
             (_, None) if self.byte(pos) == b'{' => self.bracket(pos),
             // `parseBlock` without its `{`
-            (_, None) => previous_token_end(self.text, pos),
+            (_, None) => skip_trivia_back(self.text, pos),
         }
     }
 
@@ -2428,7 +2472,7 @@ impl Checker<'_> {
             MemberKind::Constructor => {
                 let mut start = member.pos as usize;
                 loop {
-                    let end = previous_token_end(&hir.text, start);
+                    let end = skip_trivia_back(&hir.text, start);
                     let word = hir.text[..end]
                         .iter()
                         .rposition(|b| !b.is_ascii_alphabetic())
@@ -2548,11 +2592,11 @@ impl Checker<'_> {
             return Some(first as u32);
         }
         // After decorators, which are an error there: it is what the `:` before its type follows.
-        let colon_end = previous_token_end(spans.text, spans.type_pos(func.this_ty));
+        let colon_end = skip_trivia_back(spans.text, spans.type_pos(func.this_ty));
         if colon_end <= first || spans.byte(colon_end - 1) != b':' {
             return None;
         }
-        let start = previous_token_end(spans.text, colon_end - 1).checked_sub(4)?;
+        let start = skip_trivia_back(spans.text, colon_end - 1).checked_sub(4)?;
         (start > first && spans.word_at(start) == b"this").then_some(start as u32)
     }
 
@@ -2597,7 +2641,7 @@ impl Checker<'_> {
     /// Where the token before `pos` ends: back over blanks and comments. Where a missing node is, and `node.Pos()` of what starts at
     /// `pos`.
     pub(super) fn end_of_token_before(&self, file: FileId, pos: u32) -> u32 {
-        previous_token_end(&self.hir(file).text, pos as usize) as u32
+        skip_trivia_back(&self.hir(file).text, pos as usize) as u32
     }
 }
 
@@ -2662,9 +2706,9 @@ mod tests {
     fn skips_trivia_both_ways() {
         let text = b"a /* b */ // c\n  d";
         assert_eq!(skip_trivia(text, 1), 17);
-        assert_eq!(previous_token_end(text, 17), 1);
+        assert_eq!(skip_trivia_back(text, 17), 1);
         let text = b"x = 'a//b' // c\r\n\t(y";
-        assert_eq!(previous_token_end(text, 18), 10);
+        assert_eq!(skip_trivia_back(text, 18), 10);
     }
 
     /// The bracket group that `text` starts with.

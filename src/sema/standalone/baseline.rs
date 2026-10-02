@@ -3,6 +3,7 @@
 //! that is only in memory, checked through the driver `bun check` goes through, and what comes out is written in the format of the
 //! `.errors.txt` baselines that are committed there, to be compared with them.
 
+use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::resolve::{Host, Options, join, normalize, parent_dir};
@@ -468,32 +469,6 @@ fn category_name(category: Category) -> &'static str {
     }
 }
 
-/// `ComputeECMALineStarts`
-fn line_starts(text: &[u8]) -> Vec<usize> {
-    let mut starts = vec![0];
-    let mut i = 0;
-    while i < text.len() {
-        match text[i] {
-            b'\r' => {
-                if text.get(i + 1) == Some(&b'\n') {
-                    i += 1;
-                }
-                starts.push(i + 1);
-            }
-            b'\n' => starts.push(i + 1),
-            0xE2 if text.get(i + 1) == Some(&0x80)
-                && matches!(text.get(i + 2), Some(0xA8 | 0xA9)) =>
-            {
-                i += 2;
-                starts.push(i + 1);
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    starts
-}
-
 /// `utf8.RuneCountInString`
 fn runes(bytes: &[u8]) -> usize {
     String::from_utf8_lossy(bytes).chars().count()
@@ -727,16 +702,20 @@ fn render(
             .collect();
         new_line(&mut out);
         out.extend_from_slice(format!("==== {name} ({} errors) ====", errors.len()).as_bytes());
-        let starts = line_starts(content);
+        let starts = compute_ecma_line_starts(content);
         let lines: Vec<&[u8]> = content.split(|&b| b == b'\n').collect();
         for (index, line) in lines.iter().enumerate() {
             let is_last = index == lines.len() - 1;
             let line = line.strip_suffix(b"\r").unwrap_or(line);
-            let this_start = starts.get(index).copied().unwrap_or(content.len()) as i64;
+            let this_start = starts
+                .get(index)
+                .map_or(content.len() as i64, |&s| i64::from(s));
             let next_start = if is_last {
                 content.len() as i64
             } else {
-                starts.get(index + 1).copied().unwrap_or(content.len()) as i64
+                starts
+                    .get(index + 1)
+                    .map_or(content.len() as i64, |&s| i64::from(s))
             };
             new_line(&mut out);
             out.extend_from_slice(b"    ");
@@ -1183,7 +1162,7 @@ fn run_one(
             return;
         }
         let text = checker.hir(file).text.clone();
-        let starts = line_starts(&text);
+        let starts = compute_ecma_line_starts(&text);
         let unit = without_prefixes(&path, setup.lib_dir);
         // The source goes along, so that each entry of a baseline can be given its line.
         let mut lines = format!(
@@ -1200,7 +1179,7 @@ fn run_one(
             if start > end || start == end && found.kind != "missing" {
                 continue;
             }
-            let line = starts.partition_point(|&s| s <= start) - 1;
+            let line = starts.partition_point(|&s| s as usize <= start) - 1;
             let source = String::from_utf8_lossy(&text[start..end]).replace(['\r', '\n'], "");
             lines.push_str(&format!(
                 "{unit}\t{line}\t{start}\t{source}\t{}\t{}\n",
@@ -1212,10 +1191,11 @@ fn run_one(
         let mut lines = String::new();
         for found in checker.symbols_at_locations(file) {
             let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
-            if start >= end {
+            // A missing identifier has no text.
+            if start > end {
                 continue;
             }
-            let line = starts.partition_point(|&s| s <= start) - 1;
+            let line = starts.partition_point(|&s| s as usize <= start) - 1;
             let source = String::from_utf8_lossy(&text[start..end]).replace(['\r', '\n'], "");
             lines.push_str(&format!(
                 "{unit}\t{line}\t{start}\t{source}\t{}\tsymbol\n",

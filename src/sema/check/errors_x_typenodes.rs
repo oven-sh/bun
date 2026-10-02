@@ -41,82 +41,6 @@ fn has_parse_diagnostics(hir: &hir::File) -> bool {
 
 // ───────────────────────────── the text ─────────────────────────────
 
-/// `SkipTrivia`: where the first token at or after `pos` starts.
-fn skip_trivia(text: &[u8], mut pos: usize) -> usize {
-    loop {
-        match text.get(pos) {
-            Some(c) if c.is_ascii_whitespace() => pos += 1,
-            Some(b'/') if text.get(pos + 1) == Some(&b'/') => {
-                pos += text[pos..]
-                    .iter()
-                    .position(|&c| c == b'\n')
-                    .unwrap_or(text.len() - pos);
-            }
-            Some(b'/') if text.get(pos + 1) == Some(&b'*') => {
-                pos = text[pos + 2..]
-                    .windows(2)
-                    .position(|w| w == b"*/")
-                    .map_or(text.len(), |end| pos + end + 4);
-            }
-            _ => return pos,
-        }
-    }
-}
-
-/// Where a `//` comment starts in `line`, if it ends in one.
-fn line_comment_start(line: &[u8]) -> Option<usize> {
-    let mut quote = 0u8;
-    let mut i = 0;
-    while i < line.len() {
-        let c = line[i];
-        if quote != 0 {
-            if c == b'\\' {
-                i += 1;
-            } else if c == quote {
-                quote = 0;
-            }
-        } else if matches!(c, b'"' | b'\'' | b'`') {
-            quote = c;
-        } else if c == b'/' && line.get(i + 1) == Some(&b'/') {
-            return Some(i);
-        } else if c == b'/' && line.get(i + 1) == Some(&b'*') {
-            i += line[i + 2..].windows(2).position(|w| w == b"*/")? + 3;
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Where the token before `pos` ends: `pos`, less the blanks and the comments before it.
-fn end_of_previous_token(text: &[u8], pos: usize) -> usize {
-    let mut pos = pos.min(text.len());
-    loop {
-        while pos > 0 && text[pos - 1].is_ascii_whitespace() {
-            pos -= 1;
-            if text[pos] == b'\n' {
-                let line = text[..pos]
-                    .iter()
-                    .rposition(|&c| c == b'\n')
-                    .map_or(0, |i| i + 1);
-                if let Some(comment) = line_comment_start(&text[line..pos]) {
-                    pos = line + comment;
-                }
-            }
-        }
-        match text[..pos]
-            .strip_suffix(b"*/")
-            .and_then(|before| before.windows(2).rposition(|w| w == b"/*"))
-        {
-            Some(open) => pos = open,
-            None => return pos,
-        }
-    }
-}
-
-fn is_identifier_part(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
-}
-
 /// Past the string or the template that starts at `pos`.
 fn end_of_string(text: &[u8], pos: usize) -> Option<usize> {
     let quote = text[pos];
@@ -182,7 +106,7 @@ fn end_of_type_arguments(text: &[u8], pos: usize) -> Option<usize> {
 /// Where the comma is that the list of type arguments `args` ends with, if it does: `<A, B,>`.
 fn trailing_comma_of_type_arguments(hir: &hir::File, args: IdList<TypeNodeId>) -> Option<u32> {
     let last = hir.ids(args).next_back()?;
-    let end = end_of_previous_token(
+    let end = skip_trivia_back(
         &hir.text,
         end_of_type_arguments(&hir.text, hir[last].pos as usize)?,
     );
@@ -238,10 +162,8 @@ impl OddLists {
         if c == b'<' && !self.has_empty {
             self.has_empty = text.get(skip_trivia(text, at + 1)) == Some(&b'>');
         } else if c == b'>' && !self.has_early_end {
-            self.has_early_end = matches!(
-                text[..end_of_previous_token(text, at)].last(),
-                Some(b',' | b'<')
-            );
+            self.has_early_end =
+                matches!(text[..skip_trivia_back(text, at)].last(), Some(b',' | b'<'));
         }
     }
 }
@@ -256,7 +178,7 @@ fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     {
         let words: [&[u8]; 2] = [b"new", b"abstract"];
         for word in words {
-            let end = end_of_previous_token(text, at);
+            let end = skip_trivia_back(text, at);
             if text[..end].ends_with(word) {
                 at = end - word.len();
             }
@@ -264,7 +186,7 @@ fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     }
     // `(T)`, `| T`: a bar before the whole of a type leads it.
     loop {
-        let end = end_of_previous_token(text, at);
+        let end = skip_trivia_back(text, at);
         if !matches!(text[..end].last(), Some(b'(' | b'|' | b'&')) {
             return at as u32;
         }
@@ -276,7 +198,7 @@ fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
 fn start_of_modifiers(text: &[u8], pos: u32) -> u32 {
     let mut at = pos as usize;
     loop {
-        let end = end_of_previous_token(text, at);
+        let end = skip_trivia_back(text, at);
         let mut start = end;
         while start > 0 && is_identifier_part(text[start - 1]) {
             start -= 1;
@@ -304,7 +226,7 @@ fn start_of_modifiers(text: &[u8], pos: u32) -> u32 {
 fn start_of_tuple_element(hir: &hir::File, elem: &TupleElem) -> u32 {
     let text: &[u8] = &hir.text;
     let before_dots = |at: usize| {
-        let end = end_of_previous_token(text, at);
+        let end = skip_trivia_back(text, at);
         if text[..end].ends_with(b"...") {
             end - 3
         } else {
@@ -316,13 +238,13 @@ fn start_of_tuple_element(hir: &hir::File, elem: &TupleElem) -> u32 {
         at = before_dots(at);
     }
     if elem.name.is_some() {
-        let mut end = end_of_previous_token(text, at);
+        let mut end = skip_trivia_back(text, at);
         if !text[..end].ends_with(b":") {
             return at as u32;
         }
-        end = end_of_previous_token(text, end - 1);
+        end = skip_trivia_back(text, end - 1);
         if text[..end].ends_with(b"?") {
-            end = end_of_previous_token(text, end - 1);
+            end = skip_trivia_back(text, end - 1);
         }
         at = end;
         while at > 0 && is_identifier_part(text[at - 1]) {
@@ -529,7 +451,10 @@ fn is_this_type_available(
             | ScopeKind::Param(_)
             | ScopeKind::ReturnType(_)
             | ScopeKind::Extends
-            | ScopeKind::InferConstraint => {}
+            | ScopeKind::InferConstraint
+            | ScopeKind::StaticMember
+            | ScopeKind::ComputedName
+            | ScopeKind::BaseExpression => {}
         }
         scope = s.parent;
     }
@@ -1384,8 +1309,14 @@ impl Checker<'_> {
             {
                 continue;
             }
-            // `areTypeParametersIdentical`: what the parameter extends is what the first that says so says.
-            let mut wanted = None;
+            // `areTypeParametersIdentical`
+            let target = self.type_param(file, param);
+            let Some(wanted) = self.constraint_of_type_param(target) else {
+                continue;
+            };
+            if !self.is_known(wanted) {
+                continue;
+            }
             let mut identical = true;
             for decl in decls {
                 let Decl::TypeParam(p) = *decl else { continue };
@@ -1393,16 +1324,10 @@ impl Checker<'_> {
                     continue;
                 }
                 let own = self.type_from_node(file, hir[p].constraint);
-                let says_any = matches!(
-                    hir[hir[p].constraint].kind,
-                    TypeNodeKind::Keyword(Keyword::Any)
-                );
-                if !self.is_known(own) || self.is_any(own) && !says_any {
+                if !self.is_known(own) {
                     identical = true;
                     break;
                 }
-                // `getConstraintFromTypeParameter`: to extend `any` is to extend `unknown`.
-                let wanted = *wanted.get_or_insert(if says_any { TypeId::UNKNOWN } else { own });
                 match self.answer_if_sure(|c| c.is_identical(own, wanted)) {
                     Some(same) => identical &= same,
                     None => {
@@ -1615,7 +1540,7 @@ impl Checker<'_> {
             }
             // It is the keyword right after the `=` only: in parentheses it is a name like any other.
             let start = hir[alias.ty].pos;
-            if !hir.text[..end_of_previous_token(&hir.text, start as usize)].ends_with(b"=") {
+            if !hir.text[..skip_trivia_back(&hir.text, start as usize)].ends_with(b"=") {
                 continue;
             }
             let name = self.files().atoms.bytes(alias.name);
@@ -1941,15 +1866,15 @@ impl Checker<'_> {
                 Some(first) => self.start_of(file, first),
                 None => call.close_pos,
             };
-            let open = end_of_previous_token(text, inside as usize);
+            let open = skip_trivia_back(text, inside as usize);
             if !text[..open].ends_with(b"(") {
                 continue;
             }
-            let close = end_of_previous_token(text, open - 1);
+            let close = skip_trivia_back(text, open - 1);
             if !text[..close].ends_with(b">") {
                 continue;
             }
-            let last = end_of_previous_token(text, close - 1);
+            let last = skip_trivia_back(text, close - 1);
             match text[..last].last() {
                 Some(b',') => out.push(Diagnostic {
                     start: last as u32 - 1,
@@ -2135,7 +2060,7 @@ impl Checker<'_> {
             let Some(close) = closing_bracket(text, open) else {
                 continue;
             };
-            let last = end_of_previous_token(text, close);
+            let last = skip_trivia_back(text, close);
             if text[..last].ends_with(b",") {
                 out.push(Diagnostic {
                     start: last as u32 - 1,
@@ -2260,8 +2185,7 @@ impl Checker<'_> {
         args: IdList<TypeNodeId>,
         out: &mut Vec<Diagnostic>,
     ) {
-        // What is in error is `any` too, and nothing more is said of that.
-        if args.is_empty() || !self.is_known(ty) || self.is_any(ty) {
+        if args.is_empty() || !self.is_known(ty) || self.is_error_type(ty) {
             return;
         }
         let hir = self.hir(file);

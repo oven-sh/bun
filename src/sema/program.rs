@@ -2390,7 +2390,31 @@ impl Files {
         self.ranks[file.idx()]
     }
 
-    /// Libs first; then from each starting point depth first, a file after everything it refers to.
+    /// `getDefaultLibFilePriority`
+    fn default_lib_file_priority(&self, file: FileId) -> usize {
+        let path = self.modules[file.idx()].path.as_str();
+        let is_in_lib_dir = path
+            .strip_prefix(self.options.lib_dir.trim_end_matches('/'))
+            .is_some_and(|rest| rest.starts_with('/'));
+        if is_in_lib_dir {
+            let basename = &path[path.rfind('/').map_or(0, |slash| slash + 1)..];
+            if basename == "lib.d.ts" || basename == "lib.es6.d.ts" {
+                return 0;
+            }
+            let name = basename.strip_prefix("lib.").unwrap_or(basename);
+            let name = name.strip_suffix(".d.ts").unwrap_or(name);
+            if let Some(index) = crate::resolve::LIB_NAMES
+                .split(' ')
+                .position(|lib| lib == name)
+            {
+                return index + 1;
+            }
+        }
+        crate::resolve::LIB_NAMES.split(' ').count() + 2
+    }
+
+    /// `getProcessedFiles`: the libraries first, sorted (`sortLibs`); then from each starting point depth first, a file after
+    /// everything it refers to.
     fn declaration_order(&self, starts: &[FileId]) -> Vec<FileId> {
         let mut seen = vec![false; self.modules.len()];
         let mut libs = Vec::new();
@@ -2421,6 +2445,7 @@ impl Files {
                 }
             }
         }
+        libs.sort_by_cached_key(|&file| self.default_lib_file_priority(file));
         libs.extend(others);
         libs
     }
@@ -3376,14 +3401,30 @@ impl Files {
     pub fn resolve_name(
         &self,
         file: FileId,
-        mut scope: ScopeId,
+        scope: ScopeId,
         name: Atom,
         meaning: SymFlags,
     ) -> Option<Sym> {
+        self.resolve_name_or_error(file, scope, name, meaning)
+            .unwrap_or(None)
+    }
+
+    /// `NameResolver.Resolve`. `Err`: the error it reports where it ends the search before it is through, which takes the place of
+    /// the one for a name that is not found.
+    pub fn resolve_name_or_error(
+        &self,
+        file: FileId,
+        mut scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+    ) -> Result<Option<Sym>, u32> {
         let bound = self.bound(file);
         // `lastLocation`: the kind of the scope the search has just left.
         let mut from = ScopeKind::Block;
         while scope.is_some() {
+            if let Some(code) = bound.type_parameter_out_of_reach(scope, name, meaning) {
+                return Err(code);
+            }
             let s = &bound.scopes[scope.idx()];
             // The `infer`s of a conditional type are seen from its true branch, not from the `extends` clause that declares them.
             if !matches!(from, ScopeKind::Extends)
@@ -3391,7 +3432,7 @@ impl Files {
             {
                 let sym = self.sym(file, id);
                 if self.means(sym, meaning) && bound.is_seen_from(from, self.flags(sym), meaning) {
-                    return Some(sym);
+                    return Ok(Some(sym));
                 }
             }
             // What a module, a namespace or an enum exports is in scope in it, wherever it was declared. `default` is no name.
@@ -3407,13 +3448,13 @@ impl Files {
                     && !self.flags(sym).contains(SymFlags::EXPORT_ONLY)
                     && self.means(sym, visible)
                 {
-                    return Some(sym);
+                    return Ok(Some(sym));
                 }
             }
             from = s.kind;
             scope = s.parent;
         }
-        self.global(name, meaning)
+        Ok(self.global(name, meaning))
     }
 
     // ───────────────────────────── modules and aliases ─────────────────────────────

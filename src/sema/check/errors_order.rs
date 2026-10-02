@@ -1316,11 +1316,13 @@ impl Checker<'_> {
                 && let Some(c) = declaring_class
             {
                 let sym = self.files().sym(file, bound.class_symbol[c.idx()]);
-                if let Some(&base) = self.base_types(sym).first()
-                    && let Some((base_prop, _)) = self.prop_of(base, name)
-                    && Self::value_declaration(&base_prop).is_some()
-                {
-                    is_inherited = true;
+                if let Some(&base) = self.base_types(sym).first() {
+                    let base = self.apparent_type(base);
+                    if let Some((base_prop, _)) = self.prop_of(base, name)
+                        && Self::value_declaration(&base_prop).is_some()
+                    {
+                        is_inherited = true;
+                    }
                 }
             }
             if !is_inherited {

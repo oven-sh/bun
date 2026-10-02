@@ -653,6 +653,28 @@ impl<'p> Checker<'p> {
                 .is_accessible()
         })
     }
+
+    /// `isTriviallySerializableComputedName`, of the computed property name `[name]` written in `file`, with `scope` of
+    /// `enclosing_file` for `enclosingDeclaration`.
+    pub(super) fn is_trivially_serializable_computed_name_at(
+        &mut self,
+        file: FileId,
+        name: ExprId,
+        enclosing_file: FileId,
+        scope: ScopeId,
+    ) -> bool {
+        self.with_enclosing_declaration(enclosing_file, scope, |emit| {
+            if !emit.is_entity_name_expression(file, name) {
+                return false;
+            }
+            let Some((first, _)) = emit.first_identifier(file, name) else {
+                return false;
+            };
+            let at = emit.b.enclosing;
+            emit.is_entity_name_visible(first, None, Meaning::ValueOfName, at, false)
+                .is_accessible()
+        })
+    }
 }
 
 impl<'p> DeclarationEmit<'_, 'p> {
@@ -1162,13 +1184,15 @@ impl<'p> DeclarationEmit<'_, 'p> {
         Some(aliases)
     }
 
-    /// `isEntityNameVisible`, of a name that starts with the identifier `first` written at `start`.
+    /// `isEntityNameVisible`, of a name that starts with the identifier `first`. `start`: where that is written in the file at hand,
+    /// for `ErrorNode`.
     fn is_entity_name_visible(
         &mut self,
         first: Atom,
-        start: u32,
+        start: Option<u32>,
         meaning: Meaning,
         at: Enclosing,
+        should_compute_alias_to_make_visible: bool,
     ) -> Access {
         let found = self
             .c
@@ -1179,7 +1203,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             aliases: Vec::new(),
             symbol_name: self.c.atom_text(first),
             module_name: String::new(),
-            error_node: Some((start, self.c.end_of_name_at(self.file, start))),
+            error_node: start.map(|start| (start, self.c.end_of_name_at(self.file, start))),
         };
         let Some(symbol) = found else {
             return result;
@@ -1187,7 +1211,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         if meaning == Meaning::Type && self.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
             return Access::accessible(Vec::new());
         }
-        match self.has_visible_declarations(symbol, true) {
+        match self.has_visible_declarations(symbol, should_compute_alias_to_make_visible) {
             Some(aliases) => Access::accessible(aliases),
             None => {
                 result.accessibility = Accessibility::NotAccessible;
@@ -3225,7 +3249,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `checkEntityNameVisibility`
     fn check_entity_name_visibility(&mut self, first: Atom, start: u32, meaning: Meaning) {
-        let access = self.is_entity_name_visible(first, start, meaning, self.enclosing);
+        let access = self.is_entity_name_visible(first, Some(start), meaning, self.enclosing, true);
         self.handle_symbol_accessibility_error(access);
     }
 

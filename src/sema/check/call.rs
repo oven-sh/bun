@@ -599,23 +599,29 @@ impl<'p> Checker<'p> {
                 ..
             } = hir[c];
             let callee = self.type_of_expr(file, tag);
-            if self.is_any(callee) {
-                self.look_at_arguments_of_untyped_call(file, exprs);
+            let apparent = self.apparent_type(callee);
+            if self.is_error_type(apparent) {
+                return self.resolve_error_call(file, exprs);
+            }
+            if callee == TypeId::UNRESOLVED {
                 return ResolvedCall {
-                    sig: None,
                     ret: callee,
+                    ..self.resolve_untyped_call(file, exprs)
                 };
             }
             let sigs = self.signatures(callee, false);
             if sigs.is_empty() {
-                // Nothing to call: an error, or an untyped call. Either way anything comes of it.
-                return ResolvedCall {
-                    sig: None,
-                    ret: if self.is_known(callee) {
-                        TypeId::ANY
-                    } else {
-                        TypeId::UNRESOLVED
-                    },
+                if !self.is_known(callee) {
+                    return ResolvedCall {
+                        sig: None,
+                        ret: TypeId::UNRESOLVED,
+                    };
+                }
+                let constructs = self.signatures(callee, true).len();
+                return if self.is_untyped_function_call(callee, apparent, 0, constructs) {
+                    self.resolve_untyped_call(file, exprs)
+                } else {
+                    self.resolve_error_call(file, exprs)
                 };
             }
             let type_args = self.types_from_nodes(file, type_args);
@@ -658,34 +664,42 @@ impl<'p> Checker<'p> {
     }
 
     /// `resolveUntypedCall`: nothing is expected of the arguments, and they are looked at all the same. What leads back from there to
-    /// something that is being worked out is a circle.
-    fn look_at_arguments_of_untyped_call(&mut self, file: FileId, args: IdList<ExprId>) {
+    /// something that is being worked out is a circle. The result is `anySignature`.
+    fn resolve_untyped_call(&mut self, file: FileId, args: IdList<ExprId>) -> ResolvedCall {
         let uncertain = self.uncertain;
         for arg in self.hir(file).ids(args) {
             self.type_of_expr(file, arg);
         }
         self.uncertain = uncertain;
+        ResolvedCall {
+            sig: None,
+            ret: TypeId::ANY,
+        }
+    }
+
+    /// `resolveErrorCall`: the same, and the result is `unknownSignature`, which returns the error type.
+    fn resolve_error_call(&mut self, file: FileId, args: IdList<ExprId>) -> ResolvedCall {
+        ResolvedCall {
+            ret: TypeId::ERROR,
+            ..self.resolve_untyped_call(file, args)
+        }
     }
 
     /// `resolveCallExpression`, of `super(..)`: what is called is one of the constructors of what the class extends, with the type
     /// arguments given there.
     fn resolve_super_call(&mut self, file: FileId, call: ExprId, id: CallId) -> ResolvedCall {
-        let nothing = ResolvedCall {
-            sig: None,
-            ret: TypeId::VOID,
-        };
         let Some(&class) = self
             .classes_around(file, self.bound(file).expr_parent[call.idx()])
             .first()
         else {
-            return nothing;
+            return self.resolve_untyped_call(file, self.hir(file)[id].args);
         };
         let class = self
             .files()
             .sym(file, self.bound(file).class_symbol[class.idx()]);
         let sigs = self.super_constructor_sigs(class);
         if sigs.is_empty() {
-            return nothing;
+            return self.resolve_untyped_call(file, self.hir(file)[id].args);
         }
         let args = self.effective_args(file, self.hir(file)[id].args);
         self.resolve_among(file, call, id, &sigs, &[], &args, None, false, true, true)
@@ -706,15 +720,23 @@ impl<'p> Checker<'p> {
             callee = self.non_nullable(callee);
         }
         callee = self.receiver_that_is_there(callee);
-        if self.is_any(callee) {
-            self.look_at_arguments_of_untyped_call(file, data.args);
+        let apparent = self.apparent_type(callee);
+        if self.is_error_type(apparent) {
+            return self.resolve_error_call(file, data.args);
+        }
+        // `isUntypedFunctionCall`, and `IsTypeAny(expressionType)` in `resolveNewExpression`.
+        if self.is_any(callee) || is_new && self.has_any_flag(apparent) {
             return ResolvedCall {
-                sig: None,
-                ret: callee,
+                ret: if callee == TypeId::UNRESOLVED {
+                    callee
+                } else {
+                    TypeId::ANY
+                },
+                ..self.resolve_untyped_call(file, data.args)
             };
         }
         let mut sigs = self.signatures(callee, is_new);
-        // What may not be constructed from here is in error, and anything comes of it.
+        // What may not be constructed from here is in error.
         if is_new
             && !sigs.is_empty()
             && (self
@@ -722,10 +744,7 @@ impl<'p> Checker<'p> {
                 .is_some()
                 || self.has_abstract_construct_signature(callee))
         {
-            return ResolvedCall {
-                sig: None,
-                ret: TypeId::ERROR,
-            };
+            return self.resolve_error_call(file, data.args);
         }
         // A method of `A[] | B[]` whose signatures do not come together is called as that of `(A | B)[]`.
         if sigs.is_empty()
@@ -779,18 +798,21 @@ impl<'p> Checker<'p> {
             sigs = self.signatures(callee, false);
         }
         if sigs.is_empty() {
-            // `resolveUntypedCall` gives `anySignature`, `resolveErrorCall` gives `unknownSignature`, which returns the error type.
-            let ret = if !self.is_known(callee) {
-                TypeId::UNRESOLVED
-            } else if !is_new && {
-                let apparent = self.apparent_type(callee);
-                self.is_untyped_function_call(callee, apparent, 0, 0)
-            } {
-                TypeId::ANY
-            } else {
-                TypeId::ERROR
+            if !self.is_known(callee) {
+                return ResolvedCall {
+                    sig: None,
+                    ret: TypeId::UNRESOLVED,
+                };
+            }
+            let is_untyped = !is_new && {
+                let constructs = self.signatures(callee, true).len();
+                self.is_untyped_function_call(callee, apparent, 0, constructs)
             };
-            return ResolvedCall { sig: None, ret };
+            return if is_untyped {
+                self.resolve_untyped_call(file, data.args)
+            } else {
+                self.resolve_error_call(file, data.args)
+            };
         }
         let type_args = self.types_from_nodes(file, data.type_args);
         let args = self.effective_args(file, data.args);
@@ -2027,9 +2049,8 @@ impl<'p> Checker<'p> {
             .index
             .iter()
             .map(|i| IndexInfo {
-                key: i.key,
                 value: self.instantiate(i.value, members.mapper),
-                readonly: i.readonly,
+                ..*i
             })
             .collect();
         self.synth(Shape {
@@ -5181,8 +5202,6 @@ impl<'p> Checker<'p> {
         let mut from_plain: Option<(MapperId, MapperId)> = None;
         // The result of `infer_type_arguments_from_first_check`, once computed.
         let mut first_check: Option<Option<SmallVec<[MapperId; 8]>>> = None;
-        // The literal arguments whose cached type is their type under the instantiated parameter type.
-        let mut is_checked_again: SmallVec<[bool; 8]> = smallvec![false; args.len()];
         let mut inferred_type_params: Vec<TypeId> = Vec::new();
         for pass in 0..2 {
             if pass == 1 && skip_sensitive {
@@ -5390,13 +5409,11 @@ impl<'p> Checker<'p> {
                                     .explicit_context(file, e)
                                     .is_none_or(|earlier| earlier == recorded)
                                 {
-                                    is_checked_again[i] = instantiated != context;
                                     instantiated_context = Some(instantiated);
                                 }
                             }
                         }
-                        // Otherwise a literal is checked once, and the instantiated parameter type is anticipated as far as the
-                        // plain arguments go.
+                        // Otherwise the instantiated parameter type is anticipated as far as the plain arguments go.
                         if let Some(instantiated) = instantiated_context {
                             instantiated
                         } else if self.has_type_variables(context)
@@ -5486,25 +5503,18 @@ impl<'p> Checker<'p> {
                     Arg::Expr(e) => self.type_of_expr_for_inference(file, e),
                     _ => self.arg_type(file, arg),
                 };
-                // `inferTypeArguments` infers from the type under the uninstantiated parameter type.
-                if is_checked_again[i]
+                if pass == 0
                     && let Arg::Expr(e) = arg
-                {
-                    let uninstantiated =
-                        self.instantiate_with_expected_result(param, return_mapper);
-                    let uninstantiated = self.without_no_infer(uninstantiated);
-                    let uninstantiated = self.force(uninstantiated);
-                    let first = self.check_expression_with_contextual_type(
+                    && let Some(first) = self.literal_argument_type_for_inference(
                         file,
+                        sig,
                         e,
-                        Some(uninstantiated),
-                        (e, uninstantiated),
-                        true,
+                        param,
+                        return_mapper,
                         &mut inference.array_literals,
-                    );
-                    if self.is_known(first) {
-                        ty = first;
-                    }
+                    )
+                {
+                    ty = first;
                 }
                 self.settle_after_look(&mut inference);
                 if let Arg::Expr(e) = arg {
@@ -6218,6 +6228,47 @@ impl<'p> Checker<'p> {
             return ty;
         }
         self.widen_literal_for_context(ty, contextual_type)
+    }
+
+    /// `inferTypeArguments`: `checkExpressionWithContextualType(arg, paramType, context, checkMode)`, of the literal argument `e` of a
+    /// call of `sig`. Every inference checks `e` under `param`, the uninstantiated parameter type: one for each candidate and round of
+    /// `chooseOverload`, and `inferSignatureInstantiationForOverloadFailure`. The cached type of `e` is its type under the recorded
+    /// contextual type, which stands for the instantiated parameter type of `getSignatureApplicabilityError`.
+    /// `None`: the cached type is the type to infer from.
+    fn literal_argument_type_for_inference(
+        &mut self,
+        file: FileId,
+        sig: SigId,
+        e: ExprId,
+        param: TypeId,
+        return_mapper: MapperId,
+        array_literals: &mut Vec<TypeId>,
+    ) -> Option<TypeId> {
+        if !self.is_literal_that_depends_on_context(file, e)
+            || !self.can_check_with_contextual_type(file, e)
+            || self.hir(file).is_js
+            || self.has_const_type_parameter(sig)
+        {
+            return None;
+        }
+        let uninstantiated = self.instantiate_with_expected_result(param, return_mapper);
+        let uninstantiated = self.without_no_infer(uninstantiated);
+        if self
+            .explicit_context(file, e)
+            .is_none_or(|recorded| recorded == uninstantiated)
+        {
+            return None;
+        }
+        let uninstantiated = self.force(uninstantiated);
+        let first = self.check_expression_with_contextual_type(
+            file,
+            e,
+            Some(uninstantiated),
+            (e, uninstantiated),
+            true,
+            array_literals,
+        );
+        self.is_known(first).then_some(first)
     }
 
     /// The type of `e`, a call given for the parameter type `param`, to infer from. A call is resolved once (`resolvedSignature`), under

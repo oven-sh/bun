@@ -181,7 +181,7 @@ impl<'p> Checker<'p> {
                     }
                 }
                 // `#x` is no key: the error type.
-                PropKey::Private(_) => TypeId::ANY,
+                PropKey::Private(_) => TypeId::ERROR,
                 PropKey::None => TypeId::STRING,
             };
             return Some(match (owner, member) {
@@ -795,32 +795,21 @@ impl<'p> Checker<'p> {
             is_parenthesized,
         } = written;
         let function = self.type_of_expr(file, e);
-        if !self.is_known(function) || self.is_any(function) || self.is_uncertain(file, e) {
+        if !self.is_known(function) || self.is_uncertain(file, e) {
             return;
         }
         let apparent = self.apparent_type(function);
         if !self.is_known(apparent) {
             return;
         }
-        let sigs = self.signatures(apparent, false);
-        // `isUntypedFunctionCall`
-        if self.is_any(apparent)
-            && matches!(
-                self.data(function),
-                TypeData::TypeParam(..) | TypeData::ThisParam(_)
-            )
-        {
+        // `resolveErrorCall`
+        if self.is_error_type(apparent) {
             return;
         }
-        if sigs.is_empty()
-            && self.signatures(apparent, true).is_empty()
-            && !self.is_union(apparent)
-            && self.reduced(apparent) != TypeId::NEVER
-        {
-            let function_type = self.global_ref(known::Function, &[]);
-            if self.is_assignable(function, function_type) {
-                return;
-            }
+        let sigs = self.signatures(apparent, false);
+        let constructs = self.signatures(apparent, true).len();
+        if self.is_untyped_function_call(function, apparent, sigs.len(), constructs) {
+            return;
         }
         let head = match owner {
             DecoratorOwner::Class(_) => 1238,

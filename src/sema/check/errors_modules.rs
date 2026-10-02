@@ -1253,25 +1253,6 @@ pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> String {
     format!("{}.{name}", fully_qualified_name(c, parent))
 }
 
-/// What `levenshteinWithMax` measures: changing a letter costs two, and changing its case next to nothing.
-fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
-    let mut previous: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();
-    let mut current = vec![0.0; b.len() + 1];
-    for (i, x) in a.iter().enumerate() {
-        current[0] = (i + 1) as f64;
-        for (j, y) in b.iter().enumerate() {
-            current[j + 1] = if x == y {
-                previous[j]
-            } else {
-                let change = previous[j] + if x.eq_ignore_ascii_case(y) { 0.1 } else { 2.0 };
-                (previous[j + 1] + 1.0).min(current[j] + 1.0).min(change)
-            };
-        }
-        std::mem::swap(&mut previous, &mut current);
-    }
-    previous[b.len()]
-}
-
 /// `IsEntityNameExpression`. A missing expression is an empty Identifier (`createMissingIdentifier`).
 fn is_entity_name_expression(c: &Checker<'_>, file: FileId, mut e: ExprId) -> bool {
     let hir = c.hir(file);
@@ -1295,27 +1276,6 @@ fn root_declaration(bound: &Bound, mut pat: PatId) -> PatParent {
         match bound.pat_parent[pat.idx()] {
             PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
             root => return root,
-        }
-    }
-}
-
-/// `SkipTrivia`: past the blanks and comments at `at`.
-fn skip_trivia(text: &[u8], mut at: usize) -> usize {
-    loop {
-        match text.get(at) {
-            Some(c) if c.is_ascii_whitespace() || *c == 0x0b => at += 1,
-            Some(b'/') if text.get(at + 1) == Some(&b'/') => {
-                while text.get(at).is_some_and(|&c| c != b'\n' && c != b'\r') {
-                    at += 1;
-                }
-            }
-            Some(b'/') if text.get(at + 1) == Some(&b'*') => {
-                at = text[at + 2..]
-                    .windows(2)
-                    .position(|w| w == b"*/")
-                    .map_or(text.len(), |n| at + n + 4);
-            }
-            _ => return at,
         }
     }
 }

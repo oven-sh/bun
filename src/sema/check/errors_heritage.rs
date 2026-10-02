@@ -314,6 +314,7 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
+        let apparent_base = self.apparent_type(with_this.1);
         let mut named: Vec<(MemberId, Atom)> = Vec::new();
         for m in hir[c].members.iter() {
             let member = &hir[m];
@@ -363,7 +364,7 @@ impl Checker<'_> {
                 if self.explains
                     && let (Some((own, own_mapper)), Some((inherited, base_mapper))) = (
                         self.prop_of(with_this.0, name),
-                        self.prop_of(with_this.1, name),
+                        self.prop_of(apparent_base, name),
                     )
                 {
                     let (given, wanted) = (
@@ -442,8 +443,9 @@ impl Checker<'_> {
     /// Whether the property `name` of the first of `pair` fits that of the second. It does where one of them has none, and where it
     /// cannot be told.
     fn is_member_assignable(&mut self, pair: (TypeId, TypeId), name: Atom) -> bool {
+        let base = self.apparent_type(pair.1);
         let (Some((own, own_mapper)), Some((inherited, base_mapper))) =
-            (self.prop_of(pair.0, name), self.prop_of(pair.1, name))
+            (self.prop_of(pair.0, name), self.prop_of(base, name))
         else {
             return true;
         };
@@ -533,8 +535,10 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
+        // `getPropertiesOfType`
+        let apparent_base = self.apparent_type(base);
         let (Some(base_members), Some(own_members)) =
-            (self.members(base), self.members(class_type))
+            (self.members(apparent_base), self.members(class_type))
         else {
             return;
         };
@@ -955,31 +959,13 @@ impl Checker<'_> {
                 ..*i
             })
             .collect();
-        // Where the index signature for `key` is written, if the type itself declares it.
-        let local_index = |c: &mut Self, key: TypeId| -> Option<(FileId, u32, Reported)> {
-            for &(f, span) in locals {
-                for m in span.iter() {
-                    let member = c.hir(f)[m];
-                    if member.kind != MemberKind::IndexSignature
-                        || member.flags.contains(Flags::STATIC) != is_static
-                    {
-                        continue;
-                    }
-                    let Some(p) = c.hir(f)[member.func].params.iter().next() else {
-                        continue;
-                    };
-                    let node = c.hir(f)[p].ty;
-                    let declared = if node.is_some() {
-                        c.type_from_node(f, node)
-                    } else {
-                        TypeId::STRING
-                    };
-                    if c.parts(declared).contains(&key) {
-                        return Some((f, member.pos, Reported::Member(m)));
-                    }
-                }
-            }
-            None
+        // `localIndexDeclaration`
+        let local_index = |c: &Self, info: &IndexInfo| -> Option<(FileId, u32, Reported)> {
+            let (f, m) = info.declaration?;
+            locals
+                .iter()
+                .any(|&(local, span)| local == f && span.range().contains(&m.idx()))
+                .then(|| (f, c.hir(f)[m].pos, Reported::Member(m)))
         };
         for prop in &members.shape().props {
             let text = self.files().atoms.bytes(prop.name);
@@ -1013,7 +999,7 @@ impl Checker<'_> {
                 {
                     continue;
                 }
-                let mut at = local_prop.or_else(|| local_index(self, info.key));
+                let mut at = local_prop.or_else(|| local_index(self, info));
                 if at.is_none()
                     && let Some((name_pos, sym)) = fallback
                 {
@@ -1132,8 +1118,7 @@ impl Checker<'_> {
                     if info.key == check.key || !self.is_index_key_applicable(check.key, info.key) {
                         continue;
                     }
-                    let mut at =
-                        local_index(self, check.key).or_else(|| local_index(self, info.key));
+                    let mut at = local_index(self, check).or_else(|| local_index(self, info));
                     if at.is_none()
                         && let Some((name_pos, sym)) = fallback
                     {

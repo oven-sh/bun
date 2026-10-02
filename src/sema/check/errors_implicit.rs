@@ -574,7 +574,10 @@ impl Checker<'_> {
                     .base_types(self.class_sym(file, class))
                     .first()
                     .copied();
-                !base.is_some_and(|base| self.prop_of(base, name).is_some())
+                !base.is_some_and(|base| {
+                    let base = self.apparent_type(base);
+                    self.prop_of(base, name).is_some()
+                })
             };
         }
         if reads_declarations {
@@ -729,7 +732,10 @@ impl Checker<'_> {
         // `getTypeOfPropertyInBaseClass`
         let class = self.class_sym(file, c);
         let base = self.base_types(class).first().copied();
-        base.is_some_and(|base| self.prop_of(base, name).is_some())
+        base.is_some_and(|base| {
+            let base = self.apparent_type(base);
+            self.prop_of(base, name).is_some()
+        })
     }
 
     /// Where an error about `func` as a whole goes: its name if it has one.

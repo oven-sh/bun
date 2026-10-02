@@ -273,7 +273,7 @@ impl Checker<'_> {
         };
         let constructor = self.type_of_expr(file, extends);
         // `resolveBaseTypesOfClass`: the error type is no base type.
-        if constructor == TypeId::ERROR {
+        if self.is_error_type(constructor) {
             return nothing;
         }
         if !self.is_known(constructor) || self.is_uncertain(file, extends) {
@@ -330,7 +330,7 @@ impl Checker<'_> {
                     self.type_reference(target, &args)
                 }
             }
-            _ if self.has_any_flag(apparent) => TypeId::ANY,
+            _ if self.has_any_flag(apparent) => apparent,
             _ => {
                 let Some(list) = self.base_constructor_returns(apparent, &args) else {
                     return ClassBase::Unknown;
@@ -347,6 +347,9 @@ impl Checker<'_> {
         let mapper = self.decl_params_mapper(sym, file, class.type_params);
         let base = self.instantiate(base, mapper);
         let base = self.force(base);
+        if self.is_error_type(base) {
+            return nothing;
+        }
         if !self.is_settled_base(base)
             || !is_generic_here && self.has_type_variables_except_this(file, c, base)
         {
@@ -366,9 +369,8 @@ impl Checker<'_> {
         if self.has_base(base, sym, 0) {
             return nothing;
         }
-        // What is like a class without being one has to make the same thing whichever way it is called. An `any` that comes first
-        // may stand for what is in error, and then nothing is extended.
-        if base_class.is_none() && !self.is_type_variable(constructor) && !self.has_any_flag(base) {
+        // What is like a class without being one has to make the same thing whichever way it is called.
+        if base_class.is_none() && !self.is_type_variable(constructor) {
             let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
             let mut all_the_same = true;
             for &returned in &returns {
@@ -907,11 +909,6 @@ impl Checker<'_> {
             }
             ClassBase::Is { constructor, base } => (constructor, base),
         };
-        // What a constructor that is not `any` itself makes, and in JavaScript every `any`, may be the error type, and then nothing
-        // is extended: 4112, not 4113.
-        if self.has_any_flag(base) && (is_js || !self.has_any_flag(constructor)) {
-            return;
-        }
         // A name that is only known when the program runs is the name of no property that could be looked up.
         if let PropKey::Computed(name) = member.key {
             match self.is_bindable_computed_name(file, name) {
@@ -1133,7 +1130,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let distance = super::errors_access::edit_distance(text, candidate);
+            let distance = edit_distance(text, candidate);
             if best.is_none_or(|(least, _)| distance + 0.05 < least) {
                 best = Some((distance, prop));
             }

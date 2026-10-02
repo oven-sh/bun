@@ -563,6 +563,8 @@ impl<'p> Checker<'p> {
             TypeData::Enum { .. } => 37,
             TypeData::UniqueSymbol { .. } => 38,
             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => 39,
+            // `TypeFlagsBoolean | TypeFlagsUnion`
+            TypeData::Union(_) if ty == TypeId::BOOLEAN => 48,
             TypeData::Union(_) => 40,
             TypeData::Intersection(_) => 41,
             TypeData::Cond { .. } => 42,
@@ -1596,7 +1598,7 @@ impl<'p> Checker<'p> {
             }
         }
         if mapped.ty.is_none() {
-            return Some(TypeId::ANY);
+            return Some(TypeId::ERROR);
         }
         let param = self.type_param(file, mapped.param);
         let mut pairs = self.p.types.mapping(mapper).to_vec();
@@ -2253,7 +2255,7 @@ impl<'p> Checker<'p> {
         };
         let mapped = self.mapped_decl(file, node);
         if mapped.ty.is_none() {
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         let declared = self.type_from_node(file, mapped.ty);
         let declared = if mapped.optional == MappedModifier::Add {
@@ -4329,11 +4331,13 @@ impl<'p> Checker<'p> {
         }
         let apparent = self.apparent_type(source);
         // `createUnionOrIntersectionProperty` reads the apparent type of each member.
-        let members: SmallVec<[TypeId; 8]> = self
+        let mut members: SmallVec<[TypeId; 8]> = self
             .parts(apparent)
             .iter()
             .map(|&member| self.apparent_type(member))
             .collect();
+        // `!c.isErrorType(t) && t.flags&TypeFlagsNever == 0`
+        members.retain(|member| !self.is_error_type(*member) && *member != TypeId::NEVER);
         if members.len() < 2 {
             let source = members.first().copied().unwrap_or(source);
             return self.properties_related_to(r, source, target, &[], optionals_only, state);
@@ -4377,30 +4381,6 @@ impl<'p> Checker<'p> {
                 .constituents(source)
                 .iter()
                 .any(|&t| t == target || matches!(self.data(t), TypeData::Synth(shape) if shape.literal == Literalness::Partial))
-    }
-
-    /// `getSingleBaseForNonAugmentingSubtype`, of a class whose base type is a type parameter: `resolveBaseTypesOfClass` takes the
-    /// return type of the first base constructor, and `isValidBaseType` goes by the constraint of a type parameter.
-    fn type_parameter_base_of_non_augmenting_class(&mut self, ty: TypeId) -> Option<TypeId> {
-        let TypeData::Ref { target, args } = self.data(ty) else {
-            return None;
-        };
-        if !self.files().flags(*target).contains(SymFlags::CLASS)
-            || !self.is_non_augmenting_declaration(*target)
-        {
-            return None;
-        }
-        let &first = self.super_constructor_sigs(*target).first()?;
-        let base = self.sig_return(first);
-        if !matches!(self.data(base), TypeData::TypeParam(..)) || !self.is_valid_base_type(base) {
-            return None;
-        }
-        let params = self.all_type_params_of_symbol(*target);
-        if params.is_empty() || args.len() < params.len() {
-            return Some(base);
-        }
-        let mapper = self.mapper_from(&params, &args[..params.len()]);
-        Some(self.instantiate(base, mapper))
     }
 
     /// The `relateVariances` closure of `structuredTypeRelatedToWorker`. `Some`: that settles it.
@@ -4669,9 +4649,9 @@ impl<'p> Checker<'p> {
         match *td {
             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
                 // `getNormalizedType`: a class that adds nothing to its base type is compared as that type. `normalized` leaves it as
-                // it is, which makes a difference only for a base type that is a type parameter.
+                // it is.
                 if matches!(sd, TypeData::Ref { .. })
-                    && let Some(base) = self.type_parameter_base_of_non_augmenting_class(source)
+                    && let Some(base) = self.single_base_for_non_augmenting_subtype(source)
                 {
                     return self.is_related_to(r, base, target, REC_SOURCE);
                 }
@@ -5458,11 +5438,7 @@ impl<'p> Checker<'p> {
                         };
                         values.push(self.instantiate(same.value, members.mapper));
                     }
-                    index.push(IndexInfo {
-                        key: info.key,
-                        value: self.union(&values),
-                        readonly: false,
-                    });
+                    index.push(IndexInfo::new(info.key, self.union(&values), false));
                 }
                 let whole = self.synth(Shape {
                     index,

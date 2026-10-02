@@ -2810,34 +2810,8 @@ fn expression_end(text: &[u8], mut at: usize) -> Option<usize> {
 
 // ───────────────────────────── reading the text ─────────────────────────────
 
-fn is_word_byte(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
-}
-
 fn has_line_break(text: &[u8]) -> bool {
     text.iter().any(|&c| c == b'\n' || c == b'\r')
-}
-
-/// `SkipTrivia`: past white space and comments.
-fn skip_trivia(text: &[u8], mut at: usize) -> usize {
-    loop {
-        match text.get(at) {
-            Some(c) if c.is_ascii_whitespace() || *c == 0x0b => at += 1,
-            Some(b'/') if text.get(at + 1) == Some(&b'/') => {
-                while text.get(at).is_some_and(|&c| c != b'\n' && c != b'\r') {
-                    at += 1;
-                }
-            }
-            Some(b'/') if text.get(at + 1) == Some(&b'*') => {
-                at += 2;
-                while at < text.len() && !text[at..].starts_with(b"*/") {
-                    at += 1;
-                }
-                at = (at + 2).min(text.len());
-            }
-            _ => return at,
-        }
-    }
 }
 
 /// The start of the first token of the file. The scanner skips a byte order mark and a `#!` line there like trivia.
@@ -2856,58 +2830,10 @@ fn first_token_start(text: &[u8]) -> u32 {
     skip_trivia(text, at) as u32
 }
 
-/// Where the `//` comment of a line starts, going by the strings and comments before it.
-fn line_comment_start(line: &[u8]) -> Option<usize> {
-    let (mut i, mut quote) = (0, 0u8);
-    while i < line.len() {
-        let c = line[i];
-        if quote != 0 {
-            if c == b'\\' {
-                i += 1;
-            } else if c == quote {
-                quote = 0;
-            }
-        } else if matches!(c, b'"' | b'\'' | b'`') {
-            quote = c;
-        } else if c == b'/' && line.get(i + 1) == Some(&b'/') {
-            return Some(i);
-        } else if c == b'/' && line.get(i + 1) == Some(&b'*') {
-            i += 2 + line[i + 2..].windows(2).position(|w| w == b"*/")?;
-            i += 1;
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Where what comes before `at` ends, white space and comments aside.
-fn skip_trivia_back(text: &[u8], at: usize) -> usize {
-    let mut end = at.min(text.len());
-    loop {
-        while end > 0 && (text[end - 1].is_ascii_whitespace() || text[end - 1] == 0x0b) {
-            end -= 1;
-        }
-        if text[..end].ends_with(b"*/")
-            && let Some(open) = text[..end - 2].windows(2).rposition(|w| w == b"/*")
-        {
-            end = open;
-            continue;
-        }
-        let line = text[..end]
-            .iter()
-            .rposition(|&c| c == b'\n' || c == b'\r')
-            .map_or(0, |i| i + 1);
-        match line_comment_start(&text[line..end]) {
-            Some(comment) => end = line + comment,
-            None => return end,
-        }
-    }
-}
-
 /// Where the identifier or keyword at `at` ends.
 fn word_end(text: &[u8], mut at: usize) -> usize {
     while let Some(&c) = text.get(at) {
-        if is_word_byte(c) {
+        if is_identifier_part(c) {
             at += 1;
         } else if c == b'\\' && text.get(at + 1) == Some(&b'u') {
             // A Unicode escape, with four digits or with braces.
@@ -2933,7 +2859,7 @@ fn word_at(text: &[u8], at: usize) -> &[u8] {
 /// Where the word that ends at `end` starts.
 fn word_start(text: &[u8], end: usize) -> usize {
     let mut start = end;
-    while start > 0 && is_word_byte(text[start - 1]) {
+    while start > 0 && is_identifier_part(text[start - 1]) {
         start -= 1;
     }
     // A byte order mark is white space.
@@ -3002,7 +2928,7 @@ fn statement_start(text: &[u8], pos: u32) -> u32 {
             .iter()
             .rev()
             .find(|&&c| c != b' ' && c != b'\t')
-            && !is_word_byte(c)
+            && !is_identifier_part(c)
             && !matches!(c, b'/' | b'\n' | b'\r')
         {
             return start as u32;

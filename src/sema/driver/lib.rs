@@ -7,7 +7,7 @@ pub mod host;
 
 pub use bun_sema::messages::Category;
 
-use bun_sema::check::Program;
+use bun_sema::check::{Program, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
@@ -297,30 +297,6 @@ fn located(
         source_line: source_line + 1,
         ..said
     }
-}
-
-/// Where each line of `text` starts. `ComputeECMALineStarts`
-fn line_starts(text: &[u8]) -> Vec<u32> {
-    let mut starts = vec![0u32];
-    let mut i = 0;
-    // 0xE2 starts U+2028 and U+2029, which end a line too.
-    while let Some(found) = bun_core::strings::index_of_any(&text[i..], b"\n\r\xE2") {
-        i += found;
-        match text[i] {
-            b'\r' if text.get(i + 1) == Some(&b'\n') => i += 1,
-            0xE2 => {
-                if text.get(i + 1) != Some(&0x80) || !matches!(text.get(i + 2), Some(0xA8 | 0xA9)) {
-                    i += 1;
-                    continue;
-                }
-                i += 2;
-            }
-            _ => {}
-        }
-        i += 1;
-        starts.push(i as u32);
-    }
-    starts
 }
 
 /// The line `offset` is on, from 0, and how many UTF-16 code units come before it there.
@@ -659,7 +635,14 @@ fn check_what_is_named(
         }
         match &error.at {
             Some((path, from, to)) => match host.read(path) {
-                Some(text) => located(path, &text, &line_starts(&text), *from, *to, said),
+                Some(text) => located(
+                    path,
+                    &text,
+                    &compute_ecma_line_starts(&text),
+                    *from,
+                    *to,
+                    said,
+                ),
                 None => said,
             },
             None => said,
@@ -836,7 +819,7 @@ fn check_what_is_named(
             return;
         }
         let text = &module.hir.text;
-        let starts = line_starts(text);
+        let starts = compute_ecma_line_starts(text);
         let shown: Vec<Diagnostic> = errors
             .into_iter()
             .map(|e| {
@@ -865,7 +848,14 @@ fn check_what_is_named(
                         } else {
                             &other.hir.text[..]
                         };
-                        located(&other.path, text, &line_starts(text), start, end, said)
+                        located(
+                            &other.path,
+                            text,
+                            &compute_ecma_line_starts(text),
+                            start,
+                            end,
+                            said,
+                        )
                     })
                     .collect();
                 let said = Diagnostic {

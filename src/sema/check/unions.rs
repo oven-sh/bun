@@ -835,10 +835,9 @@ impl<'p> Checker<'p> {
             }
             return seen_placeholder;
         }
-        matches!(
-            ty,
-            TypeId::ANY | TypeId::ERROR | TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT
-        ) || self.is_pattern_literal(ty)
+        self.has_any_flag(ty)
+            || matches!(ty, TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT)
+            || self.is_pattern_literal(ty)
     }
 
     /// A template or the like with nothing generic in it: `a${string}`, `Uppercase<string>`. `isPatternLiteralType`
@@ -1507,14 +1506,10 @@ impl<'p> Checker<'p> {
     }
 
     /// What `compareNodes` orders a node at `pos` of `file` by: the index of the file in the program (`fileIndexMap`), then the
-    /// position. The libraries come first. `rank_of_file` does not order them as `getDefaultLibFilePriority` does: they go by number.
+    /// position. The libraries come first.
     pub(super) fn place_in_program_order(&self, file: FileId, pos: u32) -> (bool, u32, u32) {
         let files = self.files();
-        if files.module(file).is_lib {
-            (false, file.0, pos)
-        } else {
-            (true, files.rank_of_file(file), pos)
-        }
+        (!files.module(file).is_lib, files.rank_of_file(file), pos)
     }
 
     /// `t.symbol.Declarations[0]` of an object type: the file and the position.

@@ -98,61 +98,18 @@ impl Checker<'_> {
     }
 }
 
-fn is_word_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80
-}
-
-/// Past blanks and comments.
-fn skip_trivia(text: &[u8], mut i: usize) -> usize {
-    loop {
-        while text.get(i).is_some_and(u8::is_ascii_whitespace) {
-            i += 1;
-        }
-        if text[i.min(text.len())..].starts_with(b"//") {
-            i += text[i..]
-                .iter()
-                .position(|&c| c == b'\n')
-                .unwrap_or(text.len() - i);
-        } else if text[i.min(text.len())..].starts_with(b"/*") {
-            i += text[i + 2..]
-                .windows(2)
-                .position(|w| w == b"*/")
-                .map_or(text.len() - i, |n| n + 4);
-        } else {
-            return i;
-        }
-    }
-}
-
-/// Back over blanks and `/* */`: where what is written before `i` ends.
-fn skip_trivia_back(text: &[u8], mut i: usize) -> usize {
-    loop {
-        while i > 0 && text[i - 1].is_ascii_whitespace() {
-            i -= 1;
-        }
-        if i >= 2 && &text[i - 2..i] == b"*/" {
-            match text[..i - 2].windows(2).rposition(|w| w == b"/*") {
-                Some(open) => i = open,
-                None => return i,
-            }
-        } else {
-            return i;
-        }
-    }
-}
-
 fn word_at(text: &[u8], start: usize) -> &[u8] {
     let rest = &text[start.min(text.len())..];
     &rest[..rest
         .iter()
-        .position(|&b| !is_word_byte(b))
+        .position(|&b| !is_identifier_part(b))
         .unwrap_or(rest.len())]
 }
 
 fn word_before(text: &[u8], end: usize) -> &[u8] {
     let start = text[..end]
         .iter()
-        .rposition(|&b| !is_word_byte(b))
+        .rposition(|&b| !is_identifier_part(b))
         .map_or(0, |i| i + 1);
     &text[start..end]
 }
@@ -260,7 +217,7 @@ fn modifiers_around(text: &[u8], at: u32, flags: Flags) -> SmallVec<[(u32, bool)
         let next = skip_trivia(text, i + word.len());
         // A member can be called by any of these words.
         if !text.get(next).is_some_and(|&b| {
-            is_word_byte(b) || matches!(b, b'[' | b'"' | b'\'' | b'#' | b'*' | b'{')
+            is_identifier_part(b) || matches!(b, b'[' | b'"' | b'\'' | b'#' | b'*' | b'{')
         }) {
             break;
         }

@@ -258,10 +258,10 @@ impl Checker<'_> {
                 continue;
             }
             // `GetErrorRangeForNode`: a parameter is not pointed at by its name, but starts where it starts, modifiers and `...` included.
-            let (is_annotated, is_bare_parameter, start) = match bound.pat_parent[i] {
-                PatParent::Var(d) => (hir[d].ty.is_some(), false, hir[pat].pos),
-                PatParent::Param(p) => (hir[p].ty.is_some(), hir[p].default.is_none(), hir[p].pos),
-                _ => (false, false, hir[pat].pos),
+            let is_annotated = self.type_annotation_of_pat(file, pat).is_some();
+            let (is_bare_parameter, start) = match bound.pat_parent[i] {
+                PatParent::Param(p) => (hir[p].default.is_none(), hir[p].pos),
+                _ => (false, hir[pat].pos),
             };
             let code = if is_annotated { 2502 } else { 7022 };
             if is_annotated {

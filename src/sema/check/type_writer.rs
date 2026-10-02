@@ -3,7 +3,7 @@
 
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, SymbolId};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, SymbolId};
 
 /// `typeWriterResult`
 pub struct TypeAtLocation {
@@ -14,239 +14,36 @@ pub struct TypeAtLocation {
     pub kind: &'static str,
 }
 
+/// What the walk for the types of a file keeps from one node to the next.
+struct TypeWalk {
+    /// `literal_types_in_resolved_context`
+    literal_types: FxHashMap<ExprId, TypeId>,
+    /// The type that was written last for an expression, and how it is written. The parentheses around an expression and the name of a
+    /// property access repeat it.
+    text_of_expr: Vec<Option<(TypeId, String)>>,
+}
+
 impl Checker<'_> {
     /// `typeWriterWalker.getTypes`, in no particular order. The file must have been checked, as in the harness.
     pub fn types_at_locations(&mut self, file: FileId) -> Vec<TypeAtLocation> {
         let hir = self.hir(file);
         let mut results = Vec::with_capacity(hir.exprs.len() * 2);
-        let mut text_of_expr: Vec<Option<String>> = vec![None; hir.exprs.len()];
-        // `IsExpressionWithTypeArgumentsInClassExtendsClause`: the harness writes the base type there, not the type of the expression.
-        let mut extended: Vec<ExprId> = hir.classes.iter().map(|class| class.extends).collect();
-        // A shorthand property is one node, which is written as a name. A method or an accessor is a declaration: the function
-        // expression that stands for it is no node.
-        extended.extend(
-            hir.props
-                .iter()
-                .filter(|prop| {
-                    matches!(
-                        prop.kind,
-                        PropKind::Shorthand
-                            | PropKind::Method
-                            | PropKind::Getter
-                            | PropKind::Setter
-                    )
-                })
-                .map(|prop| prop.value),
-        );
-        // `Base<T>` after `extends` is no expression node. What the lowering first made of it is still among the expressions.
-        let mut is_extended = vec![false; hir.exprs.len()];
-        for class in &hir.classes {
-            if class.extends.is_some() {
-                is_extended[class.extends.idx()] = true;
-            }
-        }
-        extended.extend((0..hir.exprs.len() as u32).map(ExprId).filter(|&e| {
-            matches!(hir[e].kind, ExprKind::Instantiation { expr, .. } if is_extended[expr.idx()])
-        }));
-        // Written by `types_at_intrinsic_jsx_tag_names`.
-        extended.extend(
-            hir.jsx
-                .iter()
-                .flat_map(|jsx| [jsx.tag, jsx.close_tag])
-                .filter(|&tag| tag.is_some() && matches!(hir[tag].kind, ExprKind::String(_))),
-        );
-        // `IsInExpressionContext` does not hold right under an `ExportAssignment`.
-        extended.extend(hir.stmts.iter().filter_map(|stmt| match stmt.kind {
-            StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)
-                // The one statement of a JSON file is an `ExpressionStatement`, which is kept as `export =`.
-                if e.is_some()
-                    && hir.kind != FileKind::Json
-                    && hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err()
-                    && match hir[e].kind {
-                        ExprKind::String(_)
-                        | ExprKind::Number(_)
-                        | ExprKind::BigInt(_)
-                        | ExprKind::This => true,
-                        ExprKind::Template { exprs, .. } => exprs.is_empty(),
-                        _ => false,
-                    } =>
-            {
-                Some(e)
-            }
-            _ => None,
-        }));
         let (literal_types, literal_prop_types) = self.literal_types_in_resolved_context(file);
-        extended.extend(self.jsx_text_and_attribute_strings(file));
-        extended.extend(self.unwritten_import_attribute_exprs(file));
-        let mut is_unwritten = vec![false; hir.exprs.len()];
-        for e in extended {
-            if e.is_some() {
-                is_unwritten[e.idx()] = true;
-            }
+        let mut walk = TypeWalk {
+            literal_types,
+            text_of_expr: vec![None; hir.exprs.len()],
+        };
+        for node in self.visited_nodes(file) {
+            self.write_type_of_visited_node(file, node, &mut walk, &mut results);
         }
-        for index in 0..hir.exprs.len() {
-            let e = ExprId(index as u32);
-            let expr = hir[e];
-            // `checkPrivateIdentifierExpression`: `#x` is `any`, and an expression node only as the left operand of `in`.
-            if matches!(expr.kind, ExprKind::String(_))
-                && hir.text.get(expr.pos as usize) == Some(&b'#')
-            {
-                let is_left_of_in = hir
-                    .parens
-                    .binary_search_by_key(&e.0, |paren| paren.0.0)
-                    .is_err()
-                    && matches!(self.bound(file).expr_parent[e.idx()], crate::bind::Parent::Expr(parent)
-                        if matches!(hir[parent].kind, ExprKind::Binary { op: BinOp::In, left, .. } if left == e));
-                if is_left_of_in {
-                    results.push(TypeAtLocation {
-                        start: self.start_inside_parentheses(file, e),
-                        end: self.end_inside_parentheses(file, e),
-                        type_text: "any".to_owned(),
-                        kind: "expression",
-                    });
-                }
-                text_of_expr[index] = Some("any".to_owned());
-                continue;
-            }
-            if matches!(expr.kind, ExprKind::Missing) {
-                // Parentheses around a missing identifier get a line.
-                text_of_expr[index] = Some("any".to_owned());
-                continue;
-            }
-            if is_unwritten[index] {
-                continue;
-            }
-            let ty = match self.type_of_export_assignment_name(file, e) {
-                Some(ty) => ty,
-                None => {
-                    // `getRegularTypeOfExpression`
-                    let ty = match literal_types.get(&e) {
-                        Some(&ty) => ty,
-                        None => match expr.kind {
-                            // `checkSpreadExpression`
-                            ExprKind::Spread(operand) => {
-                                let iterable = match literal_types.get(&operand) {
-                                    Some(&ty) => ty,
-                                    None => self.type_of_expr(file, operand),
-                                };
-                                self.iterated_type_if_any(iterable, false)
-                                    .unwrap_or(TypeId::ANY)
-                            }
-                            _ => self.type_of_expr(file, e),
-                        },
-                    };
-                    self.regular(ty)
-                }
-            };
-            let scope = self.enclosing_scope_of_expr(file, e);
-            let type_text = self.type_to_string_for_baseline_at(ty, file, scope);
-            // `isRightSideOfQualifiedNameOrPropertyAccess`: the name has the type of the whole access.
-            // A private name is no identifier, and an expression only on the left of `in`.
-            if let ExprKind::Dot { name, name_pos, .. } = expr.kind
-                && hir.text.get(name_pos as usize) != Some(&b'#')
-            {
-                results.push(TypeAtLocation {
-                    start: name_pos,
-                    end: if name == known::empty {
-                        name_pos
-                    } else {
-                        self.end_of_token_at(file, name_pos)
-                    },
-                    type_text: type_text.clone(),
-                    kind: "access-name",
-                });
-            }
-            // `IsPartOfTypeNode` takes the keyword `null` for a type wherever it is written. Parentheses around it get a line.
-            if matches!(expr.kind, ExprKind::Null) {
-                text_of_expr[index] = Some(type_text);
-                continue;
-            }
-            // `writeTypeOrSymbol`: an assertion whose type node is reparsed from a `@type` or `@satisfies` tag is not written.
-            let is_reparsed_cast = match expr.kind {
-                ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => {
-                    ty.is_some() && hir.is_in_jsdoc(hir[ty].pos)
-                }
-                ExprKind::AsConst(_) => hir.is_js,
-                _ => false,
-            };
-            if !is_reparsed_cast {
-                results.push(TypeAtLocation {
-                    start: self.start_inside_parentheses(file, e),
-                    end: self.end_inside_parentheses(file, e),
-                    type_text: type_text.clone(),
-                    kind: "expression",
-                });
-            }
-            text_of_expr[index] = Some(type_text);
-        }
-        for &(e, outermost) in &hir.parens {
-            if let Some(type_text) = &text_of_expr[e.idx()] {
-                // The type of a `satisfies` that is reparsed from a tag is written before the parenthesis.
-                let is_reparsed_satisfies = matches!(hir[e].kind, ExprKind::Satisfies { ty, .. }
-                    if ty.is_some() && hir.is_in_jsdoc(hir[ty].pos));
-                for open in self.parenthesis_starts(file, e, outermost) {
-                    results.push(TypeAtLocation {
-                        start: open,
-                        end: if is_reparsed_satisfies {
-                            self.end_of_bracket_at(file, open)
-                        } else {
-                            self.end_of_expr_from(file, e, open)
-                        },
-                        type_text: type_text.clone(),
-                        kind: "parenthesized",
-                    });
-                }
-            }
-        }
-        for index in 0..hir.pats.len() {
-            let pat = PatId(index as u32);
-            let PatKind::Ident(name) = hir[pat].kind else {
-                continue;
-            };
-            // `getTypeOfSymbol`
-            let (declared_in, first) = self.value_declaration_of_variable_name(file, pat);
-            let ty = self.type_of_pat(declared_in, first);
-            // `bindVariableDeclarationOrBindingElement`: `const x = require(..)` declares an alias. `getTypeOfNode` of its name is
-            // the type of what the alias stands for.
-            let required = self.bound(file).pat_symbol[pat.idx()];
-            let ty = if required.is_some()
-                && self.bound(file).symbols[required.idx()]
-                    .flags
-                    .contains(SymFlags::ALIAS)
-            {
-                let alias = self.files().sym(file, required);
-                self.type_of_symbol(alias)
-            } else {
-                ty
-            };
-            results.push(TypeAtLocation {
-                start: hir[pat].pos,
-                end: if name == known::empty {
-                    hir[pat].pos
-                } else {
-                    self.end_of_token_at(file, hir[pat].pos)
-                },
-                type_text: self.type_to_string_for_baseline_at(
-                    ty,
-                    file,
-                    self.enclosing_scope_of_pat(file, pat),
-                ),
-                kind: "variable",
-            });
-        }
+        let listed = results.len();
         self.types_at_intrinsic_jsx_tag_names(file, &mut results);
         self.types_at_declaration_names(file, &mut results);
-        for node in self.visited_nodes(file) {
-            self.write_type_of_visited_node(file, node, &mut results);
-        }
-        self.types_at_missing_identifiers(file, &mut results);
-        self.types_at_meta_property_names(file, &mut results);
         self.types_at_namespace_export_names(file, &mut results);
         self.types_at_dynamic_member_names(file, &mut results);
         self.types_at_tagged_template_literals(file, &mut results);
         self.types_at_ambient_module_names(file, &mut results);
         self.types_at_expression_declaration_names(file, &mut results);
-        self.types_at_class_extends(file, &mut results);
         self.types_at_member_names(file, &mut results);
         self.types_at_unbound_member_names(file, &mut results);
         self.types_at_property_names(file, &mut results);
@@ -265,15 +62,15 @@ impl Checker<'_> {
                 result.type_text.clone_from(&type_text);
             }
         }
-        // `forEachASTNode` leaves out what is reparsed from a JSDoc comment, and a comment is no child of a node.
-        results.retain(|found| !hir.is_in_jsdoc(found.start));
-        self.remove_uninstantiated_namespace_names(file, &mut results);
-        // `getTypeOfNode`: no semantic question is answered within a `with` block.
-        for found in results.iter_mut() {
-            if hir.is_in_with(found.start) && !matches!(found.kind, "no-type" | "qualifier") {
+        // `getTypeOfNode`: no semantic question is answered within a `with` block. `get_type_of_visited_node` has that for its nodes.
+        for found in results[listed..].iter_mut() {
+            if hir.is_in_with(found.start) {
                 found.type_text = ERROR_TYPE_TEXT.to_owned();
             }
         }
+        // `forEachASTNode` leaves out what is reparsed from a JSDoc comment, and a comment is no child of a node.
+        results.retain(|found| !hir.is_in_jsdoc(found.start));
+        self.remove_uninstantiated_namespace_names(file, &mut results);
         self.write_any_for_exempt_error_types(file, &mut results);
         results
     }
@@ -283,31 +80,80 @@ impl Checker<'_> {
         &mut self,
         file: FileId,
         node: VisitedNode,
+        walk: &mut TypeWalk,
         results: &mut Vec<TypeAtLocation>,
     ) {
-        if self.is_part_of_type_node(file, node.kind) {
+        if self.is_part_of_type_node(file, node.kind) || self.is_reparsed_assertion(file, node.kind)
+        {
             return;
         }
-        let ty = self.get_type_of_visited_node(file, node);
+        let ty = self.get_type_of_visited_node(file, node, walk);
         let type_text = if ty == TypeId::ERROR && self.is_error_type_written_as_any(file, node.kind)
         {
             "any".to_owned()
         } else {
-            let scope = self.enclosing_scope_of_visited_node(file, node.kind);
-            self.type_to_string_for_baseline_at(ty, file, scope)
+            self.type_text_of_visited_node(file, node.kind, ty, walk)
         };
         results.push(TypeAtLocation {
             start: node.start,
             end: node.end,
             type_text,
-            kind: node.kind.name(),
+            kind: if node.start == node.end {
+                "missing"
+            } else {
+                node.kind.name()
+            },
         });
+    }
+
+    fn type_text_of_visited_node(
+        &mut self,
+        file: FileId,
+        kind: VisitedKind,
+        ty: TypeId,
+        walk: &mut TypeWalk,
+    ) -> String {
+        let repeated = match kind {
+            VisitedKind::Expression(e)
+            | VisitedKind::Parenthesized(e, _)
+            | VisitedKind::AccessName(e) => Some(e.idx()),
+            _ => None,
+        };
+        if let Some(index) = repeated
+            && let Some((written, text)) = &walk.text_of_expr[index]
+            && *written == ty
+        {
+            return text.clone();
+        }
+        let scope = self.enclosing_scope_of_visited_node(file, kind);
+        let text = self.type_to_string_for_baseline_at(ty, file, scope);
+        if let Some(index) = repeated {
+            walk.text_of_expr[index] = Some((ty, text.clone()));
+        }
+        text
+    }
+
+    /// `writeTypeOrSymbol`: an assertion whose type node is reparsed from a `@type` or `@satisfies` tag is not written.
+    fn is_reparsed_assertion(&self, file: FileId, kind: VisitedKind) -> bool {
+        let hir = self.hir(file);
+        let VisitedKind::Expression(e) = kind else {
+            return false;
+        };
+        match hir[e].kind {
+            ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => {
+                ty.is_some() && hir.is_in_jsdoc(hir[ty].pos)
+            }
+            ExprKind::AsConst(_) => hir.is_js,
+            _ => false,
+        }
     }
 
     /// `IsPartOfTypeNode`
     fn is_part_of_type_node(&self, file: FileId, kind: VisitedKind) -> bool {
         let hir = self.hir(file);
         match kind {
+            // It takes the keyword `null` for a type wherever it is written.
+            VisitedKind::Expression(e) => matches!(hir[e].kind, ExprKind::Null),
             // `isPartOfTypeNodeInParent`: of `A.B.C` only `C` and the whole are right under a type node.
             // In a heritage clause the same holds of the property accesses (`isPartOfTypeExpressionWithTypeArguments`).
             VisitedKind::TypeReferenceName(node, index)
@@ -326,12 +172,33 @@ impl Checker<'_> {
 
     /// The exceptions of `writeTypeOrSymbol`: whether the error type of the node is written `any` in a test without errors too.
     fn is_error_type_written_as_any(&self, file: FileId, kind: VisitedKind) -> bool {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         match kind {
-            // `IsBindingElement(node.Parent)`, `IsLabelName(node)`, `IsMetaProperty(node.Parent)`
+            // `IsBindingElement(node.Parent)`, `IsLabelName(node)`, `IsMetaProperty(node.Parent)`,
+            // `IsPropertyAccessOrQualifiedName(node.Parent)`
             VisitedKind::BindingPropertyName(_)
             | VisitedKind::Label(_)
-            | VisitedKind::ImportDeferName(_) => true,
+            | VisitedKind::ImportDeferName(_)
+            | VisitedKind::AccessName(_) => true,
+            VisitedKind::BindingName(pat) => matches!(
+                bound.pat_parent[pat.idx()],
+                PatParent::Prop(..) | PatParent::Elem(..)
+            ),
+            VisitedKind::Expression(e) | VisitedKind::Parenthesized(e, _) => {
+                self.is_child_of_parent_of_expr(file, kind)
+                    && match bound.expr_parent[e.idx()] {
+                        Parent::Expr(parent) if parent.is_some() => {
+                            matches!(hir[parent].kind, ExprKind::Dot { obj, .. } if obj == e)
+                        }
+                        // `isExportStatementName`
+                        Parent::Stmt(s) if s.is_some() => matches!(
+                            hir[s].kind,
+                            StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
+                        ),
+                        Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => true,
+                        _ => false,
+                    }
+            }
             // `IsPropertyAccessOrQualifiedName(node.Parent)`
             VisitedKind::TypeReferenceName(node, _)
             | VisitedKind::HeritageClauseName(node, _)
@@ -347,10 +214,51 @@ impl Checker<'_> {
         }
     }
 
-    /// `getTypeOfNode`
-    fn get_type_of_visited_node(&mut self, file: FileId, node: VisitedNode) -> TypeId {
+    /// Whether the node is the child `bound.expr_parent` speaks of: an expression with all the parentheses around it.
+    fn is_child_of_parent_of_expr(&self, file: FileId, kind: VisitedKind) -> bool {
+        match kind {
+            VisitedKind::Parenthesized(_, depth) => depth == 0,
+            VisitedKind::Expression(e) => self
+                .hir(file)
+                .parens
+                .binary_search_by_key(&e.0, |paren| paren.0.0)
+                .is_err(),
+            _ => false,
+        }
+    }
+
+    /// `getTypeOfNode`, and before it what `writeTypeOrSymbol` asks of the node after the `extends` of a class.
+    fn get_type_of_visited_node(
+        &mut self,
+        file: FileId,
+        node: VisitedNode,
+        walk: &TypeWalk,
+    ) -> TypeId {
         let hir = self.hir(file);
+        // No semantic question is answered within a `with` block.
+        if hir.is_in_with(node.start) {
+            return TypeId::ERROR;
+        }
         match node.kind {
+            VisitedKind::Expression(e)
+            | VisitedKind::Parenthesized(e, _)
+            | VisitedKind::AccessName(e) => {
+                // `IsExpressionWithTypeArgumentsInClassExtendsClause(node.Parent)`: the base type, unless it is `any` or there is none.
+                if self.is_child_of_parent_of_expr(file, node.kind)
+                    && let Parent::ClassExtends(c) = self.bound(file).expr_parent[e.idx()]
+                {
+                    let class = self
+                        .files()
+                        .sym(file, self.bound(file).class_symbol[c.idx()]);
+                    if let Some(&base) = self.base_types(class).first()
+                        && !base.is_any()
+                    {
+                        return base;
+                    }
+                }
+                self.type_of_visited_expression(file, e, walk)
+            }
+            VisitedKind::BindingName(pat) => self.type_of_binding_name(file, pat),
             VisitedKind::LiteralInMemberName(m) => {
                 self.type_of_literal_in_computed_name(file, hir[m].key, node.start)
             }
@@ -374,6 +282,17 @@ impl Checker<'_> {
                 self.string_literal(hir.directives[index as usize].1, false)
             }
             VisitedKind::ThisParameter(f) => self.type_from_node(file, hir[f].this_ty),
+            // `getRegularTypeOfExpression` of the access, and of the name it ends with (`isRightSideOfQualifiedNameOrPropertyAccess`).
+            VisitedKind::HeritageClauseName(reference, index)
+            | VisitedKind::HeritageClausePropertyAccess(reference, index) => {
+                let TypeNodeKind::Ref { name, .. } = hir[reference].kind else {
+                    return TypeId::ERROR;
+                };
+                let names: Vec<Atom> = hir.ids(name).take(index as usize + 1).collect();
+                let scope = self.bound(file).type_scope[reference.idx()];
+                let ty = self.type_of_entity(file, scope, &names);
+                self.regular(ty)
+            }
             VisitedKind::ImportEqualsName(import, index) => {
                 self.type_of_import_equals_name(file, import, index as usize)
             }
@@ -381,10 +300,62 @@ impl Checker<'_> {
             VisitedKind::BindingPropertyName(_)
             | VisitedKind::Label(_)
             | VisitedKind::TypeReferenceName(..)
-            | VisitedKind::HeritageClauseName(..)
-            | VisitedKind::HeritageClausePropertyAccess(..)
             | VisitedKind::ImportTypeQualifierName(..)
             | VisitedKind::ImportDeferName(_) => TypeId::ERROR,
+        }
+    }
+
+    /// `getTypeOfNode` of an expression, of the parentheses around it, and of the name a property access ends with
+    /// (`isRightSideOfQualifiedNameOrPropertyAccess`).
+    fn type_of_visited_expression(&mut self, file: FileId, e: ExprId, walk: &TypeWalk) -> TypeId {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            // `getResolvedSymbol`: `NodeIsMissing`
+            ExprKind::Missing | ExprKind::Ident(known::empty) => return TypeId::ERROR,
+            // `checkPrivateIdentifierExpression`
+            ExprKind::String(_) if hir.text.get(hir[e].pos as usize) == Some(&b'#') => {
+                return TypeId::ANY;
+            }
+            _ => {}
+        }
+        if let Some(ty) = self.type_of_export_assignment_name(file, e) {
+            return ty;
+        }
+        // `getRegularTypeOfExpression`
+        let ty = match walk.literal_types.get(&e) {
+            Some(&ty) => ty,
+            None => match hir[e].kind {
+                // `checkSpreadExpression`
+                ExprKind::Spread(operand) => {
+                    let iterable = match walk.literal_types.get(&operand) {
+                        Some(&ty) => ty,
+                        None => self.type_of_expr(file, operand),
+                    };
+                    self.iterated_type_if_any(iterable, false)
+                        .unwrap_or(TypeId::ANY)
+                }
+                _ => self.type_of_expr(file, e),
+            },
+        };
+        self.regular(ty)
+    }
+
+    /// `getTypeOfSymbol` of the symbol the name `pat` declares.
+    fn type_of_binding_name(&mut self, file: FileId, pat: PatId) -> TypeId {
+        let (declared_in, first) = self.value_declaration_of_variable_name(file, pat);
+        let ty = self.type_of_pat(declared_in, first);
+        // `bindVariableDeclarationOrBindingElement`: `const x = require(..)` declares an alias. `getTypeOfNode` of its name is
+        // the type of what the alias stands for.
+        let required = self.bound(file).pat_symbol[pat.idx()];
+        if required.is_some()
+            && self.bound(file).symbols[required.idx()]
+                .flags
+                .contains(SymFlags::ALIAS)
+        {
+            let alias = self.files().sym(file, required);
+            self.type_of_symbol(alias)
+        } else {
+            ty
         }
     }
 
@@ -552,66 +523,6 @@ impl Checker<'_> {
         });
     }
 
-    /// `createMissingNode`: an identifier the parser missed is a node without text, where the token before it ends. The harness puts
-    /// it on the line of the token after it (`SkipTrivia`).
-    fn types_at_missing_identifiers(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
-        let hir = self.hir(file);
-        if !hir.has_parse_diagnostics {
-            return;
-        }
-        // An `OmittedExpression` and the empty `{}` of JSX are no identifiers.
-        let mut is_omitted = vec![false; hir.exprs.len()];
-        for expr in &hir.exprs {
-            if let ExprKind::Array(items) = expr.kind {
-                for item in hir.ids(items) {
-                    is_omitted[item.idx()] = true;
-                }
-            }
-        }
-        for jsx in hir.jsx.iter() {
-            let values = jsx.attrs.iter().map(|p| hir[p].value);
-            for e in hir.ids(jsx.children).chain(values) {
-                if e.is_some() {
-                    is_omitted[e.idx()] = true;
-                }
-            }
-        }
-        let mut missing = Vec::new();
-        for (index, expr) in hir.exprs.iter().enumerate() {
-            match expr.kind {
-                // `parseDecoratedExpression`: decorators before what is no class make a `MissingDeclaration`, which is no identifier.
-                ExprKind::Missing if hir.text.get(expr.pos as usize) == Some(&b'@') => {}
-                ExprKind::Missing | ExprKind::Ident(known::empty) if !is_omitted[index] => {
-                    missing.push((expr.pos, "any".to_owned()));
-                }
-                ExprKind::Dot {
-                    name: known::empty,
-                    name_pos,
-                    ..
-                } => missing.push((name_pos, "any".to_owned())),
-                _ => {}
-            }
-        }
-        for index in 0..hir.pats.len() {
-            let pat = PatId(index as u32);
-            if matches!(hir[pat].kind, PatKind::Ident(known::empty)) {
-                let ty = self.type_of_pat(file, pat);
-                let scope = self.enclosing_scope_of_pat(file, pat);
-                let type_text = self.type_to_string_for_baseline_at(ty, file, scope);
-                missing.push((hir[pat].pos, type_text));
-            }
-        }
-        for (pos, type_text) in missing {
-            let start = self.skip_trivia_from(file, self.end_of_token_before(file, pos));
-            results.push(TypeAtLocation {
-                start,
-                end: start,
-                type_text,
-                kind: "missing",
-            });
-        }
-    }
-
     /// `parseJsxAttributeName`: the name of an attribute goes on over `-` and `:name`. The two identifiers of `a:b` get a line too,
     /// with the error type.
     fn extend_jsx_attribute_names(&self, file: FileId, results: &mut Vec<TypeAtLocation>) {
@@ -654,35 +565,6 @@ impl Checker<'_> {
                 end,
                 type_text: "error".to_owned(),
                 kind: "error-type",
-            });
-        }
-    }
-
-    /// `IsRightSideOfQualifiedNameOrPropertyAccess`: the name of a `MetaProperty` has the type of the whole.
-    fn types_at_meta_property_names(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
-        let hir = self.hir(file);
-        for index in 0..hir.exprs.len() {
-            let e = ExprId(index as u32);
-            if !matches!(hir[e].kind, ExprKind::ImportMeta | ExprKind::NewTarget) {
-                continue;
-            }
-            let keyword_end = self.end_of_token_at(file, hir[e].pos);
-            let dot = self.skip_trivia_from(file, keyword_end);
-            if hir.text.get(dot as usize) != Some(&b'.') {
-                continue;
-            }
-            let start = self.skip_trivia_from(file, dot + 1);
-            let ty = self.type_of_expr(file, e);
-            let ty = self.regular(ty);
-            results.push(TypeAtLocation {
-                start,
-                end: self.end_of_token_at(file, start),
-                type_text: self.type_to_string_for_baseline_at(
-                    ty,
-                    file,
-                    self.enclosing_scope_of_expr(file, e),
-                ),
-                kind: "access-name",
             });
         }
     }
@@ -811,68 +693,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `ImportAttributes` is no expression node, and a literal that is the value of an `ImportAttribute` is in no expression context.
-    fn unwritten_import_attribute_exprs(&self, file: FileId) -> Vec<ExprId> {
-        let hir = self.hir(file);
-        let mut unwritten = Vec::new();
-        for &(_, attributes) in hir.import_attributes.iter() {
-            unwritten.push(attributes);
-            let ExprKind::Object(props) = hir[attributes].kind else {
-                continue;
-            };
-            for p in props.iter() {
-                let value = hir[p].value;
-                if value.is_none() {
-                    continue;
-                }
-                let is_literal = match hir[value].kind {
-                    ExprKind::String(_)
-                    | ExprKind::Number(_)
-                    | ExprKind::BigInt(_)
-                    | ExprKind::This => true,
-                    ExprKind::Template { exprs, .. } => exprs.is_empty(),
-                    _ => false,
-                };
-                if is_literal {
-                    unwritten.push(value);
-                }
-            }
-        }
-        unwritten
-    }
-
-    /// What stands for `JsxText` and for the string of `name="value"`, which are no expression nodes, and for the `{...children}` of
-    /// an element, which is no `SpreadElement`.
-    fn jsx_text_and_attribute_strings(&self, file: FileId) -> Vec<ExprId> {
-        let hir = self.hir(file);
-        let mut unwritten = Vec::new();
-        for jsx in hir.jsx.iter() {
-            for child in hir.ids(jsx.children) {
-                let is_unwritten = match hir[child].kind {
-                    // Text is put where its element starts. The string of `{"text"}` starts with its quote.
-                    ExprKind::String(_) => hir.text.get(hir[child].pos as usize) == Some(&b'<'),
-                    ExprKind::Spread(_) => true,
-                    _ => false,
-                };
-                if is_unwritten {
-                    unwritten.push(child);
-                }
-            }
-            for p in jsx.attrs.iter() {
-                let value = hir[p].value;
-                if value.is_none() || !matches!(hir[value].kind, ExprKind::String(_)) {
-                    continue;
-                }
-                // `name="value"`, not `name={"value"}`
-                let before = self.end_of_token_before(file, hir[value].pos) as usize;
-                if before > 0 && hir.text.get(before - 1) == Some(&b'=') {
-                    unwritten.push(value);
-                }
-            }
-        }
-        unwritten
-    }
-
     /// `GetMeaningFromDeclaration`: the name of a namespace has a value meaning only if the declaration is
     /// `ModuleInstanceStateInstantiated`.
     fn remove_uninstantiated_namespace_names(
@@ -949,79 +769,6 @@ impl Checker<'_> {
                 ),
                 kind: "declaration-name",
             });
-        }
-    }
-
-    /// Where each of the parentheses around `e` opens, the outermost first. `hir.parens` keeps `outermost`.
-    fn parenthesis_starts(&self, file: FileId, e: ExprId, outermost: u32) -> Vec<u32> {
-        let hir = self.hir(file);
-        let inside = self.start_inside_parentheses(file, e);
-        let mut starts = Vec::new();
-        let mut at = outermost;
-        while at < inside && hir.text.get(at as usize) == Some(&b'(') {
-            starts.push(at);
-            at = self.skip_trivia_from(file, at + 1);
-        }
-        starts
-    }
-
-    /// `IsExpressionWithTypeArgumentsInClassExtendsClause`: the harness writes the base type at the expression after `extends`, and
-    /// the type of the expression if the base type is `any` or there is none.
-    fn types_at_class_extends(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for index in 0..hir.classes.len() {
-            let e = hir.classes[index].extends;
-            if e.is_none() || matches!(hir[e].kind, ExprKind::Missing) {
-                continue;
-            }
-            let ty = self.type_of_expr(file, e);
-            let ty = self.regular(ty);
-            let scope = self.enclosing_scope_of_expr(file, e);
-            let expression_text = self.type_to_string_for_baseline_at(ty, file, scope);
-            let class = self.files().sym(file, bound.class_symbol[index]);
-            let base_text = match self.base_types(class).first() {
-                Some(&base) if base != TypeId::ANY => {
-                    self.type_to_string_for_baseline_at(base, file, scope)
-                }
-                _ => expression_text.clone(),
-            };
-            // The node right under the clause comes first.
-            let mut nodes = Vec::new();
-            if let Ok(found) = hir.parens.binary_search_by_key(&e.0, |p| p.0.0) {
-                for open in self.parenthesis_starts(file, e, hir.parens[found].1) {
-                    nodes.push((open, self.end_of_expr_from(file, e, open), "parenthesized"));
-                }
-            }
-            if !matches!(hir[e].kind, ExprKind::Null) {
-                nodes.push((
-                    self.start_inside_parentheses(file, e),
-                    self.end_inside_parentheses(file, e),
-                    "expression",
-                ));
-            }
-            for (depth, (start, end, kind)) in nodes.into_iter().enumerate() {
-                let type_text = if depth == 0 {
-                    base_text.clone()
-                } else {
-                    expression_text.clone()
-                };
-                results.push(TypeAtLocation {
-                    start,
-                    end,
-                    type_text,
-                    kind,
-                });
-            }
-            if let ExprKind::Dot { name_pos, .. } = hir[e].kind
-                && hir.text.get(name_pos as usize) != Some(&b'#')
-            {
-                results.push(TypeAtLocation {
-                    start: name_pos,
-                    end: self.end_of_token_at(file, name_pos),
-                    type_text: expression_text,
-                    kind: "access-name",
-                });
-            }
         }
     }
 
@@ -1518,7 +1265,8 @@ impl Checker<'_> {
 pub const ERROR_TYPE_TEXT: &str = "\u{1}error";
 
 impl Checker<'_> {
-    /// The exceptions of `writeTypeOrSymbol`: the nodes whose error type is written `any` in a test without errors too.
+    /// The exceptions of `writeTypeOrSymbol`, for the names of declarations: those whose error type is written `any` in a test without
+    /// errors too.
     fn write_any_for_exempt_error_types(&self, file: FileId, results: &mut [TypeAtLocation]) {
         if !results
             .iter()
@@ -1526,51 +1274,8 @@ impl Checker<'_> {
         {
             return;
         }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // The child an expression is of its parent: with the parentheses around it.
-        let node_range = |e: ExprId| match hir.parens.binary_search_by_key(&e.0, |p| p.0.0) {
-            Ok(found) => {
-                let open = hir.parens[found].1;
-                (open, self.end_of_expr_from(file, e, open))
-            }
-            Err(_) => (
-                self.start_inside_parentheses(file, e),
-                self.end_inside_parentheses(file, e),
-            ),
-        };
-        let mut nodes = Vec::new();
-        // `IsPropertyAccessOrQualifiedName(node.Parent)`
-        for expr in &hir.exprs {
-            if let ExprKind::Dot { obj, .. } = expr.kind {
-                nodes.push(node_range(obj));
-            }
-        }
-        // `isExportStatementName`
-        for stmt in &hir.stmts {
-            if let StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) = stmt.kind
-                && e.is_some()
-            {
-                nodes.push(node_range(e));
-            }
-        }
-        // `IsBindingElement(node.Parent)`
-        let defaults = hir
-            .pat_props
-            .iter()
-            .map(|prop| prop.default)
-            .chain(hir.pat_elems.iter().map(|element| element.default));
-        for default in defaults.filter(|default| default.is_some()) {
-            nodes.push(node_range(default));
-        }
+        let hir = self.hir(file);
         let mut names = Vec::new();
-        for (index, pat) in hir.pats.iter().enumerate() {
-            if matches!(
-                bound.pat_parent[index],
-                crate::bind::PatParent::Prop(..) | crate::bind::PatParent::Elem(..)
-            ) {
-                names.push(pat.pos);
-            }
-        }
         // `isImportStatementName`, `isExportStatementName`
         for import in &hir.imports {
             if import.default.is_some() {
@@ -1593,16 +1298,10 @@ impl Checker<'_> {
             }
         }
         for found in results.iter_mut() {
-            if found.type_text != ERROR_TYPE_TEXT {
-                continue;
-            }
-            let is_exempt = match found.kind {
-                "access-name" => true,
-                "expression" | "parenthesized" => nodes.contains(&(found.start, found.end)),
-                "variable" | "declaration-name" => names.contains(&found.start),
-                _ => false,
-            };
-            if is_exempt {
+            if found.type_text == ERROR_TYPE_TEXT
+                && found.kind == "declaration-name"
+                && names.contains(&found.start)
+            {
                 found.type_text = "any".to_owned();
             }
         }

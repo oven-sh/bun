@@ -1377,7 +1377,13 @@ impl<'p> Checker<'p> {
             return Self::iso_inferred(Node::Expr(e));
         }
         match hir[e].kind {
-            ExprKind::Missing => Pseudo::Undefined,
+            // `OmittedExpression`. What the parser makes up where an expression is missing is an identifier without a text.
+            ExprKind::Missing => match self.bound(file).expr_parent[e.idx()] {
+                Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Array(_)) => {
+                    Pseudo::Undefined
+                }
+                _ => Self::iso_inferred(Node::Expr(e)),
+            },
             ExprKind::Ident(known::undefined) => Pseudo::Undefined,
             ExprKind::Null => Pseudo::Null,
             ExprKind::Fn(f) if matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow) => {
@@ -2941,7 +2947,7 @@ impl<'p> Checker<'p> {
                 if self.files().flags(target).contains(SymFlags::CLASS)
                     && !self.iso_is_symbol_accessible(tx, target, SymFlags::VALUE, false)
                 {
-                    return self.iso_write_members(tx, ty, None);
+                    return self.iso_write_members(tx, ty);
                 }
                 for &arg in args.iter() {
                     self.iso_write_type(tx, arg);
@@ -2963,12 +2969,10 @@ impl<'p> Checker<'p> {
             }
             // `createAnonymousTypeNodeEx`, `shouldEmitTypeOfSymbol`
             TypeData::Anon { origin, .. } => match *origin {
-                Origin::TypeLiteral(..) | Origin::Mapped(..) => {
-                    self.iso_write_members(tx, ty, None)
-                }
-                Origin::ObjectLiteral(file, e) | Origin::WidenedLiteral(file, e) => {
-                    self.iso_write_members(tx, ty, Some((file, e)))
-                }
+                Origin::TypeLiteral(..)
+                | Origin::Mapped(..)
+                | Origin::ObjectLiteral(..)
+                | Origin::WidenedLiteral(..) => self.iso_write_members(tx, ty),
                 Origin::ClassStatic(sym) => {
                     let is_declaration =
                         self.files().decls_of(sym).iter().any(|&(file, decl)| {
@@ -2979,7 +2983,7 @@ impl<'p> Checker<'p> {
                     {
                         self.iso_track_symbol(tx, sym, SymFlags::VALUE);
                     } else {
-                        self.iso_write_members(tx, ty, None);
+                        self.iso_write_members(tx, ty);
                     }
                 }
                 // `shouldWriteTypeOfFunctionSymbol`
@@ -2992,7 +2996,7 @@ impl<'p> Checker<'p> {
                     {
                         self.iso_track_symbol(tx, sym, SymFlags::VALUE);
                     } else {
-                        self.iso_write_members(tx, ty, None);
+                        self.iso_write_members(tx, ty);
                     }
                 }
                 Origin::EnumObject(sym)
@@ -3009,11 +3013,9 @@ impl<'p> Checker<'p> {
                 {
                     return self.iso_track_symbol(tx, named, SymFlags::VALUE);
                 }
-                self.iso_write_members(tx, ty, None);
+                self.iso_write_members(tx, ty);
             }
-            TypeData::Synth(_) | TypeData::ReverseMapped { .. } => {
-                self.iso_write_members(tx, ty, None)
-            }
+            TypeData::Synth(_) | TypeData::ReverseMapped { .. } => self.iso_write_members(tx, ty),
             TypeData::IndexedAccess { obj, index, .. } => {
                 self.iso_write_type(tx, *obj);
                 self.iso_write_type(tx, *index);
@@ -3060,8 +3062,8 @@ impl<'p> Checker<'p> {
         symbol.is_some().then(|| self.files().sym(file, symbol))
     }
 
-    /// `createTypeNodeFromObjectType`, `createTypeNodesFromResolvedType`. `literal`: the object literal `ty` is the type of.
-    fn iso_write_members(&mut self, tx: &mut Emit, ty: TypeId, literal: Option<(FileId, ExprId)>) {
+    /// `createTypeNodeFromObjectType`, `createTypeNodesFromResolvedType`
+    fn iso_write_members(&mut self, tx: &mut Emit, ty: TypeId) {
         let Some(members) = self.members(ty) else {
             return;
         };
@@ -3073,9 +3075,7 @@ impl<'p> Checker<'p> {
             }
         }
         for info in &shape.index {
-            if let Some((file, e)) = literal
-                && self.iso_write_computed_names(tx, file, e, info.key)
-            {
+            if self.iso_write_computed_names(tx, info) {
                 continue;
             }
             self.iso_write_type(tx, info.key);
@@ -3122,76 +3122,35 @@ impl<'p> Checker<'p> {
             .is_some_and(|sym| self.iso_has_visible_declarations(tx, sym, false))
     }
 
-    /// `indexInfoToObjectComputedNamesOrSignatureDeclaration`, of the index signature for `key` that the object literal `e` has from its
-    /// computed names (`getObjectLiteralIndexInfo`). Whether those names are written instead of it: they all can be.
-    fn iso_write_computed_names(
-        &mut self,
-        tx: &mut Emit,
-        file: FileId,
-        e: ExprId,
-        key: TypeId,
-    ) -> bool {
-        let hir = self.hir(file);
-        let ExprKind::Object(props) = hir[e].kind else {
-            return false;
-        };
-        if file != tx.file {
+    /// `indexInfoToObjectComputedNamesOrSignatureDeclaration`: whether the names of `info.components` are written instead of `info`.
+    fn iso_write_computed_names(&mut self, tx: &mut Emit, info: &IndexInfo) -> bool {
+        let components = self.index_components(info.components);
+        if components.is_empty() {
             return false;
         }
-        // `IndexInfo.components`, and whether each has a name after all (`hasLateBindableName`).
-        let mut components: Vec<(PropId, bool)> = Vec::new();
-        for p in props.iter() {
-            let prop = &hir[p];
-            // `isSymbolWithComputedName`
-            if prop.kind == PropKind::Spread || hir.text.get(prop.pos as usize) != Some(&b'[') {
-                continue;
-            }
-            let name = self.member_name(file, prop.key);
-            // `isSymbolWithSymbolName`, `isSymbolWithNumericName`
-            let (is_symbol, is_numeric) = match (name, prop.key) {
-                (Some(name), _) => (
-                    self.files().atoms.is_symbol_name(name),
-                    self.is_numeric_name(name),
-                ),
-                (None, PropKey::Computed(k)) => {
-                    let ty = self.type_of_expr(file, k);
-                    (
-                        self.is_assignable(ty, TypeId::SYMBOL),
-                        self.is_assignable(ty, TypeId::NUMBER),
-                    )
-                }
-                _ => continue,
-            };
-            let belongs = match key {
-                TypeId::STRING => !is_symbol,
-                TypeId::NUMBER => is_numeric,
-                _ => is_symbol,
-            };
-            if !belongs {
-                continue;
-            }
-            // `isTriviallySerializableComputedName`
-            let PropKey::Computed(k) = prop.key else {
+        // `isTriviallySerializableComputedName`
+        for &component in components {
+            let (file, key) = self.name_of_index_component(component);
+            let PropKey::Computed(k) = key else {
                 return false;
             };
-            if !self.iso_is_written_entity_name(file, k)
+            if file != tx.file
+                || !self.iso_is_written_entity_name(file, k)
                 || !self.iso_is_computed_name_visible(tx, file, k)
             {
                 return false;
             }
-            components.push((p, name.is_some()));
         }
-        if components.is_empty() {
-            return false;
-        }
-        for (p, is_named) in components {
-            if is_named {
+        for &component in components {
+            let (file, key) = self.name_of_index_component(component);
+            // `hasLateBindableName`
+            if self.member_name(file, key).is_some() {
                 continue;
             }
-            if let PropKey::Computed(k) = hir[p].key {
+            if let PropKey::Computed(k) = key {
                 self.iso_track_computed_name(tx, file, k);
             }
-            let ty = self.type_of_literal_prop(file, p);
+            let ty = self.type_of_index_component(component);
             self.iso_write_type(tx, ty);
         }
         true

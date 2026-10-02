@@ -79,11 +79,18 @@ use crate::table::{Bases, ById, ByIdKept, ByKey, ByNode, ByNodeKept, IdSet, Node
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
+use errors::edit_distance;
+use errors_x_regexp_scanner::levenshtein_with_max;
+use spans::is_identifier_part;
+use spans::line_break_len;
+use spans::skip_trivia;
+use spans::{skip_trivia_back, trim_trivia_end};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 pub use call::ResolvedCall;
 pub use shape::Members;
+pub use spans::compute_ecma_line_starts;
 
 const RECENT_SIGS: usize = 256;
 
@@ -1048,6 +1055,12 @@ impl<'p> Checker<'p> {
         self.p.types.intern(data)
     }
 
+    /// `IndexInfo.components`
+    #[inline]
+    pub fn index_components(&self, id: ComponentsId) -> &'p [IndexComponent] {
+        self.p.types.components(id)
+    }
+
     /// The type parameter `tp` of `file`, as declared.
     #[inline]
     pub fn type_param(&self, file: FileId, tp: TypeParamId) -> TypeId {
@@ -1663,7 +1676,7 @@ impl<'p> Checker<'p> {
             return TypeId::UNRESOLVED;
         }
         self.record_excessive_depth();
-        TypeId::ANY
+        TypeId::ERROR
     }
 
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a conditional type
@@ -1673,7 +1686,7 @@ impl<'p> Checker<'p> {
             return TypeId::UNRESOLVED;
         }
         self.record_excessive_depth();
-        TypeId::ANY
+        TypeId::ERROR
     }
 
     /// Counts one hit of an instantiation limit. Returns whether 2589 was reported for it.

@@ -27,10 +27,6 @@ use smallvec::SmallVec;
 
 // ───────────────────────────── the text ─────────────────────────────
 
-fn is_identifier_part(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'\\') || b >= 0x80
-}
-
 /// Whether the word `word` is written at `at`.
 fn is_word_at(text: &[u8], at: usize, word: &[u8]) -> bool {
     text.get(at..).is_some_and(|rest| {
@@ -72,11 +68,6 @@ fn next_token(text: &[u8], mut at: usize) -> (usize, bool) {
             _ => return (at, is_on_new_line),
         }
     }
-}
-
-/// `SkipTrivia`
-fn skip_trivia(text: &[u8], at: usize) -> usize {
-    next_token(text, at).0
 }
 
 /// Where the `await` of the `for await` at `at` is.

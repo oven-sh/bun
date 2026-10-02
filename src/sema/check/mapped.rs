@@ -929,11 +929,7 @@ impl<'p> Checker<'p> {
                 values.push(self.instantiate(same.value, members.mapper));
                 readonly |= same.readonly;
             }
-            infos.push(IndexInfo {
-                key: info.key,
-                value: self.union(&values),
-                readonly,
-            });
+            infos.push(IndexInfo::new(info.key, self.union(&values), readonly));
         }
         infos
     }
@@ -1198,19 +1194,17 @@ impl<'p> Checker<'p> {
                 return TypeId::UNRESOLVED;
             };
             let check_declared = self.type_from_node(file, check);
-            let events = self.deep_events;
             let check_ty = self.instantiate(check_declared, mapper);
             let check_ty = self.force(check_ty);
             let extends_declared = self.type_from_node(file, extends);
             if check_ty == TypeId::UNRESOLVED {
                 return TypeId::UNRESOLVED;
             }
-            if check_ty == TypeId::ERROR {
+            // `extendsType`, which is not `inferredExtendsType`.
+            let extends_before_inference = self.instantiate(extends_declared, mapper);
+            let extends_before_inference = self.force(extends_before_inference);
+            if check_ty == TypeId::ERROR || extends_before_inference == TypeId::ERROR {
                 return TypeId::ERROR;
-            }
-            // `checkType == c.errorType`. There is no separate error type: `any` is one if computing it hit an instantiation limit.
-            if self.has_any_flag(check_ty) && self.deep_events != events {
-                return TypeId::ANY;
             }
             // `[A] extends [B]` waits for its elements like `A extends B` would.
             let check_tuples = match (
@@ -1242,15 +1236,10 @@ impl<'p> Checker<'p> {
                     combined = self.p.types.mapper(pairs);
                 }
             }
-            let events = self.deep_events;
             let extends_ty = self.instantiate(extends_declared, combined);
             let extends_ty = self.force(extends_ty);
             if extends_ty == TypeId::UNRESOLVED {
                 return TypeId::UNRESOLVED;
-            }
-            // `extendsType == c.errorType`
-            if self.has_any_flag(extends_ty) && self.deep_events != events {
-                return TypeId::ANY;
             }
             if check_is_generic
                 || self.is_generic(extends_ty)
@@ -1397,17 +1386,6 @@ impl<'p> Checker<'p> {
         if root_mapper == own {
             return Err(declared);
         }
-        // `instantiate` recognizes the error type among the new type arguments and answers with it (`checkType == c.errorType`).
-        if self.p.types.mapping(own).iter().any(|before| {
-            self.is_tuple(before.1)
-                && self
-                    .p
-                    .types
-                    .map(root_mapper, before.0)
-                    .is_some_and(|ty| self.has_any_flag(ty))
-        }) {
-            return Err(declared);
-        }
         if is_distributive && let Some(value) = self.p.types.map(root_mapper, root_check) {
             let value = self.force(value);
             if self.is_union(value) || value == TypeId::NEVER {
@@ -1501,7 +1479,7 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         let declared = self
             .constraint_of_mapped_param(file, node)
-            .unwrap_or(TypeId::ANY);
+            .unwrap_or(TypeId::ERROR);
         self.instantiate(declared, mapper)
     }
 
@@ -1642,6 +1620,7 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         if self.is_primitive(t)
             || t == TypeId::UNRESOLVED
+            || self.is_error_type(t)
             || t == TypeId::OBJECT
             || matches!(
                 self.data(t),
@@ -1676,10 +1655,11 @@ impl<'p> Checker<'p> {
         let param = self.type_param(file, mapped.param);
         // `instantiateMappedTypeTemplate`
         let template = |c: &mut Self, of: MapperId, key: TypeId, is_optional: bool| {
+            // `getTemplateTypeFromMappedType`
             let declared = if mapped.ty.is_some() {
                 c.type_from_node(file, mapped.ty)
             } else {
-                TypeId::ANY
+                TypeId::ERROR
             };
             let with_key = c.mapper_with_pair(of, param, key);
             let ty = c.instantiate(declared, with_key);
@@ -1707,15 +1687,9 @@ impl<'p> Checker<'p> {
             };
         // `instantiateMappedArrayType`
         if any_as_array || self.array_element(t).is_some() {
-            // A template that is missing is in error, and so is an array of it.
-            if mapped.ty.is_none() {
-                return TypeId::ANY;
-            }
-            let events = self.deep_events;
             let element = template(self, one, TypeId::NUMBER, true);
-            // `isErrorType(elementType)`: `any` is the error type if computing it hit an instantiation limit.
-            if self.has_any_flag(element) && self.deep_events != events {
-                return TypeId::ANY;
+            if self.is_error_type(element) {
+                return TypeId::ERROR;
             }
             let readonly = match mapped.readonly {
                 MappedModifier::Add => true,
@@ -1740,14 +1714,9 @@ impl<'p> Checker<'p> {
                 .iter()
                 .position(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
                 .unwrap_or(flags.len());
-            // An element in error makes the whole an error.
-            if mapped.ty.is_none() && fixed > 0 {
-                return TypeId::ANY;
-            }
             let mut new_elems = Vec::with_capacity(elems.len());
             let mut new_flags = Vec::with_capacity(elems.len());
             for (i, &f) in flags.iter().enumerate() {
-                let events = self.deep_events;
                 let elem = if i < fixed {
                     let name = self.number_name(i as f64);
                     let key = self.string_literal(name, false);
@@ -1763,11 +1732,15 @@ impl<'p> Checker<'p> {
                 } else {
                     let list = self.array_of(elems[i]);
                     let of_list = with(self, list);
-                    template(self, of_list, TypeId::NUMBER, true)
+                    // `getElementTypeOfArrayType` of what `instantiateMappedArrayType` gives, and the error type is no array.
+                    match template(self, of_list, TypeId::NUMBER, true) {
+                        element if self.is_error_type(element) => TypeId::UNKNOWN,
+                        element => element,
+                    }
                 };
                 // `slices.Contains(newElementTypes, c.errorType)`
-                if self.has_any_flag(elem) && self.deep_events != events {
-                    return TypeId::ANY;
+                if elem == TypeId::ERROR {
+                    return TypeId::ERROR;
                 }
                 let flag = match mapped.optional {
                     MappedModifier::Add if f.contains(ElemFlags::REQUIRED) => {
@@ -2079,7 +2052,7 @@ impl<'p> Checker<'p> {
                         None => {
                             if self
                                 .applicable_index(&of_other, TypeId::STRING, Some(prop.name))
-                                .is_some_and(|found| found.1)
+                                .is_some_and(|info| info.readonly)
                             {
                                 flags |= PropFlags::READONLY;
                             }
@@ -2218,9 +2191,11 @@ impl<'p> Checker<'p> {
     /// (`getTypeOfInstantiatedSymbol`). `strips` is `CheckFlagsStripOptional`.
     pub(super) fn type_of_mapped_prop(&mut self, of: TypeId, prop: &Prop, strips: bool) -> TypeId {
         let known = self.p.mapped_prop_types.get(&(of, prop.name));
-        // The error type stays the error type under every mapper.
-        if known.is_some_and(|ty| self.has_any_flag(ty)) {
-            return TypeId::ANY;
+        // `TypeFlagsAny`: no type variables, so it is the same under every mapper.
+        if let Some(known) = known
+            && self.has_any_flag(known)
+        {
+            return known;
         }
         let Some((file, node, mapper)) = self.mapped_origin(of) else {
             return TypeId::UNRESOLVED;
@@ -2238,7 +2213,7 @@ impl<'p> Checker<'p> {
         }
         if !self.enter(Query::MappedProp(of, prop.name)) {
             return if self.came_full_circle {
-                TypeId::ANY
+                TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
             };
@@ -2247,7 +2222,7 @@ impl<'p> Checker<'p> {
         let template = if mapped.ty.is_some() {
             self.type_from_node(file, mapped.ty)
         } else {
-            TypeId::ANY
+            TypeId::ERROR
         };
         let ty = self.instantiate(template, prop.mapper);
         // `instantiateType` resolves a reference to a type alias here, inside the resolution.
@@ -2268,8 +2243,8 @@ impl<'p> Checker<'p> {
             let kept = self
                 .p
                 .mapped_prop_types
-                .insert((of, prop.name), TypeId::ANY);
-            return if is_copy { TypeId::ANY } else { kept };
+                .insert((of, prop.name), TypeId::ERROR);
+            return if is_copy { TypeId::ERROR } else { kept };
         }
         if is_cacheable && !is_copy {
             self.p.mapped_prop_types.insert((of, prop.name), ty);
@@ -2296,7 +2271,7 @@ impl<'p> Checker<'p> {
         let template_declared = if mapped.ty.is_some() {
             self.type_from_node(file, mapped.ty)
         } else {
-            TypeId::ANY
+            TypeId::ERROR
         };
         let name_declared = if mapped.name_ty.is_some() {
             Some(self.type_from_node(file, mapped.name_ty))
@@ -2432,7 +2407,7 @@ impl<'p> Checker<'p> {
                             // `getApplicableIndexInfo(modifiersType, propNameType)`
                             (MappedModifier::None, Some(m)) => self
                                 .applicable_index(m, name_ty, None)
-                                .is_some_and(|found| found.1),
+                                .is_some_and(|info| info.readonly),
                             _ => false,
                         };
                         // `appendIndexInfo`
@@ -2441,11 +2416,7 @@ impl<'p> Checker<'p> {
                                 existing.value = self.union(&[existing.value, ty]);
                                 existing.readonly |= readonly;
                             }
-                            None => shape.index.push(IndexInfo {
-                                key: index_key,
-                                value: ty,
-                                readonly,
-                            }),
+                            None => shape.index.push(IndexInfo::new(index_key, ty, readonly)),
                         }
                     }
                 }
@@ -2491,7 +2462,7 @@ impl<'p> Checker<'p> {
                 .iter()
                 .fold(1usize, |n, &t| n.saturating_mul(self.parts(t).len()));
             if count >= 100_000 {
-                return TypeId::ANY;
+                return TypeId::ERROR;
             }
             let parts = self.parts(types[at]).to_vec();
             let mut results = Vec::with_capacity(parts.len());
@@ -2655,6 +2626,7 @@ impl<'p> Checker<'p> {
             // Twice is once.
             TypeData::StringMapping { kind: same, .. } if *same == kind => ty,
             TypeData::Intrinsic(Intrinsic::Any | Intrinsic::Error | Intrinsic::String)
+            | TypeData::UnresolvedName { .. }
             | TypeData::StringMapping { .. } => self.intern(TypeData::StringMapping { kind, ty }),
             _ if self.is_generic(ty) => self.intern(TypeData::StringMapping { kind, ty }),
             // A number is mapped as the string it makes.

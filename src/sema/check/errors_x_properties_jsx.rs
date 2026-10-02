@@ -986,8 +986,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkJsxExpression`: 2609, a spread child must have an array type. A tuple type is not one. Only `anyType` itself is exempt,
-    /// so the error type is reported too.
+    /// `checkJsxExpression`: 2609, a spread child must have an array type. A tuple type is not one. `t != c.anyType`: the error type
+    /// is reported too.
     fn check_jsx_spread_children(
         &mut self,
         file: FileId,
@@ -1001,10 +1001,11 @@ impl Checker<'_> {
                     continue;
                 };
                 let ty = self.type_of_expr(file, spread);
-                if !self.is_known(ty) || self.is_uncertain(file, spread) || self.is_array(ty) {
-                    continue;
-                }
-                if self.has_any_flag(ty) && !self.is_error_type_expr(file, spread) {
+                if !self.is_known(ty)
+                    || self.is_uncertain(file, spread)
+                    || ty == TypeId::ANY
+                    || self.is_array(ty)
+                {
                     continue;
                 }
                 // The error span is the whole `{...e}`.
@@ -1020,21 +1021,6 @@ impl Checker<'_> {
                 }
             }
         }
-    }
-
-    /// `isErrorType` for the type of `e`, which is `TypeId::ANY`: that id stands for both `anyType` and the error type. Returns `false`
-    /// in JavaScript, where `is_callee_in_error` does not know that an unresolved `require("m")` is `anyType` (`isCommonJSRequire`).
-    fn is_error_type_expr(&mut self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        if hir.is_js {
-            return false;
-        }
-        // `getJsxType`: the error type without a `JSX.Element`. `checkJsxFragment` makes `anyType` of it.
-        if let ExprKind::Jsx(j) = hir[e].kind {
-            return hir[j].tag.is_some() && self.jsx_type(file, known::Element).is_none();
-        }
-        // `getResolvedSymbol`: the identifier the parser creates for a missing expression resolves to `unknownSymbol`.
-        self.type_of_expr(file, e) == TypeId::ERROR
     }
 
     /// `checkJsxFragment`: 17016 17017, whoever says what makes elements has to say what makes fragments.
@@ -1588,73 +1574,6 @@ fn has_empty_type_parameter_list(hir: &File, func: &Func) -> bool {
 
 fn upto(text: &[u8], pos: u32) -> &[u8] {
     &text[..(pos as usize).min(text.len())]
-}
-
-fn is_identifier_part(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
-}
-
-/// `SkipTrivia`: past white space and comments.
-fn skip_trivia(text: &[u8], mut pos: usize) -> usize {
-    loop {
-        match text.get(pos) {
-            Some(c) if c.is_ascii_whitespace() => pos += 1,
-            Some(b'/') if text.get(pos + 1) == Some(&b'/') => {
-                while text.get(pos).is_some_and(|&c| c != b'\n' && c != b'\r') {
-                    pos += 1;
-                }
-            }
-            Some(b'/') if text.get(pos + 1) == Some(&b'*') => {
-                match text[pos + 2..].windows(2).position(|w| w == b"*/") {
-                    Some(end) => pos += end + 4,
-                    None => return text.len(),
-                }
-            }
-            _ => return pos,
-        }
-    }
-}
-
-/// `text` without the white space and the comments it ends with.
-fn trim_trivia_end(mut text: &[u8]) -> &[u8] {
-    loop {
-        let trimmed = text.trim_ascii_end();
-        // A `//` comment goes on to the end of its line: only what a line break follows can end with one.
-        let ends_a_line = text[trimmed.len()..].contains(&b'\n');
-        text = trimmed;
-        if ends_a_line {
-            let line = text.iter().rposition(|&c| c == b'\n').map_or(0, |i| i + 1);
-            if let Some(comment) = start_of_line_comment(&text[line..]) {
-                text = &text[..line + comment];
-                continue;
-            }
-        }
-        let Some(rest) = text.strip_suffix(b"*/") else {
-            return text;
-        };
-        let Some(open) = rest.windows(2).rposition(|w| w == b"/*") else {
-            return text;
-        };
-        text = &text[..open];
-    }
-}
-
-/// Where the `//` comment starts that `line` ends with, if it ends with one. What is in quotes or in `/* */` is no comment.
-fn start_of_line_comment(line: &[u8]) -> Option<usize> {
-    if !line.contains(&b'/') {
-        return None;
-    }
-    let mut i = 0;
-    loop {
-        match *line.get(i)? {
-            b'"' | b'\'' | b'`' => i = end_of_quoted(line, i)?,
-            b'/' if line.get(i + 1) == Some(&b'/') => return Some(i),
-            b'/' if line.get(i + 1) == Some(&b'*') => {
-                i += 4 + line[i + 2..].windows(2).position(|w| w == b"*/")?
-            }
-            _ => i += 1,
-        }
-    }
 }
 
 /// `extractPragmas`, whether it finds the pragma `name`, which is given in lower case. Only the `/* */` comments before the first token

@@ -28,97 +28,8 @@ use smallvec::SmallVec;
 
 // ───────────────────────────── the text ─────────────────────────────
 
-fn is_word_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80
-}
-
 fn is_space(b: u8) -> bool {
     b.is_ascii_whitespace() || b == 0x0b
-}
-
-/// `SkipTrivia`: past white space and comments.
-fn skip_trivia(text: &[u8], mut i: usize) -> usize {
-    while let Some(&b) = text.get(i) {
-        if is_space(b) {
-            i += 1;
-        } else if b == b'/' && text.get(i + 1) == Some(&b'/') {
-            i += text[i..]
-                .iter()
-                .position(|&c| c == b'\n' || c == b'\r')
-                .unwrap_or(text.len() - i);
-        } else if b == b'/' && text.get(i + 1) == Some(&b'*') {
-            i = match text[i + 2..].windows(2).position(|w| w == b"*/") {
-                Some(end) => i + end + 4,
-                None => text.len(),
-            };
-        } else {
-            break;
-        }
-    }
-    i.min(text.len())
-}
-
-/// Where the `//` comment starts that the line ending at `end` ends with, if it ends with one.
-fn line_comment_start(text: &[u8], end: usize) -> Option<usize> {
-    let mut i = text[..end]
-        .iter()
-        .rposition(|&b| b == b'\n' || b == b'\r')
-        .map_or(0, |at| at + 1);
-    // The line may begin in a comment that an earlier one opens.
-    if let Some(close) = text[i..end].windows(2).position(|w| w == b"*/")
-        && !text[i..i + close].windows(2).any(|w| w == b"/*")
-    {
-        i += close + 2;
-    }
-    while i + 1 < end {
-        match text[i] {
-            b'/' if text[i + 1] == b'/' => return Some(i),
-            b'/' if text[i + 1] == b'*' => {
-                i += 4 + text[i + 2..end].windows(2).position(|w| w == b"*/")?
-            }
-            b'"' | b'\'' | b'`' => i = skip_string(text, i).filter(|&after| after <= end)?,
-            _ => i += 1,
-        }
-    }
-    None
-}
-
-/// Where the comment opens that the `*/` at `close` closes.
-fn block_comment_start(text: &[u8], close: usize) -> Option<usize> {
-    let mut open = text[..close].windows(2).rposition(|w| w == b"/*")?;
-    if text[open + 2..close].windows(2).any(|w| w == b"*/") {
-        return None;
-    }
-    // Comments do not nest: one that opens earlier and is not closed in between goes on until here.
-    while let Some(earlier) = text[..open].windows(2).rposition(|w| w == b"/*")
-        && !text[earlier + 2..open].windows(2).any(|w| w == b"*/")
-    {
-        open = earlier;
-    }
-    Some(open)
-}
-
-/// Back over white space and comments: where what comes before `i` ends.
-fn skip_trivia_back(text: &[u8], i: usize) -> usize {
-    let mut i = i.min(text.len());
-    loop {
-        let from = i;
-        while i > 0 && is_space(text[i - 1]) {
-            i -= 1;
-        }
-        if has_line_break(text, i, from)
-            && let Some(comment) = line_comment_start(text, i)
-        {
-            i = comment;
-        } else if i >= 4
-            && text[..i].ends_with(b"*/")
-            && let Some(open) = block_comment_start(text, i - 2)
-        {
-            i = open;
-        } else {
-            return i;
-        }
-    }
 }
 
 /// The word that starts at `start`, which may be none.
@@ -126,7 +37,7 @@ fn word_at(text: &[u8], start: usize) -> &[u8] {
     let rest = text.get(start..).unwrap_or(&[]);
     &rest[..rest
         .iter()
-        .position(|&b| !is_word_byte(b))
+        .position(|&b| !is_identifier_part(b))
         .unwrap_or(rest.len())]
 }
 
@@ -135,7 +46,7 @@ fn word_before(text: &[u8], end: usize) -> &[u8] {
     let before = &text[..end.min(text.len())];
     &before[before
         .iter()
-        .rposition(|&b| !is_word_byte(b))
+        .rposition(|&b| !is_identifier_part(b))
         .map_or(0, |i| i + 1)..]
 }
 
@@ -272,7 +183,7 @@ fn skip_balanced(text: &[u8], open: usize) -> Option<usize> {
                 i = skip_trivia(text, i);
                 continue;
             }
-            b'/' if !(is_word_byte(last)
+            b'/' if !(is_identifier_part(last)
                 || matches!(last, b')' | b']' | b'}' | b'"' | b'\'' | b'`')) =>
             {
                 i = skip_regular_expression(text, i)?;
@@ -355,7 +266,7 @@ fn skip_type(text: &[u8], mut i: usize) -> Option<usize> {
                     wants_operand = false;
                 }
                 b'|' | b'&' | b'-' => i = at + 1,
-                _ if is_word_byte(b) => {
+                _ if is_identifier_part(b) => {
                     let word = word_at(text, at);
                     i = at + word.len();
                     let next = skip_trivia(text, i);
@@ -364,7 +275,7 @@ fn skip_type(text: &[u8], mut i: usize) -> Option<usize> {
                         | b"abstract" => true,
                         b"asserts" => {
                             !has_line_break(text, i, next)
-                                && text.get(next).is_some_and(|&n| is_word_byte(n))
+                                && text.get(next).is_some_and(|&n| is_identifier_part(n))
                         }
                         _ => false,
                     };
@@ -778,7 +689,7 @@ fn use_strict_prologue(text: &[u8], open: usize) -> Option<u32> {
             Some(b';') => i = next + 1,
             Some(b'}') | None => i = next,
             Some(&b) if has_line_break(text, end, next) => {
-                let goes_on = if is_word_byte(b) {
+                let goes_on = if is_identifier_part(b) {
                     matches!(word_at(text, next), b"in" | b"instanceof")
                 } else {
                     !matches!(b, b'"' | b'\'' | b'{' | b'@' | b'#')

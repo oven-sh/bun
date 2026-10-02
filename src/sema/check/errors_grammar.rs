@@ -1034,28 +1034,6 @@ fn has_parse_diagnostics(hir: &hir::File) -> bool {
         })
 }
 
-/// Where the next token starts: past white space and comments.
-fn skip_trivia(text: &[u8], mut at: usize) -> usize {
-    loop {
-        match text.get(at..).unwrap_or_default() {
-            [b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c, ..] => at += 1,
-            [b'/', b'/', rest @ ..] => {
-                at += 2 + rest
-                    .iter()
-                    .position(|b| matches!(b, b'\n' | b'\r'))
-                    .unwrap_or(rest.len())
-            }
-            [b'/', b'*', rest @ ..] => {
-                at += 2 + rest
-                    .windows(2)
-                    .position(|w| w == b"*/")
-                    .map_or(rest.len(), |end| end + 2)
-            }
-            _ => return at,
-        }
-    }
-}
-
 /// Whether `word` is written at `at`, and ends there.
 fn is_word_at(text: &[u8], at: usize, word: &[u8]) -> bool {
     text.get(at..).is_some_and(|rest| {

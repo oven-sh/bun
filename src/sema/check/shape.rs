@@ -763,6 +763,14 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `e.Name()`, of a component of an index signature, and the file it is written in.
+    pub(super) fn name_of_index_component(&self, component: IndexComponent) -> (FileId, PropKey) {
+        match component {
+            IndexComponent::Property(file, p) => (file, self.hir(file)[p].key),
+            IndexComponent::Member(file, m) => (file, self.hir(file)[m].key),
+        }
+    }
+
     /// The name of a member of a class, an interface or a type literal (`isLateBindableName`).
     pub fn declared_member_name(&mut self, file: FileId, key: PropKey) -> Option<Atom> {
         if let PropKey::Computed(e) = key
@@ -889,6 +897,8 @@ impl<'p> Checker<'p> {
                             key,
                             value,
                             readonly: member.flags.contains(Flags::READONLY),
+                            declaration: Some((file, m)),
+                            components: ComponentsId::NONE,
                         };
                         match b.shape.index.iter().position(|i| i.key == key) {
                             None => b.shape.index.push(info),
@@ -1123,6 +1133,22 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getTypeOfSymbol(e.Symbol())`, of a component of an index signature.
+    pub(super) fn type_of_index_component(&mut self, component: IndexComponent) -> TypeId {
+        match component {
+            IndexComponent::Property(file, p) => self.type_of_literal_prop(file, p),
+            IndexComponent::Member(file, m) => {
+                let ty = self.type_of_member_declaration(file, m);
+                // What may be left out may be undefined.
+                if self.hir(file)[m].flags.contains(Flags::OPTIONAL) {
+                    self.optional_property(ty)
+                } else {
+                    ty
+                }
+            }
+        }
+    }
+
     /// `getIndexInfosOfIndexSymbol`: `[k] = v` with a `k` that is some string, number or symbol says what is found under any of them,
     /// together with the members next to it that go by such a name. `holds_more`: next to it is also something that is no property.
     fn add_index_signatures_of_computed_names(
@@ -1141,6 +1167,8 @@ impl<'p> Checker<'p> {
             (TypeId::NUMBER, Vec::new(), true, false),
             (TypeId::SYMBOL, Vec::new(), true, false),
         ];
+        // `components`, for each of the three.
+        let mut components: [Vec<IndexComponent>; 3] = Default::default();
         for &m in computed {
             let PropKey::Computed(e) = hir[m].key else {
                 continue;
@@ -1167,25 +1195,23 @@ impl<'p> Checker<'p> {
             };
             found[kind].3 = true;
             found[kind].2 &= hir[m].flags.contains(Flags::READONLY);
-            let mut value = self.type_of_member_declaration(file, m);
-            // `getTypeOfSymbol`: what may be left out may be undefined.
-            if hir[m].flags.contains(Flags::OPTIONAL) {
-                value = self.optional_property(value);
-            }
+            let value = self.type_of_index_component(IndexComponent::Member(file, m));
             // `getObjectLiteralIndexInfo`: under a string is all that does not go by a symbol (`isSymbolWithSymbolName`), what goes
             // by a number too. An `any` can be a number and a symbol.
             if kind == 1 {
                 found[1].1.push(value);
+                components[1].push(IndexComponent::Member(file, m));
             }
             let is_symbol = kind == 2 || kind == 1 && self.is_assignable(key, TypeId::SYMBOL);
             found[if is_symbol { 2 } else { 0 }].1.push(value);
+            components[if is_symbol { 2 } else { 0 }].push(IndexComponent::Member(file, m));
         }
         if !found.iter().any(|f| f.3) {
             return;
         }
         // `getTypeOfSymbol` of a type parameter, a constructor or a signature is the error type. None goes by a number or a symbol.
         if holds_more {
-            found[0].1.push(TypeId::ANY);
+            found[0].1.push(TypeId::ERROR);
         }
         for (name, group) in named {
             let is_symbol = self.files().atoms.is_symbol_name(*name);
@@ -1201,16 +1227,24 @@ impl<'p> Checker<'p> {
                 mapper: MapperId::IDENTITY,
             };
             let value = self.type_of_prop(&prop, MapperId::IDENTITY);
+            // `isSymbolWithComputedName`. `["a"]` is kept as a plain name.
+            let name_start = super::errors_x_properties_jsx::start_of_member_name(hir, group[0]);
+            let has_computed_name = matches!(hir[group[0]].key, PropKey::Computed(_))
+                || hir.text.get(name_start as usize) == Some(&b'[');
+            let component = has_computed_name.then_some(IndexComponent::Member(file, group[0]));
             if is_symbol {
                 found[2].1.push(value);
+                components[2].extend(component);
             } else {
                 found[0].1.push(value);
+                components[0].extend(component);
                 if is_numeric {
                     found[1].1.push(value);
+                    components[1].extend(component);
                 }
             }
         }
-        for (key, values, readonly, is_there) in found {
+        for (kind, (key, values, readonly, is_there)) in found.into_iter().enumerate() {
             if !is_there || b.shape.index.iter().any(|i| i.key == key) {
                 continue;
             }
@@ -1224,6 +1258,8 @@ impl<'p> Checker<'p> {
                 key,
                 value,
                 readonly,
+                declaration: None,
+                components: self.p.types.intern_components(&components[kind]),
             });
             b.implied.push(key);
         }
@@ -1347,6 +1383,17 @@ impl<'p> Checker<'p> {
 
     /// What `resolveObjectTypeMembers` takes from one base type.
     fn inherit(&mut self, b: &mut Builder, base: TypeId, this: Option<(Sym, TypeId)>) {
+        // `anyBaseTypeIndexInfo`
+        if base == TypeId::ANY {
+            if !b.shape.index.iter().any(|i| i.key == TypeId::STRING) {
+                b.shape
+                    .index
+                    .push(IndexInfo::new(TypeId::STRING, TypeId::ANY, false));
+            }
+            return;
+        }
+        // `getPropertiesOfType`, `getSignaturesOfType`, `getIndexInfosOfType`: of the apparent type.
+        let base = self.apparent_type(base);
         // `this` in an inherited member is the heir.
         let members = match this {
             Some((_, this_param)) => match self.tuple_members_with_this(base, this_param) {
@@ -1418,15 +1465,6 @@ impl<'p> Checker<'p> {
         }
         let this = self.intern(TypeData::ThisParam(sym));
         let bases = self.base_types(sym);
-        // `anyBaseTypeIndexInfo`: what extends `any` has whatever is asked of it. What the class extends comes before what
-        // interfaces of its name extend.
-        if !b.shape.index.iter().any(|i| i.key == TypeId::STRING) && self.extends_any(sym, false) {
-            b.shape.index.push(IndexInfo {
-                key: TypeId::STRING,
-                value: TypeId::ANY,
-                readonly: false,
-            });
-        }
         let own = b.shape.props.len();
         for base in bases.iter().copied() {
             self.inherit(&mut b, base, Some((sym, this)));
@@ -1592,33 +1630,16 @@ impl<'p> Checker<'p> {
             })
     }
 
-    /// Whether what class `sym` extends is `any` itself (`resolveAnonymousTypeMembers`); for the instances, also whether what it
-    /// extends makes `any` (`resolveBaseTypesOfClass`).
-    fn extends_any(&mut self, sym: Sym, static_side: bool) -> bool {
+    /// `resolveAnonymousTypeMembers`: whether the base constructor type of class `sym` is `any` itself.
+    fn extends_any(&mut self, sym: Sym) -> bool {
         let Some((file, c)) = self.extending_declaration(sym) else {
             return false;
         };
         let extends = self.hir(file)[c].extends;
         let constructor = self.type_of_expr(file, extends);
-        if self.has_any_flag(constructor) {
-            return constructor != TypeId::ERROR && !self.is_uncertain(file, extends);
-        }
-        // A class makes its instances, or is in error.
-        if static_side
-            || matches!(
-                self.data(constructor),
-                TypeData::Anon {
-                    origin: Origin::ClassStatic(_),
-                    ..
-                }
-            )
-        {
-            return false;
-        }
-        {
-            let ty = self.base_instance_type(file, c);
-            self.has_any_flag(ty)
-        }
+        self.has_any_flag(constructor)
+            && constructor != TypeId::ERROR
+            && !self.is_uncertain(file, extends)
     }
 
     fn sigs_of_function_declarations(&mut self, sym: Sym) -> Vec<SigId> {
@@ -1711,8 +1732,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getBaseTypes`: what a class or an interface extends, in terms of its own type parameters. Only what has members to
-    /// inherit is listed: not `any` or `object`, and its constraint in place of a type parameter that a class extends.
+    /// `getBaseTypes`: what a class or an interface extends, in terms of its own type parameters.
     pub fn base_types(&mut self, sym: Sym) -> Arc<[TypeId]> {
         if let Some(known) = self.p.base_types.get(&sym) {
             return known;
@@ -1729,12 +1749,6 @@ impl<'p> Checker<'p> {
             let mapper = self.decl_params_mapper(sym, file, self.hir(file)[c].type_params);
             let base = self.base_instance_type(file, c);
             let base = self.instantiate(base, mapper);
-            // `addInheritedMembers` reads the apparent type of the base type.
-            let base = if matches!(self.data(base), TypeData::TypeParam(..)) {
-                self.base_constraint(base)
-            } else {
-                base
-            };
             if let Some(base) = self.as_base_type(base) {
                 if !self.has_base(base, sym, 0) {
                     bases.push(base);
@@ -1795,8 +1809,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getReducedType`, `isValidBaseType`: `base` as what the class or interface whose base types are being worked out can
-    /// inherit from. `None`: it is no object type whose members can be told, and no intersection of such.
+    /// `getReducedType`, `isErrorType`, `isValidBaseType`: `base` as a base type of the class or interface whose base types are being
+    /// worked out, if it can be one.
     fn as_base_type(&mut self, base: TypeId) -> Option<TypeId> {
         let base = self.force(base);
         // `isGenericMappedType`: what a mapped type ranges over has to be known, and `keyof Y` takes the members of `Y`, which
@@ -1819,17 +1833,28 @@ impl<'p> Checker<'p> {
             }
         }
         let base = self.reduced(base);
-        let has_members =
-            self.is_object_type(base) || matches!(self.data(base), TypeData::Intersection(_));
-        (has_members && self.is_valid_base_type(base)).then_some(base)
+        // `is_valid_base_type` lets pass what could not be worked out. Only an object type with such a part is listed.
+        let is_worked_out = self.is_known(base)
+            || self.is_object_type(base)
+            || matches!(self.data(base), TypeData::Intersection(_));
+        (is_worked_out && !self.is_error_type(base) && self.is_valid_base_type(base))
+            .then_some(base)
     }
 
-    /// The type of the instances of what class `c` extends.
+    /// `baseType` of `resolveBaseTypesOfClass`: the type of the instances of what class `c` extends.
     fn base_instance_type(&mut self, file: FileId, c: ClassId) -> TypeId {
         let hir = self.hir(file);
         let class = &hir[c];
         let args = self.types_from_nodes(file, class.extends_args);
         let constructor = self.type_of_expr(file, class.extends);
+        // `baseType = baseConstructorType`
+        if self.has_any_flag(constructor) {
+            return if self.is_uncertain(file, class.extends) {
+                TypeId::UNRESOLVED
+            } else {
+                constructor
+            };
+        }
         // `areAllOuterTypeParametersApplied`, asked of the declared type: a class declared inside something generic is gone
         // through by its construct signatures.
         if let TypeData::Anon {
@@ -1848,7 +1873,7 @@ impl<'p> Checker<'p> {
             }
             // Otherwise a wrong type argument count gives the error type, and the class has no base type.
             if args.len() < least || args.len() > most {
-                return TypeId::ANY;
+                return TypeId::ERROR;
             }
             return self.type_reference(base, &args);
         }
@@ -2103,7 +2128,7 @@ impl<'p> Checker<'p> {
                     if self.files().flags(sym).intersects(SymFlags::MODULE) {
                         for (name, _) in self.exports_in_order(sym) {
                             if !b.has(name) {
-                                others.push((name, TypeId::ANY));
+                                others.push((name, TypeId::ERROR));
                             }
                         }
                     }
@@ -2126,12 +2151,10 @@ impl<'p> Checker<'p> {
                     }
                 }
                 // `anyBaseTypeIndexInfo`, where the class has no static index signature at all.
-                if b.shape.index.is_empty() && self.extends_any(sym, true) {
-                    b.shape.index.push(IndexInfo {
-                        key: TypeId::STRING,
-                        value: TypeId::ANY,
-                        readonly: false,
-                    });
+                if b.shape.index.is_empty() && self.extends_any(sym) {
+                    b.shape
+                        .index
+                        .push(IndexInfo::new(TypeId::STRING, TypeId::ANY, false));
                 }
             }
             Origin::Function(sym) => {
@@ -2177,11 +2200,9 @@ impl<'p> Checker<'p> {
                 }
                 // `resolveAnonymousTypeMembers`: some property is a number, or the enum has no members.
                 if has_numbers || !has_members {
-                    b.shape.index.push(IndexInfo {
-                        key: TypeId::NUMBER,
-                        value: TypeId::STRING,
-                        readonly: true,
-                    });
+                    b.shape
+                        .index
+                        .push(IndexInfo::new(TypeId::NUMBER, TypeId::STRING, true));
                 }
             }
             Origin::Module(sym) => {
@@ -2675,8 +2696,9 @@ impl<'p> Checker<'p> {
                 let value = self.instantiate(info.value, members.mapper);
                 match b.shape.index.iter_mut().find(|i| i.key == info.key) {
                     Some(existing) => {
-                        existing.value = self.intersection(&[existing.value, value]);
-                        existing.readonly &= info.readonly;
+                        let value = self.intersection(&[existing.value, value]);
+                        let readonly = existing.readonly && info.readonly;
+                        *existing = IndexInfo::new(info.key, value, readonly);
                     }
                     None => b.shape.index.push(IndexInfo { value, ..*info }),
                 }
@@ -2890,14 +2912,14 @@ impl<'p> Checker<'p> {
         if right == TypeId::NEVER {
             return left;
         }
-        // `checkCrossProductUnion`: a union too big to write out is an error, and what is in error can be anything.
+        // `checkCrossProductUnion`: a union too big to write out is an error.
         let is_too_complex = |c: &Self, left: TypeId, right: TypeId| {
             c.parts(left).len().saturating_mul(c.parts(right).len()) >= 100_000
         };
         let left = self.merge_object_or_nothing(left);
         if self.is_union(left) {
             if is_too_complex(self, left, right) {
-                return TypeId::ANY;
+                return TypeId::ERROR;
             }
             // `mapType`: in the order of `CompareTypes`. What is made here is ordered by when it was made.
             let spread: Vec<TypeId> = self
@@ -2910,7 +2932,7 @@ impl<'p> Checker<'p> {
         let right = self.merge_object_or_nothing(right);
         if self.is_union(right) {
             if is_too_complex(self, left, right) {
-                return TypeId::ANY;
+                return TypeId::ERROR;
             }
             let spread: Vec<TypeId> = self
                 .parts_in_order(right)
@@ -3134,11 +3156,11 @@ impl<'p> Checker<'p> {
         for info in &r.shape().index {
             let value = self.instantiate(info.value, r.mapper);
             match b.shape.index.iter().find(|i| i.key == info.key) {
-                Some(existing) => index.push(IndexInfo {
-                    key: info.key,
-                    value: self.union(&[existing.value, value]),
-                    readonly: false,
-                }),
+                // `getUnionIndexInfos`
+                Some(existing) => {
+                    let value = self.union(&[existing.value, value]);
+                    index.push(IndexInfo::new(info.key, value, false));
+                }
                 None if left_is_nothing => index.push(IndexInfo {
                     value,
                     readonly: false,
@@ -3467,8 +3489,12 @@ impl<'p> Checker<'p> {
         self.type_of_declared_property(base, name)
     }
 
-    /// `getTypeOfPropertyOfType`: unlike in a property access, no index signature stands in for a missing property.
+    /// `getTypeOfPropertyOfType`: unlike in a property access, no index signature stands in for a missing property, and `any` has
+    /// no properties.
     fn type_of_declared_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
+        if self.has_any_flag(ty) {
+            return None;
+        }
         match self.find_property(ty, name, Access::Read)? {
             (_, Found::ByIndex) => None,
             (found, _) => Some(found),
@@ -3768,18 +3794,29 @@ impl<'p> Checker<'p> {
     /// `type_of_members`, where nothing is kept yet.
     fn resolve_type_of_members(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
         let (file, first) = members[0];
+        let member = &self.hir(file)[first];
+        let is_accessor = matches!(member.kind, MemberKind::Getter | MemberKind::Setter)
+            || member.flags.contains(Flags::ACCESSOR);
         if !self.enter(Query::Member(file, first)) {
-            return if self.came_full_circle {
-                TypeId::ANY
-            } else {
+            return if !self.came_full_circle {
                 TypeId::UNRESOLVED
+            } else if is_accessor {
+                // `getTypeOfAccessors`
+                TypeId::ERROR
+            } else {
+                super::symbols::circularity_error_type(member.ty)
             };
         }
         let ty = self.type_of_members_uncached(members);
         let holds = self.leave();
         if self.left_a_circle {
             self.p.circular_members.insert((file, first), ());
-            return self.p.member_types.insert((file, first), TypeId::ANY);
+            let ty = if is_accessor {
+                TypeId::ANY
+            } else {
+                super::symbols::circularity_error_type(member.ty)
+            };
+            return self.p.member_types.insert((file, first), ty);
         }
         if holds {
             self.p.member_types.insert((file, first), ty);
@@ -4865,17 +4902,17 @@ impl<'p> Checker<'p> {
         name: Option<Atom>,
     ) -> Option<TypeId> {
         self.applicable_index(members, key, name)
-            .map(|found| found.0)
+            .map(|info| info.value)
     }
 
-    /// `findApplicableIndexInfo`: the value type of the index signature that covers keys of type `key` (the property `name`, if it
-    /// is one), and whether it can only be read.
+    /// `findApplicableIndexInfo`: the index signature that covers keys of type `key` (the property `name`, if it is one), with its
+    /// value type instantiated for `members`.
     pub fn applicable_index(
         &mut self,
         members: &Members,
         key: TypeId,
         name: Option<Atom>,
-    ) -> Option<(TypeId, bool)> {
+    ) -> Option<IndexInfo> {
         // `string & {}` is a string, to a signature for strings.
         let plain = match self.data(key) {
             TypeData::Intersection(parts) => parts
@@ -4887,7 +4924,7 @@ impl<'p> Checker<'p> {
         };
         // The signature for strings counts only where no other applies.
         let mut by_string = None;
-        let mut found: Option<(TypeId, bool)> = None;
+        let mut found: Option<IndexInfo> = None;
         // The value types, if more than one applies.
         let mut several = Vec::new();
         for info in &members.shape().index {
@@ -4915,28 +4952,36 @@ impl<'p> Checker<'p> {
             if !applies {
                 continue;
             }
-            let value = self.instantiate(info.value, members.mapper);
+            let info = IndexInfo {
+                value: self.instantiate(info.value, members.mapper),
+                ..*info
+            };
             if info.key == TypeId::STRING {
-                by_string = Some((value, info.readonly));
+                by_string = Some(info);
                 continue;
             }
             found = Some(match found {
-                None => (value, info.readonly),
-                // Together they can only be read if none of them can be written to.
-                Some((first, readonly)) => {
+                None => info,
+                // Together they are one that is declared nowhere. It can only be read if none of them can be written to.
+                Some(first) => {
                     if several.is_empty() {
-                        several.push(first);
+                        several.push(first.value);
                     }
-                    several.push(value);
-                    (first, readonly && info.readonly)
+                    several.push(info.value);
+                    IndexInfo::new(
+                        TypeId::UNKNOWN,
+                        first.value,
+                        first.readonly && info.readonly,
+                    )
                 }
             });
         }
         match found {
             None => by_string,
-            Some((_, readonly)) if !several.is_empty() => {
-                Some((self.intersection(&several), readonly))
-            }
+            Some(found) if !several.is_empty() => Some(IndexInfo {
+                value: self.intersection(&several),
+                ..found
+            }),
             found => found,
         }
     }
@@ -5038,7 +5083,7 @@ impl<'p> Checker<'p> {
         {
             let mut lists = Vec::with_capacity(parts.len());
             for &part in parts.iter() {
-                // `unknownSignature`: `Function` itself can be called with nothing, and gives anything.
+                // `unknownSignature`: `Function` itself can be called with nothing, and returns the error type.
                 let sigs = if !construct
                     && self
                         .is_global_ref(part, known::Function)
@@ -5047,7 +5092,7 @@ impl<'p> Checker<'p> {
                     vec![self.p.types.intern_sig(SigData::Synth {
                         type_params: Box::new([]),
                         params: Box::new([]),
-                        ret: TypeId::ANY,
+                        ret: TypeId::ERROR,
                         this: None,
                         of: Box::new([]),
                     })]

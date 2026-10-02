@@ -650,24 +650,6 @@ fn find_bytes(text: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
     }
 }
 
-/// `SkipTrivia`: where the first token at or after `at` starts.
-fn skip_trivia(text: &[u8], mut at: usize) -> usize {
-    loop {
-        at += match text.get(at..).unwrap_or(&[]) {
-            [c, ..] if c.is_ascii_whitespace() => 1,
-            [b'/', b'/', rest @ ..] => {
-                let end = rest.iter().position(|&c| c == b'\n' || c == b'\r');
-                2 + end.unwrap_or(rest.len())
-            }
-            [b'/', b'*', rest @ ..] => {
-                let end = rest.windows(2).position(|w| w == b"*/");
-                2 + end.map_or(rest.len(), |end| end + 2)
-            }
-            _ => return at,
-        };
-    }
-}
-
 /// The last byte of the token before the comment that starts at `open`, if the two are on one line, whatever comments are between
 /// them. `GetLeadingCommentRanges` collects a comment only after a line break or at the start of the text.
 fn byte_before_comment(text: &[u8], mut open: usize) -> Option<u8> {
@@ -1227,6 +1209,12 @@ impl Unused<'_> {
         // The declaration furthest out that the name is written in, short of where it is found.
         let mut inside = SymbolId::NONE;
         while scope.is_some() {
+            if bound
+                .type_parameter_out_of_reach(scope, name, meaning)
+                .is_some()
+            {
+                return None;
+            }
             let s = &bound.scopes[scope.idx()];
             let mut found = bound.lookup(s.locals, name).filter(|f| {
                 bound.symbols[f.idx()]

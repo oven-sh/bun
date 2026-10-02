@@ -100,6 +100,7 @@ impl<'f> Binder<'f> {
         b.pat_symbol = vec![SymbolId::NONE; f.pats.len()];
         b.prop_owner = vec![ExprId::NONE; f.props.len()];
         b.member_owner = vec![MemberOwner::None; f.members.len()];
+        b.member_scope = vec![ScopeId::NONE; f.members.len()];
         b.param_fn = vec![FnId::NONE; f.params.len()];
         b.type_param_symbol = vec![SymbolId::NONE; f.type_params.len()];
         b.type_param_scope = vec![ScopeId::NONE; f.type_params.len()];
@@ -3094,7 +3095,10 @@ impl<'f> Binder<'f> {
         if c.extends.is_some() {
             // To `requiresScopeChangeWorker` what is extended is a type.
             let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
+            let base_expression = self.push_scope(ScopeKind::BaseExpression, SymbolId::NONE);
+            self.b.expr_scope.insert(c.extends, base_expression);
             self.expr(c.extends, Parent::ClassExtends(id));
+            self.pop_scope();
             self.scope_change_of = scope_change_of;
         }
         for t in self.f.ids(c.extends_args) {
@@ -3108,18 +3112,26 @@ impl<'f> Binder<'f> {
         let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
         for i in 0..self.f.decorators.len() {
             let (of, e) = self.f.decorators[i];
-            let is_here = match of {
-                DecoratorOwner::Class(_) => false,
-                DecoratorOwner::Member(m) => c.members.range().contains(&m.idx()),
-                DecoratorOwner::Param(p) => c.members.iter().any(|m| {
+            let member = match of {
+                DecoratorOwner::Class(_) => None,
+                DecoratorOwner::Member(m) => c.members.range().contains(&m.idx()).then_some(m),
+                DecoratorOwner::Param(p) => c.members.iter().find(|&m| {
                     let func = self.f[m].func;
                     func.is_some() && self.f[func].params.range().contains(&p.idx())
                 }),
             };
-            if is_here {
+            if let Some(member) = member {
                 // `forEachYieldExpression` looks at nothing of a method, an accessor or a constructor but its computed name.
                 let counted = self.yields.len();
+                // `Resolve`, `KindDecorator`: the class is come to from the member.
+                let is_static = self.is_static(member, MemberOwner::Class(id));
+                if is_static {
+                    self.push_scope(ScopeKind::StaticMember, SymbolId::NONE);
+                }
                 self.expr(e, Parent::Decorator(id, of));
+                if is_static {
+                    self.pop_scope();
+                }
                 let of_a_function = match of {
                     DecoratorOwner::Member(m) => self.f[m].func.is_some(),
                     DecoratorOwner::Param(_) => true,
@@ -3182,6 +3194,21 @@ impl<'f> Binder<'f> {
         }
     }
 
+    /// `IsStatic`
+    fn is_static(&self, m: MemberId, owner: MemberOwner) -> bool {
+        let member = &self.f[m];
+        member.flags.contains(Flags::STATIC)
+            && match owner {
+                MemberOwner::Class(_) => true,
+                // `IsClassElement` goes by the kind of node, and these are of the same kind in an interface and in a class.
+                MemberOwner::Interface(_) => matches!(
+                    member.kind,
+                    MemberKind::IndexSignature | MemberKind::Getter | MemberKind::Setter
+                ),
+                MemberOwner::TypeLiteral(_) | MemberOwner::None => false,
+            }
+    }
+
     fn members(&mut self, members: Span<MemberId>, owner: MemberOwner) {
         let is_in_class_expression = matches!(owner, MemberOwner::Class(c) if matches!(self.b.class_owner[c.idx()], ClassOwner::Expr(_)));
         for m in members.iter() {
@@ -3211,10 +3238,19 @@ impl<'f> Binder<'f> {
                     && !self.is_in_parens(key)
                     && !matches!(member.kind, MemberKind::Getter | MemberKind::Setter))
             {
+                let is_of_class_or_interface =
+                    matches!(owner, MemberOwner::Class(_) | MemberOwner::Interface(_));
+                if is_of_class_or_interface {
+                    let computed_name = self.push_scope(ScopeKind::ComputedName, SymbolId::NONE);
+                    self.b.expr_scope.insert(key, computed_name);
+                }
                 if member.func.is_some() {
                     self.function_key(key, is_in_class_expression);
                 } else {
                     self.expr(key, Parent::MemberKey);
+                }
+                if is_of_class_or_interface {
+                    self.pop_scope();
                 }
             }
             let of_class = if matches!(owner, MemberOwner::Class(_)) {
@@ -3223,6 +3259,11 @@ impl<'f> Binder<'f> {
                 MemberId::NONE
             };
             let outer_member = std::mem::replace(&mut self.cur_member, of_class);
+            let is_static = self.is_static(m, owner);
+            if is_static {
+                self.push_scope(ScopeKind::StaticMember, SymbolId::NONE);
+            }
+            self.b.member_scope[m.idx()] = self.scope;
             // The type of an index signature is the return type of its function, which is bound below.
             if member.ty.is_some() && member.kind != MemberKind::IndexSignature {
                 self.ty(member.ty);
@@ -3239,6 +3280,9 @@ impl<'f> Binder<'f> {
                 if member.kind == MemberKind::Property && matches!(owner, MemberOwner::Class(_)) {
                     self.seen_this = seen_this;
                 }
+            }
+            if is_static {
+                self.pop_scope();
             }
             self.cur_member = outer_member;
         }

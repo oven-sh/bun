@@ -254,7 +254,7 @@ fn check_grammar_rest_element(
 ) {
     let hir = c.hir(file);
     let start = hir[name].pos;
-    let before = end_of_previous_token(&hir.text, (start as usize).min(hir.text.len()));
+    let before = skip_trivia_back(&hir.text, (start as usize).min(hir.text.len()));
     if !is_last {
         out.push(Diagnostic { start, code: 2462 });
         c.note(start, c.end_of_pat(file, name), 2462, Vec::new());
@@ -340,86 +340,11 @@ fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
     e
 }
 
-fn is_identifier_part(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80
-}
-
-/// `SkipTrivia`: on from `pos` over white space and comments.
-fn skip_trivia(text: &[u8], mut pos: usize) -> usize {
-    loop {
-        while pos < text.len() && text[pos].is_ascii_whitespace() {
-            pos += 1;
-        }
-        if text[pos..].starts_with(b"//") {
-            while pos < text.len() && text[pos] != b'\n' {
-                pos += 1;
-            }
-        } else if text[pos..].starts_with(b"/*") {
-            pos = text[pos + 2..]
-                .windows(2)
-                .position(|w| w == b"*/")
-                .map_or(text.len(), |end| pos + 2 + end + 2);
-        } else {
-            return pos;
-        }
-    }
-}
-
-/// Where a `//` comment starts in `line`, if there is one that is not in a string.
-fn start_of_line_comment(line: &[u8]) -> Option<usize> {
-    let mut quote = 0u8;
-    let mut i = 0;
-    while i < line.len() {
-        let b = line[i];
-        if quote != 0 {
-            if b == b'\\' {
-                i += 1;
-            } else if b == quote {
-                quote = 0;
-            }
-        } else if matches!(b, b'"' | b'\'' | b'`') {
-            quote = b;
-        } else if b == b'/' && line.get(i + 1) == Some(&b'/') {
-            return Some(i);
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Where the token before `pos` ends: back over white space and comments.
-fn end_of_previous_token(text: &[u8], mut pos: usize) -> usize {
-    loop {
-        let from = pos;
-        while pos > 0 && text[pos - 1].is_ascii_whitespace() {
-            pos -= 1;
-        }
-        if text[..pos].ends_with(b"*/") {
-            match text[..pos - 2].windows(2).rposition(|w| w == b"/*") {
-                Some(open) => pos = open,
-                None => return pos,
-            }
-            continue;
-        }
-        if text[pos..from].contains(&b'\n') {
-            let line = text[..pos]
-                .iter()
-                .rposition(|&b| b == b'\n')
-                .map_or(0, |i| i + 1);
-            if let Some(comment) = start_of_line_comment(&text[line..pos]) {
-                pos = line + comment;
-                continue;
-            }
-        }
-        return pos;
-    }
-}
-
 /// Where the `=` right before `value` is.
 fn start_of_equals_before(c: &Checker<'_>, file: FileId, value: ExprId) -> Option<u32> {
     let text = &c.hir(file).text;
     let start = (c.start_of(file, value) as usize).min(text.len());
-    let end = end_of_previous_token(text, start);
+    let end = skip_trivia_back(text, start);
     (end > 0 && text[end - 1] == b'=').then(|| end as u32 - 1)
 }
 
@@ -427,7 +352,7 @@ fn start_of_equals_before(c: &Checker<'_>, file: FileId, value: ExprId) -> Optio
 fn start_of_dots_before(c: &Checker<'_>, file: FileId, operand: ExprId) -> Option<u32> {
     let text = &c.hir(file).text;
     let start = (c.start_of(file, operand) as usize).min(text.len());
-    let end = end_of_previous_token(text, start);
+    let end = skip_trivia_back(text, start);
     text[..end].ends_with(b"...").then(|| end as u32 - 3)
 }
 
@@ -507,7 +432,7 @@ fn start_of_const_asserted(c: &Checker<'_>, file: FileId, operand: ExprId) -> u3
     let mut open = Vec::new();
     let mut at = (inside as usize).min(text.len());
     loop {
-        let end = end_of_previous_token(text, at);
+        let end = skip_trivia_back(text, at);
         if end == 0 || text[end - 1] != b'(' {
             break;
         }

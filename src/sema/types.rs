@@ -17,6 +17,9 @@ pub struct TypeId(pub u32);
 pub struct SigId(pub u32);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct MapperId(pub u32);
+/// An interned list of `IndexComponent`s.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct ComponentsId(pub u32);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Intrinsic {
@@ -341,11 +344,47 @@ pub struct Prop {
 
 const _: () = assert!(size_of::<Prop>() <= 40);
 
+/// `ElementWithComputedPropertyName`
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum IndexComponent {
+    /// A member of an object literal.
+    Property(FileId, crate::hir::PropId),
+    /// A member of a class, an interface or a type literal.
+    Member(FileId, crate::hir::MemberId),
+}
+
+impl IndexComponent {
+    #[inline]
+    pub fn file(self) -> FileId {
+        match self {
+            IndexComponent::Property(file, _) | IndexComponent::Member(file, _) => file,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct IndexInfo {
     pub key: TypeId,
     pub value: TypeId,
     pub readonly: bool,
+    /// The index signature that declares it (`getIndexInfosOfIndexSymbol`).
+    pub declaration: Option<(FileId, crate::hir::MemberId)>,
+    /// The declarations with computed names that it is made from (`getObjectLiteralIndexInfo`): `TypeStore::components`.
+    pub components: ComponentsId,
+}
+
+impl IndexInfo {
+    /// `newIndexInfo(keyType, valueType, isReadonly, nil, nil)`
+    #[inline]
+    pub fn new(key: TypeId, value: TypeId, readonly: bool) -> IndexInfo {
+        IndexInfo {
+            key,
+            value,
+            readonly,
+            declaration: None,
+            components: ComponentsId::NONE,
+        }
+    }
 }
 
 /// `InstantiationExpressionType.node`: `f<T>`, or `typeof f<T>` or `typeof import("m").f<T>`.
@@ -501,8 +540,55 @@ bitflags::bitflags! {
     }
 }
 
+/// What tells apart two types that are made of the same: it is part of what a type is interned by, as in `getUnionKey` and
+/// `getAliasKey`. `data` says nothing of it, so a union that has a name is a `TypeData::Union` of its members like any other.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
+pub struct Provenance {
+    /// `Type.alias`
+    pub alias: Option<(Sym, Box<[TypeId]>)>,
+    /// `UnionType.origin`
+    pub origin: UnionOrigin,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
+pub enum UnionOrigin {
+    #[default]
+    None,
+    /// The named unions it was made of, and the rest of its members.
+    Union(Box<[TypeId]>),
+    /// The intersection it is the normal form of.
+    Intersection(Box<[TypeId]>),
+    /// The `keyof T` it is the keys of.
+    Keyof(TypeId),
+}
+
+impl Provenance {
+    fn is_local(&self, file: FileId) -> bool {
+        let any = |ids: &[TypeId]| ids.iter().any(MaybeLocal::is_local);
+        self.alias
+            .as_ref()
+            .is_some_and(|(alias, arguments)| alias.file == file || any(arguments))
+            || match &self.origin {
+                UnionOrigin::None => false,
+                UnionOrigin::Union(types) | UnionOrigin::Intersection(types) => any(types),
+                UnionOrigin::Keyof(of) => of.is_local(),
+            }
+    }
+}
+
+/// What a type is interned by.
+type Made = (TypeData, Option<Box<Provenance>>);
+
+/// A type without provenance has the hash of its data, which `TypeParts` has too.
+fn spread_hash_of(made: &Made) -> u64 {
+    match &made.1 {
+        None => spread_hash(&made.0),
+        Some(provenance) => spread_hash(&(&made.0, provenance)),
+    }
+}
+
 pub struct TypeRecord {
-    pub data: TypeData,
+    made: Made,
     pub flags: TypeFlags,
     id: TypeId,
     /// See `mark_manifest`.
@@ -562,7 +648,7 @@ impl<V> Interned<V> {
     }
 }
 
-crate::packed_ids!(TypeId, SigId, MapperId);
+crate::packed_ids!(TypeId, SigId, MapperId, ComponentsId);
 
 /// The types, signatures and mappers that mention the file at hand: see `local`.
 #[derive(Default)]
@@ -570,9 +656,11 @@ struct LocalStore {
     types: Chunked<TypeRecord>,
     sigs: Chunked<SigData>,
     mappers: Chunked<(Mapping, TypeFlags)>,
+    components: Chunked<Box<[IndexComponent]>>,
     found_types: Found,
     found_sigs: Found,
     found_mappers: Found,
+    found_components: Found,
 }
 
 thread_local! {
@@ -610,6 +698,11 @@ fn local_mapper<'a>(id: MapperId) -> &'a (Mapping, TypeFlags) {
 #[inline(never)]
 fn local_sig<'a>(id: SigId) -> &'a SigData {
     local_store().sigs.get((id.0 & !LOCAL) as usize)
+}
+
+#[inline(never)]
+fn local_components<'a>(id: ComponentsId) -> &'a [IndexComponent] {
+    &local_store().components.get((id.0 & !LOCAL) as usize)[..]
 }
 
 impl MaybeLocal for Atom {
@@ -687,10 +780,13 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
                         if f == file
                 )
                 || shape.props.iter().any(|p| is_prop_local(p, file))
-                || shape
-                    .index
-                    .iter()
-                    .any(|i| i.key.is_local() || i.value.is_local())
+                || shape.index.iter().any(|i| {
+                    i.key.is_local()
+                        || i.value.is_local()
+                        || i.components.is_local()
+                        || i.declaration
+                            .is_some_and(|declaration| declaration.0 == file)
+                })
                 || shape
                     .call
                     .iter()
@@ -895,6 +991,7 @@ pub struct TypeStore {
     types: Interned<TypeRecord>,
     sigs: Interned<SigData>,
     mappers: Interned<(Mapping, TypeFlags)>,
+    components: Interned<Box<[IndexComponent]>>,
     /// The types of string literals, regular and fresh, by what they say. There is one for nearly every string in a program.
     string_literals: [ById<Atom, TypeId>; 2],
 }
@@ -983,6 +1080,11 @@ impl MapperId {
     pub const IDENTITY: MapperId = MapperId(0);
 }
 
+impl ComponentsId {
+    /// The empty list.
+    pub const NONE: ComponentsId = ComponentsId(0);
+}
+
 impl Default for TypeStore {
     fn default() -> Self {
         Self::new()
@@ -995,6 +1097,7 @@ impl TypeStore {
             types: Interned::new(),
             sigs: Interned::new(),
             mappers: Interned::new(),
+            components: Interned::new(),
             string_literals: Default::default(),
         };
         for (i, data) in WELL_KNOWN.iter().enumerate() {
@@ -1016,6 +1119,12 @@ impl TypeStore {
             TypeId::UNKNOWN_EMPTY_OBJECT
         );
         assert_eq!(store.mapper_in_order(&[]), MapperId::IDENTITY);
+        assert_eq!(
+            store
+                .components
+                .intern(Box::default(), |list| list, |list, _| list),
+            ComponentsId::NONE.0
+        );
         store
     }
 
@@ -1040,7 +1149,7 @@ impl TypeStore {
         let mut kinds: std::collections::BTreeMap<&'static str, (usize, usize)> =
             Default::default();
         for i in 0..self.types.items.len() {
-            let (name, payload) = match &self.types.items.get(i).data {
+            let (name, payload) = match &self.types.items.get(i).made.0 {
                 TypeData::Union(t) => ("type: union", t.len() * 4),
                 TypeData::Intersection(t) => ("type: intersection", t.len() * 4),
                 TypeData::Ref { args, .. } => ("type: reference", args.len() * 4),
@@ -1100,14 +1209,14 @@ impl TypeStore {
 
     #[inline]
     pub fn get(&self, id: TypeId) -> &TypeData {
-        &self.record(id).data
+        &self.record(id).made.0
     }
 
     /// The members of a union, nothing for `never`, and any other type on its own.
     #[inline]
     pub fn parts(&self, id: TypeId) -> &[TypeId] {
         let record = self.record(id);
-        match &record.data {
+        match &record.made.0 {
             TypeData::Union(members) => members,
             TypeData::Intrinsic(Intrinsic::Never) => &[],
             _ => std::slice::from_ref(&record.id),
@@ -1122,7 +1231,7 @@ impl TypeStore {
     #[inline]
     pub fn get_with_flags(&self, id: TypeId) -> (&TypeData, TypeFlags) {
         let record = self.record(id);
-        (&record.data, record.flags)
+        (&record.made.0, record.flags)
     }
 
     pub fn len(&self) -> u32 {
@@ -1245,20 +1354,23 @@ impl TypeStore {
         store.types.clear();
         store.sigs.clear();
         store.mappers.clear();
+        store.components.clear();
         store.found_types.clear();
         store.found_sigs.clear();
         store.found_mappers.clear();
+        store.found_components.clear();
     }
 
-    fn new_record(&self, data: TypeData, id: u32) -> TypeRecord {
-        let may_be_reduced = match &data {
+    fn new_record(&self, made: Made, id: u32) -> TypeRecord {
+        let data = &made.0;
+        let may_be_reduced = match data {
             TypeData::Intersection(_) => true,
             TypeData::Union(members) => members
                 .iter()
                 .any(|&member| matches!(self.get(member), TypeData::Intersection(_))),
             _ => false,
         };
-        let mut flags = self.flags_of(&data);
+        let mut flags = self.flags_of(data);
         // Unlike the others, it is not handed on by what the type is made of.
         flags.set(TypeFlags::MAY_BE_REDUCED, may_be_reduced);
         let has_lazy_member = match &data {
@@ -1274,7 +1386,7 @@ impl TypeStore {
         flags.set(TypeFlags::HAS_LAZY_MEMBER, has_lazy_member);
         TypeRecord {
             flags,
-            data,
+            made,
             id: TypeId(id),
             manifest: AtomicBool::new(false),
         }
@@ -1286,23 +1398,44 @@ impl TypeStore {
             if let Some(id) = known.get(&value) {
                 return id;
             }
-            let id = self.types.items.push_with(|id| self.new_record(data, id));
+            let id = self
+                .types
+                .items
+                .push_with(|id| self.new_record((data, None), id));
             // Of two threads that get here at once one has made a type nothing will ever refer to.
             return known.insert(value, TypeId(id));
         }
+        self.intern_made((data, None))
+    }
+
+    /// `intern` of a type that has an alias or an origin.
+    pub fn intern_with(&self, data: TypeData, provenance: Provenance) -> TypeId {
+        if provenance == Provenance::default() {
+            return self.intern(data);
+        }
+        self.intern_made((data, Some(Box::new(provenance))))
+    }
+
+    #[inline]
+    pub fn provenance(&self, id: TypeId) -> Option<&Provenance> {
+        self.record(id).made.1.as_deref()
+    }
+
+    fn intern_made(&self, made: Made) -> TypeId {
+        let spread = spread_hash_of(&made);
         if !local::is_any_on() {
-            return TypeId(self.types.intern(
-                data,
-                |record| &record.data,
-                |data, id| self.new_record(data, id),
+            return TypeId(self.types.intern_hashed(
+                spread,
+                made,
+                |record| &record.made,
+                |made, id| self.new_record(made, id),
             ));
         }
-        self.intern_with_local(data)
+        self.intern_with_local(spread, made)
     }
 
     #[inline(never)]
-    fn intern_with_local(&self, data: TypeData) -> TypeId {
-        let spread = spread_hash(&data);
+    fn intern_with_local(&self, spread: u64, made: Made) -> TypeId {
         // Where it was last found or put by this thread, which is nowhere unless the thread has a file at hand.
         let store = local_store();
         if let Some(id) = store.found_types.find(spread, |id| {
@@ -1311,23 +1444,26 @@ impl TypeStore {
             } else {
                 store.types.get((id & !LOCAL) as usize)
             };
-            record.data == data
+            record.made == made
         }) {
             return TypeId(id);
         }
         let file = local::file();
-        let id = if file != u32::MAX && is_type_local(&data, FileId(file)) {
+        let is_local = file != u32::MAX
+            && (is_type_local(&made.0, FileId(file))
+                || made.1.as_ref().is_some_and(|p| p.is_local(FileId(file))));
+        let id = if is_local {
             let id = store.types.len() as u32 | LOCAL;
-            let record = self.new_record(data, id);
+            let record = self.new_record(made, id);
             // SAFETY: no reference to the store is in use.
             unsafe { local_store_mut() }.types.push(record);
             id
         } else {
             self.types.intern_hashed(
                 spread,
-                data,
-                |record| &record.data,
-                |data, id| self.new_record(data, id),
+                made,
+                |record| &record.made,
+                |made, id| self.new_record(made, id),
             )
         };
         if file != u32::MAX {
@@ -1349,7 +1485,7 @@ impl TypeStore {
                 } else {
                     store.types.get((id & !LOCAL) as usize)
                 };
-                parts.is(&record.data)
+                record.made.1.is_none() && parts.is(&record.made.0)
             }) {
                 return TypeId(id);
             }
@@ -1357,8 +1493,10 @@ impl TypeStore {
                 return self.intern(parts.to_data());
             }
         }
-        let known = self.types.shards[shard_of(spread)]
-            .find(spread, |id| parts.is(&self.types.items.get(id).data));
+        let known = self.types.shards[shard_of(spread)].find(spread, |id| {
+            let record = self.types.items.get(id);
+            record.made.1.is_none() && parts.is(&record.made.0)
+        });
         match known {
             Some(id) => TypeId(id),
             None => self.intern(parts.to_data()),
@@ -1435,6 +1573,54 @@ impl TypeStore {
             unsafe { local_store_mut() }.found_sigs.add(spread, id);
         }
         SigId(id)
+    }
+
+    /// `IndexInfo.components`
+    #[inline]
+    pub fn components(&self, id: ComponentsId) -> &[IndexComponent] {
+        if id.0 & LOCAL == 0 {
+            &self.components.items.get(id.0)[..]
+        } else {
+            local_components(id)
+        }
+    }
+
+    pub fn intern_components(&self, list: &[IndexComponent]) -> ComponentsId {
+        if list.is_empty() {
+            return ComponentsId::NONE;
+        }
+        let list: Box<[IndexComponent]> = list.into();
+        if !local::is_any_on() {
+            return ComponentsId(self.components.intern(list, |list| list, |list, _| list));
+        }
+        let spread = spread_hash(&list);
+        // As in `intern_with_local`.
+        let store = local_store();
+        if let Some(id) = store.found_components.find(spread, |id| {
+            let known = if id & LOCAL == 0 {
+                self.components.items.get(id)
+            } else {
+                store.components.get((id & !LOCAL) as usize)
+            };
+            *known == list
+        }) {
+            return ComponentsId(id);
+        }
+        let file = local::file();
+        let id = if file != u32::MAX && list.iter().any(|component| component.file().0 == file) {
+            // SAFETY: no reference to the store is in use.
+            unsafe { local_store_mut() }.components.push(list) as u32 | LOCAL
+        } else {
+            self.components
+                .intern_hashed(spread, list, |list| list, |list, _| list)
+        };
+        if file != u32::MAX {
+            // SAFETY: no reference to the store is in use.
+            unsafe { local_store_mut() }
+                .found_components
+                .add(spread, id);
+        }
+        ComponentsId(id)
     }
 
     /// `pairs` need not be sorted. A parameter mapped to itself stays: it says that the origin depends on it.

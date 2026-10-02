@@ -646,11 +646,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `Resolve`, at what a class extends and at a computed name: 2562 2467. The type parameters of a class or an interface are not
-    /// there yet where these are worked out.
+    /// `Resolve`, at what a class extends and at a computed name: 2562 2467.
     fn check_x_class_type_parameters_out_of_reach(&self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (mut roots, mut scopes) = (Vec::new(), Vec::new());
         let classes = hir
             .classes
             .iter()
@@ -659,49 +657,37 @@ impl Checker<'_> {
             .interfaces
             .iter()
             .map(|i| (i.type_params, ExprId::NONE, i.members));
+        // The names of the type parameters of what extends an expression or has a computed name.
+        let mut names: Vec<Atom> = Vec::new();
         for (type_params, extends, members) in classes.chain(interfaces) {
-            if type_params.is_empty() {
-                continue;
+            if !type_params.is_empty()
+                && (extends.is_some()
+                    || members
+                        .iter()
+                        .any(|m| matches!(hir[m].key, PropKey::Computed(_))))
+            {
+                names.extend(type_params.iter().map(|p| hir[p].name));
             }
-            let keys = members.iter().filter_map(|m| match hir[m].key {
-                PropKey::Computed(e) => Some((e, 2467)),
-                _ => None,
-            });
-            for (e, code) in std::iter::once((extends, 2562)).chain(keys) {
-                roots.clear();
-                scopes.clear();
-                types_written_in(hir, bound, e, &mut roots, &mut scopes);
-                // A name on its own that means one of those type parameters.
-                let mut check = |node: TypeNodeId| {
-                    if let TypeNodeKind::Ref { name, .. } = hir[node].kind
-                        && name.len() == 1
-                        && bound.type_scope[node.idx()].is_some()
-                        && let Some(found) = bound.resolve(
-                            bound.type_scope[node.idx()],
-                            hir.id_at(name, 0),
-                            SymFlags::TYPE,
-                        )
-                        && type_params
-                            .iter()
-                            .any(|p| bound.type_param_symbol[p.idx()] == found)
-                    {
-                        out.push(Diagnostic {
-                            start: hir[node].pos,
-                            code,
-                        });
-                    }
-                };
-                for &root in &roots {
-                    for_each_type_in(hir, root, &mut check);
-                }
-                // What is written in the functions and classes in there.
-                if !scopes.is_empty() {
-                    for t in 0..hir.types.len() {
-                        if is_scope_within(bound, bound.type_scope[t], &scopes) {
-                            check(TypeNodeId(t as u32));
-                        }
-                    }
-                }
+        }
+        if names.is_empty() {
+            return;
+        }
+        for (t, node) in hir.types.iter().enumerate() {
+            if let TypeNodeKind::Ref { name, .. } = node.kind
+                && name.len() == 1
+                && names.contains(&hir.id_at(name, 0))
+                && bound.type_scope[t].is_some()
+                && let Err(code @ (2467 | 2562)) = self.files().resolve_name_or_error(
+                    file,
+                    bound.type_scope[t],
+                    hir.id_at(name, 0),
+                    SymFlags::TYPE,
+                )
+            {
+                out.push(Diagnostic {
+                    start: node.pos,
+                    code,
+                });
             }
         }
     }
@@ -1914,88 +1900,6 @@ fn is_instantiated(hir: &hir::File, m: ModuleId) -> bool {
 
 // ───────────────────────────── what is written in what ─────────────────────────────
 
-/// The types written in the expression `e`: those that are part of it itself go to `roots`; of the functions and classes in it,
-/// the scopes go to `scopes`.
-fn types_written_in(
-    hir: &hir::File,
-    bound: &Bound,
-    e: ExprId,
-    roots: &mut Vec<TypeNodeId>,
-    scopes: &mut Vec<ScopeId>,
-) {
-    if e.is_none() {
-        return;
-    }
-    match hir[e].kind {
-        ExprKind::Template { exprs, .. } | ExprKind::Array(exprs) => {
-            for x in hir.ids(exprs) {
-                types_written_in(hir, bound, x, roots, scopes);
-            }
-        }
-        ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) => {
-            let call = &hir[call];
-            roots.extend(hir.ids(call.type_args));
-            types_written_in(hir, bound, call.callee, roots, scopes);
-            for x in hir.ids(call.args) {
-                types_written_in(hir, bound, x, roots, scopes);
-            }
-        }
-        ExprKind::Object(props) => {
-            for p in props.iter() {
-                if let PropKey::Computed(key) = hir[p].key {
-                    types_written_in(hir, bound, key, roots, scopes);
-                }
-                types_written_in(hir, bound, hir[p].value, roots, scopes);
-            }
-        }
-        ExprKind::Fn(f) => scopes.push(bound.fns[f.idx()].scope),
-        ExprKind::Class(k) => scopes.push(bound.class_scope[k.idx()]),
-        ExprKind::Dot { obj: x, .. }
-        | ExprKind::Unary { operand: x, .. }
-        | ExprKind::Spread(x)
-        | ExprKind::Await(x)
-        | ExprKind::AsConst(x)
-        | ExprKind::NonNull(x)
-        | ExprKind::ImportCall(x)
-        | ExprKind::Yield { value: x, .. } => types_written_in(hir, bound, x, roots, scopes),
-        ExprKind::Index {
-            obj: a, index: b, ..
-        }
-        | ExprKind::Binary {
-            left: a, right: b, ..
-        }
-        | ExprKind::Assign {
-            target: a,
-            value: b,
-            ..
-        } => {
-            types_written_in(hir, bound, a, roots, scopes);
-            types_written_in(hir, bound, b, roots, scopes);
-        }
-        ExprKind::Cond { test, yes, no } => {
-            for x in [test, yes, no] {
-                types_written_in(hir, bound, x, roots, scopes);
-            }
-        }
-        ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
-            roots.push(ty);
-            types_written_in(hir, bound, expr, roots, scopes);
-        }
-        ExprKind::Jsx(jsx) => {
-            let jsx = &hir[jsx];
-            roots.extend(hir.ids(jsx.type_args));
-            types_written_in(hir, bound, jsx.tag, roots, scopes);
-            for p in jsx.attrs.iter() {
-                types_written_in(hir, bound, hir[p].value, roots, scopes);
-            }
-            for x in hir.ids(jsx.children) {
-                types_written_in(hir, bound, x, roots, scopes);
-            }
-        }
-        _ => {}
-    }
-}
-
 /// Calls `f` with `node` and with every type written in it.
 fn for_each_type_in(hir: &hir::File, node: TypeNodeId, f: &mut dyn FnMut(TypeNodeId)) {
     if node.is_none() {
@@ -2068,17 +1972,6 @@ fn for_each_type_in_signature(hir: &hir::File, func: FnId, f: &mut dyn FnMut(Typ
     for_each_type_in(hir, func.ret, f);
 }
 
-/// Whether `scope` is one of `any_of`, or in one.
-fn is_scope_within(bound: &Bound, mut scope: ScopeId, any_of: &[ScopeId]) -> bool {
-    while scope.is_some() {
-        if any_of.contains(&scope) {
-            return true;
-        }
-        scope = bound.scopes[scope.idx()].parent;
-    }
-    false
-}
-
 // ───────────────────────────── where things are written ─────────────────────────────
 
 /// Where the outermost parenthesis around `e` opens, if it is in any.
@@ -2087,41 +1980,6 @@ fn open_parenthesis(hir: &hir::File, e: ExprId) -> Option<u32> {
         .binary_search_by_key(&e.0, |p| p.0.0)
         .ok()
         .map(|at| hir.parens[at].1)
-}
-
-/// Past white space and comments.
-fn skip_trivia(text: &[u8], mut at: usize) -> usize {
-    loop {
-        match text.get(at) {
-            Some(b) if b.is_ascii_whitespace() => at += 1,
-            Some(b'/') if text.get(at + 1) == Some(&b'/') => {
-                while at < text.len() && text[at] != b'\n' {
-                    at += 1;
-                }
-            }
-            Some(b'/') if text.get(at + 1) == Some(&b'*') => {
-                match text[at + 2..].windows(2).position(|w| w == b"*/") {
-                    Some(end) => at += end + 4,
-                    None => return text.len(),
-                }
-            }
-            _ => return at,
-        }
-    }
-}
-
-/// `text` less the white space and the `/* */` comments it ends with.
-fn trim_trivia_end(mut text: &[u8]) -> &[u8] {
-    loop {
-        text = text.trim_ascii_end();
-        let Some(rest) = text.strip_suffix(b"*/") else {
-            return text;
-        };
-        match rest.windows(2).rposition(|w| w == b"/*") {
-            Some(open) => text = &text[..open],
-            None => return text,
-        }
-    }
 }
 
 /// What is written before `pos`, up to the end of the last token. Nothing where the text is not kept.

@@ -395,11 +395,9 @@ impl<'p> Checker<'p> {
                 for p in props.iter() {
                     let prop = &hir[p];
                     if prop.is_rest {
-                        shape.index.push(IndexInfo {
-                            key: TypeId::STRING,
-                            value: TypeId::ANY,
-                            readonly: false,
-                        });
+                        shape
+                            .index
+                            .push(IndexInfo::new(TypeId::STRING, TypeId::ANY, false));
                         continue;
                     }
                     // A name that is only known when it runs is left out.

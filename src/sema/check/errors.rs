@@ -2139,9 +2139,13 @@ impl Checker<'_> {
                 self.check_entity_name(file, scope, &names, start, SymFlags::TYPE, out);
                 continue;
             }
-            let found = self
+            // `Err`: `Resolve` has an error of its own, which is not said here.
+            let Ok(found) = self
                 .files()
-                .resolve_name(file, scope, first, SymFlags::TYPE);
+                .resolve_name_or_error(file, scope, first, SymFlags::TYPE)
+            else {
+                continue;
+            };
             // `getSymbol`: an alias that ends at a property has no type meaning, and the search goes on further out.
             // `checkAndReportErrorForUsingValueAsType`
             if let Some(found) = found
@@ -2913,9 +2917,7 @@ impl Checker<'_> {
             });
             return Some(if is_extended { 2863 } else { 2693 });
         }
-        if let Some(sym) = self.files().resolve_name(file, scope, name, SymFlags::TYPE)
-            && !e.is_some_and(|e| self.is_type_param_out_of_sight(file, e, sym))
-        {
+        if let Some(sym) = self.files().resolve_name(file, scope, name, SymFlags::TYPE) {
             let flags = self.resolved_flags(sym);
             if flags.intersects(SymFlags::TYPE) && !flags.intersects(SymFlags::VALUE) {
                 return Some(
@@ -2988,89 +2990,6 @@ impl Checker<'_> {
         self.files()
             .resolve_entity(file, scope, &names[..n], SymFlags::INTERFACE)
             .is_some_and(|s| self.resolved_flags(s).contains(SymFlags::INTERFACE))
-    }
-
-    /// `NameResolver.Resolve`: the type parameters of a class are not seen from what it extends, from its static members or from the
-    /// computed names of its members, nor those of an interface from the computed names of its members: the search ends there, with
-    /// nothing. Whether `sym`, which `e` would mean as a type, is such a type parameter.
-    fn is_type_param_out_of_sight(&self, file: FileId, e: ExprId, sym: Sym) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if sym.file != file {
-            return false;
-        }
-        let Some(&Decl::TypeParam(tp)) = self.files().symbol(sym).decls.first() else {
-            return false;
-        };
-        let declared_in = bound.type_param_scope[tp.idx()];
-        if declared_in.is_none() {
-            return false;
-        }
-        let owner = match bound.scopes[declared_in.idx()].kind {
-            ScopeKind::Class(c) => MemberOwner::Class(c),
-            ScopeKind::Interface(i) => MemberOwner::Interface(i),
-            _ => return false,
-        };
-        let is_own = |m: MemberId| bound.member_owner[m.idx()] == owner;
-        let is_static = |m: MemberId| hir[m].flags.contains(Flags::STATIC);
-        // An enum, an interface or a type literal has no place among the expressions: it is in the function its scope is in.
-        let scope_of = |kind: ScopeKind| {
-            bound
-                .scopes
-                .iter()
-                .position(|s| s.kind == kind)
-                .map_or(ScopeId::NONE, |s| ScopeId(s as u32))
-        };
-        let fn_around = |mut scope: ScopeId| loop {
-            if scope.is_none() {
-                return Parent::None;
-            }
-            match bound.scopes[scope.idx()].kind {
-                ScopeKind::Fn(f) => return Parent::FnBody(f),
-                _ => scope = bound.scopes[scope.idx()].parent,
-            }
-        };
-        // The expression gone out of last: a computed name is known by it.
-        let mut below = e;
-        let mut parent = bound.expr_parent[e.idx()];
-        loop {
-            parent = match parent {
-                Parent::Expr(x) if x.is_some() => {
-                    below = x;
-                    bound.expr_parent[x.idx()]
-                }
-                Parent::ClassExtends(c) if owner == MemberOwner::Class(c) => return true,
-                // A decorator is looked up from the member it is on, or whose parameter it is on.
-                Parent::MemberInit(m) | Parent::Decorator(_, DecoratorOwner::Member(m))
-                    if is_own(m) =>
-                {
-                    return is_static(m);
-                }
-                Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                    Parent::FnBody(bound.param_fn[p.idx()])
-                }
-                Parent::FnBody(f) => match bound.fns[f.idx()].owner {
-                    FnOwner::Member(m) if is_own(m) => return is_static(m),
-                    _ => self.outward(file, parent),
-                },
-                Parent::Key(_) | Parent::MemberKey => match self.what_is_named(file, parent, below)
-                {
-                    Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
-                    Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
-                    Named::Member(m) if is_own(m) => return true,
-                    Named::Member(m) => match bound.member_owner[m.idx()] {
-                        MemberOwner::Interface(i) => fn_around(scope_of(ScopeKind::Interface(i))),
-                        MemberOwner::TypeLiteral(t) => fn_around(bound.type_scope[t.idx()]),
-                        _ => self.parent_of(file, Parent::MemberInit(m)),
-                    },
-                    Named::Unknown => return false,
-                },
-                Parent::EnumInit(m) => {
-                    fn_around(scope_of(ScopeKind::Enum(bound.enum_member_owner[m.idx()])))
-                }
-                Parent::None | Parent::File | Parent::Module(_) | Parent::Expr(_) => return false,
-                other => self.outward(file, other),
-            };
-        }
     }
 
     /// `name` is written at `start`, where a type goes, and no type goes by it.
@@ -3536,28 +3455,6 @@ fn require_call_argument(hir: &hir::File, call: ExprId) -> Option<(ExprId, Atom)
         .then_some((argument, spec))
 }
 
-/// `SkipTrivia`: past the blanks and comments at `at`.
-fn skip_trivia(text: &[u8], mut at: usize) -> usize {
-    loop {
-        match text.get(at) {
-            Some(c) if c.is_ascii_whitespace() || *c == 0x0b => at += 1,
-            Some(b'/') if text.get(at + 1) == Some(&b'/') => {
-                while text.get(at).is_some_and(|&c| c != b'\n' && c != b'\r') {
-                    at += 1;
-                }
-            }
-            Some(b'/') if text.get(at + 1) == Some(&b'*') => {
-                at += 2;
-                while at < text.len() && !text[at..].starts_with(b"*/") {
-                    at += 1;
-                }
-                at = (at + 2).min(text.len());
-            }
-            _ => return at,
-        }
-    }
-}
-
 /// Where the `type` of `import type name` is written. `name`: where the name is.
 fn start_of_type_keyword(text: &[u8], name: u32) -> Option<u32> {
     let at = text
@@ -3768,7 +3665,7 @@ enum Meant {
 }
 
 /// What `levenshteinWithMax` measures: changing a letter costs two, and changing its case next to nothing.
-fn spelling_distance(a: &[u8], b: &[u8]) -> f64 {
+pub(super) fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
     let mut previous: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();
     let mut current = vec![0.0; b.len() + 1];
     for (i, x) in a.iter().enumerate() {
@@ -3824,7 +3721,7 @@ fn closest<'a>(
         if !is_close(name, text) {
             continue;
         }
-        let distance = spelling_distance(name, text);
+        let distance = edit_distance(name, text);
         let place = match meant {
             Meant::Symbol(sym) => place_of_first_declaration(c, sym),
             Meant::Word(_) => None,
@@ -5741,7 +5638,7 @@ impl Checker<'_> {
                 18046 => vec![entity_name_text(c, file, node)],
                 _ => Vec::new(),
             });
-            return TypeId::ANY;
+            return TypeId::ERROR;
         }
         // `getTypeFacts`: what waits for type parameters goes by what it extends, and so does an intersection.
         let goes_by_constraint = |c: &Self, m: TypeId| {
@@ -5785,9 +5682,8 @@ impl Checker<'_> {
             18047..=18050 => vec![entity_name_text(c, file, node)],
             _ => Vec::new(),
         });
-        // Where nothing is left, or nothing is taken out, it is in error.
         match self.non_nullable(ty) {
-            rest if rest == TypeId::NEVER || rest.is_null() || rest.is_undefined() => TypeId::ANY,
+            rest if rest == TypeId::NEVER || rest.is_null() || rest.is_undefined() => TypeId::ERROR,
             rest => rest,
         }
     }
@@ -6195,7 +6091,7 @@ impl Checker<'_> {
                 self.applicable_index(&members, TypeId::STRING, Some(name))
             };
             match stand_in {
-                Some((_, readonly)) => is_readonly |= readonly,
+                Some(info) => is_readonly |= info.readonly,
                 // An object literal that does not mention it does not have it.
                 None if self.is_closed_object_literal_type(part) => {}
                 None => return None,

@@ -5,6 +5,7 @@
 
 use super::Checker;
 use super::errors::Diagnostic;
+use super::spans::{ident_end, identifier_end};
 use crate::messages::{self, Category};
 use crate::program::FileId;
 
@@ -514,10 +515,6 @@ impl Checker<'_> {
     }
 }
 
-fn is_identifier_part(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80
-}
-
 /// Where the token that starts at `start` ends: a name, a number, a string, or else one character.
 pub(super) fn end_of_token(text: &[u8], start: u32) -> u32 {
     let at = start as usize;
@@ -536,21 +533,13 @@ pub(super) fn end_of_token(text: &[u8], start: u32) -> u32 {
                 }
             }
         }
-        b'#' | b'@' => {
-            while text.get(end).copied().is_some_and(is_identifier_part) {
-                end += 1;
+        b'#' | b'@' => end = ident_end(text, end),
+        b'0'..=b'9' => {
+            while text.get(end) == Some(&b'.') || ident_end(text, end) > end {
+                end = ident_end(text, end).max(end + 1);
             }
         }
-        _ if is_identifier_part(first) => {
-            while text
-                .get(end)
-                .copied()
-                .is_some_and(|b| is_identifier_part(b) || first.is_ascii_digit() && b == b'.')
-            {
-                end += 1;
-            }
-        }
-        _ => {}
+        _ => end = identifier_end(text, at).max(end),
     }
     end.min(text.len()) as u32
 }

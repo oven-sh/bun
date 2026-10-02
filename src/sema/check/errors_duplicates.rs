@@ -396,17 +396,16 @@ impl Checker<'_> {
             return;
         }
         // `symbolToString(source)`
-        let mut name = if self.explains {
+        let name = if self.explains {
             self.symbol_to_string(named)
         } else {
             String::new()
         };
         // A missing name has no length.
-        let mut end = 0;
-        if name.is_empty() {
-            name = "(Missing)".to_owned();
-            end = super::explain::NO_LENGTH;
-        }
+        let end = match self.files().symbol(named).name {
+            known::empty => super::explain::NO_LENGTH,
+            _ => 0,
+        };
         for (symbol, other) in [(source, target), (target, source)] {
             if symbol.first().is_none_or(|first| self.is_plain_js(first.0)) {
                 continue;
@@ -1944,27 +1943,6 @@ impl Checker<'_> {
                 }
                 _ => {}
             }
-        }
-    }
-}
-
-/// `SkipTrivia`: the offset of the first token at or after `at`.
-fn skip_trivia(text: &[u8], mut at: usize) -> usize {
-    loop {
-        match text.get(at) {
-            Some(c) if c.is_ascii_whitespace() || *c == 0x0b => at += 1,
-            Some(b'/') if text.get(at + 1) == Some(&b'/') => {
-                while text.get(at).is_some_and(|&c| c != b'\n' && c != b'\r') {
-                    at += 1;
-                }
-            }
-            Some(b'/') if text.get(at + 1) == Some(&b'*') => {
-                at = text[at + 2..]
-                    .windows(2)
-                    .position(|w| w == b"*/")
-                    .map_or(text.len(), |n| at + n + 4);
-            }
-            _ => return at,
         }
     }
 }

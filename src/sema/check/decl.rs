@@ -2718,17 +2718,6 @@ impl<'p> Checker<'p> {
                         return TypeId::ANY;
                     }
                 }
-                // `Resolve`: from its static members and from the expression it extends, the type parameters of a class are out of
-                // reach.
-                if names.len() == 1
-                    && (self.is_static_reference_to_class_type_param(file, node, scope, found)
-                        || self.is_base_expression_reference_to_class_type_param(
-                            file, node, scope, found,
-                        ))
-                {
-                    let args = self.types_from_nodes(file, args);
-                    return self.unresolved_name_type(&names, &args);
-                }
                 // `resolveEntityName`: an alias is followed as far as the first symbol that is a type.
                 let target = self.files().resolve_alias_as(found, SymFlags::TYPE);
                 let sym = match target {
@@ -3020,80 +3009,6 @@ impl<'p> Checker<'p> {
             }
         }
         mentioned.this || mentioned.everything
-    }
-
-    /// The class around `scope` that `sym` is a type parameter of.
-    fn class_of_type_param_around(
-        &self,
-        file: FileId,
-        mut scope: ScopeId,
-        sym: Sym,
-    ) -> Option<ClassId> {
-        if sym.file != file || !self.files().flags(sym).contains(SymFlags::TYPE_PARAMETER) {
-            return None;
-        }
-        let &Decl::TypeParam(tp) = self.files().symbol(sym).decls.first()? else {
-            return None;
-        };
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        while scope.is_some() {
-            let s = &bound.scopes[scope.idx()];
-            if let ScopeKind::Class(c) = s.kind
-                && hir[c].type_params.range().contains(&tp.idx())
-            {
-                return Some(c);
-            }
-            scope = s.parent;
-        }
-        None
-    }
-
-    /// `Resolve`, at a class come to from one of its static members, however deep in it `node` is: 2302, and `sym` is not found.
-    pub(super) fn is_static_reference_to_class_type_param(
-        &self,
-        file: FileId,
-        node: TypeNodeId,
-        scope: ScopeId,
-        sym: Sym,
-    ) -> bool {
-        let Some(class) = self.class_of_type_param_around(file, scope, sym) else {
-            return false;
-        };
-        let hir = self.hir(file);
-        // The member it is written in: the last that starts before it.
-        let members = &hir.members[hir[class].members.range()];
-        let after = members.partition_point(|m| m.pos <= hir[node].pos);
-        after > 0 && members[after - 1].flags.contains(Flags::STATIC)
-    }
-
-    /// `Resolve`, at what a class extends come to from the expression, not from its type arguments: 2562, and `sym` is not found.
-    pub(super) fn is_base_expression_reference_to_class_type_param(
-        &self,
-        file: FileId,
-        node: TypeNodeId,
-        scope: ScopeId,
-        sym: Sym,
-    ) -> bool {
-        let Some(class) = self.class_of_type_param_around(file, scope, sym) else {
-            return false;
-        };
-        let hir = self.hir(file);
-        let c = &hir[class];
-        if c.extends.is_none() {
-            return false;
-        }
-        // From where the expression starts up to what is written next: its type arguments, what is implemented, the first member.
-        let next = [
-            hir.ids(c.extends_args).next().map(|t| hir[t].pos),
-            hir.ids(c.implements).next().map(|t| hir[t].pos),
-            c.members.iter().next().map(|m| hir[m].pos),
-        ];
-        let pos = hir[node].pos;
-        // The comment of the first member is written after the expression and before the member.
-        if hir.is_in_jsdoc(pos) && pos >= self.end_of_expr(file, c.extends) {
-            return false;
-        }
-        pos >= self.start_of(file, c.extends) && next.into_iter().flatten().all(|end| pos < end)
     }
 
     /// `getThisType`: `this` as a type, written at `node` in `scope`. Where there is no such thing it is in error, and what is in

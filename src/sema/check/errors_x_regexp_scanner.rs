@@ -1540,7 +1540,7 @@ pub(super) fn spelling_suggestion<'c>(
 }
 
 /// `levenshteinWithMax`: changing a letter costs two, and changing its case next to nothing. `None` for its -1: more than `max_value`.
-fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64> {
+pub(super) fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64> {
     let mut previous: Vec<f64> = (0..=s2.len()).map(|j| j as f64).collect();
     let mut current = vec![0.0; s2.len() + 1];
     let big = max_value + 0.01;

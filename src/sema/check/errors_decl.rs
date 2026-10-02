@@ -339,7 +339,7 @@ impl Checker<'_> {
 
     /// 2302: the type parameters of a class are those of its instances.
     fn check_static_type_parameter_references(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let has_static =
             |members: Span<MemberId>| members.iter().any(|m| hir[m].flags.contains(Flags::STATIC));
         // The names of the type parameters of what has a static member.
@@ -358,7 +358,13 @@ impl Checker<'_> {
             if let TypeNodeKind::Ref { name, .. } = hir.types[t].kind
                 && name.len() == 1
                 && names.contains(&hir.id_at(name, 0))
-                && self.is_class_type_parameter_in_static(file, TypeNodeId(t as u32))
+                && bound.type_scope[t].is_some()
+                && self.files().resolve_name_or_error(
+                    file,
+                    bound.type_scope[t],
+                    hir.id_at(name, 0),
+                    SymFlags::TYPE,
+                ) == Err(2302)
             {
                 out.push(Diagnostic {
                     start: hir.types[t].pos,
@@ -366,91 +372,6 @@ impl Checker<'_> {
                 });
             }
         }
-    }
-
-    /// `Resolve`, on getting to a class or an interface: whether the type reference `t` names a type parameter of it from one of
-    /// its static members, however deep in the member it is written. It names nothing then.
-    pub(super) fn is_class_type_parameter_in_static(&self, file: FileId, t: TypeNodeId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let TypeNodeKind::Ref { name, .. } = hir[t].kind else {
-            return false;
-        };
-        let scope = bound.type_scope[t.idx()];
-        if scope.is_none() || name.len() != 1 {
-            return false;
-        }
-        let Some(sym) = self
-            .files()
-            .resolve_name(file, scope, hir.id_at(name, 0), SymFlags::TYPE)
-        else {
-            return false;
-        };
-        if sym.file != file || !self.files().flags(sym).contains(SymFlags::TYPE_PARAMETER) {
-            return false;
-        }
-        let Some(&Decl::TypeParam(tp)) = self.files().symbol(sym).decls.first() else {
-            return false;
-        };
-        let is_among = |params: Span<TypeParamId>| params.range().contains(&tp.idx());
-        let (members, is_class) =
-            if let Some(c) = hir.classes.iter().find(|c| is_among(c.type_params)) {
-                (c.members, true)
-            } else if let Some(i) = hir.interfaces.iter().find(|i| is_among(i.type_params)) {
-                (i.members, false)
-            } else {
-                return false;
-            };
-        // The member it is written in. Members are in the order they are written and start at their names. What comes before the
-        // first, the type parameters and what is extended and implemented, is in none.
-        let pos = hir[t].pos;
-        let mut owner = None;
-        for m in members.iter() {
-            if hir[m].pos <= pos {
-                owner = Some(m);
-                continue;
-            }
-            // What decorates a member comes before its name. From there the search goes on at the member.
-            if hir
-                .decorators
-                .iter()
-                .any(|&(of, e)| of == DecoratorOwner::Member(m) && self.start_of(file, e) <= pos)
-            {
-                owner = Some(m);
-            }
-            break;
-        }
-        let Some(m) = owner else { return false };
-        let member = &hir[m];
-        // `IsStatic`, `IsClassElement`: of what is in an interface only an index signature and an accessor are the kind of node
-        // that is in a class.
-        if !member.flags.contains(Flags::STATIC)
-            || !is_class
-                && !matches!(
-                    member.kind,
-                    MemberKind::IndexSignature | MemberKind::Getter | MemberKind::Setter
-                )
-        {
-            return false;
-        }
-        if !matches!(member.key, PropKey::Computed(_)) || pos < member.pos {
-            return true;
-        }
-        // From the computed name of a member the search ends before it gets to the class: that is 2467, static or not. What comes
-        // after the name starts here.
-        let after = if member.func.is_some() {
-            let func = &hir[member.func];
-            func.type_params
-                .iter()
-                .next()
-                .map_or(func.anchor, |p| hir[p].pos)
-        } else if member.ty.is_some() {
-            hir[member.ty].pos
-        } else if member.init.is_some() {
-            self.start_of(file, member.init)
-        } else {
-            u32::MAX
-        };
-        pos >= after
     }
 
     /// What several declarations make together: 2428 2374 2440.
@@ -808,7 +729,7 @@ impl Checker<'_> {
             } else {
                 self.type_of_declared_member(&merged[0])
             };
-            if !self.is_known(of_symbol) {
+            if !self.is_known(of_symbol) || self.is_error_type(of_symbol) {
                 continue;
             }
             for d in &merged[1..] {
@@ -816,7 +737,10 @@ impl Checker<'_> {
                     continue;
                 }
                 let again = self.type_of_declared_member(d);
-                if !self.is_known(again) || self.is_identical(of_symbol, again) {
+                if !self.is_known(again)
+                    || self.is_error_type(again)
+                    || self.is_identical(of_symbol, again)
+                {
                     continue;
                 }
                 // As sure as with variables: see 2403.

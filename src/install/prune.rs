@@ -1439,9 +1439,7 @@ struct UnplacedFolder {
 
 struct UnplacedEntry {
     alias: Box<[u8]>,
-    /// The lockfile this run loaded placed the entry. It goes unless the copy that replaces it is not installed
-    /// (`HoistedTree::removable`). Any other entry goes only when a folder above holds the same name, installed
-    /// (`HoistedTree::collapsed_into_ancestor`).
+    /// The lockfile this run loaded placed the entry: `removable` decides. Else `collapsed_into_ancestor` does.
     was_placed: bool,
     kind: EntryKind,
 }
@@ -1457,12 +1455,7 @@ impl UnplacedEntry {
     }
 }
 
-/// Hoisted post-install pass (install_with_manager.rs): removes, from nested and workspace `node_modules` folders,
-/// the copies `before` placed that the install no longer places, and the copies that hide what a folder above provides.
-/// It never removes an entry of the root `node_modules`. The folders are compared with the install tree, not the
-/// lockfile's: only the install tree applies the self-contained barrier, so only it says what a self-contained
-/// workspace keeps. The tree carries every dependency type, so a copy under a dependency that `--production` /
-/// `--omit` skipped this run stays. Returns how many entries it removed and how many it failed to remove.
+/// Hoisted post-install pass (install_with_manager.rs). Returns how many entries it removed and how many it could not.
 #[cold]
 #[inline(never)]
 pub(crate) fn remove_collapsed_copies(
@@ -1475,6 +1468,8 @@ pub(crate) fn remove_collapsed_copies(
     if unplaced.is_empty() {
         return (0, 0);
     }
+    // Only the install tree applies the self-contained barrier. It carries every dependency type, so a copy under
+    // a dependency that `--production` / `--omit` skipped stays.
     let Ok(saved) = hoist_install_tree(manager, full_install_features(install_features(manager)))
     else {
         return (0, 0);
@@ -1484,9 +1479,7 @@ pub(crate) fn remove_collapsed_copies(
     counts
 }
 
-/// Looks at the disk only where a lockfile in memory gives a reason to: the rows `before` placed that the saved tree
-/// of `manager.lockfile` no longer places, the workspace folders, and the folders where a copy would hide a package
-/// this run installed from one of its dependents.
+/// Nested and workspace entries the saved tree of `manager.lockfile` does not place. It never looks in the root folder.
 fn find_unplaced(
     manager: &PackageManager,
     before: &Lockfile,
@@ -1645,8 +1638,7 @@ fn find_unplaced(
     unplaced
 }
 
-/// A package that stayed in place resolves a dependency this run installed through the folders between the two.
-/// A copy of the dependency left in one of them hides the installed one. Each such place gets one `lstat`.
+/// One `lstat` per place where a leftover copy would hide a package this run installed from a dependent that stayed.
 fn find_copies_above_installed(
     after: &Lockfile,
     placed: &HoistedTree<'_>,
@@ -1981,7 +1973,6 @@ fn disk_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-/// `None` for a workspace at `.`, a root that depends on itself: its `node_modules` is the root folder.
 fn workspace_path(lockfile: &Lockfile, pkg_id: PackageID) -> Option<&[u8]> {
     let res = lockfile.packages.items_resolution().get(pkg_id as usize)?;
     if res.tag != ResolutionTag::Workspace {
@@ -1989,7 +1980,7 @@ fn workspace_path(lockfile: &Lockfile, pkg_id: PackageID) -> Option<&[u8]> {
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
     let path = strings::without_trailing_slash(res.workspace().slice(buf));
-    (!path.is_empty() && path != b".").then_some(path)
+    (!path.is_empty()).then_some(path)
 }
 
 fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<[u8]>> {

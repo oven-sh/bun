@@ -637,7 +637,7 @@ impl ShellCpTask {
         // need to create it.
         let src_is_dir = match Self::is_dir(src) {
             Ok(x) => x,
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Some(ShellErr::new_sys(&e.with_path(&self.src))),
         };
 
         // Any source directory without -R is an error.
@@ -666,7 +666,7 @@ impl ShellCpTask {
                 // If it has a trailing directory separator, it's a directory.
                 (Self::has_trailing_sep(tgt.as_bytes()), false)
             }
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Some(ShellErr::new_sys(&e.with_path(&self.tgt))),
         };
 
         let mut _copying_many = false;

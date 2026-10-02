@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
@@ -264,6 +264,81 @@ describe("Bun.serve HTML manifest", () => {
     await proc.exited;
 
     expect(out).toContain("SUCCESS: Manifest validation failed as expected");
+  });
+
+  const maxPathBytes = isWindows ? 98302 : process.platform === "darwin" ? 1024 : 4096;
+
+  // Spawns bun with a manifest whose one file has `path` and prints the
+  // error code the Bun.serve call throws, or "no-throw".
+  async function serveWithManifestPath(pathExpr: string, cwd?: string) {
+    await using proc = Bun.spawn({
+      cwd,
+      cmd: [
+        bunExe(),
+        "-e",
+        `const long = ${pathExpr};` +
+          `try {` +
+          `  const s = Bun.serve({ port: 0, routes: { "/": {` +
+          `    index: "./index.html",` +
+          `    files: [{ input: "index.html", path: long, loader: "html", isEntry: true,` +
+          `              headers: { etag: "x", "content-type": "text/html" } }],` +
+          `  } } });` +
+          `  s.stop();` +
+          `  console.log("CAUGHT no-throw");` +
+          `} catch (e) { console.log("CAUGHT", e.code || e.name); }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout.startsWith("CAUGHT")) console.error(stderr);
+    return { stdout: stdout.trim(), exitCode };
+  }
+
+  it("rejects an absolute manifest file path longer than the join buffer without aborting", async () => {
+    // Windows MAX_PATH_BYTES (98302) >> 4096, so a 5000-byte path passes the
+    // ENAMETOOLONG guard and reaches FileSystem::abs() whose output buffer was
+    // 4096 bytes: process used to abort with a slice-index panic. On POSIX
+    // MAX_PATH_BYTES <= 4096, so the guard rejects it with ENAMETOOLONG first.
+    const { stdout, exitCode } = await serveWithManifestPath(
+      `(process.platform === "win32" ? "C:\\\\" : "/") + Buffer.alloc(5000, "a").toString()`,
+    );
+    // On Windows abs() succeeds and route setup then rejects the missing file.
+    expect(stdout).toBe(isWindows ? "CAUGHT ERR_INVALID_ARG_TYPE" : "CAUGHT ENAMETOOLONG");
+    expect(exitCode).toBe(0);
+  });
+
+  it("rejects a relative manifest file path that overflows the join buffer once joined onto the cwd", async () => {
+    // One byte under MAX_PATH_BYTES passes the per-part guard, but cwd + "/" +
+    // part is longer than any host path, and on Linux and Windows longer than
+    // the join buffer: process used to abort with a slice-index panic.
+    const { stdout, exitCode } = await serveWithManifestPath(`Buffer.alloc(${maxPathBytes - 1}, "a").toString()`);
+    expect(stdout).toBe("CAUGHT ENAMETOOLONG");
+    expect(exitCode).toBe(0);
+  });
+
+  it("rejects a relative manifest file path that joins onto the cwd to exactly MAX_PATH_BYTES", async () => {
+    // The joined path fills a PathBuffer with no room for its NUL. The OS
+    // rejects it, and on Windows relative() used to overflow its own buffer.
+    const { stdout, exitCode } = await serveWithManifestPath(
+      `Buffer.alloc(${maxPathBytes} - process.cwd().length - 1, "a").toString()`,
+    );
+    expect(stdout).toBe("CAUGHT ENAMETOOLONG");
+    expect(exitCode).toBe(0);
+  });
+
+  it("rejects an absolute manifest file path outside the cwd that overflows the relative buffer", async () => {
+    // The path fits the join buffer, but relative(cwd, path) prepends one
+    // "/.." per cwd segment, and that output did not fit its own buffer:
+    // process used to abort with a slice-index panic.
+    using dir = tempDir("serve-html-deep", {});
+    const { stdout, exitCode } = await serveWithManifestPath(
+      `(process.platform === "win32" ? "C:\\\\" : "/") + Buffer.alloc(${maxPathBytes - 4}, "a").toString()`,
+      String(dir),
+    );
+    // abs() succeeds, so route setup then rejects the missing file.
+    expect(stdout).toBe("CAUGHT ERR_INVALID_ARG_TYPE");
+    expect(exitCode).toBe(0);
   });
 
   it("serves manifest with proper headers", async () => {

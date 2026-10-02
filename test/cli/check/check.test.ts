@@ -575,13 +575,29 @@ describe.concurrent("bun check", () => {
       using dir = project({
         "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/app" }] }),
         "console.d.ts": "",
-        "packages/lib/package.json": JSON.stringify({ name: "lib", exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } } }),
-        "packages/lib/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, rootDir: "src", outDir: "dist" }, include: ["src"] }),
+        "packages/lib/package.json": JSON.stringify({
+          name: "lib",
+          exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
+        }),
+        "packages/lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, rootDir: "src", outDir: "dist" },
+          include: ["src"],
+        }),
         "packages/lib/src/index.ts": `export const double = (n: number) => n * 2;\n`,
         // A scoped package, found through `main` and a directory, with `declarationDir`.
-        "packages/scoped/package.json": JSON.stringify({ name: "@scope/pkg", main: "./build/js", types: "./build/types" }),
+        "packages/scoped/package.json": JSON.stringify({
+          name: "@scope/pkg",
+          main: "./build/js",
+          types: "./build/types",
+        }),
         "packages/scoped/tsconfig.json": JSON.stringify({
-          compilerOptions: { ...options, jsx: "preserve", rootDir: "src", outDir: "build/js", declarationDir: "build/types" },
+          compilerOptions: {
+            ...options,
+            jsx: "preserve",
+            rootDir: "src",
+            outDir: "build/js",
+            declarationDir: "build/types",
+          },
           include: ["src"],
         }),
         "packages/scoped/src/index.tsx": `export const triple = (n: number) => n * 3;\n`,
@@ -614,14 +630,19 @@ describe.concurrent("bun check", () => {
         "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, composite: false }, include: ["app"] }),
         "console.d.ts": "",
         "lib/package.json": JSON.stringify({ name: "lib", types: "./dist/index.d.ts" }),
-        "lib/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, rootDir: "src", outDir: "dist" }, include: ["src"] }),
+        "lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, rootDir: "src", outDir: "dist" },
+          include: ["src"],
+        }),
         "lib/src/index.ts": `export const double = (n: number) => n * 2;\n`,
         "app/index.ts": `import { double } from "lib";\nexport const a = double(2);\n`,
       });
       mkdirSync(join(String(dir), "node_modules"), { recursive: true });
       symlinkSync(join(String(dir), "lib"), join(String(dir), "node_modules/lib"), "junction");
       const { stdout } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"app/index.ts(1,24): error TS2307: Cannot find module 'lib' or its corresponding type declarations."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"app/index.ts(1,24): error TS2307: Cannot find module 'lib' or its corresponding type declarations."`,
+      );
     });
 
     test("a reference that does not exist", async () => {
@@ -899,7 +920,9 @@ export {};
 
   describe("compiler options as flags", () => {
     const files = {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: false, noEmit: true, target: "esnext", lib: ["esnext"], types: [] } }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: false, noEmit: true, target: "esnext", lib: ["esnext"], types: [] },
+      }),
       "a.ts": `export function f(x) {\n  return x;\n}\nexport const first = [1][0].toFixed();\n`,
     };
 
@@ -913,7 +936,9 @@ export {};
         check(dir, ["--STRICT=true", "--nouncheckedindexedaccess", "--noImplicitAny=false"]),
       ]);
       expect(plain.stdout).toBe("");
-      expect(strict.stdout).toMatchInlineSnapshot(`"a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`);
+      expect(strict.stdout).toMatchInlineSnapshot(
+        `"a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`,
+      );
       expect(off.stdout).toBe("");
       expect(indexed.stdout).toMatchInlineSnapshot(`"a.ts(4,22): error TS2532: Object is possibly 'undefined'."`);
     });
@@ -932,7 +957,9 @@ export {};
         check(dir, ["--target"]),
         check(dir, ["--nonsense"]),
       ]);
-      expect(es5.stdout).toMatchInlineSnapshot(`"a.ts(1,22): error TS2585: 'Promise' only refers to a type, but is being used as a value here. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later."`);
+      expect(es5.stdout).toMatchInlineSnapshot(
+        `"a.ts(1,22): error TS2585: 'Promise' only refers to a type, but is being used as a value here. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later."`,
+      );
       expect(bad.stderr).toMatchInlineSnapshot(`
         "error: --target must be one of: es6, es2015, es2016, es2017, es2018, es2019, es2020, es2021, es2022, es2023, es2024, es2025, esnext
         note: run 'bun check --help' for more information"
@@ -952,12 +979,21 @@ export {};
       using dir = project({
         "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "lib" }] }),
         "console.d.ts": "",
-        "lib/tsconfig.json": JSON.stringify({ compilerOptions: { composite: true, strict: false, lib: ["esnext"], types: [] }, include: ["*.ts"] }),
+        "lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { composite: true, strict: false, lib: ["esnext"], types: [] },
+          include: ["*.ts"],
+        }),
         "lib/a.ts": `export function f(x) {\n  return x;\n}\n`,
       });
-      const [loose, strict, build] = await Promise.all([check(dir), check(dir, ["--strict"]), check(dir, ["-b", "lib", "--strict"])]);
+      const [loose, strict, build] = await Promise.all([
+        check(dir),
+        check(dir, ["--strict"]),
+        check(dir, ["-b", "lib", "--strict"]),
+      ]);
       expect(loose.stdout).toBe("");
-      expect(strict.stdout).toMatchInlineSnapshot(`"lib/a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`);
+      expect(strict.stdout).toMatchInlineSnapshot(
+        `"lib/a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."`,
+      );
       expect(build.stdout).toBe(strict.stdout);
     });
   });

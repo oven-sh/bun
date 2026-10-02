@@ -351,3 +351,11 @@
 10-02_16:05:15 anon=88MB pids=37 load=892.46 top=python3:81MB
 10-02_16:05:50 anon=95MB pids=32 load=897.65 top=python3:98MB
 10-02_16:06:26 anon=47MB pids=33 load=890.15 top=python3:49MB
+10-02_16:07:06 anon=91MB pids=37 load=949.30 top=python3:93MB
+10-02_16:07:47 anon=1565MB pids=42 load=935.08 top=cachegrind-amd6:382MB
+10-02_16:08:26 anon=832MB pids=56 load=942.23 top=cachegrind-amd6:325MB
+10-02_16:08:59 anon=286MB pids=46 load=927.38 top=cachegrind-amd6:309MB
+10-02_16:09:36 anon=1011MB pids=42 load=892.32 top=cachegrind-amd6:268MB
+10-02_16:10:15 anon=569MB pids=54 load=853.47 top=cachegrind-amd6:323MB
+10-02_16:10:52 anon=4MB pids=37 load=881.99 top=cachegrind-amd6:30MB
+10-02_16:11:30 anon=248MB pids=36 load=886.20 top=cachegrind-amd6:270MB

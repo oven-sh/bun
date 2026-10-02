@@ -117,7 +117,7 @@ mod handler {
     // No-op handlers: the pointer arg is never dereferenced. Safe fn items
     // coerce to the `unsafe extern "C" fn` slots in `uws::LoopHandler` below.
     extern "C" fn wakeup(_loop: *mut uws::Loop) {
-        // No-op: we don't need to wake up from another thread for spawnSync
+        // Nothing to run: a wakeup (the waiter thread's, for a child's exit) only has to end the wait
     }
 
     extern "C" fn pre(_loop: *mut uws::Loop) {

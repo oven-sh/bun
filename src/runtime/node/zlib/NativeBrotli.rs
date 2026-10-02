@@ -277,7 +277,7 @@ mod _impl {
             );
 
             // node's `BrotliCompressionStream::Init` throws this text for every failure.
-            const MESSAGE: Option<&str> = Some("Initialization failed");
+            const MESSAGE: &[u8] = b"Initialization failed";
 
             let mut err = self.stream.with_mut(|s| s.init(dictionary));
             if err.is_error() {

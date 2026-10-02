@@ -70,6 +70,14 @@ impl Error {
     pub(crate) fn is_error(&self) -> bool {
         !self.msg.is_null()
     }
+
+    pub(crate) fn message(&self) -> &[u8] {
+        if self.msg.is_null() {
+            return b"";
+        }
+        // SAFETY: a non-null `msg` is a NUL-terminated C string.
+        unsafe { bun_core::ffi::cstr(self.msg) }.to_bytes()
+    }
 }
 
 // ─── local shims (upstream-crate gaps) ────────────────────────────────────
@@ -876,19 +884,15 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     /// Closes the handle before `onerror` runs, so user JS cannot drive a handle that has no context.
-    /// Throws `message`, or `err`'s own text when `None`.
     pub(crate) fn init_failed(
         this: &T,
         global_this: &JSGlobalObject,
         this_value: JSValue,
         err: Error,
-        message: Option<&str>,
+        message: &[u8],
     ) -> jsc::JsError {
         Self::close_internal(this);
         Self::emit_error(this, global_this, this_value, err);
-        // SAFETY: every caller passes an `is_error()` result, whose `msg` is a NUL-terminated C string.
-        let own_message = unsafe { bun_core::ffi::cstr(err.msg) }.to_bytes();
-        let message = message.map_or(own_message, str::as_bytes);
         global_this
             .err(
                 ErrorCode::ZLIB_INITIALIZATION_FAILED,

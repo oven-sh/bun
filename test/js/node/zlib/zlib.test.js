@@ -612,6 +612,16 @@ for (const C of [zlib.BrotliCompress, zlib.BrotliDecompress]) {
   }
 }
 
+// `errno: undefined` in an expectation also matches an error that has no errno property.
+function thrownBy(fn) {
+  try {
+    fn();
+  } catch (e) {
+    return { name: e.name, code: e.code, message: e.message, errno: e.errno };
+  }
+  return "did not throw";
+}
+
 describe("zlib.zstd", () => {
   const inputString =
     "ΩΩLorem ipsum dolor sit amet, consectetur adipiscing eli" +
@@ -667,30 +677,55 @@ describe("zlib.zstd", () => {
     // entropy tables, so ZSTD_DCtx_loadDictionary rejects it. A buffer without
     // the magic is treated as a raw content dictionary and always loads.
     const malformedDictionary = Buffer.from([0x37, 0xa4, 0x30, 0xec, 1, 2, 3, 4, 5, 6, 7, 8]);
-    const expectedError = {
+    const options = { dictionary: malformedDictionary };
+    const initFailed = {
       name: "Error",
       code: "ERR_ZLIB_INITIALIZATION_FAILED",
       message: "Failed to load zstd dictionary",
+      errno: undefined,
     };
 
     it("zstdDecompressSync throws instead of returning an empty buffer", () => {
-      expect(() => zlib.zstdDecompressSync(compressedBuffer, { dictionary: malformedDictionary })).toThrow(
-        expect.objectContaining(expectedError),
-      );
+      expect(thrownBy(() => zlib.zstdDecompressSync(compressedBuffer, options))).toEqual(initFailed);
     });
 
     it("zstdDecompress throws synchronously like node", () => {
       const callback = jest.fn();
-      expect(() => zlib.zstdDecompress(compressedBuffer, { dictionary: malformedDictionary }, callback)).toThrow(
-        expect.objectContaining(expectedError),
-      );
+      expect(thrownBy(() => zlib.zstdDecompress(compressedBuffer, options, callback))).toEqual(initFailed);
       expect(callback).not.toHaveBeenCalled();
     });
 
     it("createZstdDecompress throws from the constructor", () => {
-      expect(() => zlib.createZstdDecompress({ dictionary: malformedDictionary })).toThrow(
-        expect.objectContaining(expectedError),
-      );
+      expect(thrownBy(() => zlib.createZstdDecompress(options))).toEqual(initFailed);
+    });
+
+    // node checks these after the handle is initialized, so the dictionary error is thrown first.
+    it.each([
+      ["a chunkSize below the minimum", () => zlib.zstdDecompressSync(compressedBuffer, { ...options, chunkSize: 0 })],
+      ["a flush value out of range", () => zlib.zstdDecompressSync(compressedBuffer, { ...options, flush: 99 })],
+      ["a callback that is not a function", () => zlib.zstdDecompress(compressedBuffer, options, "nope")],
+      ["an input that is not a buffer", () => zlib.zstdDecompressSync(12345, options)],
+    ])("the dictionary error wins over %s", (_, call) => {
+      expect(thrownBy(call)).toEqual(initFailed);
+    });
+
+    it("a parameter key that zlib.ts rejects wins over the dictionary error", () => {
+      expect(thrownBy(() => zlib.zstdDecompressSync(compressedBuffer, { ...options, params: { 99999: 1 } }))).toEqual({
+        name: "RangeError",
+        code: "ERR_ZSTD_INVALID_PARAM",
+        message: "99999 is not a valid zstd parameter",
+        errno: undefined,
+      });
+    });
+
+    // zstd parses a compression dictionary at the first write, so init() accepts this one.
+    it("zstdCompressSync still fails at the first write", () => {
+      expect(thrownBy(() => zlib.zstdCompressSync(inputString, options))).toEqual({
+        name: "Error",
+        code: "ZSTD_error_memory_allocation",
+        message: "Allocation error : not enough memory",
+        errno: 64,
+      });
     });
 
     // node:zlib/iter builds its own NativeZstd handle and needs the flag, so it runs in a child.
@@ -700,7 +735,7 @@ describe("zlib.zstd", () => {
         const { decompressZstd, decompressZstdSync } = require("node:zlib/iter");
         const dictionary = Buffer.from(${JSON.stringify([...malformedDictionary])});
         const compressed = Buffer.from(${JSON.stringify(compressedString)}, "base64");
-        const show = e => [e.name, e.code, e.message].join("|");
+        const show = e => [e.name, e.code, e.message, String(e.errno)].join("|");
         try {
           const out = bytesSync(pullSync(fromSync(compressed), decompressZstdSync({ dictionary })));
           console.log("sync resolved with", out.byteLength, "bytes");
@@ -719,7 +754,7 @@ describe("zlib.zstd", () => {
         stderr: "pipe",
       });
       const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const expected = [expectedError.name, expectedError.code, expectedError.message].join("|");
+      const expected = [initFailed.name, initFailed.code, initFailed.message, "undefined"].join("|");
       expect(stdout).toBe(`sync ${expected}\nasync ${expected}\n`);
       expect(exitCode).toBe(0);
     });
@@ -820,6 +855,97 @@ describe("zlib.zstd", () => {
     await promise;
     expect(all.length).toBeGreaterThanOrEqual(7);
   }, 15_000);
+});
+
+describe("a native init() that fails", () => {
+  const rejectedParams = () => {
+    const params = new Uint32Array(50).fill(0xffffffff);
+    params[49] = 0;
+    return params;
+  };
+  const noop = () => {};
+
+  // node's Init calls the stream's onerror, which destroys the stream, and then throws.
+  it.each([
+    [
+      "zstd dictionary",
+      () => zlib.createZstdDecompress(),
+      handle =>
+        handle.init(
+          new Uint32Array(0),
+          undefined,
+          new Uint32Array(2),
+          noop,
+          Buffer.from([0x37, 0xa4, 0x30, 0xec, 1, 2, 3, 4, 5, 6, 7, 8]),
+        ),
+      "Failed to load zstd dictionary",
+      "ERR_ZLIB_DICTIONARY_LOAD_FAILED",
+    ],
+    [
+      "zstd parameter",
+      () => zlib.createZstdCompress(),
+      handle => handle.init(rejectedParams(), undefined, new Uint32Array(2), noop),
+      "Setting parameter failed",
+      "ERR_ZSTD_PARAM_SET_FAILED",
+    ],
+    [
+      "brotli parameter",
+      () => zlib.createBrotliCompress(),
+      handle => handle.init(rejectedParams(), new Uint32Array(2), noop),
+      "Initialization failed",
+      "ERR_BROTLI_PARAM_SET_FAILED",
+    ],
+  ])("%s: a live stream is destroyed before _handle.init() throws", async (_, create, init, thrown, emittedCode) => {
+    const stream = create();
+    const events = [];
+    const { promise, resolve } = Promise.withResolvers();
+    stream.on("error", e => events.push(["error", e.code, e.errno]));
+    stream.on("close", () => {
+      events.push(["close"]);
+      resolve();
+    });
+    const handle = stream._handle;
+
+    expect(thrownBy(() => init(handle))).toEqual({
+      name: "Error",
+      code: "ERR_ZLIB_INITIALIZATION_FAILED",
+      message: thrown,
+      errno: undefined,
+    });
+    expect({ destroyed: stream.destroyed, handle: stream._handle }).toEqual({ destroyed: true, handle: null });
+    await promise;
+    expect(events).toEqual([["error", emittedCode, -1], ["close"]]);
+  });
+
+  // node:zlib/iter builds its own NativeBrotli handle and needs the flag, so it runs in a child.
+  it("node:zlib/iter compressBrotli and compressBrotliSync throw when the handle is created", async () => {
+    const script = `
+      const { from, fromSync, pull, pullSync, bytes, bytesSync } = require("node:stream/iter");
+      const { compressBrotli, compressBrotliSync } = require("node:zlib/iter");
+      const params = { [require("node:zlib").constants.BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING]: 42 };
+      const show = e => [e.name, e.code, e.message, String(e.errno)].join("|");
+      try {
+        const out = bytesSync(pullSync(fromSync(Buffer.from("hello")), compressBrotliSync({ params })));
+        console.log("sync resolved with", out.byteLength, "bytes");
+      } catch (e) {
+        console.log("sync", show(e));
+      }
+      bytes(pull(from(Buffer.from("hello")), compressBrotli({ params }))).then(
+        out => console.log("async resolved with", out.byteLength, "bytes"),
+        e => console.log("async", show(e)),
+      );
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--experimental-stream-iter", "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = "Error|ERR_ZLIB_INITIALIZATION_FAILED|Initialization failed|undefined";
+    expect(stdout).toBe(`sync ${expected}\nasync ${expected}\n`);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("async write buffer lifetime", () => {

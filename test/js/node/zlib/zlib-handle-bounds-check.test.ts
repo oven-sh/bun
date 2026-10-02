@@ -338,26 +338,87 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
       `const C = zlib.createBrotliCompress()._handle.constructor;
        const h = new C(8);
        const p = new Uint32Array(50).fill(0xffffffff); p[49] = 0;
-       try { h.init(p, new Uint32Array(2), () => {}); } catch {}
+       try { h.init(p, new Uint32Array(2), () => {}); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }
        try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
-      CLOSED,
+      `threw ERR_ZLIB_INITIALIZATION_FAILED: Initialization failed\n${CLOSED}`,
     ],
     [
       "zstd: a handle whose init() parameters were rejected is closed",
       `const C = zlib.createZstdCompress()._handle.constructor;
        const h = new C(10);
        const p = new Uint32Array(50).fill(0xffffffff); p[49] = 0;
-       try { h.init(p, undefined, new Uint32Array(2), () => {}); } catch {}
+       try { h.init(p, undefined, new Uint32Array(2), () => {}); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }
        try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
-      "threw ERR_INVALID_STATE: zlib binding closed",
+      `threw ERR_ZLIB_INITIALIZATION_FAILED: Setting parameter failed\n${CLOSED}`,
+    ],
+    [
+      "zstd: a handle whose dictionary failed to load rejects writeSync() and init()",
+      `const C = zlib.createZstdDecompress()._handle.constructor;
+       const h = new C(11);
+       const d = Buffer.from([0x37, 0xa4, 0x30, 0xec, 1, 2, 3, 4, 5, 6, 7, 8]);
+       for (const op of [
+         () => h.init(new Uint32Array(0), undefined, new Uint32Array(2), () => {}, d),
+         () => h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64),
+         () => h.init(new Uint32Array(0), undefined, new Uint32Array(2), () => {}),
+       ]) {
+         try { op(); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }
+       }`,
+      `threw ERR_ZLIB_INITIALIZATION_FAILED: Failed to load zstd dictionary\n${CLOSED}\n${CLOSED}`,
     ],
   ];
 
   for (const [name, body, expected] of cases) {
     test.concurrent(name, async () => {
       expect(await run(body)).toEqual({ stdout: expected, exitCode: 0 });
+    });
+  }
+
+  // node's Init calls onerror (EmitError) and then throws ERR_ZLIB_INITIALIZATION_FAILED.
+  // Each row: [name, factory, mode, init arguments, onerror arguments, thrown message].
+  const failingInits: [string, string, number, string, string, string][] = [
+    [
+      "zstd dictionary",
+      "createZstdDecompress",
+      11,
+      `new Uint32Array(0), undefined, new Uint32Array(2), () => {}, Buffer.from([0x37, 0xa4, 0x30, 0xec, 1, 2, 3, 4, 5, 6, 7, 8])`,
+      "Failed to load zstd dictionary|-1|ERR_ZLIB_DICTIONARY_LOAD_FAILED",
+      "Failed to load zstd dictionary",
+    ],
+    [
+      "zstd parameter",
+      "createZstdCompress",
+      10,
+      `p, undefined, new Uint32Array(2), () => {}`,
+      "Setting parameter failed|-1|ERR_ZSTD_PARAM_SET_FAILED",
+      "Setting parameter failed",
+    ],
+    [
+      "brotli parameter",
+      "createBrotliCompress",
+      8,
+      `p, new Uint32Array(2), () => {}`,
+      "Setting parameter failed|-1|ERR_BROTLI_PARAM_SET_FAILED",
+      "Initialization failed",
+    ],
+  ];
+  for (const [name, create, mode, args, emitted, thrown] of failingInits) {
+    test.concurrent(`${name}: a failed init() calls an installed onerror once, then throws`, async () => {
+      const body = `const p = new Uint32Array(50).fill(0xffffffff); p[49] = 0;
+        const h = new (zlib.${create}()._handle.constructor)(${mode});
+        const calls = [];
+        h.onerror = (...args) => calls.push(args.join("|"));
+        try { h.init(${args}); console.log("handled"); }
+        catch (e) { console.log("threw " + e.code + ": " + e.message); }
+        console.log(calls.join(","));`;
+      expect(await run(body)).toEqual({
+        stdout: `threw ERR_ZLIB_INITIALIZATION_FAILED: ${thrown}\n${emitted}`,
+        exitCode: 0,
+      });
     });
   }
 

@@ -236,7 +236,11 @@ mod _impl {
                 .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
                 return Err(CompressionStream::<Self>::init_failed(
-                    self, global, this_value, err, None,
+                    self,
+                    global,
+                    this_value,
+                    err,
+                    err.message(),
                 ));
             }
 
@@ -263,7 +267,11 @@ mod _impl {
                     .with_mut(|s| s.set_params(c_uint::try_from(i).expect("int cast"), x));
                 if err_.is_error() {
                     return Err(CompressionStream::<Self>::init_failed(
-                        self, global, this_value, err_, None,
+                        self,
+                        global,
+                        this_value,
+                        err_,
+                        err_.message(),
                     ));
                 }
             }

@@ -2847,17 +2847,12 @@ impl TestCommand {
         // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
         // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
-        // `on_requested_exit` reaches the reporter through `serial_run` from inside the run, so
-        // the run borrows the reporter from that same pointer.
-        let reporter_ptr = core::ptr::NonNull::from(reporter_);
-        // SAFETY: `reporter_ptr` is the caller's exclusive borrow, which lasts for this call.
-        let reporter = unsafe { &mut *reporter_ptr.as_ptr() };
-        reporter.jest.serial_run = Some(jest::SerialRun {
-            reporter: reporter_ptr,
-            files: core::ptr::NonNull::from(files_),
+        reporter_.jest.serial_run = Some(jest::SerialRun {
+            reporter: bun_ptr::BackRef::new_mut(reporter_),
+            files: bun_ptr::BackRef::new(files_),
         });
         let mut ctx = Context {
-            reporter,
+            reporter: reporter_,
             vm: vm_,
             files: files_,
         };
@@ -3124,10 +3119,7 @@ impl TestCommand {
 /// never reaches the tail of `exec`.
 #[inline]
 pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
-    // SAFETY: `RUNNER` is only read and written on the JS thread.
-    let run =
-        jest::Jest::runner_ptr().and_then(|runner| unsafe { (*runner.as_ptr()).serial_run.take() });
-    if let Some(run) = run {
+    if let Some(run) = jest::Jest::runner().and_then(|runner| runner.serial_run.take()) {
         report_run_ended_by_exit(run, vm, code);
     }
 }
@@ -3135,10 +3127,11 @@ pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
 /// Reports the run in place of the tail of `exec`, and keeps a run that failed, or that the
 /// exit cut short, from exiting 0.
 #[cold]
-fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code: u8) {
-    // SAFETY: `run_all_tests` is on the stack, so its reporter and files are alive. Its frame
-    // and the frames above it borrow both, and none of them runs again: the caller exits.
-    let (reporter, files) = unsafe { (&mut *run.reporter.as_ptr(), run.files.as_ref()) };
+fn report_run_ended_by_exit(mut run: jest::SerialRun, vm: &mut VirtualMachine, code: u8) {
+    // SAFETY: `run_all_tests` and the frames above it borrow the reporter, and none of them
+    // runs again: the caller exits.
+    let reporter = unsafe { run.reporter.get_mut() };
+    let files: &[Interned] = &run.files;
 
     if should_drain_event_loop() {
         // The file is the whole run and ends it with its own status, as under node. Only a

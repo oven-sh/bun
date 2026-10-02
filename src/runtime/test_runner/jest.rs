@@ -156,9 +156,9 @@ pub(crate) struct TestRunner<'a> {
 
 /// A run that executes its test files in this process, as opposed to a `--parallel` worker or coordinator.
 pub(crate) struct SerialRun {
-    pub(crate) reporter: NonNull<CommandLineReporter>,
+    pub(crate) reporter: bun_ptr::BackRef<CommandLineReporter, bun_ptr::Mut>,
     /// In run order. The first `summary.files` of them have started.
-    pub(crate) files: NonNull<[bun_ptr::Interned]>,
+    pub(crate) files: bun_ptr::BackRef<[bun_ptr::Interned]>,
 }
 
 impl<'a> TestRunner<'a> {

@@ -173,7 +173,7 @@ impl InternalMsgHolder {
         let len = messages.get_length(global)? as u32;
         for i in 0..len {
             let message = messages.get_direct_index(global, i)?;
-            if message.is_empty_or_undefined_or_null() {
+            if message.is_empty() {
                 continue;
             }
             // SAFETY: `this` is still live across re-entry — the IPC

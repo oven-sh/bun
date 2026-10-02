@@ -7093,8 +7093,13 @@ impl VirtualMachine {
                 }
 
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eq_ascii(b"cause") {
+                let is_error = kind == JSType::ErrorInstance;
+                let is_cause = is_error && field.eq_ascii(b"cause");
+                // The queue prints no members of an AggregateError. The render in place does.
+                if is_error
+                    && (!prev_had_errors || (is_cause && !value.is_aggregate_error(global_ref)))
+                {
+                    if is_cause {
                         saw_cause = true;
                     }
                     value.protect();

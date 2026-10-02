@@ -510,3 +510,196 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// An Error-valued `cause` is printed after the error that holds it, once,
+// for a `cause` that was assigned and for a `cause` from the constructor.
+describe.concurrent("an assigned cause", () => {
+  const assigned = n =>
+    `let e = new Error("leaf"); for (let i = 0; i < ${n}; i++) { const x = new Error("l" + i); x.cause = e; e = x; }`;
+  const constructed = n =>
+    `let e = new Error("leaf"); for (let i = 0; i < ${n}; i++) { e = new Error("l" + i, { cause: e }); }`;
+
+  async function run(source) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+  // What the printer writes, without the source previews and the stack frames.
+  const text = output =>
+    output.split("\n").filter(line => !/^\s*\d+ \| /.test(line) && !/^\s*\^\s*$/.test(line) && !/^\s+at /.test(line));
+  const renders = output =>
+    output
+      .split("\n")
+      .filter(line => /^\s*(error: |AggregateError: |\[Error \.\.\.\]|\[Circular\])/.test(line))
+      .map(line => line.trim());
+  const chain = n => [...Array.from({ length: n }, (_, i) => "error: l" + (n - 1 - i)), "error: leaf"];
+
+  test("Bun.inspect renders each error of the chain once", async () => {
+    const { stdout, exitCode } = await run(
+      [3, 6, 10]
+        .map(n => `{ ${assigned(n)} console.log("chain of " + ${n}); console.log(Bun.inspect(e, { depth: 100 })); }`)
+        .join("\n"),
+    );
+    const seen = {};
+    let current;
+    for (const line of stdout.split("\n")) {
+      if (line.startsWith("chain of ")) seen[line] = current = [];
+      else current?.push(...renders(line));
+    }
+    expect({ seen, exitCode }).toEqual({
+      seen: { "chain of 3": chain(3), "chain of 6": chain(6), "chain of 10": chain(10) },
+      exitCode: 0,
+    });
+  });
+
+  test.each(["throw e;", "Promise.reject(e);", "reportError(e);"])(
+    "a chain of 2000 ends at the depth cap: %s",
+    async statement => {
+      const { stdout, stderr, exitCode, signalCode } = await run(`${assigned(2000)} ${statement}`);
+      expect({ renders: renders(stderr), stdout, exitCode, signalCode }).toEqual({
+        renders: [...chain(2000).slice(0, 9), "[Error ...]"],
+        stdout: "",
+        exitCode: 1,
+        signalCode: null,
+      });
+    },
+  );
+
+  test("throw prints the same text as for a cause from the constructor", async () => {
+    const [a, c] = await Promise.all([run(`${assigned(12)} throw e;`), run(`${constructed(12)} throw e;`)]);
+    expect({ text: text(a.stderr), renders: renders(a.stderr), exitCode: a.exitCode }).toEqual({
+      text: text(c.stderr),
+      renders: [...chain(12).slice(0, 9), "[Error ...]"],
+      exitCode: 1,
+    });
+  });
+
+  test("console.log and Bun.inspect print the same text as for a cause from the constructor", async () => {
+    const { stdout, exitCode } = await run(`
+      const values = {
+        assigned: (() => { ${assigned(4)} return e; })(),
+        constructed: (() => { ${constructed(4)} return e; })(),
+      };
+      for (const [name, value] of Object.entries(values)) {
+        console.log("console.log: " + name);
+        console.log(value);
+        console.log("Bun.inspect: " + name);
+        console.log(Bun.inspect(value));
+      }
+      console.log("end");`);
+    const seen = {};
+    let current;
+    for (const line of text(stdout)) {
+      if (/^(console\.log|Bun\.inspect): /.test(line)) seen[line] = current = [];
+      else if (line === "end") break;
+      else current?.push(line);
+    }
+    expect({
+      "console.log": seen["console.log: assigned"],
+      "Bun.inspect": seen["Bun.inspect: assigned"],
+      "console.log renders": renders(seen["console.log: assigned"].join("\n")),
+      "Bun.inspect renders": renders(seen["Bun.inspect: assigned"].join("\n")),
+      exitCode,
+    }).toEqual({
+      "console.log": seen["console.log: constructed"],
+      "Bun.inspect": seen["Bun.inspect: constructed"],
+      "console.log renders": ["error: l3", "error: l2", "error: l1", "[Error ...]"],
+      "Bun.inspect renders": chain(4),
+      exitCode: 0,
+    });
+  });
+
+  // node:test assigns the failure of a subtest as `cause` at each level of t.test().
+  test("bun test prints the failure of a node:test subtest four levels deep once", async () => {
+    using dir = tempDir("assigned-cause-node-test", {
+      "nested.test.js": `
+        const { test } = require("node:test");
+        const assert = require("node:assert");
+        // Built at runtime so that the message is not in the source preview.
+        const message = ["the", "root", "failure"].join(" ");
+        test("level 1", async t => {
+          await t.test("level 2", async t => {
+            await t.test("level 3", async t => {
+              await t.test("level 4", async () => {
+                assert.strictEqual(1, 2, message);
+              });
+            });
+          });
+        });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./nested.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      renders: stderr.split("\n").filter(line => line.startsWith("AssertionError: ")),
+      exitCode,
+    }).toEqual({
+      renders: ["AssertionError: the root failure"],
+      exitCode: 1,
+    });
+  });
+
+  test("a cycle of assigned causes ends with [Circular]", async () => {
+    const { stderr, exitCode, signalCode } = await run(`
+      const [a, b, c, d] = ["a", "b", "c", "d"].map(name => new Error(name));
+      a.cause = b;
+      b.cause = c;
+      c.cause = d;
+      d.cause = c;
+      throw a;`);
+    expect({ renders: renders(stderr), exitCode, signalCode }).toEqual({
+      renders: ["error: a", "error: b", "error: c", "error: d", "[Circular]"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  // Only an Error-valued `cause` goes to the queue from a nested error. The
+  // queue prints no members of an AggregateError, so that value stays in place.
+  test("a nested error keeps its other values in its property list", async () => {
+    const shapes = {
+      "an Error-valued property that is not the cause": `
+        const mid = new Error("mid");
+        mid.other = new Error("other");
+        throw new Error("top", { cause: mid });`,
+      "a cause that is an AggregateError": `
+        const mid = new Error("mid");
+        mid.cause = new AggregateError([new Error("member")], "agg");
+        throw new Error("top", { cause: mid });`,
+    };
+    const names = Object.keys(shapes);
+    const results = await Promise.all(names.map(name => run(shapes[name])));
+    const seen = Object.fromEntries(
+      names.map((name, i) => [
+        name,
+        {
+          renders: renders(results[i].stderr),
+          inPlace: results[i].stderr.split("\n").filter(line => /^ (other|cause): /.test(line)).length,
+          exitCode: results[i].exitCode,
+        },
+      ]),
+    );
+    expect(seen).toEqual({
+      "an Error-valued property that is not the cause": {
+        renders: ["error: top", "error: mid", "error: other"],
+        inPlace: 1,
+        exitCode: 1,
+      },
+      "a cause that is an AggregateError": {
+        renders: ["error: top", "error: mid", "error: member", "AggregateError: agg"],
+        inPlace: 1,
+        exitCode: 1,
+      },
+    });
+  });
+});

@@ -5,6 +5,7 @@ import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
+import { parseArgs } from "util";
 import { getHeapStatistics } from "v8";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -520,6 +521,174 @@ it("process.env reads are never stale after a write (JIT inline-cache soundness)
   });
 });
 
+// On Windows process.env is a Proxy, which has no structure of its own to look at.
+it.concurrent.skipIf(isWindows)("reading process.env does not change its structure", async () => {
+  // JSC turns an object into a dictionary, which inline caches give up on, after 128 transitions.
+  const env = { ...bunEnv };
+  for (let i = 0; i < 200; i++) env["STRUCTURE_TEST_" + i] = "value " + i;
+  using dir = tempDir("process-env-structure", {
+    "index.mjs": `
+      import { describe } from "bun:jsc";
+      import { Worker, isMainThread, parentPort } from "node:worker_threads";
+
+      function probe() {
+        const shape = () => describe(process.env).match(/StructureID: \\d+|Dictionary/g).join(" ");
+        const before = shape();
+        let read = 0;
+        for (const key in process.env) read += typeof process.env[key] === "string";
+        read += Object.keys({ ...process.env }).length;
+        for (let i = 0; i < 20000; i++) read += process.env.STRUCTURE_TEST_MISSING !== undefined;
+        return { read: read >= 400, dictionary: before.includes("Dictionary"), changed: shape() !== before };
+      }
+
+      if (isMainThread) {
+        const main = probe();
+        const worker = await new Promise((resolve, reject) => {
+          new Worker(import.meta.filename).once("message", resolve).once("error", reject);
+        });
+        console.log(JSON.stringify({ main, worker }));
+      } else {
+        parentPort.postMessage(probe());
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = { read: true, dictionary: false, changed: false };
+  expect({ out: JSON.parse(stdout || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { main: expected, worker: expected },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// With more than 128 properties, JSC makes an object a dictionary when native code adds one more with a default slot.
+it.concurrent.skipIf(isWindows)("a new variable does not make process.env a dictionary", async () => {
+  // TZ, NODE_TLS_REJECT_UNAUTHORIZED and BUN_CONFIG_VERBOSE_FETCH are accessors on the main thread only.
+  const names = ["HTTP_PROXY", "https_proxy", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH", "NEW"];
+  const env = { ...bunEnv };
+  for (const name of names) delete env[name];
+  for (let i = Object.keys(env).length; i < 200; i++) env["STRUCTURE_TEST_" + i] = "value " + i;
+  using dir = tempDir("process-env-new-variable", {
+    "index.mjs": `
+      import { describe } from "bun:jsc";
+      import { Worker, isMainThread, parentPort } from "node:worker_threads";
+
+      // The writes after which process.env is a dictionary.
+      function probe() {
+        const dictionary = [];
+        const write = name => {
+          process.env[name] = "x";
+          if (describe(process.env).includes("Dictionary")) dictionary.push(name);
+        };
+        for (const name of ${JSON.stringify(names)}) write(name);
+        delete process.env.TZ;
+        write("TZ");
+        return dictionary;
+      }
+
+      if (isMainThread) {
+        // The worker starts with a copy of the variables, so it runs before the main thread adds any.
+        const worker = await new Promise((resolve, reject) => {
+          new Worker(import.meta.filename).once("message", resolve).once("error", reject);
+        });
+        console.log(JSON.stringify({ main: probe(), worker }));
+      } else {
+        parentPort.postMessage(probe());
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { main: [], worker: [] },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The values are read through getOwnPropertyDescriptor so that no inline cache is involved in the check.
+const countRawWrites = body => `
+  ${body}
+  let raw = 0;
+  for (let i = 0; i < 10000; i++) {
+    write(i);
+    if (typeof Object.getOwnPropertyDescriptor(process.env, "HOT_WRITE").value !== "string") raw++;
+  }
+  console.log(raw);
+`;
+// The concurrent JIT is off and the FTL threshold is low: write() reaches every tier early in the loop, in a debug build too.
+const hotWriteEnv = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000" };
+
+it.concurrent("process.env coerces every write from a hot site to a string", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", countRawWrites(`function write(value) { process.env.HOT_WRITE = value; }`)],
+    env: hotWriteEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "0\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// PutByStatus::computeFor(StructureSet) in JSC does not look at OverridesPut, so the DFG stores the value directly.
+it.concurrent.todo("process.env coerces every write from a hot site that also reads the variable", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      countRawWrites(`function write(value) { process.env.HOT_WRITE = value; return process.env.HOT_WRITE; }`),
+    ],
+    env: hotWriteEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "0\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Windows environment blocks are UTF-16.
+it.concurrent.skipIf(isWindows)("process.env has the value of a variable whose name is not valid UTF-8", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      "sh",
+      "-c",
+      `exec env "$(printf 'BAD\\377')=first" "$(printf 'BAD\\376')=second" "$0" -e 'console.log(JSON.stringify(Object.entries(process.env).filter(([k]) => k.startsWith("BAD"))))'`,
+      bunExe(),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Both names decode to "BAD\ufffd". The one that comes first in the environment keeps the name.
+  expect({ out: JSON.parse(stdout || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: [["BAD\ufffd", "first"]],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",
@@ -756,6 +925,78 @@ it("process.argv in testing", () => {
 
   // assert we aren't creating a new process.argv each call
   expect(process.argv).toBe(process.argv);
+});
+
+it("process.argv and process.execArgv are data properties", () => {
+  for (const key of ["argv", "execArgv"]) {
+    expect(Object.getOwnPropertyDescriptor(process, key)).toEqual({
+      value: process[key],
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+});
+
+it("util.parseArgs reads process.argv the way JavaScript does", () => {
+  const original = Object.getOwnPropertyDescriptor(process, "argv");
+  const options = { a: { type: "boolean" }, b: { type: "boolean" } };
+  try {
+    process.argv = ["bun", "script.js", "-a"];
+    expect(parseArgs({ options }).values).toEqual({ a: true });
+    Object.defineProperty(process, "argv", { get: () => ["bun", "script.js", "-b"], configurable: true });
+    expect(parseArgs({ options }).values).toEqual({ b: true });
+    Object.defineProperty(process, "argv", {
+      get() {
+        throw new Error("argv getter");
+      },
+      configurable: true,
+    });
+    expect(() => parseArgs({ options })).toThrow("argv getter");
+    for (const notAnArray of [1, {}]) {
+      Object.defineProperty(process, "argv", { value: notAnArray, configurable: true });
+      expect(parseArgs({ options }).values).toEqual({});
+    }
+  } finally {
+    Object.defineProperty(process, "argv", original);
+  }
+});
+
+// Bun.argv takes its value from process.argv on the first read. The child has not read it yet.
+it.concurrent("Bun.argv keeps no value when the process.argv getter throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        Object.defineProperty(process, "argv", {
+          get() {
+            throw new Error("argv getter");
+          },
+          configurable: true,
+        });
+        const thrown = [];
+        for (let i = 0; i < 2; i++) {
+          try {
+            Bun.argv;
+          } catch (error) {
+            thrown.push(error.message);
+          }
+        }
+        Object.defineProperty(process, "argv", { value: ["a", "b"], configurable: true });
+        console.log(JSON.stringify({ thrown, argv: Bun.argv, same: Bun.argv === process.argv }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { thrown: ["argv getter", "argv getter"], argv: ["a", "b"], same: true },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 describe("process.exitCode", () => {

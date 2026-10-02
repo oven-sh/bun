@@ -616,14 +616,18 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 // worker coerce to string, reject symbol keys, and validate
                 // defineProperty like Node's EnvSetter/EnvDefiner.
                 auto* envStructure = Bun::JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
-                JSC::JSObject* env = Bun::JSEnvironmentVariableMap::create(vm, envStructure);
+                auto* env = Bun::JSEnvironmentVariableMap::create(vm, envStructure);
 #endif
                 size_t i = 0;
                 for (auto k : map) {
                     // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
                     // ThrowScope). Seeded values are JSStrings, so this throws only on OOM
                     // or under a termination already requested for this starting worker.
+#if OS(WINDOWS)
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+#else
+                    env->putInitialValue(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+#endif
                     if (scope.exception()) [[unlikely]]
                         break;
                 }

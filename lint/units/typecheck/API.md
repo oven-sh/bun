@@ -318,7 +318,8 @@ This section says what the crate got so that cargo compiles them; the rows are i
   DiagnosticsCollection, RepopulateDiagnosticInfo, RepopulateDiagnosticKind, deep_clone_node}`: files of the layers
   after this one name them and no file defines them (the probe of the round-4 survey). The contract's
   `tscore/golang.rs` and `ast_diagnostic.rs` hold all but `deep_clone_node`. Layer 4 brought `Text`, `DiagnosticId` and
-  `DiagnosticStore`; the others wait ("Binder: the wiring of `binder`" below).
+  `DiagnosticStore`; the others wait ("Binder: the wiring of `binder`" below). Layer 6 brought `deep_clone_node`
+  ("Emit printer: the wiring of `printer`" at the end of this file).
 - `lowering::ParseDiagnostic` and `importer::javascript::ParseDiagnostic` stay two types until `ast/diagnostic.rs` has
   the diagnostic itself. It has since `d0230a94c6`; the two types are still there.
 
@@ -414,7 +415,8 @@ the functions, and the four places of `binder.go` that call what was added, read
   dropped with everything else of the binding.
 - `Bound::heap_bytes` does not count the diagnostics.
 - `crate::core::{Map, LiveList, Memo}` and `crate::ast::{Diagnostics, DiagnosticsCollection, RepopulateDiagnosticInfo,
-  RepopulateDiagnosticKind, deep_clone_node}`: files of later layers name them and no file defines them.
+  RepopulateDiagnosticKind, deep_clone_node}`: files of later layers name them and no file defines them
+  (`deep_clone_node` is in `ast/deepclone.rs` since layer 6).
 - No test reads what was added. The tests of the contract's diagnostics block (`diagnostics_tests.rs`) need the
   comparisons and the writer, which are not in the tree.
 
@@ -1334,3 +1336,61 @@ under a minute without `pien`):
   `is_valid_spread_type`, `get_type_of_property_or_index_signature_of_type(t, name)`, `get_type_with_facts(t, TypeFacts)`.
 - Grammar checks, each called as a statement: `check_grammar_await_or_await_using`, `check_grammar_decorator`,
   `check_grammar_jsx_element`, `check_grammar_jsx_expression`.
+
+## Emit printer: the wiring of `printer`
+
+Commits `a518aba15d` (`ast/deepclone.rs`), `a8df180054` (`printer/factory.rs`, `printer/printer.rs`,
+`printer/utilities.rs`) and `c73680fe1d` (`ast/mod.rs`, and `pub mod printer;` with `#![allow(dead_code)]` in
+`lib.rs`), all three written by the job that commits the worktree. The other ten files of `printer/` are those of
+round 1, unchanged. This section says what a caller of the printer and of a deep clone writes; the rows and what was
+checked are in PORT_STATUS.md, "Emit printer".
+
+### How a caller writes the calls
+
+- `crate::printer::NodeFactory<'a, 'c>` has two lifetimes: `'a` is the tree and `'c` the borrow of the emit context.
+  `new_node_factory(a: Ast<'a>, context: &'c mut EmitContext) -> NodeFactory<'a, 'c>`. A factory is made where it is
+  used and dropped with the statement, so the context is free again after it:
+  `new_node_factory(a, self.emit_context).new_token(Kind::DotToken)`.
+- The factory implements `NodeSink`, `NodeUpdate` and `NodeClone` of `crate::ast`. The constructors (`new_token`,
+  `new_identifier`, ...) are methods of the trait `crate::ast::NodeFactory` and the update functions of
+  `crate::ast::NodeUpdater`: a file that calls them imports the trait. `clone_node(node)` (`Node.Clone(f)`: the clone
+  is marked as synthesized and linked to its original) and `deep_clone_node(node)` (`f.DeepCloneNode(node)`) are
+  methods of the factory itself and need no import.
+- `crate::ast::deep_clone_node(f: &mut F, a: Ast<'_>, node: NodeId) -> NodeId` for `F: NodeClone` is
+  `NodeFactory.DeepCloneNode`: a copy of the node and of everything that `VisitEachChild` visits below it, made with
+  `f`. Every node and every list of the copy is of the open store and has the range (-1, -1); the last node of a list
+  that had a trailing comma has (-2, -2). The nil node gives the nil node.
+- `crate::ast::NodeClone: NodeUpdate` is the factory that upstream's three `Clone` methods take:
+  `clone_node(node)`, `clone_node_list(list)`, `clone_modifier_list(list)`. `ast::Factory` and `printer::NodeFactory`
+  implement it. Both also have `clone_node` as a method of their own, which the trait method calls: a call on the
+  type itself needs no import.
+- `Printer.Write` is `Printer::write_exported(node, source_file, writer)`: `write(text)` of printer.go 304 has the
+  same snake case name and stays `write`, private to `printer/printer.rs`.
+- `lib.rs` carries `#![allow(dead_code)]`: the rust lint `dead_code` is off for the whole crate from `c73680fe1d` on,
+  every other lint of the workspace stays denied.
+
+### Differences from upstream
+
+- `get_deep_clone_visitor(a, synthetic_location, run)` calls `run` with the visitor where upstream returns it: a
+  `NodeVisitor` borrows its callbacks, which live in that call. The factory is the state `C` of the visitor, so it is
+  the argument of the visitor's methods (`visitor.visit_node_exported(f, node)`) and not a capture of the callbacks.
+- The visit callback of the deep clone checks the stack before it visits the children of a node; without stack left
+  it records `FaultKind::StackLimit` and clones the node as a leaf.
+- A place of `printer/` that upstream's code has and the port has not records a fault with the name of the upstream
+  function (`a.unhandled("Printer.emitFunctionBody", node)`), 22 places, and is not an entry of the stand-in log.
+  Layer 6 did not change that.
+
+### What waits
+
+- `checker/printer.rs` 162, 265, 333 and 373 call `p.write(node, source_file, writer)`: the name is `write_exported`.
+- `checker/nodebuilderimpl.rs` 214 names `NodeFactory<'c>`: with the checker's `Checker<'a>` the type is
+  `NodeFactory<'a, 'c>`.
+- `Printer<'p>` still has one lifetime for the tree (`a: Ast<'p>`), for the emit context (`&'p mut EmitContext`) and
+  for the writer (`&'p mut (dyn EmitTextWriter + 'p)` of `write_exported`), and `Ast` is invariant. So a caller lends
+  its emit context and its writer for as long as the tree is used. No file of layers 1 to 6 makes a printer, so
+  nothing fails there. The four `create_printer_*` of `checker/printer.rs` take the context out of the checker for
+  one block: by the reasoning that explains the 18 borrow errors of `emit_property_access_expression`, such a printer
+  does not accept that. This was not compiled against the checker; the comment at the end of
+  `round2-layer6-printer/probe.rs` has a caller of a stand-in printer that rustc rejects for this reason. The answer
+  would be the one `NodeFactory` got, a second lifetime for the borrows: a change of `printer/printer.rs`, not of its
+  callers.

@@ -653,3 +653,95 @@ tree, and no `.bits()`, `^` or `!` on a flag value in `printer/`.
 | `nodebuilder/types.go` 8-23 (`SymbolTracker`, 12 methods) | `nodebuilder/types.rs` 4-27 | translated | |
 | `nodebuilder/types.go` 25-66 (`Flags`, 33 constants) | `nodebuilder/types.rs` 81-116 | translated | |
 | `nodebuilder/types.go` 68-78 (`InternalFlags`, 5 constants) | `nodebuilder/types.rs` 118-124 | translated | |
+
+## Emit printer (`printer`)
+
+The 13 files of `printer/` (4,841 lines) came in with `5b2df1d046` (the three writers and the writer interface),
+`2936f8152a` (the emit context, its factory, the flags, the resolver types, `utilities.rs`) and `92805dc7b2` (the
+printer and the name generator); `1eb0da9d53` took two lines out of `printer.rs`. Layer 6 of round 2 declares the directory: the line
+`pub mod printer;` of `lib.rs` is `c73680fe1d`, next to `pub mod nodebuilder;`, whose flag macro four files of
+`printer/` call. The commits of this layer were written by the job that commits the worktree ("typecheck: compile the
+port, work in progress"): `a518aba15d` (`ast/deepclone.rs`), `a8df180054` (`printer/factory.rs`, `printer/printer.rs`,
+`printer/utilities.rs`), `c73680fe1d` (`ast/mod.rs`, `lib.rs`). `src/typecheck/Cargo.toml` did not change: the
+directory names `bun_core` and `bun_collections` only.
+
+What the look-ahead of the round-7 survey reported for the directory (its log was not on the machine, so this is the
+report and not a reading of it), and what answers each point:
+
+- `crate::ast::deep_clone_node` had no definition: `ast/deepclone.rs` is a port of `ast/deepclone.go` 6-73, the row is
+  under "Node table". A deep clone clones nodes with the hooks of the caller's factory, and the two traits of
+  `ast/factory.rs` have no clone, so the file has a third, `NodeClone: NodeUpdate` (`clone_node`, `clone_node_list`,
+  `clone_modifier_list`: `Node.Clone`, `NodeList.Clone`, `ModifierList.Clone`, which take the factory upstream). It is
+  implemented for `ast::Factory` (by its own methods of the same names) in `ast/deepclone.rs` and for
+  `printer::NodeFactory` (a node through `on_create` and `on_clone`, a list as `Factory` does) in `printer/factory.rs`.
+  `ast/factory.rs` did not change.
+- `write` twice in `impl Printer` (`write(text)` of printer.go 304 and `Write(node, sourceFile, writer, ..)` of 5069):
+  the exported one is `write_exported`, as the tree names every such pair (API.md). No file of layers 1 to 6 calls it.
+- `new_token` not found at `printer.rs` 2793: the file imports the trait `crate::ast::NodeFactory` now.
+- `raw_text` on an `Option` at `utilities.rs` 263: `a.template_literal_like_data(node).unwrap_or_default().raw_text`.
+  Upstream dereferences `node.TemplateLiteralLikeData()`, which is not nil for the four kinds of that arm.
+- 18 borrow errors in `Printer::emit_property_access_expression`: `NodeFactory<'c>` gave the tree and the borrow of the
+  emit context one lifetime, and `Ast` is invariant. It is `NodeFactory<'a, 'c>` and
+  `new_node_factory<'a, 'c>(a: Ast<'a>, context: &'c mut EmitContext)` now; `printer.rs` did not change for this.
+- `EndOf::NodeList` is never constructed (`utilities.rs` 426; the `case (*ast.NodeList)` of `tryGetEnd`, which no
+  caller of `greatestEnd` reaches upstream either): the variant and its arm stay, and `lib.rs` carries
+  `#![allow(dead_code)]` from `c73680fe1d` on, the one attribute the goal of round 2 gives it.
+
+No `cargo check`, no `cargo clippy` and no `cargo test` was run with these commits: the survey that follows
+`c73680fe1d` is the first cargo compile of the 13 files and of `ast/deepclone.rs` in the real crate, so the states
+below are `translated` until that run passes. What was checked when they were written:
+
+- Read side by side with upstream: `ast/deepclone.go` 1-73 and what it calls (`ast/ast.go` 60-173: the hooks,
+  `updateNode`, `cloneNode`, `NodeList.Clone`, `ModifierList.Clone`, `HasTrailingComma`; `ast/visitor.go` 1-140),
+  `printer/factory.go` 13-27, `printer/emitcontext.go` 71-87 and 446-474, `printer/printer.go` 280-306 and 5069-5090,
+  `printer/utilities.go` 236-300 and 565-610. Against the tree: every name that `ast/deepclone.rs` uses, at its
+  definition (`ast/visitor.rs` 10-17, 20-62, 64-76, 109, 149, 164, 213; `ast/factory.rs` 15-37, 75, 90, 104;
+  `ast/reader.rs` 288, 572, 608, 631, 707, 714; `ast/ids.rs` 73-78; `core/text.rs` 15; `internal.rs` 16).
+- `round2-layer6-printer/probe.rs`: one file of 521 lines that stands alone, no file of the crate is part of it. Its
+  stand-ins have the shapes of the tree with fewer members (an invariant `Ast<'a>`, the visitor record and a hooks
+  record with three of the nine hooks, three factory traits, `Factory` with its three inherent clone methods, a
+  `Printer<'p>` whose method makes a factory from `self.emit_context` as `emit_property_access_expression` does). From
+  the tree it has the five aliases of `ast/visitor.rs` letter for letter, the code lines of `NodeClone`, of its impl
+  for `Factory`, of `get_deep_clone_visitor` and of `deep_clone_node` (without the comments and without `.as_slice()`,
+  as its `nodes` answers a slice), and the code of `printer::NodeFactory` with its inherent and its `NodeClone` impl.
+  `rustc --edition 2024` alone (the toolchain of the worktree), `#![deny(warnings)]` and `dead_code`,
+  `unreachable_pub`, `unused_imports`, `unused_variables`, `unused_mut` denied: exit 0, no warning. It answers these
+  questions and no other: a closure with the parameter `&NodeVisitor<'_, '_, F>` may call the visitor in its body and
+  is a `VisitFn`, a `NodesHook` and a `ModifiersHook`; `&|f, make| make(f)` is a `FactoryFn<'_, F>`;
+  `Factory::clone_node(self, node)` inside `impl NodeClone for Factory` is the inherent method (no
+  `unconditional_recursion`); `deep_clone_node(self, self.a, node)` borrows in two phases; with two lifetimes on the
+  factory a method of `Printer<'_>` may make one from `self.emit_context`. The comment at its end holds a second body
+  of `main` that rustc rejects (E0503): it is the point about `Printer<'p>` under "What waits" of the printer section
+  of API.md.
+- `rustfmt --check --edition 2024 src/typecheck/lib.rs`, which follows every `mod` line: exit 0.
+- `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck` on the tree of `c73680fe1d`: 117 of 180 files are
+  reached, and no file of `printer/` or `ast/` is outside (the 63 files of `checker`, `evaluator` and
+  `modulespecifiers` are).
+- `python3 /workspace/notes/lint/tools/commentcop.py fd055451b0`: no added run of two comment lines. The new and the
+  changed lines have no `unsafe`, `unwrap()`, `expect(`, `panic!`, `todo!`, `unimplemented!`, `unreachable!`.
+- Not looked at: any body of the 13 files against upstream beyond the lines above; clippy on any of them.
+
+One difference from upstream in `ast/deepclone.rs`: the visit callback asks `bun_core::StackCheck` before it visits
+the children of a node, as the walks of `ast/utilities.rs` and `ast/ast.rs` do. Without stack left it records the fault
+`StackLimit` and clones the node as a leaf (with its location made synthetic), so the copy shares the children below
+that depth with the original.
+
+What the files of the printer do where upstream's code is not ported, as the tree of `c73680fe1d` has it and this
+layer did not change it: 22 places record a fault with the name of the upstream function
+(`a.unhandled("Printer.emitFunctionBody", node)` and the like: `grep -n 'unhandled.*"Printer\.\|"EmitContext\.'
+src/typecheck/printer/*.rs`) and return the zero value. They are not entries of the stand-in log of `internal.rs`.
+
+The rows below count by name (`round2-layer6-printer/names.py <file.go> --list`: a Go function counts when a Rust
+function of `printer/` has its name, underscores, case and the suffix `_exported` aside; it does not compare bodies).
+
+| upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
+| --- | --- | --- | --- |
+| `printer/printer.go` (378 functions) | `printer/printer.rs` (3,133 lines) | translated | by name, 180; 198 nowhere in the tree. The head comment of the file names the limit: the printer as far as the type printer of the checker runs it, no source maps. `Printer.Write` is `write_exported` |
+| `printer/emitcontext.go` (87 functions) | `printer/emitcontext.rs` | translated | by name, 24; 55 nowhere in the tree (variable and lexical environments, emit helpers, snippet elements, assigned names, the visitor hooks of a transformation) and 8 whose name only another directory has |
+| `printer/factory.go` 13-27 (`NodeFactory`, `NewNodeFactory`) | `printer/factory.rs` (`NodeFactory<'a, 'c>`, `new_node_factory`, and the three hooks as its impls of `NodeSink`, `NodeUpdate` and `NodeClone`) | translated | 29-1315, 89 functions: generated names, the expressions and helper calls that transformations build |
+| `printer/namegenerator.go` (25 functions) | `printer/namegenerator.rs` | translated | by name, 3; 21 nowhere in the tree. The head comment: `GenerateName` returns `None` where upstream calls back into the printer |
+| `printer/generatedidentifierflags.go` (9 functions) | `printer/generatedidentifierflags.rs` | translated | by name, 2; 7 nowhere in the tree |
+| `printer/utilities.go` (51 functions) | `printer/utilities.rs` | translated | by name, 20; 30 nowhere in the tree |
+| `printer/textwriter.go` (33), `printer/singlelinestringwriter.go` (27), `printer/semicolon_writer.go` (28), `printer/emittextwriter.go` (the interface) | `printer/textwriter.rs`, `printer/singlelinestringwriter.rs`, `printer/semicolon_writer.rs`, `printer/emittextwriter.rs` | translated | by name, all 88 functions |
+| `printer/emitflags.go`, `printer/emitresolver.go` | `printer/emitflags.rs`, `printer/emitresolver.rs` | translated | the head comment of `emitresolver.rs`: the result types of the accessibility checks only, not the `EmitResolver` interface |
+| `printer/changetrackerwriter.go`, `printer/emithost.go`, `printer/helpers.go`, `printer/sourcefilemetadataprovider.go`, `printer/syntheticfile.go` | | not started | the language service, declaration emit and the emit helpers of transformations |

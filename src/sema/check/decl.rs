@@ -1614,7 +1614,13 @@ impl<'p> Checker<'p> {
         if node.is_none() {
             return (None, true);
         }
-        let default = self.type_from_node(of, node);
+        // `getTypeArguments` of a deferred type reference asks for the default when the reference is used. Here it is asked for where
+        // the reference is written, which may be while the default is worked out.
+        let default = if self.stack.contains(&Query::TypeNode(of, node)) {
+            self.deferred_type_argument(of, node)
+        } else {
+            self.type_from_node(of, node)
+        };
         let is_settled = self.p.type_node_types.get(of, node.idx()).is_some();
         let default = match lists {
             Some((theirs, own)) => {
@@ -2622,6 +2628,12 @@ impl<'p> Checker<'p> {
                     let params = self.local_type_params_of_symbol(sym);
                     args = self.fill_type_args_as(&params, &args, true);
                 }
+                if most != 0
+                    && flags.contains(SymFlags::TYPE_ALIAS)
+                    && !flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+                {
+                    return self.type_from_type_alias_reference(file, node, sym, false, &args);
+                }
                 self.written_type_reference(sym, &args)
             }
             TypeNodeKind::Ref { name, args } => {
@@ -2675,41 +2687,16 @@ impl<'p> Checker<'p> {
                     let params = self.local_type_params_of_symbol(sym);
                     args = self.fill_type_args_as(&params, &args, true);
                 }
-                // `getTypeFromTypeAliasReference`: a reference to a generic alias that is the body of another alias is instantiated
-                // under that alias, which is part of the cache key (`getConditionalTypeKey`).
-                if self.reports_depth
-                    && most != 0
-                    && !is_class_or_interface
-                    && flags.contains(SymFlags::TYPE_ALIAS)
-                    && !self.stack.contains(&Query::Declared(sym))
-                    && let Some(host) = self.alias_with_body(file, scope, node)
-                {
-                    let host = self
-                        .files()
-                        .sym(file, self.bound(file).alias_symbol[host.idx()]);
-                    let declared = self.declared_type_by_name(sym, flags);
-                    self.aliased_reference = matches!(self.data(declared), TypeData::Cond { .. })
-                        && (self.is_local_type_alias(sym) || !self.is_local_type_alias(host));
-                }
-                let mut ty = self.written_type_reference(sym, &args);
-                self.aliased_reference = false;
-                if most != 0
+                let mut ty = if most != 0
                     && !is_class_or_interface
                     && flags.contains(SymFlags::TYPE_ALIAS)
                     // `getIntendedTypeFromJSDocTypeReference` instantiates `Record` for `Object<K, V>` under no alias.
                     && !self.is_jsdoc_object_with_arguments(file, node)
                 {
-                    if let Some((alias, type_arguments)) =
-                        self.alias_for_type_node(file, scope, node)
-                        && (self.is_local_type_alias(sym) || !self.is_local_type_alias(alias))
-                    {
-                        ty = self.instantiated_under_alias(sym, &args, ty, alias, &type_arguments);
-                    } else if found != sym && args.len() < most {
-                        // The name is that of an import, an export or a re-export: the alias it stands for, with the type arguments
-                        // that are written. With all of them written that is the alias `ty` has.
-                        ty = self.instantiated_under_alias(sym, &args, ty, sym, &args);
-                    }
-                }
+                    self.type_from_type_alias_reference(file, node, sym, found != sym, &args)
+                } else {
+                    self.written_type_reference(sym, &args)
+                };
                 if is_deferred && self.has_type_variables(ty) {
                     self.p.deferred_references.insert(ty, ());
                 }
@@ -2907,6 +2894,31 @@ impl<'p> Checker<'p> {
             }
         }
         TypeId::UNRESOLVED
+    }
+
+    /// `getTypeFromTypeAliasReference`, of the generic alias `sym`, past the count of the type arguments. `args`: those written at
+    /// `node`. `is_imported`: the name is that of an import, an export or a re-export.
+    fn type_from_type_alias_reference(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        sym: Sym,
+        is_imported: bool,
+        args: &[TypeId],
+    ) -> TypeId {
+        let scope = self.bound(file).type_scope[node.idx()];
+        let new_alias = match self.alias_for_type_node(file, scope, node) {
+            // An alias declared in a function does not host a reference to a top-level alias.
+            Some(alias) if self.is_local_type_alias(sym) || !self.is_local_type_alias(alias.0) => {
+                Some(alias)
+            }
+            _ if is_imported => Some((sym, SmallVec::from_slice(args))),
+            _ => None,
+        };
+        let new_alias = new_alias
+            .as_ref()
+            .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
+        self.type_reference_type(sym, args, new_alias)
     }
 
     /// `type_reference`, for a reference that is written out.
@@ -3160,7 +3172,8 @@ impl<'p> Checker<'p> {
         // declaration is never expanded here.
         let is_self_reference = !args.is_empty()
             && self.enclosing_alias(file, self.bound(file).type_scope[node.idx()]) == Some(sym);
-        if !is_self_reference {
+        let is_under_way = self.stack.contains(&Query::TypeNode(file, node));
+        if !is_self_reference && !is_under_way {
             let cycles = self.cycles;
             let ty = self.type_from_node(file, node);
             if self.cycles == cycles || self.is_known(ty) {
@@ -3208,6 +3221,16 @@ impl<'p> Checker<'p> {
 
     /// `sym<args>`, where `sym` is not an alias for something imported.
     pub fn type_reference(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
+        self.type_reference_type(sym, args, None)
+    }
+
+    /// `getTypeReferenceType`. `alias`: what `getTypeAliasInstantiation` is handed, where `sym` is a generic type alias.
+    pub(super) fn type_reference_type(
+        &mut self,
+        sym: Sym,
+        args: &[TypeId],
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
         let flags = self.type_flags_of_symbol(sym);
         if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
             let declared = self.declared_type(sym);
@@ -3238,10 +3261,17 @@ impl<'p> Checker<'p> {
                 // Inside its own definition, where it can wait, it stays a name, to be looked up when somebody needs to know. So it
                 // does where TypeScript would not have come back to it.
                 if is_put_off || !self.mark_circle_from(i) {
-                    return self.intern(TypeData::LazyAlias {
+                    let reference = self.intern(TypeData::LazyAlias {
                         sym,
                         args: args.into(),
                     });
+                    // It is instantiated when it is forced.
+                    return match alias {
+                        Some((alias, type_arguments)) => {
+                            self.with_alias(reference, alias, type_arguments)
+                        }
+                        None => reference,
+                    };
                 }
                 // `getDeclaredTypeOfTypeAlias`, `pushTypeResolution`: it depends on itself, which is an error.
                 self.mark_tainted_from(i + 1);
@@ -3272,7 +3302,10 @@ impl<'p> Checker<'p> {
             }
             let declared = self.declared_type_by_name(sym, flags);
             let mapper = self.mapper_from(&params, &args);
-            return self.instantiate(declared, mapper);
+            return match alias {
+                Some(alias) => self.instantiate_with_alias(declared, mapper, alias),
+                None => self.instantiate(declared, mapper),
+            };
         }
         if flags.intersects(SymFlags::TYPE) {
             return self.declared_type_by_name(sym, flags);

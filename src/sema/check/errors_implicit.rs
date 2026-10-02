@@ -450,32 +450,18 @@ impl Checker<'_> {
                 }
             }
         }
-        // What `cloneSymbol` makes repeats the declarations of another.
-        let mut declared: Vec<(SymbolId, Atom, ExprId)> = Vec::new();
-        for symbol in &bound.symbols {
-            if symbol.flags.contains(SymFlags::ASSIGNMENT)
-                && !symbol.flags.contains(SymFlags::TRANSIENT)
-            {
-                for &decl in &symbol.decls {
-                    if let Decl::Expando(e) = decl {
-                        declared.push((symbol.parent, symbol.name, e));
-                    }
-                }
+        // The symbols that assignments add to.
+        let parent = |&e: &ExprId| bound.symbols[bound.expr_symbol[e.idx()].idx()].parent;
+        let mut owners: Vec<SymbolId> = bound.expando_declarations.iter().map(parent).collect();
+        owners.sort_unstable();
+        owners.dedup();
+        for owner in owners {
+            // Each run of equal names is one property.
+            for of_name in self.expandos_of(file, owner).chunk_by(|a, b| a.0 == b.0) {
+                let (name, first) = of_name[0];
+                self.check_assigned_property_implicit_any(file, name, first, None, out);
             }
         }
-        self.check_expandos_implicit_any(file, &declared, &bound.declared_fn_keyed_expandos, out);
-        self.check_expandos_implicit_any(
-            file,
-            &bound.fn_expr_expandos,
-            &bound.fn_expr_keyed_expandos,
-            out,
-        );
-        self.check_expandos_implicit_any(
-            file,
-            &bound.object_expandos,
-            &bound.object_keyed_expandos,
-            out,
-        );
         // The list is sorted: each run of equal (class, is_static, name) is one property.
         let properties = &bound.this_properties;
         let mut i = 0;
@@ -486,41 +472,6 @@ impl Checker<'_> {
                 .take_while(|x| (x.0, x.1, x.2) == (class, is_static, name))
                 .count();
             self.check_assigned_property_implicit_any(file, name, first, Some(class), out);
-        }
-    }
-
-    /// Checks each property declared by `named` (`f.name = value`) and `keyed` (`f[key] = value`). Both lists are sorted by owner,
-    /// `named` then by name and declaration.
-    fn check_expandos_implicit_any<K: Copy + Ord>(
-        &mut self,
-        file: FileId,
-        named: &[(K, Atom, ExprId)],
-        keyed: &[(K, ExprId, ExprId)],
-        out: &mut Vec<Diagnostic>,
-    ) {
-        // `lateBindMember`: the type of `key` names the property, which merges with the `f.name = value` of that name.
-        let mut merged = Vec::new();
-        let declarations = if keyed.is_empty() {
-            named
-        } else {
-            merged.extend_from_slice(named);
-            for &(owner, key, declaration) in keyed {
-                if let Some(name) = self.member_name(file, PropKey::Computed(key)) {
-                    merged.push((owner, name, declaration));
-                }
-            }
-            merged.sort_unstable();
-            &merged[..]
-        };
-        // Each run of equal (owner, name) is one property.
-        let mut i = 0;
-        while i < declarations.len() {
-            let (owner, name, first) = declarations[i];
-            i += declarations[i..]
-                .iter()
-                .take_while(|x| x.0 == owner && x.1 == name)
-                .count();
-            self.check_assigned_property_implicit_any(file, name, first, None, out);
         }
     }
 
@@ -1298,7 +1249,7 @@ impl Checker<'_> {
                             return true;
                         }
                         // Otherwise it is the `children` of what the tag takes, which is looked up by name for `<div>`.
-                        if !matches!(hir[tag].kind, ExprKind::String(_)) {
+                        if self.jsx_intrinsic_tag_name(file, tag).is_none() {
                             let component = self.type_of_expr(file, tag);
                             if !self.is_known(component) || self.is_uncertain(file, tag) {
                                 return false;

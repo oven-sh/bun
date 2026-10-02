@@ -157,10 +157,12 @@ impl Checker<'_> {
             // The binder objects to those of `export as namespace N`. Nothing else has any.
             _ => return None,
         };
-        // `reportObviousDecoratorErrors`. Those of a class are not in the list yet.
+        // `reportObviousDecoratorErrors`, `CanHaveIllegalDecorators`
         let is_decorator =
             |modifier: &&Modifier| matches!(modifier.kind, ModifierKind::Decorator(_));
-        if let Some(decorator) = hir.modifier_list(modifiers).iter().find(is_decorator) {
+        if !matches!(kind, StmtKind::Class(_))
+            && let Some(decorator) = hir.modifier_list(modifiers).iter().find(is_decorator)
+        {
             return Some(GrammarError {
                 start: decorator.pos,
                 code: 1206,

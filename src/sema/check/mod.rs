@@ -541,7 +541,6 @@ impl Program {
             reports_depth: false,
             deep_events: 0,
             unreported_event: 0,
-            aliased_reference: false,
             excessive_at: Vec::new(),
             free_relaters: Vec::new(),
             reliability: 0,
@@ -811,8 +810,6 @@ pub struct Checker<'p> {
     deep_events: u64,
     /// `deep_events` after the last hit that could not be reported.
     unreported_event: u64,
-    /// `getAliasSymbolForTypeNode`: the type reference being resolved is the whole body of a type alias.
-    aliased_reference: bool,
     /// Where 2589 was reported (file, start, end). `check_excessive_depth` drains it.
     excessive_at: Vec<(FileId, u32, u32)>,
     free_relaters: Vec<relate::Relater>,

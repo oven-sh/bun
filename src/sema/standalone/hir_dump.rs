@@ -1066,14 +1066,16 @@ impl Dump<'_> {
             members,
             pos,
             start,
+            modifiers,
         } = node!(self, depth, label, classes, id);
-        put!(
-            self,
-            depth,
-            label,
+        let mut head = format!(
             "Class name={} name_pos={name_pos} flags={flags:?} pos={pos} start={start}",
             self.q(name)
         );
+        for modifier in self.file.modifier_list(modifiers) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
+        self.line(depth, label, &head);
         let d = depth + 1;
         self.span(d, "type_params", type_params, Self::type_param);
         self.expr(d, "extends", extends);

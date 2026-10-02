@@ -5358,9 +5358,10 @@ impl Files {
                 StmtKind::ExportStar { star_pos, .. } => star_pos,
                 _ => hir[statement].start,
             },
-            Decl::ModuleExports(e) | Decl::ExportsProperty(e) | Decl::Expando(e) => {
-                start_inside_parentheses(hir, e)
-            }
+            Decl::ModuleExports(e)
+            | Decl::ExportsProperty(e)
+            | Decl::Expando(e)
+            | Decl::ObjectLiteral(e) => start_inside_parentheses(hir, e),
             Decl::File | Decl::CommonJsVariable => 0,
         }
     }

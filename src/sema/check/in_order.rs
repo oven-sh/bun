@@ -573,12 +573,16 @@ impl Checker<'_> {
             }
             // `checkJsxElementDeferred`
             ExprKind::Jsx(jsx) => {
-                self.check_expression(file, hir[jsx].tag);
+                let component = |c: &Self, tag: ExprId| match tag.some() {
+                    Some(tag) if c.jsx_intrinsic_tag_name(file, tag).is_none() => tag,
+                    _ => ExprId::NONE,
+                };
+                self.check_expression(file, component(self, hir[jsx].tag));
                 self.check_type_nodes(file, hir[jsx].type_args);
                 for p in hir[jsx].attrs.iter() {
                     self.check_expression(file, hir[p].value);
                 }
-                self.check_expression(file, hir[jsx].close_tag);
+                self.check_expression(file, component(self, hir[jsx].close_tag));
                 for x in hir.ids(hir[jsx].children) {
                     self.check_expression(file, x);
                 }

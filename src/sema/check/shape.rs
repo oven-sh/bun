@@ -1,7 +1,7 @@
 //! What is in an object type: properties, signatures, index signatures.
 
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
 use smallvec::{SmallVec, smallvec};
 
@@ -366,18 +366,10 @@ impl<'p> Checker<'p> {
                 }
                 // `instantiate` marks the object of an indexed access that waits on an alias.
                 self.note_depth(Deep::Instantiation(ty, MapperId::IDENTITY), None);
-                let (hosted, hosted_arguments) = (*sym, args);
-                let expanded = self.type_reference(hosted, hosted_arguments);
-                match self.stored_alias(ty) {
-                    Some((alias, type_arguments)) => self.instantiated_under_alias(
-                        hosted,
-                        hosted_arguments,
-                        expanded,
-                        *alias,
-                        type_arguments,
-                    ),
-                    None => expanded,
-                }
+                let alias = self
+                    .stored_alias(ty)
+                    .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
+                self.type_reference_type(*sym, args, alias)
             }
             _ => ty,
         }
@@ -687,18 +679,8 @@ impl<'p> Checker<'p> {
                         }
                     }
                     if let [(file, func)] = decls[..] {
-                        let bound = c.bound(file);
-                        let named = Bound::expandos_of(&bound.fn_expr_expandos, func);
-                        let keyed = Bound::expandos_of(&bound.fn_expr_keyed_expandos, func);
-                        if !named.is_empty() || !keyed.is_empty() {
-                            let mut b = Builder {
-                                shape,
-                                ..Default::default()
-                            };
-                            c.add_all_expandos(&mut b, file, named, keyed);
-                            c.get_named_members(&mut b.shape.props, |_| true, &[]);
-                            shape = b.shape;
-                        }
+                        shape = c.with_expandos(shape, file, c.bound(file).fn_symbol[func.idx()]);
+                        c.get_named_members(&mut shape.props, |_| true, &[]);
                     }
                     shape
                 });
@@ -2210,8 +2192,7 @@ impl<'p> Checker<'p> {
                     self.add_members(&mut b, file, members, true, MapperId::IDENTITY, false);
                     self.add_this_properties(&mut b, file, c, true);
                     if hir.is_js && file == sym.file {
-                        let named = self.bound(file).expandos_among_exports(sym.id);
-                        Self::add_expandos(&mut b, file, &named);
+                        self.add_expandos(&mut b, file, sym.id);
                     }
                     // `symbol.Members[InternalSymbolNameConstructor]`: `declareClassMember` puts a static one in the exports.
                     let constructors: Vec<MemberId> = hir[c]
@@ -2344,10 +2325,7 @@ impl<'p> Checker<'p> {
                 self.add_namespace_exports(&mut b, sym);
                 // What is assigned to a name declares it only if nothing else does. `mergeSymbolTable`: every part brings its own.
                 for part in self.files().parts(sym) {
-                    let bound = self.bound(part.file);
-                    let named = bound.expandos_among_exports(part.id);
-                    let keyed = Bound::expandos_of(&bound.declared_fn_keyed_expandos, part.id);
-                    self.add_all_expandos(&mut b, part.file, &named, keyed);
+                    self.add_expandos(&mut b, part.file, part.id);
                 }
             }
             Origin::EnumObject(sym) => {
@@ -2526,23 +2504,64 @@ impl<'p> Checker<'p> {
         all
     }
 
-    /// The properties `f.name = value` declares, from a list sorted by name.
-    fn add_expandos<K>(b: &mut Builder, file: FileId, expandos: &[(K, Atom, ExprId)]) {
-        let mut i = 0;
-        while i < expandos.len() {
-            let name = expandos[i].1;
-            let end = i + expandos[i..].iter().take_while(|x| x.1 == name).count();
+    /// `getExportsOfSymbol`, of what `bindDeferredExpandoAssignment` declares among the exports of `owner`: (name, declaration), by
+    /// name. `lateBindMember`: `f[key] = value` declares the property that the type of `key` names, together with the
+    /// `f.name = value` of that name. A key whose type names nothing declares nothing. `checkObjectLiteral` takes the exports as
+    /// the binder left them.
+    pub(super) fn expandos_of(&mut self, file: FileId, owner: SymbolId) -> Vec<(Atom, ExprId)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let of = &bound.symbols[owner.idx()];
+        let mut all = Vec::new();
+        let mut is_sorted = true;
+        for &(name, symbol) in bound.table(of.exports) {
+            for &decl in &bound.symbols[symbol.idx()].decls {
+                let Decl::Expando(e) = decl else {
+                    continue;
+                };
+                if name != known::assignment_declaration {
+                    all.push((name, e));
+                } else if !of.flags.contains(SymFlags::OBJECT_LITERAL)
+                    && let ExprKind::Assign { target, .. } = hir[e].kind
+                    && let ExprKind::Index { index, .. } = hir[target].kind
+                    && let Some(name) = self.member_name(file, PropKey::Computed(index))
+                {
+                    all.push((name, e));
+                    is_sorted = false;
+                }
+            }
+        }
+        if !is_sorted {
+            all.sort_unstable();
+        }
+        all
+    }
+
+    /// The properties that assignments declare for `owner`, where nothing else declares them.
+    fn add_expandos(&mut self, b: &mut Builder, file: FileId, owner: SymbolId) {
+        for of_name in self.expandos_of(file, owner).chunk_by(|a, b| a.0 == b.0) {
+            let name = of_name[0].0;
             if !b.has(name) {
-                let assignments: Box<[ExprId]> = expandos[i..end].iter().map(|x| x.2).collect();
                 b.add(Prop {
                     name,
                     flags: PropFlags::empty(),
-                    source: PropSource::Assigned(file, assignments),
+                    source: PropSource::Assigned(file, of_name.iter().map(|x| x.1).collect()),
                     mapper: MapperId::IDENTITY,
                 });
             }
-            i = end;
         }
+    }
+
+    /// `shape`, which has no properties, with those that assignments declare for `owner`. `NONE`: there are none.
+    pub(super) fn with_expandos(&mut self, shape: Shape, file: FileId, owner: SymbolId) -> Shape {
+        if owner.is_none() {
+            return shape;
+        }
+        let mut b = Builder {
+            shape,
+            ..Default::default()
+        };
+        self.add_expandos(&mut b, file, owner);
+        b.shape
     }
 
     /// The properties `this.name = value` declares in JavaScript, where nothing else declares them.
@@ -2575,28 +2594,6 @@ impl<'p> Checker<'p> {
             }
             i = end;
         }
-    }
-
-    /// `lateBindMember`: `f[key] = value` declares the property that the type of `key` names, together with the `f.name = value` of
-    /// that name. A key whose type names nothing declares nothing.
-    fn add_all_expandos<K: Copy>(
-        &mut self,
-        b: &mut Builder,
-        file: FileId,
-        named: &[(K, Atom, ExprId)],
-        keyed: &[(K, ExprId, ExprId)],
-    ) {
-        if keyed.is_empty() {
-            return Self::add_expandos(b, file, named);
-        }
-        let mut all = named.to_vec();
-        for &(function, key, assignment) in keyed {
-            if let Some(name) = self.member_name(file, PropKey::Computed(key)) {
-                all.push((function, name, assignment));
-            }
-        }
-        all.sort_unstable_by_key(|x| (x.1, x.2));
-        Self::add_expandos(b, file, &all);
     }
 
     /// The values a namespace merged with a function, a class or an enum exports.
@@ -3322,6 +3319,7 @@ impl<'p> Checker<'p> {
         } else {
             Literalness::WithSpread
         };
+        b.shape.spread_of = Some((left, right));
         self.synth(b.shape)
     }
 

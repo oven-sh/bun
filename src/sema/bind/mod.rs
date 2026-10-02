@@ -59,10 +59,11 @@ bitflags::bitflags! {
         const EXPORT_VALUE = 1 << 22;
         /// `SymbolFlagsAssignment`: what `bindDeferredExpandoAssignment` declares.
         const ASSIGNMENT = 1 << 23;
+        const OBJECT_LITERAL = 1 << 24;
 
         const VARIABLE = Self::FUNCTION_SCOPED_VARIABLE.bits() | Self::BLOCK_SCOPED_VARIABLE.bits();
         const VALUE = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::ENUM.bits()
-            | Self::VALUE_MODULE.bits() | Self::ENUM_MEMBER.bits() | Self::PROPERTY.bits();
+            | Self::VALUE_MODULE.bits() | Self::ENUM_MEMBER.bits() | Self::PROPERTY.bits() | Self::OBJECT_LITERAL.bits();
         const TYPE = Self::CLASS.bits() | Self::INTERFACE.bits() | Self::ENUM.bits() | Self::TYPE_PARAMETER.bits()
             | Self::TYPE_ALIAS.bits() | Self::ENUM_MEMBER.bits();
         const NAMESPACE = Self::VALUE_MODULE.bits() | Self::NAMESPACE_MODULE.bits() | Self::ENUM.bits();
@@ -106,9 +107,11 @@ pub enum Decl {
     ModuleExports(ExprId),
     /// `exports.a = e`, `module.exports.a = e` in JavaScript: the assignment. `Object.defineProperty(exports, "a", descriptor)`: the call.
     ExportsProperty(ExprId),
-    /// `f.a = e`, `f["a"] = e` next to `function f() {}`, which may be written `a.f`: the assignment. In JavaScript next to a class
-    /// too, and `Object.defineProperty(f, "a", descriptor)`: the call.
+    /// `f.a = e`, `f["a"] = e`, `f[key] = e`, where `getInitializerSymbol` finds something for `f`, which may be written `a.f`: the
+    /// assignment. In JavaScript `Object.defineProperty(f, "a", descriptor)` too: the call.
     Expando(ExprId),
+    /// `{}`, of the symbol such assignments add to in JavaScript.
+    ObjectLiteral(ExprId),
     /// `module` and `exports` in a CommonJS module.
     CommonJsVariable,
 }
@@ -734,8 +737,9 @@ pub struct Bound {
     pub file_symbol: SymbolId,
     /// `exportStars.Declarations`: every `export * from spec`, with the module or namespace symbol that says so.
     pub export_stars: Few<(SymbolId, StmtId)>,
-    /// `declare module "name"` at the top of a file, or right in an ambient module at the top of a script.
-    pub ambient_modules: Few<(Atom, SymbolId)>,
+    /// `declare module "name"` at the top of a file, or right in an ambient module at the top of a script. And
+    /// `IsModuleAugmentationExternal`: it adds to a module that is declared elsewhere.
+    pub ambient_modules: Few<(Atom, SymbolId, bool)>,
     /// `declare global { }` at the top of a module, or right in an ambient module at the top of a script: symbols whose exports are
     /// global.
     pub global_augmentations: Few<SymbolId>,
@@ -760,7 +764,8 @@ pub struct Bound {
     /// `declareCommonJSVariable`: `module.Members["exports"]`. `NONE`: there is no such `module`.
     pub module_exports_property: SymbolId,
 
-    /// What an identifier means as a value. `NONE`: nothing in this file declares it. Of a `Decl::Expando`: `node.Symbol`.
+    /// `getResolvedSymbol` of an identifier. `NONE`: nothing in this file declares it. `node.Symbol` of a `Decl::Expando` and of an
+    /// object literal, where `NONE` says that it is not made: see `symbol_of_expando_initializer`.
     pub expr_symbol: Vec<SymbolId>,
     pub expr_parent: Vec<Parent>,
     /// Where control is at a name, a `this`, a `super`, and an `a.b` or `a[b]` that can be narrowed (`isNarrowableReference`).
@@ -796,6 +801,8 @@ pub struct Bound {
     pub fns: Vec<FnInfo>,
     /// `requiresScopeChange` of some parameter, by function: its parameters see the variables of its body.
     pub requires_scope_change: Vec<bool>,
+    /// `node.Symbol`. Of a function expression without a name and of an arrow function `NONE` says that it is not made: see
+    /// `symbol_of_expando_initializer`.
     pub fn_symbol: Vec<SymbolId>,
     pub class_symbol: Vec<SymbolId>,
     pub class_owner: Vec<ClassOwner>,
@@ -825,20 +832,6 @@ pub struct Bound {
     pub unchecked_types: Few<TypeNodeId>,
     /// Where each `infer T` that is written somewhere that says something about `T` is written. In order of the parameters.
     pub infer_positions: Few<(TypeParamId, InferPosition)>,
-    /// `f.name = value` and `f["name"] = value` next to `const f = function () {}` or `const f = () => {}`: properties of `f`. By
-    /// the function, then by name. The last field is the declaration: the assignment or, in JavaScript, the call
-    /// `Object.defineProperty(f, "name", descriptor)`. Next to `function f() {}` it is a `Decl::Expando`.
-    pub fn_expr_expandos: Few<(FnId, Atom, ExprId)>,
-    /// `f[0] = value`, `f[key] = value`: the same under a numeric or late-bound key, which the checker names.
-    /// (function, key, declaration), by function, then by declaration.
-    pub declared_fn_keyed_expandos: Few<(SymbolId, ExprId, ExprId)>,
-    pub fn_expr_keyed_expandos: Few<(FnId, ExprId, ExprId)>,
-    /// `o.name = value`, `o["name"] = value`: properties of the empty object literal that initializes `o`, in JavaScript. By the
-    /// literal, then by name.
-    pub object_expandos: Few<(ExprId, Atom, ExprId)>,
-    /// `o[0] = value`: a property of such a literal under a numeric key, which the checker names. A late-bound key declares
-    /// nothing there. (literal, key, declaration), by literal, then by declaration.
-    pub object_keyed_expandos: Few<(ExprId, ExprId, ExprId)>,
     /// The assignments and calls that `bindDeferredExpandoAssignment` gives a symbol. Sorted.
     pub expando_declarations: Few<ExprId>,
     pub case_stmt: Vec<StmtId>,
@@ -1276,26 +1269,6 @@ impl Bound {
         &self.this_properties[start..end]
     }
 
-    /// The entries of `list`, which is sorted by owner, that belong to the owner `key`.
-    pub fn expandos_of<K: Copy + Ord, N>(list: &[(K, N, ExprId)], key: K) -> &[(K, N, ExprId)] {
-        let start = list.partition_point(|e| e.0 < key);
-        let end = list.partition_point(|e| e.0 <= key);
-        &list[start..end]
-    }
-
-    /// Every `Decl::Expando` among the exports of `owner`: (owner, name, declaration), by name.
-    pub fn expandos_among_exports(&self, owner: SymbolId) -> Vec<(SymbolId, Atom, ExprId)> {
-        let mut all = Vec::new();
-        for &(name, symbol) in self.table(self.symbols[owner.idx()].exports) {
-            for &decl in &self.symbols[symbol.idx()].decls {
-                if let Decl::Expando(e) = decl {
-                    all.push((owner, name, e));
-                }
-            }
-        }
-        all
-    }
-
     /// `node.Symbol`. `NONE`: it is not kept for a declaration of that kind, none of which has a local symbol.
     pub fn symbol_of_declaration(&self, decl: Decl) -> SymbolId {
         match decl {
@@ -1308,7 +1281,7 @@ impl Bound {
             Decl::EnumMember(it) => self.enum_member_symbol[it.idx()],
             Decl::Module(it) => self.module_symbol[it.idx()],
             Decl::TypeParam(it) => self.type_param_symbol[it.idx()],
-            Decl::Expando(it) => self.expr_symbol[it.idx()],
+            Decl::Expando(it) | Decl::ObjectLiteral(it) => self.expr_symbol[it.idx()],
             _ => SymbolId::NONE,
         }
     }

@@ -206,27 +206,6 @@ fn print_loaded_sizes(program: &bun_sema::check::Program) {
         add(&mut rows, "bound.infer_positions", &m.bound.infer_positions);
         add(
             &mut rows,
-            "bound.fn_expr_expandos",
-            &m.bound.fn_expr_expandos,
-        );
-        add(
-            &mut rows,
-            "bound.declared_fn_keyed_expandos",
-            &m.bound.declared_fn_keyed_expandos,
-        );
-        add(
-            &mut rows,
-            "bound.fn_expr_keyed_expandos",
-            &m.bound.fn_expr_keyed_expandos,
-        );
-        add(&mut rows, "bound.object_expandos", &m.bound.object_expandos);
-        add(
-            &mut rows,
-            "bound.object_keyed_expandos",
-            &m.bound.object_keyed_expandos,
-        );
-        add(
-            &mut rows,
             "bound.expando_declarations",
             &m.bound.expando_declarations,
         );

@@ -2117,7 +2117,7 @@ impl<'p> Checker<'p> {
         pairs.retain(|p| p.0 != param);
         pairs.push((param, constraint));
         let with_constraint = self.p.types.mapper(pairs);
-        let instantiated = self.conditional_type_uncached(file, node, with_constraint, true);
+        let instantiated = self.conditional_type_uncached(file, node, with_constraint, true, None);
         (!instantiated.is_never()).then_some(instantiated)
     }
 

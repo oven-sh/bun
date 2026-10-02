@@ -184,7 +184,7 @@ impl<'p> Checker<'p> {
         self.instantiation_depth += 1;
         let (cycles_before, events_before) = (self.cycles, self.deep_events);
         let result = self.instantiate_uncached(ty, mapper);
-        let result = self.with_instantiated_alias(ty, mapper, result);
+        let result = self.with_new_alias(ty, mapper, result, None);
         self.instantiation_depth -= 1;
         if self.cycles == cycles_before {
             self.note_depth(key, Some(events_before));
@@ -328,6 +328,12 @@ impl<'p> Checker<'p> {
                     .map(|&s| self.instantiate_sig(s, mapper))
                     .collect();
                 new.symbol_declared_at = shape.symbol_declared_at;
+                new.spread_of = shape.spread_of.map(|(left, right)| {
+                    (
+                        self.instantiate(left, mapper),
+                        self.instantiate(right, mapper),
+                    )
+                });
                 // `instantiateAnonymousType`
                 new.instantiation_expression = shape.instantiation_expression;
                 new.is_js_literal = shape.is_js_literal;

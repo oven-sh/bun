@@ -320,7 +320,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             VisitedKind::ConstOfAsConst(_) => Some(Found::Undeclared("const".to_owned())),
             // `getIntrinsicTagSymbol`
             VisitedKind::JsxIntrinsicTagName(_, tag) => {
-                let ExprKind::String(name) = hir[tag].kind else {
+                let (ExprKind::String(name) | ExprKind::Ident(name)) = hir[tag].kind else {
                     return None;
                 };
                 let elements = self.c.jsx_type(file, known::IntrinsicElements)?;
@@ -1038,7 +1038,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 let &(file, function) = decls.first()?;
                 let bound = self.c.bound(file);
                 let symbol = bound.fn_symbol[function.idx()];
-                if symbol.is_some() {
+                if symbol.is_some() && self.c.hir(file)[function].name.is_some() {
                     return Some(Found::Symbol(files.sym(file, symbol)));
                 }
                 match bound.fns[function.idx()].owner {
@@ -1287,25 +1287,23 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 let first = *assignments.first()?;
                 let (bound, files) = (self.c.bound(*file), self.c.files());
                 let declared = bound.expr_symbol[first.idx()];
-                if declared.is_some() {
-                    let parent = bound.symbols[declared.idx()].parent;
-                    return Some(PropertyParent::Symbol(files.sym(*file, parent)));
-                }
-                let function = bound
-                    .fn_expr_expandos
-                    .iter()
-                    .find(|expando| expando.2 == first)?
-                    .0;
-                let symbol = bound.fn_symbol[function.idx()];
-                if symbol.is_some() {
-                    return Some(PropertyParent::Symbol(files.sym(*file, symbol)));
-                }
-                let FnOwner::Expr(e) = bound.fns[function.idx()].owner else {
+                if declared.is_none() {
                     return None;
+                }
+                let parent = bound.symbols[declared.idx()].parent;
+                let owner = &bound.symbols[parent.idx()];
+                return match (owner.name, owner.decls[0]) {
+                    (known::anonymous_function, Decl::Fn(function)) => {
+                        let FnOwner::Expr(e) = bound.fns[function.idx()].owner else {
+                            return None;
+                        };
+                        Some(PropertyParent::Named(
+                            self.c.name_of_function_expression(*file, e),
+                        ))
+                    }
+                    (known::object_literal, _) => None,
+                    _ => Some(PropertyParent::Symbol(files.sym(*file, parent))),
                 };
-                return Some(PropertyParent::Named(
-                    self.c.name_of_function_expression(*file, e),
-                ));
             }
             _ => return None,
         };

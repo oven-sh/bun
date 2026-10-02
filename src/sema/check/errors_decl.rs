@@ -175,7 +175,7 @@ impl Checker<'_> {
                 continue;
             };
             let local = bound.expr_symbol[i];
-            if local.is_none() || bound.is_in_type_query(id) {
+            if local.is_none() || bound.is_in_type_query(id) || bound.is_unchecked(i) {
                 continue;
             }
             // `candidate.ValueDeclaration`: where it is, and the pattern that binds it if it is a parameter.

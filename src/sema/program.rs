@@ -2642,17 +2642,16 @@ impl Files {
                 }
             }
         }
-        // `declare module "name"` in a script declares the module; in a module it adds to one that is there.
         let mut augmentations: Vec<(FileId, Atom, Sym)> = Vec::new();
         for id in self.order.clone() {
             let file = id.idx();
-            let is_module = self.modules[file].is_module();
-            for (name, symbol) in self.modules[file].bound.ambient_modules.clone() {
+            for (name, symbol, is_augmentation) in self.modules[file].bound.ambient_modules.clone()
+            {
                 let sym = Sym {
                     file: id,
                     id: symbol,
                 };
-                if is_module {
+                if is_augmentation {
                     augmentations.push((id, name, sym));
                     continue;
                 }

@@ -743,7 +743,7 @@ impl Checker<'_> {
             let i = child.idx();
             let may_be_the_same = same_variable(tested, child)
                 || matches!((hir[tested].kind, hir[child].kind), (ExprKind::Dot { name: x, .. }, ExprKind::Dot { name: y, .. }) if x == y);
-            if child == tested || !may_be_the_same {
+            if child == tested || !may_be_the_same || bound.is_unchecked(i) {
                 continue;
             }
             // `ForEachChild`: what is in `container` is gone through, not `container` itself, and there is nothing in a name.

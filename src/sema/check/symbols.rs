@@ -1334,6 +1334,9 @@ impl<'p> Checker<'p> {
             shape.index.push(IndexInfo { value, ..*info });
         }
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(ty);
+        if let TypeData::Synth(widened) = self.data(ty) {
+            shape.spread_of = widened.spread_of;
+        }
         // "Retain js literal flag through widening"
         shape.is_js_literal = self.has_js_literal_flag(ty);
         self.synth(shape)

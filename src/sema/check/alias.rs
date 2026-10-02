@@ -172,49 +172,89 @@ impl<'p> Checker<'p> {
         aliased
     }
 
-    /// `instantiateTypeAlias`, and where `instantiateTypeWorker` puts what it gives: `result` is what `ty`, which keeps an alias,
-    /// comes to under `mapper`.
-    pub(super) fn with_instantiated_alias(
+    /// `instantiateTypeWithAlias`, given an alias.
+    pub(super) fn instantiate_with_alias(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        alias: (Sym, &[TypeId]),
+    ) -> TypeId {
+        match self.data(ty) {
+            TypeData::Union(_) | TypeData::Intersection(_) => {
+                self.instantiate_union_or_intersection(ty, mapper, Some(alias))
+            }
+            TypeData::IndexedAccess { .. } => {
+                self.instantiate_indexed_access(ty, mapper, Some(alias))
+            }
+            &TypeData::Cond {
+                file,
+                node,
+                mapper: own,
+            } => {
+                let new = self.map_mapper(own, mapper);
+                self.conditional_type_instantiation(file, node, new, Some(alias))
+            }
+            &TypeData::Anon {
+                origin: Origin::Mapped(file, node),
+                mapper: own,
+            } => {
+                let new = self.map_mapper(own, mapper);
+                if new == own {
+                    return ty;
+                }
+                self.instantiate_mapped_type(file, node, new, NewAlias::Given(alias.0, alias.1))
+            }
+            // Only a deferred type reference goes through `getObjectTypeInstantiation`: the body of an alias, which has it for an alias.
+            TypeData::Ref { .. } | TypeData::Tuple { .. } if self.stored_alias(ty).is_none() => {
+                self.instantiate(ty, mapper)
+            }
+            _ => {
+                let result = self.instantiate(ty, mapper);
+                self.with_new_alias(ty, mapper, result, Some(alias))
+            }
+        }
+    }
+
+    /// `newAlias` of `getObjectTypeInstantiation`, on `result`, which is what `ty` comes to under `mapper`: `alias`, or else
+    /// `instantiateTypeAlias(t.alias, m)` if `ty` keeps one.
+    pub(super) fn with_new_alias(
         &mut self,
         ty: TypeId,
         mapper: MapperId,
         result: TypeId,
+        alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let Some((alias, type_arguments)) = self.stored_alias(ty) else {
-            return result;
-        };
-        let takes_alias = match (self.data(ty), self.data(result)) {
-            // `getIndexedAccessTypeEx` is handed it.
-            (TypeData::IndexedAccess { .. }, _) => false,
-            // `getConditionalType` gives what is handed no alias `root.alias`: the alias whose body the node is.
-            (TypeData::Cond { .. }, _) => false,
-            _ => self.takes_alias_of(ty, result),
-        };
-        if !takes_alias {
+        let kept = self.stored_alias(ty);
+        if alias.is_none() && kept.is_none() {
             return result;
         }
-        let instantiated = self.instantiate_all(type_arguments, mapper);
-        if result == ty && instantiated[..] == type_arguments[..] {
-            return ty;
-        }
-        self.with_alias(result, *alias, &instantiated)
-    }
-
-    /// Whether `result`, an instantiation of `ty`, is of a kind that the alias given to `instantiateTypeWithAlias` ends up on:
-    /// `createDeferredTypeReference`, `instantiateAnonymousType`, `getConditionalType` where it defers. A union or an intersection
-    /// goes by `instantiate_union_or_intersection`, an indexed access by `instantiate_indexed_access`.
-    pub(super) fn takes_alias_of(&self, ty: TypeId, result: TypeId) -> bool {
-        match (self.data(ty), self.data(result)) {
+        // `createDeferredTypeReference`, `instantiateAnonymousType`
+        let is_instantiation = match (self.data(ty), self.data(result)) {
             (
                 TypeData::Ref { .. } | TypeData::Tuple { .. },
                 TypeData::Ref { .. } | TypeData::Tuple { .. },
             )
             | (TypeData::LazyAlias { .. }, TypeData::LazyAlias { .. })
             | (TypeData::Fns { .. }, TypeData::Fns { .. })
-            | (TypeData::Cond { .. }, TypeData::Cond { .. })
             | (TypeData::Synth(_), TypeData::Synth(_)) => true,
             (TypeData::Anon { origin: a, .. }, TypeData::Anon { origin: b, .. }) => a == b,
             _ => false,
+        };
+        if !is_instantiation {
+            return result;
+        }
+        match (alias, kept) {
+            // What mentions no type parameter is not instantiated.
+            (Some(_), _) if result == ty => ty,
+            (Some((alias, type_arguments)), _) => self.with_alias(result, alias, type_arguments),
+            (None, Some((alias, type_arguments))) => {
+                let instantiated = self.instantiate_all(type_arguments, mapper);
+                if result == ty && instantiated[..] == type_arguments[..] {
+                    return ty;
+                }
+                self.with_alias(result, *alias, &instantiated)
+            }
+            (None, None) => result,
         }
     }
 
@@ -317,86 +357,6 @@ impl<'p> Checker<'p> {
                 self.intern(data.clone())
             }
             _ => ty,
-        }
-    }
-
-    /// `getTypeAliasInstantiation(hosted, hosted_arguments, alias)`: `ty` is what the reference to the generic alias `hosted` comes
-    /// to, and it is the whole body of `alias`, under which `instantiateTypeWithAlias` instantiates the declared type of `hosted`.
-    pub(super) fn instantiated_under_alias(
-        &mut self,
-        hosted: Sym,
-        hosted_arguments: &[TypeId],
-        ty: TypeId,
-        alias: Sym,
-        type_arguments: &[TypeId],
-    ) -> TypeId {
-        // It is instantiated when it is forced.
-        if matches!(self.data(ty), TypeData::LazyAlias { .. }) {
-            return self.with_alias(ty, alias, type_arguments);
-        }
-        if self.stack.contains(&Query::Declared(hosted)) {
-            return ty;
-        }
-        let declared = self.declared_type(hosted);
-        let takes_alias = match self.data(declared) {
-            data @ (TypeData::Union(_)
-            | TypeData::Intersection(_)
-            | TypeData::IndexedAccess { .. }) => {
-                let params = self.local_type_params_of_symbol(hosted);
-                let filled = self.fill_type_args(&params, hosted_arguments);
-                let mapper = self.mapper_from(&params, &filled);
-                let alias = Some((alias, type_arguments));
-                return if matches!(data, TypeData::IndexedAccess { .. }) {
-                    self.instantiate_indexed_access(declared, mapper, alias)
-                } else {
-                    self.instantiate_union_or_intersection(declared, mapper, alias)
-                };
-            }
-            // `getObjectTypeInstantiation`, `instantiateMappedType`
-            &TypeData::Anon {
-                origin: Origin::Mapped(file, node),
-                mapper: own,
-            } => {
-                let params = self.local_type_params_of_symbol(hosted);
-                let filled = self.fill_type_args(&params, hosted_arguments);
-                let mapper = self.mapper_from(&params, &filled);
-                let new = self.map_mapper(own, mapper);
-                if new == own {
-                    return ty;
-                }
-                let alias = NewAlias::Given(alias, type_arguments);
-                return self.instantiate_mapped_type(file, node, new, alias);
-            }
-            // `getConditionalTypeInstantiation`: `mapTypeWithAlias`, where it distributes over a union. What a branch comes to is
-            // given no alias.
-            TypeData::Cond { file, node, .. } if self.is_union(ty) => {
-                let (file, node) = (*file, *node);
-                let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind else {
-                    return ty;
-                };
-                let check = self.type_from_node(file, check);
-                let params = self.local_type_params_of_symbol(hosted);
-                let filled = self.fill_type_args(&params, hosted_arguments);
-                let Some(at) = params.iter().position(|&param| param == check) else {
-                    return ty;
-                };
-                let distribution_type = self.force(filled[at]);
-                let distribution_type = self.reduced(distribution_type);
-                self.is_union(distribution_type) && self.is_distributive_conditional(file, node)
-            }
-            // Only a deferred type reference goes through `getObjectTypeInstantiation`: the body of an alias, which has it for an alias.
-            TypeData::Ref { .. } | TypeData::Tuple { .. }
-                if self.stored_alias(declared).is_none() =>
-            {
-                false
-            }
-            // `getObjectTypeInstantiation`: what mentions no type parameter is not instantiated.
-            _ => ty != declared && self.takes_alias_of(declared, ty),
-        };
-        if takes_alias {
-            self.with_alias(ty, alias, type_arguments)
-        } else {
-            ty
         }
     }
 }

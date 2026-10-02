@@ -2,16 +2,6 @@ use super::member_flags::*;
 use super::*;
 use crate::atom::known;
 
-/// What `getInitializerSymbol` finds.
-enum ExpandoFunction {
-    /// `function f() {}`
-    Declared(SymbolId),
-    /// `const f = function () {}`, `const f = () => {}`
-    Expr(FnId),
-    /// `var o = {}`, in JavaScript
-    Object(ExprId),
-}
-
 /// `exportKind` of `declareModuleMember`
 fn export_kind(flags: SymFlags) -> SymFlags {
     if flags.intersects(SymFlags::VALUE) {
@@ -433,15 +423,20 @@ impl<'f> Binder<'f> {
         symbol
     }
 
-    /// `declareModuleMember`, `bindExportDeclaration`: `export { a as b }` and `export * as b` are declared among the exports.
-    /// `AliasExcludes`: one symbol with what else is exported as `b`, unless that is an alias.
+    /// `export { a as b }` and `export * as b` go by `b.container`. `declareModuleMember`, `bindExportDeclaration`: among the exports
+    /// of a module or a namespace. `AliasExcludes`: one symbol with what else has the name, unless that is an alias.
     fn export_as(&mut self, name: Atom, flags: SymFlags, decl: Decl) {
-        let container = self.b.scopes[self.scope.idx()].symbol;
+        let s = &self.b.scopes[self.container_scope(self.scope).idx()];
+        let (locals, container) = (s.locals, s.symbol);
         if container.is_some() {
             let exports = self.b.symbols[container.idx()].exports;
             self.declare_in(exports, name, flags, decl, container);
+        } else if matches!(decl, Decl::ExportSpec(_)) {
+            // `declareSymbolAndAddToSymbolTable`: in a function or a script it is a local.
+            self.declare_in(locals, name, flags, decl, SymbolId::NONE);
         } else {
-            self.new_symbol(name, flags, decl, container);
+            // "Export * in some sort of block construct"
+            self.new_symbol(name, flags, decl, SymbolId::NONE);
         }
     }
 
@@ -1039,58 +1034,63 @@ impl<'f> Binder<'f> {
             .copied()
     }
 
-    /// `lookupEntity`: `a`, or `a.b` where `a` is a function and a namespace that exports `b`.
-    fn lookup_entity(&self, e: ExprId, scope: ScopeId) -> Option<SymbolId> {
+    /// `lookupEntity`. `IsEntityNameExpressionEx`: `a["b"]` and `a[0]` are entity names in JavaScript alone, and what is in
+    /// parentheses is none.
+    fn lookup_entity(&mut self, e: ExprId, scope: ScopeId) -> Option<SymbolId> {
         if is_parenthesized(self.f, e) {
             return None;
         }
-        match self.f[e].kind {
-            ExprKind::Ident(name) => self.lookup_name(name, scope),
+        let (obj, name) = match self.f[e].kind {
+            ExprKind::Ident(name) => return self.lookup_name(name, scope),
             ExprKind::Dot {
                 obj,
                 name,
                 name_pos,
                 ..
-            } if !is_private_name_at(self.f, name_pos) => {
-                let ExpandoFunction::Declared(owner) =
-                    self.expando_function(self.lookup_entity(obj, scope)?)?
-                else {
-                    return None;
-                };
-                let exports = self.b.symbols[owner.idx()].exports;
-                if exports.is_none() {
-                    return None;
-                }
-                self.tables[exports.idx()].get(&name).copied()
+            } if !is_private_name_at(self.f, name_pos) => (obj, name),
+            ExprKind::Index { obj, index, .. }
+                if self.f.is_js && is_string_or_numeric_literal_like(self.f, index) =>
+            {
+                (obj, self.literal_name(index))
             }
-            _ => None,
-        }
+            _ => return None,
+        };
+        let owner = self.lookup_entity(obj, scope)?;
+        let owner = self.initializer_symbol(owner)?;
+        self.export_of(owner, name)
     }
 
-    /// `getInitializerSymbol`: the function `symbol` is declared as, or the one it is initialized with if it is a constant.
-    fn expando_function(&self, symbol: SymbolId) -> Option<ExpandoFunction> {
-        for &decl in &self.b.symbols[symbol.idx()].decls {
+    /// `getInitializerSymbol`
+    fn initializer_symbol(&mut self, symbol: SymbolId) -> Option<SymbolId> {
+        // `symbol.ValueDeclaration`: the first that is no namespace.
+        for i in 0..self.b.symbols[symbol.idx()].decls.len() {
+            let decl = self.b.symbols[symbol.idx()].decls[i];
             match decl {
                 Decl::Fn(f) if matches!(self.b.fns[f.idx()].owner, FnOwner::Stmt(_)) => {
-                    return Some(ExpandoFunction::Declared(symbol));
+                    return Some(symbol);
                 }
+                Decl::Class(_) if self.f.is_js => return Some(symbol),
                 Decl::Var(pat) => {
                     let PatParent::Var(d) = self.b.pat_parent[pat.idx()] else {
                         return None;
                     };
                     let decl = &self.f[d];
-                    if (decl.kind == VarKind::Const || self.f.is_js)
-                        && decl.init.is_some()
-                        && !is_parenthesized(self.f, decl.init)
-                    {
-                        return self.expando_initializer(decl.init, decl.ty.is_some());
+                    if decl.kind != VarKind::Const && !self.f.is_js {
+                        return None;
                     }
-                    return None;
+                    return self.symbol_of_expando_initializer(decl.init, decl.ty.is_some());
                 }
-                // In JavaScript a class can be added to as well.
-                Decl::Class(_) if self.f.is_js => return Some(ExpandoFunction::Declared(symbol)),
-                Decl::Expando(first) => return self.initializer_of_assignment(first),
-                // The value declaration decides: the first that is no namespace.
+                // There is a case for a binary expression in JavaScript and none for a call.
+                Decl::Expando(first) => {
+                    let ExprKind::Assign { value, .. } = self.f[first].kind else {
+                        return None;
+                    };
+                    if !self.f.is_js {
+                        return None;
+                    }
+                    let annotation = self.f.jsdoc_type(JsDocTypeOwner::Assign(first));
+                    return self.symbol_of_expando_initializer(value, annotation.is_some());
+                }
                 Decl::Class(_) | Decl::Enum(_) | Decl::Param(_) => return None,
                 _ => {}
             }
@@ -1098,147 +1098,64 @@ impl<'f> Binder<'f> {
         None
     }
 
-    /// `getInitializerSymbol` has a case for a binary expression in JavaScript and none for a call. It takes the right side as
-    /// written: `({})` is not an expando initializer.
-    fn initializer_of_assignment(&self, first: ExprId) -> Option<ExpandoFunction> {
-        let ExprKind::Assign { value, .. } = self.f[first].kind else {
-            return None;
-        };
-        if !self.f.is_js || is_parenthesized(self.f, value) {
-            return None;
-        }
-        let is_annotated = self.f.jsdoc_type(JsDocTypeOwner::Assign(first)).is_some();
-        self.expando_initializer(value, is_annotated)
-    }
-
-    /// `symbol.Exports[name]`
-    fn export_of(&self, symbol: SymbolId, name: Atom) -> Option<&Symbol> {
-        let exports = self.b.symbols[symbol.idx()].exports;
-        if exports.is_none() {
+    /// `IsExpandoInitializer`, `initializer.Symbol()`. `bindAnonymousDeclaration` gives every function expression, arrow function
+    /// and object literal a symbol. Here one that has no name gets it when it is first asked for.
+    fn symbol_of_expando_initializer(
+        &mut self,
+        init: ExprId,
+        is_annotated: bool,
+    ) -> Option<SymbolId> {
+        // It is taken as written: `({})` is no expando initializer.
+        if init.is_none() || is_parenthesized(self.f, init) {
             return None;
         }
-        let &export = self.tables[exports.idx()].get(&name)?;
-        Some(&self.b.symbols[export.idx()])
-    }
-
-    /// Whether something that is no assignment declares `name` among the exports of the function `symbol`: a namespace that is one
-    /// with it, or a class, whose static members and `prototype` are there.
-    fn has_export(&self, symbol: SymbolId, name: Atom) -> bool {
-        let s = &self.b.symbols[symbol.idx()];
-        self.export_of(symbol, name)
-            .is_some_and(|existing| !existing.flags.contains(SymFlags::ASSIGNMENT))
-            || s.decls.iter().any(|&d| {
-                matches!(d, Decl::Class(c) if name == known::prototype
-                    || self.f[c].members.iter().any(|m| self.f[m].flags.contains(Flags::STATIC) && self.f[m].key == PropKey::Name(name)))
-            })
-    }
-
-    /// `IsDynamicName`, `isLateBindableAST`: a literal, in parentheses or not, or an entity name.
-    fn can_name_an_expando(&self, key: ExprId) -> bool {
-        match self.f[key].kind {
-            ExprKind::String(_) | ExprKind::Number(_) => true,
-            ExprKind::Template { exprs, .. } => exprs.is_empty(),
-            _ => is_entity_name_expression(self.f, key),
-        }
-    }
-
-    /// `IsExpandoInitializer`: what can be added to by assigning, if `init` is such a thing.
-    fn expando_initializer(&self, init: ExprId, is_annotated: bool) -> Option<ExpandoFunction> {
         match self.f[init].kind {
-            ExprKind::Fn(func) => Some(ExpandoFunction::Expr(func)),
-            ExprKind::Class(c) if self.f.is_js => {
-                Some(ExpandoFunction::Declared(self.b.class_symbol[c.idx()]))
+            ExprKind::Fn(func) => {
+                if self.b.fn_symbol[func.idx()].is_none() {
+                    self.b.fn_symbol[func.idx()] = self.new_symbol(
+                        known::anonymous_function,
+                        SymFlags::FUNCTION,
+                        Decl::Fn(func),
+                        SymbolId::NONE,
+                    );
+                }
+                Some(self.b.fn_symbol[func.idx()])
             }
+            ExprKind::Class(c) if self.f.is_js => Some(self.b.class_symbol[c.idx()]),
             ExprKind::Object(props) if self.f.is_js && props.is_empty() && !is_annotated => {
-                Some(ExpandoFunction::Object(init))
+                if self.b.expr_symbol[init.idx()].is_none() {
+                    self.b.expr_symbol[init.idx()] = self.new_symbol(
+                        known::object_literal,
+                        SymFlags::OBJECT_LITERAL,
+                        Decl::ObjectLiteral(init),
+                        SymbolId::NONE,
+                    );
+                }
+                Some(self.b.expr_symbol[init.idx()])
             }
             _ => None,
         }
     }
 
-    /// The first declaration of a property of `owner`. The property is `name` or, if `name` is `NONE`, the one that the numeric
-    /// literal `key` names. `a["0"]` and `a[0]` do not match: the binder cannot spell a number.
-    fn first_expando_declaration<K: Copy + PartialEq>(
-        &self,
-        named: &[(K, Atom, ExprId)],
-        keyed: &[(K, ExprId, ExprId)],
-        owner: K,
-        name: Atom,
-        key: ExprId,
-    ) -> Option<ExprId> {
-        if name.is_some() {
-            return named
-                .iter()
-                .find(|x| x.0 == owner && x.1 == name)
-                .map(|x| x.2);
-        }
-        let ExprKind::Number(number) = self.f[key].kind else {
+    /// `symbol.Exports[name]`
+    fn export_of(&self, symbol: SymbolId, name: Atom) -> Option<SymbolId> {
+        let exports = self.b.symbols[symbol.idx()].exports;
+        if exports.is_none() {
             return None;
-        };
-        let value = self.f.numbers[number as usize];
-        keyed
-            .iter()
-            .find(|x| x.0 == owner && matches!(self.f[x.1].kind, ExprKind::Number(other) if self.f.numbers[other as usize] == value))
-            .map(|x| x.2)
+        }
+        self.tables[exports.idx()].get(&name).copied()
     }
 
-    /// `getInitializerSymbol(lookupEntity(e))`: the function, class or object literal that `e.name = value`, written in `scope`,
-    /// adds a property to.
-    fn expando_owner(&self, e: ExprId, scope: ScopeId) -> Option<ExpandoFunction> {
-        if let Some(symbol) = self
-            .lookup_entity(e, scope)
-            .or_else(|| self.lookup_entity(e, self.container_scope(scope)))
-        {
-            return self.expando_function(symbol);
-        }
-        if !self.f.is_js || is_parenthesized(self.f, e) {
-            return None;
-        }
-        // `IsEntityNameExpressionEx` with `allowJS`: `a.b`, `a["b"]`, `a[0]`.
-        let (obj, name, key) = match self.f[e].kind {
-            ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                ..
-            } if name.is_some() && !is_private_name_at(self.f, name_pos) => {
-                (obj, name, ExprId::NONE)
-            }
-            ExprKind::Index { obj, index, .. }
-                if is_string_or_numeric_literal_like(self.f, index) =>
-            {
-                (obj, string_literal_text(self.f, index), index)
-            }
-            _ => return None,
-        };
-        // `symbol.ValueDeclaration` is the first declaration. The lists are still in binding order here.
-        let b = &self.b;
-        let first = match self.expando_owner(obj, scope)? {
-            ExpandoFunction::Declared(s) if name.is_some() => {
-                match self.export_of(s, name)?.decls[0] {
-                    Decl::Expando(first) => Some(first),
-                    _ => None,
-                }
-            }
-            ExpandoFunction::Declared(s) => {
-                self.first_expando_declaration(&[], &b.declared_fn_keyed_expandos, s, name, key)
-            }
-            ExpandoFunction::Expr(f) => self.first_expando_declaration(
-                &b.fn_expr_expandos,
-                &b.fn_expr_keyed_expandos,
-                f,
-                name,
-                key,
-            ),
-            ExpandoFunction::Object(o) => self.first_expando_declaration(
-                &b.object_expandos,
-                &b.object_keyed_expandos,
-                o,
-                name,
-                key,
-            ),
-        }?;
-        self.initializer_of_assignment(first)
+    /// Whether something that is no assignment declares `name` among the exports of `symbol`: a namespace that is one with it, or
+    /// a class, whose static members and `prototype` are there.
+    fn has_export(&self, symbol: SymbolId, name: Atom) -> bool {
+        let flags = |existing: SymbolId| self.b.symbols[existing.idx()].flags;
+        self.export_of(symbol, name)
+            .is_some_and(|existing| !flags(existing).contains(SymFlags::ASSIGNMENT))
+            || self.b.symbols[symbol.idx()].decls.iter().any(|&d| {
+                matches!(d, Decl::Class(c) if name == known::prototype
+                    || self.f[c].members.iter().any(|m| self.f[m].flags.contains(Flags::STATIC) && self.f[m].key == PropKey::Name(name)))
+            })
     }
 
     /// `GetContainerFlags`: an object literal and the attributes of a JSX element are containers without locals, so `lookupName`
@@ -1256,16 +1173,14 @@ impl<'f> Binder<'f> {
         }
     }
 
-    /// `bindDeferredExpandoAssignment`: `f.name = value`, `f[key] = value` and, in JavaScript,
-    /// `Object.defineProperty(f, key, descriptor)` declare a property of `f`. `f` is a function declared in the block that
-    /// contains the declaration or in the enclosing function, namespace or file, or a constant there that is initialized with a
-    /// function. In JavaScript `f` can also be a class, or any variable initialized with a function, a class or `{}`.
-    fn collect_expandos(&mut self) {
+    /// `bindDeferredExpandoAssignments`: `f.name = value`, `f[key] = value` and, in JavaScript,
+    /// `Object.defineProperty(f, key, descriptor)` declare a property of `f`.
+    fn bind_deferred_expando_assignments(&mut self) {
         for (e, scope) in std::mem::take(&mut self.expando_assignments) {
             if self.is_in_container_without_locals(e) {
                 continue;
             }
-            // `getParentOfPropertyAssignment`, `GetNonAssignedNameOfDeclaration`. `key` is `NONE` for `obj.name`.
+            // `getParentOfPropertyAssignment`, `getDeclarationName`: the text of a literal key. `key` is `NONE` for `obj.name`.
             let (obj, name, key) = match self.f[e].kind {
                 ExprKind::Assign { target, .. } => {
                     // `GetAssignmentDeclarationKind` tests the JavaScript kinds before `JSDeclarationKindProperty`.
@@ -1282,7 +1197,7 @@ impl<'f> Binder<'f> {
                             ..
                         } if !is_private_name_at(self.f, name_pos) => (obj, name, ExprId::NONE),
                         ExprKind::Index { obj, index, .. } => {
-                            (obj, string_literal_text(self.f, index), index)
+                            (obj, self.literal_name(index), index)
                         }
                         _ => continue,
                     }
@@ -1291,78 +1206,47 @@ impl<'f> Binder<'f> {
                     let Some((obj, key)) = define_property_call(self.f, e) else {
                         continue;
                     };
-                    (obj, string_literal_text(self.f, key), key)
+                    (obj, self.literal_name(key), key)
                 }
                 _ => continue,
             };
             if name.is_none() && key.is_none() {
                 continue;
             }
-            let Some(owner) = self.expando_owner(obj, scope) else {
+            let symbol = match self.lookup_entity(obj, scope) {
+                Some(symbol) => symbol,
+                None => match self.lookup_entity(obj, self.container_scope(scope)) {
+                    Some(symbol) => symbol,
+                    None => continue,
+                },
+            };
+            let Some(owner) = self.initializer_symbol(symbol) else {
                 continue;
             };
-            match owner {
-                // A declaration that is not an expando keeps the name.
-                ExpandoFunction::Declared(symbol)
-                    if name.is_some() && self.has_export(symbol, name) =>
-                {
-                    continue;
-                }
-                // `getDeclarationName`: the text of a literal key.
-                ExpandoFunction::Declared(symbol) if name.is_some() => {
-                    // `GetExports`
-                    if self.b.symbols[symbol.idx()].exports.is_none() {
-                        let exports = self.new_table();
-                        self.b.symbols[symbol.idx()].exports = exports;
-                    }
-                    let exports = self.b.symbols[symbol.idx()].exports;
-                    let flags = SymFlags::PROPERTY | SymFlags::ASSIGNMENT;
-                    self.b.expr_symbol[e.idx()] =
-                        self.declare_in(exports, name, flags, Decl::Expando(e), symbol);
-                }
-                ExpandoFunction::Expr(func) if name.is_some() => {
-                    self.b.fn_expr_expandos.push((func, name, e))
-                }
-                ExpandoFunction::Object(literal) if name.is_some() => {
-                    self.b.object_expandos.push((literal, name, e))
-                }
-                // A key such as `a + b` or `-1` names no property.
-                _ if !self.can_name_an_expando(key) => {}
-                // The checker names a number and a late-bound key.
-                ExpandoFunction::Declared(symbol) => {
-                    self.b.declared_fn_keyed_expandos.push((symbol, key, e))
-                }
-                ExpandoFunction::Expr(func) => self.b.fn_expr_keyed_expandos.push((func, key, e)),
-                // `checkObjectLiteral` takes the exports as the binder left them: a late-bound name never reaches an object literal.
-                ExpandoFunction::Object(literal)
-                    if matches!(self.f[key].kind, ExprKind::Number(_)) =>
-                {
-                    self.b.object_keyed_expandos.push((literal, key, e))
-                }
-                ExpandoFunction::Object(_) => {}
+            // "We declare expandos only when there are no non-expando declarations for that name."
+            if name.is_some() && self.has_export(owner, name) {
+                continue;
             }
+            // `GetExports`
+            if self.b.symbols[owner.idx()].exports.is_none() {
+                let exports = self.new_table();
+                self.b.symbols[owner.idx()].exports = exports;
+            }
+            let exports = self.b.symbols[owner.idx()].exports;
+            let (flags, decl) = (SymFlags::PROPERTY | SymFlags::ASSIGNMENT, Decl::Expando(e));
+            self.b.expr_symbol[e.idx()] = if name.is_some() {
+                self.declare_in(exports, name, flags, decl, owner)
+            } else {
+                // `addLateBoundAssignmentDeclarationToSymbol`. `isLateBindableAST`: a key such as `a + b` or `-1` names no property.
+                if is_entity_name_expression(self.f, key) {
+                    let name = known::assignment_declaration;
+                    self.declare_in(exports, name, SymFlags::empty(), decl, SymbolId::NONE);
+                }
+                // `bindAnonymousDeclaration`. The parent is the one `lateBindMember` gives the symbol it makes.
+                self.new_symbol(known::computed, flags, decl, owner)
+            };
             self.b.expando_declarations.push(e);
         }
-        self.b
-            .fn_expr_expandos
-            .as_mut_slice()
-            .sort_unstable_by_key(|x| (x.0, x.1, x.2));
-        self.b
-            .declared_fn_keyed_expandos
-            .as_mut_slice()
-            .sort_unstable_by_key(|x| (x.0, x.2));
-        self.b
-            .fn_expr_keyed_expandos
-            .as_mut_slice()
-            .sort_unstable_by_key(|x| (x.0, x.2));
-        self.b
-            .object_expandos
-            .as_mut_slice()
-            .sort_unstable_by_key(|x| (x.0, x.1, x.2));
-        self.b
-            .object_keyed_expandos
-            .as_mut_slice()
-            .sort_unstable_by_key(|x| (x.0, x.2));
         self.b.expando_declarations.as_mut_slice().sort_unstable();
     }
 
@@ -1475,6 +1359,13 @@ impl<'f> Binder<'f> {
                 }
             };
             self.b.expr_symbol[expr.idx()] = symbol;
+            // There are two for every `<div></div>`, and nobody but the writers of the baselines asks what they mean.
+            if matches!(self.b.expr_parent[expr.idx()], Parent::Expr(x)
+                if matches!(self.f[x].kind, ExprKind::Jsx(j) if self.f[j].tag == expr || self.f[j].close_tag == expr))
+                && self.is_intrinsic_jsx_identifier(expr)
+            {
+                continue;
+            }
             if symbol.is_none() {
                 self.b.free_idents.push((expr, scope));
             } else if !self.b.symbols[symbol.idx()]
@@ -1508,7 +1399,7 @@ impl<'f> Binder<'f> {
             .infer_positions
             .as_mut_slice()
             .sort_unstable_by_key(|p| p.0);
-        self.collect_expandos();
+        self.bind_deferred_expando_assignments();
         self.collect_this_properties();
         self.declare_member_symbols();
         // Tables, flat and sorted.
@@ -1614,9 +1505,11 @@ impl<'f> Binder<'f> {
         self.b.stmt_flow[id.idx()] = self.flow;
         let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         let me = Parent::Stmt(id);
-        // `checkDecorators` never comes to those of what is no class.
+        // `checkDecorators` never comes to those of what is no class. Those of a class are bound with it.
         for modifier in self.f[id].modifiers.iter() {
-            if let ModifierKind::Decorator(decorator) = self.f[modifier].kind {
+            if let ModifierKind::Decorator(decorator) = self.f[modifier].kind
+                && !matches!(self.f[id].kind, StmtKind::Class(_))
+            {
                 self.unchecked_expr(decorator, me);
             }
         }
@@ -2373,7 +2266,7 @@ impl<'f> Binder<'f> {
                     .b
                     .ambient_modules
                     .iter()
-                    .find(|a| a.0 == name)
+                    .find(|a| a.0 == name && a.2 == is_augmentation)
                     .map(|a| a.1);
                 match existing {
                     Some(symbol) => {
@@ -2384,7 +2277,8 @@ impl<'f> Binder<'f> {
                     }
                     None => {
                         let symbol = self.new_symbol(name, flags, Decl::Module(m), SymbolId::NONE);
-                        self.b.ambient_modules.push((name, symbol));
+                        let module = (name, symbol, is_augmentation);
+                        self.b.ambient_modules.push(module);
                         symbol
                     }
                 }
@@ -3584,6 +3478,22 @@ impl<'f> Binder<'f> {
         }
     }
 
+    /// `isJsxIntrinsicTagName`, of a tag name that is an identifier.
+    fn is_intrinsic_jsx_identifier(&self, tag: ExprId) -> bool {
+        matches!((self.f[tag].kind, self.atoms), (ExprKind::Ident(name), Some(atoms))
+            if crate::hir::is_intrinsic_jsx_name(atoms.bytes(name)))
+    }
+
+    /// `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxElementDeferred`: an intrinsic name is looked up in
+    /// `JSX.IntrinsicElements`.
+    fn jsx_tag_name(&mut self, tag: ExprId, parent: Parent) {
+        if self.is_intrinsic_jsx_identifier(tag) {
+            self.unchecked_expr(tag, parent);
+        } else {
+            self.expr(tag, parent);
+        }
+    }
+
     /// `expr`, of what `checkSourceFile` never comes to.
     fn unchecked_expr(&mut self, id: ExprId, parent: Parent) {
         let around = std::mem::replace(&mut self.is_unchecked, true);
@@ -3974,13 +3884,13 @@ impl<'f> Binder<'f> {
                 self.b.expr_scope.insert(id, self.scope);
                 let jsx = &self.f[j];
                 if jsx.tag.is_some() {
-                    self.expr(jsx.tag, me);
+                    self.jsx_tag_name(jsx.tag, me);
                 }
                 self.tys(jsx.type_args);
                 self.props(jsx.attrs, id);
                 self.exprs(jsx.children, me);
                 if jsx.close_tag.is_some() {
-                    self.expr(jsx.close_tag, me);
+                    self.jsx_tag_name(jsx.close_tag, me);
                 }
             }
         }

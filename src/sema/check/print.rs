@@ -463,6 +463,8 @@ struct Node {
     precedence: u8,
     /// `isIdentifierTypeReference`: the name, of a type reference whose name is one identifier.
     reference: Option<String>,
+    /// `UnionTypeNode.Types`, each as it is emitted.
+    types: Vec<String>,
 }
 
 impl Node {
@@ -471,6 +473,21 @@ impl Node {
             text: text.into(),
             precedence,
             reference: None,
+            types: Vec::new(),
+        }
+    }
+
+    /// `NewUnionTypeNode`
+    fn union(types: Vec<Node>) -> Node {
+        let types: Vec<String> = types
+            .into_iter()
+            .map(|node| node.emit(TYPE_OPERATOR))
+            .collect();
+        Node {
+            text: types.join(" | "),
+            precedence: UNION,
+            reference: None,
+            types,
         }
     }
 
@@ -1928,6 +1945,7 @@ impl<'p> Printer<'_, 'p> {
             text: format!("{name}{qualifier}{type_arguments}"),
             precedence: NON_ARRAY,
             reference: qualifier.is_empty().then_some(name),
+            types: Vec::new(),
         }
     }
 
@@ -2073,11 +2091,12 @@ impl<'p> Printer<'_, 'p> {
                     return name;
                 }
                 // `GetAssignedName`
-                if bound.fn_symbol[function.idx()].is_none()
+                if self.c.hir(file)[function].name.is_none()
                     && let FnOwner::Expr(e) = bound.fns[function.idx()].owner
-                    && let Some(name) = self.name_of_initialized_variable(file, e)
                 {
-                    return name;
+                    return self
+                        .name_of_initialized_variable(file, e)
+                        .unwrap_or_else(|| "(Anonymous function)".to_owned());
                 }
                 bound.fn_symbol[function.idx()]
             }
@@ -2491,6 +2510,7 @@ impl<'p> Printer<'_, 'p> {
                 text: name.clone(),
                 precedence: NON_ARRAY,
                 reference: Some(name),
+                types: Vec::new(),
             };
         }
         self.approximate_length += name.len() + 6;
@@ -2576,7 +2596,7 @@ impl<'p> Printer<'_, 'p> {
             return self.type_to_node(only);
         }
         let nodes = self.map_to_type_nodes(&types, true);
-        Node::new(join_nodes(nodes, " | ", TYPE_OPERATOR), UNION)
+        Node::union(nodes)
     }
 
     fn intersection_to_node(&mut self, members: &[TypeId]) -> Node {

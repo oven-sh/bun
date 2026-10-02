@@ -1120,16 +1120,16 @@ impl<'p> Checker<'p> {
         }
         // `{}` goes next to what cannot be null or undefined (`TypeFlagsDefinitelyNonNullable`), which a union is not known to be.
         // `U & {}` with a union `U` of nothing else is `U` once it is distributed over: no need to.
-        let is_non_nullable = includes & tf::DEFINITELY_NON_NULLABLE != 0
-            || includes & tf::INCLUDES_EMPTY_OBJECT != 0
-                && set.len() == 2
-                && set.iter().any(|&t| {
-                    self.is_union(t)
-                        && self
-                            .parts(t)
-                            .iter()
-                            .all(|&p| self.type_flags(p) & tf::DEFINITELY_NON_NULLABLE != 0)
-                });
+        let is_distributed_over = includes & tf::INCLUDES_EMPTY_OBJECT != 0
+            && set.len() == 2
+            && set.iter().any(|&t| {
+                self.is_union(t)
+                    && self
+                        .parts(t)
+                        .iter()
+                        .all(|&p| self.type_flags(p) & tf::DEFINITELY_NON_NULLABLE != 0)
+            });
+        let is_non_nullable = includes & tf::DEFINITELY_NON_NULLABLE != 0 || is_distributed_over;
         // `removeRedundantSupertypes`
         set.retain(|&t| {
             !(t == TypeId::STRING
@@ -1147,6 +1147,11 @@ impl<'p> Checker<'p> {
         }
         match set.len() {
             0 => return (TypeId::UNKNOWN, false),
+            // `getUnionTypeEx(constituents, UnionReductionLiteral, alias, nil)`: a union of its own.
+            1 if is_distributed_over && self.is_union(set[0]) => {
+                let members = self.parts(set[0]);
+                return (self.union(members), true);
+            }
             1 => return (set[0], false),
             _ => {}
         }
@@ -1761,6 +1766,12 @@ impl<'p> Checker<'p> {
                     .cmp(t.iter().map(text))
                     .then_with(|| lists(x, y))
             }
+            // TypeScript has them by id, in the order `getSpreadType` made them: `mapType` goes through the left, and for each of its
+            // members through the right.
+            (TypeData::Synth(x), TypeData::Synth(y)) => match (x.spread_of, y.spread_of) {
+                (Some((l, r)), Some((m, s))) => types(l, m).then_with(|| types(r, s)),
+                _ => Equal,
+            },
             // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`: what has none comes last.
             (x, y) => {
                 let kind = |data: &TypeData| match data {

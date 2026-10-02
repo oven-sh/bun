@@ -378,10 +378,6 @@ impl Checker<'_> {
             // `isDeleteTarget`
             let is_written = is_target
                 || matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
-            // `bindDeferredExpandoAssignment`: the access is the target of an assignment that declares a property of a function or class.
-            let is_expando_declaration = matches!(bound.expr_parent[i], Parent::Expr(p)
-                if matches!(hir[p].kind, ExprKind::Assign { target, .. } if target == e)
-                    && (bound.declared_fn_keyed_expandos.iter().any(|x| x.2 == p) || bound.fn_expr_keyed_expandos.iter().any(|x| x.2 == p)));
             // `AccessFlagsNoIndexSignatures`: what waits for its type parameters is not written to through a signature of what it extends.
             let no_index_signatures = is_target
                 && self.is_generic_object_type(object)
@@ -486,10 +482,6 @@ impl Checker<'_> {
                 }
                 // Nothing about `any` is said of a `const enum`: the member is missing, whatever the options.
                 if is_key_like && !is_const_enum {
-                    // `lateBindMember`: the assignment declares the property that `key` names.
-                    if is_expando_declaration && name.is_some() {
-                        continue;
-                    }
                     if self.is_object_literal_type(apparent) {
                         if no_implicit_any && is_literal_key {
                             out.push(Diagnostic {

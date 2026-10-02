@@ -469,14 +469,23 @@ impl<'p> Printer<'_, 'p> {
                         has_elided_type = true;
                         continue;
                     }
+                    // `appendTypeNode`: the members of a union among them are members of the whole.
                     let node = self.pseudo_type_to_node(file, member);
-                    if node.text == "undefined" {
-                        if has_undefined {
-                            continue;
+                    let nodes = if node.types.is_empty() {
+                        vec![node]
+                    } else {
+                        let emitted = |text: String| Node::new(text, TYPE_OPERATOR);
+                        node.types.into_iter().map(emitted).collect()
+                    };
+                    for node in nodes {
+                        if node.text == "undefined" {
+                            if has_undefined {
+                                continue;
+                            }
+                            has_undefined = true;
                         }
-                        has_undefined = true;
+                        parts.push(node);
                     }
-                    parts.push(node);
                 }
                 if parts.len() == 1
                     && let Some(only) = parts.pop()
@@ -486,18 +495,7 @@ impl<'p> Printer<'_, 'p> {
                 if parts.is_empty() {
                     return Node::simple(if has_elided_type { "any" } else { "never" });
                 }
-                // The members of a union among them are members of the whole.
-                let parts: Vec<String> = parts
-                    .into_iter()
-                    .map(|node| {
-                        if node.precedence == UNION {
-                            node.text
-                        } else {
-                            node.emit(TYPE_OPERATOR)
-                        }
-                    })
-                    .collect();
-                Node::new(parts.join(" | "), UNION)
+                Node::union(parts)
             }
             Pseudo::Undefined => Node::simple(if is_strict { "undefined" } else { "any" }),
             Pseudo::Null => Node::simple(if is_strict { "null" } else { "any" }),
@@ -880,6 +878,60 @@ impl<'p> Printer<'_, 'p> {
         Some(visited)
     }
 
+    /// `getModuleSpecifierOverride`, of the import type `node` of `file`. `None`: the literal stays.
+    fn get_module_specifier_override(&mut self, file: FileId, node: TypeNodeId) -> Option<String> {
+        let at = self
+            .enclosing_declaration
+            .filter(|enclosing| enclosing.file != file)?;
+        let (hir, files) = (self.c.hir(file), self.c.files());
+        let TypeNodeKind::Import {
+            spec,
+            name,
+            is_typeof,
+            mode,
+            ..
+        } = hir[node].kind
+        else {
+            return None;
+        };
+        let target = files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
+        // `tryGetResolvedSymbolFromTypeNode`
+        let mut resolved = Some(files.module_value(target));
+        for part in hir.ids(name) {
+            resolved = resolved
+                .and_then(|container| files.resolve_alias(container))
+                .and_then(|container| files.namespace_member(container, part));
+        }
+        let resolved = resolved.and_then(|symbol| files.resolve_alias(symbol));
+        let meaning = if is_typeof {
+            SymFlags::VALUE
+        } else {
+            SymFlags::TYPE
+        };
+        let parent = match resolved {
+            Some(symbol) if self.c.is_symbol_accessible_at(symbol, meaning, false, at) => {
+                self.track_symbol(symbol, meaning);
+                let (starts_with_global_this, chain) =
+                    self.c.lookup_symbol_chain_at(symbol, is_typeof, true, at);
+                (!starts_with_global_this).then(|| chain[0])
+            }
+            _ => None,
+        };
+        // Otherwise `getExternalModuleFileFromDeclaration`.
+        let module = parent
+            .filter(|&parent| self.is_external_module(parent))
+            .unwrap_or(target);
+        let name = self.c.specifier_for_module_symbol_at(module, at);
+        if name.contains("/node_modules/") {
+            self.encountered_error = true;
+            self.report(Report::LikelyUnsafeImportRequired(
+                name.clone(),
+                String::new(),
+            ));
+        }
+        (!name.is_empty() && name != self.text(spec)).then_some(name)
+    }
+
     /// `visitExistingNodeTreeSymbolsWorker`, and how the printer writes what comes of it.
     fn visit_existing_type_node_worker(&mut self, file: FileId, node: TypeNodeId) -> Option<Node> {
         let hir = self.c.hir(file);
@@ -913,27 +965,28 @@ impl<'p> Printer<'_, 'p> {
                 is_typeof,
                 mode,
             } => {
-                // `getModuleSpecifierOverride`: what the module is called depends on where it is called that.
-                let is_in_enclosing_file = self
-                    .enclosing_declaration
-                    .is_none_or(|enclosing| enclosing.file == file);
                 let declared = self.c.type_from_node(file, node);
                 // `IsLiteralImportTypeNode`
                 if spec.is_none()
-                    || !is_in_enclosing_file
                     || mode != ResolutionMode::None
                     || self.c.instantiate(declared, self.mapper) != declared
                 {
                     return None;
                 }
-                let is_quote = |&&byte: &&u8| byte == b'\'' || byte == b'"';
-                let quote = match hir.text.get(pos as usize..) {
-                    Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => '\'',
-                    _ => '"',
+                // `rewriteModuleSpecifier`
+                let specifier = match self.get_module_specifier_override(file, node) {
+                    Some(name) => quoted(&name, '"', true),
+                    None => {
+                        let is_quote = |&&byte: &&u8| byte == b'\'' || byte == b'"';
+                        let quote = match hir.text.get(pos as usize..) {
+                            Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => '\'',
+                            _ => '"',
+                        };
+                        self.string_literal_to_node(spec, quote).text
+                    }
                 };
                 let query = if is_typeof { "typeof " } else { "" };
-                let specifier = self.string_literal_to_node(spec, quote);
-                let mut text = format!("{query}import({})", specifier.text);
+                let mut text = format!("{query}import({specifier})");
                 for part in hir.ids(name) {
                     text.push('.');
                     text.push_str(&self.text(part));
@@ -1002,7 +1055,7 @@ impl<'p> Printer<'_, 'p> {
             }
             TypeNodeKind::Union(list) => {
                 let nodes = self.visit_existing_type_nodes(file, list, pos)?;
-                Node::new(join_nodes(nodes, " | ", TYPE_OPERATOR), UNION)
+                Node::union(nodes)
             }
             TypeNodeKind::Intersection(list) => {
                 let nodes = self.visit_existing_type_nodes(file, list, pos)?;
@@ -1489,6 +1542,7 @@ impl<'p> Printer<'_, 'p> {
                 text: name.clone(),
                 precedence: NON_ARRAY,
                 reference: Some(name),
+                types: Vec::new(),
             });
         }
         if !self.can_reuse_existing_js_type_node(file, node, declared) {
@@ -1518,6 +1572,7 @@ impl<'p> Printer<'_, 'p> {
                 [only] => Some(only.clone()),
                 _ => None,
             },
+            types: Vec::new(),
         })
     }
 

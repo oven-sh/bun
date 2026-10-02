@@ -1013,25 +1013,38 @@ impl<'p> Checker<'p> {
         out.sort_unstable();
     }
 
-    /// `getConditionalTypeInstantiation`: the conditional type at `node`, with `mapper` for the type parameters around it.
+    /// `getConditionalTypeInstantiation`, given no alias.
     pub fn conditional_type(&mut self, file: FileId, node: TypeNodeId, mapper: MapperId) -> TypeId {
+        self.conditional_type_instantiation(file, node, mapper, None)
+    }
+
+    /// `getConditionalTypeInstantiation`: the conditional type at `node`, with `mapper` for the type parameters around it. What is
+    /// made under an alias is not kept: `getConditionalTypeKey` has the alias in it, `conditionals` has not.
+    pub(super) fn conditional_type_instantiation(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
         let key = Deep::Conditional(file, node, mapper);
-        let is_aliased = std::mem::take(&mut self.aliased_reference);
         if let Some(known) = self.p.conditionals.get(&(file, node, mapper)) {
             // `getConditionalTypeKey` includes the alias. Under a new alias tsgo resolves the type again and reports 2589 again.
-            if is_aliased && self.p.excessive.get(&key).is_some() {
+            if alias.is_some() && self.reports_depth && self.p.excessive.get(&key).is_some() {
                 self.excessively_deep();
-            } else {
-                self.note_depth(key, None);
+                return known;
             }
-            return known;
+            if alias.is_none() {
+                self.note_depth(key, None);
+                return known;
+            }
         }
         if !self.enter(Query::Cond(file, node, mapper)) {
             return self.excessively_deep();
         }
         let events = self.deep_events;
-        let ty = self.conditional_type_uncached(file, node, mapper, false);
-        if self.leave() {
+        let ty = self.conditional_type_uncached(file, node, mapper, false, alias);
+        if self.leave() && alias.is_none() {
             self.note_depth(key, Some(events));
             self.p.conditionals.insert((file, node, mapper), ty);
         }
@@ -1055,6 +1068,7 @@ impl<'p> Checker<'p> {
         node: TypeNodeId,
         mapper: MapperId,
         for_constraint: bool,
+        alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind else {
             return TypeId::UNRESOLVED;
@@ -1070,7 +1084,7 @@ impl<'p> Checker<'p> {
             if (value.is_never() || self.is_union(value))
                 && self.is_distributive_conditional(file, node)
             {
-                return self.map_type(value, |c, part| {
+                let of_member = |c: &mut Self, part: TypeId| {
                     let mut pairs = c.p.types.mapping(mapper).to_vec();
                     for p in &mut pairs {
                         if p.0 == check_declared {
@@ -1079,14 +1093,15 @@ impl<'p> Checker<'p> {
                     }
                     let one = c.p.types.mapper(pairs);
                     if for_constraint {
-                        c.resolve_conditional(file, node, one, true)
+                        c.resolve_conditional(file, node, one, true, None)
                     } else {
                         c.conditional_type(file, node, one)
                     }
-                });
+                };
+                return self.map_type_with_alias(value, of_member, alias);
             }
         }
-        self.resolve_conditional(file, node, mapper, for_constraint)
+        self.resolve_conditional(file, node, mapper, for_constraint, alias)
     }
 
     /// How many elements the tuple written at `node` has, if none is optional or a rest.
@@ -1113,6 +1128,7 @@ impl<'p> Checker<'p> {
         node: TypeNodeId,
         mapper: MapperId,
         for_constraint: bool,
+        mut alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         let (mut file, mut node, mut mapper) = (file, node, mapper);
         let mut extra_types: Vec<TypeId> = Vec::new();
@@ -1194,7 +1210,7 @@ impl<'p> Checker<'p> {
                 || self.is_generic(extends_ty)
                 || check_tuples && self.has_generic_element(extends_ty)
             {
-                break self.intern(TypeData::Cond { file, node, mapper });
+                break self.deferred_conditional_type(file, node, mapper, alias);
             }
             let extends_is_top = self.has_any_flag(extends_ty) || extends_ty == TypeId::UNKNOWN;
             // `getPermissiveInstantiation` leaves a type without type variables as it is. `Relation::Permissive` would take the type
@@ -1230,7 +1246,7 @@ impl<'p> Checker<'p> {
                         self.is_assignable(check_ty, extends_ty)
                     };
                 if !passes {
-                    break self.intern(TypeData::Cond { file, node, mapper });
+                    break self.deferred_conditional_type(file, node, mapper, alias);
                 }
                 (yes, combined, false)
             };
@@ -1243,6 +1259,7 @@ impl<'p> Checker<'p> {
             ) {
                 Ok((root, is_tail_call)) => {
                     if is_tail_call {
+                        alias = None;
                         // The loop is deterministic: a root that comes back under the same mapper comes back until a limit is hit.
                         if !tail_roots.insert(root) {
                             return self.excessively_deep();
@@ -1276,6 +1293,21 @@ impl<'p> Checker<'p> {
         }
         extra_types.push(result);
         self.union(&extra_types)
+    }
+
+    /// `newConditionalType`, with `alias`. Given none it has `instantiateTypeAlias(root.alias, mapper)`, which the node says.
+    fn deferred_conditional_type(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+        alias: Option<(Sym, &[TypeId])>,
+    ) -> TypeId {
+        let deferred = self.intern(TypeData::Cond { file, node, mapper });
+        match alias {
+            Some((alias, type_arguments)) => self.with_alias(deferred, alias, type_arguments),
+            None => deferred,
+        }
     }
 
     /// `Ok`: the conditional type that the loop of `getConditionalType` continues with instead of instantiating the branch at `branch`

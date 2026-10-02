@@ -95,7 +95,11 @@ impl<'c, 'p> JsxCheckOrder<'c, 'p> {
                 DeferredNode::ClassExpression(class) => self.check_class_members(class),
                 DeferredNode::JsxElement(jsx) => {
                     let jsx = &hir[jsx];
-                    self.check_expression(jsx.tag);
+                    let tag = match self.checker.jsx_intrinsic_tag_name(self.file, jsx.tag) {
+                        Some(_) => ExprId::NONE,
+                        None => jsx.tag,
+                    };
+                    self.check_expression(tag);
                     for p in jsx.attrs.iter() {
                         self.check_expression(hir[p].value);
                     }
@@ -103,7 +107,7 @@ impl<'c, 'p> JsxCheckOrder<'c, 'p> {
                         self.check_expression(child);
                     }
                     // `checkJsxReturnAssignableToAppropriateBound`
-                    if let Some(func) = self.called_function(jsx.tag) {
+                    if let Some(func) = self.called_function(tag) {
                         self.get_return_type_from_body(func);
                     }
                 }
@@ -616,14 +620,9 @@ impl Checker<'_> {
             self.check_jsx_component(file, e, out);
             // `checkJsxElementDeferred`: `getIntrinsicTagSymbol` of the opening element, then of the closing one, each by its own name.
             // A closing name that is not intrinsic is an expression, checked like any other.
-            let intrinsic_name = |tag: ExprId| match hir[tag].kind {
-                // `IsIntrinsicJsxName`: a missing name is not one.
-                ExprKind::String(name) if name != known::empty => Some(name),
-                _ => None,
-            };
-            let opening_name = intrinsic_name(element.tag);
+            let opening_name = self.jsx_intrinsic_tag_name(file, element.tag);
             let closing_name = if element.close_tag.is_some() {
-                intrinsic_name(element.close_tag)
+                self.jsx_intrinsic_tag_name(file, element.close_tag)
             } else {
                 None
             };
@@ -761,8 +760,8 @@ impl Checker<'_> {
         let (tag_name, tag_end) = (tag_name_start(hir, e), tag_name_end(hir, e));
         // The last of several candidates.
         let mut last_candidate = None;
-        let wanted: Vec<TypeId> = match hir[jsx.tag].kind {
-            ExprKind::String(name) => {
+        let wanted: Vec<TypeId> = match self.jsx_intrinsic_tag_name(file, jsx.tag) {
+            Some(name) => {
                 // An intrinsic element takes no type arguments. The attributes are checked all the same.
                 self.report_jsx_type_argument_arity(file, jsx.type_args, &[], out);
                 match self.jsx_intrinsic_attributes(file, name) {
@@ -770,7 +769,7 @@ impl Checker<'_> {
                     None => return,
                 }
             }
-            _ => {
+            None => {
                 let component = self.type_of_expr(file, jsx.tag);
                 if !self.is_known(component)
                     || self.is_any(component)
@@ -893,7 +892,7 @@ impl Checker<'_> {
             return;
         }
         // No signature applies then, whatever the attributes are.
-        if !matches!(hir[jsx.tag].kind, ExprKind::String(_))
+        if self.jsx_intrinsic_tag_name(file, jsx.tag).is_none()
             && let Some((least, factory, most)) = self.jsx_tag_expects_too_many_arguments(file, e)
         {
             out.push(Diagnostic {
@@ -1717,10 +1716,7 @@ impl Checker<'_> {
         };
         let tag = hir[j].tag;
         let tag_name = tag_name_start(hir, e);
-        let intrinsic = match hir[tag].kind {
-            ExprKind::String(name) => Some(name),
-            _ => None,
-        };
+        let intrinsic = self.jsx_intrinsic_tag_name(file, tag);
         // `JSX.ElementType` says it all, if it is there.
         if let Some(allowed) = self.jsx_element_type_constraint(file) {
             let given = match intrinsic {

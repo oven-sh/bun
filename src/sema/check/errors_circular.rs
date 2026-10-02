@@ -7,7 +7,9 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
+use crate::bind::{
+    Decl, FnOwner, MemberDeclaration, MemberOwner, Parent, PatParent, Symbol, SymbolId,
+};
 use smallvec::SmallVec;
 
 type TypeParams = SmallVec<[TypeParamId; 8]>;
@@ -243,49 +245,28 @@ impl Checker<'_> {
                 self.type_of_member_declaration(file, member);
                 continue;
             }
-            // A getter and a setter are one property, known by whichever is written first.
-            let all = match bound.member_owner[i] {
-                MemberOwner::Class(c) => hir[c].members,
-                MemberOwner::Interface(x) => hir[x].members,
-                MemberOwner::TypeLiteral(t) => match hir[t].kind {
-                    TypeNodeKind::Object(members) => members,
-                    _ => continue,
-                },
-                MemberOwner::None => continue,
-            };
-            // They go together by name, as the members of a type are grouped: two names that are worked out are never the same
-            // expression. One whose name could be anything stays alone.
-            let name = self.member_name(file, hir[member].key);
-            let is_static = hir[member].flags.contains(Flags::STATIC);
-            let (mut getter, mut setter) = (None, None);
-            for m in all.iter() {
-                let found = match hir[m].kind {
-                    MemberKind::Getter => &mut getter,
-                    MemberKind::Setter => &mut setter,
-                    _ => continue,
-                };
-                if found.is_none()
-                    && hir[m].flags.contains(Flags::STATIC) == is_static
-                    && (m == member || name.is_some() && self.member_name(file, hir[m].key) == name)
-                {
-                    *found = Some(m);
-                }
-            }
-            let first = match (getter, setter) {
-                (Some(g), Some(s)) => g.min(s),
-                (Some(m), None) | (None, Some(m)) => m,
-                (None, None) => continue,
-            };
-            if first != member {
+            if bound.member_owner[i] == MemberOwner::None {
                 continue;
             }
-            let mut both: SmallVec<[(FileId, MemberId); 2]> = [getter, setter]
-                .into_iter()
-                .flatten()
-                .map(|m| (file, m))
+            // `getTypeOfAccessors`: the accessors among the declarations of one symbol are one property, known by the first.
+            let both: SmallVec<[(FileId, MemberId); 2]> = self
+                .declarations_of_member(file, MemberDeclaration::Member(member))
+                .iter()
+                .filter_map(|&(of, declaration)| match declaration {
+                    MemberDeclaration::Member(m)
+                        if matches!(
+                            self.hir(of)[m].kind,
+                            MemberKind::Getter | MemberKind::Setter
+                        ) =>
+                    {
+                        Some((of, m))
+                    }
+                    _ => None,
+                })
                 .collect();
-            both.sort_unstable();
-            self.type_of_member_declarations(&both);
+            if both.first() == Some(&(file, member)) {
+                self.type_of_member_declarations(&both);
+            }
         }
         for i in 0..hir.fns.len() {
             let func = FnId(i as u32);

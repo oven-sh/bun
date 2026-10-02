@@ -631,9 +631,15 @@ pub struct Prop {
     pub end: u32,
 }
 
+/// `IsIntrinsicJsxName`
+pub fn is_intrinsic_jsx_name(name: &[u8]) -> bool {
+    name.first().is_some_and(u8::is_ascii_lowercase) || name.contains(&b'-')
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct Jsx {
-    /// The name in the opening tag. `NONE` for a fragment. An intrinsic element's is a `String`.
+    /// `TagName` of the opening element. `NONE` for a fragment. What is no identifier to the rest of the language is a `String`:
+    /// `a-b`, `a:b`.
     pub tag: ExprId,
     /// `TagName` of the `JsxClosingElement`. `NONE` for `<tag />` and for a fragment. A missing expression where the name or the
     /// whole tag is missed. After a syntax error the two names may differ.
@@ -957,6 +963,8 @@ pub struct Class {
     pub pos: u32,
     /// Where its first token is, decorators and modifiers included.
     pub start: u32,
+    /// `node.Modifiers()`. Of a declaration, the list of its statement.
+    pub modifiers: Span<ModifierId>,
 }
 
 #[derive(Copy, Clone, Debug)]

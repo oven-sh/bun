@@ -72,6 +72,19 @@ impl<'p> Checker<'p> {
         self.jsx_name_from_container(file, known::ElementChildrenAttribute)
     }
 
+    /// `isJsxIntrinsicTagName`, and the name the element is looked up by.
+    pub(super) fn jsx_intrinsic_tag_name(&self, file: FileId, tag: ExprId) -> Option<Atom> {
+        match self.hir(file)[tag].kind {
+            ExprKind::String(name) => Some(name),
+            ExprKind::Ident(name)
+                if crate::hir::is_intrinsic_jsx_name(self.files().atoms.bytes(name)) =>
+            {
+                Some(name)
+            }
+            _ => None,
+        }
+    }
+
     /// `getUninstantiatedJsxSignaturesOfType`, and whether they are for `new`.
     pub(super) fn jsx_signatures(&mut self, component: TypeId) -> (List<'p, SigId>, bool) {
         let apparent = self.apparent_type(component);
@@ -270,12 +283,12 @@ impl<'p> Checker<'p> {
                 None => attributes,
             };
         }
-        let constructor = match hir[tag].kind {
-            ExprKind::String(name) => match self.jsx_intrinsic_attributes(file, name) {
+        let constructor = match self.jsx_intrinsic_tag_name(file, tag) {
+            Some(name) => match self.jsx_intrinsic_attributes(file, name) {
                 Some(intrinsic) => self.jsx_intrinsic_function_type(file, intrinsic),
                 None => return attributes,
             },
-            _ => {
+            None => {
                 let tag_type = self.type_of_expr(file, tag);
                 match self.string_literal_value(tag_type) {
                     Some(name) => match self.jsx_attributes_of_literal_tag(file, name) {

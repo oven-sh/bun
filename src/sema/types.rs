@@ -454,6 +454,8 @@ pub struct Shape {
     pub instantiation_expression: Option<InstantiationExpression>,
     /// Of what `createDefaultPropertyWrapperForModule` makes: `originalSymbol`, the module, which is the `Parent` of its `default`.
     pub default_of: Option<Sym>,
+    /// Of what `getSpreadType` makes, which is a new type each time: the left and the right it was made of.
+    pub spread_of: Option<(TypeId, TypeId)>,
 }
 
 /// Whether a made-up object type is still the type of an object literal expression, or what else it was made as that tells.
@@ -825,6 +827,9 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
         TypeData::Synth(shape) => {
             shape.symbol_declared_at.is_some_and(|at| at.0 == file)
                 || shape.default_of.is_some_and(|module| module.file == file)
+                || shape
+                    .spread_of
+                    .is_some_and(|(left, right)| left.is_local() || right.is_local())
                 || matches!(
                     shape.instantiation_expression,
                     Some(InstantiationExpression::Expr(f, _) | InstantiationExpression::TypeNode(f, _))

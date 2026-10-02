@@ -1668,9 +1668,7 @@ impl<'p> Checker<'p> {
                     {
                         return None;
                     }
-                    if self.is_expando_assignment(file, assignment)
-                        || bound.is_expando_declaration(assignment)
-                    {
+                    if bound.is_expando_declaration(assignment) {
                         // A variable that says what it is says what its properties are expected to be.
                         let symbol = bound.expr_symbol[obj.idx()];
                         if symbol.is_some()
@@ -1705,8 +1703,7 @@ impl<'p> Checker<'p> {
                 }
                 // `a.f.id = value`, `module.exports.id = value`, the same.
                 ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                    if self.is_expando_assignment(file, assignment)
-                        || bound.is_expando_declaration(assignment)
+                    if bound.is_expando_declaration(assignment)
                         || !matches!(
                             crate::bind::assignment_declaration_kind(hir, assignment),
                             crate::bind::JsDeclarationKind::None
@@ -1840,21 +1837,6 @@ impl<'p> Checker<'p> {
         !props.iter().any(|x| {
             hir[x].key == PropKey::Name(name) && hir.jsdoc_type(JsDocTypeOwner::Prop(x)).is_some()
         })
-    }
-
-    /// Whether the binder took `assignment` for the declaration of a property of a function (`binary.Symbol != nil`).
-    fn is_expando_assignment(&self, file: FileId, assignment: ExprId) -> bool {
-        let bound = self.bound(file);
-        bound.expr_symbol[assignment.idx()].is_some()
-            || bound.fn_expr_expandos.iter().any(|x| x.2 == assignment)
-            || bound
-                .declared_fn_keyed_expandos
-                .iter()
-                .any(|x| x.2 == assignment)
-            || bound
-                .fn_expr_keyed_expandos
-                .iter()
-                .any(|x| x.2 == assignment)
     }
 
     /// `getContextualTypeForElementExpression`. `length`: how many elements are written, if that is known. `first_spread`,

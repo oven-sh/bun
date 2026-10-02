@@ -3304,7 +3304,8 @@ impl<'p> Checker<'p> {
         if !hir.is_js {
             return false;
         }
-        if !crate::bind::Bound::expandos_of(&bound.object_expandos, literal).is_empty() {
+        let symbol = bound.expr_symbol[literal.idx()];
+        if symbol.is_some() && !bound.table(bound.symbols[symbol.idx()].exports).is_empty() {
             return true;
         }
         let Some((call, argument)) = self.enclosing_call_argument(file, literal) else {
@@ -3848,41 +3849,9 @@ impl<'p> Checker<'p> {
             });
         }
         shape.index = self.index_infos_of_object_literal(file, props, props, is_const);
-        // `bindDeferredExpandoAssignment`: in JavaScript, `x.a = v`, `x["a"] = v` and `x[0] = v` declare properties of the `{}` that
-        // initializes `x`. A literal key declares the property it names.
-        let bound = self.bound(file);
-        let named = crate::bind::Bound::expandos_of(&bound.object_expandos, e);
-        let keyed = crate::bind::Bound::expandos_of(&bound.object_keyed_expandos, e);
-        let mut merged = Vec::new();
-        let added: &[(ExprId, Atom, ExprId)] = if keyed.is_empty() {
-            named
-        } else {
-            merged.extend_from_slice(named);
-            for &(literal, key, assignment) in keyed {
-                if let Some(name) = self.member_name(file, PropKey::Computed(key)) {
-                    merged.push((literal, name, assignment));
-                }
-            }
-            merged.sort_unstable_by_key(|x| (x.1, x.2));
-            &merged
-        };
-        let mut i = 0;
-        while i < added.len() {
-            let name = added[i].1;
-            let end = i + added[i..].iter().take_while(|x| x.1 == name).count();
-            let assignments: Box<[ExprId]> = added[i..end].iter().map(|x| x.2).collect();
-            shape.props.push(Prop {
-                name,
-                flags: PropFlags::empty(),
-                source: PropSource::Assigned(file, assignments),
-                mapper: MapperId::IDENTITY,
-            });
-            i = end;
-        }
-        if !added.is_empty() {
-            self.get_named_members(&mut shape.props, |_| true, &[]);
-        }
-        shape
+        // "Expando object literals have empty properties but filled exports"
+        let owner = self.bound(file).expr_symbol[e.idx()];
+        self.with_expandos(shape, file, owner)
     }
 
     /// Whether what the object literal `e` is expected to be can be what a pattern implies: `e` is what a pattern without a type of
@@ -4792,7 +4761,7 @@ impl<'p> Checker<'p> {
         if tag.is_none() {
             return None;
         }
-        if let ExprKind::String(name) = hir[tag].kind {
+        if let Some(name) = self.jsx_intrinsic_tag_name(file, tag) {
             return self.jsx_intrinsic_attributes(file, name);
         }
         let component = self.type_of_expr(file, tag);

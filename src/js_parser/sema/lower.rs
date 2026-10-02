@@ -684,6 +684,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             .partition_point(|list| list.0 <= loc.start);
         let list = match after.checked_sub(1).map(|last| self.modifier_lists[last]) {
             Some((at, list)) if at == loc.start => list,
+            // A class has its decorators all the same.
+            _ if matches!(self.b.file[id].kind, StmtKind::Class(_)) => ts::Span::EMPTY,
             _ => return,
         };
         let mut modifiers = Vec::with_capacity(list.len());
@@ -1685,7 +1687,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             other_implements.extend(self.b.file.ids(clause));
         }
         let other_implements = self.b.file.list(&other_implements);
-        let of_class: Vec<ExprId> = class.ts_decorators.iter().map(|d| self.expr(d)).collect();
+        let of_class: Vec<(ExprId, u32)> = class
+            .ts_decorators
+            .iter()
+            .map(|d| (self.expr(d), self.b.at_sign_before(pos_of(d.loc))))
+            .collect();
         let outer_is_abstract = std::mem::replace(
             &mut self.b.in_abstract_class,
             flags.contains(Flags::ABSTRACT),
@@ -1694,10 +1700,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         // By where the member is: they are put in order further down.
         let mut of_members: Vec<(u32, ExprId)> = Vec::new();
         for property in class.properties.slice() {
-            let decorators: Vec<ExprId> = property
+            let decorators: Vec<(ExprId, u32)> = property
                 .ts_decorators
                 .iter()
-                .map(|d| self.expr(d))
+                .map(|d| (self.expr(d), self.b.at_sign_before(pos_of(d.loc))))
                 .collect();
             let mut member = self.class_member(property);
             // `parseClassElement`
@@ -1715,7 +1721,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 member = self.member_jsdoc(member, start);
                 members.append(&mut self.reparsed_members);
             }
-            of_members.extend(decorators.into_iter().map(|e| (member.pos, e)));
+            member.modifiers = self
+                .b
+                .modifiers_with_decorators(member.modifiers, &decorators);
+            of_members.extend(decorators.into_iter().map(|(e, _)| (member.pos, e)));
             members.push(member);
         }
         for at in self.marks_from(keyword, Mark::DroppedMember) {
@@ -1739,6 +1748,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.b.file.decorators.push((DecoratorOwner::Member(m), e));
             }
         }
+        let modifiers = self.b.modifiers_with_decorators(Span::EMPTY, &of_class);
         let id = self.b.file.add_class(Class {
             name: class
                 .class_name
@@ -1755,8 +1765,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             members,
             pos,
             start,
+            modifiers,
         });
-        for e in of_class {
+        for (e, _) in of_class {
             self.b.file.decorators.push((DecoratorOwner::Class(id), e));
         }
         id
@@ -2139,8 +2150,9 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `parseJsxTagName`: `this` at the head of a tag name is the keyword. `tag` may be `NONE`.
-    fn jsx_this_keyword(&mut self, tag: ExprId) {
+    /// `parseJsxTagName`: `this` at the head of a tag name is the keyword, and a name is an identifier, which the parser gives as a
+    /// string if the element is intrinsic. `tag` may be `NONE`.
+    fn jsx_tag_name(&mut self, tag: ExprId) {
         let mut root = tag;
         while root.is_some() {
             let ExprKind::Dot { obj, .. } = self.b.file[root].kind else {
@@ -2152,6 +2164,16 @@ impl<'p, 'a> Lower<'p, 'a> {
             && matches!(self.b.file[root].kind, ExprKind::Ident(name) | ExprKind::String(name) if name == bun_sema::atom::known::this)
         {
             self.b.file[root].kind = ExprKind::This;
+        } else if root.is_some()
+            && let ExprKind::String(name) = self.b.file[root].kind
+            && !self
+                .b
+                .atoms
+                .bytes(name)
+                .iter()
+                .any(|c| matches!(c, b'-' | b':'))
+        {
+            self.b.file[root].kind = ExprKind::Ident(name);
         }
     }
 
@@ -2349,7 +2371,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             Data::EJsxElement(e) => {
                 let tag = self.optional_expr(e.tag.as_ref());
-                self.jsx_this_keyword(tag);
+                self.jsx_tag_name(tag);
                 let attrs = self.props(e.properties.as_slice(), false);
                 let children = self.exprs(e.children.iter());
                 let type_args = match self.mark(expr.loc, Mark::TypeArguments) {
@@ -2368,7 +2390,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     pos_of(closing_start)
                 };
                 let close_tag = self.optional_expr(closing_tag.as_ref());
-                self.jsx_this_keyword(close_tag);
+                self.jsx_tag_name(close_tag);
                 ExprKind::Jsx(self.b.file.add_jsx(Jsx {
                     tag,
                     close_tag,

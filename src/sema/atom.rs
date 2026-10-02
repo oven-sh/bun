@@ -162,6 +162,10 @@ known_atoms! {
     get = "get",
     set = "set",
     writable = "writable",
+    anonymous_function = "function=",
+    object_literal = "object=",
+    computed = "computed=",
+    assignment_declaration = "assignment=",
 }
 
 /// What the name of a property that a symbol names starts with: `InternalSymbolNamePrefix` and `@`. No text has the byte 0xFE in

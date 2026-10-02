@@ -252,7 +252,7 @@ impl Checker<'_> {
         let interface_extends = self.files().decls(sym).iter().any(
             |&(f, decl)| matches!(decl, Decl::Interface(i) if !self.hir(f)[i].extends.is_empty()),
         );
-        let nothing = if interface_extends {
+        let nothing = if interface_extends && !self.base_types(sym).is_empty() {
             ClassBase::Unknown
         } else {
             ClassBase::Nothing

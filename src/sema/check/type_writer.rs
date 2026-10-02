@@ -255,15 +255,14 @@ impl Checker<'_> {
                 self.type_of_visited_expression(file, e)
             }
             VisitedKind::BindingName(pat) => self.type_of_binding_name(file, pat),
-            // `IsJsxTagName`: the identifier is an expression, and `checkIdentifier` resolves it as a value from where the element is.
-            VisitedKind::JsxIntrinsicTagName(element, tag) => {
-                let scope = self.bound(file).expr_scope.get(&element);
-                let (ExprKind::String(name), Some(&scope)) = (hir[tag].kind, scope) else {
-                    return TypeId::ERROR;
-                };
-                let ty = self.type_of_entity(file, scope, &[name]);
-                self.regular(ty)
-            }
+            // `IsJsxTagName`: the identifier is an expression (`checkIdentifier`). Nothing goes by the name `a-b`.
+            VisitedKind::JsxIntrinsicTagName(_, tag) => match hir[tag].kind {
+                ExprKind::Ident(_) => {
+                    let ty = self.type_of_expr(file, tag);
+                    self.regular(ty)
+                }
+                _ => TypeId::ERROR,
+            },
             VisitedKind::DeclarationName(decl, symbol) => {
                 self.type_of_declaration_name(file, decl, symbol, node.start)
             }
@@ -588,8 +587,24 @@ impl Checker<'_> {
         let prop = self
             .member_name(file, member.key)
             .and_then(|name| self.prop_of(container, name));
+        let own_symbol = |name: Atom, mapper: MapperId| {
+            let mut flags = PropFlags::empty();
+            if member.flags.contains(Flags::OPTIONAL) {
+                flags |= PropFlags::OPTIONAL;
+            }
+            if member.kind == MemberKind::Method {
+                flags |= PropFlags::METHOD;
+            }
+            Prop {
+                name,
+                flags,
+                source: PropSource::Members(MemberList::One((file, m))),
+                mapper,
+            }
+        };
         let Some((prop, _)) = prop else {
-            return self.type_of_member_declaration(file, m);
+            let prop = own_symbol(Atom::NONE, MapperId::IDENTITY);
+            return self.type_of_prop(&prop, MapperId::IDENTITY);
         };
         let name = prop.name;
         // `declareSymbolEx`, `mergeSymbol`, `lateBindMember`: what the symbol of that name refused has a symbol of its own.
@@ -617,19 +632,7 @@ impl Checker<'_> {
             }
         };
         let prop = if has_own_symbol {
-            let mut flags = PropFlags::empty();
-            if member.flags.contains(Flags::OPTIONAL) {
-                flags |= PropFlags::OPTIONAL;
-            }
-            if member.kind == MemberKind::Method {
-                flags |= PropFlags::METHOD;
-            }
-            Prop {
-                name,
-                flags,
-                source: PropSource::Members(MemberList::One((file, m))),
-                mapper: prop.mapper,
-            }
+            own_symbol(name, prop.mapper)
         } else {
             prop
         };

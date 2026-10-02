@@ -347,7 +347,7 @@ impl Visitor<'_, '_> {
                 ExprKind::Jsx(jsx) if bound.expr_scope.contains_key(&e) => {
                     let jsx = hir[jsx];
                     for tag in [jsx.tag, jsx.close_tag] {
-                        if tag.is_none() || !matches!(hir[tag].kind, ExprKind::String(_)) {
+                        if tag.is_none() || self.c.jsx_intrinsic_tag_name(file, tag).is_none() {
                             continue;
                         }
                         let start = hir[tag].pos;
@@ -499,12 +499,10 @@ impl Visitor<'_, '_> {
             // The empty `{}` of `name={}`, which the parser puts where the brace is. It makes no child of one.
             let is_at_brace = |e: &ExprId| hir.text.get(hir[*e].pos as usize) == Some(&b'{');
             not_missed.extend(values().filter(is_at_brace));
-            // The name of an intrinsic element is an identifier, which the lowered tree keeps as a string.
-            not_visited.extend(
-                [jsx.tag, jsx.close_tag]
-                    .into_iter()
-                    .filter(|&tag| tag.is_some() && matches!(hir[tag].kind, ExprKind::String(_))),
-            );
+            // `VisitedKind::JsxIntrinsicTagName`
+            not_visited.extend([jsx.tag, jsx.close_tag].into_iter().filter(|&tag| {
+                tag.is_some() && self.c.jsx_intrinsic_tag_name(self.file, tag).is_some()
+            }));
             // `JsxText`, which is put where its element starts, and `{...children}`, which is no `SpreadElement`.
             not_visited.extend(
                 hir.ids(jsx.children)

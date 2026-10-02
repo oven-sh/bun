@@ -729,8 +729,50 @@ impl<'a> Builder<'a> {
         Span::new(start, modifiers.len() as u32)
     }
 
+    /// `keywords` and `decorators`, each with where its `@` is, as one `ModifierList`.
+    pub(crate) fn modifiers_with_decorators(
+        &mut self,
+        keywords: Span<ModifierId>,
+        decorators: &[(ExprId, u32)],
+    ) -> Span<ModifierId> {
+        if decorators.is_empty() {
+            return keywords;
+        }
+        let mut all = self.file.modifier_list(keywords).to_vec();
+        all.extend(decorators.iter().map(|&(decorator, pos)| Modifier {
+            kind: ModifierKind::Decorator(decorator),
+            pos,
+        }));
+        all.sort_by_key(|modifier| modifier.pos);
+        self.file.add_modifiers(&all)
+    }
+
+    /// Where the `@` is of the decorator whose expression starts at `pos`.
+    pub(crate) fn at_sign_before(&self, pos: u32) -> u32 {
+        bun_core::strings::last_index_of_char(&self.lexer.contents[..pos as usize], b'@')
+            .map_or(pos, |at| at as u32)
+    }
+
     /// `statement` has the modifiers that were come upon since there were `base` of them. Its own `export` and `default` are none.
     pub(crate) fn take_statement_modifiers(&mut self, statement: StmtId, base: usize) {
+        // The decorators of a class are lowered with the class (`Class::modifiers`). What was read of them here goes.
+        let class = match self.file[statement].kind {
+            StmtKind::Class(class) => Some(class),
+            _ => None,
+        };
+        if let Some(class) = class {
+            let is_keyword =
+                |modifier: &Modifier| matches!(modifier.kind, ModifierKind::Keyword(_));
+            let mut index = 0;
+            self.statement_modifiers.retain(|modifier| {
+                index += 1;
+                index <= base || is_keyword(modifier)
+            });
+            let lowered = self.file.modifier_list(self.file[class].modifiers);
+            self.statement_modifiers
+                .extend(lowered.iter().filter(|modifier| !is_keyword(modifier)));
+            self.statement_modifiers[base..].sort_by_key(|modifier| modifier.pos);
+        }
         let own_keywords = match self.file[statement].kind {
             StmtKind::ExportDefault(_) => 2,
             StmtKind::ExportNamed(_)
@@ -749,6 +791,9 @@ impl<'a> Builder<'a> {
                 .file
                 .add_modifiers(&self.statement_modifiers[base..end]);
             self.file[statement].modifiers = list;
+            if let Some(class) = class {
+                self.file[class].modifiers = list;
+            }
         }
         self.statement_modifiers.truncate(base);
     }
@@ -1455,6 +1500,11 @@ impl<'a> Builder<'a> {
         let own_static = usize::from(member.kind == MemberKind::StaticBlock);
         member.modifiers =
             self.add_modifier_list(&modifiers[..modifiers.len().saturating_sub(own_static)]);
+        let decorators: Vec<(ExprId, u32)> = self.member_decorators[first_decorator..]
+            .iter()
+            .map(|&(_, decorator)| (decorator, self.at_sign_before(self.file[decorator].pos)))
+            .collect();
+        member.modifiers = self.modifiers_with_decorators(member.modifiers, &decorators);
         if !modifiers.is_empty() {
             let on = match member.kind {
                 MemberKind::IndexSignature => Modified::ClassIndexSignature,
@@ -2695,7 +2745,14 @@ impl<'a> Builder<'a> {
     fn parse_statement(&mut self, flags: Flags) -> R<StmtId> {
         let pos = self.pos();
         while self.tok() == T::TAt {
-            self.skip_decorator()?;
+            let at = self.pos();
+            match self.attempt(|p| p.parse_decorator().map(Some)) {
+                Some(decorator) => self.statement_modifiers.push(Modifier {
+                    kind: ModifierKind::Decorator(decorator),
+                    pos: at,
+                }),
+                None => self.skip_decorator()?,
+            }
         }
         match self.tok() {
             T::TSemicolon => {
@@ -3306,6 +3363,7 @@ impl<'a> Builder<'a> {
             members,
             pos,
             start: self.statement_start,
+            modifiers: Span::EMPTY,
         });
         Ok(self.file.stmt(StmtKind::Class(class), pos))
     }

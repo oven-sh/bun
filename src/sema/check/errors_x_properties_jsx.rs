@@ -1021,7 +1021,7 @@ impl Checker<'_> {
             let jsx = &hir[j];
             if jsx.tag.is_none()
                 || jsx.attrs.is_empty()
-                || matches!(hir[jsx.tag].kind, ExprKind::String(_))
+                || self.jsx_intrinsic_tag_name(file, jsx.tag).is_some()
             {
                 continue;
             }
@@ -1215,7 +1215,7 @@ impl Checker<'_> {
             if of_children {
                 return true;
             }
-            if matches!(hir[tag].kind, ExprKind::String(_)) {
+            if self.jsx_intrinsic_tag_name(user, tag).is_some() {
                 continue;
             }
             let component = self.type_of_expr(user, tag);

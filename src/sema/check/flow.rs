@@ -3930,8 +3930,7 @@ impl<'p> Checker<'p> {
         sym: Sym,
         declared: TypeId,
     ) -> TypeId {
-        // Of `string` it can be found out that it is `"a"`, and of `"a"` that it is not even that.
-        if declared == TypeId::UNRESOLVED || declared.is_never() {
+        if declared == TypeId::UNRESOLVED {
             return declared;
         }
         let declared = self.narrowable_type(file, e, declared);

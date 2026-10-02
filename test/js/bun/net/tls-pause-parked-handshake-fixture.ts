@@ -10,7 +10,8 @@
 // handshake ran, and `handshake` and `data` were delivered to a socket whose pause() had returned.
 //
 // Server and clients share this process, so a loop iteration is one step for both sides and the
-// iteration counter is an exact clock:
+// iteration counter is an exact clock, as long as a write() delivers at once (see
+// tls-fixture-transport.ts):
 //   1. N clients connect. The server pauses each accepted socket in `open`, so every ClientHello
 //      stays unread in the kernel.
 //   2. The server resumes all N at once. The next iteration reads 5 ClientHellos (their clients
@@ -23,6 +24,7 @@
 import type { Socket } from "bun";
 import { getEventLoopStats } from "bun:internal-for-testing";
 import { tls as certs } from "harness";
+import { connect, listen } from "./tls-fixture-transport";
 
 const N = 32;
 // MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION in packages/bun-usockets/src/loop.c.
@@ -68,9 +70,7 @@ const accepted: Socket<State>[] = [];
 let clientOpens = 0;
 let clientHandshakes = 0;
 
-const server = Bun.listen<State>({
-  hostname: "127.0.0.1",
-  port: 0,
+const { server, address } = listen<State>("s", {
   tls: { key: certs.key, cert: certs.cert },
   socket: {
     open(s) {
@@ -98,9 +98,7 @@ const clients: Socket[] = [];
 try {
   for (let i = 0; i < N; i++) {
     clients.push(
-      await Bun.connect({
-        hostname: "127.0.0.1",
-        port: server.port,
+      await connect(address, {
         tls: { rejectUnauthorized: false },
         socket: {
           // The ClientHello goes out as soon as this returns.

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { rmSync, statSync } from "fs";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe("bun pm scan", () => {
@@ -674,6 +675,78 @@ describe("bun pm scan", () => {
       expect(stdout).not.toContain("Installation aborted");
       expect(stderr).not.toContain("installation aborted");
       expect(stderr).not.toContain("Installation aborted");
+    });
+  });
+
+  // `bun pm scan` installs the scanner package when node_modules does not have it. That install
+  // links the scanner's bins like any other install. Windows links bins as shims and chmods nothing.
+  describe.each(["isolated", "hoisted"] as const)("installing the scanner with the %s linker", linker => {
+    test.concurrent.skipIf(isWindows)("gives its bin target the mode 0o777 & ~umask", async () => {
+      const tarball = await new Bun.Archive(
+        {
+          "package/package.json": JSON.stringify({
+            name: "bin-scanner",
+            version: "1.0.0",
+            main: "index.js",
+            type: "module",
+            bin: "cli.js",
+          }),
+          "package/index.js": `export const scanner = { version: "1", scan: async () => [] };\n`,
+          "package/cli.js": "#!/bin/sh\necho scanner\n",
+        },
+        { compress: "gzip" },
+      ).bytes();
+      const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
+      await using registry = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const { origin, pathname } = new URL(request.url);
+          if (pathname === "/bin-scanner-1.0.0.tgz") return new Response(tarball);
+          if (pathname !== "/bin-scanner") return new Response("not found", { status: 404 });
+          return Response.json({
+            name: "bin-scanner",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "bin-scanner",
+                version: "1.0.0",
+                bin: "cli.js",
+                dist: { tarball: `${origin}/bin-scanner-1.0.0.tgz`, integrity },
+              },
+            },
+          });
+        },
+      });
+
+      using dir = tempDir("scan-installs-scanner", {
+        "package.json": JSON.stringify({ name: "scan-root", dependencies: { "bin-scanner": "1.0.0" } }),
+      });
+      await Bun.write(
+        join(String(dir), "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            registry: `${registry.url.origin}/`,
+            cache: join(String(dir), ".bun-cache"),
+            linker,
+            security: { scanner: "bin-scanner" },
+          },
+        }),
+      );
+
+      async function run(cmd: string[]) {
+        await using proc = Bun.spawn({ cmd, cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { output: stdout + stderr, exitCode };
+      }
+
+      // The lockfile that `bun pm scan` needs. This install puts the scanner in node_modules too.
+      expect(await run([bunExe(), "install", "--lockfile-only"])).toMatchObject({ exitCode: 0 });
+      rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+
+      const scan = await run(["sh", "-c", `umask 077 && exec "$0" pm scan`, bunExe()]);
+      expect(scan.output).toContain("Security scanner installed successfully");
+      expect((statSync(join(String(dir), "node_modules", ".bin", "bin-scanner")).mode & 0o777).toString(8)).toBe("700");
+      expect(scan.exitCode).toBe(0);
     });
   });
 });

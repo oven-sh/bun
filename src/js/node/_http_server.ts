@@ -3418,13 +3418,8 @@ ServerResponse.prototype.writeContinue = function (cb) {
   cb?.();
 };
 
-// Trailer fields added via res.addTrailers() are sent after the terminating
-// 0 chunk of a chunked response body (RFC 9112 7.1.2). They force chunked
-// framing, so they only apply when nothing pinned the framing to
-// Content-Length and the response can carry a body - Node.js drops them in
-// every other case (explicit Content-Length, HTTP/1.0, body-less statuses).
-// The handle gets the section with the call that ends the response, framed like Node's end() does:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1127
+// The trailer section of a chunked body, as Node's end() writes it (lib/_http_outgoing.js, v26.3.0 line 1127).
+// A handle sends it only when the body that it writes is chunked.
 function trailerSectionOf(res, trailer) {
   const req = res.req;
   return res._hasBody && !res.hasHeader("content-length") && req?.httpVersionMajor === 1 && req?.httpVersionMinor >= 1

@@ -34,6 +34,12 @@ You typed: hello again
 
 Bun also exposes `stdin` as a `BunFile`, `Bun.stdin`. Use it to incrementally read large inputs piped into the `bun` process.
 
+<Note>
+  `Bun.stdin.stream()` is not the same as `Bun.file("/dev/stdin").stream()`. `Bun.stdin` reads from the already-open
+  file descriptor 0, while `Bun.file("/dev/stdin")` re-opens `/dev/stdin` as a file, which has different offset and
+  TTY semantics. Prefer `Bun.stdin` for piped input.
+</Note>
+
 Chunks aren't guaranteed to be split line-by-line.
 
 ```ts stdin.ts icon="/icons/typescript.svg"

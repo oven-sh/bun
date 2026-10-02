@@ -77,6 +77,37 @@ function tarFile(name: string, body: Buffer): Buffer[] {
   return [tarHeader(name, body.length, "0"), body, pad512(body.length)];
 }
 
+// One old GNU sparse member, as `tar --sparse` writes it: typeflag 'S',
+// magic "ustar  \0", a map of (offset, length) pairs at 386 and the real
+// size at 483. The size field counts the stored bytes only. `data` sits
+// at offset 0 and the rest of the file, up to `realSize`, is a hole.
+function gnuSparseFile(name: string, realSize: number, data: Buffer): Buffer[] {
+  const buf = Buffer.alloc(512, 0);
+  buf.write(name, 0, 100, "utf8");
+  buf.write(octal(0o644, 8), 100);
+  buf.write(octal(0, 8), 108);
+  buf.write(octal(0, 8), 116);
+  buf.write(octal(data.length, 12), 124);
+  buf.write(octal(0, 12), 136);
+  buf.fill(" ", 148, 156);
+  buf.write("S", 156);
+  buf.write("ustar  \0", 257);
+  // GNU tar closes the map with an empty entry at the real size.
+  const map: [number, number][] = [
+    [0, data.length],
+    [realSize, 0],
+  ];
+  map.forEach(([offset, length], i) => {
+    buf.write(octal(offset, 12), 386 + i * 24);
+    buf.write(octal(length, 12), 398 + i * 24);
+  });
+  buf.write(octal(realSize, 12), 483);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += buf[i];
+  buf.write(octal(sum, 8), 148);
+  return [buf, data, pad512(data.length)];
+}
+
 type Entry = { path: string; body: Buffer };
 
 function buildTarball(entries: Entry[]): { tgz: Buffer; shasum: string; integrity: string } {
@@ -1035,4 +1066,59 @@ test.concurrent.each([
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
+});
+
+// A sparse entry that ends in a hole is only as long as its declared size
+// if the writer extends the file to that size: libarchive reports the
+// trailing hole through the offset of its ARCHIVE_EOF call, not as a data
+// block. One entry is above the 1 MB preallocation threshold, one below.
+test.concurrent.each([
+  ["streaming", {}],
+  ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+] as const)("installs a tarball whose sparse entries end in a hole (%s)", async (label, env) => {
+  const sizes = [500_000, 1_500_000];
+  const head = Buffer.alloc(1024, "A");
+  // Incompressible bulk so the body spans many reads and streaming commits.
+  const bulk = Buffer.alloc(256 * 1024);
+  let seed = createHash("sha256").update("sparse-hole").digest();
+  for (let off = 0; off < bulk.length; off += 32) {
+    seed.copy(bulk, off);
+    seed = createHash("sha256").update(seed).digest();
+  }
+  const tgz = gzipSync(
+    Buffer.concat([
+      ...tarFile("package/package.json", Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }))),
+      ...sizes.flatMap(size => gnuSparseFile(`package/hole-${size}.bin`, size, head)),
+      ...tarFile("package/bulk.bin", bulk),
+      Buffer.alloc(1024, 0),
+    ]),
+  );
+  const shasum = createHash("sha1").update(tgz).digest("hex");
+  const integrity = "sha512-" + createHash("sha512").update(tgz).digest("base64");
+  await using reg = await makeRegistry(tgz, shasum, integrity, 4096);
+
+  using dir = tempDir("streaming-extract-sparse-hole", {
+    "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+  });
+
+  const { stderr, exitCode } = await runInstall(String(dir), { ...env, BUN_INSTALL_STREAMING_MIN_SIZE: "1024" });
+  expect(stderr).not.toContain("error:");
+  if (label === "streaming") {
+    expect(stderr).toContain("Streamed ");
+  } else {
+    expect(stderr).not.toContain("Streamed ");
+  }
+  const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+  const files = sizes.map(size => {
+    const got = readFileSync(join(pkgRoot, `hole-${size}.bin`));
+    return {
+      size: got.length,
+      head: got.subarray(0, 1024).equals(head),
+      tailIsZero: got.subarray(1024).every(b => b === 0),
+    };
+  });
+  expect(files).toEqual(sizes.map(size => ({ size, head: true, tailIsZero: true })));
+  expect(readFileSync(join(pkgRoot, "bulk.bin")).equals(bulk)).toBe(true);
+  expect(exitCode).toBe(0);
 });

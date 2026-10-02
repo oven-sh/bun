@@ -591,7 +591,11 @@ impl TarballStream {
                     Phase::WantData => {
                         let mut offset: i64 = 0;
                         let Some(block) = archive.next(&mut offset) else {
-                            // End of this entry's data.
+                            // End of this entry's data. libarchive sets the
+                            // offset to the entry's real size, which is past
+                            // the last data block when the entry ends in a
+                            // sparse hole.
+                            (*this).entry_final_offset = (*this).entry_final_offset.max(offset);
                             (*this).close_output_file();
                             (*this).phase = Phase::WantHeader;
                             continue;
@@ -921,13 +925,12 @@ impl TarballStream {
     fn write_data_block(&mut self, fd: Fd, block: &lib::Block) -> crate::Result<()> {
         let file = bun_sys::File::borrow(&fd);
         let data = block.bytes;
-        if data.is_empty() {
-            return Ok(());
-        }
-
         self.entry_final_offset = self
             .entry_final_offset
             .max(block.offset + i64::try_from(data.len()).expect("int cast"));
+        if data.is_empty() {
+            return Ok(());
+        }
 
         #[cfg(unix)]
         {

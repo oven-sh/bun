@@ -340,6 +340,11 @@ pub mod lib {
                 }
             }
 
+            // On ARCHIVE_EOF libarchive sets the offset to the entry's real
+            // size, which is past the last data block when the entry ends in
+            // a sparse hole.
+            final_offset = final_offset.max(target_offset);
+
             // Handle trailing sparse hole by truncating file to final size.
             // This extends the file to include any trailing zeros without actually writing them.
             if final_offset > actual_offset {

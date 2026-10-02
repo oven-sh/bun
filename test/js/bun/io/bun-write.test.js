@@ -578,7 +578,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       using dir = tempDir("bun-write-fd-append-string", { "out.log": "abc\n" });
       const log = join(String(dir), "out.log");
       const script = `
-        const fs = require("fs");
+        import fs from "node:fs";
         const fd = fs.openSync(${JSON.stringify(log)}, "a");
         try {
           process.stderr.write(String(await Bun.write(Bun.file(fd), Buffer.alloc(${size}, "x").toString())));

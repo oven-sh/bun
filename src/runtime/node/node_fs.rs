@@ -3,9 +3,7 @@
 // The top-level functions assume the arguments are already validated
 
 use bun_paths::strings;
-#[cfg(windows)]
-use core::ffi::c_int;
-use core::ffi::{c_char, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -7410,7 +7408,22 @@ impl NodeFS {
         // Worthwhile after 6 MB at least on ext4 linux
         if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
-                let offset: usize = if matches!(args.file, PathOrFileDescriptor::Path(_)) {
+                let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
+                // An O_APPEND write lands at the end of the file, wherever the
+                // cursor is, so a reservation at the cursor is not used.
+                let appends = if is_path {
+                    (args.flag.as_int() & sys::O::APPEND) != 0
+                } else {
+                    // `flag` is the option, not how the caller opened this fd.
+                    match sys::get_fcntl_flags(fd) {
+                        Ok(open_flags) => (open_flags as c_int & sys::O::APPEND) != 0,
+                        Err(_) => break 'preallocate,
+                    }
+                };
+                if appends {
+                    break 'preallocate;
+                }
+                let offset: usize = if is_path {
                     0
                 } else {
                     match Syscall::lseek(fd, 0, libc::SEEK_CUR) {

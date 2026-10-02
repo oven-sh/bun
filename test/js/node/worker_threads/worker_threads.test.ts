@@ -579,6 +579,275 @@ describe("stdio is flushed when the worker exits synchronously", () => {
   });
 });
 
+// Bun only. A 'message' listener starts a port. This device drops the ones that `new Worker()`
+// adds, so the ports of the Worker never start, and only its exit handler can deliver what the
+// worker posted or wrote. The fixture has MessagePort in scope.
+const withoutPortListeners = (construct: string) => `
+  {
+    const { addEventListener } = EventTarget.prototype;
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      if (type === "message" && this instanceof MessagePort) return;
+      return addEventListener.call(this, type, listener, options);
+    };
+    try {
+      ${construct}
+    } finally {
+      EventTarget.prototype.addEventListener = addEventListener;
+    }
+  }
+`;
+
+// What a worker writes to process.stdout or process.stderr right before it ends reaches the
+// parent, as in node. Two things deliver it. The stdio streams of a Worker listen on their ports
+// before the thread starts, so the ports deliver the output before 'error' and 'exit'. And the
+// exit handler of the Worker takes what is still in the ports before it ends the streams:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L393-L410
+describe("stdio that a worker wrote right before it ended", () => {
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+  // A fixture prints its log when the process exits by itself.
+  const prelude = `
+    const { Worker, MessagePort } = require("node:worker_threads");
+    const log = [];
+    process.on("uncaughtException", error => log.push("uncaught " + error.message));
+    process.on("exit", () => console.log(JSON.stringify(log)));
+    let w;
+  `;
+  const printed = (log: readonly unknown[]) => ({
+    stdout: JSON.stringify(log) + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+
+  // The worker posts the first write of a stream at once. The second one waits for the answer
+  // of the parent, so the worker posts it from its process 'exit' listeners.
+  const writes = `process.stdout.write("out 1\\n"); process.stderr.write("err 1\\n"); process.stdout.write("out 2\\n"); process.stderr.write("err 2\\n");`;
+  const endings = [
+    ["process.exit()", `${writes} process.exit(0);`, 0],
+    ["an uncaught exception", `${writes} throw new Error("boom");`, 1],
+    ["an unhandled rejection", `${writes} Promise.reject(new Error("boom"));`, 1],
+    ["writes from a process 'exit' listener", `process.on("exit", () => { ${writes} });`, 0],
+  ] as const;
+  const captured = (source: string) => `w = new Worker(${JSON.stringify(source)}, { eval: true, stdout: true, stderr: true });`;
+
+  describe("the exit handler delivers what is left in stdio ports that did not start", () => {
+    test.concurrent.each(endings)("captured, %s", async (_ending, source, code) => {
+      const script = `${prelude}
+        ${withoutPortListeners(captured(source))}
+        const text = { stdout: "", stderr: "" };
+        for (const name of ["stdout", "stderr"]) w[name].setEncoding("utf8").on("data", chunk => (text[name] += chunk));
+        w.on("error", () => {});
+        w.on("exit", code => log.push({ code, ...text }));`;
+      expect(await run(script)).toEqual(printed([{ code, stdout: "out 1\nout 2\n", stderr: "err 1\nerr 2\n" }]));
+    });
+
+    test.concurrent.each(endings)("auto-piped, %s", async (_ending, source, code) => {
+      const script = `
+        const { Worker, MessagePort } = require("node:worker_threads");
+        let w;
+        ${withoutPortListeners(`w = new Worker(${JSON.stringify(source)}, { eval: true });`)}
+        w.on("error", () => {});
+        w.on("exit", code => console.log("exit " + code));`;
+      expect(await run(script)).toEqual({
+        stdout: `out 1\nout 2\nexit ${code}\n`,
+        stderr: "err 1\nerr 2\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    test.concurrent("captured and not consumed: the streams hold it at 'exit'", async () => {
+      const script = `${prelude}
+        ${withoutPortListeners(captured(endings[0][1]))}
+        w.on("exit", code => {
+          const text = { stdout: "", stderr: "" };
+          for (const name of ["stdout", "stderr"]) {
+            for (let chunk; (chunk = w[name].read()) !== null; ) text[name] += chunk;
+          }
+          log.push({ code, ...text });
+        });`;
+      expect(await run(script)).toEqual(printed([{ code: 0, stdout: "out 1\nout 2\n", stderr: "err 1\nerr 2\n" }]));
+    });
+
+    // The EOF that the worker posted is in the port too.
+    test.concurrent("a stream that the worker ended: its last chunk, then one EOF", async () => {
+      const script = `${prelude}
+        ${withoutPortListeners(captured(`process.stdout.end("last"); process.exit(0);`))}
+        w.stdout.on("data", chunk => log.push("data " + chunk));
+        w.stdout.on("end", () => log.push("end"));
+        w.stdout.on("error", error => log.push("error " + error.code));
+        w.on("exit", code => log.push("exit " + code));`;
+      expect(await run(script)).toEqual(printed(["data last", "exit 0", "end"]));
+    });
+
+    // A throw ends the message that carried the chunk, as it does when the port delivers. node
+    // reports the errors after 'exit'.
+    test.concurrent("a 'data' listener that throws does not end the delivery", async () => {
+      const script = `${prelude}
+        ${withoutPortListeners(captured(endings[0][1]))}
+        for (const name of ["stdout", "stderr"]) {
+          w[name].setEncoding("utf8").on("data", chunk => {
+            log.push(name + " " + JSON.stringify(chunk));
+            throw new Error("from " + name);
+          });
+        }
+        w.on("exit", code => log.push("exit " + code));`;
+      expect(await run(script)).toEqual(
+        printed([
+          'stdout "out 1\\n"',
+          "uncaught from stdout",
+          'stdout "out 2\\n"',
+          "uncaught from stdout",
+          'stderr "err 1\\n"',
+          "uncaught from stderr",
+          'stderr "err 2\\n"',
+          "uncaught from stderr",
+          "exit 0",
+        ]),
+      );
+    });
+
+    // node drains the port of the messages first. Its second port carries stdout and stderr in
+    // the order of the writes. Here each stream has a port, and stdout comes first.
+    test.concurrent("the last messages come first, then stdout, then stderr", async () => {
+      const source = `const { parentPort } = require("node:worker_threads");
+        process.stderr.write("err"); parentPort.postMessage(1); process.stdout.write("out"); parentPort.postMessage(2); process.exit(0);`;
+      const script = `${prelude}
+        ${withoutPortListeners(captured(source))}
+        w.on("message", message => log.push("message " + message));
+        for (const name of ["stdout", "stderr"]) w[name].on("data", chunk => log.push(name + " " + chunk));
+        w.on("exit", code => log.push("exit " + code));`;
+      expect(await run(script)).toEqual(printed(["message 1", "message 2", "stdout out", "stderr err", "exit 0"]));
+    });
+  });
+
+  // The drain of a port stops after 1,024 messages for each turn of the event loop.
+  test.concurrent.each([
+    ["did not start", true],
+    ["started", false],
+  ])(
+    "5,000 writes from a process 'exit' listener come before 'exit' when the stdio ports %s",
+    async (_state, device) => {
+      const construct = captured(
+        `process.on("exit", () => { for (let i = 0; i < 5000; i++) process.stdout.write("x"); });`,
+      );
+      const script = `${prelude}
+      ${device ? withoutPortListeners(construct) : construct}
+      let bytes = 0;
+      w.stdout.on("data", chunk => (bytes += chunk.length));
+      w.on("exit", code => log.push({ code, bytes }));`;
+      expect(await run(script)).toEqual(printed([{ code: 0, bytes: 5000 }]));
+    },
+  );
+
+  // The port of a destroyed stream has no listener, so it keeps what the worker wrote. The exit
+  // handler takes it and the stream drops it.
+  test.concurrent("a stream that the parent destroyed gets no chunk and no error", async () => {
+    const script = `${prelude}
+      ${captured(endings[0][1])}
+      w.stdout.on("data", chunk => log.push("stdout " + chunk));
+      w.stdout.on("error", error => log.push("stdout error " + error.code));
+      w.stdout.on("close", () => log.push("stdout close"));
+      w.stdout.destroy();
+      let stderr = "";
+      w.stderr.setEncoding("utf8").on("data", chunk => (stderr += chunk));
+      w.on("exit", code => log.push({ code, stderr }));`;
+    expect(await run(script)).toEqual(printed(["stdout close", { code: 0, stderr: "err 1\nerr 2\n" }]));
+  });
+
+  describe("the stdio streams listen before the thread starts", () => {
+    // The device holds the parent inside `new Worker()` from the start of the thread until the
+    // process 'exit' listeners of the worker ran. A parent that loses the CPU there reaches the
+    // same state. The start of the thread is the clone of workerData in the native constructor,
+    // which runs the getter. The hold is in the constructor of a stream, so there is no hold
+    // when the streams exist before the thread.
+    const heldWhileTheWorkerEnds = (source: string, options: string) => `
+      const { Worker } = require("node:worker_threads");
+      const gate = new Int32Array(new SharedArrayBuffer(4));
+      let threadStarted = false;
+      Object.defineProperty(Object.prototype, "objectMode", {
+        configurable: true,
+        get() {
+          if (threadStarted) {
+            threadStarted = false;
+            Atomics.wait(gate, 0, 0);
+          }
+        },
+      });
+      const signal = 'const { gate } = require("node:worker_threads").workerData; process.on("exit", () => { Atomics.store(gate, 0, 1); Atomics.notify(gate, 0); });';
+      const workerData = { gate, get seen() { return (threadStarted = true); } };
+      const w = new Worker(signal + ${JSON.stringify(source)}, { eval: true, workerData${options} });
+      delete Object.prototype.objectMode;
+    `;
+
+    // The worker posts its error before its process 'exit' listeners run. Only the first write
+    // of a stream is in its port before the error.
+    test.concurrent("a worker that throws: its output comes before 'error'", async () => {
+      const source = `process.stdout.write("out"); process.stderr.write("err"); throw new Error("boom");`;
+      const script = `${heldWhileTheWorkerEnds(source, ", stdout: true, stderr: true")}
+        const log = [];
+        for (const name of ["stdout", "stderr"]) w[name].on("data", chunk => log.push(name + " " + chunk));
+        w.on("error", error => log.push("error " + error.message));
+        w.on("exit", code => {
+          log.push("exit " + code);
+          console.log(JSON.stringify(log));
+        });`;
+      expect(await run(script)).toEqual(printed(["stdout out", "stderr err", "error boom", "exit 1"]));
+    });
+
+    test.concurrent("a parent that exits in 'error' has printed the output of the worker", async () => {
+      const source = `process.stdout.write("out\\n"); process.stderr.write("err\\n"); throw new Error("boom");`;
+      const script = `${heldWhileTheWorkerEnds(source, "")}
+        w.on("error", () => process.exit(1));`;
+      expect(await run(script)).toEqual({ stdout: "out\n", stderr: "err\n", exitCode: 1, signalCode: null });
+    });
+
+    // The streams exist when the native constructor throws, and a port with a 'message' listener
+    // is not collected while its peer is open.
+    test.concurrent("the stdio ports of a constructor that throws are collected", async () => {
+      const script = `
+        const { Worker } = require("node:worker_threads");
+        const { heapStats } = require("bun:jsc");
+        const ports = () => {
+          Bun.gc(true);
+          return heapStats().objectTypeCounts.MessagePort ?? 0;
+        };
+        const before = ports();
+        const thrown = {};
+        for (let i = 0; i < 500; i++) {
+          for (const options of [{ workerData: () => {} }, { execArgv: 6 }]) {
+            try {
+              new Worker("", { eval: true, ...options });
+            } catch (error) {
+              thrown[error.name] = (thrown[error.name] ?? 0) + 1;
+            }
+          }
+        }
+        setImmediate(() => console.log(JSON.stringify({ thrown, left: ports() - before })));`;
+      const { stdout, stderr, exitCode, signalCode } = await run(script);
+      const { thrown, left } = JSON.parse(stdout);
+      expect({ thrown, stderr: exitCode === 0 ? "" : stderr, exitCode, signalCode }).toEqual({
+        thrown: { DataCloneError: 500, TypeError: 500 },
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+      // The 2,000 ports stay when the streams keep their listeners. A few can stay for one more
+      // collection.
+      expect(left).toBeLessThan(100);
+    });
+  });
+});
+
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
     const { promise, resolve } = Promise.withResolvers();
@@ -2931,11 +3200,12 @@ describe("no JS entry after a worker's termination has been thrown", () => {
 });
 
 // terminate() called by user code that the parent-side exit handler of a Worker runs. A 'message'
-// that the exit handler delivers comes before the exit state is stored: the promise resolves with
-// the exit code, after 'exit'. The stdio EOF comes after it: the promise resolves with undefined.
+// or a stdio chunk that the exit handler delivers comes before the exit state is stored: the
+// promise resolves with the exit code, after 'exit'. The stdio EOF comes after it: the promise
+// resolves with undefined.
 // node v26.3.0 prints the same log for the stdout and stderr fixtures. It delivers a 'message'
-// from its exit handler when the parent is held after `new Worker()`, and prints the same log for
-// that state. A comment names each difference.
+// and the stdio chunks from its exit handler when the parent is held after `new Worker()`, and
+// prints the same log for that state. A comment names each difference.
 describe("terminate() inside the Worker's exit handler", () => {
   // A fixture prints its log when the process exits by itself, so a promise that never settles
   // shows as a missing line.
@@ -2954,21 +3224,11 @@ describe("terminate() inside the Worker's exit handler", () => {
     w.on("exit", code => log.push("exit " + code + state()));
   `;
   const start = (source: string, options = "") => prelude + construct(source, options);
-  // Bun only. A 'message' listener starts a port. Without one the public port of the Worker never
-  // starts, and only the exit handler can deliver what the worker posted. A parent that loses the
-  // CPU inside `new Worker()` until the worker has ended reaches the same state.
-  const startWithoutPorts = (source: string, options = "") => `${prelude}
-    const { addEventListener } = EventTarget.prototype;
-    EventTarget.prototype.addEventListener = function (type, listener, options) {
-      if (type === "message" && this instanceof MessagePort) return;
-      return addEventListener.call(this, type, listener, options);
-    };
-    try {
-      ${construct(source, options)}
-    } finally {
-      EventTarget.prototype.addEventListener = addEventListener;
-    }
-  `;
+  // Only the exit handler can deliver what this worker posted or wrote. For the public port, a
+  // parent that loses the CPU inside `new Worker()` until the worker has ended reaches the same
+  // state.
+  const startWithoutPorts = (source: string, options = "") =>
+    prelude + withoutPortListeners(construct(source, options));
   const postsAndEnds = `require("node:worker_threads").parentPort.postMessage(1);`;
   // Answers "ready", then stays alive until terminate().
   const idle = `const { parentPort } = require("node:worker_threads"); parentPort.on("message", () => {}); parentPort.postMessage("ready");`;
@@ -2981,6 +3241,13 @@ describe("terminate() inside the Worker's exit handler", () => {
     Atomics.wait(gate, 0, 1);
     process.exit(0);`;
 
+  const data = (stream: "stdout" | "stderr") => (call: string) => `
+    ${startWithoutPorts(`process.${stream}.write("x"); process.exit(0);`, `, ${stream}: true`)}
+    w.${stream}.on("data", chunk => {
+      log.push("${stream} data " + chunk + state());
+      queueMicrotask(() => log.push("microtask"));
+      ${call}
+    });`;
   const windows = {
     // The microtask runs after 'exit': the exit handler delivered the message, not the port.
     message: (call: string) => `${startWithoutPorts(postsAndEnds)}
@@ -2989,6 +3256,8 @@ describe("terminate() inside the Worker's exit handler", () => {
         queueMicrotask(() => log.push("microtask"));
         ${call}
       });`,
+    "stdout data": data("stdout"),
+    "stderr data": data("stderr"),
     stdout: (call: string) => `${start("", ", stdout: true")}
       w.stdout.on("readable", () => {
         if (w.stdout.read() !== null) return;
@@ -3054,6 +3323,8 @@ describe("terminate() inside the Worker's exit handler", () => {
       ["DEP0132"],
     ],
     ["message", "asyncDispose", ["message 1" + live, "exit 0" + exited, "microtask", "asyncDispose undefined"], []],
+    ["stdout data", "promise", ["stdout data x" + live, "exit 0" + exited, "microtask", "promise 0"], []],
+    ["stderr data", "promise", ["stderr data x" + live, "exit 0" + exited, "microtask", "promise 0"], []],
     ["stdout", "promise", ["stdout EOF" + exited, "exit 0" + exited, "promise undefined"], []],
     ["stdout", "callback", ["stdout EOF" + exited, "exit 0" + exited, "promise undefined"], ["DEP0132"]],
     ["stdout", "asyncDispose", ["stdout EOF" + exited, "exit 0" + exited, "asyncDispose undefined"], []],

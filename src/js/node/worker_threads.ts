@@ -338,7 +338,7 @@ const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 // stdio and control ports.
 const BUN_WORKER_PARENT_PORT_KEY = "@@bunWorkerThreadsParentPort";
 
-const { makePortReadable, makePortWritable } = require("internal/worker/stdio");
+const { kFlushSync, makePortReadable, makePortWritable } = require("internal/worker/stdio");
 
 // The parent always sends stdout and stderr ports; stdin only for { stdin: true }.
 // With the ports registered on the global, process.stdin/stdout/stderr's native
@@ -824,6 +824,18 @@ function emitGuarded(worker: Worker, name: string, value: unknown) {
   }
 }
 
+// Delivers what the worker wrote to a stdio port and the port did not deliver. A 'data' listener that throws ends one message, not the drain.
+function drainStdio(port: MessagePort, stream: import("node:stream").Readable) {
+  let entry;
+  while ((entry = _receiveMessageOnPort(port)) !== undefined) {
+    try {
+      stream[kFlushSync]({ data: entry.message });
+    } catch (err) {
+      reportUncaughtException(err);
+    }
+  }
+}
+
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
@@ -951,16 +963,17 @@ class Worker extends EventEmitter {
         // user-supplied value so it can't trigger env sharing on its own.
         options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
       }
-      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
       // port on first read (node's kIncrementsPortRef).
+      // They listen before the thread starts, as in node. The port then delivers what a worker writes before its 'error' and 'exit', however soon it ends: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L305-L383
       this.#stdout = makePortReadable(this.#stdoutPort, !stdoutAutoPipe);
       this.#stderr = makePortReadable(this.#stderrPort, !stderrAutoPipe);
       // 'data' instead of pipe(): pipe() adds an error listener on the shared
       // process.stdout per worker, tripping MaxListenersExceededWarning.
       if (stdoutAutoPipe) this.#stdout.on("data", chunk => process.stdout.write(chunk));
       if (stderrAutoPipe) this.#stderr.on("data", chunk => process.stderr.write(chunk));
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
     } catch (e) {
       // Restore any transferList handles that were already neutered by
       // packJSTransferables, so their fds aren't orphaned.
@@ -968,6 +981,9 @@ class Worker extends EventEmitter {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
       }
+      // Their 'close' removes the listeners from the stdio ports.
+      this.#stdout?.destroy();
+      this.#stderr?.destroy();
       throw e;
     }
     // threadId is only assigned once the WebWorker exists; register the hub-side
@@ -1199,7 +1215,7 @@ class Worker extends EventEmitter {
     }
   }
 
-  // The order of node's kOnExit: the last messages, the exit state, the stdio EOF, then 'exit'. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L393-L410
+  // The order of node's kOnExit: the last messages, the last stdio chunks, the exit state, the stdio EOF, then 'exit'. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L393-L410
   #exit(code: number) {
     // Revoke the eval blob: URL now that the worker has exited; the
     // FinalizationRegistry remains only as a GC safety net.
@@ -1215,6 +1231,8 @@ class Worker extends EventEmitter {
       }
       this.#publicPort.close();
     }
+    if (this.#stdout) drainStdio(this.#stdoutPort, this.#stdout);
+    if (this.#stderr) drainStdio(this.#stderrPort, this.#stderr);
     this.#exited = true;
     // End captured stdio readables when the worker exits, even if it was
     // terminated before its own streams finished.

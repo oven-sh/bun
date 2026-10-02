@@ -426,13 +426,16 @@ fn is_symlink(path: &ZStr) -> bool {
 /// `.bin` already holds.
 struct OwnerBinDir {
     node_modules: AbsPath,
+    /// No component of the owner's path is a symlink, so every directory
+    /// above it is a real path too.
+    owner_path_is_real: bool,
     seen: StringHashMap<()>,
 }
 
 impl OwnerBinDir {
     fn open(owner_dir: &ZStr) -> Option<Self> {
-        // A symlinked owner (`link:`, `file:`, a workspace) is a directory
-        // outside the tree; nothing is written there.
+        // A symlinked owner (`link:`, a workspace) is a directory outside the
+        // tree; nothing is written there.
         if is_symlink(owner_dir) {
             return None;
         }
@@ -441,6 +444,8 @@ impl OwnerBinDir {
         // only right between real paths.
         let mut real_buf = bun_paths::path_buffer_pool::get();
         let real_owner = Syscall::realpath(owner_dir, &mut real_buf).ok()?;
+        let owner_path_is_real =
+            real_owner == strings::without_trailing_slash(owner_dir.as_bytes());
         let mut node_modules = AbsPath::from(real_owner).unwrap_or_oom();
         node_modules.append(b"node_modules").unwrap_or_oom();
 
@@ -469,7 +474,11 @@ impl OwnerBinDir {
             let _ = Syscall::close(fd);
         }
 
-        Some(Self { node_modules, seen })
+        Some(Self {
+            node_modules,
+            owner_path_is_real,
+            seen,
+        })
     }
 }
 
@@ -589,11 +598,19 @@ pub(crate) fn link_owner_dependency_bins(
 
         loop {
             let mut target_node_modules = abs_node_modules_path(lockfile, string_buf, target.0);
-            let Ok(real_target) = Syscall::realpath(target_node_modules.slice_z(), &mut real_buf)
-            else {
-                break;
-            };
-            let target_node_modules = AbsPath::from(real_target).unwrap_or_oom();
+            let above_real_owner = owner_bin_dir.owner_path_is_real
+                && owner_dir
+                    .as_bytes()
+                    .strip_prefix(target_node_modules.slice())
+                    .is_some_and(|rest| rest.first() == Some(&SEP));
+            if !above_real_owner {
+                let Ok(real_target) =
+                    Syscall::realpath(target_node_modules.slice_z(), &mut real_buf)
+                else {
+                    break;
+                };
+                target_node_modules = AbsPath::from(real_target).unwrap_or_oom();
+            }
 
             let mut bin_linker = bin::Linker {
                 bin,

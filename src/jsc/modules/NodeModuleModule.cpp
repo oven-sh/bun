@@ -1,6 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "NodeModuleModule.h"
+#include "CodeGenerationFromStrings.h"
 #include "ModuleGraph.h"
 #include "WebCoreJSBuiltins.h"
 
@@ -693,9 +694,15 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 
 // Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a
 // subclass, as jest-runtime does) is not an override.
-static void setModuleWrapper(Zig::GlobalObject* global, String&& start, String&& end)
+// A wrapper that is not the default is a string compiled around every CommonJS module.
+static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, String&& start, String&& end)
 {
-    global->hasOverriddenModuleWrapper = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
+    bool isOverride = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
+    if (isOverride) [[unlikely]] {
+        Bun::throwIfMayNotMakeScriptFromStrings(global, scope);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    global->hasOverriddenModuleWrapper = isOverride;
     global->m_moduleWrapperStart = WTF::move(start);
     global->m_moduleWrapperEnd = WTF::move(end);
 }
@@ -710,7 +717,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalOb
     RETURN_IF_EXCEPTION(scope, {});
     String bString = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    setModuleWrapper(global, WTF::move(aString), WTF::move(bString));
+    setModuleWrapper(global, scope, WTF::move(aString), WTF::move(bString));
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -767,7 +775,8 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     auto bstring = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    setModuleWrapper(globalObject, WTF::move(astring), WTF::move(bstring));
+    setModuleWrapper(globalObject, scope, WTF::move(astring), WTF::move(bstring));
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 

@@ -381,9 +381,11 @@ async function processFunctionFile(x: string) {
 
 interface BundleBuiltinFunctionsArgs {
   requireTransformer: (x: string, filename: string) => string;
+  /** Where WebCoreJSBuiltins.d.ts goes. */
+  typesDir: string;
 }
 
-export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuiltinFunctionsArgs) {
+export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: BundleBuiltinFunctionsArgs) {
   mkdirSync(TMP_DIR, { recursive: true });
   const filesToProcess = readdirSync(SRC_DIR)
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
@@ -463,7 +465,7 @@ JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& v
 
   const initializeSourceCodeFn = (fn: BundledBuiltin, basename: string) => {
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
-    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}, 1, 1))`;
+    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}))`;
   };
   for (const { basename, internal, functions } of files) {
     bundledCPP += `
@@ -480,8 +482,10 @@ ${basename}BuiltinsWrapper::${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::
   }
 
   bundledCPP += `
+static constexpr unsigned internalCombinedSourceStarts[] = { ${files.flatMap(({ functions }) => functions.map(fn => fn.sourceOffset)).join(", ")} };
+
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider() {
-    return JSC::StringSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), SourceOrigin(), String(), SourceTaintedOrigin());
+    return JSC::BuiltinsSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), internalCombinedSourceStarts);
 }
 `;
 
@@ -842,7 +846,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
       dts += `\n// ${basename}.ts\n`;
       for (const fn of functions) {
         dts += `declare const \$${fn.name}: RemoveThis<typeof import("${path.relative(
-          CODEGEN_DIR,
+          typesDir,
           path.join(SRC_DIR, basename),
         )}")[${JSON.stringify(fn.name)}]>;\n`;
       }
@@ -851,7 +855,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   dts += getJS2NativeDTS();
 
-  writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.d.ts"), dts);
+  writeIfNotChanged(path.join(typesDir, "WebCoreJSBuiltins.d.ts"), dts);
 
   const totalJSSize = files.reduce(
     (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),

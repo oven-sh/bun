@@ -29,8 +29,8 @@ impl Checker<'_> {
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
         let path = &self.files().module(file).path;
         let runtime = crate::program::jsx_runtime_of(options, hir, atoms)
-            .filter(|_| path.ends_with(".tsx") || path.ends_with(".jsx"))
-            .map(|spec| atoms.intern_str(&spec));
+            .filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"))
+            .map(|spec| atoms.intern(&spec));
         // `getJsxNamespaceContainerForImplicitImport`: the module elements are made with is imported unasked, and has to be there.
         let runtime_is_missing =
             runtime.is_some_and(|spec| self.files().module_of_specifier(file, spec).is_none());
@@ -126,7 +126,7 @@ impl Checker<'_> {
                 } else if let Some(spec) = runtime {
                     match self.files().module(file).imported_file(spec) {
                         Some(found) => {
-                            let path = self.files().module(found).path.as_bytes();
+                            let path = &self.files().module(found).path;
                             self.error_at((file, start, end), 2306, &[Arg::Bytes(path)])
                         }
                         None => self.error_at((file, start, end), 2875, &[Arg::Atom(spec)]),
@@ -1050,7 +1050,7 @@ pub(super) fn jsx_namespace(files: &Files, hir: &hir::File, is_opening_fragment:
         let text = if pragma.is_some() {
             files.atoms.bytes(pragma)
         } else {
-            files.options.jsx_fragment_factory.as_bytes()
+            &files.options.jsx_fragment_factory
         };
         if let Some(entity) = parse_isolated_entity_name(&files.atoms, text) {
             return entity[0];
@@ -1070,9 +1070,9 @@ fn jsx_factory_entity(files: &Files, hir: &hir::File, is_local: bool) -> Vec<Ato
         return entity;
     }
     // `_jsxFactoryEntity`: `reactNamespace` is read only if no `jsxFactory` is written, and is used whole.
-    parse_isolated_entity_name(atoms, options.jsx_factory.as_bytes()).unwrap_or_else(|| {
+    parse_isolated_entity_name(atoms, &options.jsx_factory).unwrap_or_else(|| {
         let namespace = if options.jsx_factory.is_empty() && !options.react_namespace.is_empty() {
-            atoms.intern(options.react_namespace.as_bytes())
+            atoms.intern(&options.react_namespace)
         } else {
             known::React
         };
@@ -1082,13 +1082,11 @@ fn jsx_factory_entity(files: &Files, hir: &hir::File, is_local: bool) -> Vec<Ato
 
 /// `parseIsolatedEntityName`, as the identifiers of the name. The empty text is no name.
 fn parse_isolated_entity_name(atoms: &crate::atom::Interner, text: &[u8]) -> Option<Vec<Atom>> {
-    std::str::from_utf8(text)
-        .is_ok_and(crate::verify::is_entity_name)
-        .then(|| {
-            text.split(|&c| c == b'.')
-                .map(|name| atoms.intern(name.trim_ascii()))
-                .collect()
-        })
+    crate::verify::is_entity_name(text).then(|| {
+        text.split(|&c| c == b'.')
+            .map(|name| atoms.intern(name.trim_ascii()))
+            .collect()
+    })
 }
 
 fn text_of(hir: &hir::File, start: u32, end: u32) -> &[u8] {

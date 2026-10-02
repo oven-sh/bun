@@ -16,6 +16,7 @@ use super::enclosing_declaration::Enclosing;
 use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent};
+use bstr::ByteSlice;
 
 /// A node of the tree, as far as an error is reported on it or the way up from it is gone.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -140,7 +141,11 @@ impl<'p> Checker<'p> {
     pub(super) fn new_isolated_declarations(&self, file: FileId) -> Option<Emit> {
         let is_on = self.files().options.isolated_declarations
             && !self.hir(file).has_errors
-            && !self.files().module(file).path.contains("/node_modules/");
+            && !self
+                .files()
+                .module(file)
+                .path
+                .contains_str(b"/node_modules/");
         is_on.then(|| Emit::new(file))
     }
 

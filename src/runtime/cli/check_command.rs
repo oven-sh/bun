@@ -12,8 +12,8 @@ pub(crate) struct CheckCommand;
 
 #[derive(Default)]
 struct Options {
-    project: Option<String>,
-    paths: Vec<String>,
+    project: Option<Vec<u8>>,
+    paths: Vec<Vec<u8>>,
     threads: usize,
     /// `--pretty`, `--no-pretty`. Not said: by where the output goes.
     pretty: Option<bool>,
@@ -24,10 +24,6 @@ struct Options {
     /// `-b`, `--build`: what is named is a project, as for `tsc -b`.
     build: bool,
     timing: bool,
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
@@ -67,7 +63,7 @@ fn parse(args: &[&ZStr]) -> Options {
     while let Some(arg) = rest.next() {
         let arg = arg.as_bytes();
         if !takes_flags || !arg.starts_with(b"-") || arg == b"-" {
-            options.paths.push(text(arg));
+            options.paths.push(arg.to_vec());
             continue;
         }
         if arg == b"--" {
@@ -80,7 +76,7 @@ fn parse(args: &[&ZStr]) -> Options {
             &[b"-p", b"--project", b"--tsconfig-override"],
             &mut rest,
         ) {
-            options.project = Some(text(project));
+            options.project = Some(project.to_vec());
         } else if let Some(cwd) = value_of(arg, &[b"--cwd"], &mut rest) {
             let path = bun_core::ZBox::from_bytes(cwd);
             if let bun_sys::Result::Err(err) = bun_sys::chdir(&path) {
@@ -92,8 +88,8 @@ fn parse(args: &[&ZStr]) -> Options {
                 Global::exit(1);
             }
         } else if let Some(threads) = value_of(arg, &[b"--threads"], &mut rest) {
-            match text(threads).parse::<usize>() {
-                Ok(n) if n > 0 => options.threads = n,
+            match bun_core::fmt::parse_decimal::<usize>(threads) {
+                Some(n) if n > 0 => options.threads = n,
                 _ => usage_error(format_args!(
                     "--threads takes a number above zero, not \"{}\"",
                     BStr::new(threads)
@@ -114,7 +110,7 @@ fn parse(args: &[&ZStr]) -> Options {
         } else if let Some(flag) = arg.strip_prefix(b"--") {
             options
                 .compiler_options
-                .push(compiler_option(&text(flag), &mut rest));
+                .push(compiler_option(flag, &mut rest));
         } else {
             usage_error(format_args!("Unknown flag \"{}\"", BStr::new(arg)));
         }
@@ -130,19 +126,22 @@ fn parse(args: &[&ZStr]) -> Options {
 }
 
 /// `flag` is what follows `--`: `strict`, `target` with the value in the next argument, or `target=es2022`.
-fn compiler_option(flag: &str, rest: &mut core::slice::Iter<'_, &ZStr>) -> CompilerOption {
-    let (name, mut value) = match bun_core::strings::index_of_char_usize(flag.as_bytes(), b'=') {
-        Some(at) => (&flag[..at], Some(flag[at + 1..].to_owned())),
+fn compiler_option<'a>(
+    flag: &'a [u8],
+    rest: &mut core::slice::Iter<'_, &'a ZStr>,
+) -> CompilerOption {
+    let (name, mut value) = match bun_core::strings::index_of_char_usize(flag, b'=') {
+        Some(at) => (&flag[..at], Some(&flag[at + 1..])),
         None => (flag, None),
     };
     if value.is_none() {
-        let next = rest.as_slice().first().map(|next| text(next.as_bytes()));
-        let takes_next = match &next {
+        let next = rest.as_slice().first().map(|next| next.as_bytes());
+        let takes_next = match next {
             // `--strict false`, but not `--strict src/index.ts`.
             Some(next) if bun_sema_driver::is_boolean_compiler_option(name) => {
-                next.eq_ignore_ascii_case("true") || next.eq_ignore_ascii_case("false")
+                next.eq_ignore_ascii_case(b"true") || next.eq_ignore_ascii_case(b"false")
             }
-            Some(next) => !next.starts_with('-'),
+            Some(next) => !next.starts_with(b"-"),
             None => false,
         };
         if takes_next {
@@ -150,25 +149,27 @@ fn compiler_option(flag: &str, rest: &mut core::slice::Iter<'_, &ZStr>) -> Compi
             value = next;
         }
     }
-    match bun_sema_driver::compiler_option_from_flag(name, value.as_deref()) {
+    let option = bun_sema_driver::compiler_option_from_flag(name, value);
+    let name = BStr::new(name);
+    match option {
         Ok(option) => option,
         Err(FlagError::Unknown) => usage_error(format_args!("Unknown flag \"--{name}\"")),
         Err(FlagError::NeedsValue) => usage_error(format_args!("--{name} needs a value")),
         Err(FlagError::BadValue([])) => usage_error(format_args!(
             "--{name} does not take \"{}\"",
-            value.unwrap_or_default()
+            BStr::new(value.unwrap_or_default())
         )),
         Err(FlagError::BadValue(allowed)) => usage_error(format_args!(
             "--{name} must be one of: {}",
-            allowed.join(", ")
+            BStr::new(&allowed.join(&b", "[..]))
         )),
     }
 }
 
-fn working_directory() -> String {
+fn working_directory() -> Vec<u8> {
     let mut buf = bun_paths::path_buffer_pool::get();
     match bun_core::getcwd(&mut buf) {
-        Ok(cwd) => text(cwd.as_bytes()),
+        Ok(cwd) => cwd.as_bytes().to_vec(),
         Err(err) => {
             Output::err(err, "Could not read the working directory", ());
             Global::exit(1);
@@ -177,16 +178,16 @@ fn working_directory() -> String {
 }
 
 /// Where `bun add -g` puts packages.
-fn global_node_modules() -> Option<String> {
+fn global_node_modules() -> Option<Vec<u8>> {
     if let Some(dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
-        return Some(format!("{}/node_modules", text(dir)));
+        return Some([dir, b"/node_modules"].concat());
     }
     if let Some(dir) = env_var::BUN_INSTALL.get() {
-        return Some(format!("{}/install/global/node_modules", text(dir)));
+        return Some([dir, b"/install/global/node_modules"].concat());
     }
     env_var::HOME
         .get()
-        .map(|home| format!("{}/.bun/install/global/node_modules", text(home)))
+        .map(|home| [home, b"/.bun/install/global/node_modules"].concat())
 }
 
 /// Shows how far `progress` has got on stderr until `is_done`, once it has taken long enough for somebody to wonder.
@@ -197,24 +198,24 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
     let mut tick = 0;
     while !is_done.load(Ordering::Acquire) {
         if began.elapsed() >= BEFORE_THE_FIRST {
-            let mut line = String::new();
+            let mut line = Vec::new();
             format::write_progress(&mut line, progress, style, tick);
-            let _ = Output::error_writer().write_all(line.as_bytes());
+            let _ = Output::error_writer().write_all(&line);
             Output::flush();
             tick += 1;
         }
         std::thread::park_timeout(BETWEEN);
     }
     if tick > 0 {
-        let _ = Output::error_writer().write_all(format::ERASE_LINE.as_bytes());
+        let _ = Output::error_writer().write_all(format::ERASE_LINE);
         Output::flush();
     }
 }
 
 fn run(
-    cwd: &str,
-    project: Option<&str>,
-    paths: &[String],
+    cwd: &[u8],
+    project: Option<&[u8]>,
+    paths: &[Vec<u8>],
     compiler_options: &[CompilerOption],
     threads: usize,
     ends_the_process: bool,
@@ -258,9 +259,9 @@ fn run(
 }
 
 fn run_quietly(
-    cwd: &str,
-    project: Option<&str>,
-    paths: &[String],
+    cwd: &[u8],
+    project: Option<&[u8]>,
+    paths: &[Vec<u8>],
     compiler_options: &[CompilerOption],
     threads: usize,
     ends_the_process: bool,
@@ -290,7 +291,7 @@ fn run_quietly(
 /// A person at a terminal gets the source around each error, and so does an agent, in tags and without colors, which spares it opening
 /// the files. A pipe or continuous integration gets a line an error.
 fn style_for(
-    cwd: &str,
+    cwd: &[u8],
     pretty: Option<bool>,
     to: bun_core::Fd,
     is_tty: bool,
@@ -330,11 +331,12 @@ impl CheckCommand {
             &options.paths,
             &options.compiler_options,
             options.threads,
-            true,
+            // Where leaks are looked for, all is given back.
+            !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES,
         );
         let shown_from = bun_sema_driver::host::from_native(&cwd);
         // The errors are the output, as they are of `tsc`. How it went is said on the side.
-        let mut out = String::new();
+        let mut out = Vec::new();
         format::write_diagnostics(
             &mut out,
             &report,
@@ -347,8 +349,8 @@ impl CheckCommand {
                 options.all,
             ),
         );
-        let _ = Output::writer().write_all(out.as_bytes());
-        let mut summary = String::new();
+        let _ = Output::writer().write_all(&out);
+        let mut summary = Vec::new();
         format::write_summary(
             &mut summary,
             &report,
@@ -365,7 +367,7 @@ impl CheckCommand {
             },
         );
         if options.timing {
-            use core::fmt::Write;
+            use std::io::Write;
             let _ = writeln!(
                 summary,
                 "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} KB of stack at the most",
@@ -376,7 +378,7 @@ impl CheckCommand {
                 report.deepest_stack / 1024,
             );
         }
-        let _ = Output::error_writer().write_all(summary.as_bytes());
+        let _ = Output::error_writer().write_all(&summary);
         Output::flush();
         Global::exit(u32::from(!report.is_ok()));
     }
@@ -389,10 +391,10 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     const CHECKED: [&[u8]; 8] = [
         b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs",
     ];
-    let paths: Vec<String> = entry_points
+    let paths: Vec<Vec<u8>> = entry_points
         .iter()
         .filter(|path| CHECKED.iter().any(|extension| path.ends_with(extension)))
-        .map(|path| text(path))
+        .map(|path| path.to_vec())
         .collect();
     if paths.is_empty() {
         return true;
@@ -400,8 +402,8 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     // A JavaScript entry point is read for what it imports, whatever `allowJs` says. Only `checkJs` has its own errors reported.
     let allow_js: Vec<CompilerOption> = paths
         .iter()
-        .any(|path| !path.ends_with("ts") && !path.ends_with(".tsx"))
-        .then(|| bun_sema_driver::compiler_option_from_flag("allowJs", None).ok())
+        .any(|path| !path.ends_with(b"ts") && !path.ends_with(b".tsx"))
+        .then(|| bun_sema_driver::compiler_option_from_flag(b"allowJs", None).ok())
         .flatten()
         .into_iter()
         .collect();
@@ -413,7 +415,7 @@ pub(crate) fn check_project_before() -> bool {
     check_and_say(&[], &[])
 }
 
-fn check_and_say(paths: &[String], compiler_options: &[CompilerOption]) -> bool {
+fn check_and_say(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> bool {
     let cwd = working_directory();
     let report = run(&cwd, None, paths, compiler_options, 0, false);
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {
@@ -428,12 +430,12 @@ fn check_and_say(paths: &[String], compiler_options: &[CompilerOption]) -> bool 
         Output::enable_ansi_colors_stderr(),
         false,
     );
-    let mut out = String::new();
+    let mut out = Vec::new();
     format::write_diagnostics(&mut out, &report, &style);
     if !report.is_ok() {
         format::write_summary(&mut out, &report, &style);
     }
-    let _ = Output::error_writer().write_all(out.as_bytes());
+    let _ = Output::error_writer().write_all(&out);
     Output::flush();
     report.is_ok()
 }

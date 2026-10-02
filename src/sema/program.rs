@@ -7,13 +7,18 @@ use crate::hir::{self, *};
 use crate::json::{Expression, ExpressionKind, Json, PropertyName};
 use crate::resolve::{
     Host, JsxEmit, ModuleDetection, ModuleKind, Options, Phase, Resolver, ScriptTarget, Spent,
-    is_javascript, is_relative, join, known_extension, lib_name, parent_dir,
+    contains_path, is_javascript, is_relative, join, known_extension, lib_name,
+    to_file_name_lower_case,
 };
 use crate::table::{Bases, ByNode, ByNodeKept, RawWord};
 use crate::util::{FxHashMap, FxHashSet, List};
 use crate::verify::{Place, Problem};
+use bstr::ByteSlice;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::dirname;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -57,7 +62,7 @@ fn add_transient_symbols(module: &mut Module, made: Vec<(TransientSymbol, Symbol
 }
 
 pub struct Module {
-    pub path: String,
+    pub path: Vec<u8>,
     pub hir: hir::File,
     pub bound: Bound,
     /// There as long as `bound` is. Whether an alias stands for what was made for it, only types tell.
@@ -170,7 +175,7 @@ impl Drop for AtHand<'_> {
 /// thread that sleeps to the next is not made use of meanwhile.
 fn read_and_work(
     host: &dyn Host,
-    paths: &[&str],
+    paths: &[&[u8]],
     work: &(dyn Fn(usize, Cow<'static, [u8]>) + Sync),
 ) {
     let (threads, readers) = (host.threads(), host.readers());
@@ -244,22 +249,22 @@ fn read_and_work(
 
 /// A guess at whether nothing refers to the file: it exports nothing, or it is called what nothing imports is called. It is only a matter
 /// of speed and memory: a file that was wrongly let go of is parsed again, and one that was wrongly held on to is let go of later.
-fn looks_like_a_leaf(path: &str, bound: &Bound) -> bool {
+fn looks_like_a_leaf(path: &[u8], bound: &Bound) -> bool {
     let exports = bound.symbols[bound.file_symbol.idx()].exports;
     if bound.table(exports).is_empty() && bound.export_stars.is_empty() {
         return true;
     }
-    let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
+    let name = path.rsplit_once_str(b"/").map_or(path, |(_, name)| name);
     [
-        ".test.",
-        ".spec.",
-        "_test.",
-        ".stories.",
-        ".bench.",
-        ".e2e.",
+        b".test.".as_slice(),
+        b".spec.",
+        b"_test.",
+        b".stories.",
+        b".bench.",
+        b".e2e.",
     ]
     .iter()
-    .any(|mark| name.contains(mark))
+    .any(|mark| name.contains_str(mark))
 }
 
 /// What is known of a file whose syntax tree is not there. With `keeps_text`, what it reads stays, for whoever parses it next: opening
@@ -373,7 +378,7 @@ pub struct Files {
     pub atoms: Interner,
     pub options: Options,
     pub modules: Vec<ModuleCell>,
-    pub by_path: FxHashMap<String, FileId>,
+    pub by_path: FxHashMap<Vec<u8>, FileId>,
 
     pub globals: SymbolMap,
     /// `globalThisSymbol`: a module no file declares, which is in `globals` and whose `Exports` they are. A symbol of the first file.
@@ -387,7 +392,7 @@ pub struct Files {
     pub prototype_symbol: Sym,
     ambient_modules: FxHashMap<Atom, Sym>,
     /// `declare module "*.svg"`
-    ambient_patterns: Vec<(String, String, Sym)>,
+    ambient_patterns: Vec<(Vec<u8>, Vec<u8>, Sym)>,
     /// `patternAmbientModuleAugmentations`: by the name written, what `declare module "a.svg"` in a module makes of `declare module "*.svg"`.
     pattern_augmentations: FxHashMap<Atom, Sym>,
     /// `mergedSymbols`
@@ -433,10 +438,10 @@ pub struct Files {
     include_errors: Vec<(FileId, u32, u32, Problem)>,
     /// The `package.json` of each package in a `node_modules` that a file of the program is in, by its directory. Only where declaration
     /// files are emitted, which have to call such files something.
-    pub package_jsons: FxHashMap<String, Json>,
+    pub package_jsons: FxHashMap<Vec<u8>, Json>,
     /// `DirectoriesByRealpath`: each directory that is known to be linked, with a link to it, in order. Only where declaration files are
     /// emitted. The `package.json` of each is in `package_jsons` under the path of the link.
-    pub linked_directories: Vec<(String, String)>,
+    pub linked_directories: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 /// What follows from how symbols are put together, each worked out the first time it is asked for. Until they are put together the
@@ -536,9 +541,9 @@ impl ExactSizeIterator for Exports<'_> {}
 struct Loaded {
     module: Module,
     /// (specifier, the way it is looked for, what it resolved to, whether that is brought into the program for it, `increaseDepth`)
-    imports: Vec<(Atom, ResolutionMode, String, bool, bool)>,
+    imports: Vec<(Atom, ResolutionMode, Vec<u8>, bool, bool)>,
     /// (path, is a lib, `increaseDepth`)
-    references: Vec<(String, bool, bool)>,
+    references: Vec<(Vec<u8>, bool, bool)>,
 }
 
 /// `typeOnlyDeclaration`
@@ -638,7 +643,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                 }
             }
             Json::Number(n) => ExprKind::Number(f.number(*n)),
-            Json::String(s) => ExprKind::String(atoms.intern_str(s)),
+            Json::String(s) => ExprKind::String(atoms.intern(s)),
             Json::Array(items) => {
                 let items: Vec<ExprId> = items
                     .iter()
@@ -663,7 +668,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                         let pos = member.map_or(end, |member| member.name_from);
                         Prop {
                             kind: PropKind::Init,
-                            key: PropKey::Name(atoms.intern_str(k)),
+                            key: PropKey::Name(atoms.intern(k)),
                             name_kind: hir::NameKind::StringLiteral,
                             value: value(f, v, member.map(|member| &member.value), end, atoms),
                             pos,
@@ -685,8 +690,8 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
             ExpressionKind::Bool(true) => ExprKind::True,
             ExpressionKind::Bool(false) => ExprKind::False,
             ExpressionKind::Number(n) => ExprKind::Number(f.number(*n)),
-            ExpressionKind::String(s) => ExprKind::String(atoms.intern_str(s)),
-            ExpressionKind::Identifier(name) => ExprKind::Ident(atoms.intern_str(name)),
+            ExpressionKind::String(s) => ExprKind::String(atoms.intern(s)),
+            ExpressionKind::Identifier(name) => ExprKind::Ident(atoms.intern(name)),
             ExpressionKind::Missing => ExprKind::Missing,
             ExpressionKind::Array(items) => {
                 let items: Vec<ExprId> = items.iter().map(|i| expression(f, i, atoms)).collect();
@@ -697,13 +702,11 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                     .iter()
                     .map(|p| {
                         let key = match &p.name {
-                            PropertyName::Name(name) => PropKey::Name(atoms.intern_str(name)),
+                            PropertyName::Name(name) => PropKey::Name(atoms.intern(name)),
                             PropertyName::Computed(name) => match &name.kind {
-                                ExpressionKind::String(name) => {
-                                    PropKey::Name(atoms.intern_str(name))
-                                }
+                                ExpressionKind::String(name) => PropKey::Name(atoms.intern(name)),
                                 ExpressionKind::Number(n) if !n.is_sign_negative() => {
-                                    PropKey::Name(atoms.intern_str(&number_to_string(*n)))
+                                    PropKey::Name(atoms.intern(number_to_string(*n).as_bytes()))
                                 }
                                 _ => PropKey::Computed(expression(f, name, atoms)),
                             },
@@ -775,77 +778,83 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
 }
 
 /// `GetJSXRuntimeImport` of `GetJSXImplicitImportBase`.
-pub(crate) fn jsx_runtime_of(options: &Options, hir: &File, atoms: &Interner) -> Option<String> {
+pub(crate) fn jsx_runtime_of(options: &Options, hir: &File, atoms: &Interner) -> Option<Vec<u8>> {
     if hir.jsx_pragmas.classic == Some(true) {
         return None;
     }
-    let runtime = if options.jsx == JsxEmit::ReactJsxDev {
-        "jsx-dev-runtime"
+    let runtime: &[u8] = if options.jsx == JsxEmit::ReactJsxDev {
+        b"jsx-dev-runtime"
     } else {
-        "jsx-runtime"
+        b"jsx-runtime"
     };
     if hir.jsx_pragmas.import_source.is_some() {
-        return Some(format!(
-            "{}/{runtime}",
-            atoms.text(hir.jsx_pragmas.import_source)
-        ));
+        return Some([atoms.bytes(hir.jsx_pragmas.import_source), b"/", runtime].concat());
     }
     if !options.jsx_runtime.is_empty() {
         return Some(options.jsx_runtime.clone());
     }
     (hir.jsx_pragmas.classic == Some(false))
-        .then(|| format!("{}/{runtime}", options.jsx_import_source))
+        .then(|| [&options.jsx_import_source[..], b"/", runtime].concat())
+}
+
+fn lib_file(options: &Options, lib: &[u8]) -> Vec<u8> {
+    [&options.lib_dir[..], b"/lib.", lib, b".d.ts"].concat()
 }
 
 /// `GetLibFileName`: the `N` of the `lib.N.d.ts` that has the library `lib`, which `lib_name` made. The library directory of a
 /// TypeScript that has not moved the library yet has it under the name itself.
-fn lib_file_stem<'a>(host: &dyn Host, options: &Options, lib: &'a str) -> &'a str {
+fn lib_file_stem<'a>(host: &dyn Host, options: &Options, lib: &'a [u8]) -> &'a [u8] {
     match crate::resolve::lib_fallback_name(lib) {
-        Some(moved_to) if !host.is_file(&format!("{}/lib.{lib}.d.ts", options.lib_dir)) => moved_to,
+        Some(moved_to) if !host.is_file(&lib_file(options, lib)) => moved_to,
         _ => lib,
     }
 }
 
 /// `pathForLibFile`: where `lib.<lib>.d.ts` is read from, and whether that is TypeScript's own file.
-fn lib_path(resolver: &Resolver, options: &Options, lib: &str) -> (String, bool) {
+fn lib_path(resolver: &Resolver, options: &Options, lib: &[u8]) -> (Vec<u8>, bool) {
     if options.lib_replacement {
         // `getLibraryNameFromLibFileName`: `dom.iterable` is `@typescript/lib-dom/iterable`, `es2015.symbol.wellknown` is
         // `@typescript/lib-es2015/symbol-wellknown`.
-        let mut name = String::from("@typescript/lib-");
-        for (i, part) in lib.split('.').enumerate() {
+        let mut name = b"@typescript/lib-".to_vec();
+        for (i, part) in lib.split(|&b| b == b'.').enumerate() {
             match i {
                 0 => {}
-                1 => name.push('/'),
-                _ => name.push('-'),
+                1 => name.push(b'/'),
+                _ => name.push(b'-'),
             }
-            name.push_str(part);
+            name.extend_from_slice(part);
         }
         // `getInferredLibraryNameResolveFrom`
-        let from = format!(
-            "{}/__lib_node_modules_lookup_lib.{lib}.d.ts__.ts",
-            options.base_dir
-        );
+        let from = [
+            &options.base_dir[..],
+            b"/__lib_node_modules_lookup_lib.",
+            lib,
+            b".d.ts__.ts",
+        ]
+        .concat();
         // `resolveLibrary`: always the way `require` would.
-        if let Some(found) = resolver.resolve_as(&name, &from, ResolutionMode::Require) {
-            return (found, false);
+        if let Some(found) = resolver.resolve_module_name(&name, &from, ResolutionMode::Require)
+            && !is_javascript(&found.file_name)
+        {
+            return (found.file_name, false);
         }
     }
-    (format!("{}/lib.{lib}.d.ts", options.lib_dir), true)
+    (lib_file(options, lib), true)
 }
 
 /// `HasExtension`
-fn has_extension(path: &str) -> bool {
-    path[path.rfind('/').map_or(0, |i| i + 1)..].contains('.')
+fn has_extension(path: &[u8]) -> bool {
+    path[path.rfind_byte(b'/').map_or(0, |i| i + 1)..].contains(&b'.')
 }
 
 /// The first test of `getSourceFileFromReference`: the error code for a file name whose extension is not supported
 /// (`isSupportedExtension`). JavaScript needs `allowJs`, JSON needs `resolveJsonModule`. `None` for a name without an extension.
-fn unsupported_extension_error(options: &Options, path: &str) -> Option<u32> {
-    let is_supported = [".ts", ".tsx", ".mts", ".cts"]
+fn unsupported_extension_error(options: &Options, path: &[u8]) -> Option<u32> {
+    let is_supported = [b".ts".as_slice(), b".tsx", b".mts", b".cts"]
         .iter()
         .any(|e| path.ends_with(e))
         || options.allow_js && is_javascript(path)
-        || options.resolve_json_module && path.ends_with(".json");
+        || options.resolve_json_module && path.ends_with(b".json");
     if !has_extension(path) || is_supported {
         return None;
     }
@@ -853,30 +862,32 @@ fn unsupported_extension_error(options: &Options, path: &str) -> Option<u32> {
 }
 
 /// What `referenced_file` says of the file at `path`, which is `code`, in full.
-fn reference_problem(options: &Options, code: u32, path: &str) -> Problem {
+fn reference_problem(options: &Options, code: u32, path: &[u8]) -> Problem {
     if code == 6504 || code == 6053 {
         return Problem::new(code, &[path], Place::Nowhere);
     }
     // `GetSupportedExtensions`, flattened.
-    let extensions: Vec<&str> = if options.allow_js {
+    let extensions: Vec<&[u8]> = if options.allow_js {
         vec![
-            ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".cts", ".d.cts", ".cjs", ".mts", ".d.mts",
-            ".mjs",
+            b".ts", b".tsx", b".d.ts", b".js", b".jsx", b".cts", b".d.cts", b".cjs", b".mts",
+            b".d.mts", b".mjs",
         ]
     } else {
-        vec![".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"]
+        vec![
+            b".ts", b".tsx", b".d.ts", b".cts", b".d.cts", b".mts", b".d.mts",
+        ]
     };
-    let quoted: Vec<String> = extensions.iter().map(|e| format!("'{e}'")).collect();
-    Problem::new(code, &[path, &quoted.join(", ")], Place::Nowhere)
+    let quoted = [b"'", &extensions.join(&b"', '"[..])[..], b"'"].concat();
+    Problem::new(code, &[path, &quoted], Place::Nowhere)
 }
 
 /// `resolveTripleslashPathReference`: where the `/// <reference path>` that says `written` in the file at `from` points to.
-fn referenced_path(written: &str, from: &str) -> String {
-    let written = written.replace('\\', "/");
-    match written.as_bytes() {
+fn referenced_path(written: &[u8], from: &[u8]) -> Vec<u8> {
+    let written = written.replace(b"\\", b"/");
+    match written[..] {
         // `c:/a` is `/c:/a` here.
-        [drive, b':', b'/', ..] if drive.is_ascii_alphabetic() => join("/", &written),
-        _ => join(parent_dir(from), &written),
+        [drive, b':', b'/', ..] if drive.is_ascii_alphabetic() => join(b"/", &written),
+        _ => join(dirname::<Posix>(from), &written),
     }
 }
 
@@ -885,9 +896,9 @@ fn referenced_path(written: &str, from: &str) -> String {
 fn referenced_file(
     host: &dyn Host,
     options: &Options,
-    name: &str,
-    from: &str,
-) -> Result<String, u32> {
+    name: &[u8],
+    from: &[u8],
+) -> Result<Vec<u8>, u32> {
     // With an extension, it is that file or none.
     if has_extension(name) {
         if let Some(code) = unsupported_extension_error(options, name) {
@@ -899,28 +910,28 @@ fn referenced_file(
         if name == from {
             return Err(1006);
         }
-        return Ok(name.to_owned());
+        return Ok(name.to_vec());
     }
     // `supportedExtensions[0]`
-    let extensions: &[&str] = if options.allow_js {
-        &[".ts", ".tsx", ".d.ts", ".js", ".jsx"]
+    let extensions: &[&[u8]] = if options.allow_js {
+        &[b".ts", b".tsx", b".d.ts", b".js", b".jsx"]
     } else {
-        &[".ts", ".tsx", ".d.ts"]
+        &[b".ts", b".tsx", b".d.ts"]
     };
     extensions
         .iter()
-        .map(|e| format!("{name}{e}"))
+        .map(|e| [&name[..], &e[..]].concat())
         .find(|c| host.is_file(c))
         .ok_or(6231)
 }
 
 /// `GetAutomaticTypeDirectiveNames`: what `compilerOptions.types` names. A `*` in it stands for every package under the type roots.
-fn automatic_type_directives(host: &dyn Host, options: &Options) -> Vec<String> {
+fn automatic_type_directives(host: &dyn Host, options: &Options) -> Vec<Vec<u8>> {
     // Since TypeScript 6.0 nothing under `node_modules/@types` is included unless something asks for it.
     let Some(types) = &options.types else {
         return Vec::new();
     };
-    if !types.iter().any(|t| t == "*") {
+    if !types.iter().any(|t| t == b"*") {
         return types.clone();
     }
     let mut packages = Vec::new();
@@ -928,22 +939,22 @@ fn automatic_type_directives(host: &dyn Host, options: &Options) -> Vec<String> 
         let mut names = host.list_dir(&root);
         names.sort_unstable();
         for name in names {
-            let dir = format!("{root}/{name}");
-            if name.starts_with('.') || !host.is_dir(&dir) {
+            let dir = [&root[..], b"/", &name[..]].concat();
+            if name.starts_with(b".") || !host.is_dir(&dir) {
                 continue;
             }
             // `"typings": null` is how a package says that it is not needed.
             let package = host
-                .read(&format!("{dir}/package.json"))
+                .read(&[&dir[..], b"/package.json"].concat())
                 .and_then(|text| Json::parse(&text));
-            if package.is_none_or(|p| p.get("typings") != Some(&Json::Null)) {
+            if package.is_none_or(|p| p.get(b"typings") != Some(&Json::Null)) {
                 packages.push(name);
             }
         }
     }
-    let mut all: Vec<String> = Vec::new();
+    let mut all: Vec<Vec<u8>> = Vec::new();
     for name in types {
-        let names = if name == "*" {
+        let names = if name == b"*" {
             packages.as_slice()
         } else {
             std::slice::from_ref(name)
@@ -958,45 +969,38 @@ fn automatic_type_directives(host: &dyn Host, options: &Options) -> Vec<String> 
 }
 
 /// `GetPathComponents` of an absolute path: the root, then the names. The root is empty, or a drive: `/c:/a` is `c:/a` to TypeScript.
-fn components_of_path(path: &str) -> Vec<&str> {
-    let mut parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
-    let starts_with_drive = parts.first().is_some_and(
-        |first| matches!(first.as_bytes(), [letter, b':'] if letter.is_ascii_alphabetic()),
-    );
+fn components_of_path(path: &[u8]) -> Vec<&[u8]> {
+    let mut parts: Vec<&[u8]> = path
+        .split(|&b| b == b'/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let starts_with_drive = parts
+        .first()
+        .is_some_and(|first| matches!(first, [letter, b':'] if letter.is_ascii_alphabetic()));
     if !starts_with_drive {
-        parts.insert(0, "");
+        parts.insert(0, b"");
     }
     parts
 }
 
 /// `GetCanonicalFileName` of both.
-fn is_same_name(a: &str, b: &str, is_case_sensitive: bool) -> bool {
+fn is_same_name(a: &[u8], b: &[u8], is_case_sensitive: bool) -> bool {
     if is_case_sensitive {
         a == b
     } else {
-        a.to_lowercase() == b.to_lowercase()
+        to_file_name_lower_case(a) == to_file_name_lower_case(b)
     }
 }
 
-/// `ContainsPath`
-fn is_path_under(parent: &str, child: &str, is_case_sensitive: bool) -> bool {
-    let (parent, child) = (components_of_path(parent), components_of_path(child));
-    parent.len() <= child.len()
-        && parent
-            .iter()
-            .zip(&child)
-            .all(|(a, b)| is_same_name(a, b, is_case_sensitive))
-}
-
 /// `computeCommonSourceDirectoryOfFilenames`. `None`: the files have nothing in common, not even the drive.
-fn common_directory_of(files: &[&str], is_case_sensitive: bool) -> Option<String> {
-    fn directory(file: &str) -> Vec<&str> {
+fn common_directory_of(files: &[&[u8]], is_case_sensitive: bool) -> Option<Vec<u8>> {
+    fn directory(file: &[u8]) -> Vec<&[u8]> {
         let mut parts = components_of_path(file);
         parts.pop();
         parts
     }
     let Some((first, rest)) = files.split_first() else {
-        return Some("/".to_owned());
+        return Some(b"/".to_vec());
     };
     let mut common = directory(first);
     for file in rest {
@@ -1011,7 +1015,7 @@ fn common_directory_of(files: &[&str], is_case_sensitive: bool) -> Option<String
         }
         common.truncate(shared);
     }
-    Some(join("/", &common.join("/")))
+    Some(join(b"/", &common.join(&b"/"[..])))
 }
 
 /// `FileIncludeReason`, of a file that `checkSourceFilesBelongToPath` objects to.
@@ -1067,7 +1071,7 @@ fn reference_locations(
     host: &dyn Host,
     options: &Options,
     atoms: &Interner,
-    by_path: &FxHashMap<String, FileId>,
+    by_path: &FxHashMap<Vec<u8>, FileId>,
     module: &Module,
 ) -> Vec<(FileId, u32, u32, u32)> {
     let parsed;
@@ -1085,7 +1089,7 @@ fn reference_locations(
             && let Ok(found) = referenced_file(
                 host,
                 options,
-                &referenced_path(&atoms.text(value), &module.path),
+                &referenced_path(atoms.bytes(value), &module.path),
                 &module.path,
             )
             && let Some(&target) = by_path.get(&found)
@@ -1107,7 +1111,11 @@ fn reference_locations(
 }
 
 /// `computeDiagnostic` of `fileIncludeKindRootFile`: the code and the arguments of what says why the root file at `path` is one.
-fn root_file_reason(options: &Options, path: &str, is_case_sensitive: bool) -> (u32, Vec<String>) {
+fn root_file_reason(
+    options: &Options,
+    path: &[u8],
+    is_case_sensitive: bool,
+) -> (u32, Vec<Vec<u8>>) {
     if options.config_path.is_empty() {
         return (1427, Vec::new());
     }
@@ -1127,7 +1135,7 @@ fn root_file_reason(options: &Options, path: &str, is_case_sensitive: bool) -> (
         path,
         is_case_sensitive,
     ) {
-        Some(spec) => (1407, vec![spec.to_owned(), options.config_path.clone()]),
+        Some(spec) => (1407, vec![spec.to_vec(), options.config_path.clone()]),
         None => (1427, Vec::new()),
     }
 }
@@ -1137,35 +1145,35 @@ fn implied_format_reason(
     resolver: &Resolver,
     options: &Options,
     module: &Module,
-) -> Option<(u32, Vec<String>)> {
+) -> Option<(u32, Vec<Vec<u8>>)> {
     if !module.is_module() {
         return None;
     }
     // `loadSourceFileMetaData`
-    let mut dir = parent_dir(&module.path);
+    let mut dir = dirname::<Posix>(&module.path);
     let scope = loop {
         if let Some(json) = resolver.package_json(dir) {
-            break Some((join(dir, "package.json"), json));
+            break Some((join(dir, b"package.json"), json));
         }
-        if dir.is_empty() || dir == "/" {
+        if dir.is_empty() || dir == b"/" {
             break None;
         }
-        dir = parent_dir(dir);
+        dir = dirname::<Posix>(dir);
     };
     let is_type_recorded = options.resolves_like_node
-        && ![".mts", ".cts", ".mjs", ".cjs"]
+        && ![b".mts", b".cts", b".mjs", b".cjs"]
             .iter()
-            .any(|e| module.path.ends_with(e))
-        || module.path.contains("/node_modules/");
+            .any(|e| module.path.ends_with(*e))
+        || module.path.contains_str(b"/node_modules/");
     let package_type = scope
         .as_ref()
         .filter(|_| is_type_recorded)
-        .and_then(|scope| scope.1.get("type"))
+        .and_then(|scope| scope.1.get(b"type"))
         .and_then(Json::as_str)
-        .unwrap_or("");
+        .unwrap_or(b"");
     let package_json = scope.as_ref().map(|scope| scope.0.clone());
     match (module.implied_format, package_json) {
-        (ResolutionMode::Import, Some(path)) if package_type == "module" => {
+        (ResolutionMode::Import, Some(path)) if package_type == b"module" => {
             Some((1458, vec![path]))
         }
         (ResolutionMode::Require, Some(path)) if !package_type.is_empty() => {
@@ -1184,15 +1192,15 @@ fn source_file_may_be_emitted(options: &Options, module: &Module, is_case_sensit
         return false;
     }
     // `GetCommonSourceDirectory`, if `rootDir` or the configuration file says it.
-    let common = match options.root_dir.as_str() {
-        "" => parent_dir(&options.config_path),
+    let common = match options.root_dir.as_slice() {
+        b"" => dirname::<Posix>(&options.config_path),
         root_dir => root_dir,
     };
     // `GetSourceFilePathInNewDirWorker`: a JSON file that is not under there would be written over itself.
     module.hir.kind != FileKind::Json
         || !options.out_dir.is_empty()
             && (common.is_empty()
-                || is_path_under(common, &module.path, is_case_sensitive)
+                || contains_path(common, &module.path, is_case_sensitive)
                     && !is_same_name(&options.out_dir, common, is_case_sensitive))
 }
 
@@ -1205,11 +1213,11 @@ fn explain_source_files(
     options: &Options,
     atoms: &Interner,
     modules: &[ModuleCell],
-    by_path: &FxHashMap<String, FileId>,
-    roots: &[String],
+    by_path: &FxHashMap<Vec<u8>, FileId>,
+    roots: &[Vec<u8>],
     starts: &[FileId],
     code: u32,
-    arg: &str,
+    arg: &[u8],
     is_wrong: &dyn Fn(&Module, bool) -> bool,
 ) -> Vec<(Option<(FileId, u32, u32)>, Problem)> {
     let is_case_sensitive = host.is_case_sensitive();
@@ -1290,7 +1298,7 @@ fn explain_source_files(
             } => Some((from, start, end)),
             IncludeReason::RootFile => None,
         });
-        let mut problem = Problem::new(code, &[module.path.as_str(), arg], Place::Nowhere);
+        let mut problem = Problem::new(code, &[module.path.as_slice(), arg], Place::Nowhere);
         if preferred_location.is_none() || reasons.len() != 1 {
             problem = problem.with(1, 1430, &[]);
             for reason in reasons {
@@ -1298,7 +1306,7 @@ fn explain_source_files(
                     IncludeReason::RootFile => {
                         let (code, args) =
                             root_file_reason(options, &module.path, is_case_sensitive);
-                        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                        let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
                         problem.with(2, code, &args)
                     }
                     IncludeReason::Reference {
@@ -1313,14 +1321,13 @@ fn explain_source_files(
                             .text
                             .get(start as usize..end as usize)
                             .unwrap_or_default();
-                        let written = String::from_utf8_lossy(written);
-                        problem.with(2, code, &[&*written, from.path.as_str()])
+                        problem.with(2, code, &[written, &from.path])
                     }
                 };
             }
         }
         if let Some((code, args)) = implied_format_reason(&resolver, options, module) {
-            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
             problem = problem.with(1, code, &args);
         }
         problems.push((preferred_location, problem));
@@ -1339,32 +1346,35 @@ fn output_path_errors(
     options: &Options,
     atoms: &Interner,
     modules: &[ModuleCell],
-    by_path: &FxHashMap<String, FileId>,
-    roots: &[String],
+    by_path: &FxHashMap<Vec<u8>, FileId>,
+    roots: &[Vec<u8>],
     starts: &[FileId],
     include_errors: &mut Vec<(FileId, u32, u32, Problem)>,
 ) -> Vec<Problem> {
     let mut errors = Vec::new();
     let is_case_sensitive = host.is_case_sensitive();
-    let declaration_dir = if options.writes_declarations {
-        options.declaration_dir.as_str()
+    let declaration_dir = if options.emits_declarations {
+        options.declaration_dir.as_slice()
     } else {
-        ""
+        b""
     };
     let sources: Vec<&Module> = modules
         .iter()
         .map(|module| &**module)
         .filter(|module| source_file_may_be_emitted(options, module, is_case_sensitive))
         .collect();
-    let paths: Vec<&str> = sources.iter().map(|module| module.path.as_str()).collect();
-    let explain = |code: u32, arg: &str, is_wrong: &dyn Fn(&Module, bool) -> bool| {
+    let paths: Vec<&[u8]> = sources
+        .iter()
+        .map(|module| module.path.as_slice())
+        .collect();
+    let explain = |code: u32, arg: &[u8], is_wrong: &dyn Fn(&Module, bool) -> bool| {
         explain_source_files(
             host, options, atoms, modules, by_path, roots, starts, code, arg, is_wrong,
         )
     };
     let mut explained = Vec::new();
     if options.composite {
-        explained = explain(6307, options.config_path.as_str(), &|_, is_root| !is_root);
+        explained = explain(6307, options.config_path.as_slice(), &|_, is_root| !is_root);
     }
     // `CommonSourceDirectory`, where anything goes by it. `None`: there is none.
     let mut common = None;
@@ -1374,22 +1384,22 @@ fn output_path_errors(
         || !declaration_dir.is_empty()
     {
         let said = if !options.root_dir.is_empty() {
-            options.root_dir.as_str()
+            options.root_dir.as_slice()
         } else if !options.config_path.is_empty() {
-            parent_dir(&options.config_path)
+            dirname::<Posix>(&options.config_path)
         } else {
-            ""
+            b""
         };
         if said.is_empty() {
             common = common_directory_of(&paths, is_case_sensitive);
         } else {
             explained.extend(explain(6059, said, &|module, _| {
-                !is_path_under(said, &module.path, is_case_sensitive)
+                !contains_path(said, &module.path, is_case_sensitive)
             }));
-            common = Some(said.to_owned());
+            common = Some(said.to_vec());
         }
         if common.is_none() && !options.out_dir.is_empty() {
-            errors.push(Problem::new(5009, &[], Place::Key("outDir", "")));
+            errors.push(Problem::new(5009, &[], Place::Key(b"outDir", b"")));
         }
     }
     for (at, problem) in explained {
@@ -1410,17 +1420,17 @@ fn output_path_errors(
         && let Some(computed) = common_directory_of(&paths, is_case_sensitive)
         && !is_same_name(
             &computed,
-            parent_dir(&options.config_path),
+            dirname::<Posix>(&options.config_path),
             is_case_sensitive,
         )
     {
-        let (one, other) = if options.out_dir.is_empty() {
-            ("declarationDir", "")
+        let (one, other): (&[u8], &[u8]) = if options.out_dir.is_empty() {
+            (b"declarationDir", b"")
         } else {
-            ("outDir", "declarationDir")
+            (b"outDir", b"declarationDir")
         };
         let config_name =
-            &options.config_path[options.config_path.rfind('/').map_or(0, |i| i + 1)..];
+            &options.config_path[options.config_path.rfind_byte(b'/').map_or(0, |i| i + 1)..];
         let relative = crate::verify::relative_from_file(&options.config_path, &computed);
         errors.push(
             Problem::new(5011, &[config_name, &relative], Place::Key(one, other)).with(
@@ -1433,8 +1443,8 @@ fn output_path_errors(
     if options.suppress_output_path_check {
         return errors;
     }
-    let mut seen: FxHashSet<String> = FxHashSet::default();
-    let mut verify = |output: String| {
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut verify = |output: Vec<u8>| {
         if by_path.contains_key(&output) {
             let problem = Problem::new(5055, &[&output], Place::Nowhere);
             errors.push(if options.has_config_file {
@@ -1446,7 +1456,7 @@ fn output_path_errors(
         let key = if is_case_sensitive {
             output.clone()
         } else {
-            output.to_lowercase()
+            to_file_name_lower_case(&output)
         };
         if seen.contains(&key) {
             errors.push(Problem::new(5056, &[&output], Place::Nowhere));
@@ -1455,41 +1465,41 @@ fn output_path_errors(
         }
     };
     // `GetSourceFilePathInNewDir`: in `dir`, where it is in what the sources have in common. What is not in that stays where it is.
-    let moved_to = |dir: &str, path: &str| match &common {
-        _ if dir.is_empty() => path.to_owned(),
-        Some(common) if is_path_under(common, path, is_case_sensitive) => join(
+    let moved_to = |dir: &[u8], path: &[u8]| match &common {
+        _ if dir.is_empty() => path.to_vec(),
+        Some(common) if contains_path(common, path, is_case_sensitive) => join(
             dir,
             path.get(common.len()..)
-                .unwrap_or("")
-                .trim_start_matches('/'),
+                .unwrap_or(b"")
+                .trim_start_with(|c| c == '/'),
         ),
-        _ => path.to_owned(),
+        _ => path.to_vec(),
     };
     // `RemoveFileExtension`
     let without_extension =
-        |path: String| path[..path.len() - known_extension(&path).len()].to_owned();
+        |path: Vec<u8>| path[..path.len() - known_extension(&path).len()].to_vec();
     for module in sources {
-        let path = module.path.as_str();
+        let path = module.path.as_slice();
         let is_json = module.hir.kind == FileKind::Json;
-        let is_one_of = |extensions: [&str; 2]| extensions.iter().any(|e| path.ends_with(e));
+        let is_one_of = |extensions: [&[u8]; 2]| extensions.iter().any(|e| path.ends_with(e));
         if !options.emit_declaration_only {
             // `GetOutputExtension`
-            let extension = if is_json {
-                ".json"
-            } else if options.jsx == JsxEmit::Preserve && is_one_of([".jsx", ".tsx"]) {
-                ".jsx"
-            } else if is_one_of([".mts", ".mjs"]) {
-                ".mjs"
-            } else if is_one_of([".cts", ".cjs"]) {
-                ".cjs"
+            let extension: &[u8] = if is_json {
+                b".json"
+            } else if options.jsx == JsxEmit::Preserve && is_one_of([b".jsx", b".tsx"]) {
+                b".jsx"
+            } else if is_one_of([b".mts", b".mjs"]) {
+                b".mjs"
+            } else if is_one_of([b".cts", b".cjs"]) {
+                b".cjs"
             } else {
-                ".js"
+                b".js"
             };
             let stem = without_extension(moved_to(&options.out_dir, path));
-            let output = format!("{stem}{extension}");
+            let output = [&stem[..], &extension[..]].concat();
             // A JSON file that would be written where it is read from is not written.
             if !is_json || output != path {
-                let map = format!("{output}.map");
+                let map = [&output[..], b".map"].concat();
                 verify(output);
                 if options.writes_source_maps && !is_json {
                     verify(map);
@@ -1498,22 +1508,22 @@ fn output_path_errors(
         }
         // `GetDeclarationEmitOutputFilePath`
         let declarations_in = if declaration_dir.is_empty() {
-            options.out_dir.as_str()
+            options.out_dir.as_slice()
         } else {
             declaration_dir
         };
-        if options.writes_declarations && !is_json {
+        if options.emits_declarations && !is_json {
             // `GetDeclarationEmitExtensionForPath`
-            let extension = if is_one_of([".mjs", ".mts"]) {
-                ".d.mts"
-            } else if is_one_of([".cjs", ".cts"]) {
-                ".d.cts"
+            let extension: &[u8] = if is_one_of([b".mjs", b".mts"]) {
+                b".d.mts"
+            } else if is_one_of([b".cjs", b".cts"]) {
+                b".d.cts"
             } else {
-                ".d.ts"
+                b".d.ts"
             };
             let stem = without_extension(moved_to(declarations_in, path));
-            let output = format!("{stem}{extension}");
-            let map = format!("{output}.map");
+            let output = [&stem[..], &extension[..]].concat();
+            let map = [&output[..], b".map"].concat();
             verify(output);
             if options.writes_declaration_maps {
                 verify(map);
@@ -1526,10 +1536,12 @@ fn output_path_errors(
 /// `GetSymbolNameForPrivateIdentifier`: `#x` is a name of the class that declares it and of no other. From here on it is spelled
 /// `#x@<hash of the path>.<class>`, where it is declared and wherever it is meant. An `#x` that no class around declares stays `#x`, which names
 /// nothing.
-fn rename_private_names(hir: &mut hir::File, bound: &Bound, atoms: &Interner, path: &str) {
+fn rename_private_names(hir: &mut hir::File, bound: &Bound, atoms: &Interner, path: &[u8]) {
     let file = crate::util::spread_hash(path);
     let renamed = |class: u32, name: Atom| {
-        atoms.intern_str(&format!("{}@{:x}.{}", atoms.text(name), file, class))
+        let mut spelled = atoms.bytes(name).to_vec();
+        let _ = write!(spelled, "@{file:x}.{class}");
+        atoms.intern(&spelled)
     };
     for class in 0..hir.classes.len() {
         for member in hir.classes[class].members.iter() {
@@ -1601,21 +1613,21 @@ pub(crate) fn get_excluded_symbol_flags(flags: SymFlags) -> SymFlags {
 
 impl Files {
     /// Reads `roots` and everything that can be reached from them.
-    pub fn load(host: &dyn Host, options: Options, roots: &[String]) -> Files {
+    pub fn load(host: &dyn Host, options: Options, roots: &[Vec<u8>]) -> Files {
         let atoms = Interner::new();
         let resolver = Resolver::new(host, &options);
-        let mut by_path: FxHashMap<String, FileId> = FxHashMap::default();
-        let mut by_package_id: FxHashMap<String, FileId> = FxHashMap::default();
+        let mut by_path: FxHashMap<Vec<u8>, FileId> = FxHashMap::default();
+        let mut by_package_id: FxHashMap<Vec<u8>, FileId> = FxHashMap::default();
         let mut modules: Vec<Option<Module>> = Vec::new();
         // `parseTaskData.lowestDepth`, by `FileId`: the fewest steps into packages (`increaseDepth`) on a path from a root file.
         let mut depths: Vec<u32> = Vec::new();
-        let mut frontier: Vec<(FileId, String, bool)> = Vec::new();
-        let mut add = |path: String,
+        let mut frontier: Vec<(FileId, Vec<u8>, bool)> = Vec::new();
+        let mut add = |path: Vec<u8>,
                        is_lib: bool,
                        depth: u32,
                        modules: &mut Vec<Option<Module>>,
                        depths: &mut Vec<u32>,
-                       frontier: &mut Vec<(FileId, String, bool)>|
+                       frontier: &mut Vec<(FileId, Vec<u8>, bool)>|
          -> FileId {
             if let Some(&id) = by_path.get(&path) {
                 depths[id.idx()] = depths[id.idx()].min(depth);
@@ -1661,7 +1673,7 @@ impl Files {
         let mut program_errors = Vec::new();
         for root in roots {
             // `addRootFileTask`
-            match referenced_file(host, &options, root, "") {
+            match referenced_file(host, &options, root, b"") {
                 Ok(found) => starts.push(add(
                     found,
                     false,
@@ -1672,7 +1684,7 @@ impl Files {
                 )),
                 Err(code) => {
                     let (reason, args) = root_file_reason(&options, root, host.is_case_sensitive());
-                    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                    let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
                     let problem = reference_problem(&options, code, root);
                     program_errors.push(problem.with(1, 1430, &[]).with(2, reason, &args));
                 }
@@ -1702,7 +1714,7 @@ impl Files {
                     ));
                 }
                 // `*` is whatever there is.
-                None if name == "*" => {}
+                None if name == b"*" => {}
                 None => program_errors.push(
                     Problem::new(2688, &[name], Place::Nowhere)
                         .with(1, 1430, &[])
@@ -1716,13 +1728,13 @@ impl Files {
         }
 
         // What is looked for without being brought in: it is found if it is in the program for another reason.
-        let mut only_found: Vec<(FileId, Atom, ResolutionMode, String)> = Vec::new();
+        let mut only_found: Vec<(FileId, Atom, ResolutionMode, Vec<u8>)> = Vec::new();
         // The sub tasks: from which file to which, and `increaseDepth`.
         let mut steps: Vec<(FileId, FileId, bool)> = Vec::new();
         // Only what nothing has been seen to refer to: the files the program starts from.
         let mut may_drop = options.drops_what_nothing_refers_to;
         let mut is_first = true;
-        let mut ahead: FxHashMap<String, Box<Loaded>> = FxHashMap::default();
+        let mut ahead: FxHashMap<Vec<u8>, Box<Loaded>> = FxHashMap::default();
         while !frontier.is_empty() {
             let batch = std::mem::take(&mut frontier);
             if is_first {
@@ -1747,7 +1759,7 @@ impl Files {
             let missing: Vec<usize> = (0..batch.len())
                 .filter(|&i| results[i].lock().unwrap().is_none())
                 .collect();
-            let paths: Vec<&str> = missing.iter().map(|&i| &batch[i].1[..]).collect();
+            let paths: Vec<&[u8]> = missing.iter().map(|&i| &batch[i].1[..]).collect();
             read_and_work(host, &paths, &|at, text| {
                 let (_, path, is_lib) = &batch[missing[at]];
                 *results[missing[at]].lock().unwrap() = Some(Box::new(Self::load_one(
@@ -1777,7 +1789,7 @@ impl Files {
                     // `elideOnDepth`, `isJsFileFromNodeModules`: JavaScript deeper inside packages than `maxNodeModuleJsDepth` is not loaded.
                     let is_elided = increases_depth
                         && is_javascript(&path)
-                        && path.contains("/node_modules/")
+                        && path.contains_str(b"/node_modules/")
                         && depth > options.max_node_module_js_depth;
                     // `shouldAddFile`: with `noResolve` nothing does.
                     if !brings_in || is_elided || options.no_resolve {
@@ -1818,7 +1830,7 @@ impl Files {
         }
 
         // `redirectFilesByPath`: the paths that stand for a file that is kept under another.
-        let kept: FxHashMap<FileId, String> = by_path
+        let kept: FxHashMap<FileId, Vec<u8>> = by_path
             .iter()
             .filter_map(|(path, &id)| {
                 let kept = &modules[id.idx()].as_ref()?.path;
@@ -1831,36 +1843,36 @@ impl Files {
                 for (&(spec, mode), target) in &module.imports {
                     if let Some(kept) = kept.get(target)
                         && let Some(found) =
-                            resolver.resolve_module(&atoms.text(spec), &module.path, mode)
-                        && found != *kept
+                            resolver.resolve_module_name(atoms.bytes(spec), &module.path, mode)
+                        && found.file_name != *kept
                     {
-                        redirected.push((spec, mode, atoms.intern(found.as_bytes())));
+                        redirected.push((spec, mode, atoms.intern(&found.file_name)));
                     }
                 }
                 module.redirected_imports = redirected.into();
             }
         }
-        let mut package_jsons: FxHashMap<String, Json> = FxHashMap::default();
-        if options.emits_declaration_files {
+        let mut package_jsons: FxHashMap<Vec<u8>, Json> = FxHashMap::default();
+        if options.emits_declarations {
             for module in modules.iter().flatten() {
                 if let Some((_, _, end)) = crate::resolve::node_module_path_parts(&module.path)
                     && !package_jsons.contains_key(&module.path[..end])
                     && let Some(json) = resolver.package_json(&module.path[..end])
                 {
-                    package_jsons.insert(module.path[..end].to_owned(), json);
+                    package_jsons.insert(module.path[..end].to_vec(), json);
                 }
             }
         }
         let mut linked_directories = Vec::new();
-        if options.emits_declaration_files {
+        if options.emits_declarations {
             // `SourceFileMayBeEmitted`
             let emitted = modules.iter().flatten().filter(|module| {
                 matches!(module.hir.kind, hir::FileKind::Ts | hir::FileKind::Tsx)
                     && !module.is_lib
-                    && !module.path.contains("/node_modules/")
+                    && !module.path.contains_str(b"/node_modules/")
             });
             linked_directories =
-                resolver.linked_directories(emitted.map(|module| module.path.as_str()));
+                resolver.linked_directories(emitted.map(|module| module.path.as_slice()));
             for (_, link) in &linked_directories {
                 if !package_jsons.contains_key(link)
                     && let Some(json) = resolver.package_json(link)
@@ -2010,20 +2022,20 @@ impl Files {
         resolver: &Resolver,
         options: &Options,
         atoms: &Interner,
-        seeds: Vec<(String, bool, bool)>,
-    ) -> FxHashMap<String, Box<Loaded>> {
+        seeds: Vec<(Vec<u8>, bool, bool)>,
+    ) -> FxHashMap<Vec<u8>, Box<Loaded>> {
         /// What is next to each other is in the same directory.
         const RUN: usize = 16;
         /// What has been read takes memory until it is worked on.
         const AHEAD: usize = 256;
         struct Shared {
-            to_read: std::collections::VecDeque<(String, bool, bool)>,
-            ready: Vec<((String, bool, bool), Cow<'static, [u8]>)>,
-            seen: FxHashSet<String>,
-            seen_packages: FxHashSet<String>,
+            to_read: std::collections::VecDeque<(Vec<u8>, bool, bool)>,
+            ready: Vec<((Vec<u8>, bool, bool), Cow<'static, [u8]>)>,
+            seen: FxHashSet<Vec<u8>>,
+            seen_packages: FxHashSet<Vec<u8>>,
             /// Taken from `to_read` and not in `done` yet.
             under_way: usize,
-            done: FxHashMap<String, Box<Loaded>>,
+            done: FxHashMap<Vec<u8>, Box<Loaded>>,
         }
         let shared = Mutex::new(Shared {
             seen: seeds.iter().map(|seed| seed.0.clone()).collect(),
@@ -2069,11 +2081,12 @@ impl Files {
                                 .filter(|(_, _, path, brings_in, _)| {
                                     *brings_in
                                         && !options.no_resolve
-                                        && !(is_javascript(path) && path.contains("/node_modules/"))
+                                        && !(is_javascript(path)
+                                            && path.contains_str(b"/node_modules/"))
                                 })
                                 .map(|(_, _, path, ..)| (path, false)),
                         );
-                    let found: Vec<(&String, bool, Option<String>)> = found
+                    let found: Vec<(&Vec<u8>, bool, Option<Vec<u8>>)> = found
                         .map(|(path, is_lib)| (path, is_lib, resolver.package_id(path)))
                         .collect();
                     state = shared.lock().unwrap();
@@ -2108,12 +2121,12 @@ impl Files {
         host: &dyn Host,
         options: &Options,
         atoms: &Interner,
-        path: &str,
+        path: &[u8],
         is_lib: bool,
         says_esm: bool,
         text: Cow<'static, [u8]>,
     ) -> (hir::File, Bound) {
-        let mut hir = if path.ends_with(".json") {
+        let mut hir = if path.ends_with(b".json") {
             json_to_hir(&text, atoms)
         } else {
             host.parse(path, &text, atoms, options)
@@ -2140,7 +2153,7 @@ impl Files {
                 ModuleDetection::Legacy => false,
                 ModuleDetection::Auto => {
                     says_esm
-                        || [".mts", ".cts", ".mjs", ".cjs"]
+                        || [b".mts", b".cts", b".mjs", b".cjs"]
                             .iter()
                             .any(|&e| path.ends_with(e))
                 }
@@ -2202,14 +2215,14 @@ impl Files {
         resolver: &Resolver,
         options: &Options,
         atoms: &Interner,
-        path: &str,
+        path: &[u8],
         is_lib: bool,
         may_drop: bool,
         text: Cow<'static, [u8]>,
     ) -> Loaded {
         // `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, whatever its package says.
-        let says_esm = !path.ends_with(".json")
-            && (options.resolves_like_node || path.contains("/node_modules/"))
+        let says_esm = !path.ends_with(b".json")
+            && (options.resolves_like_node || path.contains_str(b"/node_modules/"))
             && resolver.is_ecmascript_module(path);
         let is_esm = options.resolves_like_node && says_esm;
         let implied_format = resolver.implied_format(path);
@@ -2218,7 +2231,7 @@ impl Files {
             if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
                 resolver
                     .package_json_without_type(path)
-                    .map_or(Atom::NONE, |found| atoms.intern(found.as_bytes()))
+                    .map_or(Atom::NONE, |found| atoms.intern(&found))
             } else {
                 Atom::NONE
             };
@@ -2239,19 +2252,19 @@ impl Files {
             && (hir.is_js
                 || hir.kind != FileKind::Declaration
                     && (options.isolated_modules || hir.has_module_syntax))
-            && let Some(resolved) = resolver.resolve_module_name("tslib", path, default_mode)
+            && let Some(resolved) = resolver.resolve_module_name(b"tslib", path, default_mode)
         {
             let found = resolved.file_name;
-            let tslib = atoms.intern_str("tslib");
+            let tslib = atoms.intern(b"tslib");
             if is_javascript(&found) {
                 untyped_imports.push((tslib, default_mode));
                 let package = resolver.package_id(&found);
                 untyped_import_files.push((
-                    atoms.intern(found.as_bytes()),
+                    atoms.intern(&found),
                     package
                         .as_deref()
-                        .and_then(|id| Some(&id[..1 + id.get(1..)?.find('@')?]))
-                        .map(|name| atoms.intern(name.as_bytes())),
+                        .and_then(|id| Some(&id[..1 + id.get(1..)?.find_byte(b'@')?]))
+                        .map(|name| atoms.intern(name)),
                 ));
             } else {
                 let increases_depth = resolved.is_external_library_import;
@@ -2259,28 +2272,28 @@ impl Files {
             }
         }
         // Only a file that can have tags in it, going by its name, imports what they are made with.
-        if (path.ends_with(".tsx") || path.ends_with(".jsx"))
+        if (path.ends_with(b".tsx") || path.ends_with(b".jsx"))
             && let Some(runtime) = jsx_runtime_of(options, &hir, atoms)
             && let Some(resolved) = resolver.resolve_module_name(&runtime, path, default_mode)
         {
             let found = resolved.file_name;
-            let spec = atoms.intern_str(&runtime);
+            let spec = atoms.intern(&runtime);
             let is_untyped = is_javascript(&found);
             if is_untyped {
                 untyped_imports.push((spec, default_mode));
                 if let Some(types) = resolved.alternate_result {
-                    let types = atoms.intern(types.as_bytes());
+                    let types = atoms.intern(&types);
                     untyped_import_alternates.push((spec, default_mode, types));
                 }
                 let package = resolver.package_id(&found);
                 untyped_import_files.push((
-                    atoms.intern(found.as_bytes()),
+                    atoms.intern(&found),
                     package
                         .as_deref()
-                        .and_then(|id| Some(&id[..1 + id.get(1..)?.find('@')?]))
-                        .map(|name| atoms.intern(name.as_bytes())),
+                        .and_then(|id| Some(&id[..1 + id.get(1..)?.find_byte(b'@')?]))
+                        .map(|name| atoms.intern(name)),
                 ));
-                if found.contains("/node_modules/") {
+                if found.contains_str(b"/node_modules/") {
                     untyped_package_imports.push((spec, default_mode));
                 }
             }
@@ -2295,20 +2308,20 @@ impl Files {
         let ambient = bound
             .ambient_specifiers
             .iter()
-            .filter(|&&spec| !is_relative(&atoms.text(spec)));
+            .filter(|&&spec| !is_relative(atoms.bytes(spec)));
         for &spec in ambient
             .chain(&bound.specifiers)
             .chain(bound.module_augmentations.iter())
         {
-            let text = atoms.text(spec);
+            let text = atoms.bytes(spec);
             // `isExtensionlessRelativePathImport`. `HasExtension` goes by `GetBaseFileName`, to which one slash at the end is nothing.
-            let base = text.strip_suffix('/').unwrap_or(&text);
-            let base = &base[base.rfind('/').map_or(0, |i| i + 1)..];
+            let base = text.strip_suffix(b"/").unwrap_or(text);
+            let base = &base[base.rfind_byte(b'/').map_or(0, |i| i + 1)..];
             if options.resolves_like_node
-                && (text.starts_with("./") || text.starts_with("../"))
-                && !base.contains('.')
+                && (text.starts_with(b"./") || text.starts_with(b"../"))
+                && !base.contains(&b'.')
             {
-                let stem = join(parent_dir(path), &text);
+                let stem = join(dirname::<Posix>(path), text);
                 // `getSuggestedImportExtension`
                 let for_tsx: &[u8] = if options.jsx == JsxEmit::Preserve {
                     b".jsx"
@@ -2316,18 +2329,18 @@ impl Files {
                     b".js"
                 };
                 let suggested = [
-                    (".mts", &b".mjs"[..]),
-                    (".ts", b".js"),
-                    (".cts", b".cjs"),
-                    (".mjs", b".mjs"),
-                    (".js", b".js"),
-                    (".cjs", b".cjs"),
-                    (".tsx", for_tsx),
-                    (".jsx", b".jsx"),
-                    (".json", b".json"),
+                    (&b".mts"[..], &b".mjs"[..]),
+                    (b".ts", b".js"),
+                    (b".cts", b".cjs"),
+                    (b".mjs", b".mjs"),
+                    (b".js", b".js"),
+                    (b".cjs", b".cjs"),
+                    (b".tsx", for_tsx),
+                    (b".jsx", b".jsx"),
+                    (b".json", b".json"),
                 ]
                 .into_iter()
-                .find(|(e, _)| host.is_file(&format!("{stem}{e}")));
+                .find(|(e, _)| host.is_file(&[&stem[..], e].concat()));
                 extensionless_imports.push((spec, suggested.map(|found| found.1)));
             }
             // It is looked for in each way something in the file asks for it, in the order they do, calls last.
@@ -2352,7 +2365,7 @@ impl Files {
                 count += 1;
             }
             for (i, &mode) in modes[..count].iter().enumerate() {
-                let Some(resolved) = resolver.resolve_module_name(&text, path, mode) else {
+                let Some(resolved) = resolver.resolve_module_name(text, path, mode) else {
                     continue;
                 };
                 let increases_depth = resolved.is_external_library_import;
@@ -2360,23 +2373,23 @@ impl Files {
                     found if is_javascript(&found) => {
                         untyped_imports.push((spec, mode));
                         if let Some(types) = resolved.alternate_result {
-                            let types = atoms.intern(types.as_bytes());
+                            let types = atoms.intern(&types);
                             untyped_import_alternates.push((spec, mode, types));
                         }
                         let package = resolver.package_id(&found);
                         untyped_import_files.push((
-                            atoms.intern(found.as_bytes()),
+                            atoms.intern(&found),
                             // The name can hold a `@` at its start only.
                             package
                                 .as_deref()
-                                .and_then(|id| Some(&id[..1 + id.get(1..)?.find('@')?]))
-                                .map(|name| atoms.intern(name.as_bytes())),
+                                .and_then(|id| Some(&id[..1 + id.get(1..)?.find_byte(b'@')?]))
+                                .map(|name| atoms.intern(name)),
                         ));
-                        let needs_jsx = options.jsx == JsxEmit::None && found.ends_with(".jsx");
+                        let needs_jsx = options.jsx == JsxEmit::None && found.ends_with(b".jsx");
                         if needs_jsx {
-                            jsx_imports.push((spec, mode, atoms.intern(found.as_bytes())));
+                            jsx_imports.push((spec, mode, atoms.intern(&found)));
                         }
-                        if found.contains("/node_modules/") {
+                        if found.contains_str(b"/node_modules/") {
                             untyped_package_imports.push((spec, mode));
                         }
                         // `shouldAddFile`: with `allowJs`, JavaScript is loaded like any other file. `Files::load` skips files too deep
@@ -2394,7 +2407,7 @@ impl Files {
                             && !options.allow_arbitrary_extensions =>
                     {
                         arbitrary_extension_imports.push((spec, mode));
-                        arbitrary_extension_files.push(atoms.intern(found.as_bytes()));
+                        arbitrary_extension_files.push(atoms.intern(&found));
                     }
                     found => {
                         if resolved.using_ts_extension {
@@ -2404,10 +2417,11 @@ impl Files {
                         if is_redirect {
                             project_reference_imports.push((spec, mode));
                         }
-                        let needs_jsx =
-                            options.jsx == JsxEmit::None && !is_redirect && found.ends_with(".tsx");
+                        let needs_jsx = options.jsx == JsxEmit::None
+                            && !is_redirect
+                            && found.ends_with(b".tsx");
                         if needs_jsx {
-                            jsx_imports.push((spec, mode, atoms.intern(found.as_bytes())));
+                            jsx_imports.push((spec, mode, atoms.intern(&found)));
                         }
                         let brings_in = !needs_jsx && (i < imported || !is_module_name);
                         imports.push((spec, mode, found, brings_in, increases_depth));
@@ -2423,10 +2437,10 @@ impl Files {
             if options.no_resolve && matches!(kind, ReferenceKind::Path | ReferenceKind::Types) {
                 continue;
             }
-            let value = atoms.text(value);
+            let value = atoms.bytes(value);
             match kind {
                 ReferenceKind::Path => {
-                    match referenced_file(host, options, &referenced_path(&value, path), path) {
+                    match referenced_file(host, options, &referenced_path(value, path), path) {
                         Ok(found) => references.push((found, false, false)),
                         Err(code) => missing_references.push((pos, code)),
                     }
@@ -2435,10 +2449,10 @@ impl Files {
                     if options.no_lib {
                         continue;
                     }
-                    let name = lib_name(&value);
+                    let name = lib_name(value);
                     let name = lib_file_stem(host, options, &name);
                     // `GetLibFileName`: whether there is such a library does not depend on what stands in for it.
-                    if host.is_file(&format!("{}/lib.{name}.d.ts", options.lib_dir)) {
+                    if host.is_file(&lib_file(options, name)) {
                         let (found, is_lib) = lib_path(resolver, options, name);
                         libs.push((found, is_lib, false));
                     } else {
@@ -2452,7 +2466,12 @@ impl Files {
                     } else {
                         mode
                     };
-                    match resolver.resolve_type_reference(&value, parent_dir(path), mode, false) {
+                    match resolver.resolve_type_reference(
+                        value,
+                        dirname::<Posix>(path),
+                        mode,
+                        false,
+                    ) {
                         Some((found, is_external)) => types.push((found, false, is_external)),
                         None => missing_references.push((pos, 2688)),
                     }
@@ -2462,7 +2481,7 @@ impl Files {
         references.extend(types);
         references.extend(libs);
         let module = Module {
-            path: path.to_owned(),
+            path: path.to_vec(),
             hir,
             bound,
             is_lib,
@@ -2484,7 +2503,7 @@ impl Files {
             package_json_without_type,
             package_json_directory: resolver
                 .package_json_directory(path)
-                .map_or(Atom::NONE, |directory| atoms.intern(directory.as_bytes())),
+                .map_or(Atom::NONE, |directory| atoms.intern(directory)),
             edges: Vec::new(),
             redirected_imports: Few::default(),
             project_reference_imports: project_reference_imports.into(),
@@ -2540,11 +2559,11 @@ impl Files {
     pub fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
         let module = &self.modules[file.idx()];
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
-        if !module.path.ends_with(".tsx") && !module.path.ends_with(".jsx") {
+        if !module.path.ends_with(b".tsx") && !module.path.ends_with(b".jsx") {
             return None;
         }
         let runtime = jsx_runtime_of(&self.options, &module.hir, &self.atoms)?;
-        self.atoms.lookup(runtime.as_bytes())
+        self.atoms.lookup(&runtime)
     }
 
     // ───────────────────────────── merging ─────────────────────────────
@@ -2557,25 +2576,25 @@ impl Files {
 
     /// `getDefaultLibFilePriority`
     fn default_lib_file_priority(&self, file: FileId) -> usize {
-        let path = self.modules[file.idx()].path.as_str();
+        let path = self.modules[file.idx()].path.as_slice();
         let is_in_lib_dir = path
-            .strip_prefix(self.options.lib_dir.trim_end_matches('/'))
-            .is_some_and(|rest| rest.starts_with('/'));
+            .strip_prefix(self.options.lib_dir.trim_end_with(|c| c == '/'))
+            .is_some_and(|rest| rest.starts_with(b"/"));
         if is_in_lib_dir {
-            let basename = &path[path.rfind('/').map_or(0, |slash| slash + 1)..];
-            if basename == "lib.d.ts" || basename == "lib.es6.d.ts" {
+            let basename = &path[path.rfind_byte(b'/').map_or(0, |slash| slash + 1)..];
+            if basename == b"lib.d.ts" || basename == b"lib.es6.d.ts" {
                 return 0;
             }
-            let name = basename.strip_prefix("lib.").unwrap_or(basename);
-            let name = name.strip_suffix(".d.ts").unwrap_or(name);
+            let name = basename.strip_prefix(b"lib.").unwrap_or(basename);
+            let name = name.strip_suffix(b".d.ts").unwrap_or(name);
             if let Some(index) = crate::resolve::LIB_NAMES
-                .split(' ')
+                .split(|&b| b == b' ')
                 .position(|lib| lib == name)
             {
                 return index + 1;
             }
         }
-        crate::resolve::LIB_NAMES.split(' ').count() + 2
+        crate::resolve::LIB_NAMES.split(|&b| b == b' ').count() + 2
     }
 
     /// `getProcessedFiles`: the libraries first, sorted (`sortLibs`); then from each starting point depth first, a file after
@@ -2697,13 +2716,13 @@ impl Files {
                     continue;
                 }
                 // `TryParsePattern`: one `*`, and no more, makes a pattern of the name. It is a name like any other besides.
-                let text = self.atoms.text(name).into_owned();
-                if let Some(star) = text.find('*')
-                    && !text[star + 1..].contains('*')
+                let text = self.atoms.bytes(name);
+                if let Some(star) = text.find_byte(b'*')
+                    && !text[star + 1..].contains(&b'*')
                 {
                     self.ambient_patterns.push((
-                        text[..star].to_owned(),
-                        text[star + 1..].to_owned(),
+                        text[..star].to_vec(),
+                        text[star + 1..].to_vec(),
                         sym,
                     ));
                 }
@@ -3773,7 +3792,7 @@ impl Files {
         }
         // `tryFindAmbientModule`: nothing is found by a relative name.
         if let Some(&ambient) = self.ambient_modules.get(&spec)
-            && !is_relative(&self.atoms.text(spec))
+            && !is_relative(self.atoms.bytes(spec))
         {
             return Some(self.canonical(ambient));
         }
@@ -3785,14 +3804,14 @@ impl Files {
                 .then(|| self.file_symbol(target));
         }
         if !self.ambient_patterns.is_empty() {
-            let text = self.atoms.text(spec);
+            let text = self.atoms.bytes(spec);
             // `FindBestPatternMatch`: the one with the longest prefix, and of those the first.
             let mut best: Option<(usize, Sym)> = None;
             for (prefix, suffix, sym) in &self.ambient_patterns {
                 if best.is_none_or(|b| prefix.len() > b.0)
                     && text.len() >= prefix.len() + suffix.len()
-                    && text.starts_with(prefix.as_str())
-                    && text.ends_with(suffix.as_str())
+                    && text.starts_with(prefix.as_slice())
+                    && text.ends_with(suffix.as_slice())
                 {
                     best = Some((prefix.len(), *sym));
                 }
@@ -3909,7 +3928,7 @@ impl Files {
                 .iter()
                 .any(|d| matches!(d, Decl::File))
             && (self.hir(module.file).kind == FileKind::Json
-                || self.module(module.file).path.ends_with(".d.json.ts"))
+                || self.module(module.file).path.ends_with(b".d.json.ts"))
     }
 
     /// `isESMFormatImportImportingCommonjsFormatFile`, of a plain `import` in `from`: a file that is emitted as CommonJS, imported by one

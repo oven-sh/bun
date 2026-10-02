@@ -34,9 +34,9 @@ pub(super) enum Arg<'a> {
 /// The arguments of a message, printed.
 pub(super) type Args = Box<[Box<[u8]>]>;
 
-/// For who still prints the arguments by itself, into `String`s. It goes with its last caller: a diagnostic takes `&[Arg]`.
-pub(super) fn held(args: Vec<String>) -> Args {
-    (args.into_iter().map(|arg| arg.into_bytes().into())).collect()
+/// For who still prints the arguments by itself. It goes with its last caller: a diagnostic takes `&[Arg]`.
+pub(super) fn held(args: Vec<impl Into<Vec<u8>>>) -> Args {
+    (args.into_iter().map(|arg| arg.into().into())).collect()
 }
 
 /// `maxSerializationLevel`

@@ -315,7 +315,7 @@ impl Checker<'_> {
             && self.emit_module_format_of_file(file) < ModuleKind::Es2015
         {
             let module = self.p.files.options.module.name();
-            self.error(file, name, 2725, &[Arg::Text(module)]);
+            self.error(file, name, 2725, &[Arg::Bytes(module)]);
         }
     }
 

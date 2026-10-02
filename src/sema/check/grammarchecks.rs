@@ -202,11 +202,11 @@ impl Checker<'_> {
         }
         if f.type_params.len() == 1 {
             let first = f.type_params.at(0);
-            let path = self.files().module(file).path.as_str();
+            let path = self.files().module(file).path.as_slice();
             // Neither a constraint nor a trailing comma.
             if hir[first].constraint.is_none()
                 && text.get(skip_trivia(text, hir[first].end as usize)) == Some(&b'>')
-                && (path.ends_with(".mts") || path.ends_with(".cts"))
+                && (path.ends_with(b".mts") || path.ends_with(b".cts"))
             {
                 self.grammar_error_on_node(file, first, 7060, &[]);
             }

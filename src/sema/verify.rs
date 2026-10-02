@@ -3,43 +3,30 @@
 //!
 //! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths.
 
+use crate::config::starts_with_config_dir_template;
 use crate::json::Json;
 use crate::json_places::{self, Value};
-use crate::resolve::{JsxEmit, ModuleKind, Options};
-
-/// `configDirTemplate` (tsoptions)
-const CONFIG_DIR_TEMPLATE: &str = "${configDir}";
+use crate::resolve::{JsxEmit, ModuleKind, Options, path_is_relative};
+use bstr::ByteSlice;
+use bun_core::strings::without_trailing_slash;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::{dirname, relative_normalized};
 
 /// `hasZeroOrOneAsteriskCharacter`
-fn has_at_most_one_asterisk(text: &str) -> bool {
+fn has_at_most_one_asterisk(text: &[u8]) -> bool {
     text.bytes().filter(|&b| b == b'*').count() <= 1
 }
 
-/// `PathIsRelative`
-fn path_is_relative(path: &str) -> bool {
-    matches!(
-        path.as_bytes(),
-        [b'.'] | [b'.', b'.'] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..]
-    )
-}
-
 /// `PathIsAbsolute`: `GetEncodedRootLength(path) != 0`
-fn path_is_absolute(path: &str) -> bool {
-    match path.as_bytes() {
+fn path_is_absolute(path: &[u8]) -> bool {
+    match path {
         // A POSIX, UNC or untitled (`^/`) root
         [b'/' | b'\\', ..] | [b'^', b'/', ..] => true,
         // A DOS volume: `c:`, `c:/` or `c:\`, but not `c:d`
         [volume, b':'] | [volume, b':', b'/' | b'\\', ..] if volume.is_ascii_alphabetic() => true,
         // A URL
-        _ => path.contains("://"),
+        _ => path.contains_str(b"://"),
     }
-}
-
-/// `startsWithConfigDirTemplate` (tsoptions): parsing replaces the template by the directory of the configuration file, which makes
-/// the path absolute.
-fn starts_with_config_dir_template(path: &str) -> bool {
-    path.get(..CONFIG_DIR_TEMPLATE.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CONFIG_DIR_TEMPLATE))
 }
 
 /// The elements of a list option as tsoptions parses it. `None` is Go's nil slice: `value` is not an array, or it is a non-empty array
@@ -56,21 +43,21 @@ fn is_white_space_like(ch: char) -> bool {
 }
 
 /// `IsIdentifierText`
-fn is_identifier(text: &str) -> bool {
-    bun_core::lexer::is_identifier(text.as_bytes())
+fn is_identifier(text: &[u8]) -> bool {
+    bun_core::lexer::is_identifier(text)
 }
 
 /// `ParseIsolatedEntityName`: whether `text` is an identifier or a qualified name. Keywords count as identifiers, and white space may
 /// surround each name. Comments, `\u` escapes and a leading `#!` line are not supported: a text that contains one is rejected.
-pub fn is_entity_name(text: &str) -> bool {
+pub fn is_entity_name(text: &[u8]) -> bool {
     let mut names = text
-        .split('.')
-        .map(|name| name.trim_matches(is_white_space_like));
+        .split(|&b| b == b'.')
+        .map(|name| name.trim_with(is_white_space_like));
     // `tokenIsIdentifierOrKeyword` holds for a private identifier, so `parseEntityName` accepts `#a` as the first name.
     // `parseRightSideOfDot` rejects it after a dot.
     names
         .next()
-        .is_some_and(|first| is_identifier(first.strip_prefix('#').unwrap_or(first)))
+        .is_some_and(|first| is_identifier(first.strip_prefix(b"#").unwrap_or(first)))
         && names.all(is_identifier)
 }
 
@@ -83,44 +70,44 @@ pub enum Place {
     /// `createCompilerOptionsDiagnostic`: at the word `compilerOptions`.
     CompilerOptions,
     /// `createDiagnosticForOption`: at the name of whichever of two options is written first, the second of which may be none.
-    Key(&'static str, &'static str),
+    Key(&'static [u8], &'static [u8]),
     /// At what the option is set to.
-    Value(&'static str),
+    Value(&'static [u8]),
     /// `createDiagnosticForOptionPaths`: at a pattern in `paths`, or at what is to be tried for it.
-    PathsKey(String),
-    PathsValue(String),
+    PathsKey(Vec<u8>),
+    PathsValue(Vec<u8>),
     /// `createDiagnosticForOptionPathKeyValue`: at one of those.
-    PathsElement(String, usize),
+    PathsElement(Vec<u8>, usize),
     /// `ForEachTsConfigPropArray`: at what is said for a name beside `compilerOptions`.
-    Top(&'static str),
+    Top(&'static [u8]),
     /// `GetTsConfigPropArrayElementValue`: at the string in that list. Nowhere if it is not in this file.
-    TopElement(&'static str, String),
+    TopElement(&'static [u8], Vec<u8>),
 }
 
 /// Something wrong with the options.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Problem {
     pub code: u32,
-    pub args: Vec<String>,
+    pub args: Vec<Vec<u8>>,
     /// `AddMessageChain`: what is said below it. How far it is indented, the code, what goes into the message.
-    pub chain: Vec<(u32, u32, Vec<String>)>,
+    pub chain: Vec<(u32, u32, Vec<Vec<u8>>)>,
     pub at: Place,
 }
 
 impl Problem {
-    pub fn new(code: u32, args: &[&str], at: Place) -> Problem {
+    pub fn new(code: u32, args: &[&[u8]], at: Place) -> Problem {
         Problem {
             code,
-            args: args.iter().map(|&a| a.to_owned()).collect(),
+            args: args.iter().map(|&a| a.to_vec()).collect(),
             chain: Vec::new(),
             at,
         }
     }
 
     /// With `code` said below it, `level` steps in.
-    pub fn with(mut self, level: u32, code: u32, args: &[&str]) -> Problem {
+    pub fn with(mut self, level: u32, code: u32, args: &[&[u8]]) -> Problem {
         self.chain
-            .push((level, code, args.iter().map(|&a| a.to_owned()).collect()));
+            .push((level, code, args.iter().map(|&a| a.to_vec()).collect()));
         self
     }
 
@@ -132,35 +119,34 @@ impl Problem {
         let root = json_places::parse(text)?;
         let of = |value: &Value| (value.from, value.to);
         if let Place::Top(name) | Place::TopElement(name, _) = &self.at {
-            let list = &root.member(name, "")?.value;
+            let list = &root.member(name, b"")?.value;
             let (Place::TopElement(_, said), json_places::Written::Array(elements)) =
                 (&self.at, &list.what)
             else {
                 return Some(of(list));
             };
             let is_it = |e: &&Value| {
-                text.get(e.from as usize + 1..(e.to as usize).saturating_sub(1))
-                    == Some(said.as_bytes())
+                text.get(e.from as usize + 1..(e.to as usize).saturating_sub(1)) == Some(said)
             };
             return elements.iter().find(is_it).map(of);
         }
-        let options = root.member("compilerOptions", "")?;
-        let paths = || options.value.member("paths", "");
+        let options = root.member(b"compilerOptions", b"")?;
+        let paths = || options.value.member(b"paths", b"");
         let found = match &self.at {
             Place::Nowhere | Place::CompilerOptions | Place::Top(_) | Place::TopElement(..) => None,
             Place::Key(name, other) => options
                 .value
                 .member(name, other)
                 .map(|m| (m.name_from, m.name_to)),
-            Place::Value(name) => options.value.member(name, "").map(|m| of(&m.value)),
+            Place::Value(name) => options.value.member(name, b"").map(|m| of(&m.value)),
             Place::PathsKey(key) => paths()
-                .and_then(|p| p.value.member(key, ""))
+                .and_then(|p| p.value.member(key, b""))
                 .map(|m| (m.name_from, m.name_to)),
             Place::PathsValue(key) => paths()
-                .and_then(|p| p.value.member(key, ""))
+                .and_then(|p| p.value.member(key, b""))
                 .map(|m| of(&m.value)),
             Place::PathsElement(key, index) => paths()
-                .and_then(|p| p.value.member(key, ""))
+                .and_then(|p| p.value.member(key, b""))
                 .and_then(|m| m.value.element(*index))
                 .map(of),
         };
@@ -169,19 +155,13 @@ impl Problem {
 }
 
 /// `GetRelativePathFromFile`, both being absolute.
-pub(crate) fn relative_from_file(from: &str, to: &str) -> String {
-    let from: Vec<&str> = crate::resolve::parent_dir(from)
-        .split('/')
-        .filter(|p| !p.is_empty())
-        .collect();
-    let to: Vec<&str> = to.split('/').filter(|p| !p.is_empty()).collect();
-    let shared = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
-    let mut parts: Vec<&str> = vec![".."; from.len() - shared];
-    parts.extend(&to[shared..]);
-    match parts.first() {
-        None => ".".to_owned(),
-        Some(&"..") => parts.join("/"),
-        Some(_) => format!("./{}", parts.join("/")),
+pub(crate) fn relative_from_file(from: &[u8], to: &[u8]) -> Vec<u8> {
+    let relative = relative_normalized::<Posix, true>(dirname::<Posix>(from), to);
+    // `EnsurePathIsNonModuleName`
+    if relative == b".." || relative.starts_with(b"../") {
+        relative.to_vec()
+    } else {
+        [b"./", relative].concat()
     }
 }
 
@@ -190,119 +170,123 @@ pub(crate) fn relative_from_file(from: &str, to: &str) -> String {
 pub fn verify_compiler_options(
     compiler: &Json,
     options: &Options,
-    config_path: &str,
+    config_path: &[u8],
 ) -> Vec<Problem> {
     let mut out: Vec<Problem> = Vec::new();
-    let flag = |name: &str| compiler.get(name).and_then(Json::as_bool);
-    let is_true = |name: &str| flag(name) == Some(true);
-    let is_false = |name: &str| flag(name) == Some(false);
-    let text = |name: &str| compiler.get(name).and_then(Json::as_str).unwrap_or("");
-    let lower = |name: &str| text(name).to_ascii_lowercase();
-    let said = |name: &str| !text(name).is_empty();
+    let flag = |name: &[u8]| compiler.get(name).and_then(Json::as_bool);
+    let is_true = |name: &[u8]| flag(name) == Some(true);
+    let is_false = |name: &[u8]| flag(name) == Some(false);
+    let text = |name: &[u8]| compiler.get(name).and_then(Json::as_str).unwrap_or(b"");
+    let lower = |name: &[u8]| text(name).to_ascii_lowercase();
+    let said = |name: &[u8]| !text(name).is_empty();
     // `createDiagnosticForOptionName`
     fn about(
         out: &mut Vec<Problem>,
         code: u32,
-        one: &'static str,
-        other: &'static str,
-        more: &[&str],
+        one: &'static [u8],
+        other: &'static [u8],
+        more: &[&[u8]],
     ) {
         let mut args = vec![one, other];
         args.extend_from_slice(more);
         out.push(Problem::new(code, &args, Place::Key(one, other)));
     }
     // `createRemovedOptionDiagnostic`
-    fn removed(out: &mut Vec<Problem>, name: &'static str, value: &str) {
+    fn removed(out: &mut Vec<Problem>, name: &'static [u8], value: &[u8]) {
         out.push(if value.is_empty() {
-            Problem::new(5102, &[name], Place::Key(name, ""))
+            Problem::new(5102, &[name], Place::Key(name, b""))
         } else {
             Problem::new(5108, &[name, value], Place::Value(name))
         });
     }
 
     // What is no longer there.
-    if said("baseUrl") {
-        removed(&mut out, "baseUrl", "");
+    if said(b"baseUrl") {
+        removed(&mut out, b"baseUrl", b"");
         if !config_path.is_empty() {
-            let suggestion = format!("{}/*", relative_from_file(config_path, text("baseUrl")));
-            let instead = format!("\"paths\": {{\"*\": [\"{suggestion}\"]}}");
+            let relative = relative_from_file(config_path, text(b"baseUrl"));
+            let suggestion = without_trailing_slash(&relative);
+            let instead = [b"\"paths\": {\"*\": [\"", suggestion, b"/*\"]}"].concat();
             out.last_mut().unwrap().chain.push((1, 5106, vec![instead]));
         }
     }
-    if said("outFile") {
-        removed(&mut out, "outFile", "");
+    if said(b"outFile") {
+        removed(&mut out, b"outFile", b"");
     }
-    if lower("target") == "es5" {
-        removed(&mut out, "target", "ES5");
+    if lower(b"target") == b"es5" {
+        removed(&mut out, b"target", b"ES5");
     }
-    match lower("module").as_str() {
-        "amd" => removed(&mut out, "module", "AMD"),
-        "system" => removed(&mut out, "module", "System"),
-        "umd" => removed(&mut out, "module", "UMD"),
+    match lower(b"module").as_slice() {
+        b"amd" => removed(&mut out, b"module", b"AMD"),
+        b"system" => removed(&mut out, b"module", b"System"),
+        b"umd" => removed(&mut out, b"module", b"UMD"),
         _ => {}
     }
-    let resolution_said = lower("moduleResolution");
-    if resolution_said == "classic" {
-        removed(&mut out, "moduleResolution", "Classic");
+    let resolution_said = lower(b"moduleResolution");
+    if resolution_said == b"classic" {
+        removed(&mut out, b"moduleResolution", b"Classic");
     }
-    if is_false("alwaysStrict") {
-        removed(&mut out, "alwaysStrict", "false");
+    if is_false(b"alwaysStrict") {
+        removed(&mut out, b"alwaysStrict", b"false");
     }
-    if is_false("esModuleInterop") {
-        removed(&mut out, "esModuleInterop", "false");
+    if is_false(b"esModuleInterop") {
+        removed(&mut out, b"esModuleInterop", b"false");
     }
-    if is_false("allowSyntheticDefaultImports") {
-        removed(&mut out, "allowSyntheticDefaultImports", "false");
+    if is_false(b"allowSyntheticDefaultImports") {
+        removed(&mut out, b"allowSyntheticDefaultImports", b"false");
     }
-    if matches!(resolution_said.as_str(), "node10" | "node") {
-        removed(&mut out, "moduleResolution", "node10");
+    if matches!(resolution_said.as_slice(), b"node10" | b"node") {
+        removed(&mut out, b"moduleResolution", b"node10");
     }
-    if flag("downlevelIteration").is_some() {
-        removed(&mut out, "downlevelIteration", "");
+    if flag(b"downlevelIteration").is_some() {
+        removed(&mut out, b"downlevelIteration", b"");
     }
 
-    for name in ["strictPropertyInitialization", "exactOptionalPropertyTypes"] {
+    for name in [
+        b"strictPropertyInitialization".as_slice(),
+        b"exactOptionalPropertyTypes",
+    ] {
         if is_true(name) && !options.strict_null_checks {
-            about(&mut out, 5052, name, "strictNullChecks", &[]);
+            about(&mut out, 5052, name, b"strictNullChecks", &[]);
         }
     }
     // `GetEmitDeclarations`
-    let emits_declarations = is_true("declaration") || is_true("composite");
-    let needs_declarations = ["declaration", "composite"];
-    if is_true("isolatedDeclarations") {
+    let emits_declarations = is_true(b"declaration") || is_true(b"composite");
+    let needs_declarations = [b"declaration".as_slice(), b"composite"];
+    if is_true(b"isolatedDeclarations") {
         if options.allow_js {
-            about(&mut out, 5053, "allowJs", "isolatedDeclarations", &[]);
+            about(&mut out, 5053, b"allowJs", b"isolatedDeclarations", &[]);
         }
         if !emits_declarations {
             about(
                 &mut out,
                 5069,
-                "isolatedDeclarations",
-                "declaration",
-                &["composite"],
+                b"isolatedDeclarations",
+                b"declaration",
+                &[b"composite"],
             );
         }
     }
-    if is_true("inlineSourceMap") {
-        if is_true("sourceMap") {
-            about(&mut out, 5053, "sourceMap", "inlineSourceMap", &[]);
+    if is_true(b"inlineSourceMap") {
+        if is_true(b"sourceMap") {
+            about(&mut out, 5053, b"sourceMap", b"inlineSourceMap", &[]);
         }
-        if said("mapRoot") {
-            about(&mut out, 5053, "mapRoot", "inlineSourceMap", &[]);
-        }
-    }
-    if is_true("composite") {
-        if is_false("declaration") {
-            about(&mut out, 6304, "declaration", "", &[]);
-        }
-        if is_false("incremental") {
-            about(&mut out, 6379, "declaration", "", &[]);
+        if said(b"mapRoot") {
+            about(&mut out, 5053, b"mapRoot", b"inlineSourceMap", &[]);
         }
     }
-    if !said("tsBuildInfoFile") && is_true("incremental") && config_path.is_empty() {
+    if is_true(b"composite") {
+        if is_false(b"declaration") {
+            about(&mut out, 6304, b"declaration", b"", &[]);
+        }
+        if is_false(b"incremental") {
+            about(&mut out, 6379, b"declaration", b"", &[]);
+        }
+    }
+    if !said(b"tsBuildInfoFile") && is_true(b"incremental") && config_path.is_empty() {
         out.push(Problem::new(5074, &[], Place::CompilerOptions));
     }
-    if let Some(paths) = compiler.get("paths").and_then(Json::as_object) {
+    if let Some(paths) = compiler.get(b"paths").and_then(Json::as_object) {
         for (pattern, value) in paths {
             if !has_at_most_one_asterisk(pattern) {
                 out.push(Problem::new(
@@ -320,7 +304,7 @@ pub fn verify_compiler_options(
                 continue;
             };
             // `options.Paths` keeps only the strings of each list.
-            let substitutions: Vec<&str> = items.iter().filter_map(Json::as_str).collect();
+            let substitutions: Vec<&[u8]> = items.iter().filter_map(Json::as_str).collect();
             if substitutions.is_empty() {
                 out.push(Problem::new(
                     5066,
@@ -342,174 +326,180 @@ pub fn verify_compiler_options(
             }
         }
     }
-    if !is_true("sourceMap") && !is_true("inlineSourceMap") {
-        if is_true("inlineSources") {
-            about(&mut out, 5051, "inlineSources", "", &[]);
+    if !is_true(b"sourceMap") && !is_true(b"inlineSourceMap") {
+        if is_true(b"inlineSources") {
+            about(&mut out, 5051, b"inlineSources", b"", &[]);
         }
-        if said("sourceRoot") {
-            about(&mut out, 5051, "sourceRoot", "", &[]);
+        if said(b"sourceRoot") {
+            about(&mut out, 5051, b"sourceRoot", b"", &[]);
         }
     }
-    if said("mapRoot") && !(is_true("sourceMap") || is_true("declarationMap")) {
-        about(&mut out, 5069, "mapRoot", "sourceMap", &["declarationMap"]);
-    }
-    if said("declarationDir") && !emits_declarations {
+    if said(b"mapRoot") && !(is_true(b"sourceMap") || is_true(b"declarationMap")) {
         about(
             &mut out,
             5069,
-            "declarationDir",
+            b"mapRoot",
+            b"sourceMap",
+            &[b"declarationMap"],
+        );
+    }
+    if said(b"declarationDir") && !emits_declarations {
+        about(
+            &mut out,
+            5069,
+            b"declarationDir",
             needs_declarations[0],
             &needs_declarations[1..],
         );
     }
-    if is_true("declarationMap") && !emits_declarations {
+    if is_true(b"declarationMap") && !emits_declarations {
         about(
             &mut out,
             5069,
-            "declarationMap",
+            b"declarationMap",
             needs_declarations[0],
             &needs_declarations[1..],
         );
     }
     // `options.Lib != nil`
-    if compiler.get("lib").and_then(parsed_list).is_some() && is_true("noLib") {
-        about(&mut out, 5053, "lib", "noLib", &[]);
+    if compiler.get(b"lib").and_then(parsed_list).is_some() && is_true(b"noLib") {
+        about(&mut out, 5053, b"lib", b"noLib", &[]);
     }
-    if (is_true("isolatedModules") || is_true("verbatimModuleSyntax"))
-        && is_false("preserveConstEnums")
+    if (is_true(b"isolatedModules") || is_true(b"verbatimModuleSyntax"))
+        && is_false(b"preserveConstEnums")
     {
-        let by = if is_true("verbatimModuleSyntax") {
-            "verbatimModuleSyntax"
+        let by: &[u8] = if is_true(b"verbatimModuleSyntax") {
+            b"verbatimModuleSyntax"
         } else {
-            "isolatedModules"
+            b"isolatedModules"
         };
-        about(&mut out, 5091, by, "preserveConstEnums", &[]);
+        about(&mut out, 5091, by, b"preserveConstEnums", &[]);
     }
-    if is_true("checkJs") && !options.allow_js {
-        about(&mut out, 5052, "checkJs", "allowJs", &[]);
+    if is_true(b"checkJs") && !options.allow_js {
+        about(&mut out, 5052, b"checkJs", b"allowJs", &[]);
     }
-    if is_true("emitDeclarationOnly") && !emits_declarations {
+    if is_true(b"emitDeclarationOnly") && !emits_declarations {
         about(
             &mut out,
             5069,
-            "emitDeclarationOnly",
+            b"emitDeclarationOnly",
             needs_declarations[0],
             &needs_declarations[1..],
         );
     }
-    if is_true("emitDecoratorMetadata") && !is_true("experimentalDecorators") {
+    if is_true(b"emitDecoratorMetadata") && !is_true(b"experimentalDecorators") {
         about(
             &mut out,
             5052,
-            "emitDecoratorMetadata",
-            "experimentalDecorators",
+            b"emitDecoratorMetadata",
+            b"experimentalDecorators",
             &[],
         );
     }
     // `JsxEmit.String`
-    let jsx = match options.jsx {
-        JsxEmit::ReactJsx => "react-jsx",
-        JsxEmit::ReactJsxDev => "react-jsxdev",
-        JsxEmit::React => "react",
-        _ => "",
+    let jsx: &[u8] = match options.jsx {
+        JsxEmit::ReactJsx => b"react-jsx",
+        JsxEmit::ReactJsxDev => b"react-jsxdev",
+        JsxEmit::React => b"react",
+        _ => b"",
     };
     let is_automatic = matches!(options.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev);
     // `Option_0_cannot_be_specified_when_option_jsx_is_1`
-    let not_with_jsx = |out: &mut Vec<Problem>, name: &'static str| {
-        out.push(Problem::new(5089, &[name, jsx], Place::Key(name, "")));
+    let not_with_jsx = |out: &mut Vec<Problem>, name: &'static [u8]| {
+        out.push(Problem::new(5089, &[name, jsx], Place::Key(name, b"")));
     };
-    if said("jsxFactory") {
-        if said("reactNamespace") {
-            about(&mut out, 5053, "reactNamespace", "jsxFactory", &[]);
+    if said(b"jsxFactory") {
+        if said(b"reactNamespace") {
+            about(&mut out, 5053, b"reactNamespace", b"jsxFactory", &[]);
         }
         if is_automatic {
-            not_with_jsx(&mut out, "jsxFactory");
+            not_with_jsx(&mut out, b"jsxFactory");
         }
-        if !is_entity_name(text("jsxFactory")) {
+        if !is_entity_name(text(b"jsxFactory")) {
             out.push(Problem::new(
                 5067,
-                &[text("jsxFactory")],
-                Place::Value("jsxFactory"),
+                &[text(b"jsxFactory")],
+                Place::Value(b"jsxFactory"),
             ));
         }
-    } else if said("reactNamespace") && !is_identifier(text("reactNamespace")) {
+    } else if said(b"reactNamespace") && !is_identifier(text(b"reactNamespace")) {
         out.push(Problem::new(
             5059,
-            &[text("reactNamespace")],
-            Place::Value("reactNamespace"),
+            &[text(b"reactNamespace")],
+            Place::Value(b"reactNamespace"),
         ));
     }
-    if said("jsxFragmentFactory") {
-        if !said("jsxFactory") {
-            about(&mut out, 5052, "jsxFragmentFactory", "jsxFactory", &[]);
+    if said(b"jsxFragmentFactory") {
+        if !said(b"jsxFactory") {
+            about(&mut out, 5052, b"jsxFragmentFactory", b"jsxFactory", &[]);
         }
         if is_automatic {
-            not_with_jsx(&mut out, "jsxFragmentFactory");
+            not_with_jsx(&mut out, b"jsxFragmentFactory");
         }
-        if !is_entity_name(text("jsxFragmentFactory")) {
+        if !is_entity_name(text(b"jsxFragmentFactory")) {
             out.push(Problem::new(
                 18035,
-                &[text("jsxFragmentFactory")],
-                Place::Value("jsxFragmentFactory"),
+                &[text(b"jsxFragmentFactory")],
+                Place::Value(b"jsxFragmentFactory"),
             ));
         }
     }
-    if said("reactNamespace") && is_automatic {
-        not_with_jsx(&mut out, "reactNamespace");
+    if said(b"reactNamespace") && is_automatic {
+        not_with_jsx(&mut out, b"reactNamespace");
     }
-    if said("jsxImportSource") && options.jsx == JsxEmit::React {
-        not_with_jsx(&mut out, "jsxImportSource");
+    if said(b"jsxImportSource") && options.jsx == JsxEmit::React {
+        not_with_jsx(&mut out, b"jsxImportSource");
     }
-    if is_true("allowImportingTsExtensions")
-        && !(is_true("noEmit")
-            || is_true("emitDeclarationOnly")
-            || is_true("rewriteRelativeImportExtensions"))
+    if is_true(b"allowImportingTsExtensions")
+        && !(is_true(b"noEmit")
+            || is_true(b"emitDeclarationOnly")
+            || is_true(b"rewriteRelativeImportExtensions"))
     {
         out.push(Problem::new(
             5096,
             &[],
-            Place::Value("allowImportingTsExtensions"),
+            Place::Value(b"allowImportingTsExtensions"),
         ));
     }
     // `GetModuleResolutionKind`: `classic` and `node10` are as good as not said.
     let module = options.module;
-    let resolution = match resolution_said.as_str() {
-        "node16" => "Node16",
-        "nodenext" => "NodeNext",
-        "bundler" => "Bundler",
-        _ if module == ModuleKind::NodeNext => "NodeNext",
-        _ if module.is_node() => "Node16",
-        _ => "Bundler",
+    let resolution: &[u8] = match resolution_said.as_slice() {
+        b"node16" => b"Node16",
+        b"nodenext" => b"NodeNext",
+        b"bundler" => b"Bundler",
+        _ if module == ModuleKind::NodeNext => b"NodeNext",
+        _ if module.is_node() => b"Node16",
+        _ => b"Bundler",
     };
-    if resolution == "Bundler"
+    if resolution == b"Bundler"
         && !(module >= ModuleKind::Es2015 && module <= ModuleKind::EsNext)
         && module != ModuleKind::Preserve
         && module != ModuleKind::CommonJs
     {
         out.push(Problem::new(
             5095,
-            &["bundler"],
-            Place::Value("moduleResolution"),
+            &[b"bundler".as_slice()],
+            Place::Value(b"moduleResolution"),
         ));
     }
-    let resolves_like_node = matches!(resolution, "Node16" | "NodeNext");
+    let resolves_like_node = matches!(resolution, b"Node16" | b"NodeNext");
     if module.is_node() && !resolves_like_node {
         // `ModuleKindToModuleResolutionKind`
-        let wanted = if module == ModuleKind::NodeNext {
-            "NodeNext"
+        let wanted: &[u8] = if module == ModuleKind::NodeNext {
+            b"NodeNext"
         } else {
-            "Node16"
+            b"Node16"
         };
         out.push(Problem::new(
             5109,
             &[wanted, module.name()],
-            Place::Value("moduleResolution"),
+            Place::Value(b"moduleResolution"),
         ));
     } else if resolves_like_node && !module.is_node() {
         out.push(Problem::new(
             5110,
             &[resolution, resolution],
-            Place::Value("module"),
+            Place::Value(b"module"),
         ));
     }
     out

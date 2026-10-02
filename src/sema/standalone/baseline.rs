@@ -6,7 +6,8 @@
 use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
-use bun_sema::resolve::{Host, Options, join, normalize, parent_dir};
+use bun_sema::messages::text;
+use bun_sema::resolve::{Host, Options, join, to_file_name_lower_case};
 use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -91,19 +92,19 @@ const HARNESS_OPTIONS: &[&str] = &[
 /// A file system that is only in memory, but for the default library and `tests/lib`, which are read from where they are.
 pub struct Virtual {
     /// By path. On a file system that does not tell `A` from `a`, by the path in lower case, with the path as it is written.
-    files: BTreeMap<String, (String, Cow<'static, [u8]>)>,
+    files: BTreeMap<Vec<u8>, (Vec<u8>, Cow<'static, [u8]>)>,
     /// All that has something in it, likewise.
-    directories: BTreeMap<String, String>,
+    directories: BTreeMap<Vec<u8>, Vec<u8>>,
     /// What stands for something else, and what for.
-    links: BTreeMap<String, String>,
+    links: BTreeMap<Vec<u8>, Vec<u8>>,
     is_case_sensitive: bool,
     /// Prefixes that are somewhere on the disk, and where.
-    mounted: Vec<(String, String)>,
+    mounted: Vec<(Vec<u8>, Vec<u8>)>,
     disk: bun_sema_driver::host::Disk,
 }
 
 impl Virtual {
-    fn new(is_case_sensitive: bool, mounted: Vec<(String, String)>) -> Virtual {
+    fn new(is_case_sensitive: bool, mounted: Vec<(Vec<u8>, Vec<u8>)>) -> Virtual {
         Virtual {
             files: BTreeMap::new(),
             directories: BTreeMap::new(),
@@ -114,52 +115,52 @@ impl Virtual {
         }
     }
 
-    fn key(&self, path: &str) -> String {
+    fn key(&self, path: &[u8]) -> Vec<u8> {
         if self.is_case_sensitive {
-            path.to_owned()
+            path.to_vec()
         } else {
-            path.to_lowercase()
+            to_file_name_lower_case(path)
         }
     }
 
-    fn add_directories_above(&mut self, path: &str) {
-        let mut dir = parent_dir(path);
+    fn add_directories_above(&mut self, path: &[u8]) {
+        let mut dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
         loop {
             if self
                 .directories
-                .insert(self.key(dir), dir.to_owned())
+                .insert(self.key(dir), dir.to_vec())
                 .is_some()
-                || dir == "/"
+                || dir == b"/"
                 || dir.is_empty()
             {
                 break;
             }
-            dir = parent_dir(dir);
+            dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(dir);
         }
     }
 
-    fn add_file(&mut self, path: &str, content: Vec<u8>) {
+    fn add_file(&mut self, path: &[u8], content: Vec<u8>) {
         self.files
-            .insert(self.key(path), (path.to_owned(), Cow::Owned(content)));
+            .insert(self.key(path), (path.to_vec(), Cow::Owned(content)));
         self.add_directories_above(path);
     }
 
-    fn add_link(&mut self, path: &str, target: &str) {
-        self.links.insert(self.key(path), target.to_owned());
+    fn add_link(&mut self, path: &[u8], target: &[u8]) {
+        self.links.insert(self.key(path), target.to_vec());
         self.add_directories_above(path);
     }
 
     /// Where `path` is on the disk, if it is.
-    fn on_disk(&self, path: &str) -> Option<String> {
+    fn on_disk(&self, path: &[u8]) -> Option<Vec<u8>> {
         self.mounted.iter().find_map(|(prefix, real)| {
-            let rest = path.strip_prefix(prefix.as_str())?;
-            (rest.is_empty() || rest.starts_with('/')).then(|| format!("{real}{rest}"))
+            let rest = path.strip_prefix(prefix.as_slice())?;
+            (rest.is_empty() || rest.starts_with(b"/")).then(|| [&real[..], &rest[..]].concat())
         })
     }
 
     /// `path` with the links in it followed.
-    fn followed(&self, path: &str) -> String {
-        let mut path = path.to_owned();
+    fn followed(&self, path: &[u8]) -> Vec<u8> {
+        let mut path = path.to_vec();
         'again: for _ in 0..40 {
             if self.links.is_empty() {
                 break;
@@ -167,10 +168,11 @@ impl Virtual {
             let mut end = 0;
             while end < path.len() {
                 end = path[end + 1..]
-                    .find('/')
+                    .iter()
+                    .position(|&b| b == b'/')
                     .map_or(path.len(), |i| end + 1 + i);
                 if let Some(target) = self.links.get(&self.key(&path[..end])) {
-                    path = format!("{target}{}", &path[end..]);
+                    path = [target, &path[end..]].concat();
                     continue 'again;
                 }
             }
@@ -181,20 +183,20 @@ impl Virtual {
 }
 
 impl Host for Virtual {
-    fn read(&self, path: &str) -> Option<Cow<'static, [u8]>> {
+    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         if let Some(real) = self.on_disk(path) {
             return self.disk.read(&real);
         }
         let (_, content) = self.files.get(&self.key(&self.followed(path)))?;
         Some(Cow::Owned(decode(content)))
     }
-    fn is_file(&self, path: &str) -> bool {
+    fn is_file(&self, path: &[u8]) -> bool {
         match self.on_disk(path) {
             Some(real) => self.disk.is_file(&real),
             None => self.files.contains_key(&self.key(&self.followed(path))),
         }
     }
-    fn is_dir(&self, path: &str) -> bool {
+    fn is_dir(&self, path: &[u8]) -> bool {
         match self.on_disk(path) {
             Some(real) => self.disk.is_dir(&real),
             None => self
@@ -202,7 +204,7 @@ impl Host for Virtual {
                 .contains_key(&self.key(&self.followed(path))),
         }
     }
-    fn realpath(&self, path: &str) -> String {
+    fn realpath(&self, path: &[u8]) -> Vec<u8> {
         let followed = self.followed(path);
         let key = self.key(&followed);
         match (self.files.get(&key), self.directories.get(&key)) {
@@ -211,15 +213,15 @@ impl Host for Virtual {
             _ => followed,
         }
     }
-    fn list_dir(&self, path: &str) -> Vec<String> {
+    fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
         if let Some(real) = self.on_disk(path) {
             return self.disk.list_dir(&real);
         }
         let dir = self.followed(path);
-        let prefix = if dir == "/" {
-            "/".to_owned()
+        let prefix = if dir == b"/" {
+            b"/".to_vec()
         } else {
-            format!("{}/", self.key(&dir))
+            [&self.key(&dir)[..], b"/"].concat()
         };
         let mut names = BTreeSet::new();
         let written = self
@@ -228,19 +230,19 @@ impl Host for Virtual {
             .map(|(key, (written, _))| (key, written))
             .chain(self.directories.iter());
         for (key, written) in written {
-            if let Some(rest) = key.strip_prefix(&prefix)
+            if let Some(rest) = key.strip_prefix(&prefix[..])
                 && !rest.is_empty()
-                && !rest.contains('/')
+                && !rest.contains(&b'/')
             {
-                names.insert(written[written.len() - rest.len()..].to_owned());
+                names.insert(written[written.len() - rest.len()..].to_vec());
             }
         }
         for key in self.links.keys() {
-            if let Some(rest) = key.strip_prefix(&prefix)
+            if let Some(rest) = key.strip_prefix(&prefix[..])
                 && !rest.is_empty()
-                && !rest.contains('/')
+                && !rest.contains(&b'/')
             {
-                names.insert(rest.to_owned());
+                names.insert(rest.to_vec());
             }
         }
         names.into_iter().collect()
@@ -250,7 +252,7 @@ impl Host for Virtual {
     }
     fn parse(
         &self,
-        path: &str,
+        path: &[u8],
         text: &[u8],
         atoms: &bun_sema::atom::Interner,
         options: &Options,
@@ -289,11 +291,10 @@ fn decode(bytes: &[u8]) -> Vec<u8> {
 
 /// `GetNormalizedAbsolutePath`, in the terms of the checker, where `c:/a` is `/c:/a`.
 fn absolute(path: &str, cwd: &str) -> String {
-    let path = path.replace('\\', "/");
-    match path.as_bytes() {
-        [drive, b':', ..] if drive.is_ascii_alphabetic() => normalize(&format!("/{path}")),
-        _ => join(cwd, &path),
-    }
+    text(&match path.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => join(b"/", path.as_bytes()),
+        _ => join(cwd.as_bytes(), path.as_bytes()),
+    })
 }
 
 fn trim(bytes: &[u8]) -> &[u8] {
@@ -410,7 +411,7 @@ fn settings_of(code: &[u8]) -> BTreeMap<String, String> {
 
 /// `splitOptionValues`, where only one is left: which.
 fn the_one_value(option: &str, value: &str) -> String {
-    let Some(all) = bun_sema::config_options::choices(option) else {
+    let Some(all) = bun_sema::config_options::choices(option.as_bytes()) else {
         return value.to_owned();
     };
     let (mut includes, mut excludes, mut star) = (Vec::new(), Vec::new(), false);
@@ -424,7 +425,7 @@ fn the_one_value(option: &str, value: &str) -> String {
         }
     }
     if star {
-        includes.extend(all.iter().map(|&s| s.to_owned()));
+        includes.extend(all.iter().map(|&s| text(s)));
     }
     includes
         .into_iter()
@@ -499,7 +500,9 @@ fn category_color(category: Category) -> &'static str {
 fn write_location(out: &mut String, d: &Diagnostic) {
     out.push_str(&format!(
         "{CYAN}{}{RESET}:{YELLOW}{}{RESET}:{YELLOW}{}{RESET}",
-        d.path, d.line, d.column
+        text(&d.path),
+        d.line,
+        d.column
     ));
 }
 
@@ -528,7 +531,7 @@ fn write_code_snippet(out: &mut String, d: &Diagnostic, color: &str, indent: &st
         let line = d
             .source
             .get((i + 1).saturating_sub(d.source_line as usize))
-            .map_or("", |line| line.as_str());
+            .map_or_else(String::new, |line| text(line));
         let line = line.trim_end().replace('\t', " ");
         out.push_str(&format!(
             "{indent}{GUTTER}{:>width$}{RESET} {line}\n",
@@ -570,7 +573,7 @@ fn with_color_and_context(diagnostics: &[Diagnostic]) -> String {
             category_color(d.category),
             category_name(d.category),
             d.code,
-            d.text
+            text(&d.text)
         ));
         // `File_appears_to_be_binary`
         if !d.path.is_empty() && d.code != 1490 {
@@ -583,7 +586,7 @@ fn with_color_and_context(diagnostics: &[Diagnostic]) -> String {
                 out.push_str("\n  ");
                 write_location(&mut out, related);
                 out.push_str(" - ");
-                out.push_str(&related.text);
+                out.push_str(&text(&related.text));
                 write_code_snippet(&mut out, related, CYAN, "    ");
             }
             out.push('\n');
@@ -602,12 +605,12 @@ fn error_summary(diagnostics: &[Diagnostic]) -> String {
         return String::new();
     }
     // By file, in the order of their names: how many, and `prettyPathForFileError`.
-    let mut by_file: BTreeMap<&str, (usize, String)> = BTreeMap::new();
+    let mut by_file: BTreeMap<&[u8], (usize, String)> = BTreeMap::new();
     for &d in &errors {
         if !d.path.is_empty() {
             by_file
-                .entry(d.path.as_str())
-                .or_insert_with(|| (0, format!("{}{GREY}:{}{RESET}", d.path, d.line)))
+                .entry(&d.path)
+                .or_insert_with(|| (0, format!("{}{GREY}:{}{RESET}", text(&d.path), d.line)))
                 .0 += 1;
         }
     }
@@ -650,17 +653,18 @@ fn render(
     for d in diagnostics.iter().filter(|_| !pretty) {
         let mut line = String::new();
         if !d.path.is_empty() {
-            if is_default_library(&d.path) {
-                line.push_str(&format!("{}(--,--): ", d.path));
+            let path = text(&d.path);
+            if is_default_library(&path) {
+                line.push_str(&format!("{path}(--,--): "));
             } else {
-                line.push_str(&format!("{}({},{}): ", d.path, d.line, d.column));
+                line.push_str(&format!("{path}({},{}): ", d.line, d.column));
             }
         }
         line.push_str(&format!(
             "{} TS{}: {}\n",
             category_name(d.category),
             d.code,
-            d.text
+            text(&d.text)
         ));
         out.extend_from_slice(clean(&line).as_bytes());
     }
@@ -672,26 +676,29 @@ fn render(
         }
     };
     let error_text = |out: &mut Vec<u8>, new_line: &mut dyn FnMut(&mut Vec<u8>), d: &Diagnostic| {
-        for line in clean(&d.text).split('\n').filter(|l| !l.is_empty()) {
+        for line in clean(&text(&d.text)).split('\n').filter(|l| !l.is_empty()) {
             new_line(out);
             out.extend_from_slice(
                 format!("!!! {} TS{}: {line}", category_name(d.category), d.code).as_bytes(),
             );
         }
         for related in &d.related {
-            let location = if related.path.is_empty() {
+            let path = text(&related.path);
+            let location = if path.is_empty() {
                 String::new()
-            } else if is_default_library(&related.path) {
-                clean(&format!(" {}:--:--", related.path))
+            } else if is_default_library(&path) {
+                clean(&format!(" {path}:--:--"))
             } else {
-                clean(&format!(
-                    " {}:{}:{}",
-                    related.path, related.line, related.column
-                ))
+                clean(&format!(" {path}:{}:{}", related.line, related.column))
             };
             new_line(out);
             out.extend_from_slice(
-                format!("!!! related TS{}{location}: {}", related.code, related.text).as_bytes(),
+                format!(
+                    "!!! related TS{}{location}: {}",
+                    related.code,
+                    text(&related.text)
+                )
+                .as_bytes(),
             );
         }
     };
@@ -702,7 +709,7 @@ fn render(
         let name = clean(name);
         let errors: Vec<&Diagnostic> = diagnostics
             .iter()
-            .filter(|d| !d.path.is_empty() && clean(&d.path).eq_ignore_ascii_case(&name))
+            .filter(|d| !d.path.is_empty() && clean(&text(&d.path)).eq_ignore_ascii_case(&name))
             .collect();
         new_line(&mut out);
         out.extend_from_slice(format!("==== {name} ({} errors) ====", errors.len()).as_bytes());
@@ -890,18 +897,19 @@ fn what_emit_took_away(text: &str) -> Vec<&str> {
 
 /// `d` as it would be listed there.
 fn as_listed(d: &Diagnostic, lib_dir: &str) -> String {
-    let location = if d.path.is_empty() {
+    let path = text(&d.path);
+    let location = if path.is_empty() {
         String::new()
-    } else if is_default_library(&d.path) {
-        format!(" {}:--:--", d.path)
+    } else if is_default_library(&path) {
+        format!(" {path}:--:--")
     } else {
-        format!(" {}:{}:{}", d.path, d.line, d.column)
+        format!(" {path}:{}:{}", d.line, d.column)
     };
     format!(
         "{}{}: {}",
         d.code,
         without_prefixes(&location, lib_dir),
-        d.text.lines().next().unwrap_or("")
+        text(&d.text).lines().next().unwrap_or("")
     )
 }
 
@@ -972,12 +980,15 @@ fn files_under(dir: &str, found: &mut Vec<String>) {
 }
 
 /// `SkipUnsupportedCompilerOptions`
-fn is_unsupported(compiler: &[(String, Json)]) -> bool {
-    let get = |name: &str| compiler.iter().rev().find(|o| o.0 == name).map(|o| &o.1);
+fn is_unsupported(compiler: &[(Vec<u8>, Json)]) -> bool {
+    let get = |name: &str| {
+        let mut options = compiler.iter().rev();
+        options.find(|o| o.0 == name.as_bytes()).map(|o| &o.1)
+    };
     let word = |name: &str| {
         get(name)
             .and_then(Json::as_str)
-            .map(str::to_lowercase)
+            .map(|word| text(word).to_lowercase())
             .unwrap_or_default()
     };
     matches!(word("module").as_str(), "amd" | "umd" | "system")
@@ -1009,20 +1020,21 @@ fn run_one(
         SRC,
     );
     // What the directives say, as `compilerOptions` would.
-    let mut said: Vec<(String, Json)> = Vec::new();
+    let mut said: Vec<(Vec<u8>, Json)> = Vec::new();
     for (name, value) in settings {
         if HARNESS_OPTIONS.contains(&name.as_str()) {
             continue;
         }
-        match bun_sema::config_options::from_text(name, value) {
+        match bun_sema::config_options::from_text(name.as_bytes(), value.as_bytes()) {
             // `getOptionValue`: what is declared `IsFilePath` is taken from the current directory.
-            Some((name @ ("outDir" | "rootDir" | "declarationDir"), Json::String(path))) => {
-                said.push((name.to_owned(), Json::String(absolute(&path, &cwd))))
+            Some((name @ (b"outDir" | b"rootDir" | b"declarationDir"), Json::String(path))) => {
+                let path = absolute(&text(&path), &cwd).into_bytes();
+                said.push((name.to_owned(), Json::String(path)))
             }
             Some((name, value)) => said.push((name.to_owned(), value)),
             None => match name.as_str() {
                 "suppressoutputpathcheck" => said.push((
-                    "suppressOutputPathCheck".to_owned(),
+                    b"suppressOutputPathCheck".to_vec(),
                     Json::Bool(value.eq_ignore_ascii_case("true")),
                 )),
                 "allownontsextensions" | "noerrortruncation" => {}
@@ -1036,8 +1048,8 @@ fn run_one(
         .get("usecasesensitivefilenames")
         .is_none_or(|v| !v.eq_ignore_ascii_case("false"));
     let mounted = vec![
-        (setup.lib_dir.to_owned(), setup.lib_dir.to_owned()),
-        (LIB.to_owned(), setup.test_lib.to_owned()),
+        (setup.lib_dir.into(), setup.lib_dir.into()),
+        (LIB.into(), setup.test_lib.into()),
     ];
 
     // `makeUnitsFromTest`: the first `tsconfig.json` or `jsconfig.json` is the configuration, read where there are only the files of
@@ -1051,16 +1063,20 @@ fn run_one(
         .get("currentdirectory")
         .filter(|s| !s.is_empty())
         .map_or(SRC.to_owned(), |dir| absolute(dir, "/"));
-    let mut named_by_config: Option<Vec<String>> = None;
+    let mut named_by_config: Option<Vec<Vec<u8>>> = None;
     let mut config_unit = None;
     if let Some(at) = config_at {
         let mut only_units = Virtual::new(true, Vec::new());
         for unit in &units {
-            only_units.add_file(&absolute(&unit.name, &config_cwd), unit.content.clone());
+            only_units.add_file(
+                absolute(&unit.name, &config_cwd).as_bytes(),
+                unit.content.clone(),
+            );
         }
         let config_path = absolute(&units[at].name, &config_cwd);
-        named_by_config =
-            Some(config::load_as_typescript_does(&only_units, &config_path, Vec::new()).files);
+        let project =
+            config::load_as_typescript_does(&only_units, config_path.as_bytes(), Vec::new());
+        named_by_config = Some(project.files);
         config_unit = Some(units.remove(at));
     }
 
@@ -1068,7 +1084,7 @@ fn run_one(
     match &named_by_config {
         Some(named) => {
             for unit in &units {
-                if named.contains(&absolute(&unit.name, &cwd)) {
+                if named.contains(&absolute(&unit.name, &cwd).into_bytes()) {
                     roots.push(unit);
                 } else {
                     others.push(unit);
@@ -1097,10 +1113,13 @@ fn run_one(
 
     let mut host = Virtual::new(is_case_sensitive, mounted);
     for unit in roots.iter().chain(&others) {
-        host.add_file(&absolute(&unit.name, &cwd), unit.content.clone());
+        host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());
     }
     for (link, target) in &links {
-        host.add_link(&absolute(link, &cwd), &absolute(target, &cwd));
+        host.add_link(
+            absolute(link, &cwd).as_bytes(),
+            absolute(target, &cwd).as_bytes(),
+        );
     }
     let mut files: Vec<String> = roots
         .iter()
@@ -1109,7 +1128,7 @@ fn run_one(
         .collect();
     let no_lib = said
         .iter()
-        .any(|o| o.0 == "noLib" && matches!(o.1, Json::Bool(true)));
+        .any(|o| o.0 == b"noLib" && matches!(o.1, Json::Bool(true)));
     if let Some(lib_files) = settings.get("libfiles") {
         for lib in lib_files
             .split(',')
@@ -1123,15 +1142,17 @@ fn run_one(
         }
     }
 
+    let files: Vec<Vec<u8>> = files.into_iter().map(String::into_bytes).collect();
+
     // `CompileFiles`: what tests go by unless they say otherwise.
-    let defaults = |compiler: &mut Vec<(String, Json)>| {
-        if !compiler.iter().any(|o| o.0 == "skipDefaultLibCheck") {
-            compiler.push(("skipDefaultLibCheck".to_owned(), Json::Bool(true)));
+    let defaults = |compiler: &mut Vec<(Vec<u8>, Json)>| {
+        if !compiler.iter().any(|o| o.0 == b"skipDefaultLibCheck") {
+            compiler.push((b"skipDefaultLibCheck".to_vec(), Json::Bool(true)));
         }
-        compiler.push(("noErrorTruncation".to_owned(), Json::Bool(true)));
+        compiler.push((b"noErrorTruncation".to_vec(), Json::Bool(true)));
     };
     if let Some(unit) = &config_unit {
-        host.add_file(&absolute(&unit.name, &cwd), unit.content.clone());
+        host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());
     }
     // `compileFilesWithHost` makes two programs of it.
     let parsed_command_line = || -> Project {
@@ -1139,12 +1160,12 @@ fn run_one(
             Some(unit) => {
                 let mut over = said.clone();
                 defaults(&mut over);
-                config::load_as_typescript_does(&host, &absolute(&unit.name, &cwd), over)
+                config::load_as_typescript_does(&host, absolute(&unit.name, &cwd).as_bytes(), over)
             }
             None => {
                 let mut compiler = said.clone();
                 defaults(&mut compiler);
-                config::without_config(&host, &cwd, Json::Object(compiler), files.clone())
+                config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
             }
         };
         project.files = files.clone();
@@ -1230,7 +1251,7 @@ fn run_one(
     let write_types = |checker: &mut bun_sema::check::Checker<'_>,
                        file: bun_sema::program::FileId| {
         let files = &checker.p.files;
-        let path = files.modules[file.idx()].path.clone();
+        let path = text(&files.modules[file.idx()].path);
         // `GetSourceFile` of a path in `redirectFilesByPath` is the copy of the package that is kept: the harness walks it once more,
         // next to the text of that unit.
         let mut copies: Vec<String> = Vec::new();
@@ -1238,7 +1259,7 @@ fn run_one(
             let same_file = files.by_path.iter().filter(|&(_, &id)| id == file);
             copies.extend(
                 same_file
-                    .map(|(other, _)| other.clone())
+                    .map(|(other, _)| text(other))
                     .filter(|other| *other != path),
             );
             copies.sort();
@@ -1257,7 +1278,7 @@ fn run_one(
             write_unit(checker, file, &path, None);
         }
         for copy in copies {
-            write_unit(checker, file, &copy, host.read(&copy).as_deref());
+            write_unit(checker, file, &copy, host.read(copy.as_bytes()).as_deref());
         }
     };
     let closed_a_circle = AtomicBool::new(false);
@@ -1267,11 +1288,11 @@ fn run_one(
     };
     let request = Request {
         compiler_options: &[],
-        cwd: &cwd,
+        cwd: cwd.as_bytes(),
         project: None,
         paths: &[],
         threads: 1,
-        lib_dir: Some(setup.lib_dir),
+        lib_dir: Some(setup.lib_dir.as_bytes()),
         global_node_modules: None,
         progress: None,
         only: None,

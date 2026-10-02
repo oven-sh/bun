@@ -9,6 +9,7 @@ use super::enclosing_declaration::Enclosing;
 use super::errors_isolated_declarations::Node as SyntaxNode;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId};
+use crate::resolve::remove_file_extension;
 use bun_core::fmt::{ItoaBuf, VecWriter, digit_count, itoa};
 use bun_core::lexer::is_identifier;
 use bun_core::strings::{CodepointIterator, Cursor};
@@ -779,18 +780,6 @@ pub(super) fn quoted(text: &[u8], quote: u8, escapes_non_ascii: bool) -> Vec<u8>
     out
 }
 
-/// `RemoveFileExtension`
-fn without_extension(path: &[u8]) -> &[u8] {
-    const EXTENSIONS: [&[u8]; 12] = [
-        b".d.ts", b".d.mts", b".d.cts", b".mjs", b".mts", b".cjs", b".cts", b".ts", b".js",
-        b".tsx", b".jsx", b".json",
-    ];
-    EXTENSIONS
-        .iter()
-        .find_map(|extension| path.strip_suffix(*extension))
-        .unwrap_or(path)
-}
-
 fn string_mapping_name(kind: StringMappingKind) -> &'static [u8] {
     match kind {
         StringMappingKind::Uppercase => b"Uppercase",
@@ -1448,7 +1437,7 @@ impl<'p> Printer<'_, 'p> {
         let files = self.c.files();
         let decls = files.decls(symbol);
         if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
-            return without_extension(files.module(file).path.as_bytes()).to_owned();
+            return remove_file_extension(&files.module(file).path).to_owned();
         }
         for &(file, decl) in &decls {
             if let Decl::Module(m) = decl
@@ -1728,7 +1717,7 @@ impl<'p> Printer<'_, 'p> {
                 }
             }
             Some(&(file, Decl::File)) => {
-                return cat! { b"\"", without_extension(files.module(file).path.as_bytes()), b"\"" };
+                return cat! { b"\"", remove_file_extension(&files.module(file).path), b"\"" };
             }
             _ => {}
         }
@@ -2038,11 +2027,11 @@ impl<'p> Printer<'_, 'p> {
             if !specifier.is_empty() {
                 let attributes = match mode {
                     Some(mode) => {
-                        cat! { b", { with: { \"resolution-mode\": \"", mode.as_bytes(), b"\" } }" }
+                        cat! { b", { with: { \"resolution-mode\": \"", mode, b"\" } }" }
                     }
                     None => Vec::new(),
                 };
-                return (specifier.into_bytes(), attributes);
+                return (specifier, attributes);
             }
         }
         (self.specifier_of_module(module), Vec::new())

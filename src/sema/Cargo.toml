@@ -8,6 +8,9 @@ path = "lib.rs"
 
 [dependencies]
 bun_core.workspace = true
+bun_paths.workspace = true
+bun_semver.workspace = true
+bstr.workspace = true
 smallvec.workspace = true
 bitflags.workspace = true
 

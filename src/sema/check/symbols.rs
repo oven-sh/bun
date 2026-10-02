@@ -671,7 +671,7 @@ impl<'p> Checker<'p> {
         // `getTypeWithSyntheticDefaultOnly`, `isOnlyImportableAsDefault`: a JSON file has a default and nothing else then.
         if is_file_to_node
             && (files.hir(module.file).kind == FileKind::Json
-                || files.module(module.file).path.ends_with(".d.json.ts"))
+                || files.module(module.file).path.ends_with(b".d.json.ts"))
         {
             let default = Prop {
                 name: known::default,

@@ -21,7 +21,7 @@ pub enum Written {
 /// `"name": value`
 #[derive(Debug)]
 pub struct Member {
-    pub name: String,
+    pub name: Vec<u8>,
     /// The name with its quotes.
     pub name_from: u32,
     pub name_to: u32,
@@ -30,7 +30,7 @@ pub struct Member {
 
 impl Value {
     /// `ForEachPropertyAssignment`: the first member called `name` or `other`.
-    pub fn member(&self, name: &str, other: &str) -> Option<&Member> {
+    pub fn member(&self, name: &[u8], other: &[u8]) -> Option<&Member> {
         match &self.what {
             Written::Object(members) => members
                 .iter()
@@ -73,7 +73,7 @@ impl Reader<'_> {
     }
 
     /// Past the string that starts here. What it says, escapes left as they are.
-    fn string(&mut self) -> String {
+    fn string(&mut self) -> Vec<u8> {
         let quote = self.text[self.at];
         let start = self.at + 1;
         self.at = start;
@@ -85,7 +85,7 @@ impl Reader<'_> {
         }
         let end = self.at.min(self.text.len());
         self.at = (end + 1).min(self.text.len());
-        String::from_utf8_lossy(&self.text[start..end]).into_owned()
+        self.text[start..end].to_vec()
     }
 
     fn word(&mut self) {
@@ -124,8 +124,7 @@ impl Reader<'_> {
                                 if self.at as u32 == name_from {
                                     return None;
                                 }
-                                String::from_utf8_lossy(&self.text[name_from as usize..self.at])
-                                    .into_owned()
+                                self.text[name_from as usize..self.at].to_vec()
                             };
                             let name_to = self.at as u32;
                             self.skip_trivia();

@@ -15,7 +15,11 @@ use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, SymbolId};
 use crate::program::TypeOnlyDeclaration;
-use crate::resolve::{ModuleKind, is_declaration_file_name, join, parent_dir};
+use crate::resolve::{ModuleKind, is_declaration_file_name, join, path_is_relative};
+use crate::verify::relative_from_file;
+use bstr::ByteSlice;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::dirname;
 
 const ALL_MEANINGS: SymFlags = SymFlags::VALUE
     .union(SymFlags::TYPE)
@@ -63,10 +67,10 @@ impl Checker<'_> {
     /// `getSourceFileFromReference`: 1006
     fn xa_self_references(&mut self, file: FileId) {
         let files = self.files();
-        let path = files.module(file).path.as_str();
+        let path = &files.module(file).path[..];
         for &(kind, value, start, _) in &self.hir(file).references {
             if kind == ReferenceKind::Path
-                && join(parent_dir(path), &files.atoms.text(value)) == path
+                && join(dirname::<Posix>(path), files.atoms.bytes(value)) == path
             {
                 let end = start + files.atoms.bytes(value).len() as u32;
                 self.error_at((file, start, end), 1006, &[]);
@@ -323,7 +327,7 @@ impl Checker<'_> {
     /// `getVerbatimModuleSyntaxErrorMessage`
     pub(super) fn verbatim_module_syntax_error_message(&self, file: FileId) -> u32 {
         let path = &self.files().module(file).path;
-        if path.ends_with(".cts") || path.ends_with(".cjs") {
+        if path.ends_with(b".cts") || path.ends_with(b".cjs") {
             1286
         } else {
             1295
@@ -945,7 +949,7 @@ impl Checker<'_> {
             let using_ts_extension = importing.ts_extension_imports.contains(&key);
             let is_declaration_name = (using_ts_extension
                 || options.rewrite_relative_import_extensions)
-                && is_declaration_file_name(&text);
+                && is_declaration_file_name(text.as_bytes());
             if using_ts_extension && is_declaration_name {
                 if site.is_emittable {
                     let is_esm = (ModuleKind::Es2015..=ModuleKind::EsNext)
@@ -977,12 +981,12 @@ impl Checker<'_> {
             {
                 // `ShouldRewriteModuleSpecifier`, `SourceFileMayBeEmitted`. 2878 needs project references, which are not supported.
                 let should_rewrite =
-                    is_relative_path(text.as_bytes()) && strip_ts_extension(&text).is_some();
+                    path_is_relative(text.as_bytes()) && strip_ts_extension(&text).is_some();
                 let may_be_emitted = target.hir.kind != FileKind::Declaration
-                    && !target.path.contains("/node_modules/");
+                    && !target.path.contains_str(b"/node_modules/");
                 if !using_ts_extension && should_rewrite {
-                    let path = relative_path_from_file(&importing.path, &target.path);
-                    self.error_at(at, 2876, &[Arg::Text(&path)]);
+                    let path = relative_from_file(&importing.path, &target.path);
+                    self.error_at(at, 2876, &[Arg::Bytes(&path)]);
                 } else if using_ts_extension && !should_rewrite && may_be_emitted {
                     // `GetAnyExtensionFromPath`
                     let base = &text[text.rfind('/').map_or(0, |i| i + 1)..];
@@ -995,7 +999,7 @@ impl Checker<'_> {
                     let mut redirected = importing.redirected_imports.iter();
                     let path = match redirected.find(|r| (r.0, r.1) == key) {
                         Some(r) => Arg::Atom(r.2),
-                        None => Arg::Text(&target.path),
+                        None => Arg::Bytes(&target.path),
                     };
                     self.error_at(at, 2306, &[path]);
                 }
@@ -1007,7 +1011,7 @@ impl Checker<'_> {
             if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18)
                 && is_sync_import
                 && target.is_esm
-                && !target.path.ends_with(".json")
+                && !target.path.ends_with(b".json")
                 // `HasResolutionModeOverride`
                 && !(matches!(
                     kind,
@@ -1069,11 +1073,11 @@ impl Checker<'_> {
         } else if is_side_effect {
             self.error_at(at, 2882, &[Arg::Atom(spec)]);
         // `getCannotResolveModuleNameErrorForSpecificModule`: only for a string literal, not for a template.
-        } else if crate::resolve::is_node_core_module(&text)
+        } else if crate::resolve::is_node_core_module(text.as_bytes())
             && self.hir(file).text.get(start as usize) != Some(&b'`')
         {
             let types = options.types.as_ref();
-            let uses_wildcard_types = types.is_some_and(|t| t.iter().any(|t| t == "*"));
+            let uses_wildcard_types = types.is_some_and(|t| t.iter().any(|t| t == b"*"));
             let code = if uses_wildcard_types { 2580 } else { 2591 };
             self.error_at(at, code, &[Arg::Atom(spec)]);
         } else {
@@ -1090,13 +1094,13 @@ impl Checker<'_> {
     ) -> Option<Reported> {
         let importing = self.files().module(file);
         let path = &importing.path;
-        let target_extension = if path.ends_with(".d.ts") {
+        let target_extension = if path.ends_with(b".d.ts") {
             return None;
-        } else if path.ends_with(".ts") {
+        } else if path.ends_with(b".ts") {
             Some(".mts")
-        } else if path.ends_with(".js") {
+        } else if path.ends_with(b".js") {
             Some(".mjs")
-        } else if path.ends_with(".tsx") || path.ends_with(".jsx") {
+        } else if path.ends_with(b".tsx") || path.ends_with(b".jsx") {
             None
         } else {
             return None;
@@ -1341,11 +1345,6 @@ fn string_literal(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
     (end < text.len()).then(|| (&text[at + 1..end], end + 1))
 }
 
-/// `PathIsRelative`
-fn is_relative_path(path: &[u8]) -> bool {
-    path == b"." || path == b".." || path.starts_with(b"./") || path.starts_with(b"../")
-}
-
 /// `path` without the extension of TypeScript's it ends with, if it ends with one.
 fn strip_ts_extension(path: &str) -> Option<&str> {
     [".d.ts", ".d.mts", ".d.cts", ".mts", ".cts", ".ts", ".tsx"]
@@ -1377,25 +1376,6 @@ fn suggested_import_source(specifier: &str, is_esm: bool, prefers_ts: bool) -> S
         (_, false) => ".js",
     };
     format!("{stem}{suggested}")
-}
-
-/// `GetRelativePathFromFile`
-fn relative_path_from_file(from: &str, to: &str) -> String {
-    let from: Vec<&str> = parent_dir(from)
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect();
-    let to: Vec<&str> = to.split('/').filter(|part| !part.is_empty()).collect();
-    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
-    let mut parts: Vec<&str> = vec![".."; from.len() - common];
-    parts.extend_from_slice(&to[common..]);
-    let path = parts.join("/");
-    // `EnsurePathIsNonModuleName`
-    if path.starts_with("../") {
-        path
-    } else {
-        format!("./{path}")
-    }
 }
 
 /// Where the entity name `a.b.c` that starts at `start` ends.

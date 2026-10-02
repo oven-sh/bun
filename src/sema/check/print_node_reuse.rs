@@ -924,8 +924,7 @@ impl<'p> Printer<'_, 'p> {
             .unwrap_or(target);
         let name = self
             .c
-            .specifier_for_module_symbol(module, at.file, ResolutionMode::None)
-            .into_bytes();
+            .specifier_for_module_symbol(module, at.file, ResolutionMode::None);
         if bun_core::strings::contains(&name, b"/node_modules/") {
             self.encountered_error = true;
             self.report(Report::LikelyUnsafeImportRequired(name.clone(), Vec::new()));

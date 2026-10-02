@@ -23,6 +23,11 @@ impl Category {
     }
 }
 
+/// Bytes as text, for the arguments of a diagnostic and for the printer of types, which still hold a `String`. Goes when they hold bytes.
+pub fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
 /// The category and the text of the message with `code`. `{0}`, `{1}`, ... stand for its arguments.
 pub fn message(code: u32) -> Option<(Category, &'static str)> {
     MESSAGES

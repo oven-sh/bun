@@ -7,6 +7,9 @@ pub mod host;
 
 pub use bun_sema::messages::Category;
 
+use bstr::ByteSlice;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::dirname;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::{Program, compute_ecma_line_starts};
@@ -15,7 +18,8 @@ use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{FileId, Files};
-use bun_sema::resolve::{Host, Phase, join, parent_dir};
+use bun_sema::resolve::{Host, Phase, join};
+use bun_sema::util::{FxHashMap, FxHashSet};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -68,7 +72,7 @@ pub struct Progress {
 
 /// A compiler option and its value, from [`compiler_option_from_flag`].
 #[derive(Clone)]
-pub struct CompilerOption(String, Json);
+pub struct CompilerOption(Vec<u8>, Json);
 
 pub enum FlagError {
     /// No compiler option has this name.
@@ -76,26 +80,26 @@ pub enum FlagError {
     /// The option takes a value and none was given, or it cannot be given on a command line.
     NeedsValue,
     /// The value is not one the option takes. The allowed values, if there is a fixed set.
-    BadValue(&'static [&'static str]),
+    BadValue(&'static [&'static [u8]]),
 }
 
 /// Whether the compiler option `name`, in any case, is a boolean, so that its value may be left out.
-pub fn is_boolean_compiler_option(name: &str) -> bool {
-    bun_sema::config_options::choices(name) == Some(&["true", "false"][..])
+pub fn is_boolean_compiler_option(name: &[u8]) -> bool {
+    bun_sema::config_options::choices(name) == Some(&[b"true".as_slice(), b"false"][..])
 }
 
 /// `--name value` as `tsc` reads it. `name` is matched case-insensitively. A boolean without a value is `true`.
 pub fn compiler_option_from_flag(
-    name: &str,
-    value: Option<&str>,
+    name: &[u8],
+    value: Option<&[u8]>,
 ) -> Result<CompilerOption, FlagError> {
     use bun_sema::config_options::{choices, from_text};
     let allowed = choices(name);
     let value = match value {
         Some(value) => value,
-        None if is_boolean_compiler_option(name) => "true",
+        None if is_boolean_compiler_option(name) => b"true",
         // `from_text` with any text tells an unknown option from one that needs a value.
-        None if allowed.is_some() || from_text(name, "0").is_some() => {
+        None if allowed.is_some() || from_text(name, b"0").is_some() => {
             return Err(FlagError::NeedsValue);
         }
         None => return Err(FlagError::Unknown),
@@ -106,8 +110,8 @@ pub fn compiler_option_from_flag(
         return Err(FlagError::BadValue(allowed));
     }
     match from_text(name, value) {
-        Some((name, value)) => Ok(CompilerOption(name.to_owned(), value)),
-        None if allowed.is_some() || from_text(name, "0").is_some() => {
+        Some((name, value)) => Ok(CompilerOption(name.to_vec(), value)),
+        None if allowed.is_some() || from_text(name, b"0").is_some() => {
             Err(FlagError::BadValue(&[]))
         }
         None => Err(FlagError::Unknown),
@@ -115,35 +119,35 @@ pub fn compiler_option_from_flag(
 }
 
 /// `noEmit`, since nothing is ever written, after what the command line says.
-fn overriding_options(request: &Request) -> Vec<(String, Json)> {
+fn overriding_options(request: &Request) -> Vec<(Vec<u8>, Json)> {
     request
         .compiler_options
         .iter()
         .map(|option| (option.0.clone(), option.1.clone()))
-        .chain([("noEmit".to_owned(), Json::Bool(true))])
+        .chain([(b"noEmit".to_vec(), Json::Bool(true))])
         .collect()
 }
 
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     /// The working directory, as the operating system names it.
-    pub cwd: &'a str,
+    pub cwd: &'a [u8],
     /// `--project`: a configuration file, or a directory with a `tsconfig.json` in it.
-    pub project: Option<&'a str>,
+    pub project: Option<&'a [u8]>,
     /// Files and directories to check instead of all the project names. The options are still the project's.
-    pub paths: &'a [String],
+    pub paths: &'a [Vec<u8>],
     /// Compiler options given on the command line. They override the configuration file, also of referenced projects.
     pub compiler_options: &'a [CompilerOption],
     /// `0`: as many as there are cores.
     pub threads: usize,
     /// Where TypeScript's `lib.*.d.ts` are, if that is not to be found out.
-    pub lib_dir: Option<&'a str>,
+    pub lib_dir: Option<&'a [u8]>,
     /// The `node_modules` of what is installed globally, where they are looked for last.
-    pub global_node_modules: Option<&'a str>,
+    pub global_node_modules: Option<&'a [u8]>,
     /// Kept up to date on the way, for whoever shows how far it has got.
     pub progress: Option<&'a Progress>,
     /// Of all that is loaded, only the files with this in their path are checked. For looking into one file of a big project.
-    pub only: Option<&'a str>,
+    pub only: Option<&'a [u8]>,
     /// The process ends once the errors have been shown.
     pub ends_the_process: bool,
     /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
@@ -166,7 +170,7 @@ pub struct Request<'a> {
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     /// The file, as the checker names it. Empty for what is wrong with the configuration.
-    pub path: String,
+    pub path: Vec<u8>,
     /// Offsets in bytes.
     pub start: u32,
     pub end: u32,
@@ -178,9 +182,9 @@ pub struct Diagnostic {
     pub code: u32,
     pub category: Category,
     /// The message. Lines after the first are reasons, indented by two spaces a level.
-    pub text: String,
+    pub text: Vec<u8>,
     /// Lines of the file from `source_line` on, without their line terminators: a few before the error, those it is on, a few after.
-    pub source: Vec<String>,
+    pub source: Vec<Vec<u8>>,
     pub source_line: u32,
     /// What else has to do with it: `'x' is declared here.` None of these has any of its own.
     pub related: Vec<Diagnostic>,
@@ -191,11 +195,11 @@ pub struct Report {
     /// Sorted as TypeScript sorts them: what has no file first, then by path and position.
     pub diagnostics: Vec<Diagnostic>,
     /// Files in which something went unanswered for want of stack: errors may be missing.
-    pub incomplete: Vec<String>,
+    pub incomplete: Vec<Vec<u8>>,
     /// Whether `@types/bun` is where a project that was checked would find it.
     pub has_bun_types_installed: bool,
     /// The configuration file that was used. Empty if there is none.
-    pub config_path: String,
+    pub config_path: Vec<u8>,
     pub files_loaded: usize,
     pub files_checked: usize,
     /// How many projects were checked, if the configuration has `references`. Otherwise 0.
@@ -250,11 +254,11 @@ fn default_compiler_options() -> Json {
     Json::parse(text).unwrap_or(Json::Null)
 }
 
-fn global(code: u32, args: &[String]) -> Diagnostic {
+fn global(code: u32, args: &[impl AsRef<[u8]>]) -> Diagnostic {
     let (category, template) =
         messages::message(code).unwrap_or((Category::Error, "Unknown error."));
     Diagnostic {
-        path: String::new(),
+        path: Vec::new(),
         start: 0,
         end: 0,
         line: 0,
@@ -266,7 +270,7 @@ fn global(code: u32, args: &[String]) -> Diagnostic {
         text: {
             let mut text = Vec::new();
             messages::format(&mut text, template, args);
-            String::from_utf8_lossy(&text).into_owned()
+            text
         },
         source: Vec::new(),
         source_line: 0,
@@ -275,10 +279,10 @@ fn global(code: u32, args: &[String]) -> Diagnostic {
 }
 
 /// TypeScript's messages say how to install types with npm.
-fn in_terms_of_bun(text: String) -> String {
-    const NPM: &str = "npm i --save-dev ";
-    if text.contains(NPM) {
-        text.replace(NPM, "bun add -d ")
+fn in_terms_of_bun(text: Vec<u8>) -> Vec<u8> {
+    const NPM: &[u8] = b"npm i --save-dev ";
+    if text.contains_str(NPM) {
+        text.replace(NPM, b"bun add -d ")
     } else {
         text
     }
@@ -286,7 +290,7 @@ fn in_terms_of_bun(text: String) -> String {
 
 /// `said`, of the bytes `start..end` of the file at `path`, which reads `text` and whose lines start at `starts`.
 fn located(
-    path: &str,
+    path: &[u8],
     text: &[u8],
     starts: &[u32],
     start: u32,
@@ -298,7 +302,7 @@ fn located(
     let source_line = line.saturating_sub(LINES_BEFORE);
     let last_line = (end_line + LINES_AFTER).min(starts.len() as u32 - 1);
     Diagnostic {
-        path: path.to_owned(),
+        path: path.to_vec(),
         start,
         end,
         line: line + 1,
@@ -318,33 +322,33 @@ fn line_and_character(text: &[u8], starts: &[u32], offset: u32) -> (u32, u32) {
     let offset = offset.min(text.len() as u32);
     let line = starts.partition_point(|&s| s <= offset) - 1;
     let before = &text[starts[line] as usize..offset as usize];
-    let units = String::from_utf8_lossy(before).encode_utf16().count();
+    let units = bun_core::strings::element_length_utf8_into_utf16(before);
     (line as u32, units as u32)
 }
 
-fn line_text(text: &[u8], starts: &[u32], line: u32) -> String {
+fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
     let from = starts[line as usize] as usize;
     let to = starts
         .get(line as usize + 1)
         .map_or(text.len(), |&s| s as usize);
-    String::from_utf8_lossy(&text[from..to])
-        .trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}'])
-        .to_owned()
+    text[from..to]
+        .trim_end_with(|c| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
+        .to_vec()
 }
 
 /// The roots `paths` stand for: a file is itself, a directory is what a project with nothing but that directory would include.
 fn roots_of_paths(
     disk: &host::Disk,
-    cwd: &str,
-    paths: &[String],
+    cwd: &[u8],
+    paths: &[Vec<u8>],
     allow_js: bool,
     errors: &mut Vec<Diagnostic>,
-) -> Vec<String> {
+) -> Vec<Vec<u8>> {
     let mut roots = Vec::new();
     for path in paths {
-        let path = join(cwd, &path.replace('\\', "/"));
+        let path = join(cwd, &path.replace(b"\\", b"/"));
         if disk.is_dir(&path) {
-            let compiler = Json::Object(vec![("allowJs".to_owned(), Json::Bool(allow_js))]);
+            let compiler = Json::Object(vec![(b"allowJs".to_vec(), Json::Bool(allow_js))]);
             roots.extend(config::without_config(disk, &path, compiler, Vec::new()).files);
         } else if disk.is_file(&path) {
             roots.push(path);
@@ -362,6 +366,18 @@ const BIG_FILE: u32 = 64 << 10;
 const SLOW: Duration = Duration::from_millis(40);
 
 pub fn check(request: &Request) -> Report {
+    let mut report = check_what_is_asked(request);
+    if cfg!(windows) {
+        for said in &mut report.diagnostics {
+            host::show_drives(&mut said.text);
+            let related = said.related.iter_mut();
+            related.for_each(|related| host::show_drives(&mut related.text));
+        }
+    }
+    report
+}
+
+fn check_what_is_asked(request: &Request) -> Report {
     let started = Instant::now();
     let threads = match request.threads {
         0 => std::thread::available_parallelism().map_or(4, usize::from),
@@ -373,9 +389,9 @@ pub fn check(request: &Request) -> Report {
 
     let config_path = match request.project {
         Some(project) => {
-            let path = join(&cwd, &project.replace('\\', "/"));
+            let path = join(&cwd, &project.replace(b"\\", b"/"));
             if disk.is_dir(&path) {
-                let inside = join(&path, "tsconfig.json");
+                let inside = join(&path, b"tsconfig.json");
                 if !disk.is_file(&inside) {
                     report.diagnostics.push(global(5057, &[path]));
                     return report;
@@ -392,12 +408,12 @@ pub fn check(request: &Request) -> Report {
         None => request
             .paths
             .first()
-            .map(|first| join(&cwd, &first.replace('\\', "/")))
+            .map(|first| join(&cwd, &first.replace(b"\\", b"/")))
             .and_then(|first| {
                 let dir = if disk.is_dir(&first) {
                     first
                 } else {
-                    parent_dir(&first).to_owned()
+                    dirname::<Posix>(&first).to_vec()
                 };
                 config::find_config(&disk, &dir)
             })
@@ -430,11 +446,10 @@ pub fn check(request: &Request) -> Report {
         );
         // The program is the whole project all the same. What one file adds to the global scope, or to a module, is there for every
         // other: a file means the same, and has the same errors, whether it is named or not.
-        let mut seen: std::collections::HashSet<&str> =
-            project.files.iter().map(String::as_str).collect();
-        let more: Vec<String> = roots
+        let mut seen: FxHashSet<&[u8]> = project.files.iter().map(Vec::as_slice).collect();
+        let more: Vec<Vec<u8>> = roots
             .iter()
-            .filter(|root| seen.insert(root.as_str()))
+            .filter(|root| seen.insert(root.as_slice()))
             .cloned()
             .collect();
         project.files.extend(more);
@@ -468,27 +483,28 @@ struct ReferencedProject {
 fn collect_referenced_projects(
     host: &dyn Host,
     project: config::Project,
-    overrides: &[(String, Json)],
+    overrides: &[(Vec<u8>, Json)],
     projects: &mut Vec<ReferencedProject>,
-    index_of: &mut std::collections::HashMap<String, Option<usize>>,
+    index_of: &mut FxHashMap<Vec<u8>, Option<usize>>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<usize> {
     index_of.insert(project.config_path.clone(), None);
-    let dir = parent_dir(&project.config_path).to_owned();
+    let dir = dirname::<Posix>(&project.config_path).to_vec();
     let mut references = Vec::new();
     for reference in &project.references {
         // `resolveProjectReferencePath`
         let path = join(&dir, reference);
-        let path = if path.ends_with(".json") {
+        let path = if path.ends_with(b".json") {
             path
         } else {
-            join(&path, "tsconfig.json")
+            join(&path, b"tsconfig.json")
         };
         match index_of.get(&path) {
             Some(Some(index)) => references.push(*index),
-            Some(None) => {
-                diagnostics.push(global(6202, &[format!("{}\n{path}", project.config_path)]))
-            }
+            Some(None) => diagnostics.push(global(
+                6202,
+                &[[&project.config_path[..], b"\n", &path].concat()],
+            )),
             None if !host.is_file(&path) => diagnostics.push(global(6053, &[path])),
             None => {
                 let referenced = config::load_overriding(host, &path, overrides.to_vec());
@@ -527,13 +543,13 @@ fn check_with_references(
         root,
         &overriding_options(request),
         &mut projects,
-        &mut std::collections::HashMap::new(),
+        &mut FxHashMap::default(),
         &mut report.diagnostics,
     );
     // A file that belongs to a referenced project is checked there, with that project's options.
-    let roots: Vec<Vec<String>> = projects.iter().map(|p| p.project.files.clone()).collect();
+    let roots: Vec<Vec<Vec<u8>>> = projects.iter().map(|p| p.project.files.clone()).collect();
     // Where each project's declaration files would go, and the directory they mirror. `None`: next to the sources.
-    let outputs: Vec<Option<(String, String)>> = projects
+    let outputs: Vec<Option<(Vec<u8>, Vec<u8>)>> = projects
         .iter()
         .map(|p| {
             let options = &p.project.options;
@@ -541,13 +557,13 @@ fn check_with_references(
                 .into_iter()
                 .find(|dir| !dir.is_empty())?;
             let root_dir = if options.root_dir.is_empty() {
-                parent_dir(&p.project.config_path)
+                dirname::<Posix>(&p.project.config_path)
             } else {
-                options.root_dir.as_str()
+                options.root_dir.as_slice()
             };
             Some((
-                output_dir.trim_end_matches('/').to_owned(),
-                root_dir.trim_end_matches('/').to_owned(),
+                output_dir.trim_end_with(|c| c == '/').to_vec(),
+                root_dir.trim_end_with(|c| c == '/').to_vec(),
             ))
         })
         .collect();
@@ -575,11 +591,10 @@ fn check_with_references(
             .filter(|&i| is_referenced[i])
             .filter_map(|i| outputs[i].clone())
             .collect();
-        let own: std::collections::HashSet<&str> =
-            roots[index].iter().map(String::as_str).collect();
-        let owned_elsewhere: std::collections::HashSet<&str> = (0..roots.len())
+        let own: FxHashSet<&[u8]> = roots[index].iter().map(Vec::as_slice).collect();
+        let owned_elsewhere: FxHashSet<&[u8]> = (0..roots.len())
             .filter(|&i| is_referenced[i])
-            .flat_map(|i| roots[i].iter().map(String::as_str))
+            .flat_map(|i| roots[i].iter().map(Vec::as_slice))
             .filter(|path| !own.contains(path))
             .collect();
         let request = Request {
@@ -631,8 +646,8 @@ fn check_what_is_named(
     request: &Request,
     mut report: Report,
     started: Instant,
-    named: Option<Vec<String>>,
-    owned_elsewhere: Option<&std::collections::HashSet<&str>>,
+    named: Option<Vec<Vec<u8>>>,
+    owned_elsewhere: Option<&FxHashSet<&[u8]>>,
 ) -> Report {
     let threads = match request.threads {
         0 => std::thread::available_parallelism().map_or(4, usize::from),
@@ -641,11 +656,11 @@ fn check_what_is_named(
     let of_configuration = |error: &ConfigError| {
         let mut said = global(error.code, &error.args);
         for (level, code, args) in &error.chain {
-            said.text.push('\n');
+            said.text.push(b'\n');
             for _ in 0..*level {
-                said.text.push_str("  ");
+                said.text.extend_from_slice(b"  ");
             }
-            said.text.push_str(&global(*code, args).text);
+            said.text.extend_from_slice(&global(*code, args).text);
         }
         match &error.at {
             Some((path, from, to)) => match host.read(path) {
@@ -694,11 +709,11 @@ fn check_what_is_named(
         None if project.options.no_lib => {}
         None => {
             report.diagnostics.push(Diagnostic {
-                text: "Cannot find TypeScript's standard library (lib.es5.d.ts and the rest), which declares Array, Promise and \
+                text: b"Cannot find TypeScript's standard library (lib.es5.d.ts and the rest), which declares Array, Promise and \
                        everything else that is built in. It comes with the typescript package: bun add -d typescript"
-                    .to_owned(),
+                    .to_vec(),
                 code: 0,
-                ..global(6053, &[])
+                ..global(6053, &[""; 0])
             });
             return report;
         }
@@ -707,14 +722,14 @@ fn check_what_is_named(
         .options
         .effective_type_roots()
         .iter()
-        .any(|root| host.is_file(&format!("{root}/bun/package.json")));
+        .any(|root| host.is_file(&[&root[..], b"/bun/package.json"].concat()));
     // `"types": ["bun"]` is among what `bun init` writes, and so among what goes where there is no configuration file. It is left out
     // of `default_compiler_options` because what is not installed cannot be asked for (TS2688).
     if report.has_bun_types_installed
         && project.config_path.is_empty()
         && project.options.types.is_none()
     {
-        project.options.types = Some(vec!["bun".to_owned()]);
+        project.options.types = Some(vec![b"bun".to_vec()]);
     }
     let (skip_lib_check, skip_default_lib_check) = (
         project.options.skip_lib_check,
@@ -781,10 +796,10 @@ fn check_what_is_named(
     }
     if let Some(owned_elsewhere) = owned_elsewhere {
         to_check
-            .retain(|&f| !owned_elsewhere.contains(program.files.modules[f.idx()].path.as_str()));
+            .retain(|&f| !owned_elsewhere.contains(program.files.modules[f.idx()].path.as_slice()));
     }
     if let Some(only) = request.only {
-        to_check.retain(|&f| program.files.modules[f.idx()].path.contains(only));
+        to_check.retain(|&f| program.files.modules[f.idx()].path.contains_str(only));
     }
     // The biggest first, so that none of them is what everybody waits for at the end. Among the rest, how long a file takes has little to do
     // with how long it is: a few lines can ask a lot of the types they use. In order of size all of those would come last. In no
@@ -793,9 +808,12 @@ fn check_what_is_named(
     to_check.sort_by_key(|&f| std::cmp::Reverse(size(f)));
     let big = to_check.partition_point(|&f| size(f) >= BIG_FILE);
     to_check[big..].sort_by_cached_key(|&f| {
-        use std::hash::{Hash, Hasher};
+        // As `str` is hashed, which the paths were: a few answers still depend on the order (vue-core's vModel.ts), and this is the one
+        // they were accepted in.
+        use std::hash::Hasher;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        program.files.modules[f.idx()].path.hash(&mut hasher);
+        hasher.write(&program.files.modules[f.idx()].path);
+        hasher.write_u8(0xff);
         hasher.finish()
     });
     report.files_checked = to_check.len();
@@ -808,17 +826,14 @@ fn check_what_is_named(
         progress.to_check.store(to_check.len(), Ordering::Relaxed);
     }
     let found: Mutex<Vec<Diagnostic>> = Mutex::new(Vec::new());
-    let incomplete: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let incomplete: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
     // Files that ask a lot of the same types tend to be next to each other. When a small file turns out to take long, what else is in its
     // directory goes first, so that none of it is left for the end.
-    let mut neighbors: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    let mut neighbors: FxHashMap<&[u8], Vec<usize>> = Default::default();
     for (i, &file) in to_check.iter().enumerate().skip(big) {
         let path = &program.files.modules[file.idx()].path[..];
-        neighbors
-            .entry(bun_sema::resolve::parent_dir(path))
-            .or_default()
-            .push(i);
+        neighbors.entry(dirname::<Posix>(path)).or_default().push(i);
     }
     let is_taken: Vec<AtomicBool> = to_check.iter().map(|_| AtomicBool::new(false)).collect();
     let goes_first: Mutex<Vec<usize>> = Mutex::new(Vec::new());
@@ -848,8 +863,8 @@ fn check_what_is_named(
                         let said = Diagnostic {
                             code: related.code,
                             category: related.category,
-                            text: related.text,
-                            ..global(0, &[])
+                            text: related.text.into_bytes(),
+                            ..global(0, &[""; 0])
                         };
                         let Some((of, start, end)) = related.at else {
                             return said;
@@ -874,11 +889,11 @@ fn check_what_is_named(
                     code: e.code,
                     category: e.category,
                     text: if request.says_it_as_typescript_does {
-                        e.text
+                        e.text.into_bytes()
                     } else {
-                        in_terms_of_bun(e.text)
+                        in_terms_of_bun(e.text.into_bytes())
                     },
-                    ..global(0, &[])
+                    ..global(0, &[""; 0])
                 };
                 located(&module.path, text, &starts, e.start, e.end, said)
             })
@@ -948,7 +963,7 @@ fn check_what_is_named(
         }
         if i >= big && began.elapsed() >= SLOW {
             let path = &program.files.modules[to_check[i].idx()].path[..];
-            let next_to_it = &neighbors[bun_sema::resolve::parent_dir(path)];
+            let next_to_it = &neighbors[dirname::<Posix>(path)];
             goes_first.lock().unwrap().extend(
                 next_to_it
                     .iter()

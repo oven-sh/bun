@@ -848,7 +848,7 @@ impl Checker<'_> {
         let within_unreachable_code = self.within_unreachable_code;
         if s.is_some()
             && !within_unreachable_code
-            && self.p.files.options.reports_unreachable_code
+            && self.p.files.options.allow_unreachable_code == Some(false)
             && self.check_source_element_unreachable(file, s)
         {
             self.within_unreachable_code = true;
@@ -1105,7 +1105,9 @@ impl Checker<'_> {
                 self.check_source_element(file, finalizer);
             }
             StmtKind::Labeled { body, .. } => {
-                if self.p.files.options.reports_unused_labels && bound.unused_labels.contains(&s) {
+                if self.p.files.options.allow_unused_labels == Some(false)
+                    && bound.unused_labels.contains(&s)
+                {
                     self.error_at(self.place_of_token(file, hir[s].start), 7028, &[]);
                 }
                 self.check_source_element(file, body);
@@ -1159,7 +1161,7 @@ impl Checker<'_> {
                 && !self.looked_at.contains(&(file, id))
             {
                 let path = &self.files().module(file).path;
-                eprintln!("GAP {:?} {path}:{}", e.kind.tag(), e.pos);
+                eprintln!("GAP {:?} {}:{}", e.kind.tag(), bstr::BStr::new(path), e.pos);
             }
         }
     }

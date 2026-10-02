@@ -150,7 +150,7 @@ impl Checker<'_> {
         let (code, args) = match module.imports.get(&(tslib, mode)) {
             Some(&target) => (2306, vec![files.module(target).path.clone()]),
             None if module.untyped_imports.contains(&(tslib, mode)) => return None,
-            None => (2354, vec![TSLIB.to_owned()]),
+            None => (2354, vec![TSLIB.as_bytes().to_vec()]),
         };
         self.add_diagnostic(Reported::new(
             (file, request.start, request.end),

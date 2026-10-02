@@ -11,6 +11,7 @@ use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
+use bstr::ByteSlice;
 
 /// What `check_file` found. What a question that was under way reported is in the sink. `finish_file` makes the errors of the file of it.
 pub struct Checked {
@@ -209,7 +210,7 @@ impl Checker<'_> {
         self.reported = elsewhere;
         self.commit_reported_from(0);
         self.check_module_exports_assignments(file);
-        if self.files().options.emits_declaration_files {
+        if self.files().options.emits_declarations {
             self.check_declaration_emit(file);
         }
         self.is_type_checked = true;
@@ -292,7 +293,7 @@ impl Checker<'_> {
             } else {
                 super::explain::NO_LENGTH
             };
-            let expected = [Arg::Text(error.expected)];
+            let expected = [Arg::Bytes(error.expected)];
             let args = if error.expected.is_empty() {
                 &[][..]
             } else {
@@ -535,9 +536,9 @@ impl Checker<'_> {
         let modules = self.files().modules.iter();
         let (mut has_types_package, mut has_declarations) = (false, false);
         for module in modules {
-            has_types_package |= module.path.contains(&types);
+            has_types_package |= module.path.contains_str(&types);
             has_declarations |= crate::resolve::is_declaration_file_name(&module.path)
-                && module.path.contains(&own);
+                && module.path.contains_str(&own);
         }
         let (code, args) = if has_types_package {
             (7040, vec![package.to_owned(), mangled])
@@ -726,7 +727,7 @@ impl Checker<'_> {
             && files.is_only_importable_as_default(usage, module)
         {
             let at = self.place_of_token(file, start);
-            self.error_at(at, 1544, &[Arg::Text(files.options.module.name())]);
+            self.error_at(at, 1544, &[Arg::Bytes(files.options.module.name())]);
         } else if files.alias_links(sym).immediate_target.is_none()
             && self.symbol_from_variable(sym).is_none()
         {
@@ -953,7 +954,7 @@ impl Checker<'_> {
         let (path, package) = module.untyped_import_files[index];
         let text = self.atom_text(spec);
         let error_info = package
-            .filter(|_| !crate::resolve::is_relative(&text))
+            .filter(|_| !crate::resolve::is_relative(text.as_bytes()))
             .map(|package| {
                 let mut alternates = module.untyped_import_alternates.iter();
                 let alternate = alternates.find(|a| (a.0, a.1) == (spec, mode));
@@ -1531,7 +1532,7 @@ impl Checker<'_> {
         if let Some(&(with_all_types, otherwise)) = CANNOT_FIND_NAME_DIAGNOSTICS.get(text) {
             // `UsesWildcardTypes`: there is nothing to add to `types` then.
             let types = self.p.files.options.types.as_ref();
-            return if types.is_some_and(|t| t.iter().any(|t| t == "*")) {
+            return if types.is_some_and(|t| t.iter().any(|t| t == b"*")) {
                 with_all_types
             } else {
                 otherwise

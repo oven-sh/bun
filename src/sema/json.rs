@@ -5,10 +5,10 @@ pub enum Json {
     Null,
     Bool(bool),
     Number(f64),
-    String(String),
+    String(Vec<u8>),
     Array(Vec<Json>),
     /// In the order written: the order of `exports` conditions matters.
-    Object(Vec<(String, Json)>),
+    Object(Vec<(Vec<u8>, Json)>),
 }
 
 impl Json {
@@ -44,14 +44,14 @@ impl Json {
         p.at == text.len()
     }
 
-    pub fn get(&self, key: &str) -> Option<&Json> {
+    pub fn get(&self, key: &[u8]) -> Option<&Json> {
         match self {
             Json::Object(entries) => entries.iter().find(|e| e.0 == key).map(|e| &e.1),
             _ => None,
         }
     }
 
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn as_str(&self) -> Option<&[u8]> {
         match self {
             Json::String(s) => Some(s),
             _ => None,
@@ -72,7 +72,7 @@ impl Json {
         }
     }
 
-    pub fn as_object(&self) -> Option<&[(String, Json)]> {
+    pub fn as_object(&self) -> Option<&[(Vec<u8>, Json)]> {
         match self {
             Json::Object(o) => Some(o),
             _ => None,
@@ -192,7 +192,7 @@ impl Parser<'_> {
         Some(value)
     }
 
-    fn string(&mut self) -> Option<String> {
+    fn string(&mut self) -> Option<Vec<u8>> {
         if self.peek()? != b'"' {
             return None;
         }
@@ -226,7 +226,7 @@ impl Parser<'_> {
                 _ => out.push(c),
             }
         }
-        Some(String::from_utf8_lossy(&out).into_owned())
+        Some(out)
     }
 }
 
@@ -245,8 +245,8 @@ pub enum ExpressionKind {
     Null,
     Bool(bool),
     Number(f64),
-    String(String),
-    Identifier(String),
+    String(Vec<u8>),
+    Identifier(Vec<u8>),
     /// What stands where an expression is missing, and for a hole in an array.
     Missing,
     Array(Vec<Expression>),
@@ -256,7 +256,7 @@ pub enum ExpressionKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyName {
     /// An identifier, a string, or a number in the spelling `String(n)` gives it.
-    Name(String),
+    Name(Vec<u8>),
     Computed(Expression),
 }
 
@@ -275,7 +275,7 @@ pub struct SyntaxError {
     pub end: u32,
     pub code: u32,
     /// The token in `'{0}' expected.`
-    pub expected: &'static str,
+    pub expected: &'static [u8],
 }
 
 impl Expression {
@@ -308,14 +308,14 @@ impl Expression {
         while p.token != Token::EndOfFile {
             // Nothing is expected after the first expression.
             if expressions.len() == 1 {
-                p.error_at_token(1012, "");
+                p.error_at_token(1012, b"");
             }
             let is_literal = match p.token.clone() {
                 Token::OpenBracket => {
                     expressions.push(p.parse_array_literal_expression()?);
                     continue;
                 }
-                Token::Word(word) => matches!(word.as_str(), "true" | "false" | "null"),
+                Token::Word(word) => matches!(word.as_slice(), b"true" | b"false" | b"null"),
                 Token::Minus => {
                     let is_number = p.look_ahead(|p| {
                         p.next_token()?;
@@ -365,10 +365,10 @@ enum Token {
     Colon,
     Semicolon,
     Minus,
-    String(String),
+    String(Vec<u8>),
     Number(f64),
     /// An identifier or a keyword.
-    Word(String),
+    Word(Vec<u8>),
     EndOfFile,
 }
 
@@ -377,69 +377,69 @@ const OBJECT_LITERAL_MEMBERS: u8 = 1;
 const ARRAY_LITERAL_MEMBERS: u8 = 2;
 
 /// `KindFirstReservedWord` to `KindLastReservedWord`
-pub(crate) fn is_reserved_word(word: &str) -> bool {
+pub(crate) fn is_reserved_word(word: &[u8]) -> bool {
     matches!(
         word,
-        "break"
-            | "case"
-            | "catch"
-            | "class"
-            | "const"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "delete"
-            | "do"
-            | "else"
-            | "enum"
-            | "export"
-            | "extends"
-            | "false"
-            | "finally"
-            | "for"
-            | "function"
-            | "if"
-            | "import"
-            | "in"
-            | "instanceof"
-            | "new"
-            | "null"
-            | "return"
-            | "super"
-            | "switch"
-            | "this"
-            | "throw"
-            | "true"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
+        b"break"
+            | b"case"
+            | b"catch"
+            | b"class"
+            | b"const"
+            | b"continue"
+            | b"debugger"
+            | b"default"
+            | b"delete"
+            | b"do"
+            | b"else"
+            | b"enum"
+            | b"export"
+            | b"extends"
+            | b"false"
+            | b"finally"
+            | b"for"
+            | b"function"
+            | b"if"
+            | b"import"
+            | b"in"
+            | b"instanceof"
+            | b"new"
+            | b"null"
+            | b"return"
+            | b"super"
+            | b"switch"
+            | b"this"
+            | b"throw"
+            | b"true"
+            | b"try"
+            | b"typeof"
+            | b"var"
+            | b"void"
+            | b"while"
+            | b"with"
     )
 }
 
 /// `IsModifierKind`, `get` and `set`
-fn is_modifier_or_accessor_keyword(word: &str) -> bool {
+fn is_modifier_or_accessor_keyword(word: &[u8]) -> bool {
     matches!(
         word,
-        "abstract"
-            | "accessor"
-            | "async"
-            | "const"
-            | "declare"
-            | "default"
-            | "export"
-            | "in"
-            | "private"
-            | "protected"
-            | "public"
-            | "readonly"
-            | "out"
-            | "override"
-            | "static"
-            | "get"
-            | "set"
+        b"abstract"
+            | b"accessor"
+            | b"async"
+            | b"const"
+            | b"declare"
+            | b"default"
+            | b"export"
+            | b"in"
+            | b"private"
+            | b"protected"
+            | b"public"
+            | b"readonly"
+            | b"out"
+            | b"override"
+            | b"static"
+            | b"get"
+            | b"set"
     )
 }
 
@@ -472,7 +472,7 @@ impl TolerantParser<'_> {
     }
 
     /// `parseErrorAtRange`: an error where the last one is adds nothing.
-    fn error_at(&mut self, start: usize, end: usize, code: u32, expected: &'static str) {
+    fn error_at(&mut self, start: usize, end: usize, code: u32, expected: &'static [u8]) {
         let (start, end) = (start as u32, end as u32);
         if self.errors.last().is_none_or(|last| last.start != start) {
             self.errors.push(SyntaxError {
@@ -485,7 +485,7 @@ impl TolerantParser<'_> {
     }
 
     /// `parseErrorAtCurrentToken`
-    fn error_at_token(&mut self, code: u32, expected: &'static str) {
+    fn error_at_token(&mut self, code: u32, expected: &'static [u8]) {
         self.error_at(self.token_start, self.scanner.at, code, expected);
     }
 
@@ -496,7 +496,7 @@ impl TolerantParser<'_> {
                 start: start as u32,
                 end: self.full_start.max(start) as u32,
                 code,
-                expected: "",
+                expected: b"",
             });
         }
     }
@@ -525,7 +525,7 @@ impl TolerantParser<'_> {
                     return None;
                 }
                 let word = &self.scanner.text[start..self.scanner.at];
-                Token::Word(String::from_utf8_lossy(word).into_owned())
+                Token::Word(word.to_vec())
             }
             _ => {
                 self.scanner.at += 1;
@@ -546,7 +546,7 @@ impl TolerantParser<'_> {
     }
 
     /// `scanString`, of a string that ends on the line it starts on.
-    fn scan_string(&mut self, quote: u8) -> Option<String> {
+    fn scan_string(&mut self, quote: u8) -> Option<Vec<u8>> {
         let s = &mut self.scanner;
         s.at += 1;
         let mut out = Vec::new();
@@ -580,7 +580,7 @@ impl TolerantParser<'_> {
                 _ => out.push(c),
             }
         }
-        Some(String::from_utf8_lossy(&out).into_owned())
+        Some(out)
     }
 
     fn scan_digits(&mut self) -> bool {
@@ -646,7 +646,9 @@ impl TolerantParser<'_> {
         }
         // A hole, or `isStartOfExpression`.
         match &self.token {
-            Token::Word(word) if matches!(word.as_str(), "true" | "false" | "null") => Some(true),
+            Token::Word(word) if matches!(word.as_slice(), b"true" | b"false" | b"null") => {
+                Some(true)
+            }
             Token::Word(word) if is_reserved_word(word) => None,
             Token::Word(_)
             | Token::Comma
@@ -702,7 +704,7 @@ impl TolerantParser<'_> {
                     break;
                 }
                 // The comma is missing. A semicolon in its place is skipped.
-                self.error_at_token(1005, ",");
+                self.error_at_token(1005, b",");
                 if kind == OBJECT_LITERAL_MEMBERS && self.token == Token::Semicolon {
                     self.next_token()?;
                 }
@@ -717,7 +719,7 @@ impl TolerantParser<'_> {
             } else {
                 1137
             };
-            self.error_at_token(code, "");
+            self.error_at_token(code, b"");
             if self.is_in_some_parsing_context()? {
                 break;
             }
@@ -734,9 +736,9 @@ impl TolerantParser<'_> {
         let literal = match std::mem::replace(&mut self.token, Token::EndOfFile) {
             Token::String(text) => ExpressionKind::String(text),
             Token::Number(n) => ExpressionKind::Number(n),
-            Token::Word(word) if word == "true" => ExpressionKind::Bool(true),
-            Token::Word(word) if word == "false" => ExpressionKind::Bool(false),
-            Token::Word(word) if word == "null" => ExpressionKind::Null,
+            Token::Word(word) if word == b"true" => ExpressionKind::Bool(true),
+            Token::Word(word) if word == b"false" => ExpressionKind::Bool(false),
+            Token::Word(word) if word == b"null" => ExpressionKind::Null,
             _ => return None,
         };
         self.next_token()?;
@@ -774,7 +776,7 @@ impl TolerantParser<'_> {
         if self.token == Token::OpenBracket {
             self.next_token()?;
         } else {
-            self.error_at_token(1005, "[");
+            self.error_at_token(1005, b"[");
         }
         let elements = self.parse_delimited_list(
             ARRAY_LITERAL_MEMBERS,
@@ -783,7 +785,7 @@ impl TolerantParser<'_> {
         if self.token == Token::CloseBracket {
             self.next_token()?;
         } else {
-            self.error_at_token(1005, "]");
+            self.error_at_token(1005, b"]");
         }
         self.scanner.depth -= 1;
         Some(self.at(start, ExpressionKind::Array(elements)))
@@ -805,14 +807,14 @@ impl TolerantParser<'_> {
         if self.token == Token::OpenBrace {
             self.next_token()?;
         } else {
-            self.error_at_token(1005, "{");
+            self.error_at_token(1005, b"{");
         }
         let properties =
             self.parse_delimited_list(OBJECT_LITERAL_MEMBERS, Self::parse_object_literal_element)?;
         if self.token == Token::CloseBrace {
             self.next_token()?;
         } else {
-            self.error_at_token(1005, "}");
+            self.error_at_token(1005, b"}");
         }
         self.scanner.depth -= 1;
         Some(self.at(start, ExpressionKind::Object(properties)))
@@ -836,7 +838,7 @@ impl TolerantParser<'_> {
                     return None;
                 }
                 // `isIdentifier`, which for these two depends on what is around.
-                if matches!(word.as_str(), "await" | "yield") && self.token != Token::Colon {
+                if matches!(word.as_slice(), b"await" | b"yield") && self.token != Token::Colon {
                     return None;
                 }
                 token_is_identifier = !is_reserved_word(&word);
@@ -848,7 +850,7 @@ impl TolerantParser<'_> {
             }
             Token::Number(n) => {
                 self.next_token()?;
-                PropertyName::Name(crate::atom::number_to_string(n))
+                PropertyName::Name(crate::atom::number_to_string(n).into_bytes())
             }
             // `parseComputedPropertyName`
             Token::OpenBracket => {
@@ -880,7 +882,7 @@ impl TolerantParser<'_> {
         if self.token == Token::Colon {
             self.next_token()?;
         } else {
-            self.error_at_token(1005, ":");
+            self.error_at_token(1005, b":");
         }
         Some(Property {
             name,
@@ -898,10 +900,10 @@ impl TolerantParser<'_> {
             Token::Minus => self.parse_prefix_unary_expression()?,
             Token::String(_) | Token::Number(_) => self.parse_literal_expression()?,
             Token::Word(word) => {
-                if matches!(word.as_str(), "true" | "false" | "null") {
+                if matches!(word.as_slice(), b"true" | b"false" | b"null") {
                     self.parse_literal_expression()?
                 } else if is_reserved_word(&word)
-                    || matches!(word.as_str(), "async" | "await" | "yield")
+                    || matches!(word.as_slice(), b"async" | b"await" | b"yield")
                 {
                     return None;
                 } else {
@@ -914,9 +916,9 @@ impl TolerantParser<'_> {
             // where the last token ends.
             _ => {
                 if self.token == Token::EndOfFile {
-                    self.error_at(self.full_start, self.full_start, 1109, "");
+                    self.error_at(self.full_start, self.full_start, 1109, b"");
                 } else {
-                    self.error_at_token(1109, "");
+                    self.error_at_token(1109, b"");
                 }
                 self.refuse(start, 1328);
                 return Some(self.at(start, ExpressionKind::Missing));
@@ -926,7 +928,10 @@ impl TolerantParser<'_> {
         match &self.token {
             Token::OpenBracket | Token::Minus => None,
             Token::Word(word)
-                if matches!(word.as_str(), "as" | "satisfies" | "in" | "instanceof") =>
+                if matches!(
+                    word.as_slice(),
+                    b"as" | b"satisfies" | b"in" | b"instanceof"
+                ) =>
             {
                 None
             }

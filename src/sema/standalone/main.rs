@@ -1,4 +1,5 @@
 use bun_sema::atom::Interner;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Every file under `dir` the front end reads, `node_modules` too.
@@ -27,8 +28,8 @@ fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 /// `BUN_SEMA_LIST=<file>`: the paths of all that is loaded, a line each.
 fn list_loaded(program: &bun_sema::check::Program) {
     if let Ok(to) = std::env::var("BUN_SEMA_LIST") {
-        let paths: Vec<&str> = program.files.modules.iter().map(|m| &m.path[..]).collect();
-        let _ = std::fs::write(to, paths.join("\n"));
+        let paths: Vec<&[u8]> = program.files.modules.iter().map(|m| &m.path[..]).collect();
+        let _ = std::fs::write(to, paths.join(&b"\n"[..]));
     }
 }
 
@@ -129,7 +130,7 @@ fn main() {
                 if arg == "-p" || arg == "--project" {
                     project = rest.next().cloned();
                 } else if !arg.starts_with("--") {
-                    paths.push(arg.clone());
+                    paths.push(arg.clone().into_bytes());
                 }
             }
             let has = |flag: &str| args.iter().any(|a| a == flag);
@@ -161,15 +162,15 @@ fn main() {
                     let style = Style {
                         layout: Layout::Pretty,
                         color: true,
-                        cwd: "",
+                        cwd: b"",
                         github_annotations: false,
                         width: bun_sema_standalone::terminal_width(),
                         show_all: false,
                     };
                     for tick in 0.. {
-                        let mut line = String::new();
+                        let mut line = Vec::new();
                         bun_sema_driver::format::write_progress(&mut line, &progress, &style, tick);
-                        eprint!("{line}");
+                        let _ = std::io::stderr().write_all(&line);
                         std::thread::sleep(std::time::Duration::from_millis(80));
                     }
                 });
@@ -191,7 +192,8 @@ fn main() {
                             .map_or(0, |n| n + 1);
                         let line = before.iter().filter(|&&b| b == b'\n').count() + 1;
                         let column = before.len() - line_start + 1;
-                        error_types.push((module.path.clone(), line, column, kind));
+                        let path = bun_sema::messages::text(&module.path);
+                        error_types.push((path, line, column, kind));
                     }
                 };
             type AfterFile<'a> =
@@ -199,18 +201,21 @@ fn main() {
             let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
             let report = bun_sema_driver::check(&bun_sema_driver::Request {
                 compiler_options: &[],
-                cwd: &cwd,
-                project: project.as_deref(),
+                cwd: cwd.as_bytes(),
+                project: project.as_deref().map(str::as_bytes),
                 paths: &paths,
                 threads: args
                     .iter()
                     .find_map(|a| a.strip_prefix("--threads="))
                     .and_then(|t| t.parse().ok())
                     .unwrap_or(0),
-                lib_dir: lib_dir.as_deref(),
+                lib_dir: lib_dir.as_deref().map(str::as_bytes),
                 global_node_modules: None,
                 progress: progress.as_deref(),
-                only: args.iter().find_map(|a| a.strip_prefix("--only=")),
+                only: args
+                    .iter()
+                    .find_map(|a| a.strip_prefix("--only="))
+                    .map(str::as_bytes),
                 ends_the_process: true,
                 keeps_everything: args.iter().any(|a| a == "--keep"),
                 stops_where_tsc_does: !args.iter().any(|a| a == "--every-stage"),
@@ -222,7 +227,7 @@ fn main() {
                 checked: None,
                 after_file,
             });
-            let cwd = bun_sema_driver::host::from_native(&cwd);
+            let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
             let style = Style {
                 layout: if has("--plain") {
                     Layout::Plain
@@ -242,20 +247,20 @@ fn main() {
                 show_all: has("--all"),
             };
             if shows_progress {
-                eprint!("{}", bun_sema_driver::format::ERASE_LINE);
+                let _ = std::io::stderr().write_all(bun_sema_driver::format::ERASE_LINE);
             }
-            let mut out = String::new();
+            let mut out = Vec::new();
             write_diagnostics(&mut out, &report, &style);
-            print!("{out}");
+            let _ = std::io::stdout().write_all(&out);
             let mut error_types = error_types.into_inner().unwrap();
-            error_types.retain(|at| !report.diagnostics.iter().any(|d| d.path == at.0));
+            error_types.retain(|at| !report.diagnostics.iter().any(|d| d.path == at.0.as_bytes()));
             error_types.sort();
             for (path, line, column, kind) in &error_types {
                 println!("{path}({line},{column}): ERROR-TYPE {kind}");
             }
-            let mut summary = String::new();
+            let mut summary = Vec::new();
             write_summary(&mut summary, &report, &style);
-            eprint!("{summary}");
+            let _ = std::io::stderr().write_all(&summary);
             if has("--timing") {
                 eprintln!(
                     "loaded {} files in {:.3}s, checked {} in {:.3}s, peak {:.2} GB",

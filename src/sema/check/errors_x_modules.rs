@@ -24,7 +24,7 @@
 use super::errors_x_enums_names::means_umd_global;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, ScopeId};
-use crate::resolve::ModuleKind;
+use crate::resolve::{ModuleKind, is_relative};
 
 /// What is the same all over a file.
 struct Cx<'a> {
@@ -367,7 +367,7 @@ impl Checker<'_> {
         } else if !is_at_top {
             self.error_at((cx.file, name_pos, 0), 2435, &[]);
         } else if let ModuleName::String(name) = module.name
-            && is_relative_name(files.atoms.bytes(name))
+            && is_relative(files.atoms.bytes(name))
         {
             self.error_at((cx.file, name_pos, 0), 2436, &[]);
         }
@@ -389,7 +389,7 @@ impl Checker<'_> {
         let is_collected = if around.module.is_none() {
             around.is_ambient || hir[m].flags.contains(Flags::AMBIENT)
         } else {
-            around.is_ambient && !is_relative_name(text)
+            around.is_ambient && !is_relative(text)
         };
         let symbol = bound.module_symbol[m.idx()];
         if !is_collected || symbol.is_none() {
@@ -521,7 +521,7 @@ impl Checker<'_> {
                 return false;
             }
             // `isTopLevelInExternalModuleAugmentation`: there it has been said that the statement has no business being there.
-            if !around.is_augmentation && is_relative_name(self.files().atoms.bytes(spec)) {
+            if !around.is_augmentation && is_relative(self.files().atoms.bytes(spec)) {
                 self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), 2439, &[]);
                 return false;
             }
@@ -786,7 +786,7 @@ impl Checker<'_> {
                 self.error_at(
                     (cx.file, written.pos, 0),
                     1543,
-                    &[Arg::Text(&files.options.module.name().to_owned())],
+                    &[Arg::Bytes(files.options.module.name())],
                 );
             }
         } else {
@@ -1533,18 +1533,6 @@ impl Checker<'_> {
 // ───────────────────────────── whether the file parses ─────────────────────────────
 
 // ───────────────────────────── names of modules ─────────────────────────────
-
-/// `IsExternalModuleNameRelative`
-fn is_relative_name(name: &[u8]) -> bool {
-    match name {
-        // `PathIsRelative`
-        [b'.'] | [b'.', b'.'] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..] => true,
-        // `IsRootedDiskPath`
-        [b'/' | b'\\', ..] | [b'^', b'/', ..] => true,
-        [volume, b':'] | [volume, b':', b'/' | b'\\', ..] => volume.is_ascii_alphabetic(),
-        _ => false,
-    }
-}
 
 // ───────────────────────────── what goes into messages ─────────────────────────────
 

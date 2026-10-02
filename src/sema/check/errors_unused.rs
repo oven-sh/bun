@@ -142,7 +142,7 @@ impl Checker<'_> {
         let runtime = crate::program::jsx_runtime_of(options, hir, atoms);
         if runtime.is_some_and(|spec| {
             self.files()
-                .module_of_specifier(file, atoms.intern_str(&spec))
+                .module_of_specifier(file, atoms.intern(&spec))
                 .is_some()
         }) {
             return;

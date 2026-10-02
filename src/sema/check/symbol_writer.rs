@@ -1171,7 +1171,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     /// `Decl(a.ts, 3, 11)`
     fn push_declaration(&mut self, text: &mut String, file: FileId, declaration: Declaration) {
         let path = &self.c.files().module(file).path;
-        let file_name = path.rsplit('/').next().unwrap_or(path);
+        let file_name = &crate::messages::text(bun_paths::basename_posix(path));
         text.push_str("Decl(");
         text.push_str(file_name);
         // `isDefaultLibraryFile`
@@ -1432,7 +1432,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     .specifier_for_module_symbol(symbol, self.file, ResolutionMode::None);
             // `getSpecifierForModuleSymbol`: without a file, `StripQuotes(symbol.Name)` (`isAmbientModuleSymbolName`).
             if !specifier.is_empty() {
-                return to_valid_utf8(quoted(specifier.as_bytes(), b'"', true));
+                return to_valid_utf8(quoted(&specifier, b'"', true));
             }
         }
         name

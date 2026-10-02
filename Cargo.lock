@@ -1354,7 +1354,10 @@ name = "bun_sema"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bstr",
  "bun_core",
+ "bun_paths",
+ "bun_semver",
  "smallvec",
 ]
 
@@ -1362,8 +1365,10 @@ dependencies = [
 name = "bun_sema_driver"
 version = "0.0.0"
 dependencies = [
+ "bstr",
  "bun_core",
  "bun_js_parser",
+ "bun_paths",
  "bun_sema",
  "bun_sys",
  "bun_threading",
@@ -1375,6 +1380,7 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_js_parser",
+ "bun_paths",
  "bun_sema",
  "bun_sema_driver",
  "bun_threading",

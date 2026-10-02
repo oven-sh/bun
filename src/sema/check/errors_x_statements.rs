@@ -631,7 +631,7 @@ impl Checker<'_> {
         }
         // `GetImpliedNodeFormatForFile`: the extension decides however modules are resolved.
         let module = self.files().module(file);
-        let is_esm = module.says_esm || module.path.ends_with(".mts");
+        let is_esm = module.says_esm || module.path.ends_with(b".mts");
         let has_it = kind.is_node()
             || matches!(
                 kind,

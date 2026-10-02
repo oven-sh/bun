@@ -88,7 +88,7 @@ impl Checker<'_> {
                 let unqualified = unqualified.strip_suffix(".d.ts").unwrap_or(unqualified);
                 let suggestion = spelling_suggestion(
                     unqualified.as_bytes(),
-                    crate::resolve::LIB_NAMES.split(' ').map(str::as_bytes),
+                    crate::resolve::LIB_NAMES.split(|&b| b == b' '),
                 );
                 match suggestion {
                     Some(suggestion) => {
@@ -223,7 +223,9 @@ impl Checker<'_> {
         left: ExprId,
         right: ExprId,
     ) {
-        if self.p.files.options.allow_unreachable_code || !self.is_side_effect_free(file, left) {
+        if self.p.files.options.allow_unreachable_code == Some(true)
+            || !self.is_side_effect_free(file, left)
+        {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));

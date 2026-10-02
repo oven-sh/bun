@@ -1,4 +1,4 @@
-import { frameworkRouterInternals } from "bun:internal-for-testing";
+import { crash_handler, frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import path from "path";
@@ -131,5 +131,66 @@ test("discovers from filesystem paths", () => {
         children: [],
       },
     ],
+  });
+});
+
+// Covers the param-push paths in `FrameworkRouter::matches` that
+// https://github.com/oven-sh/bun/issues/30861 rewrote.
+describe("match() param collection", () => {
+  describe("catch-all binds the last segment", () => {
+    // One entry is pushed per segment; duplicate `slug` keys collapse to the
+    // last one in the JS result object.
+    test.each([
+      ["/a", "a"],
+      ["/one/two/three", "three"],
+      ["/a/b/c/d/e/f", "f"],
+    ])("%s → slug=%j", (p, expected) => {
+      using dir = tempDir("fsr-match-catchall", {
+        "[...slug].tsx": "1",
+      });
+      const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+      expect(router.match(p).params).toEqual({ slug: expected });
+    });
+  });
+
+  test("single-param route still matches", () => {
+    using dir = tempDir("fsr-match-param", {
+      "[name].tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    expect(router.match("/hello").params).toEqual({ name: "hello" });
+  });
+
+  test("unmatched path returns null", () => {
+    using dir = tempDir("fsr-match-miss", {
+      "known.tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    expect(router.match("/unknown/path")).toBeNull();
+  });
+
+  // On `/nested/a/b` the `[name]` pattern pushes `name="nested"` and then
+  // fails; without the `clear()` in `matches()` that entry leaks into the
+  // catch-all's result as `{ name: "nested", slug: "b" }`.
+  test("stale params from a failed prior pattern don't leak", () => {
+    using dir = tempDir("fsr-match-stale", {
+      "[name].tsx": "1",
+      "nested/[...slug].tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    // Sanity: the param-only route still works for single-segment paths.
+    expect(router.match("/x").params).toEqual({ name: "x" });
+
+    // The failing-then-succeeding case must not leak the failed pattern's push.
+    expect(router.match("/nested/a/b").params).toEqual({ slug: "b" });
+  });
+
+  // Probes the `BoundedArray::resize` contract itself (issue #30861),
+  // independently of the router, via the binding in `crash_handler_jsc.rs`.
+  test("BoundedArray::resize refuses to grow", () => {
+    expect(crash_handler.boundedArrayResizeGrowReturnsErr()).toBe(true);
   });
 });

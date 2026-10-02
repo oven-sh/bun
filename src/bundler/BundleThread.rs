@@ -57,9 +57,8 @@ pub(crate) struct BundleThread<C: Node> {
 /// The trait accessors keep the generic `BundleThread<C>`
 /// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
 pub trait CompletionStruct: Node + Send + 'static {
-    /// `bump` is the per-build mimalloc heap that backs `transpiler`, so the
-    /// two share lifetime `'a` (option fields like `optimize_imports: &'a
-    /// StringSet` borrow from `bump`).
+    /// `bump` is the per-build mimalloc heap the transpiler borrows from, so
+    /// the two share lifetime `'a`.
     fn configure_bundler<'a>(
         &mut self,
         transpiler: &mut Transpiler<'a>,

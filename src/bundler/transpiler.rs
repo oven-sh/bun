@@ -147,10 +147,7 @@ pub struct Transpiler<'a> {
 
 impl<'a> Transpiler<'a> {
     /// Takes `*mut Log` (not `&'a mut`) because the same `*Log` is aliased
-    /// into `options.log` / `linker.log` / `resolver.log`; the struct field
-    /// is a raw pointer for that reason. The caller keeps `log` alive, and
-    /// restores the previous pointer, for as long as the transpiler can
-    /// write through it.
+    /// into `options.log` / `linker.log` / `resolver.log`.
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
         self.log = log;
         self.options.log = log;

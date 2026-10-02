@@ -171,10 +171,6 @@ pub mod lib {
             // SAFETY: self came from archive_read_new().
             unsafe { archive_read_close(self.as_mut_ptr()) }
         }
-        pub fn read_free(&self) -> Result {
-            // SAFETY: self came from archive_read_new(); not used after this.
-            unsafe { archive_read_free(self.as_mut_ptr()) }
-        }
         pub fn read_support_format_tar(&self) -> Result {
             // SAFETY: self valid.
             unsafe { archive_read_support_format_tar(self.as_mut_ptr()) }

@@ -213,7 +213,13 @@ void NodeVMSyntheticModule::setExport(JSGlobalObject* globalObject, WTF::String 
     }
 
     if (!m_exportNames.contains(exportName)) {
-        throwVMError(globalObject, scope, createReferenceError(globalObject, makeString("Export '"_s, exportName, "' is not defined in module"_s)));
+        // `exportName` comes from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
+        auto message = tryMakeString("Export '"_s, exportName, "' is not defined in module"_s);
+        if (!message) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+        throwVMError(globalObject, scope, createReferenceError(globalObject, message));
         return;
     }
 

@@ -903,6 +903,82 @@ needs-node-types@1.0.0:
     expect([...requestedManifests].sort()).toStrictEqual(["@types/node", "needs-node-types"]);
   });
 
+  test("package names are only read from the path of default registry tarball URLs", async () => {
+    // Dependencies declared as tarball URLs: dependency name -> [url, package name in bun.lock].
+    // The migrator reads the package name from "<default registry>/<name>/-/<file>" when <name>
+    // is a valid package name. Every other URL keeps the name of the dependency.
+    const rows: Record<string, [url: string, packageName: string]> = {
+      "host-after-separator": ["https://evil.example/-/registry.npmjs.org/x.tgz", "host-after-separator"],
+      "mirror-with-registry-in-path": [
+        "https://registry.mirror.example/registry.npmjs.org/other/-/other-1.0.0.tgz",
+        "mirror-with-registry-in-path",
+      ],
+      "no-separator": ["https://registry.npmjs.org/w.tgz", "no-separator"],
+      "nothing-before-separator": ["https://registry.npmjs.org/-/y.tgz", "nothing-before-separator"],
+      "scope-before-separator": ["https://registry.npmjs.org/@scope/-/y.tgz", "scope-before-separator"],
+      "empty-segment-before-separator": ["https://registry.npmjs.org//-/z.tgz", "empty-segment-before-separator"],
+      "empty-segment-after-scope": ["https://registry.npmjs.org/@scope//-/z.tgz", "empty-segment-after-scope"],
+      "empty-scope": ["https://registry.npmjs.org/@/name/-/name-1.0.0.tgz", "empty-scope"],
+      "empty-scope-dash-package": ["https://registry.npmjs.org/@/-/-/--0.0.1.tgz", "empty-scope-dash-package"],
+      "extra-path-segment": ["https://registry.npmjs.org/a/b/-/b-1.0.0.tgz", "extra-path-segment"],
+      "dot-dot-before-separator": ["https://registry.npmjs.org/../-/x-1.0.0.tgz", "dot-dot-before-separator"],
+      "dash-package": ["https://registry.npmjs.org/-/-/--0.0.1.tgz", "-"],
+      "scoped-dash-package": ["https://registry.npmjs.org/@scope/-/-/--0.0.1.tgz", "@scope/-"],
+      "legacy-name-characters": ["https://registry.npmjs.org/bar~baz/-/bar~baz-1.0.0.tgz", "bar~baz"],
+      "scoped-npmjs-https": ["https://registry.npmjs.org/@scope/real/-/real-1.0.0.tgz", "@scope/real"],
+      "npmjs-http": ["http://registry.npmjs.org/real-a/-/real-a-1.0.0.tgz", "real-a"],
+      "yarnpkg-https": ["https://registry.yarnpkg.com/real-b/-/real-b-1.0.0.tgz", "real-b"],
+      "yarnpkg-http": ["http://registry.yarnpkg.com/real-c/-/real-c-1.0.0.tgz", "real-c"],
+    };
+    const dependencies = Object.fromEntries(Object.entries(rows).map(([dependency, [url]]) => [dependency, url]));
+
+    await using tmpDir = tempDir("yarn-migration-tarball-names", {
+      "package.json": JSON.stringify({ name: "tarball-names-test", version: "1.0.0", dependencies }, null, 2),
+      "yarn.lock":
+        "# yarn lockfile v1\n\n\n" +
+        Object.entries(dependencies)
+          .map(([dependency, url]) => `"${dependency}@${url}":\n  version "1.0.0"\n  resolved "${url}"\n`)
+          .join("\n"),
+    });
+
+    // Every entry is a tarball package, so the migration has no registry manifests to fetch.
+    const registryRequests: string[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        registryRequests.push(new URL(req.url).pathname);
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: tmpDir,
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        BUN_INSTALL_CACHE_DIR: join(tmpDir, ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
+
+    const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { packages: unknown };
+    expect(lock.packages).toStrictEqual(
+      Object.fromEntries(
+        Object.entries(rows).map(([dependency, [url, packageName]]) => [dependency, [`${packageName}@${url}`, {}]]),
+      ),
+    );
+    expect(registryRequests).toStrictEqual([]);
+  });
+
   test("yarn.lock with resolutions", async () => {
     await using tmpDir = tempDir("yarn-migration-resolutions", {
       "package.json": JSON.stringify(

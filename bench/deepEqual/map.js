@@ -24,4 +24,12 @@ const x = new CustomMap(genPairs());
 const y = new CustomMap(genPairs());
 bench("deepEqual CustomMap", () => expect(x).toEqual(y));
 
+const objectKeyed = () => Array.from({ length: MAP_SIZE }, (_, i) => [{ id: i }, "v" + i]);
+const [first, ...rest] = objectKeyed();
+const c = new Map(objectKeyed());
+const d = new Map(objectKeyed());
+const e = new Map([...rest, first]);
+bench("deepEqual Map with object keys", () => expect(c).toEqual(d));
+bench("deepEqual Map with object keys, one moved", () => expect(c).toEqual(e));
+
 await run();

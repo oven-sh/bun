@@ -24,4 +24,12 @@ const x = new CustomSet(genValues());
 const y = new CustomSet(genValues());
 bench("deepEqual CustomSet", () => expect(x).toEqual(y));
 
+const objects = () => Array.from({ length: SET_SIZE }, (_, i) => ({ id: i }));
+const [first, ...rest] = objects();
+const c = new Set(objects());
+const d = new Set(objects());
+const e = new Set([...rest, first]);
+bench("deepEqual Set of objects", () => expect(c).toEqual(d));
+bench("deepEqual Set of objects, one moved", () => expect(c).toEqual(e));
+
 await run();

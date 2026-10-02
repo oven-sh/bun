@@ -24,6 +24,7 @@ interface Case {
 
 const sym = Symbol("shared");
 const sharedArrayBuffer = new ArrayBuffer(4);
+const sharedMapKey = { a: 1 };
 
 function float64WithNaNPayload(bits: bigint) {
   const arr = new Float64Array(1);
@@ -740,11 +741,129 @@ const cases: Case[] = [
     looseBug: "reports equal",
   },
   {
+    name: "maps with deep-equal contents and equal extra own properties",
+    a: () => withExtraProperty(new Map([[{ a: 1 }, 1]])),
+    b: () => withExtraProperty(new Map([[{ a: 1 }, 1]])),
+    strict: true,
+    loose: true,
+  },
+  // https://github.com/oven-sh/bun/issues/34830
+  {
+    name: "maps keyed by deep-equal objects with the values in another order",
+    a: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [{ a: 1 }, 2],
+      ]),
+    b: () =>
+      new Map([
+        [{ a: 1 }, 2],
+        [{ a: 1 }, 1],
+      ]),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "maps keyed by deep-equal objects with the values in different counts",
+    a: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [{ a: 1 }, 1],
+        [{ a: 1 }, 2],
+      ]),
+    b: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [{ a: 1 }, 2],
+        [{ a: 1 }, 2],
+      ]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "maps holding undefined under a deep-equal key and under the same key",
+    a: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [sharedMapKey, undefined],
+      ]),
+    b: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [sharedMapKey, undefined],
+      ]),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "maps holding undefined under different keys",
+    a: () =>
+      new Map([
+        ["a", undefined],
+        ["b", 1],
+      ]),
+    b: () =>
+      new Map([
+        ["c", undefined],
+        ["b", 1],
+      ]),
+    strict: false,
+    loose: false,
+  },
+  {
     name: "sets holding deep-equal objects",
     a: () => new Set([{ a: 1 }]),
     b: () => new Set([{ a: 1 }]),
     strict: true,
     loose: true,
+  },
+  {
+    name: "sets holding deep-equal objects in another order",
+    a: () => new Set([{ a: 1 }, { a: 2 }, { a: 3 }]),
+    b: () => new Set([{ a: 3 }, { a: 1 }, { a: 2 }]),
+    strict: true,
+    loose: true,
+  },
+  // https://github.com/oven-sh/bun/issues/28760
+  {
+    name: "a set holding two deep-equal objects and a set holding two different ones",
+    a: () => new Set([{ a: 1 }, { a: 1 }]),
+    b: () => new Set([{ a: 1 }, { a: 2 }]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "sets holding deep-equal objects in different counts",
+    a: () => new Set([{ a: 1 }, { a: 1 }, { a: 2 }]),
+    b: () => new Set([{ a: 1 }, { a: 2 }, { a: 2 }]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "a set with an extra own property",
+    a: () => withExtraProperty(new Set([{ a: 1 }])),
+    b: () => new Set([{ a: 1 }]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "sets with deep-equal contents and equal extra own properties",
+    a: () => withExtraProperty(new Set([{ a: 1 }])),
+    b: () => withExtraProperty(new Set([{ a: 1 }])),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a set with an own index property",
+    a: () => Object.assign(new Set([{ a: 1 }]), { 0: 1 }),
+    b: () => new Set([{ a: 1 }]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
   },
   { name: "sets holding -0 and 0", a: () => new Set([-0]), b: () => new Set([0]), strict: true, loose: true },
   { name: "sets holding NaN", a: () => new Set([NaN]), b: () => new Set([NaN]), strict: true, loose: true },
@@ -1008,6 +1127,29 @@ describe("util.isDeepStrictEqual", () => {
     };
     expect(util.isDeepStrictEqual(make(), make())).toBe(true);
     expect(calls).toBe(2);
+  });
+
+  test("reads a value nested in Sets and Maps once per side", () => {
+    let reads = 0;
+    const make = () => {
+      let value: unknown = {
+        get leaf() {
+          reads++;
+          return 1;
+        },
+      };
+      for (let depth = 0; depth < 4; depth++) value = new Map([[new Set([value]), "as key"]]);
+      for (let depth = 0; depth < 4; depth++) value = new Map([["as value", new Set([value])]]);
+      return value;
+    };
+    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+    expect(reads).toBe(2);
+  });
+
+  // node v26.3.0 answers false: its shortcut for Sets of fewer than three members compares the shared member with the other side's copy first.
+  test("a two-member Set pairs a member that both sides hold with itself", () => {
+    const shared = { a: 1 };
+    expect(util.isDeepStrictEqual(new Set([shared, { a: 1 }]), new Set([shared, { a: 1 }]))).toBe(true);
   });
 
   // The third argument was added in Node v26.

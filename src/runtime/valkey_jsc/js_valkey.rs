@@ -1557,9 +1557,8 @@ impl JSValkeyClient {
         let client_ptr: *mut valkey::ValkeyClient = self.client.as_ptr();
         // Socket keep-alive ref. Forgotten once there is a socket to own it;
         // adopted by the guard at the entry of the socket's close event
-        // (`SocketHandler::on_close`, `SocketHandler::on_connect_error`, or
-        // `ValkeyClient::close()` for a half-open socket), which is the one
-        // event uSockets delivers for every socket this returns.
+        // (`SocketHandler::on_close` or `SocketHandler::on_connect_error`),
+        // which is the one event uSockets delivers for every socket this returns.
         let socket_ref = self.ref_guard();
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
         // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref

@@ -2214,11 +2214,8 @@ impl<'a> PackageInstall<'a> {
             };
 
             let target = path::resolve_path::relative(dest_dir_path, to_path);
-            // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
-            // copies in pooled path buffers. `dest` is the basename of an alias that
-            // `alias_is_safe_install_target` bounded to `< MAX_PATH_BYTES`, so the
-            // name and its NUL fit; a name the filesystem rejects comes back from
-            // `symlinkat` as ENAMETOOLONG.
+            // `symlinkat` takes `&ZStr` for both target and dest. `dest` fits a
+            // `PathBuffer`: `alias_is_safe_install_target` bounds it to `< MAX_PATH_BYTES`.
             let mut target_buf = bun_paths::path_buffer_pool::get();
             target_buf[..target.len()].copy_from_slice(target);
             target_buf[target.len()] = 0;

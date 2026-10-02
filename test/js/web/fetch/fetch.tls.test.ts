@@ -24,6 +24,21 @@ const CERT_LOCALHOST_ONLY = {
   key: readFileSync(join(import.meta.dir, "../../../regression/issue/27890-localhost-only.key"), "utf8"),
 };
 
+const NODE_KEYS = join(import.meta.dir, "../../node/test/fixtures/keys");
+const TLS_FIXTURES = join(import.meta.dir, "../../node/tls/fixtures");
+// Self-signed leaf whose keyUsage is digitalSignature + keyEncipherment, with
+// no keyCertSign: the shape `dotnet dev-certs` and `openssl req -x509` produce.
+const CERT_NO_KEYCERTSIGN = {
+  cert: readFileSync(join(NODE_KEYS, "selfsigned-no-keycertsign/cert.pem"), "utf8"),
+  key: readFileSync(join(NODE_KEYS, "selfsigned-no-keycertsign/key.pem"), "utf8"),
+};
+// Leaf issued by a CA:TRUE certificate whose keyUsage lacks keyCertSign.
+const CERT_ISSUED_BY_CA_WITHOUT_KEYCERTSIGN = {
+  cert: readFileSync(join(TLS_FIXTURES, "agent-no-keycertsign-ca-cert.pem"), "utf8"),
+  key: readFileSync(join(TLS_FIXTURES, "agent-no-keycertsign-ca-key.pem"), "utf8"),
+  ca: readFileSync(join(TLS_FIXTURES, "ca-no-keycertsign-cert.pem"), "utf8"),
+};
+
 // Note: Do not use bun.sh as the example domain
 // Cloudflare sometimes blocks automated requests to it.
 // so it will cause flaky tests.
@@ -655,6 +670,46 @@ describe.concurrent("fetch-tls", () => {
           }
         }),
       );
+    });
+  });
+
+  it("trusts a pinned self-signed certificate whose keyUsage lacks keyCertSign", async () => {
+    // Node (OpenSSL 3) anchors the chain on an exact copy of the leaf in the
+    // trust store regardless of keyUsage. keyCertSign only matters for a
+    // certificate that signs another one.
+    await createServer(CERT_NO_KEYCERTSIGN, async port => {
+      const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];
+      const results = await Promise.all(
+        urls.map(url =>
+          fetch(url, { keepalive: false, tls: { ca: CERT_NO_KEYCERTSIGN.cert } }).then(res => res.text()),
+        ),
+      );
+      expect(results).toEqual(["Hello World", "Hello World"]);
+
+      // Unpinned, it is a self-signed certificate with no anchor, like Node.
+      try {
+        await fetch(urls[0], { keepalive: false }).then(res => res.blob());
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      }
+    });
+  });
+
+  it("rejects a leaf whose trusted issuer lacks keyCertSign", async () => {
+    // The issuer is matched by name, so the chain builds, and the issuer edge
+    // then fails on key usage. RFC 5280, section 6.1.4, step (n).
+    const { cert, key } = CERT_ISSUED_BY_CA_WITHOUT_KEYCERTSIGN;
+    await createServer({ cert, key }, async port => {
+      try {
+        await fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: { ca: CERT_ISSUED_BY_CA_WITHOUT_KEYCERTSIGN.ca },
+        }).then(res => res.blob());
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("KEYUSAGE_NO_CERTSIGN");
+      }
     });
   });
 

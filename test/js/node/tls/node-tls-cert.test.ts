@@ -541,8 +541,10 @@ it("tls.connect should not accept untrusted certificates", async () => {
       });
 
     const err = await promise;
-    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
-    expect(err.message).toBe("unable to verify the first certificate");
+    // The fixture is an expired self-signed certificate. Node reports the
+    // last error of the walk, the validity check, and so does Bun.
+    expect(err.code).toBe("CERT_HAS_EXPIRED");
+    expect(err.message).toBe("certificate has expired");
   } finally {
     //@ts-ignore
     socket?.end();

@@ -1,7 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import { writeFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
 import https from "https";
 import net from "net";
@@ -2329,6 +2329,46 @@ describe("rejectUnauthorized only treats a literal `false` as opting out", () =>
       client?.destroy();
       server.close();
     }
+  });
+});
+
+describe("keyCertSign on the trust anchor", () => {
+  const fixtures = join(import.meta.dir, "fixtures");
+  const nodeKeys = join(import.meta.dir, "..", "test", "fixtures", "keys", "selfsigned-no-keycertsign");
+  const read = (path: string) => readFileSync(path, "utf8");
+
+  async function attempt(serverOptions: tls.TlsOptions, ca: string) {
+    const server = tls.createServer(serverOptions, s => s.end());
+    let client: TLSSocket | undefined;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { promise, resolve } = Promise.withResolvers<string>();
+      client = tlsConnect(
+        { port: (server.address() as AddressInfo).port, host: "127.0.0.1", servername: "localhost", ca },
+        () => resolve(`authorized ${client!.authorized}`),
+      );
+      client.on("error", (error: Error & { code?: string }) => resolve(`error ${error.code}`));
+      return await promise;
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  }
+
+  it("a pinned self-signed leaf without keyCertSign is its own anchor, like Node", async () => {
+    const cert = read(join(nodeKeys, "cert.pem"));
+    const key = read(join(nodeKeys, "key.pem"));
+    expect(await attempt({ cert, key }, cert)).toBe("authorized true");
+  });
+
+  it("a trusted issuer without keyCertSign may not sign a leaf", async () => {
+    const cert = read(join(fixtures, "agent-no-keycertsign-ca-cert.pem"));
+    const key = read(join(fixtures, "agent-no-keycertsign-ca-key.pem"));
+    const ca = read(join(fixtures, "ca-no-keycertsign-cert.pem"));
+    // X509_V_ERR_KEYUSAGE_NO_CERTSIGN has no name in the node:tls error table,
+    // so Node reports it as UNSPECIFIED too.
+    expect(await attempt({ cert, key }, ca)).toBe("error UNSPECIFIED");
   });
 });
 

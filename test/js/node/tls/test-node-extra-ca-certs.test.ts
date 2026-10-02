@@ -170,3 +170,49 @@ test("explicit ca option replaces the default trust store instead of appending t
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+test("NODE_EXTRA_CA_CERTS trusts a self-signed certificate whose keyUsage lacks keyCertSign", async () => {
+  // The shape of a `dotnet dev-certs` certificate: CA:FALSE, keyUsage =
+  // digitalSignature + keyEncipherment, EKU = serverAuth. Node trusts the
+  // pinned copy as the anchor of its own one-certificate chain.
+  const keys = join(import.meta.dir, "..", "test", "fixtures", "keys", "selfsigned-no-keycertsign");
+
+  await using dir = tempDir("extra-ca-no-keycertsign", {
+    "main.js": `
+      const tls = require("node:tls");
+      const fs = require("node:fs");
+      const { once } = require("node:events");
+      const cert = fs.readFileSync(process.env.NODE_EXTRA_CA_CERTS, "utf8");
+      const key = fs.readFileSync(process.env.TLS_KEY, "utf8");
+
+      async function main() {
+        const server = Bun.serve({ port: 0, tls: { cert, key }, fetch: () => new Response("ok") });
+        const res = await fetch("https://localhost:" + server.port + "/");
+        console.log("fetch", res.status, await res.text());
+
+        const socket = tls.connect({ host: "127.0.0.1", port: server.port, servername: "localhost" });
+        await once(socket, "secureConnect");
+        console.log("tls authorized", socket.authorized, socket.authorizationError);
+        const peer = socket.getPeerCertificate(true);
+        console.log("issuerCertificate is self", peer.issuerCertificate === peer);
+        socket.end();
+        await once(socket, "close");
+        server.stop(true);
+      }
+      main();
+    `,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "main.js"],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(keys, "cert.pem"), TLS_KEY: join(keys, "key.pem") },
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("fetch 200 ok\ntls authorized true null\nissuerCertificate is self true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

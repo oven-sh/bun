@@ -301,16 +301,24 @@ describe.concurrent("TLS wildcard hostname verification", () => {
     expect(result.error).toBeUndefined();
   });
 
-  // UTS #46 maps these three code points to ".", so a resolver that applies
-  // IDNA looks up "foo.bar.example.com", two labels below example.com
-  // (Node.js CVE-2026-48618).
-  const unicodeFullStops = [
-    ["U+3002", "foo\u3002bar.example.com"],
-    ["U+FF0E", "foo\uff0ebar.example.com"],
-    ["U+FF61", "foo\uff61bar.example.com"],
+  // UTS #46 maps three code points to ".", so a resolver that applies IDNA
+  // looks up "foo.bar.example.com", two labels below example.com (Node.js
+  // CVE-2026-48618). The mapping must not be a URL host parse: that stops at
+  // "/" and would match "foo.example.com". U+FF46 maps to "f" and sends the
+  // name through the IDNA mapping of both matchers. The name as typed is not
+  // safe either: "*" would cover the label "localhost/", and a URL parser reads
+  // that name as the host "localhost". U+FF0F maps to "/".
+  const rejectedServernames = [
+    ["a U+3002 full stop", "foo\u3002bar.example.com"],
+    ["a U+FF0E full stop", "foo\uff0ebar.example.com"],
+    ["a U+FF61 full stop", "foo\uff61bar.example.com"],
+    ["a URL path", "foo.example.com/x.evil.test"],
+    ["a URL path after a non-ASCII label", "\uff46oo.example.com/x.evil.test"],
+    ["a URL delimiter in the label under the wildcard", "localhost/.example.com"],
+    ["a U+FF0F solidus in the label under the wildcard", "localhost\uff0f.example.com"],
   ];
 
-  it.each(unicodeFullStops)("tls.connect should reject a %s full stop in servername", async (_name, servername) => {
+  it.each(rejectedServernames)("tls.connect should reject %s in servername", async (_name, servername) => {
     using server = Bun.serve({
       port: 0,
       tls: wildcardExampleComTls,
@@ -341,7 +349,7 @@ describe.concurrent("TLS wildcard hostname verification", () => {
     }
   });
 
-  it.each(unicodeFullStops)("Bun.connect should reject a %s full stop in tls.serverName", async (_name, serverName) => {
+  it.each(rejectedServernames)("Bun.connect should reject %s in tls.serverName", async (_name, serverName) => {
     using server = Bun.serve({
       port: 0,
       tls: wildcardExampleComTls,
@@ -508,10 +516,9 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     ["abc.mid.test", false, undefined],
     ["cn-not-in-san.test", false, undefined],
     // UTS #46 maps U+3002, U+FF0E and U+FF61 to ".". Both matchers match a
-    // non-ASCII host on url.domainToASCII(host) (Node.js CVE-2026-48618, values
+    // non-ASCII host on its UTS #46 ASCII form (Node.js CVE-2026-48618, values
     // from v26.8.2). checkHost hands the raw host to OpenSSL, where "*" only
-    // spans LDH bytes. An ASCII host reaches the native matcher as typed, so
-    // the two differ on one that is not a valid URL host ("a b.wild.test").
+    // spans LDH bytes.
     ["foo\u3002bar.wild.test", false, undefined],
     ["foo\uff0ebar.wild.test", false, undefined],
     ["foo\uff61bar.wild.test", false, undefined],
@@ -526,6 +533,49 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     // subdomain form.
     [".wild.test", false, "*.wild.test"],
     ["\u3002wild.test", false, undefined],
+    // That ASCII form is the UTS #46 mapping alone, not url.domainToASCII(): a
+    // URL host parse cuts the host at "/", "?", "#" and "\", drops tab, CR and
+    // LF, and decodes "%xx". Each host below would then match "exact.test" or
+    // "*.wild.test".
+    ["exact.test/.wild.test", false, undefined],
+    ["exact.test?.wild.test", false, undefined],
+    ["exact.test#.wild.test", false, undefined],
+    ["exact.test\\.wild.test", false, undefined],
+    ["exact.test\r\n", false, undefined],
+    ["exact.\ttest", false, undefined],
+    ["e%78act.test", false, undefined],
+    ["foo.wild.test/x.evil.test", false, undefined],
+    ["foo%2ewild.test", false, undefined],
+    // The same hosts with one non-ASCII code point, so that both matchers map
+    // them: U+FF45 maps to "e", U+FF46 to "f".
+    ["\uff45xact.test/.wild.test", false, undefined],
+    ["\uff45xact.test?.wild.test", false, undefined],
+    ["\uff45xact.test#.wild.test", false, undefined],
+    ["\uff45xact.test\\.wild.test", false, undefined],
+    ["\uff45xact.test\r\n", false, undefined],
+    ["\uff45%78act.test", false, undefined],
+    ["\uff46oo.wild.test/x.evil.test", false, undefined],
+    ["\uff46oo%2ewild.test", false, undefined],
+    // The host as typed is not safe either. "*" would cover the label
+    // "localhost/", and a URL parser reads "localhost/.wild.test" as the host
+    // "localhost". So a host with a character that no hostname has matches
+    // nothing, in both matchers. Node.js v26.3.0 accepts these hosts as typed.
+    // v26.8.2 rejects them, because they are not URL hosts. U+FF0F maps to "/".
+    ["localhost/.wild.test", false, undefined],
+    ["localhost?.wild.test", false, undefined],
+    ["localhost#.wild.test", false, undefined],
+    ["localhost\\.wild.test", false, undefined],
+    ["db:5432/.wild.test", false, undefined],
+    ["localhost\uff0f.wild.test", false, undefined],
+    ["a b.wild.test", false, undefined],
+    ["user@foo.wild.test", false, undefined],
+    // Bun only: "*" is a URL host character, so Node.js v26.8.2 accepts this
+    // host, as v26.3.0 does.
+    ["*.wild.test", false, undefined],
+    // Letters, digits, "-", "_" and "." are the characters of a hostname.
+    ["foo_bar.wild.test", true, undefined],
+    ["foo-bar.wild.test", true, "*.wild.test"],
+    ["xn--a.wild.test", true, "*.wild.test"],
   ];
 
   describe.concurrent("checkServerIdentity == fetch", () => {
@@ -542,18 +592,27 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     });
   });
 
-  // tls.checkServerIdentity matches DNS names on url.domainToASCII(host) and
-  // reports the host as typed. IP hosts skip domainToASCII, which returns ""
-  // for "::1". Every expected value was taken from Node.js v26.8.2, except the
-  // two hosts with an empty first label: Node lets "*" match it, Bun does not.
-  describe("checkServerIdentity matches on domainToASCII(host)", () => {
+  // tls.checkServerIdentity matches a non-ASCII host on its UTS #46 ASCII form
+  // and reports the host as typed. An ASCII host and an IP host get no mapping.
+  describe("checkServerIdentity maps a non-ASCII host with UTS #46", () => {
     const wildcardSan = { subjectaltname: "DNS:*.example.com", subject: {} };
-    const notInAltnames = (host: string) => `Host: ${host}. is not in the cert's altnames: DNS:*.example.com`;
+    const evilSan = { subjectaltname: "DNS:evil.test", subject: {} };
+    const wildEvilSan = { subjectaltname: "DNS:*.evil.test", subject: {} };
+    const notInAltnames = (host: string, altnames = "DNS:*.example.com") =>
+      `Host: ${host}. is not in the cert's altnames: ${altnames}`;
+    const expectReason = (host: string, cert: object, reason: string | undefined) => {
+      const err = tls.checkServerIdentity(host, cert as tls.PeerCertificate) as any;
+      expect(err === undefined ? undefined : { code: err.code, reason: err.reason, host: err.host }).toEqual(
+        reason === undefined ? undefined : { code: "ERR_TLS_CERT_ALTNAME_INVALID", reason, host },
+      );
+    };
+
+    // Every expected value was taken from Node.js v26.8.2, except the two hosts
+    // with an empty first label: Node lets "*" match it, Bun does not.
     it.each([
       ["foo\u3002bar.example.com", wildcardSan, notInAltnames("foo\u3002bar.example.com")],
       ["foo\uff0ebar.example.com", wildcardSan, notInAltnames("foo\uff0ebar.example.com")],
       ["foo\uff61bar.example.com", wildcardSan, notInAltnames("foo\uff61bar.example.com")],
-      ["a b.example.com", wildcardSan, notInAltnames("a b.example.com")],
       [".example.com", wildcardSan, notInAltnames(".example.com")],
       ["\u3002example.com", wildcardSan, notInAltnames("\u3002example.com")],
       [
@@ -565,14 +624,70 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       ["foo\u3002bar.example.com\u3002", { subjectaltname: "DNS:foo.bar.example.com", subject: {} }, undefined],
       ["b\u00fccher.example.com", { subjectaltname: "DNS:xn--bcher-kva.example.com", subject: {} }, undefined],
       ["::1", { subjectaltname: "IP Address:0:0:0:0:0:0:0:1", subject: {} }, undefined],
-    ])("%j vs %j", (host, cert, reason) => {
-      const err = tls.checkServerIdentity(host, cert as tls.PeerCertificate) as any;
-      expect(err === undefined ? undefined : { code: err.code, reason: err.reason, host: err.host }).toEqual(
-        reason === undefined ? undefined : { code: "ERR_TLS_CERT_ALTNAME_INVALID", reason, host },
-      );
-    });
+    ])("%j vs %j", expectReason);
 
-    // A host is an IP address only as typed. domainToASCII maps this one to
+    // The mapping is UTS #46 alone, not url.domainToASCII(). A URL host parse
+    // cuts the host at "/", "?", "#" and "\", drops tab, CR and LF, and decodes
+    // "%xx", so "evil.test/.example.com" would pass for the certificate of
+    // evil.test. U+FF45 maps to "e" and U+FF46 to "f". Every expected value is
+    // the one Node.js v26.3.0 gives, which matches each host as typed.
+    it.each([
+      ["evil.test/.example.com", evilSan, notInAltnames("evil.test/.example.com", "DNS:evil.test")],
+      ["evil.test?.example.com", evilSan, notInAltnames("evil.test?.example.com", "DNS:evil.test")],
+      ["evil.test#.example.com", evilSan, notInAltnames("evil.test#.example.com", "DNS:evil.test")],
+      ["evil.test\\.example.com", evilSan, notInAltnames("evil.test\\.example.com", "DNS:evil.test")],
+      ["evil.test\r\n", evilSan, notInAltnames("evil.test\r\n", "DNS:evil.test")],
+      ["e%76il.test", evilSan, notInAltnames("e%76il.test", "DNS:evil.test")],
+      ["foo.example.com/x.evil.test", wildcardSan, notInAltnames("foo.example.com/x.evil.test")],
+      ["foo%2eexample.com", wildcardSan, notInAltnames("foo%2eexample.com")],
+      [
+        "evil.test/.example.com",
+        { subject: { CN: "evil.test" } },
+        "Host: evil.test/.example.com. is not cert's CN: evil.test",
+      ],
+      ["\uff45vil.test/.example.com", evilSan, notInAltnames("\uff45vil.test/.example.com", "DNS:evil.test")],
+      ["\uff45vil.test\r\n", evilSan, notInAltnames("\uff45vil.test\r\n", "DNS:evil.test")],
+      ["\uff45%76il.test", evilSan, notInAltnames("\uff45%76il.test", "DNS:evil.test")],
+      ["\uff46oo.example.com/x.evil.test", wildcardSan, notInAltnames("\uff46oo.example.com/x.evil.test")],
+      ["\uff46oo%2eexample.com", wildcardSan, notInAltnames("\uff46oo%2eexample.com")],
+      ["xn--a.example.com", wildcardSan, undefined],
+      // A URL host with a numeric last label must parse as IPv4, so url.domainToASCII("db.1") is "".
+      ["db.1", { subjectaltname: "DNS:db.1", subject: {} }, undefined],
+    ])("%j vs %j", expectReason);
+
+    // The host as typed is not safe either. "*" would cover the label
+    // "localhost/", and a URL parser reads "localhost/.evil.test" as the host
+    // "localhost". A host with a character that no hostname has matches nothing.
+    // Node.js v26.3.0 accepts the rejected hosts as typed. v26.8.2 rejects them,
+    // because they are not URL hosts, and it also rejects "db.1". Two rows are
+    // Bun only, v26.8.2 accepts them: "*" and "!" are URL host characters.
+    // U+FF0F maps to "/".
+    it.each([
+      ["localhost/.evil.test", wildEvilSan, notInAltnames("localhost/.evil.test", "DNS:*.evil.test")],
+      ["localhost?.evil.test", wildEvilSan, notInAltnames("localhost?.evil.test", "DNS:*.evil.test")],
+      ["localhost#.evil.test", wildEvilSan, notInAltnames("localhost#.evil.test", "DNS:*.evil.test")],
+      ["localhost\\.evil.test", wildEvilSan, notInAltnames("localhost\\.evil.test", "DNS:*.evil.test")],
+      ["db:5432/.evil.test", wildEvilSan, notInAltnames("db:5432/.evil.test", "DNS:*.evil.test")],
+      ["localhost\uff0f.evil.test", wildEvilSan, notInAltnames("localhost\uff0f.evil.test", "DNS:*.evil.test")],
+      [
+        "localhost/.evil.test",
+        { subject: { CN: "*.evil.test" } },
+        "Host: localhost/.evil.test. is not cert's CN: *.evil.test",
+      ],
+      ["a b.example.com", wildcardSan, notInAltnames("a b.example.com")],
+      ["user@foo.example.com", wildcardSan, notInAltnames("user@foo.example.com")],
+      // Bun only.
+      ["*.example.com", wildcardSan, notInAltnames("*.example.com")],
+      [
+        "exact!name.test",
+        { subjectaltname: "DNS:exact!name.test", subject: {} },
+        notInAltnames("exact!name.test", "DNS:exact!name.test"),
+      ],
+      ["foo_bar.example.com", wildcardSan, undefined],
+      ["foo-bar.example.com.", wildcardSan, undefined],
+    ])("%j vs %j", expectReason);
+
+    // A host is an IP address only as typed. UTS #46 maps this one to
     // "127.0.0.1", and Node still matches it as a DNS name.
     it("a host that maps to an IPv4 literal does not match an IP SAN", async () => {
       const m = makeCert("x", [["ip", "127.0.0.1"]]);
@@ -581,6 +696,126 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
         csi: false,
         fetch: { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
       });
+    });
+  });
+
+  // Every ASCII byte that no hostname has, in the label under "*", through
+  // both matchers on one server. Node.js v26.8.2 accepts 19 of the 62 (tab, CR
+  // and LF, which its URL parse drops, and the URL host characters
+  // !"$&'()*+,;=`{}~). A NUL is refused before the matcher, see below.
+  it("no ASCII byte outside the hostname set matches under a wildcard", async () => {
+    await using server = Bun.serve({ port: 0, tls: wild, fetch: () => new Response("ok") });
+    const hosts: string[] = [];
+    for (let byte = 1; byte < 128; byte++) {
+      const c = String.fromCharCode(byte);
+      if (!/[A-Za-z0-9._-]/.test(c)) hosts.push(`a${c}b.wild.test`);
+    }
+    expect(hosts).toHaveLength(62);
+    const verdicts = await Promise.all(
+      hosts.map(async host => {
+        let viaFetch: string;
+        try {
+          const r = await fetch(`https://127.0.0.1:${server.port}/`, {
+            // @ts-expect-error Bun extension
+            tls: { ca: wild.cert, serverName: host },
+            keepalive: false,
+          });
+          await r.text();
+          viaFetch = "accepted";
+        } catch (e: any) {
+          viaFetch = e.code;
+        }
+        return [JSON.stringify(host), { csi: csi(wild.x509, host), fetch: viaFetch }];
+      }),
+    );
+    expect(Object.fromEntries(verdicts)).toEqual(
+      Object.fromEntries(
+        hosts.map(host => [JSON.stringify(host), { csi: false, fetch: "ERR_TLS_CERT_ALTNAME_INVALID" }]),
+      ),
+    );
+  });
+
+  // A host is an IP address only in the strict form that net.isIP takes. The
+  // native matcher used ares_inet_pton, which also reads "127.1" (as
+  // 127.1.0.0), "10", hex, zero-padded octets and a trailing "/bits". A
+  // resolver reads "127.1" as 127.0.0.1, so such a name has two readings.
+  // net.isIP also takes an IPv6 address with a zone, which canonicalizeIP()
+  // does not read. It does not read a malformed iPAddress SAN either (5 bytes
+  // here, printed as "<invalid>"), and undefined must not match undefined.
+  describe.concurrent("IP shorthand and zone ids are not an IP address", () => {
+    const ipCert = makeCert("x", [
+      ["ip", "127.0.0.1"],
+      ["ip", "127.1.0.0"],
+      ["ip", "10.0.0.0"],
+      ["ip", "1.2.3.4"],
+      ["ip", "1.2.3.0"],
+      ["ip", "1.2.3.4.5"],
+    ]);
+    it.each([
+      ["127.0.0.1", true],
+      ["127.1", false],
+      ["10", false],
+      ["0x7f000001", false],
+      ["127.000.000.001", false],
+      ["1.2.3.4/8", false],
+      ["127.0.0.1/32", false],
+      ["1.2.3", false],
+      ["::1%lo", false],
+      ["fe80::1%eth0", false],
+      ["::1", false],
+    ])("%j", async (host, match) => {
+      expect({ csi: csi(ipCert.x509, host), fetch: await fetchOk(ipCert, host) }).toEqual({
+        csi: match,
+        fetch: match ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+  });
+
+  // tls.serverName is a C string in the native TLS configuration. SNI and the
+  // native matcher would see "exact.test" for "exact.test\0.wild.test", so
+  // fetch and Bun.connect refuse the option. node:tls does what Node.js does:
+  // SNI ends at the NUL, and checkServerIdentity gets the whole name.
+  describe.concurrent("a NUL in the server name", () => {
+    const message = '"serverName" must not contain null bytes';
+    async function expectRefused(open: () => Promise<() => void>) {
+      let close: (() => void) | undefined;
+      try {
+        await expect((async () => void (close = await open()))()).rejects.toThrow(message);
+      } finally {
+        close?.();
+      }
+    }
+
+    it.each(["exact.test\0.wild.test", "exact.test\0", "\uff45xact.test\0.wild.test"])("%j", async serverName => {
+      await using server = Bun.serve({ port: 0, tls: wild, fetch: () => new Response("ok") });
+      const tlsOptions = { ca: wild.cert, serverName };
+
+      expect(csi(wild.x509, serverName)).toBe(false);
+      await expectRefused(async () => {
+        // @ts-expect-error Bun extension
+        await (await fetch(`https://127.0.0.1:${server.port}/`, { tls: tlsOptions, keepalive: false })).text();
+        return () => {};
+      });
+      await expectRefused(async () => {
+        const socket = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          tls: tlsOptions,
+          socket: { data() {} },
+        });
+        return () => socket.end();
+      });
+      for (const trust of [{ ca: wild.cert }, { secureContext: tls.createSecureContext({ ca: wild.cert }) }]) {
+        const { promise, resolve } = Promise.withResolvers<unknown>();
+        const socket = tls.connect({ host: "127.0.0.1", port: server.port, servername: serverName, ...trust });
+        socket.on("secureConnect", () => resolve({ authorized: socket.authorized }));
+        socket.on("error", resolve);
+        try {
+          expect(await promise).toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID", host: serverName });
+        } finally {
+          socket.destroy();
+        }
+      }
     });
   });
 
@@ -618,6 +853,12 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     ["IP-only SAN", "ipcn.a.test", [["ip", "10.0.0.1"]], "ipcn.a.test", true, true],
     ["URI-only SAN", "uricn.a.test", [["uri", "https://x.test/"]], "uricn.a.test", true, true],
     ["DNS SAN present", "dnscn.a.test", [["dns", "other.a.test"]], "dnscn.a.test", false, false],
+    // The CN fallback has the rule of the SAN path: a host with a character
+    // that no hostname has matches nothing. OpenSSL lets "*" cover letters,
+    // digits and "-" only, so checkHost also rejects the underscore.
+    ["wildcard CN", "*.cn.a.test", [], "foo.cn.a.test", true, true],
+    ["wildcard CN, underscore", "*.cn.a.test", [], "foo_bar.cn.a.test", true, false],
+    ["wildcard CN, URL delimiter in the label", "*.cn.a.test", [], "localhost/.cn.a.test", false, false],
   ];
   describe.concurrent("CN fallback", () => {
     it.each(cnRows)("%s -> %j", async (_label, cn, sans, host, csiMatch, checkHostMatch) => {
@@ -630,6 +871,37 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
         csi: csiMatch,
         checkHost: checkHostMatch,
         fetch: csiMatch ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+  });
+
+  // A host is an IP address only in the strict form that net.isIP takes. The
+  // native matcher asked ares_inet_pton, which also reads "127.1" (as
+  // 127.1.0.0), "10", hex, zero-padded octets and a trailing "/bits". Such a
+  // host is a name: it matches no iPAddress, and it matches a dNSName or a CN
+  // with the same text, as in tls.checkServerIdentity().
+  const shorthandRows: Array<[host: string, cn: string, sans: San[], match: boolean]> = [
+    ["127.0.0.1", "x", [["ip", "127.0.0.1"]], true],
+    ["0x7f000001", "x", [["ip", "127.0.0.1"]], false],
+    ["127.000.000.001", "x", [["ip", "127.0.0.1"]], false],
+    ["127.0.0.1/32", "x", [["ip", "127.0.0.1"]], false],
+    ["127.0.0.1/8", "x", [["ip", "127.0.0.1"]], false],
+    ["127.1", "x", [["ip", "127.1.0.0"]], false],
+    ["127.1", "x", [["ip", "127.0.0.1"]], false],
+    ["10", "x", [["ip", "10.0.0.0"]], false],
+    ["1.2.3", "x", [["ip", "1.2.3.0"]], false],
+    ["127.1", "x", [["dns", "127.1"]], true],
+    ["10", "x", [["dns", "10"]], true],
+    ["0x7f000001", "x", [["dns", "0x7f000001"]], true],
+    ["127.1", "127.1", [], true],
+    ["127.1", "127.1", [["ip", "127.0.0.1"]], true],
+  ];
+  describe.concurrent("a host in IP shorthand is a name", () => {
+    it.each(shorthandRows)("%j vs CN %j, SAN %j", async (host, cn, sans, match) => {
+      const m = makeCert(cn, sans);
+      expect({ csi: csi(m.x509, host), fetch: await fetchOk(m, host) }).toEqual({
+        csi: match,
+        fetch: match ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
       });
     });
   });

@@ -5,7 +5,7 @@
 
 pkgs.mkShell rec {
   packages = with pkgs; [
-    # Core build tools (matching bootstrap.sh)
+    # Core build tools (matching the CI images, scripts/build/ci-images/spec.ts)
     cmake
     ninja
     llvmPackages_23.clang

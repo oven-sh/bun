@@ -27,18 +27,30 @@ let dynamicallyAdjustChunkSize = (_?) => (
   (dynamicallyAdjustChunkSize = () => _)
 );
 
-type NativeReadable = typeof import("node:stream").Readable &
-  typeof import("node:stream").Stream & {
-    push: (chunk: any) => boolean;
-    $bunNativePtr?: NativePtr;
-    [kRefCount]: number;
-    [kCloseState]: [boolean];
-    [kPendingRead]: boolean;
-    [kHighWaterMark]: number;
-    [kHasResized]: boolean;
-    [kRemainingChunk]: Buffer;
-    debugId: number;
+type NodeReadable = import("node:stream").Readable;
+
+interface NativeReadable extends NodeReadable {
+  _readableState: {
+    flowing: boolean | null;
+    ended: boolean;
+    sync: boolean;
+    buffer: unknown[];
+    bufferIndex: number;
+    length: number;
   };
+  $bunNativePtr: NativePtr | undefined;
+  $start?: typeof ensureConstructed;
+  ref: typeof ref;
+  unref: typeof unref;
+  [kRefCount]: number;
+  [kCloseState]: [boolean];
+  [kConstructed]: boolean;
+  [kPendingRead]: boolean;
+  [kHighWaterMark]: number;
+  [kHasResized]: boolean;
+  [kRemainingChunk]: Buffer | undefined;
+  debugId: number;
+}
 
 interface NativePtr {
   onClose: () => void;
@@ -58,7 +70,7 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
 
-  const stream = new Readable(options);
+  const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
 
@@ -180,7 +192,7 @@ function read(this: NativeReadable, maxToRead: number) {
   }
 }
 
-function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClosed: boolean) {
+function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
   if (typeof result === "number") {
     $debug(`[${stream.debugId}] handleResult(${result})`);
     if (result >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
@@ -189,9 +201,7 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClos
     return handleNumberResult(stream, result, chunk, isClosed);
   } else if (typeof result === "boolean") {
     $debug(`[${stream.debugId}] handleResult(${result})`, chunk, isClosed);
-    process.nextTick(() => {
-      stream.push(null);
-    });
+    process.nextTick(pushEof, stream);
     return (chunk?.byteLength ?? 0) > 0 ? chunk : undefined;
   } else if ($isTypedArrayView(result)) {
     if (result.byteLength >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
@@ -201,6 +211,11 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClos
   } else {
     $assert(false, "Invalid result from pull");
   }
+}
+
+// EOF is pushed a tick after the last chunk. After a destroy() in between, Node emits 'close' without 'end'.
+function pushEof(stream: NativeReadable) {
+  if (!stream.destroyed) stream.push(null);
 }
 
 // `push()` returning false means the Readable's buffer is at/above hwm (or
@@ -223,9 +238,7 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: any, 
   }
 
   if (isClosed) {
-    process.nextTick(() => {
-      stream.push(null);
-    });
+    process.nextTick(pushEof, stream);
   }
 
   return chunk;
@@ -237,9 +250,7 @@ function handleArrayBufferViewResult(stream: NativeReadable, result: any, chunk:
   }
 
   if (isClosed) {
-    process.nextTick(() => {
-      stream.push(null);
-    });
+    process.nextTick(pushEof, stream);
   }
 
   return chunk;
@@ -255,10 +266,25 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   if (ptr) {
     ptr.cancel(error);
   }
+  dropReadAhead(this);
   if (cb) {
     // `_destroy` reports its error through the callback.
     process.nextTick(cb, error);
   }
+}
+
+// `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not.
+function dropReadAhead(stream: NativeReadable) {
+  const state = stream._readableState;
+  // Paused: Node has this buffered too, and a later read() returns it.
+  if (!state.flowing) return;
+  // Ended: the buffer is all that is left, and 'end' must not follow dropped data.
+  if (state.ended) return;
+  // Inside `_read()` the source failed: the bytes it read before the error are still delivered.
+  if (state.sync) return;
+  state.buffer.length = 0;
+  state.bufferIndex = 0;
+  state.length = 0;
 }
 
 function ref(this: NativeReadable) {

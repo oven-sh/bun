@@ -35,6 +35,7 @@ const FrameType = {
   SETTINGS: 0x4,
   PUSH_PROMISE: 0x5,
   PING: 0x6,
+  GOAWAY: 0x7,
   CONTINUATION: 0x9,
 } as const;
 
@@ -168,7 +169,9 @@ const pushedResponse = Buffer.concat([
 // the request's writable cannot finish.
 const blockedBody = Buffer.alloc(200_000, "a");
 
-const refused = { pushedStreams: 0, resetsOnStream2: [NGHTTP2_CANCEL] };
+// nghttp2 refuses before it counts the promised stream as processed (last_proc_stream_id), so
+// the GOAWAY of a later session.close() does not name it.
+const refused = { pushedStreams: 0, resetsOnStream2: [NGHTTP2_CANCEL], goawayLastStreamId: 0 };
 const surfaced = { pushedStreams: 1, resetsOnStream2: [] as number[] };
 
 type Row = {
@@ -187,7 +190,7 @@ type Row = {
   serverWaitsFor?: (f: Frame) => boolean;
   read1: Buffer[];
   read2?: Buffer[];
-  expected: typeof refused;
+  expected: typeof refused | typeof surfaced;
   /** Why Bun does not give node's result yet. */
   todoOnBun?: string;
 };
@@ -235,12 +238,16 @@ async function pushExchange(row: Row) {
       await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.toString() === payload);
       await nextTurn();
     }
-    return {
+    const result = {
       pushedStreams,
       resetsOnStream2: raw.frames
         .filter(f => f.type === FrameType.RST_STREAM && f.streamId === 2)
         .map(f => f.payload.readUInt32BE(0)),
     };
+    if (pushedStreams > 0) return result;
+    client.close();
+    const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+    return { ...result, goawayLastStreamId: goaway.payload.readUInt32BE(0) & 0x7fffffff };
   } finally {
     client.destroy();
     raw.close();

@@ -830,5 +830,558 @@ impl<'a> Checker<'a> {
             );
         }
     }
+
+    // `target` is the template literal type, which upstream passes as its `*TemplateLiteralType`.
+    pub fn infer_to_template_literal_type(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        let matches = self.infer_types_from_template_literal_type(source, target);
+        let types = self.as_template_literal_type(target).types;
+        let texts = self.as_template_literal_type(target).texts;
+        // When the target template literal contains only placeholders (meaning that inference is intended to extract single characters and remainder strings) and inference fails to produce matches, we want to infer 'never' for each placeholder such that instantiation with the inferred value(s) produces 'never', a type for which an assignment check will fail. If we make no inferences, we'll likely end up with the constraint 'string' which, upon instantiation, would collapse all the placeholders to just 'string', and an assignment check might succeed. That would be a pointless and confusing outcome.
+        if matches.len() != 0 || texts.as_slice().iter().all(|s| s.is_empty()) {
+            for (i, &target) in types.as_slice().iter().enumerate() {
+                let source = if matches.len() != 0 {
+                    matches.at(i)
+                } else {
+                    self.never_type
+                };
+                // If we are inferring from a string literal type to a type variable whose constraint includes one of the allowed template literal placeholder types, infer from a literal type corresponding to the constraint.
+                if self.types[source]
+                    .flags
+                    .intersects(TypeFlags::STRING_LITERAL)
+                    && self.types[target]
+                        .flags
+                        .intersects(TypeFlags::TYPE_VARIABLE)
+                {
+                    let inference_context = get_inference_info_for_type(self, n, target);
+                    if !inference_context.is_nil() {
+                        let type_parameter = self.inference_infos[inference_context].type_parameter;
+                        let constraint = self.get_base_constraint_of_type(type_parameter);
+                        if !constraint.is_nil() && !is_type_any(self, constraint) {
+                            let constraint_types = self.type_distributed(constraint);
+                            let mut all_type_flags = TypeFlags::NONE;
+                            for &t in constraint_types.as_slice() {
+                                all_type_flags |= self.types[t].flags;
+                            }
+                            // If the constraint contains `string`, we don't need to look for a more preferred type
+                            if !all_type_flags.intersects(TypeFlags::STRING) {
+                                let str = get_string_literal_value(self, source);
+                                // If the type contains `number` or a number literal and the string isn't a valid number, exclude numbers
+                                if all_type_flags.intersects(TypeFlags::NUMBER_LIKE)
+                                    && !is_valid_number_string(str, true)
+                                {
+                                    all_type_flags = all_type_flags.without(TypeFlags::NUMBER_LIKE);
+                                }
+                                // If the type contains `bigint` or a bigint literal and the string isn't a valid bigint, exclude bigints
+                                if all_type_flags.intersects(TypeFlags::BIG_INT_LIKE)
+                                    && !is_valid_big_int_string(str, true)
+                                {
+                                    all_type_flags =
+                                        all_type_flags.without(TypeFlags::BIG_INT_LIKE);
+                                }
+                                let choose = |c: &mut Checker<'a>,
+                                              left: TypeId,
+                                              right: TypeId|
+                                 -> TypeId {
+                                    let left_flags = c.types[left].flags;
+                                    let right_flags = c.types[right].flags;
+                                    if !right_flags.intersects(all_type_flags) {
+                                        return left;
+                                    }
+                                    if left_flags.intersects(TypeFlags::STRING) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::STRING) {
+                                        return source;
+                                    }
+                                    if left_flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::TEMPLATE_LITERAL)
+                                        && c.is_type_matched_by_template_literal_type(
+                                            source,
+                                            right,
+                                            TypeComparer::Assignable,
+                                        )
+                                    {
+                                        return source;
+                                    }
+                                    if left_flags.intersects(TypeFlags::STRING_MAPPING) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::STRING_MAPPING)
+                                        && *str
+                                            == *apply_string_mapping(
+                                                c.ast,
+                                                c.types[right].symbol,
+                                                str,
+                                            )
+                                    {
+                                        return source;
+                                    }
+                                    if left_flags.intersects(TypeFlags::STRING_LITERAL) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::STRING_LITERAL)
+                                        && get_string_literal_value(c, right) == str
+                                    {
+                                        return right;
+                                    }
+                                    if left_flags.intersects(TypeFlags::NUMBER) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::NUMBER) {
+                                        return c.get_number_literal_type(from_string(str));
+                                    }
+                                    if left_flags.intersects(TypeFlags::ENUM) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::ENUM) {
+                                        return c.get_number_literal_type(from_string(str));
+                                    }
+                                    if left_flags.intersects(TypeFlags::NUMBER_LITERAL) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::NUMBER_LITERAL)
+                                        && get_number_literal_value(c, right) == from_string(str)
+                                    {
+                                        return right;
+                                    }
+                                    if left_flags.intersects(TypeFlags::BIG_INT) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::BIG_INT) {
+                                        return c.parse_big_int_literal_type(str);
+                                    }
+                                    if left_flags.intersects(TypeFlags::BIG_INT_LITERAL) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::BIG_INT_LITERAL)
+                                        && pseudo_big_int_to_string(get_big_int_literal_value(
+                                            c, right,
+                                        )) == str
+                                    {
+                                        return right;
+                                    }
+                                    if left_flags.intersects(TypeFlags::BOOLEAN) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::BOOLEAN) {
+                                        if str == b"true" {
+                                            return c.true_type;
+                                        }
+                                        if str == b"false" {
+                                            return c.false_type;
+                                        }
+                                        return c.boolean_type;
+                                    }
+                                    if left_flags.intersects(TypeFlags::BOOLEAN_LITERAL) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::BOOLEAN_LITERAL)
+                                        && if_else(
+                                            get_boolean_literal_value(c, right),
+                                            b"true".as_slice(),
+                                            b"false".as_slice(),
+                                        ) == str
+                                    {
+                                        return right;
+                                    }
+                                    if left_flags.intersects(TypeFlags::UNDEFINED) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::UNDEFINED)
+                                        && c.as_intrinsic_type(right).intrinsic_name == str
+                                    {
+                                        return right;
+                                    }
+                                    if left_flags.intersects(TypeFlags::NULL) {
+                                        return left;
+                                    }
+                                    if right_flags.intersects(TypeFlags::NULL)
+                                        && c.as_intrinsic_type(right).intrinsic_name == str
+                                    {
+                                        return right;
+                                    }
+                                    left
+                                };
+                                let mut matching_type = self.never_type;
+                                for &t in constraint_types.as_slice() {
+                                    matching_type = choose(self, matching_type, t);
+                                }
+                                if !self.types[matching_type]
+                                    .flags
+                                    .intersects(TypeFlags::NEVER)
+                                {
+                                    self.infer_from_types(n, matching_type, target);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+                self.infer_from_types(n, source, target);
+            }
+        }
+    }
+
+    pub fn infer_from_generic_mapped_types(
+        &mut self,
+        n: InferenceStateId,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        // The source and target types are generic types { [P in S]: X } and { [P in T]: Y }, so we infer from S to T and from X to Y.
+        let source_constraint_type = self.get_constraint_type_from_mapped_type(source);
+        let target_constraint_type = self.get_constraint_type_from_mapped_type(target);
+        self.infer_from_types(n, source_constraint_type, target_constraint_type);
+        let source_template_type = self.get_template_type_from_mapped_type(source);
+        let target_template_type = self.get_template_type_from_mapped_type(target);
+        self.infer_from_types(n, source_template_type, target_template_type);
+        let source_name_type = self.get_name_type_from_mapped_type(source);
+        let target_name_type = self.get_name_type_from_mapped_type(target);
+        if !source_name_type.is_nil() && !target_name_type.is_nil() {
+            self.infer_from_types(n, source_name_type, target_name_type);
+        }
+    }
+
+    pub fn infer_from_object_types(&mut self, n: InferenceStateId, source: TypeId, target: TypeId) {
+        let a = self.ast;
+        if self.types[source]
+            .object_flags
+            .intersects(ObjectFlags::REFERENCE)
+            && self.types[target]
+                .object_flags
+                .intersects(ObjectFlags::REFERENCE)
+            && (self.type_target(source) == self.type_target(target)
+                || self.is_array_type(source) && self.is_array_type(target))
+        {
+            // If source and target are references to the same generic type, infer from type arguments
+            let source_type_arguments = self.get_type_arguments(source);
+            let target_type_arguments = self.get_type_arguments(target);
+            let source_target = self.type_target(source);
+            let variances = self.get_variances(source_target);
+            self.infer_from_type_arguments(
+                n,
+                source_type_arguments,
+                target_type_arguments,
+                variances,
+            );
+            return;
+        }
+        if self.is_generic_mapped_type(source) && self.is_generic_mapped_type(target) {
+            self.infer_from_generic_mapped_types(n, source, target);
+        }
+        if self.types[target]
+            .object_flags
+            .intersects(ObjectFlags::MAPPED)
+            && a.as_mapped_type_node(self.as_mapped_type(target).declaration)
+                .name_type
+                .is_nil()
+        {
+            let constraint_type = self.get_constraint_type_from_mapped_type(target);
+            if self.infer_to_mapped_type(n, source, target, constraint_type) {
+                return;
+            }
+        }
+        // Infer from the members of source and target only if the two types are possibly related
+        if self.types_definitely_unrelated(source, target) {
+            return;
+        }
+        if self.is_array_or_tuple_type(source) {
+            if is_tuple_type(self, target) {
+                let source_arity = self.get_type_reference_arity(source);
+                let target_arity = self.get_type_reference_arity(target);
+                let element_types = self.get_type_arguments(target);
+                let element_infos = self.type_target_tuple_type(target).element_infos;
+                // When source and target are tuple types with the same structure (fixed, variadic, and rest are matched to the same kind in each position), simply infer between the element types.
+                if is_tuple_type(self, source)
+                    && self.is_tuple_type_structure_matching(source, target)
+                {
+                    for i in 0..target_arity {
+                        let source_element_type = self.get_type_arguments(source).at(i);
+                        self.infer_from_types(n, source_element_type, element_types.at(i));
+                    }
+                    return;
+                }
+                let mut start_length = 0;
+                let mut end_length = 0;
+                if is_tuple_type(self, source) {
+                    start_length = self
+                        .type_target_tuple_type(source)
+                        .fixed_length
+                        .min(self.type_target_tuple_type(target).fixed_length);
+                    if self
+                        .type_target_tuple_type(target)
+                        .combined_flags
+                        .intersects(ElementFlags::VARIABLE)
+                    {
+                        end_length = get_end_element_count(
+                            self.type_target_tuple_type(source),
+                            ElementFlags::FIXED,
+                        )
+                        .min(get_end_element_count(
+                            self.type_target_tuple_type(target),
+                            ElementFlags::FIXED,
+                        ));
+                    }
+                }
+                // Infer between starting fixed elements.
+                for i in 0..start_length {
+                    let source_element_type = self.get_type_arguments(source).at(i);
+                    self.infer_from_types(n, source_element_type, element_types.at(i));
+                }
+                if !is_tuple_type(self, source)
+                    || source_arity - start_length - end_length == 1
+                        && self
+                            .type_target_tuple_type(source)
+                            .element_infos
+                            .at(start_length)
+                            .flags
+                            .intersects(ElementFlags::REST)
+                {
+                    // Single rest element remains in source, infer from that to every element in target
+                    let rest_type = self.get_type_arguments(source).at(start_length);
+                    for i in start_length..target_arity - end_length {
+                        let mut t = rest_type;
+                        if element_infos
+                            .at(i)
+                            .flags
+                            .intersects(ElementFlags::VARIADIC)
+                        {
+                            t = self.create_array_type(t);
+                        }
+                        self.infer_from_types(n, t, element_types.at(i));
+                    }
+                } else {
+                    let middle_length = target_arity - start_length - end_length;
+                    if middle_length == 2 {
+                        if (element_infos.at(start_length).flags
+                            & element_infos.at(start_length + 1).flags)
+                            .intersects(ElementFlags::VARIADIC)
+                        {
+                            // Middle of target is [...T, ...U] and source is tuple type
+                            let target_info = get_inference_info_for_type(
+                                self,
+                                n,
+                                element_types.at(start_length),
+                            );
+                            if !target_info.is_nil()
+                                && self.inference_infos[target_info].implied_arity >= 0
+                            {
+                                // Infer slices from source based on implied arity of T.
+                                let implied_arity = self.inference_infos[target_info].implied_arity;
+                                let leading_slice = self.slice_tuple_type(
+                                    source,
+                                    start_length,
+                                    end_length + source_arity - implied_arity,
+                                );
+                                self.infer_from_types(
+                                    n,
+                                    leading_slice,
+                                    element_types.at(start_length),
+                                );
+                                let implied_arity = self.inference_infos[target_info].implied_arity;
+                                let trailing_slice = self.slice_tuple_type(
+                                    source,
+                                    start_length + implied_arity,
+                                    end_length,
+                                );
+                                self.infer_from_types(
+                                    n,
+                                    trailing_slice,
+                                    element_types.at(start_length + 1),
+                                );
+                            }
+                        } else if element_infos
+                            .at(start_length)
+                            .flags
+                            .intersects(ElementFlags::VARIADIC)
+                            && element_infos
+                                .at(start_length + 1)
+                                .flags
+                                .intersects(ElementFlags::REST)
+                        {
+                            // Middle of target is [...T, ...rest] and source is tuple type: if T is constrained by a fixed-size tuple we might be able to use its arity to infer T
+                            let info = get_inference_info_for_type(
+                                self,
+                                n,
+                                element_types.at(start_length),
+                            );
+                            if !info.is_nil() {
+                                let type_parameter = self.inference_infos[info].type_parameter;
+                                let constraint = self.get_base_constraint_of_type(type_parameter);
+                                if !constraint.is_nil()
+                                    && is_tuple_type(self, constraint)
+                                    && !self
+                                        .type_target_tuple_type(constraint)
+                                        .combined_flags
+                                        .intersects(ElementFlags::VARIABLE)
+                                {
+                                    let implied_arity =
+                                        self.type_target_tuple_type(constraint).fixed_length;
+                                    let leading_slice = self.slice_tuple_type(
+                                        source,
+                                        start_length,
+                                        source_arity - (start_length + implied_arity),
+                                    );
+                                    self.infer_from_types(
+                                        n,
+                                        leading_slice,
+                                        element_types.at(start_length),
+                                    );
+                                    let rest_type = self.get_element_type_of_slice_of_tuple_type(
+                                        source,
+                                        start_length + implied_arity,
+                                        end_length,
+                                        false,
+                                        false,
+                                    );
+                                    if !rest_type.is_nil() {
+                                        self.infer_from_types(
+                                            n,
+                                            rest_type,
+                                            element_types.at(start_length + 1),
+                                        );
+                                    }
+                                }
+                            }
+                        } else if element_infos
+                            .at(start_length)
+                            .flags
+                            .intersects(ElementFlags::REST)
+                            && element_infos
+                                .at(start_length + 1)
+                                .flags
+                                .intersects(ElementFlags::VARIADIC)
+                        {
+                            // Middle of target is [...rest, ...T] and source is tuple type: if T is constrained by a fixed-size tuple we might be able to use its arity to infer T
+                            let info = get_inference_info_for_type(
+                                self,
+                                n,
+                                element_types.at(start_length + 1),
+                            );
+                            if !info.is_nil() {
+                                let type_parameter = self.inference_infos[info].type_parameter;
+                                let constraint = self.get_base_constraint_of_type(type_parameter);
+                                if !constraint.is_nil()
+                                    && is_tuple_type(self, constraint)
+                                    && !self
+                                        .type_target_tuple_type(constraint)
+                                        .combined_flags
+                                        .intersects(ElementFlags::VARIABLE)
+                                {
+                                    let implied_arity =
+                                        self.type_target_tuple_type(constraint).fixed_length;
+                                    let end_index = source_arity
+                                        - get_end_element_count(
+                                            self.type_target_tuple_type(target),
+                                            ElementFlags::FIXED,
+                                        );
+                                    let start_index = end_index - implied_arity;
+                                    if start_index >= start_length {
+                                        let trailing_types = self
+                                            .get_type_arguments(source)
+                                            .sub(start_index, end_index);
+                                        let trailing_infos = self
+                                            .type_target_tuple_type(source)
+                                            .element_infos
+                                            .sub(start_index, end_index);
+                                        let trailing_slice = self.create_tuple_type_ex(
+                                            trailing_types,
+                                            trailing_infos,
+                                            false,
+                                        );
+                                        let rest_type = self
+                                            .get_element_type_of_slice_of_tuple_type(
+                                                source,
+                                                start_length,
+                                                end_length + implied_arity,
+                                                false,
+                                                false,
+                                            );
+                                        if !rest_type.is_nil() {
+                                            self.infer_from_types(
+                                                n,
+                                                rest_type,
+                                                element_types.at(start_length),
+                                            );
+                                        }
+                                        self.infer_from_types(
+                                            n,
+                                            trailing_slice,
+                                            element_types.at(start_length + 1),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    } else if middle_length == 1
+                        && element_infos
+                            .at(start_length)
+                            .flags
+                            .intersects(ElementFlags::VARIADIC)
+                    {
+                        // Middle of target is exactly one variadic element. Infer the slice between the fixed parts in the source. If target ends in optional element(s), make a lower priority a speculative inference.
+                        let priority = if_else(
+                            element_infos
+                                .at(target_arity - 1)
+                                .flags
+                                .intersects(ElementFlags::OPTIONAL),
+                            InferencePriority::SPECULATIVE_TUPLE,
+                            InferencePriority::NONE,
+                        );
+                        let source_slice = self.slice_tuple_type(source, start_length, end_length);
+                        self.infer_with_priority(
+                            n,
+                            source_slice,
+                            element_types.at(start_length),
+                            priority,
+                        );
+                    } else if middle_length == 1
+                        && element_infos
+                            .at(start_length)
+                            .flags
+                            .intersects(ElementFlags::REST)
+                    {
+                        // Middle of target is exactly one rest element. If middle of source is not empty, infer union of middle element types.
+                        let rest_type = self.get_element_type_of_slice_of_tuple_type(
+                            source,
+                            start_length,
+                            end_length,
+                            false,
+                            false,
+                        );
+                        if !rest_type.is_nil() {
+                            self.infer_from_types(n, rest_type, element_types.at(start_length));
+                        }
+                    }
+                }
+                // Infer between ending fixed elements
+                for i in 0..end_length {
+                    let source_element_type =
+                        self.get_type_arguments(source).at(source_arity - i - 1);
+                    self.infer_from_types(
+                        n,
+                        source_element_type,
+                        element_types.at(target_arity - i - 1),
+                    );
+                }
+                return;
+            }
+            if self.is_array_type(target) {
+                self.infer_from_index_types(n, source, target);
+                return;
+            }
+        }
+        self.infer_from_properties(n, source, target);
+        self.infer_from_signatures(n, source, target, SignatureKind::CALL);
+        self.infer_from_signatures(n, source, target, SignatureKind::CONSTRUCT);
+        self.infer_from_index_types(n, source, target);
+    }
 //@@NEXT@@
 }

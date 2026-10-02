@@ -1,4 +1,5 @@
 import { file, spawn, write } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { readlinkSync } from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
@@ -1649,13 +1650,67 @@ it("an optional peer is rebound when another version of its package takes the sl
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
 });
 
+type Manifests = Record<string, Record<string, Record<string, unknown>>>;
+
+// Serves `manifests` as a registry. A version that lists `bundleDependencies` ships the
+// package.json of each of them inside its tarball.
+async function serveManifests(manifests: Manifests) {
+  const tarballs = new Map<string, Uint8Array>();
+  for (const [name, versions] of Object.entries(manifests)) {
+    for (const [version, extra] of Object.entries(versions)) {
+      const files = { "package/package.json": JSON.stringify({ name, version, ...extra }) };
+      for (const bundled of (extra.bundleDependencies ?? []) as string[]) {
+        const bundledVersion = (extra.dependencies as Record<string, string>)[bundled];
+        files[`package/node_modules/${bundled}/package.json`] = JSON.stringify({
+          name: bundled,
+          version: bundledVersion,
+          ...manifests[bundled][bundledVersion],
+        });
+      }
+      const archive = new Bun.Archive(files, { compress: "gzip" });
+      tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
+    }
+  }
+  const requests: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const { origin, pathname } = new URL(request.url);
+      requests.push(pathname);
+      const tarball = tarballs.get(pathname);
+      if (tarball) return new Response(tarball);
+      const name = pathname.slice(1);
+      const entry = manifests[name];
+      if (!entry) return new Response("not found", { status: 404 });
+      const versions: Record<string, unknown> = {};
+      for (const [version, extra] of Object.entries(entry)) {
+        versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
+      }
+      return Response.json(
+        { name, versions, "dist-tags": { latest: Object.keys(entry).at(-1) } },
+        // Like registry.npmjs.org. Within this window bun resolves from the
+        // manifest cache without going back to the registry.
+        { headers: { "cache-control": "public, max-age=300" } },
+      );
+    },
+  });
+  return {
+    url: server.url.href,
+    origin: server.url.origin,
+    requests,
+    [Symbol.dispose]() {
+      server.stop(true);
+    },
+  };
+}
+
 // https://github.com/oven-sh/bun/issues/26046
 // A required peer that nothing in the tree provides and that no published
 // version satisfies stays unresolved. The bun.lock written afterwards has to
 // load back, and resolving it again with every manifest already in the cache
 // has to finish (it used to retry the cached manifest forever).
 describe.each(["hoisted", "isolated"] as const)("peer no published version satisfies (%s linker)", linker => {
-  const manifests: Record<string, Record<string, Record<string, unknown>>> = {
+  const manifests: Manifests = {
     "has-unmet-peer": { "1.0.0": { peerDependencies: { "peer-target": "^1.0.1" } } },
     "peer-target": { "2.0.1": {} },
   };
@@ -1663,49 +1718,7 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
   const unmetPeerWarning =
     'warn: No version matching "^1.0.1" found for peer dependency "peer-target" (but package exists)';
 
-  async function serveRegistry() {
-    const tarballs = new Map<string, Uint8Array>();
-    for (const [name, versions] of Object.entries(manifests)) {
-      for (const [version, extra] of Object.entries(versions)) {
-        const archive = new Bun.Archive(
-          { "package/package.json": JSON.stringify({ name, version, ...extra }) },
-          { compress: "gzip" },
-        );
-        tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
-      }
-    }
-    const requests: string[] = [];
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const { origin, pathname } = new URL(request.url);
-        requests.push(pathname);
-        const tarball = tarballs.get(pathname);
-        if (tarball) return new Response(tarball);
-        const name = pathname.slice(1);
-        const entry = manifests[name];
-        if (!entry) return new Response("not found", { status: 404 });
-        const versions: Record<string, unknown> = {};
-        for (const [version, extra] of Object.entries(entry)) {
-          versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
-        }
-        return Response.json(
-          { name, versions, "dist-tags": { latest: Object.keys(entry).at(-1) } },
-          // Like registry.npmjs.org. Within this window bun resolves from the
-          // manifest cache without going back to the registry.
-          { headers: { "cache-control": "public, max-age=300" } },
-        );
-      },
-    });
-    return {
-      url: server.url.href,
-      origin: server.url.origin,
-      requests,
-      [Symbol.dispose]() {
-        server.stop(true);
-      },
-    };
-  }
+  const serveRegistry = () => serveManifests(manifests);
 
   function createProject(registryUrl: string, files: Record<string, string>) {
     return tempDir("unmet-peer-", {
@@ -1824,5 +1837,496 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     ({ err } = await install(String(dir), "--frozen-lockfile"));
     expect(err).not.toContain("Ignoring lockfile");
     expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+});
+
+// A package the hoister places at several paths has one slot for an optional peer, and each
+// placement can sit next to a different copy of that peer. The first placement the hoister
+// processes decides the binding and every other one dedupes without moving it, so the tree
+// an install saves is the tree it lays out. Loading bun.lock has to find that binding again
+// whichever row is printed last, so a reload builds the same tree.
+describe.each(["hoisted", "isolated"] as const)("optional peer of a package at several paths (%s linker)", linker => {
+  // plugin@2.0.0 is the package at several paths. Another plugin version holds the top level.
+  const plugin = {
+    "2.0.0": { peerDependencies: { runtime: "^1.1.0" }, peerDependenciesMeta: { runtime: { optional: true } } },
+    "2.1.0": {},
+  };
+
+  function createProject(
+    registryUrl: string,
+    dependencies: Record<string, string>,
+    files: Record<string, string> = {},
+  ) {
+    return tempDir("multi-path-optional-peer-", {
+      ...files,
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registryUrl, linker } }),
+    });
+  }
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+    return { out, err };
+  }
+
+  const lockfileOf = (cwd: string) => file(join(cwd, "bun.lock")).text();
+
+  // bun.lock path -> "name@version"
+  const rowsOf = (lockfile: string) =>
+    Object.fromEntries(Array.from(lockfile.matchAll(/^ {4}"([^"]+)": \["([^"]+)"/gm), match => [match[1], match[2]]));
+
+  // The row at `path` takes the value of the row at `from`. A new row goes last, where the
+  // deepest path is printed.
+  function setRow(lockfile: string, path: string, from: string) {
+    const value = lockfile.match(new RegExp(`^ {4}"${from}": (.*)$`, "m"))![1];
+    const existing = new RegExp(`^( {4}"${path}": ).*$`, "m");
+    return existing.test(lockfile)
+      ? lockfile.replace(existing, (_, key) => key + value)
+      : lockfile.replace(/\n {2}\}\n\}\n$/, () => `\n\n    "${path}": ${value}\n  }\n}\n`);
+  }
+  const dropRow = (lockfile: string, path: string) => lockfile.replace(new RegExp(`\\n\\n {4}"${path}": .*`), "");
+
+  // hoisted: every package directory as a bun.lock path -> "name@version".
+  // isolated: every store entry -> what each of its links resolves to.
+  async function layoutOf(cwd: string) {
+    const packageAt = async (dir: string, name: string) =>
+      `${name}@${(await file(join(dir, name, "package.json")).json()).version}`;
+    if (linker === "isolated") {
+      const store = join(cwd, "node_modules", ".bun");
+      const entries: Record<string, string[]> = {};
+      for (const entry of await readdirSorted(store)) {
+        if (entry === "node_modules") continue;
+        const links = join(store, entry, "node_modules");
+        entries[entry] = await Promise.all((await readdirSorted(links)).map(name => packageAt(links, name)));
+      }
+      return entries;
+    }
+    const packages: Record<string, string> = {};
+    async function walk(nodeModules: string, prefix: string) {
+      if (!(await exists(nodeModules))) return;
+      for (const name of await readdirSorted(nodeModules)) {
+        if (name.startsWith(".")) continue;
+        packages[prefix + name] = await packageAt(nodeModules, name);
+        await walk(join(nodeModules, name, "node_modules"), `${prefix}${name}/`);
+      }
+    }
+    await walk(join(cwd, "node_modules"), "");
+    return packages;
+  }
+
+  // `lockfile` is what `cwd` has. An install from it has to pass --frozen-lockfile and lay
+  // out the tree it prints, and a reload has to build that tree again.
+  async function expectFixedPoint(cwd: string, lockfile: string, { everyRowInstalled = true } = {}) {
+    await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+    await install(cwd, "--frozen-lockfile");
+    const layout = await layoutOf(cwd);
+    if (linker === "hoisted" && everyRowInstalled) expect(layout).toEqual(rowsOf(lockfile));
+
+    // --lockfile-only always writes, so this prints the tree a reload builds.
+    await install(cwd, "--lockfile-only");
+    expect(await lockfileOf(cwd)).toBe(lockfile);
+    return layout;
+  }
+
+  // A fresh install has to save the rows in `rows`, lay them out, and be a fixed point.
+  async function expectFreshInstall(
+    cwd: string,
+    rows: Record<string, string>,
+    options?: { everyRowInstalled: boolean },
+  ) {
+    await install(cwd);
+    const lockfile = await lockfileOf(cwd);
+    expect(rowsOf(lockfile)).toEqual(rows);
+    const layout = await layoutOf(cwd);
+    expect(await expectFixedPoint(cwd, lockfile, options)).toEqual(layout);
+  }
+
+  // host/plugin sits next to runtime@3.0.0, which plugin's peer range rejects, and is processed
+  // first. The other placement of plugin, next to `wantsPlugin`, sees the top-level
+  // runtime@1.1.0. The name of `wantsPlugin` decides which of the two rows is printed last.
+  const outOfRangeFirst = (wantsPlugin: string) => ({
+    manifests: {
+      "app-a": { "1.0.0": { dependencies: { "c-uses-runtime": "1.0.0", host: "1.0.0" } } },
+      "app-b": { "1.0.0": { dependencies: { plugin: "2.1.0", [wantsPlugin]: "1.0.0" } } },
+      "c-uses-runtime": { "1.0.0": { dependencies: { runtime: "1.1.0" } } },
+      [wantsPlugin]: { "1.0.0": { peerDependencies: { plugin: "2.0.0" } } },
+      host: { "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "3.0.0" } } },
+      plugin,
+      runtime: { "1.1.0": {}, "3.0.0": {} },
+    },
+    dependencies: { "app-a": "1.0.0", "app-b": "1.0.0" },
+    // host/plugin binds the peer to runtime@3.0.0. The other placement dedupes onto
+    // runtime@1.1.0 and leaves the binding, so nothing nests under host/plugin.
+    rows: {
+      "app-a": "app-a@1.0.0",
+      "app-b": "app-b@1.0.0",
+      "c-uses-runtime": "c-uses-runtime@1.0.0",
+      [wantsPlugin]: `${wantsPlugin}@1.0.0`,
+      host: "host@1.0.0",
+      plugin: "plugin@2.1.0",
+      runtime: "runtime@1.1.0",
+      [`${wantsPlugin}/plugin`]: "plugin@2.0.0",
+      "host/plugin": "plugin@2.0.0",
+      "host/runtime": "runtime@3.0.0",
+    },
+  });
+
+  // a-other/plugin sees the top-level runtime@1.1.0 and is processed first.
+  const inRangeFirst = {
+    manifests: {
+      "a-other": { "1.0.0": { dependencies: { plugin: "2.0.0" } } },
+      "c-uses-runtime": { "1.0.0": { dependencies: { runtime: "1.1.0" } } },
+      host: { "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "3.0.0" } } },
+      plugin,
+      runtime: { "1.1.0": {}, "3.0.0": {} },
+    },
+    dependencies: { "a-other": "1.0.0", "c-uses-runtime": "1.0.0", host: "1.0.0", plugin: "2.1.0" },
+    // a-other/plugin binds the peer to runtime@1.1.0. host/plugin cannot use the
+    // runtime@3.0.0 next to it, so the bound copy nests there.
+    rows: {
+      "a-other": "a-other@1.0.0",
+      "c-uses-runtime": "c-uses-runtime@1.0.0",
+      host: "host@1.0.0",
+      plugin: "plugin@2.1.0",
+      runtime: "runtime@1.1.0",
+      "a-other/plugin": "plugin@2.0.0",
+      "host/plugin": "plugin@2.0.0",
+      "host/runtime": "runtime@3.0.0",
+      "host/plugin/runtime": "runtime@1.1.0",
+    },
+  };
+
+  // p@1.0.0 has the optional peer f ^1.0.0 and three placements: x/p sees the top-level
+  // f@1.1.0 and is processed first, y/p sees y/f@1.0.0, and z/p sees z/f@2.0.0.
+  const twoInRangeOneOut = {
+    manifests: {
+      p: {
+        "1.0.0": { peerDependencies: { f: "^1.0.0" }, peerDependenciesMeta: { f: { optional: true } } },
+        "2.0.0": {},
+      },
+      x: { "1.0.0": { dependencies: { p: "1.0.0", f: "1.1.0" } } },
+      y: { "1.0.0": { dependencies: { p: "1.0.0", f: "1.0.0" } } },
+      z: { "1.0.0": { dependencies: { p: "1.0.0", f: "2.0.0" } } },
+      f: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {} },
+    },
+    dependencies: { x: "1.0.0", y: "1.0.0", z: "1.0.0", p: "2.0.0" },
+    // x/p binds the peer to f@1.1.0, y/p dedupes onto y/f, and z/p nests the bound copy.
+    rows: {
+      f: "f@1.1.0",
+      p: "p@2.0.0",
+      x: "x@1.0.0",
+      y: "y@1.0.0",
+      z: "z@1.0.0",
+      "x/p": "p@1.0.0",
+      "y/f": "f@1.0.0",
+      "y/p": "p@1.0.0",
+      "z/f": "f@2.0.0",
+      "z/p": "p@1.0.0",
+      "z/p/f": "f@1.1.0",
+    },
+  };
+
+  it("out-of-range copy first, its row printed last: the install saves the tree it lays out", async () => {
+    const { manifests, dependencies, rows } = outOfRangeFirst("d-wants-plugin");
+    using registry = await serveManifests(manifests);
+    using dir = createProject(registry.url, dependencies);
+
+    await expectFreshInstall(String(dir), rows);
+  });
+
+  it("out-of-range copy first, its row printed first: the install saves the tree it lays out", async () => {
+    const { manifests, dependencies, rows } = outOfRangeFirst("z-wants-plugin");
+    using registry = await serveManifests(manifests);
+    using dir = createProject(registry.url, dependencies);
+
+    await expectFreshInstall(String(dir), rows);
+  });
+
+  it("out-of-range copy first: a bun.lock that nests the in-range copy next to it keeps the copy", async () => {
+    const { manifests, dependencies, rows } = outOfRangeFirst("d-wants-plugin");
+    using registry = await serveManifests(manifests);
+    using dir = createProject(registry.url, dependencies);
+    const cwd = String(dir);
+    await install(cwd);
+
+    // What the second install of bun 1.4.0 to 1.4.2 wrote. The nested row is the binding.
+    const nested = setRow(await lockfileOf(cwd), "host/plugin/runtime", "runtime");
+    expect(rowsOf(nested)).toEqual({ ...rows, "host/plugin/runtime": "runtime@1.1.0" });
+    await write(join(cwd, "bun.lock"), nested);
+    await expectFixedPoint(cwd, nested);
+  });
+
+  it("in-range copy first: the placement next to the out-of-range copy nests the bound one", async () => {
+    const { manifests, dependencies, rows } = inRangeFirst;
+    using registry = await serveManifests(manifests);
+    using dir = createProject(registry.url, dependencies);
+
+    await expectFreshInstall(String(dir), rows);
+  });
+
+  it("in-range copy first: a bun.lock with no nested copy keeps the binding its rows show", async () => {
+    const { manifests, dependencies, rows } = inRangeFirst;
+    using registry = await serveManifests(manifests);
+    using dir = createProject(registry.url, dependencies);
+    const cwd = String(dir);
+    await install(cwd);
+
+    // What the project has when a-other was added after host/plugin had bound the peer (bun
+    // 1.3.14 wrote this). host/plugin has no copy of its own next to a runtime the range
+    // rejects, so the peer is bound to that runtime, and a-other/plugin must not move it.
+    const hostBoundFirst = dropRow(await lockfileOf(cwd), "host/plugin/runtime");
+    const { "host/plugin/runtime": _, ...rowsWithoutNested } = rows;
+    expect(rowsOf(hostBoundFirst)).toEqual(rowsWithoutNested);
+    await write(join(cwd, "bun.lock"), hostBoundFirst);
+    await expectFixedPoint(cwd, hostBoundFirst);
+  });
+
+  it("three in-range copies: the entry the peer edge holds keeps its version", async () => {
+    using registry = await serveManifests({
+      plugin,
+      q: { "1.0.0": { dependencies: { runtime: "1.1.0" } } },
+      xhost: { "1.0.0": { dependencies: { plugin: "2.1.0", runtime: "1.2.0", zdep: "2.0.0" } } },
+      yhost: { "1.0.0": { dependencies: { plugin: "2.1.0", runtime: "1.3.0", zdep: "2.0.0" } } },
+      zdep: { "1.0.0": {}, "2.0.0": { dependencies: { plugin: "2.0.0" } } },
+      runtime: { "1.1.0": {}, "1.2.0": {}, "1.3.0": {} },
+    });
+    using dir = createProject(registry.url, {
+      plugin: "2.0.0",
+      q: "1.0.0",
+      xhost: "1.0.0",
+      yhost: "1.0.0",
+      zdep: "1.0.0",
+    });
+
+    // The top-level plugin is processed first, and its own peer edge holds the top-level
+    // runtime entry. The placements under xhost and yhost must not turn that entry into the
+    // version next to them: q, xhost and yhost each pin one.
+    await expectFreshInstall(String(dir), {
+      plugin: "plugin@2.0.0",
+      q: "q@1.0.0",
+      runtime: "runtime@1.1.0",
+      xhost: "xhost@1.0.0",
+      yhost: "yhost@1.0.0",
+      zdep: "zdep@1.0.0",
+      "xhost/plugin": "plugin@2.1.0",
+      "xhost/runtime": "runtime@1.2.0",
+      "xhost/zdep": "zdep@2.0.0",
+      "yhost/plugin": "plugin@2.1.0",
+      "yhost/runtime": "runtime@1.3.0",
+      "yhost/zdep": "zdep@2.0.0",
+      "xhost/zdep/plugin": "plugin@2.0.0",
+      "yhost/zdep/plugin": "plugin@2.0.0",
+    });
+  });
+
+  it("two in-range copies and an out-of-range one: the first placement's copy is the one nested", async () => {
+    const { manifests, dependencies, rows } = twoInRangeOneOut;
+    using registry = await serveManifests(manifests);
+    using dir = createProject(registry.url, dependencies);
+
+    await expectFreshInstall(String(dir), rows);
+  });
+
+  it("two in-range copies and an out-of-range one: a bun.lock that nests the other copy keeps it", async () => {
+    const { manifests, dependencies, rows } = twoInRangeOneOut;
+    using registry = await serveManifests(manifests);
+    using dir = createProject(registry.url, dependencies);
+    const cwd = String(dir);
+    await install(cwd);
+
+    // bun 1.4.0 to 1.4.2 moved the binding to the copy the last in-range placement saw and
+    // nested that one. The nested row is the binding, so x/p must not move it.
+    const lastBound = setRow(await lockfileOf(cwd), "z/p/f", "y/f");
+    expect(rowsOf(lastBound)).toEqual({ ...rows, "z/p/f": "f@1.0.0" });
+    await write(join(cwd, "bun.lock"), lastBound);
+    await expectFixedPoint(cwd, lastBound);
+  });
+
+  it("in-range copies only: nothing nests, and the first placement's copy is the binding", async () => {
+    using registry = await serveManifests({
+      host: { "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "1.2.0" } } },
+      "a-wrap": { "1.0.0": { dependencies: { "d-other": "1.0.0" } } },
+      "d-other": { "1.0.0": { dependencies: { plugin: "2.0.0" } } },
+      plugin,
+      runtime: { "1.1.0": {}, "1.2.0": {} },
+    });
+    using dir = createProject(registry.url, { "a-wrap": "1.0.0", host: "1.0.0", plugin: "2.1.0", runtime: "1.1.0" });
+    const cwd = String(dir);
+
+    await expectFreshInstall(cwd, {
+      "a-wrap": "a-wrap@1.0.0",
+      "d-other": "d-other@1.0.0",
+      host: "host@1.0.0",
+      plugin: "plugin@2.1.0",
+      runtime: "runtime@1.1.0",
+      "d-other/plugin": "plugin@2.0.0",
+      "host/plugin": "plugin@2.0.0",
+      "host/runtime": "runtime@1.2.0",
+    });
+
+    // host/plugin is processed first, next to runtime@1.2.0. d-other/plugin is printed first
+    // and walks to the top-level runtime@1.1.0; it must not take the binding when the file
+    // is written, and loading must end on the same one.
+    const { dependencies, packages } = install_test_helpers.parseLockfile(cwd);
+    const peer = dependencies.find(dependency => dependency.name === "runtime" && dependency.behavior.peer);
+    expect(packages[peer.package_id]).toMatchObject({ name: "runtime", resolution: { value: "1.2.0" } });
+  });
+
+  it("a bundled placement next to an in-range copy does not move the binding", async () => {
+    using registry = await serveManifests({
+      host: { "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "3.0.0" } } },
+      kbundle: {
+        "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "1.1.0" }, bundleDependencies: ["plugin", "runtime"] },
+      },
+      plugin,
+      runtime: { "1.1.0": {}, "3.0.0": {} },
+    });
+    using dir = createProject(registry.url, { host: "1.0.0", kbundle: "1.0.0", plugin: "2.1.0" });
+
+    // host/plugin is processed first and binds the peer to runtime@3.0.0. The copy kbundle
+    // ships next to its own plugin does not move the binding, when built or when loaded.
+    await expectFreshInstall(String(dir), {
+      host: "host@1.0.0",
+      kbundle: "kbundle@1.0.0",
+      plugin: "plugin@2.1.0",
+      runtime: "runtime@3.0.0",
+      "host/plugin": "plugin@2.0.0",
+      "kbundle/plugin": "plugin@2.0.0",
+      "kbundle/runtime": "runtime@1.1.0",
+    });
+  });
+
+  it("a bundled placement whose own peer edge holds the copy at the bundle's root keeps it", async () => {
+    using registry = await serveManifests({
+      xhost: { "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "1.2.0" } } },
+      kbundle: {
+        "1.0.0": { dependencies: { plugin: "2.0.0", zinner: "1.0.0" }, bundleDependencies: ["plugin", "zinner"] },
+      },
+      zinner: { "1.0.0": { dependencies: { runtime: "1.1.0" } } },
+      plugin,
+      runtime: { "1.1.0": {}, "1.2.0": {} },
+    });
+    using dir = createProject(registry.url, { xhost: "1.0.0", kbundle: "1.0.0", plugin: "2.1.0" });
+
+    // kbundle/plugin is processed first and ends up bound to the runtime@1.1.0 zinner brings,
+    // which its peer edge places at kbundle/runtime. The xhost/plugin row is printed last and
+    // walks to the top-level runtime@1.2.0; loading must not take that one and put it at
+    // kbundle/runtime. bun does not install what a bundled package depends on, so the rows
+    // under kbundle have no directory.
+    await expectFreshInstall(
+      String(dir),
+      {
+        kbundle: "kbundle@1.0.0",
+        plugin: "plugin@2.1.0",
+        runtime: "runtime@1.2.0",
+        xhost: "xhost@1.0.0",
+        "kbundle/plugin": "plugin@2.0.0",
+        "kbundle/runtime": "runtime@1.1.0",
+        "kbundle/zinner": "zinner@1.0.0",
+        "xhost/plugin": "plugin@2.0.0",
+      },
+      { everyRowInstalled: false },
+    );
+  });
+
+  it("a top-level placement whose own peer edge holds the top-level copy keeps it next to a bundle", async () => {
+    using registry = await serveManifests({
+      w: { "1.0.0": { dependencies: { runtime: "1.2.0" } } },
+      kbundle: {
+        "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "1.1.0" }, bundleDependencies: ["plugin", "runtime"] },
+      },
+      plugin,
+      runtime: { "1.1.0": {}, "1.2.0": {} },
+    });
+    using dir = createProject(registry.url, { plugin: "2.0.0", w: "1.0.0", kbundle: "1.0.0" });
+
+    // The top-level plugin is processed first and ends up bound to the runtime@1.2.0 w
+    // brings, which its peer edge places at the top level. The kbundle/plugin row is printed
+    // last and walks to the runtime@1.1.0 kbundle ships; loading must not take that one and
+    // put it at the top level.
+    await expectFreshInstall(String(dir), {
+      kbundle: "kbundle@1.0.0",
+      plugin: "plugin@2.0.0",
+      runtime: "runtime@1.2.0",
+      w: "w@1.0.0",
+      "kbundle/plugin": "plugin@2.0.0",
+      "kbundle/runtime": "runtime@1.1.0",
+    });
+  });
+
+  it("a peer that only a later, bundled placement can bind: the top-level copy gets its dependencies", async () => {
+    using registry = await serveManifests({
+      kbundle: {
+        "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "1.1.0" }, bundleDependencies: ["plugin", "runtime"] },
+      },
+      plugin,
+      runtime: { "1.1.0": { dependencies: { leaf: "1.0.0" } } },
+      leaf: { "1.0.0": {} },
+    });
+    using dir = createProject(registry.url, { plugin: "2.0.0", kbundle: "1.0.0" });
+
+    // The top-level plugin is processed first and finds no runtime. kbundle/plugin then binds
+    // the peer to the runtime kbundle ships, which also puts it next to the top-level plugin.
+    // That copy has to come with what it depends on. The rows under kbundle that are not
+    // bundled have no directory.
+    await expectFreshInstall(
+      String(dir),
+      {
+        kbundle: "kbundle@1.0.0",
+        leaf: "leaf@1.0.0",
+        plugin: "plugin@2.0.0",
+        runtime: "runtime@1.1.0",
+        "kbundle/leaf": "leaf@1.0.0",
+        "kbundle/plugin": "plugin@2.0.0",
+        "kbundle/runtime": "runtime@1.1.0",
+      },
+      { everyRowInstalled: false },
+    );
+  });
+
+  it("a file: package bound at the first placement is not nested again next to a copy the range accepts", async () => {
+    using registry = await serveManifests({ dep: { "1.0.0": {} } });
+    const optionalPeerOnDep = { peerDependencies: { dep: "*" }, peerDependenciesMeta: { dep: { optional: true } } };
+    using dir = createProject(
+      registry.url,
+      { dep: "file:./external/dep", local: "file:./packages/local", other: "file:./packages/other" },
+      {
+        "external/dep/package.json": JSON.stringify({ name: "dep", version: "9.9.9" }),
+        "packages/local/package.json": JSON.stringify({ name: "local", version: "0.0.0", ...optionalPeerOnDep }),
+        "packages/other/package.json": JSON.stringify({
+          name: "other",
+          version: "0.0.0",
+          dependencies: { dep: "1.0.0", local: "file:../local" },
+        }),
+      },
+    );
+    const cwd = String(dir);
+
+    // The top-level `local` binds its peer to the top-level file: package. other/local sits
+    // next to dep@1.0.0, which the range accepts, so it dedupes. The saved tree has to dedupe
+    // there like the installed tree does, and not list a second copy of the file: package.
+    const rows = {
+      dep: "dep@file:external/dep",
+      local: "local@file:packages/local",
+      other: "other@file:packages/other",
+      "other/dep": "dep@1.0.0",
+      "other/local": "local@file:packages/local",
+    };
+    await install(cwd);
+    expect(rowsOf(await lockfileOf(cwd))).toEqual(rows);
+
+    await install(cwd, "--lockfile-only");
+    expect(rowsOf(await lockfileOf(cwd))).toEqual(rows);
+
+    await install(cwd, "--frozen-lockfile");
+    expect(rowsOf(await lockfileOf(cwd))).toEqual(rows);
   });
 });

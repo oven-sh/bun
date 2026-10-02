@@ -10,6 +10,10 @@ bitflags! {
         const HAS_BACKPRESSURE                = 1 << 4;
         /// `ref()` was called; `on_data` must not unref the idle connection.
         const KEEP_ALIVE_REQUESTED            = 1 << 5;
+        /// The connection became established during the current read; the
+        /// `onconnect` callback is delivered when that read has been fully
+        /// processed, and only if the connection is still established then.
+        const ON_CONNECT_PENDING              = 1 << 6;
     }
 }
 

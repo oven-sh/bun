@@ -246,3 +246,13 @@
 10-02_15:07:08 anon=593MB pids=56 load=313.79 top=cachegrind-amd6:322MB
 10-02_15:07:41 anon=293MB pids=52 load=338.57 top=cachegrind-amd6:152MB
 10-02_15:08:15 anon=862MB pids=60 load=403.15 top=cachegrind-amd6:339MB
+10-02_15:08:48 anon=290MB pids=51 load=408.19 top=cachegrind-amd6:314MB
+10-02_15:09:19 anon=472MB pids=65 load=355.54 top=rustc:456MB
+10-02_15:09:49 anon=1272MB pids=47 load=314.35 top=cachegrind-amd6:290MB
+10-02_15:10:19 anon=567MB pids=59 load=337.87 top=cachegrind-amd6:320MB
+10-02_15:10:50 anon=1350MB pids=50 load=322.31 top=cachegrind-amd6:382MB
+10-02_15:11:21 anon=682MB pids=66 load=316.85 top=cachegrind-amd6:321MB
+10-02_15:11:51 anon=387MB pids=55 load=294.45 top=cachegrind-amd6:303MB
+10-02_15:12:22 anon=1116MB pids=65 load=288.46 top=cachegrind-amd6:334MB
+10-02_15:12:52 anon=367MB pids=67 load=274.21 top=cachegrind-amd6:312MB
+10-02_15:13:23 anon=1392MB pids=116 load=281.34 top=cachegrind-amd6:284MB

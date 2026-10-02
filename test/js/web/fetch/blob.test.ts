@@ -712,21 +712,21 @@ describe("consuming a slice's stream after the Blobs were collected", () => {
     expect(await body.text()).toBe(sliced);
   });
 
-  test("slice of a slice", async () => {
-    const stream = await afterBlobsAreCollected(track => {
-      const parent = track(new Blob(parts));
-      const outer = track(parent.slice(1));
-      return track(outer.slice(start - 1, end - 1)).stream();
-    });
-    expect(await Bun.readableStreamToText(stream)).toBe(sliced);
-  });
+  // A prefix starts at the store's first byte and a suffix ends at its last:
+  // the offset alone, or the end alone, does not tell them from the whole store.
+  const windows: [string, (parent: Blob, track: Track) => Blob, string][] = [
+    ["slice(0, 7), a prefix", parent => parent.slice(0, 7), 'xx"abc"'],
+    ["slice(0, 7).slice(0, 2), a prefix of a prefix", (parent, track) => track(parent.slice(0, 7)).slice(0, 2), "xx"],
+    ["slice(7), a suffix", parent => parent.slice(7), "héllo wörld ✓"],
+    ["slice(1).slice(1, 6), a slice of a slice", (parent, track) => track(parent.slice(1)).slice(1, 6), sliced],
+    ["slice(0, 0), empty at the start", parent => parent.slice(0, 0), ""],
+    ["slice(2, 2), empty in the middle", parent => parent.slice(2, 2), ""],
+    ["slice(0), the whole Blob", parent => parent.slice(0), parts.join("")],
+  ];
 
-  test("empty slice", async () => {
-    const stream = await afterBlobsAreCollected(track => {
-      const parent = track(new Blob(parts));
-      return track(parent.slice(start, start)).stream();
-    });
-    expect(await Bun.readableStreamToBytes(stream)).toHaveLength(0);
+  test.each(windows)("%s", async (_, makeWindow, expected) => {
+    const stream = await afterBlobsAreCollected(track => track(makeWindow(track(new Blob(parts)), track)).stream());
+    expect(await Bun.readableStreamToText(stream)).toBe(expected);
   });
 
   // An unsliced Blob views its whole store, so handing the store over is fine.

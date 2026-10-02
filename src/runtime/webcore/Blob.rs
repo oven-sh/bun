@@ -6041,11 +6041,9 @@ impl Any {
         let store::Data::Bytes(bytes) = &s.data else {
             return;
         };
-        // `to_internal_blob` moves the store's whole buffer out, so the Blob
-        // must view all of it: a `slice()` shares its parent's store and only
-        // narrows `offset`/`size`, and it can be the store's last reference
-        // once the parent has been collected.
-        if !s.has_one_ref() || blob.offset.get() != 0 || blob.size.get() < bytes.len() {
+        // A slice can hold the last reference to its parent's store.
+        let views_whole_store = blob.offset.get() == 0 && blob.size.get() >= bytes.len();
+        if !s.has_one_ref() || !views_whole_store {
             return;
         }
         let internal = Store::data_mut(s).as_bytes_mut().to_internal_blob();

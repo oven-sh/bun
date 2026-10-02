@@ -172,7 +172,7 @@ impl<'a> Checker<'a> {
             if !a.type_node(declaration).is_nil() {
                 let symbol_name = self.symbol_to_string(symbol);
                 self.error(
-                    a.sym(symbol).value_declaration,
+                    declaration,
                     diagnostics::X_0_IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_TYPE_ANNOTATION,
                     &[Arg::Str(&symbol_name)],
                 );
@@ -185,7 +185,7 @@ impl<'a> Checker<'a> {
             {
                 let symbol_name = self.symbol_to_string(symbol);
                 self.error(
-                    a.sym(symbol).value_declaration,
+                    declaration,
                     diagnostics::X_0_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_INITIALIZER,
                     &[Arg::Str(&symbol_name)],
                 );

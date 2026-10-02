@@ -216,7 +216,8 @@ pub struct VirtualMachine {
     /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
-    pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
+    /// `Bun.plugin()` was called in the current global.
+    pub has_plugins: bool,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -509,7 +510,7 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__hasPluginRunner(vm: *mut VirtualMachine) -> bool {
     // SAFETY: `vm` is the live per-thread VM the C++ global object holds.
-    unsafe { (*vm).plugin_runner.is_some() }
+    unsafe { (*vm).has_plugins }
 }
 
 #[unsafe(no_mangle)]
@@ -5258,7 +5259,7 @@ impl VirtualMachine {
 
         // Bare/`node:` builtins: answer from the alias table before paying for UTF-8 copies and the resolver.
         // (Alias names are ASCII, so the Latin-1 bytes are the UTF-8 bytes whenever they can match.)
-        if jsc_vm.plugin_runner.is_none() && specifier.is_8bit() {
+        if !jsc_vm.has_plugins && specifier.is_8bit() {
             if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
                 specifier.latin1(),
                 bun_ast::Target::Bun,
@@ -5277,7 +5278,7 @@ impl VirtualMachine {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
-        if jsc_vm.plugin_runner.is_some() {
+        if jsc_vm.has_plugins {
             use bun_bundler::transpiler::PluginRunner;
             let spec = specifier_utf8.slice();
             if PluginRunner::could_be_plugin(spec) {
@@ -5818,10 +5819,8 @@ impl VirtualMachine {
         self.main_hash = 0;
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
-        // The finished file's plugins are dropped with its global; the next
-        // `Bun.plugin()` call reinstalls the runner against the new global.
-        self.transpiler.linker.plugin_runner = None;
-        self.plugin_runner = None;
+        // The finished file's plugins are dropped with its global.
+        self.has_plugins = false;
 
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);

@@ -1114,37 +1114,108 @@ it.concurrent("build.module() of a module whose import() is still loading its de
   });
 });
 
-// The loader asked for a path that these had resolved to be resolved again, so onResolve was fed its own results.
-describe.concurrent("onResolve is asked once about", () => {
-  it.each([
-    ["import()", `console.log((await import("./a.mjs")).from);`],
-    ["import.meta.require()", `console.log(import.meta.require("./a.mjs").from);`],
-  ])("%s", async (_, source) => {
-    using dir = tempDir("plugin-onresolve-once", {
-      "a.mjs": `export const from = "a.mjs";`,
-      "b.mjs": `export const from = "b.mjs";`,
-      "c.mjs": `export const from = "c.mjs";`,
-      "d.mjs": `export const from = "d.mjs";`,
-      "plugin.ts": `
-        import { basename, join } from "node:path";
-        const next = { "a.mjs": "b.mjs", "b.mjs": "c.mjs", "c.mjs": "d.mjs" };
-        Bun.plugin({
-          name: "redirect",
-          setup(build) {
-            build.onResolve({ filter: /[abc]\\.mjs$/ }, ({ path }) => ({ path: join(import.meta.dir, next[basename(path)]) }));
-          },
-        });
-      `,
-      "entry.ts": source,
-    });
+// The loader asked for a path that import() or require() had resolved to be resolved again, and the transpiler put every
+// specifier it could read through onResolve before the code ran. Either way onResolve was fed its own results.
+describe.concurrent("onResolve", () => {
+  const files = {
+    "a.mjs": `export const from = "a.mjs";`,
+    "b.mjs": `export const from = "b.mjs";`,
+    "c.mjs": `export const from = "c.mjs";`,
+    "d.mjs": `export const from = "d.mjs";`,
+    "a.cjs": `exports.from = "a.cjs";`,
+    "b.cjs": `exports.from = "b.cjs";`,
+    "c.cjs": `exports.from = "c.cjs";`,
+    "plugin.ts": `
+      import { basename, extname, join } from "node:path";
+      const next = { a: "b", b: "c", c: "d" };
+      Bun.plugin({
+        name: "redirect",
+        setup(build) {
+          build.onResolve({ filter: /[\\\\/][abc]\\.[cm]js$/ }, ({ path }) => {
+            console.log("onResolve", basename(path));
+            return { path: join(import.meta.dir, next[basename(path, extname(path))] + extname(path)) };
+          });
+          build.onResolve({ filter: /\\.virtual$/ }, ({ path }) => {
+            console.log("onResolve", basename(path));
+            return { path: "from " + basename(path), namespace: "virtual" };
+          });
+          build.onResolve({ filter: /\\.throws$/ }, () => {
+            throw new Error("from onResolve");
+          });
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, ({ path }) => ({
+            contents: "export const from = " + JSON.stringify(path) + ";",
+            loader: "js",
+          }));
+        },
+      });
+    `,
+  };
+  async function run(name: string, source: string) {
+    using dir = tempDir("plugin-onresolve-once", { ...files, [name]: source });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--preload", "./plugin.ts", "entry.ts"],
+      cmd: [bunExe(), "--preload", "./plugin.ts", name],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "b.mjs\n", stderr: "", exitCode: 0 });
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  it.each([
+    ["import()", "entry.mjs", `console.log((await import("./a.mjs")).from);`, "a.mjs", "b.mjs"],
+    ["an import statement", "entry.mjs", `import { from } from "./a.mjs"; console.log(from);`, "a.mjs", "b.mjs"],
+    [
+      "export from",
+      "entry.mjs",
+      `export { from } from "./a.mjs"; import * as self from "./entry.mjs"; console.log(self.from);`,
+      "a.mjs",
+      "b.mjs",
+    ],
+    ["import.meta.require()", "entry.mjs", `console.log(import.meta.require("./a.mjs").from);`, "a.mjs", "b.mjs"],
+    ["require() of an ES module", "entry.cjs", `console.log(require("./a.mjs").from);`, "a.mjs", "b.mjs"],
+    ["require() of a CommonJS module", "entry.cjs", `console.log(require("./a.cjs").from);`, "a.cjs", "b.cjs"],
+    ["module.require()", "entry.cjs", `console.log(module.require("./a.cjs").from);`, "a.cjs", "b.cjs"],
+    [
+      "require.resolve()",
+      "entry.cjs",
+      `console.log(require("node:path").basename(require.resolve("./a.cjs")));`,
+      "a.cjs",
+      "b.cjs",
+    ],
+  ])("is asked once by %s", async (_, name, source, asked, loaded) => {
+    expect(await run(name, source)).toEqual({ stdout: ["onResolve " + asked, loaded], stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    ["an import statement", "entry.mjs", `import { from } from "./x.virtual"; console.log(from);`, "from x.virtual"],
+    ["import()", "entry.mjs", `console.log((await import("./x.virtual")).from);`, "from x.virtual"],
+    ["require()", "entry.cjs", `console.log(require("./x.virtual").from);`, "from x.virtual"],
+    ["module.require()", "entry.cjs", `console.log(module.require("./x.virtual").from);`, "from x.virtual"],
+    ["require.resolve()", "entry.cjs", `console.log(require.resolve("./x.virtual"));`, "virtual:from x.virtual"],
+  ])("can move what %s asks for into a namespace", async (_, name, source, expected) => {
+    expect(await run(name, source)).toEqual({ stdout: ["onResolve x.virtual", expected], stderr: "", exitCode: 0 });
+  });
+
+  it("is not asked about a require() that does not run", async () => {
+    const source = `
+      if (process.env.NOT_SET) require("./a.cjs");
+      function notCalled() { return require.resolve("./b.cjs"); }
+      console.log("done");
+    `;
+    expect(await run("entry.cjs", source)).toEqual({ stdout: ["done"], stderr: "", exitCode: 0 });
+  });
+
+  it("throws where the require() is", async () => {
+    const source = `
+      console.log("before");
+      try { require("./x.throws"); } catch (error) { console.log("caught", error.message); }
+    `;
+    expect(await run("entry.cjs", source)).toEqual({
+      stdout: ["before", "caught from onResolve"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

@@ -3561,24 +3561,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
     }
 
-    // The transpiler has put a static import through onResolve already (Linker::link) and printed what that gave, so
-    // a key in a namespace that has an onLoad handler is final. The filesystem resolver would not find it.
-    //
-    // FIXME(module-loader): this ignores the plugin's filter, and bypasses any onResolve handler for an import that
-    // is written as "ns:..." in the source.
-    if (!globalObject->onLoadPlugins.namespaces.isEmpty()) {
-        if (auto colon = keyString.find(':'); colon != WTF::notFound && !(colon == 1 && isASCIIAlpha(keyString[0]))) {
-            // colon == 1 with a leading ASCII letter is a Windows drive
-            // ("C:\\..."), never a plugin namespace.
-            auto ns = keyString.left(colon);
-            for (const auto& registered : globalObject->onLoadPlugins.namespaces) {
-                if (registered == ns) {
-                    return Identifier::fromString(vm, keyString);
-                }
-            }
-        }
-    }
-
     ErrorableString res;
     BunString keyZ = Bun::toString(keyString);
     BunString referrerZ = Bun::toString(referrerString);

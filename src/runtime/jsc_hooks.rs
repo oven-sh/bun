@@ -4215,11 +4215,11 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     'transpile_async: {
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        let (has_loaded, is_in_preload, plugin_runner_is_none, store_enabled) = unsafe {
+        let (has_loaded, is_in_preload, has_plugins, store_enabled) = unsafe {
             (
                 (*jsc_vm).has_loaded,
                 (*jsc_vm).is_in_preload,
-                (*jsc_vm).plugin_runner.is_none(),
+                (*jsc_vm).has_plugins,
                 (*jsc_vm).transpiler_store.enabled,
             )
         };
@@ -4230,7 +4230,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             && !lr.is_main
             // Plugins make this complicated.
             // TODO: allow running concurrently when no onLoad handlers match a plugin.
-            && plugin_runner_is_none
+            && !has_plugins
             && store_enabled
             // With the Node compile cache enabled, transpile on-thread so the
             // fetch hook sees every module.
@@ -4437,8 +4437,6 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     // launder provenance through a shared ref and the `&mut *jsc_vm` /
     // transpiler writes below would be UB under Stacked Borrows.
     let jsc_vm: *mut VirtualMachine = global.bun_vm_ptr();
-    // Note: spec asserted `jsc_vm.plugin_runner != null` then dropped the
-    // assert ("not required for build.module()") — keep parity (no assert).
 
     let specifier_slice = specifier_str.to_utf8();
     let specifier = specifier_slice.slice();

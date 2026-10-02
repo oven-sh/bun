@@ -251,7 +251,7 @@ unsafe extern "C" fn Bun__runVirtualModule(
     specifier_ptr: *const bun_core::String,
 ) -> JSValue {
     jsc::mark_binding();
-    if global.bun_vm().plugin_runner.is_none() {
+    if !global.bun_vm().has_plugins {
         return JSValue::ZERO;
     }
 

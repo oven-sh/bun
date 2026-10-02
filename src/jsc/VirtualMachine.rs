@@ -1500,11 +1500,11 @@ impl VirtualMachine {
         unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
     }
 
-    /// Maps the static heap that the executable's build created for its main VM (`JSC::StaticHeap`). Must run before
-    /// that VM exists.
-    fn map_static_heap(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+    /// Hands the executable's machine code and static heap (if it has any) to JSC, for every VM of the process. Must run
+    /// before the main VM exists.
+    fn use_aot_image(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
         unsafe extern "C" {
-            fn Bun__StaticHeap__map(bytes: *const u8, len: usize, fd: i32, offset_in_file: i64);
+            fn Bun__AOT__useImage(bytes: *const u8, len: usize, fd: i32, offset_in_file: i64);
         }
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| {
@@ -1515,25 +1515,7 @@ impl VirtualMachine {
             }
             let (fd, offset_in_file) = graph.aot_image_file().unwrap_or((-1, 0));
             // SAFETY: `image` is a mmapped process-lifetime span, and `fd` (if any) stays open as long.
-            unsafe { Bun__StaticHeap__map(image.as_ptr(), image.len(), fd, offset_in_file) };
-        });
-    }
-
-    /// Hand the executable's machine code (if it has any) to JSC, for every VM of the process.
-    fn install_aot_image(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
-        unsafe extern "C" {
-            fn Bun__AOT__registerImage(bytes: *const u8, len: usize, fd: i32, offset_in_file: i64);
-        }
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
-            let image = graph.aot_image();
-            // The C++ side decides whether to use it (`JSC::Options::useAOT()`).
-            if image.is_empty() {
-                return;
-            }
-            let (fd, offset_in_file) = graph.aot_image_file().unwrap_or((-1, 0));
-            // SAFETY: `image` is a mmapped process-lifetime span, and `fd` (if any) stays open as long.
-            unsafe { Bun__AOT__registerImage(image.as_ptr(), image.len(), fd, offset_in_file) };
+            unsafe { Bun__AOT__useImage(image.as_ptr(), image.len(), fd, offset_in_file) };
         });
     }
 
@@ -3340,9 +3322,7 @@ impl VirtualMachine {
         unsafe { (*vm).regular_event_loop.ensure_waker() };
         if opts.is_main_thread {
             if let Some(graph) = standalone_module_graph() {
-                Self::map_static_heap(graph);
-                // Before the first realm: its built-in functions have code in the image.
-                Self::install_aot_image(graph);
+                Self::use_aot_image(graph);
             }
         }
         // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into

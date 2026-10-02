@@ -535,8 +535,6 @@ extern "C" void Bun__StaticHeap__build(const uint8_t* strings, size_t stringsSiz
     append(ctx, image.span().data(), image.size());
 }
 
-static bool s_tablesOfImageAreAtTheirAddress;
-
 static int openExecutable()
 {
 #if OS(DARWIN)
@@ -563,47 +561,45 @@ extern "C" bool Bun__StaticHeap__stringTableInImage(const uint8_t* bytes, size_t
     return true;
 }
 
-// `bytes` is the image of the code and the data that follows it. Must be called on the main thread, before it has a VM.
+// `bytes` is the image of the code and the static heap that follows it. On the main thread, before it has a VM.
 // `fileDescriptor`, `offsetInFile`: the file that `bytes` is mapped from, and the offset of `bytes` in it. A negative
 // descriptor means the executable's own file.
-extern "C" void Bun__StaticHeap__map(const uint8_t* bytes, size_t length, int fileDescriptor, int64_t offsetInFile)
+extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int fileDescriptor, int64_t offsetInFile)
 {
 #if OS(DARWIN) || OS(LINUX)
-    bool verbose = !!getenv("BUN_AOT_VERBOSE");
-    auto failed = [&](const char* why) {
-        if (verbose)
-            fprintf(stderr, "[aot] not using the static heap: %s\n", why);
-    };
-    if (!JSC::Options::useAOT())
-        return failed("useAOT is off");
-    auto sizeOfCodeImage = JSC::aotImageSize({ bytes, length });
-    if (!sizeOfCodeImage || *sizeOfCodeImage >= length)
-        return failed("there is none");
-    std::span<const uint8_t> image { bytes + *sizeOfCodeImage, length - *sizeOfCodeImage };
+    const char* verbose = getenv("BUN_AOT_VERBOSE");
     bool isInExecutable = fileDescriptor < 0;
-    auto fileOffset = isInExecutable ? offsetInExecutableFile(image.data()) : std::optional<off_t>(offsetInFile + static_cast<off_t>(*sizeOfCodeImage));
-    if (!fileOffset || *fileOffset % static_cast<off_t>(WTF::pageSize()))
-        return failed("it is not on a page boundary of its file");
-    int fd = isInExecutable ? openExecutable() : fileDescriptor;
-    if (fd < 0)
-        return failed("cannot open the executable");
-    // The static heap refers to the image's metadata about the code by address. (Not to the code: Bun__AOT__registerImage.)
-    using Region = bmalloc::StaticRegion;
-    auto codeRange = JSC::aotImageCodeRange({ bytes, length });
-    off_t offsetOfCodeImage = *fileOffset - static_cast<off_t>(*sizeOfCodeImage);
-    bool ok = codeRange && !(codeRange->first % WTF::pageSize())
-        && Region::map(Region::Arena::Image, fd, offsetOfCodeImage, codeRange->first);
-    s_tablesOfImageAreAtTheirAddress = ok;
-    ok = ok && JSC::StaticHeap::map(image, fd, *fileOffset);
-    if (isInExecutable)
-        close(fd);
-    if (!ok)
-        return failed("it is for another build of the engine, or its place is taken, or the thread has atoms");
-    if (verbose)
-        fprintf(stderr, "[aot] static heap: %zu bytes\n", image.size());
+    if (isInExecutable) {
+        auto offset = offsetInExecutableFile(bytes);
+        fileDescriptor = offset ? openExecutable() : -1;
+        offsetInFile = offset.value_or(0);
+    }
+    const char* cannotOpen = "cannot find it in the executable's file";
+    JSC::UseOfAOTFile use = fileDescriptor >= 0 ? JSC::useAOTFile({ bytes, length }, fileDescriptor, offsetInFile) : JSC::UseOfAOTFile { cannotOpen, cannotOpen };
+    if (isInExecutable && fileDescriptor >= 0)
+        close(fileDescriptor);
+    if (!verbose)
+        return;
+    if (use.whyNoStaticHeap)
+        fprintf(stderr, "[aot] not using the static heap: %s\n", use.whyNoStaticHeap);
+    else
+        fprintf(stderr, "[aot] static heap: %zu bytes\n", use.sizeOfStaticHeap);
+    if (use.whyNoImage) {
+        fprintf(stderr, "[aot] not using the image: %s\n", use.whyNoImage);
+        return;
+    }
+    fprintf(stderr, "[aot] image: %zu bytes, %zu of code at %p, %u regular expressions\n", length, use.sizeOfCode, use.code, JSC::aotImageNumberOfRegExps({ bytes, length }).value_or(0));
+    if (!strcmp(verbose, "2") && use.sizeOfCode > 4096) {
+        // Finds the copies of the stubs by scanning all of the code. The code starts with one.
+        auto* start = static_cast<const uint8_t*>(use.code);
+        for (auto* at = start; (at = static_cast<const uint8_t*>(memmem(at, start + use.sizeOfCode - at, start, 512))); at += 512)
+            fprintf(stderr, "[aot] stubs at image+0x%zx\n", static_cast<size_t>(at - start));
+    }
 #else
     UNUSED_PARAM(bytes);
     UNUSED_PARAM(length);
+    UNUSED_PARAM(fileDescriptor);
+    UNUSED_PARAM(offsetInFile);
 #endif
 }
 
@@ -618,78 +614,6 @@ extern "C" int64_t Bun__AOT__offsetInCode(const void* address)
 #else
     UNUSED_PARAM(address);
     return -1;
-#endif
-}
-
-// Registers the machine code that an AOT executable carries. The executable's section is mapped as data, so the code is
-// mapped a second time from the file, as executable pages. Those pages are shared, clean, and only paged in when they
-// run.
-// `fileDescriptor`, `offsetInFile`: see Bun__StaticHeap__map.
-extern "C" void Bun__AOT__registerImage(const uint8_t* bytes, size_t length, int fileDescriptor, int64_t offsetInFile)
-{
-    bool verbose = !!getenv("BUN_AOT_VERBOSE");
-    auto failed = [&](const char* why) {
-        if (verbose)
-            fprintf(stderr, "[aot] not using the image: %s\n", why);
-    };
-    if (!JSC::Options::useAOT())
-        return failed("useAOT is off");
-#if OS(DARWIN) || OS(LINUX)
-    std::span<const uint8_t> image { bytes, length };
-    auto range = JSC::aotImageCodeRange(image);
-    if (!range)
-        return failed("not an image");
-    auto [codeOffset, codeSize] = *range;
-    void* code = nullptr;
-    // Bun__StaticHeap__map has mapped what comes before the code.
-    if (s_tablesOfImageAreAtTheirAddress)
-        image = { reinterpret_cast<const uint8_t*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Image)), length };
-    // The code does not depend on where it is, so that is up to the system.
-    if (codeSize) {
-        bool isInExecutable = fileDescriptor < 0;
-        auto fileOffset = isInExecutable ? offsetInExecutableFile(bytes + codeOffset) : std::optional<off_t>(offsetInFile + static_cast<off_t>(codeOffset));
-        if (!fileOffset)
-            return failed("it is not in a segment of the executable");
-        if (*fileOffset % static_cast<off_t>(WTF::pageSize()))
-            return failed("its code is not on a page boundary of the file");
-        int fd = isInExecutable ? openExecutable() : fileDescriptor;
-        if (fd < 0)
-            return failed("cannot open the executable");
-        code = mmap(nullptr, codeSize, PROT_READ | PROT_EXEC, MAP_PRIVATE, fd, *fileOffset);
-        // Darwin refuses an executable mapping of a file that is not signed (EPERM), but allows a mapping of one to be made executable.
-        if (code == MAP_FAILED && errno == EPERM) {
-            code = mmap(nullptr, codeSize, PROT_READ, MAP_PRIVATE, fd, *fileOffset);
-            if (code != MAP_FAILED && mprotect(code, codeSize, PROT_READ | PROT_EXEC)) {
-                munmap(code, codeSize);
-                code = MAP_FAILED;
-            }
-        }
-        if (isInExecutable)
-            close(fd);
-        if (code == MAP_FAILED)
-            return failed(strerror(errno));
-#if OS(DARWIN)
-        // It cannot be made writable.
-        mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(code), codeSize, true, VM_PROT_READ | VM_PROT_EXECUTE);
-#endif
-    }
-    if (!JSC::registerAOTImage(image, code)) {
-        if (code)
-            munmap(code, codeSize);
-        return failed("it was compiled for another build of the engine");
-    }
-    if (verbose)
-        fprintf(stderr, "[aot] image: %zu bytes, %zu of code at %p, %u regular expressions\n", length, codeSize, code, JSC::aotImageNumberOfRegExps(image).value_or(0));
-    if (verbose && !strcmp(getenv("BUN_AOT_VERBOSE"), "2") && codeSize > 4096) {
-        // Finds the copies of the stubs by scanning all of the code. The code starts with one.
-        auto* start = bytes + codeOffset;
-        for (auto* at = start; (at = static_cast<const uint8_t*>(memmem(at, start + codeSize - at, start, 512))); at += 512)
-            fprintf(stderr, "[aot] stubs at image+0x%zx\n", static_cast<size_t>(at - start));
-    }
-#else
-    UNUSED_PARAM(bytes);
-    UNUSED_PARAM(length);
-    failed("not supported on this platform");
 #endif
 }
 

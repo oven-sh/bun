@@ -2975,6 +2975,34 @@ describe("css tests", () => {
     );
     minify_test(".foo { background: transparent }", ".foo{background:0 0}");
 
+    // The shorthand prints <box> twice when origin != clip. A single <box>
+    // token sets both origin and clip, so dropping a border-box clip after a
+    // non-default origin would change the declared clip value.
+    minify_test(".foo { background: red content-box border-box }", ".foo{background:red content-box border-box}");
+    minify_test(".foo { background: red border-box content-box }", ".foo{background:red border-box content-box}");
+    minify_test(".foo { background: red border-box padding-box }", ".foo{background:red border-box padding-box}");
+    minify_test(".foo { background: red padding-box border-box }", ".foo{background:red}");
+    minify_test(".foo { background: red border-box border-box }", ".foo{background:red border-box}");
+    cssTest(
+      `
+      .foo {
+        background-color: red;
+        background-position: 0% 0%;
+        background-size: auto;
+        background-repeat: repeat;
+        background-clip: border-box;
+        background-origin: content-box;
+        background-attachment: scroll;
+        background-image: none
+      }
+    `,
+      indoc`
+      .foo {
+        background: red content-box border-box;
+      }
+    `,
+    );
+
     minify_test(
       ".foo { background: url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\") }",
       ".foo{background:url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\")}",
@@ -5729,6 +5757,7 @@ describe("css tests", () => {
       "view-transition-image-pair",
       "view-transition-new",
       "view-transition-old",
+      "view-transition-group-children",
     ]) {
       minify_test(`:root::${name}(*) {position: fixed}`, `:root::${name}(*){position:fixed}`);
       minify_test(`:root::${name}(foo) {position: fixed}`, `:root::${name}(foo){position:fixed}`);
@@ -5736,6 +5765,18 @@ describe("css tests", () => {
       // Test class selector syntax (.class-name)
       minify_test(`:root::${name}(.slide-out) {position: fixed}`, `:root::${name}(.slide-out){position:fixed}`);
       minify_test(`:root::${name}(.fade-in) {animation-name: fade}`, `:root::${name}(.fade-in){animation-name:fade}`);
+      // <pt-name-and-class-selector>: a name or `*` followed by classes, or classes alone.
+      minify_test(`:root::${name}(*.class) {position: fixed}`, `:root::${name}(*.class){position:fixed}`);
+      minify_test(`:root::${name}(*.class.class) {position: fixed}`, `:root::${name}(*.class.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.class) {position: fixed}`, `:root::${name}(foo.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.bar.baz) {position: fixed}`, `:root::${name}(foo.bar.baz){position:fixed}`);
+      minify_test(
+        `:root::${name}(foo.bar.baz):only-child {position: fixed}`,
+        `:root::${name}(foo.bar.baz):only-child{position:fixed}`,
+      );
+      minify_test(`:root::${name}(.foo.bar) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  .foo.bar  ) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  foo.bar  ) {position: fixed}`, `:root::${name}(foo.bar){position:fixed}`);
       error_test(
         `:root::${name}(foo):first-child {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
@@ -5744,6 +5785,23 @@ describe("css tests", () => {
         `:root::${name}(foo)::before {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidState)",
       );
+      // White space is not allowed between the name and a class, or inside the classes.
+      test.each([
+        ["*.*", "Expected identifier after '.' in class selector, found: *"],
+        ["*. cls", "Expected identifier after '.' in class selector"],
+        [". cls", "Expected identifier after '.' in class selector"],
+        ["foo .bar", "Unexpected token: ."],
+        [".foo .bar", "Unexpected token: ."],
+        ["*.cls. c", "Expected identifier after '.' in class selector"],
+        ["*.cls>cls", "Unexpected token: >"],
+        ["*.cls.foo.*", "Expected identifier after '.' in class selector, found: *"],
+        ["foo.bar baz", "Unexpected token: baz"],
+        ["foo.inherit", "Unexpected token: inherit"],
+        ["inherit.foo", "Unexpected token: inherit"],
+        ["", "Unexpected end of input"],
+      ])(`ERROR: :root::${name}(%s) {position: fixed}`, (argument, message) => {
+        expect(() => minify_test_with_options(`:root::${name}(${argument}) {position: fixed}`, "")).toThrow(message);
+      });
     }
 
     minify_test(".foo ::deep .bar {width: 20px}", ".foo ::deep .bar{width:20px}");

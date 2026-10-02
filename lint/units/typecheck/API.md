@@ -1033,6 +1033,30 @@ yet. What was checked instead is in "Verified" below.
 - `core`: `node_core_modules() -> &'static BTreeSet<Vec<u8>>` (`.contains(name)`), the two lists
   `UNPREFIXED_NODE_CORE_MODULES` and `EXCLUSIVELY_PREFIXED_NODE_CORE_MODULES` (`&[&[u8]]`, in upstream's order), and
   `non_relative_module_name_for_typing_cache(name) -> &[u8]`.
+- The sink of the checker (`checker.go` 14052-14168, in `c21_resolved_symbols_diagnostics.rs` since `f49ea57437`):
+  `error(location, message, args) -> DiagnosticId`, `error_skipped_on_no_emit` with the same parameters,
+  `error_and_maybe_suggest_await(location, maybe_missing_await, message, args) -> DiagnosticId`,
+  `error_or_suggestion(is_error, location, message, args)`, `add_error_or_suggestion(is_error, diagnostic)`,
+  `add_diagnostic(diagnostic)` and `add_suggestion_diagnostic(diagnostic)`, whose result is the id that the collection
+  keeps (the one given, or an equal one that it had). `args` is `&[Arg<'_>]`, `&[]` for none. A diagnostic is an id of
+  `c.diagnostic_store`: `c.diagnostic_store[d]` reads it, `c.diagnostic_store.add_related_info(d, related)` is
+  `d.AddRelatedInfo(related)`.
+- `GetDiagnostics` is `get_diagnostics_exported(source_file) -> Vec<DiagnosticId>` (`getDiagnostics` has the same
+  snake case name), `GetSuggestionDiagnostics` is `get_suggestion_diagnostics(source_file)` and `GetGlobalDiagnostics`
+  is `get_global_diagnostics()`: ids of `c.diagnostic_store`, and no context parameter.
+  `get_diagnostics(source_file, collection)` takes `DiagnosticsCollectionKind::{Diagnostics, SuggestionDiagnostics}`
+  where upstream takes a pointer to one of the two collections of the checker.
+- `add_deferred_diagnostic(Box::new(move |c: &mut Checker<'a>| { .. }))`: the callback
+  (`DeferredDiagnosticCallback<'a>`) gets the checker that upstream's closure captures.
+- `add_deprecated_suggestion(location, declarations, deprecated_entity)` and
+  `add_deprecated_suggestion_worker(declarations, diagnostic)` only read the list (`List<'_, NodeId>`, so
+  `List::from_slice(&[declaration])` fits) and the name (`&[u8]`). `IsDeprecatedDeclaration` is the method
+  `is_deprecated_declaration(declaration)` with `&mut self` (it goes through the cache of the combined node flags);
+  `ast::is_deprecated_declaration(a, declaration)` is the free function of `ast/utilities.go`.
+  `has_parse_diagnostics(source_file)` takes `&self`.
+- `ProgramFiles { ast }` implements `ast::SourceFiles`: the file names, paths and texts behind
+  `Diagnostics { store: &c.diagnostic_store, files: &files }`, the view that the two collections of the checker and
+  `compare_diagnostics` of `c22_symbols_merge.rs` compare through.
 
 ### Differences from upstream
 
@@ -1075,6 +1099,17 @@ yet. What was checked instead is in "Verified" below.
   as "binder and checker do not call it": `checker.go` 15206 calls `core.NodeCoreModules()`, a variable of function
   type, which the call graph of the planning did not see.
 - `binder/nameresolver.rs` is unchanged.
+- The sink (14052-14168). No function takes a `ctx`: a check is not canceled, and `check_source_file` gets none.
+  `get_diagnostics` after a canceled check returns the empty list where upstream returns nil. `addErrorOrSuggestion`
+  copies the struct of the diagnostic: here the store makes the copy (`clone_diagnostic`), as `report_unused` of `c13`
+  does. `produce_deferred_diagnostics` takes the list out of the checker before it runs it: a callback that a
+  callback adds is not run and is dropped, as upstream's `range` and its assignment of nil do; a call from inside a
+  callback, which upstream does not make, would run nothing twice. A read through the nil symbol in
+  `is_deprecated_symbol` gives false where upstream dereferences nil.
+- `ProgramFiles`: the file of a root is found by the page of its id (`Ast::file_of`), and only for the root itself.
+  `path` is the path that the file keeps (`SourceFileData.path`), where the scratch of the contract, whose table had
+  no path, answered the file name. `ecma_line_map` is empty: `SourceFiles` of the contract answers `&[i32]`, and a
+  file keeps its line map as `TextPos` (`File::ecma_line_map`), which a writer of diagnostics reads there.
 
 ### Verified
 

@@ -490,6 +490,116 @@ describe("crypto.KeyObjects", () => {
     });
   });
 
+  // Node's ImportJWKEdKey: an OKP JWK is a private key when "d" is a string,
+  // whichever API receives it, and then "x" must be the public key of "d".
+  describe.each(["ed25519", "x25519"] as const)("%s JWK import", keyType => {
+    const pem = readFile(path.join(import.meta.dir, "fixtures", `${keyType}_private.pem`), "ascii");
+    const jwk = createPrivateKey(pem).export({ format: "jwk" }) as Record<string, any>;
+    const { d: _, ...publicJwk } = jwk;
+    const otherX = generateKeyPairSync(keyType as any).publicKey.export({ format: "jwk" }).x;
+    const data = Buffer.from("data");
+    const signature = Buffer.alloc(64);
+    const invalidJwk = expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK", message: "Invalid JWK OKP key" });
+
+    // Every node:crypto call that imports a key.
+    const callForms: Record<string, (key: any, callback: () => void) => unknown> = {
+      "createPrivateKey": key => createPrivateKey(key),
+      "createPublicKey": key => createPublicKey(key),
+      "sign": key => sign(null, data, key),
+      "sign with a callback": (key, callback) => sign(null, data, key, callback),
+      "verify": key => verify(null, data, key, signature),
+      "verify with a callback": (key, callback) => verify(null, data, key, signature, callback),
+      "createSign().sign": key => createSign("sha256").update(data).sign(key),
+      "createVerify().verify": key => createVerify("sha256").update(data).verify(key, signature),
+      "publicEncrypt": key => publicEncrypt(key, data),
+      "publicDecrypt": key => publicDecrypt(key, data),
+      "privateEncrypt": key => privateEncrypt(key, data),
+      "privateDecrypt": key => privateDecrypt(key, data),
+    };
+    const forms = Object.keys(callForms);
+
+    const bytes = (length: number) => Buffer.alloc(length, 1).toString("base64url");
+    const without = (member: string) => {
+      const { [member]: _, ...rest } = jwk;
+      return rest;
+    };
+    describe.each([
+      ["the x of another key", { ...jwk, x: otherX }],
+      ["an empty x", { ...jwk, x: "" }],
+      ["an 8-byte x", { ...jwk, x: bytes(8) }],
+      ["a 33-byte x", { ...jwk, x: bytes(33) }],
+      ["no x", without("x")],
+      ["a number for x", { ...jwk, x: 1 }],
+      ["null for d", { ...jwk, d: null }],
+      ["a number for d", { ...jwk, d: 1 }],
+      ["an empty d", { ...jwk, d: "" }],
+      ["an 8-byte d", { ...jwk, d: bytes(8) }],
+      ["no crv", without("crv")],
+      ["a number for crv", { ...jwk, crv: 1 }],
+      ["an unknown crv", { ...jwk, crv: "Ed25518" }],
+    ])("a JWK with %s", (_, key) => {
+      test.each(forms)("is rejected by %s", form => {
+        let callbacks = 0;
+        expect(() => callForms[form]({ key, format: "jwk" }, () => callbacks++)).toThrow(invalidJwk);
+        expect(callbacks).toBe(0);
+      });
+    });
+
+    test.each(forms)("%s reads kty, crv, x and d once each, before it validates them", form => {
+      for (const target of [jwk, { ...jwk, crv: "Ed25518" }]) {
+        const reads: PropertyKey[] = [];
+        const key = new Proxy(target, {
+          get(target, name, receiver) {
+            reads.push(name);
+            return Reflect.get(target, name, receiver);
+          },
+        });
+        try {
+          callForms[form]({ key, format: "jwk" }, () => {});
+        } catch {}
+        expect(reads).toEqual(["kty", "crv", "x", "d"]);
+      }
+    });
+
+    test("x is read once, so a getter cannot pass the check with one value and import another", () => {
+      let reads = 0;
+      const key = {
+        ...jwk,
+        get x() {
+          return reads++ === 0 ? otherX : jwk.x;
+        },
+      };
+      expect(() => createPublicKey({ key, format: "jwk" })).toThrow(invalidJwk);
+      expect(reads).toBe(1);
+    });
+
+    test("createPrivateKey reports a public-only JWK after it validates the JWK", () => {
+      expect(() => createPrivateKey({ key: publicJwk, format: "jwk" })).toThrow(
+        expect.objectContaining({
+          code: "ERR_CRYPTO_INVALID_JWK",
+          message: "JWK does not contain private key material",
+        }),
+      );
+      expect(() => createPrivateKey({ key: { ...publicJwk, x: bytes(8) }, format: "jwk" })).toThrow(invalidJwk);
+    });
+
+    test("x is compared after base64 decoding, so padded standard-alphabet base64 works", () => {
+      const standard = (x: string) => Buffer.from(x, "base64url").toString("base64");
+      expect(standard(jwk.x)).not.toBe(jwk.x);
+      const key = { ...jwk, x: standard(jwk.x) };
+      expect(createPrivateKey({ key, format: "jwk" }).export({ format: "jwk" })).toEqual(jwk);
+      expect(createPublicKey({ key, format: "jwk" }).export({ format: "jwk" })).toEqual(publicJwk);
+      expect(() => createPrivateKey({ key: { ...jwk, x: standard(otherX) }, format: "jwk" })).toThrow(invalidJwk);
+    });
+
+    test("a consistent private JWK is still a public key for createPublicKey", () => {
+      const key = createPublicKey({ key: jwk, format: "jwk" });
+      expect(key.type).toBe("public");
+      expect(key.export({ format: "jwk" })).toEqual(publicJwk);
+      expect(key.equals(createPublicKey({ key: publicJwk, format: "jwk" }))).toBe(true);
+    });
+  });
+
   [
     {
       private: readFile(path.join(import.meta.dir, "fixtures", "ec_p256_private.pem"), "ascii"),

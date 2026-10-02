@@ -424,6 +424,51 @@ for (const info of keyTypeTests) {
   }
 }
 
+// Importing an OKP private JWK where x does not match d should fail.
+{
+  const okpJwk = {
+    crv: 'Ed25519',
+    x: 'K1wIouqnuiA04b3WrMa-xKIKIpfHetNZRv3h9fBf768',
+    d: 'wVK6M3SMhQh3NK-7GRrSV-BVWQx1FO5pW8hhQeu_NdA',
+    kty: 'OKP'
+  };
+
+  assert.throws(
+    () => createPrivateKey({
+      key: { ...okpJwk, x: `A${okpJwk.x.slice(1)}` },
+      format: 'jwk',
+    }),
+    { code: 'ERR_CRYPTO_INVALID_JWK' }
+  );
+
+  // Importing a public-only OKP JWK as a private key should fail.
+  assert.throws(
+    () => createPrivateKey({
+      key: { kty: okpJwk.kty, crv: okpJwk.crv, x: okpJwk.x },
+      format: 'jwk',
+    }),
+    { code: 'ERR_CRYPTO_INVALID_JWK' }
+  );
+
+  // Importing an OKP JWK with missing crv should fail.
+  assert.throws(
+    () => createPublicKey({
+      key: { kty: okpJwk.kty, x: okpJwk.x },
+      format: 'jwk',
+    }),
+    { code: 'ERR_CRYPTO_INVALID_JWK' }
+  );
+
+  // Importing an OKP JWK with invalid crv should fail.
+  assert.throws(
+    () => createPublicKey({
+      key: { ...okpJwk, crv: 'invalid' },
+      format: 'jwk',
+    }),
+    { code: 'ERR_CRYPTO_INVALID_JWK' }
+  );
+}
+
 const namedCurveEcTests = [
   { private: fixtures.readKey('ec_p256_private.pem', 'ascii'),
     public: fixtures.readKey('ec_p256_public.pem', 'ascii'),

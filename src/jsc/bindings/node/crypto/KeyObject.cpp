@@ -1210,154 +1210,107 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         : CryptoKeyType::Private;
 
     switch (kty) {
-    case Kty::Akp: {
-        // "AKP" covers the ML-DSA and ML-KEM parameter sets. The parameter set
-        // is named by "alg" (matched case-sensitively, e.g. "ML-DSA-44"), the
-        // public key lives in "pub", and the private key is the seed in "priv".
+    case Kty::Akp:
+    case Kty::Okp: {
+        // "OKP" (Ed25519, X25519) and "AKP" (ML-DSA, ML-KEM) are both raw-key
+        // JWKs: a name ("crv" / "alg", matched case-sensitively), the public key
+        // ("x" / "pub") and, for a private key, "d" / the seed in "priv".
+        const bool isAkp = kty == Kty::Akp;
+        const ASCIILiteral invalidKey = isAkp ? "Invalid JWK AKP key"_s : "Invalid JWK OKP key"_s;
+
         VM& vm = globalObject->vm();
-        JSValue algValue = jwk->get(globalObject, Identifier::fromString(vm, "alg"_s));
+        JSValue nameValue = jwk->get(globalObject, Identifier::fromString(vm, isAkp ? "alg"_s : "crv"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        JSValue pubValue = jwk->get(globalObject, Identifier::fromString(vm, "pub"_s));
+        JSValue pubValue = jwk->get(globalObject, Identifier::fromString(vm, isAkp ? "pub"_s : "x"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        JSValue privValue = jwk->get(globalObject, Identifier::fromString(vm, "priv"_s));
+        JSValue privValue = jwk->get(globalObject, Identifier::fromString(vm, isAkp ? "priv"_s : "d"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
         int nid = 0;
-        if (algValue.isString()) {
-            WTF::String algString = algValue.toWTFString(globalObject);
+        if (nameValue.isString()) {
+            WTF::String name = nameValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            int candidate = pqcKeyTypeToNid(algString.convertToASCIILowercase());
-            // Only the canonical upper-case spelling is accepted.
-            if (candidate && WTF::String(pqcNidToKeyTypeName(candidate)).convertToASCIIUppercase() == algString)
-                nid = candidate;
+            if (isAkp) {
+                int candidate = pqcKeyTypeToNid(name.convertToASCIILowercase());
+                // Only the canonical upper-case spelling is accepted.
+                if (candidate && WTF::String(pqcNidToKeyTypeName(candidate)).convertToASCIIUppercase() == name)
+                    nid = candidate;
+            } else if (name == "Ed25519"_s) {
+                nid = EVP_PKEY_ED25519;
+            } else if (name == "Ed448"_s) {
+                nid = EVP_PKEY_ED448;
+            } else if (name == "X25519"_s) {
+                nid = EVP_PKEY_X25519;
+            } else if (name == "X448"_s) {
+                nid = EVP_PKEY_X448;
+            }
         }
         if (!nid) {
-            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Unsupported JWK AKP \"alg\""_s);
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, isAkp ? "Unsupported JWK AKP \"alg\""_s : invalidKey);
             return {};
         }
 
         if (!pubValue.isString() || (!privValue.isUndefined() && !privValue.isString())) {
-            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
             return {};
         }
 
-        // The JWK itself decides whether private key material is present.
+        // The JWK itself, not the caller's mode, decides whether it is a private key.
         CryptoKeyType jwkType = privValue.isString() ? CryptoKeyType::Private : CryptoKeyType::Public;
-        if (keyType == CryptoKeyType::Private && jwkType == CryptoKeyType::Public) {
-            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "JWK does not contain private key material"_s);
-            return {};
-        }
 
         // pubValue / privValue were already read and type-checked above; decode
         // them directly so each JWK property is observed exactly once.
         auto pubView = asString(pubValue)->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto* pubBuf = decodeJwkString(globalObject, scope, pubView, "key.pub"_s);
+        auto* pubBuf = decodeJwkString(globalObject, scope, pubView, isAkp ? "key.pub"_s : "key.x"_s);
         RETURN_IF_EXCEPTION(scope, {});
 
         JSArrayBufferView* privBuf = nullptr;
         if (jwkType == CryptoKeyType::Private) {
             auto privView = asString(privValue)->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            privBuf = decodeJwkString(globalObject, scope, privView, "key.priv"_s);
+            privBuf = decodeJwkString(globalObject, scope, privView, isAkp ? "key.priv"_s : "key.d"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
 
         MarkPopErrorOnReturn markPopError;
 
-        ncrypto::EVPKeyPointer key = jwkType == CryptoKeyType::Private
-            ? newFromPrivateSeed(nid, privBuf->span())
-            : newFromRawPublic(nid, pubBuf->span());
+        // A wrong length fails here: BoringSSL checks it for every raw key type.
+        auto keySpan = jwkType == CryptoKeyType::Private ? privBuf->span() : pubBuf->span();
+        ncrypto::EVPKeyPointer key;
+        if (isAkp) {
+            key = jwkType == CryptoKeyType::Private
+                ? newFromPrivateSeed(nid, keySpan)
+                : newFromRawPublic(nid, keySpan);
+        } else {
+            ncrypto::Buffer<const unsigned char> keyBuf { .data = keySpan.data(), .len = keySpan.size() };
+            key = jwkType == CryptoKeyType::Private
+                ? EVPKeyPointer::NewRawPrivate(nid, keyBuf)
+                : EVPKeyPointer::NewRawPublic(nid, keyBuf);
+        }
+        JSC::ensureStillAliveHere(privBuf);
 
         if (!key) {
-            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
             return {};
         }
 
-        // "pub" must agree with the public key derived from the seed.
+        // The public member must be the public key derived from the private one.
         if (jwkType == CryptoKeyType::Private) {
             auto derivedPub = key.rawPublicKey();
             auto expected = pubBuf->span();
             if (!derivedPub || derivedPub.size() != expected.size()
                 || CRYPTO_memcmp(derivedPub.get(), expected.data(), expected.size()) != 0) {
-                ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
+                ERR::CRYPTO_INVALID_JWK(scope, globalObject, invalidKey);
                 return {};
             }
         }
-
         JSC::ensureStillAliveHere(pubBuf);
-        return create(keyType, WTF::move(key));
-    }
-    case Kty::Okp: {
-        auto crvView = getJwkStringView(globalObject, scope, jwk, "crv"_s, "key.crv"_s);
-        RETURN_IF_EXCEPTION(scope, {});
 
-        int nid;
-        if (crvView == "Ed25519"_s) {
-            nid = EVP_PKEY_ED25519;
-        } else if (crvView == "Ed448"_s) {
-            nid = EVP_PKEY_ED448;
-        } else if (crvView == "X25519"_s) {
-            nid = EVP_PKEY_X25519;
-        } else if (crvView == "X448"_s) {
-            nid = EVP_PKEY_X448;
-        } else {
-            // validateOneOf
-            ERR::INVALID_ARG_VALUE(scope, globalObject, "key.crv"_s, crvView.owner, "must be one of: 'Ed25519', 'Ed448', 'X25519', 'X448'"_s);
-            return {};
-        }
-
-        auto xView = getJwkStringView(globalObject, scope, jwk, "x"_s, "key.x"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        GCOwnedDataScope<WTF::StringView> dView = GCOwnedDataScope<WTF::StringView>(nullptr, WTF::nullStringView());
-
-        if (keyType != CryptoKeyType::Public) {
-            dView = getJwkStringView(globalObject, scope, jwk, "d"_s, "key.d"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-
-        auto dataView = keyType == CryptoKeyType::Public ? xView : dView;
-
-        auto* dataBuf = decodeJwkString(globalObject, scope, dataView, "key.x"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto bufSpan = dataBuf->span();
-
-        switch (nid) {
-        case EVP_PKEY_ED25519:
-        case EVP_PKEY_X25519:
-            if (bufSpan.size() != 32) {
-                ERR::CRYPTO_INVALID_JWK(scope, globalObject);
-                return {};
-            }
-            break;
-        case EVP_PKEY_ED448:
-            if (bufSpan.size() != 57) {
-                ERR::CRYPTO_INVALID_JWK(scope, globalObject);
-                return {};
-            }
-            break;
-        case EVP_PKEY_X448:
-            if (bufSpan.size() != 56) {
-                ERR::CRYPTO_INVALID_JWK(scope, globalObject);
-                return {};
-            }
-            break;
-        }
-
-        MarkPopErrorOnReturn markPopError;
-
-        auto buf = ncrypto::Buffer {
-            .data = bufSpan.data(),
-            .len = bufSpan.size(),
-        };
-
-        auto key = keyType == CryptoKeyType::Public
-            ? EVPKeyPointer::NewRawPublic(nid, buf)
-            : EVPKeyPointer::NewRawPrivate(nid, buf);
-
-        if (!key) {
-            ERR::CRYPTO_INVALID_JWK(scope, globalObject);
+        // Every private-key consumer rejects a public-only JWK here. Node does so
+        // only in createPrivateKey and lets the others fail in the operation.
+        if (keyType == CryptoKeyType::Private && jwkType == CryptoKeyType::Public) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "JWK does not contain private key material"_s);
             return {};
         }
 

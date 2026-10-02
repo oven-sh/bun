@@ -12,7 +12,6 @@
 //! be reached (4xxx), which `TrackSymbol` reports.
 
 use super::decl::Predicate;
-use super::enclosing_declaration::Enclosing;
 use super::errors::Diagnostic;
 use super::explain::Related;
 use super::*;
@@ -554,7 +553,7 @@ impl<'p> Checker<'p> {
             Node::Var(d) => hir[d].pat,
             Node::Param(p) => hir[p].pat,
             Node::Member(m) => {
-                return self.source_text(file, hir[m].pos, self.end_of_member_name(file, m));
+                return self.source_text(file, hir[m].name_pos, self.end_of_member_name(file, m));
             }
             _ => return String::new(),
         };
@@ -756,7 +755,7 @@ impl<'p> Checker<'p> {
         if func.is_some() && hir[func].kind == FnKind::Setter {
             return self.iso_accessor_error(tx, func);
         }
-        let adds_undefined = self.requires_adding_implicit_undefined(file, p, None);
+        let adds_undefined = self.iso_requires_implicit_undefined(file, p, false);
         if !adds_undefined && hir[p].default.is_some() {
             let default = self.iso_written(file, hir[p].default);
             return self.iso_expression_error(tx, default, None);
@@ -1672,7 +1671,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── optional parameters ─────────────────────────────
 
     /// `isOptionalParameter`
-    fn is_optional_parameter(&mut self, file: FileId, p: ParamId) -> bool {
+    fn iso_is_optional_parameter(&mut self, file: FileId, p: ParamId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let param = &hir[p];
         if param.flags.contains(Flags::OPTIONAL) {
@@ -1721,12 +1720,12 @@ impl<'p> Checker<'p> {
         index >= minimum
     }
 
-    /// `requiresAddingImplicitUndefined`, of a parameter
-    pub(super) fn requires_adding_implicit_undefined(
+    /// `requiresAddingImplicitUndefinedWorker`. `in_function`: the enclosing declaration is function-like.
+    pub(super) fn iso_requires_implicit_undefined(
         &mut self,
         file: FileId,
         p: ParamId,
-        enclosing_declaration: Option<Enclosing>,
+        in_function: bool,
     ) -> bool {
         if !self.files().options.strict_null_checks {
             return false;
@@ -1735,15 +1734,12 @@ impl<'p> Checker<'p> {
         let is_property = param.flags.intersects(
             Flags::PUBLIC | Flags::PRIVATE | Flags::PROTECTED | Flags::READONLY | Flags::OVERRIDE,
         );
-        let is_optional = self.is_optional_parameter(file, p);
+        let is_optional = self.iso_is_optional_parameter(file, p);
         // `isRequiredInitializedParameter`, `isOptionalUninitializedParameterProperty`
         let requires = if is_optional {
             param.default.is_none() && is_property
         } else {
-            param.default.is_some()
-                && (!is_property
-                    || enclosing_declaration
-                        .is_some_and(|at| self.is_function_like_declaration(at)))
+            param.default.is_some() && (!is_property || in_function)
         };
         if !requires {
             return false;
@@ -1854,7 +1850,9 @@ impl<'p> Checker<'p> {
             PropSource::Assigned(_, assignments) => assignments.len(),
             PropSource::Parameter(..) => 1,
             PropSource::Symbol(sym) => self.files().decls_of(*sym).len(),
-            PropSource::Copy(_, of, _) => of.iter().map(|p| self.iso_declaration_count(p)).sum(),
+            PropSource::Copy(_, of, _) | PropSource::ReverseMapped(_, of) => {
+                of.iter().map(|p| self.iso_declaration_count(p)).sum()
+            }
             PropSource::Type(_) | PropSource::Intersected(..) | PropSource::Mapped(..) => 0,
         }
     }
@@ -2091,7 +2089,7 @@ impl<'p> Checker<'p> {
             let is_optional = match declared {
                 Some((file, func, _)) if i < self.hir(file)[func].params.len() => {
                     let declared = self.hir(file)[func].params.at(i);
-                    self.is_optional_parameter(file, declared)
+                    self.iso_is_optional_parameter(file, declared)
                 }
                 _ => target.optional,
             };
@@ -2222,7 +2220,9 @@ impl<'p> Checker<'p> {
                 return;
             }
         }
-        let mut is_visible = |decl: Decl| self.is_declaration_visible(file, decl);
+        let mut is_visible = |decl: Decl| {
+            self.with_emit_resolver(file, |resolver| resolver.is_declaration_visible(file, decl))
+        };
         if import.default.is_some() && is_visible(Decl::ImportDefault(i))
             || import.named.iter().any(|x| is_visible(Decl::ImportSpec(x)))
         {

@@ -123,7 +123,7 @@ impl<'p> Checker<'p> {
             return ty;
         }
         let (data, flags) = self.p.types.get_with_flags(ty);
-        if !flags.contains(TypeFlags::HAS_TYPE_VARIABLES) {
+        if !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES) {
             return ty;
         }
         if let TypeData::TypeParam(..) | TypeData::ThisParam(_) = data {
@@ -145,8 +145,6 @@ impl<'p> Checker<'p> {
             self.note_depth(key, None);
             return known;
         }
-        self.time_trap();
-        self.guard("instantiate");
         // `instantiationDepth == 100`: 2589 and the error type, which is cached like any other result.
         if self.instantiation_depth >= 100 {
             return self.instantiation_too_deep();

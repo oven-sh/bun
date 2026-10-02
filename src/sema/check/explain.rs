@@ -433,15 +433,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `check_file` and `finish_file`, with messages, for whoever checks one file by itself.
-    pub fn check_file_explained(&mut self, file: FileId) -> Vec<Explained> {
-        let explained_before = std::mem::replace(&mut self.explains, true);
-        let checked = self.check_file(file);
-        let explained = self.finish_file(file, checked);
-        self.explains = explained_before;
-        explained
-    }
-
     /// `errors` as they are shown, with what has been noted of them.
     pub(super) fn explain_errors(
         &mut self,

@@ -34,8 +34,8 @@ impl<'p> Checker<'p> {
         self.p.types.intern_with(
             self.data(union).clone(),
             Provenance {
-                alias: None,
                 origin,
+                ..Provenance::default()
             },
         )
     }
@@ -57,6 +57,7 @@ impl<'p> Checker<'p> {
             Provenance {
                 alias: Some((alias, type_arguments.into())),
                 origin,
+                is_enum: self.files().flags(alias).intersects(SymFlags::ENUM),
             },
         )
     }

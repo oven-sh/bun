@@ -44,7 +44,7 @@ impl Checker<'_> {
         match Self::value_declaration(prop)? {
             PropSource::Members(members) => {
                 let &(file, member) = members.first()?;
-                Some(self.place_of_token(file, self.hir(file)[member].pos))
+                Some(self.place_of_token(file, self.hir(file)[member].name_pos))
             }
             &PropSource::Parameter(file, param) => {
                 let hir = self.hir(file);
@@ -61,7 +61,8 @@ impl Checker<'_> {
             PropSource::Type(_)
             | PropSource::Intersected(..)
             | PropSource::Mapped(..)
-            | PropSource::Copy(..) => None,
+            | PropSource::Copy(..)
+            | PropSource::ReverseMapped(..) => None,
         }
     }
 
@@ -81,7 +82,7 @@ impl Checker<'_> {
             PropSource::Members(members) => {
                 let &(file, member) = members.first()?;
                 if !has_text(self, file) {
-                    return Some(self.place_of_token(file, self.hir(file)[member].pos));
+                    return Some(self.place_of_token(file, self.hir(file)[member].name_pos));
                 }
                 let (start, end) = self.error_range_of_member(file, member);
                 Some((file, start, end))
@@ -117,7 +118,9 @@ impl Checker<'_> {
                 ))
             }
             // `createUnionOrIntersectionProperty`: the declarations of all of them, one after the other.
-            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => parts
+            PropSource::Intersected(_, parts)
+            | PropSource::Copy(_, parts, _)
+            | PropSource::ReverseMapped(_, parts) => parts
                 .iter()
                 .find_map(|part| self.place_of_first_prop_declaration_within(part, depth + 1)),
             // `resolveMappedTypeMembers`: those of the property the modifiers come from.

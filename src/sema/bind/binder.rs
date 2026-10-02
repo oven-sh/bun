@@ -2838,15 +2838,30 @@ impl<'f> Binder<'f> {
                 if is_static {
                     self.push_scope(ScopeKind::StaticMember, SymbolId::NONE);
                 }
-                self.expr(e, Parent::Decorator(id, of));
-                if is_static {
-                    self.pop_scope();
-                }
                 let of_a_function = match of {
                     DecoratorOwner::Member(m) => self.f[m].func.is_some(),
                     DecoratorOwner::Param(_) => true,
                     DecoratorOwner::Class(_) => false,
                 };
+                // `bindContainer`: a decorator is a child of what it decorates, where the flow of control starts afresh.
+                let saved = (self.flow, self.exception_target);
+                if of_a_function || self.f[member].init.is_some() {
+                    let is_in_expression = of_a_function && matches!(owner, ClassOwner::Expr(_));
+                    self.flow = self.new_flow(Flow::Start {
+                        outer: if is_in_expression {
+                            saved.0
+                        } else {
+                            FlowId::NONE
+                        },
+                        arrow: false,
+                    });
+                    self.exception_target = FlowId::NONE;
+                }
+                self.expr(e, Parent::Decorator(id, of));
+                (self.flow, self.exception_target) = saved;
+                if is_static {
+                    self.pop_scope();
+                }
                 if of_a_function {
                     self.yields.truncate(counted);
                 }
@@ -3909,7 +3924,7 @@ impl<'f> Binder<'f> {
             Vec::with_capacity(f.classes.len() + f.interfaces.len());
         for (i, class) in f.classes.iter().enumerate() {
             let owner = MemberOwner::Class(ClassId(i as u32));
-            containers.push((self.b.class_symbol[i], class.pos, owner));
+            containers.push((self.b.class_symbol[i], class.name_pos, owner));
         }
         for (i, interface) in f.interfaces.iter().enumerate() {
             let owner = MemberOwner::Interface(InterfaceId(i as u32));

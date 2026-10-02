@@ -1011,7 +1011,7 @@ impl Checker<'_> {
             };
         };
         // Where the use starts, for `isUsedInFunctionOrInstanceProperty`.
-        let use_pos = decorated_class.map_or(name_pos, |c: ClassId| hir[c].pos);
+        let use_pos = decorated_class.map_or(name_pos, |c: ClassId| hir[c].name_pos);
         // In parentheses it is another kind of expression.
         let is_bare = !is_parenthesized(hir, obj);
         // Of `a.b.c` only `a.b` is looked at for 2729.
@@ -1059,7 +1059,7 @@ impl Checker<'_> {
                     return;
                 }
                 let decl = &hir[md];
-                declared_at = decl.pos;
+                declared_at = decl.name_pos;
                 match class_of(md) {
                     // Of an interface or a type literal.
                     None => {
@@ -1076,7 +1076,7 @@ impl Checker<'_> {
                             _ => None,
                         };
                         let Some(container) = container else { return };
-                        decl.pos <= name_pos
+                        decl.name_pos <= name_pos
                             || self.is_use_deferred(file, e, Declaration::further_down(container))
                     }
                     Some(class) => {
@@ -1099,7 +1099,7 @@ impl Checker<'_> {
                         let is_property = decl.kind == MemberKind::Property;
                         let is_this = is_bare && matches!(hir[obj].kind, ExprKind::This);
                         // Its decorators come before its name.
-                        let starts_before = decl.pos <= name_pos || decorator_of == md;
+                        let starts_before = decl.name_pos <= name_pos || decorator_of == md;
                         if starts_before
                             && !(is_property
                                 && is_this
@@ -1128,7 +1128,7 @@ impl Checker<'_> {
                             // `isPropertyInitializedInStaticBlocks`. With standard class fields a property declared after the use is
                             // an error whatever the static blocks assign (`isPropertyImmediatelyReferencedWithinDeclaration`).
                             let mut is_set_in_static_blocks = false;
-                            if (!emit || decl.pos <= name_pos)
+                            if (!emit || decl.name_pos <= name_pos)
                                 && is_property
                                 && is_same_class
                                 && initializer_of.is_some()
@@ -1142,7 +1142,7 @@ impl Checker<'_> {
                                 // Static blocks run in document order: only those before the initializer count.
                                 let end = self.start_of(file, hir[initializer_of].init);
                                 let is_in_range = |b: MemberId| {
-                                    hir[b].kind == MemberKind::StaticBlock && hir[b].pos <= end
+                                    hir[b].kind == MemberKind::StaticBlock && hir[b].name_pos <= end
                                 };
                                 // Without such a block the answer is no, whatever the type of the property.
                                 if hir[class].members.iter().any(|b| is_in_range(b)) {
@@ -1166,7 +1166,7 @@ impl Checker<'_> {
                             }
                             let declaration = Declaration {
                                 container,
-                                is_before: decl.pos < use_pos,
+                                is_before: decl.name_pos < use_pos,
                                 is_method: decl.kind == MemberKind::Method,
                                 is_own_instance_property: is_property
                                     && !decl.flags.contains(Flags::STATIC)
@@ -1176,7 +1176,7 @@ impl Checker<'_> {
                             self.is_use_deferred(file, e, declaration)
                                 && !(emit
                                     && is_property
-                                    && decl.pos > name_pos
+                                    && decl.name_pos > name_pos
                                     && self.is_property_immediately_referenced(
                                         file, e, md, class, true,
                                     ))

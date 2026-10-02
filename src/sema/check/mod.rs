@@ -82,8 +82,7 @@ use crate::table::{Bases, ById, ByIdKept, ByKey, ByNode, ByNodeKept, IdSet, Node
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
-use errors::edit_distance;
-use errors_x_regexp_scanner::get_spelling_suggestion;
+use errors_x_regexp_scanner::{get_spelling_suggestion, spelling_suggestion};
 use errors_x_typenodes::array_element_type_node;
 use errors_x_typenodes::has_parse_diagnostics;
 use sink::{Arg, Reported};
@@ -242,6 +241,8 @@ pub struct Program {
     awaited_types: ById<TypeId, Option<TypeId>>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
     mapped_prop_types: ByKey<(TypeId, Atom), TypeId>,
+    /// `reverseMappedCache`
+    reverse_mapped_cache: ByKey<(TypeId, TypeId, TypeId), Option<TypeId>>,
     /// See `optional_property_kept`.
     optional_properties: ById<TypeId, TypeId>,
     intersected_props: ByKey<(TypeId, Atom), TypeId>,
@@ -295,79 +296,6 @@ impl Program {
     #[inline]
     pub fn has_any_flag(&self, ty: TypeId) -> bool {
         ty.is_any() || self.is_unresolved_name(ty)
-    }
-
-    /// Where the memory of what has been worked out is: what, how many, how many bytes.
-    pub fn sizes(&self) -> Vec<(String, usize, usize)> {
-        let mut out = self.types.sizes();
-        let (mut count, mut bytes) = (0, 0);
-        for resolved in self.shapes.kept() {
-            count += 1;
-            bytes += resolved.bytes();
-        }
-        out.push(("shapes".to_owned(), count, bytes));
-        let boxes = |name: &str, lens: &mut dyn Iterator<Item = usize>, size: usize| {
-            let (mut count, mut bytes) = (0, 0);
-            for len in lens {
-                count += 1;
-                bytes += 16 + len * size + if len > 0 { 16 } else { 0 };
-            }
-            (name.to_owned(), count, bytes)
-        };
-        out.push(boxes(
-            "kept: parameters of signatures",
-            &mut self.sig_params.kept().map(|b| b.len()),
-            size_of::<SigParam>(),
-        ));
-        out.push(boxes(
-            "kept: type parameters of signatures",
-            &mut self.sig_type_params.kept().map(|b| b.len()),
-            4,
-        ));
-        out.push(boxes(
-            "kept: call signatures of types",
-            &mut self.call_signatures.kept().map(|b| b.len()),
-            4,
-        ));
-        out.push(boxes(
-            "kept: construct signatures of types",
-            &mut self.construct_signatures.kept().map(|b| b.len()),
-            4,
-        ));
-        let map = |name: &str, len: usize, entry: usize| (name.to_owned(), len, len * (entry + 11));
-        out.push(map("map: instantiations", self.instantiations.len(), 12));
-        out.push(map("map: relations", self.relations.len(), 12));
-        out.push(map("map: conditionals", self.conditionals.len(), 16));
-        out.push(map(
-            "map: mapped property types",
-            self.mapped_prop_types.len(),
-            12,
-        ));
-        out.push(map(
-            "map: intersected properties",
-            self.intersected_props.len(),
-            12,
-        ));
-        let mut by_node = |name: &str, (cells, used, size): (usize, usize, usize)| {
-            out.push((
-                format!("by node: {name} ({used} of {cells} cells in use)"),
-                cells,
-                cells * size,
-            ));
-        };
-        by_node("expression types", self.expr_types.0.fill());
-        by_node("type node types", self.type_node_types.0.fill());
-        by_node("return types", self.fn_return_types.0.fill());
-        by_node("binding types", self.pat_types.0.fill());
-        by_node("literal property types", self.literal_prop_types.0.fill());
-        by_node("symbol types", self.symbol_types.fill());
-        by_node("declared types", self.declared_types.fill());
-        by_node("calls", self.calls.fill());
-        by_node("failed calls", self.failed_calls.fill());
-        by_node("argument contexts", self.arg_contexts.fill());
-        by_node("assigned property types", self.assigned_prop_types.fill());
-        by_node("member types", self.member_types.fill());
-        out
     }
 
     pub fn new(files: Files) -> Program {
@@ -437,6 +365,7 @@ impl Program {
             assigned_prop_types: ByNode::new(&exprs),
             awaited_types: Default::default(),
             mapped_prop_types: Default::default(),
+            reverse_mapped_cache: Default::default(),
             optional_properties: Default::default(),
             intersected_props: Default::default(),
             discriminants: Default::default(),
@@ -536,6 +465,7 @@ impl Program {
             mode_of_recheck: CheckMode::empty(),
             rechecked_exprs: FxHashMap::default(),
             rechecked_members: FxHashMap::default(),
+            literals_checked_under: FxHashMap::default(),
             inference_contexts: Vec::new(),
             instantiation_depth: 0,
             recent_instantiations: Default::default(),
@@ -574,8 +504,6 @@ impl Program {
             deadline: None,
             constraint_stack: Vec::new(),
             conditional_constraint_depth: 0,
-            trap_on_timeout: std::env::var_os("BUN_SEMA_TIME_TRAP").is_some(),
-            trap_on_low_stack: std::env::var_os("BUN_SEMA_DEBUG_STACK").is_some(),
             deepest_stack: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
             exprs_by_kind: None,
@@ -583,7 +511,7 @@ impl Program {
             held_for_now: FxHashMap::default(),
             trials: FxHashMap::default(),
             enclosing_module_specifier_mode: None,
-            emit_resolver_links: Default::default(),
+            symbol_chain_cache: Default::default(),
             explains: false,
             only_syntax: false,
             notes: Default::default(),
@@ -628,8 +556,6 @@ impl Program {
             provisional: 0,
             provisional_floor: 0,
             provisional_arg_contexts: FxHashMap::default(),
-            forces_provisional_contexts: false,
-            outside_const_context: Vec::new(),
             stack_base: stack_pointer(),
             stack_limit: 6 << 20,
             work: 0,
@@ -822,6 +748,8 @@ pub struct Checker<'p> {
     /// literal or JSX attribute.
     rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
     rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
+    /// `arg_type_under`: the type of a literal argument under a parameter type.
+    literals_checked_under: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
     instantiation_depth: u32,
@@ -887,8 +815,6 @@ pub struct Checker<'p> {
     constraint_stack: Vec<relate::RecursionId>,
     /// `conditionalConstraintDepth`
     conditional_constraint_depth: u32,
-    trap_on_timeout: bool,
-    trap_on_low_stack: bool,
     deepest_stack: std::cell::Cell<usize>,
     ran_out_of_stack: std::cell::Cell<bool>,
     /// Of the file that was last asked about.
@@ -906,7 +832,7 @@ pub struct Checker<'p> {
     /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`, while the name of an import or an
     /// export is printed.
     enclosing_module_specifier_mode: Option<ResolutionMode>,
-    emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
+    symbol_chain_cache: errors_declaration_emit::SymbolChainCache,
     /// What is noted of errors is kept: somebody is going to read it.
     explains: bool,
     /// `GetSyntacticDiagnostics`: only what the parser and the scanner say is reported.
@@ -995,10 +921,6 @@ pub struct Checker<'p> {
     /// How many questions were open when the outermost trial began.
     provisional_floor: usize,
     provisional_arg_contexts: FxHashMap<(FileId, ExprId), TypeId>,
-    /// Every contextual type recorded now belongs to a trial.
-    forces_provisional_contexts: bool,
-    /// The calls whose overloads without a `const` type parameter are being tried.
-    outside_const_context: Vec<(FileId, ExprId)>,
     /// Where the stack was when the checker was made, and how far below that it may go.
     stack_base: usize,
     stack_limit: usize,
@@ -1167,26 +1089,6 @@ impl<'p> Checker<'p> {
         self.deepest_stack.get()
     }
 
-    /// For finding runaway recursion: `BUN_SEMA_DEBUG_STACK=1`.
-    #[inline]
-    pub(crate) fn guard(&self, what: &str) {
-        if self.trap_on_low_stack {
-            self.trap_if_stack_is_low(what);
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn trap_if_stack_is_low(&self, what: &str) {
-        if self.is_stack_low() {
-            panic!(
-                "stack low in {what}: {:?}\n{}",
-                &self.stack[self.stack.len().saturating_sub(30)..],
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
-    }
-
     /// From now on, no more than `limit` is spent. What is not known by then stays unknown, and nothing is said about it.
     pub fn set_time_limit(&mut self, limit: std::time::Duration) {
         self.deadline = Some(std::time::Instant::now() + limit);
@@ -1195,53 +1097,6 @@ impl<'p> Checker<'p> {
 
     pub fn timed_out(&self) -> bool {
         self.timed_out
-    }
-
-    /// For finding what does not end: `BUN_SEMA_TIME_TRAP=1` stops with a backtrace where the time limit is passed.
-    #[inline]
-    pub(crate) fn time_trap(&mut self) {
-        if self.trap_on_timeout {
-            self.trap_if_out_of_time();
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn trap_if_out_of_time(&mut self) {
-        if self.is_out_of_time() {
-            if let Some(&Query::Cond(file, node, _)) = self
-                .stack
-                .iter()
-                .rev()
-                .find(|q| matches!(q, Query::Cond(..)))
-            {
-                eprintln!(
-                    "CONDITIONAL {} at {}",
-                    self.files().module(file).path,
-                    self.hir(file)[node].pos
-                );
-            }
-            for query in &self.stack {
-                let at = match *query {
-                    Query::Expr(file, e) | Query::Call(file, e) => {
-                        Some((file, self.hir(file)[e].pos))
-                    }
-                    Query::LiteralProp(file, p) => {
-                        let value = self.hir(file)[p].value;
-                        value.is_some().then(|| (file, self.hir(file)[value].pos))
-                    }
-                    _ => None,
-                };
-                if let Some((file, pos)) = at {
-                    eprintln!("  {query:?} {}:{pos}", self.files().module(file).path);
-                }
-            }
-            panic!(
-                "out of time: {:?}\n{}",
-                &self.stack,
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
     }
 
     /// Looks at the clock once in a while.
@@ -1309,13 +1164,6 @@ impl<'p> Checker<'p> {
                 panic!(
                     "work trap: {:?}\n{}",
                     &self.stack,
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-            if std::env::var_os("BUN_SEMA_DEBUG_STACK").is_some() {
-                panic!(
-                    "stack low: {:?}\n{}",
-                    &self.stack[self.stack.len().saturating_sub(30)..],
                     std::backtrace::Backtrace::force_capture()
                 );
             }
@@ -2043,12 +1891,19 @@ impl<'p> Checker<'p> {
     pub fn has_type_variables(&self, ty: TypeId) -> bool {
         self.p
             .types
-            .flags(ty)
-            .contains(TypeFlags::HAS_TYPE_VARIABLES)
+            .object_flags(ty)
+            .contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES)
     }
 
+    /// `Type.flags`
+    #[inline]
+    pub fn flags(&self, ty: TypeId) -> u32 {
+        self.p.types.flags(ty)
+    }
+
+    #[inline]
     pub fn is_union(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Union(_))
+        self.flags(ty) & tf::UNION != 0
     }
 
     /// The members of a union; the type itself otherwise; nothing for `never`.
@@ -2057,137 +1912,73 @@ impl<'p> Checker<'p> {
         self.p.types.parts(ty)
     }
 
+    /// `TypeFlagsObject`, but for an evolving array.
+    #[inline]
     pub fn is_object_type(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Ref { .. }
-                | TypeData::Tuple { .. }
-                | TypeData::Anon { .. }
-                | TypeData::Fns { .. }
-                | TypeData::Synth(_)
-                | TypeData::ReverseMapped { .. }
-        )
+        self.flags(ty) & tf::OBJECT != 0 && !matches!(self.data(ty), TypeData::EvolvingArray(_))
     }
 
+    #[inline]
     pub fn is_type_variable(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::TypeParam(..)
-                | TypeData::ThisParam(_)
-                | TypeData::Marker(_)
-                | TypeData::IndexedAccess { .. }
-        )
+        self.flags(ty) & tf::TYPE_VARIABLE != 0
     }
 
     /// A type whose members cannot be known before its type parameters are.
+    #[inline]
     pub fn is_deferred(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::TypeParam(..)
-                | TypeData::ThisParam(_)
-                | TypeData::Marker(_)
-                | TypeData::IndexedAccess { .. }
-                | TypeData::Cond { .. }
-                | TypeData::Substitution { .. }
-                | TypeData::Keyof(_)
-        )
+        self.flags(ty) & (tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX) != 0
     }
 
+    #[inline]
     pub fn is_literal(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::StringLit { .. }
-                | TypeData::NumberLit { .. }
-                | TypeData::BigIntLit { .. }
-                | TypeData::BoolLit { .. }
-                | TypeData::EnumLit { .. }
-        )
+        self.flags(ty) & tf::LITERAL != 0
     }
 
-    /// A type with one value. `void` is not one. `TypeFlagsUnit`
+    #[inline]
     pub fn is_unit(&self, ty: TypeId) -> bool {
-        self.is_literal(ty)
-            || ty.is_undefined()
-            || ty.is_null()
-            || matches!(
-                self.data(ty),
-                TypeData::UniqueSymbol { .. } | TypeData::Enum { .. }
-            )
+        self.flags(ty) & tf::UNIT != 0
     }
 
+    #[inline]
     pub fn is_string_like(&self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Intrinsic(Intrinsic::String)
-            | TypeData::StringLit { .. }
-            | TypeData::Template { .. }
-            | TypeData::StringMapping { .. }
-            | TypeData::EnumLit {
-                value: EnumValue::String(_),
-                ..
-            } => true,
-            _ => false,
-        }
+        self.flags(ty) & tf::STRING_LIKE != 0
     }
 
+    #[inline]
     pub fn is_number_like(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Intrinsic(Intrinsic::Number)
-                | TypeData::NumberLit { .. }
-                | TypeData::EnumLit {
-                    value: EnumValue::Number(_),
-                    ..
-                }
-                | TypeData::Enum { .. }
-        )
+        self.flags(ty) & tf::NUMBER_LIKE != 0
     }
 
+    #[inline]
     pub fn is_bigint_like(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Intrinsic(Intrinsic::BigInt) | TypeData::BigIntLit { .. }
-        )
+        self.flags(ty) & tf::BIGINT_LIKE != 0
     }
 
-    /// `TypeFlagsBoolean`: `getUnionTypeFromSortedList` gives it to the union of the two boolean literal types, whatever alias or
-    /// origin that has.
+    /// `getUnionTypeFromSortedList` gives it to the union of the two boolean literal types, whatever alias or origin that has.
     #[inline]
     pub fn is_boolean(&self, ty: TypeId) -> bool {
-        ty == TypeId::BOOLEAN
-            || matches!(self.data(ty), TypeData::Union(members) if members[..] == [TypeId::FALSE, TypeId::TRUE])
+        self.flags(ty) & tf::BOOLEAN != 0
     }
 
+    #[inline]
     pub fn is_boolean_like(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::BoolLit { .. })
+        self.flags(ty) & tf::BOOLEAN_LITERAL != 0
     }
 
+    #[inline]
     pub fn is_symbol_like(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Intrinsic(Intrinsic::Symbol) | TypeData::UniqueSymbol { .. }
-        )
+        self.flags(ty) & tf::ES_SYMBOL_LIKE != 0
     }
 
+    #[inline]
     pub fn is_nullish(&self, ty: TypeId) -> bool {
-        ty.is_undefined() || ty.is_null() || ty == TypeId::VOID
+        self.flags(ty) & (tf::NULLABLE | tf::VOID) != 0
     }
 
+    /// `TypeFlagsPrimitive`, but for the unions that have it: `boolean`, an enum.
+    #[inline]
     pub fn is_primitive(&self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Intrinsic(
-                Intrinsic::String | Intrinsic::Number | Intrinsic::BigInt | Intrinsic::Symbol,
-            )
-            | TypeData::StringLit { .. }
-            | TypeData::NumberLit { .. }
-            | TypeData::BigIntLit { .. }
-            | TypeData::BoolLit { .. }
-            | TypeData::EnumLit { .. }
-            | TypeData::Enum { .. }
-            | TypeData::UniqueSymbol { .. }
-            | TypeData::Template { .. }
-            | TypeData::StringMapping { .. } => true,
-            _ => self.is_nullish(ty),
-        }
+        self.flags(ty) & tf::PRIMITIVE != 0 && self.flags(ty) & tf::UNION == 0
     }
 
     /// Whether every member of `ty` passes.
@@ -2404,22 +2195,6 @@ impl<'p> Checker<'p> {
     pub fn promise_of(&mut self, value: TypeId) -> TypeId {
         match self.global_ref(known::Promise, &[value]) {
             TypeId::EMPTY_OBJECT => TypeId::UNKNOWN,
-            promise => promise,
-        }
-    }
-
-    /// `createPromiseLikeType`, of what has been awaited.
-    pub fn promise_like_of(&mut self, value: TypeId) -> TypeId {
-        match self.global_ref(known::PromiseLike, &[value]) {
-            TypeId::EMPTY_OBJECT => TypeId::UNKNOWN,
-            promise => promise,
-        }
-    }
-
-    /// `createPromiseReturnType`, without its errors: what is in error can be anything.
-    pub fn promise_return_of(&mut self, value: TypeId) -> TypeId {
-        match self.promise_of(value) {
-            TypeId::UNKNOWN => TypeId::ANY,
             promise => promise,
         }
     }

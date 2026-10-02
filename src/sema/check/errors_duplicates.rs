@@ -671,7 +671,7 @@ impl Checker<'_> {
         // `getFirstNonAmbientClassOrFunctionDeclaration`
         let first = decls.iter().find_map(|&(of, decl, _)| match decl {
             Decl::Class(c) if !is_ambient(of, self.hir(of)[c].flags) => {
-                Some((of, self.hir(of)[c].pos))
+                Some((of, self.hir(of)[c].name_pos))
             }
             Decl::Fn(f)
                 if !matches!(self.hir(of)[f].body, FnBody::None)
@@ -854,7 +854,7 @@ impl Checker<'_> {
                     let Some(name) = self.declared_member_name(of, member.key) else {
                         continue;
                     };
-                    declared.push((at, of, name, includes, excludes, member.pos));
+                    declared.push((at, of, name, includes, excludes, member.name_pos));
                 }
             }
             let names: Vec<Atom> = declared.iter().map(|d| d.2).collect();
@@ -1016,7 +1016,7 @@ impl Checker<'_> {
                 let Some(name) = self.declared_member_name(of, member.key) else {
                     continue;
                 };
-                clash(self, name, includes, excludes, (of, member.pos));
+                clash(self, name, includes, excludes, (of, member.name_pos));
             }
         }
     }
@@ -1132,7 +1132,7 @@ impl Checker<'_> {
                     )
                 {
                     out.push(Diagnostic {
-                        start: member.pos,
+                        start: member.name_pos,
                         code: 2699,
                     });
                     self.explain_static_name_conflict(file, m, name);
@@ -1143,7 +1143,7 @@ impl Checker<'_> {
 
     /// The arguments of 2699, which is reported on the name of the static member `m`: `name`, and the class.
     fn explain_static_name_conflict(&mut self, file: FileId, m: MemberId, name: Atom) {
-        let start = self.hir(file)[m].pos;
+        let start = self.hir(file)[m].name_pos;
         let end = self.end_of_member_name(file, m);
         self.explain_to(start, end, 2699, |c| {
             let mut class_name = String::new();
@@ -1343,15 +1343,15 @@ impl Checker<'_> {
             };
             if !is_ambient && is_static && name == known::prototype {
                 out.push(Diagnostic {
-                    start: member.pos,
+                    start: member.name_pos,
                     code: 2699,
                 });
                 self.explain_static_name_conflict(file, m, name);
             }
             if matches!(member.key, PropKey::Computed(_)) {
-                late_bound.push(member.pos);
+                late_bound.push(member.name_pos);
             }
-            declared.push((name, is_static, includes, excludes, member.pos, kind));
+            declared.push((name, is_static, includes, excludes, member.name_pos, kind));
         }
         let Some((repeated, mut entries)) =
             self.report_refused_members(file, &declared, &late_bound, out)

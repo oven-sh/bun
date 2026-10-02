@@ -16,7 +16,7 @@ use std::rc::Rc;
 pub(super) struct ErrorChain {
     next: Chain,
     code: u32,
-    args: Vec<String>,
+    args: Box<[Box<[u8]>]>,
 }
 
 /// The line reported last comes first: it is the outermost.
@@ -60,53 +60,56 @@ impl Relater {
     }
 
     /// `chainArgsMatch`. `None` matches anything.
-    fn chain_args_match(&self, args: &[Option<&str>]) -> bool {
+    fn chain_args_match(&self, args: &[Option<&[u8]>]) -> bool {
         let Some(first) = &self.error_chain else {
             return false;
         };
         args.iter().enumerate().all(|(i, arg)| match *arg {
-            Some(arg) => first.args.get(i).is_some_and(|said| said.as_str() == arg),
+            Some(arg) => first.args.get(i).is_some_and(|said| **said == *arg),
             None => true,
         })
     }
+}
 
+impl Checker<'_> {
     /// `reportError`
-    pub(super) fn report_error(&mut self, mut code: u32, mut args: Vec<String>) {
+    pub(super) fn report_error(&mut self, r: &mut Relater, mut code: u32, args: &[Arg<'_>]) {
+        let mut args = self.stringify_args(args);
         if code == 2326 {
-            if matches!(self.get_chain_message(0), Some(2353 | 2561)) {
+            if matches!(r.get_chain_message(0), Some(2353 | 2561)) {
                 return;
             }
             // 'x', some elaboration and a return type marker become "The types returned by 'x()'".
             let name = property_name_arg(&args[0]);
-            let returned_by = match self.get_chain_message(1) {
-                Some(2204) => Some(format!("{name}()")),
-                Some(2205) => Some(format!("new {name}()")),
-                Some(2202) => Some(format!("{name}(...)")),
-                Some(2203) => Some(format!("new {name}(...)")),
+            let returned_by: Option<[&[u8]; 3]> = match r.get_chain_message(1) {
+                Some(2204) => Some([b"", &name, b"()"]),
+                Some(2205) => Some([b"new ", &name, b"()"]),
+                Some(2202) => Some([b"", &name, b"(...)"]),
+                Some(2203) => Some([b"new ", &name, b"(...)"]),
                 _ => None,
             };
             if let Some(returned_by) = returned_by {
                 code = 2201;
-                args[0] = returned_by;
-                self.error_chain = self.chain_after(2);
+                args[0] = returned_by.concat().into();
+                r.error_chain = r.chain_after(2);
             }
             // 'x', some elaboration and 'y' become 'x.y'.
-            if matches!(self.get_chain_message(1), Some(2326 | 2200 | 2201)) {
+            if matches!(r.get_chain_message(1), Some(2326 | 2200 | 2201)) {
                 let head = property_name_arg(&args[0]);
-                let tail = self
+                let tail = r
                     .chain_after(1)
                     .and_then(|entry| entry.args.first().cloned())
                     .unwrap_or_default();
                 let tail = property_name_arg(&tail);
-                self.error_chain = self.chain_after(2);
+                r.error_chain = r.chain_after(2);
                 if code == 2326 {
                     code = 2200;
                 }
-                args = vec![add_to_dotted_name(&head, &tail)];
+                args = Box::new([add_to_dotted_name(&head, &tail)]);
             }
         }
-        self.error_chain = Some(Rc::new(ErrorChain {
-            next: self.error_chain.take(),
+        r.error_chain = Some(Rc::new(ErrorChain {
+            next: r.error_chain.take(),
             code,
             args,
         }));
@@ -142,7 +145,11 @@ fn lines_of(chain: &Chain, level: u32) -> Vec<Line> {
         if !matches!(entry.code, 2202..=2205) {
             lines.push(Line {
                 code: entry.code,
-                args: entry.args.clone(),
+                args: entry
+                    .args
+                    .iter()
+                    .map(|arg| String::from_utf8_lossy(arg).into_owned())
+                    .collect(),
                 level: level + lines.len() as u32,
             });
         }
@@ -152,37 +159,33 @@ fn lines_of(chain: &Chain, level: u32) -> Vec<Line> {
 }
 
 /// `getPropertyNameArg`
-fn property_name_arg(name: &str) -> String {
-    if name.starts_with(['"', '\'', '`']) {
-        format!("[{name}]")
-    } else {
-        name.to_owned()
+fn property_name_arg(name: &[u8]) -> Vec<u8> {
+    match name {
+        [b'"' | b'\'' | b'`', ..] => [&b"["[..], name, b"]"].concat(),
+        _ => name.to_vec(),
     }
 }
 
 /// `addToDottedName`
-fn add_to_dotted_name(head: &str, tail: &str) -> String {
-    let head = if head.starts_with("new ") {
-        format!("({head})")
+fn add_to_dotted_name(head: &[u8], tail: &[u8]) -> Box<[u8]> {
+    let (open, close): (&[u8], &[u8]) = if head.starts_with(b"new ") {
+        (b"(", b")")
     } else {
-        head.to_owned()
+        (b"", b"")
     };
     let mut pos = 0;
     loop {
-        if tail[pos..].starts_with('(') {
+        if tail[pos..].starts_with(b"(") {
             pos += 1;
-        } else if tail[pos..].starts_with("new ") {
+        } else if tail[pos..].starts_with(b"new ") {
             pos += 4;
         } else {
             break;
         }
     }
     let (prefix, suffix) = tail.split_at(pos);
-    if suffix.starts_with('[') {
-        format!("{prefix}{head}{suffix}")
-    } else {
-        format!("{prefix}{head}.{suffix}")
-    }
+    let dot: &[u8] = if suffix.starts_with(b"[") { b"" } else { b"." };
+    [prefix, open, head, close, dot, suffix].concat().into()
 }
 
 /// `isConversionOrInterfaceImplementationMessage`
@@ -191,32 +194,14 @@ fn is_conversion_or_interface_implementation_message(code: u32) -> bool {
 }
 
 /// `visibilityToString`
-pub(super) fn visibility_to_string(flags: Flags) -> String {
+pub(super) fn visibility_to_string(flags: Flags) -> &'static [u8] {
     if flags == Flags::PRIVATE {
-        "private".to_owned()
+        b"private"
     } else if flags == Flags::PROTECTED {
-        "protected".to_owned()
+        b"protected"
     } else {
-        "public".to_owned()
+        b"public"
     }
-}
-
-/// `ValueToString` of a string.
-fn quoted(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 // ───────────────────────────── what is asked from outside ─────────────────────────────
@@ -513,21 +498,22 @@ impl<'p> Checker<'p> {
 impl<'p> Checker<'p> {
     /// `getParameterNameAtPosition`. An element of a rest parameter that has no label goes by the name of the parameter and its
     /// place (`getTupleElementLabel`).
-    pub(super) fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> String {
-        let name_of = |index: usize| {
-            let name = params[index].name;
-            if name.is_none() {
-                format!("__{index}")
-            } else {
-                self.atom_text(name)
-            }
+    pub(super) fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> Atom {
+        let atoms = &self.files().atoms;
+        let numbered = |name: &[u8], index: usize| {
+            let mut digits = bun_core::fmt::ItoaBuf::new();
+            atoms.intern(&[name, b"_", bun_core::fmt::itoa(&mut digits, index)].concat())
+        };
+        let name_of = |index: usize| match params[index].name {
+            Atom::NONE => numbered(b"_", index),
+            name => name,
         };
         let fixed = params.len() - usize::from(params.last().is_some_and(|p| p.rest));
         if pos < fixed {
             return name_of(pos);
         }
         if fixed >= params.len() {
-            return String::new();
+            return known::empty;
         }
         let rest = name_of(fixed);
         match self.data(params[fixed].ty) {
@@ -536,7 +522,7 @@ impl<'p> Checker<'p> {
                 if let Some(flag) = flags.get(index)
                     && flag.label().is_some()
                 {
-                    return self.atom_text(flag.label());
+                    return flag.label();
                 }
                 let is_variable = flags
                     .get(index)
@@ -545,7 +531,7 @@ impl<'p> Checker<'p> {
                 if is_variable && params[fixed].has_declaration {
                     rest
                 } else {
-                    format!("{rest}_{index}")
+                    numbered(atoms.bytes(rest), index)
                 }
             }
             _ => rest,
@@ -559,7 +545,7 @@ impl<'p> Checker<'p> {
         sig: SigId,
         params: &[SigParam],
         pos: usize,
-    ) -> String {
+    ) -> Atom {
         if let Some((rest, fixed)) = params.split_last().filter(|split| split.0.rest)
             && pos >= fixed.len()
             && let TypeData::Tuple { flags, .. } = self.data(rest.ty)
@@ -575,7 +561,7 @@ impl<'p> Checker<'p> {
                     && index < written.len()
                     && hir[written.at(index)].name.is_some()
                 {
-                    return self.atom_text(hir[written.at(index)].name);
+                    return hir[written.at(index)].name;
                 }
             }
         }
@@ -587,21 +573,22 @@ impl<'p> Checker<'p> {
         &mut self,
         predicate: &super::decl::Predicate,
         params: &[SigParam],
-    ) -> String {
-        let mut text = String::new();
+    ) -> Vec<u8> {
+        let mut text = Vec::new();
         if predicate.asserts {
-            text.push_str("asserts ");
+            text.extend_from_slice(b"asserts ");
         }
         match predicate.param {
             Some(index) if index < params.len() => {
-                text.push_str(&self.parameter_name_at_position(params, index));
+                let name = self.parameter_name_at_position(params, index);
+                text.extend_from_slice(self.files().atoms.bytes(name));
             }
             Some(_) => {}
-            None => text.push_str("this"),
+            None => text.extend_from_slice(b"this"),
         }
         if let Some(ty) = predicate.ty {
-            text.push_str(" is ");
-            text.push_str(&self.type_to_string(ty));
+            text.extend_from_slice(b" is ");
+            text.extend(self.type_to_string(ty).into_bytes());
         }
         text
     }
@@ -609,7 +596,7 @@ impl<'p> Checker<'p> {
     /// `valueToString` of the value of an enum member.
     pub(super) fn enum_value_text(&self, value: EnumValue) -> String {
         match value {
-            EnumValue::String(text) => quoted(&self.atom_text(text)),
+            EnumValue::String(text) => super::print::quoted(&self.atom_text(text), '"', false),
             EnumValue::Number(bits) => crate::atom::number_to_string(f64::from_bits(bits)),
         }
     }
@@ -721,7 +708,7 @@ impl<'p> Checker<'p> {
         if self.is_object_type(source) && self.has_primitive_flag(target) {
             self.try_elaborate_errors_for_primitives_and_objects(r, source, target);
         } else if self.is_reference_to_global(source, known::Object) {
-            r.report_error(2696, Vec::new());
+            self.report_error(r, 2696, &[]);
         } else if is_jsx && self.is_intersection(target) {
             if let TypeData::Intersection(parts) = self.data(target)
                 && let Some(file) = self.checking
@@ -737,8 +724,11 @@ impl<'p> Checker<'p> {
             && let Some((code, prop)) = self.why_never_intersection(original_target)
         {
             let intersection = self.type_to_string_without_reduction(original_target);
-            let name = self.prop_to_string(&prop);
-            r.report_error(code, vec![intersection, name]);
+            self.report_error(
+                r,
+                code,
+                &[Arg::Bytes(intersection.as_bytes()), Arg::Prop(&prop)],
+            );
         }
         self.report_relation_error(r, head, source, target);
         if let TypeData::TypeParam(file, tp, _) = *self.data(source)
@@ -900,6 +890,9 @@ impl<'p> Checker<'p> {
             generalized_source = self.base_of_literal(source);
             generalized_source_type = self.type_to_string_fully_qualified(generalized_source);
         }
+        let [source_name, generalized_source_name, target_name] =
+            [&source_type, &generalized_source_type, &target_type]
+                .map(|name| Arg::Bytes(name.as_bytes()));
         // Of `T[K]`, unless the source is an indexed access too, it is `T` that counts.
         let is_type_parameter = match (self.data(target), self.data(source)) {
             (TypeData::IndexedAccess { obj, .. }, s)
@@ -922,30 +915,16 @@ impl<'p> Checker<'p> {
             };
             match base_constraint {
                 Some(constraint) if self.is_assignable(generalized_source, constraint) => {
-                    let constraint = self.type_to_string(constraint);
-                    r.report_error(
-                        5075,
-                        vec![
-                            generalized_source_type.clone(),
-                            target_type.clone(),
-                            constraint,
-                        ],
-                    );
+                    let args = [generalized_source_name, target_name, Arg::Type(constraint)];
+                    self.report_error(r, 5075, &args);
                 }
                 Some(constraint) if self.is_assignable(source, constraint) => {
-                    let constraint = self.type_to_string(constraint);
-                    r.report_error(
-                        5075,
-                        vec![source_type.clone(), target_type.clone(), constraint],
-                    );
+                    self.report_error(r, 5075, &[source_name, target_name, Arg::Type(constraint)]);
                 }
                 _ => {
                     // Only this is said.
                     r.error_chain = None;
-                    r.report_error(
-                        5082,
-                        vec![target_type.clone(), generalized_source_type.clone()],
-                    );
+                    self.report_error(r, 5082, &[target_name, generalized_source_name]);
                 }
             }
         }
@@ -957,8 +936,8 @@ impl<'p> Checker<'p> {
                 if self.is_union(target)
                     && let Some(suggested) = self.suggested_string_literal_type(source, target)
                 {
-                    let suggested = self.type_to_string(suggested);
-                    r.report_error(2820, vec![generalized_source_type, target_type, suggested]);
+                    let args = [generalized_source_name, target_name, Arg::Type(suggested)];
+                    self.report_error(r, 2820, &args);
                     return;
                 }
                 2322
@@ -967,8 +946,8 @@ impl<'p> Checker<'p> {
             Some(message) => message,
         };
         let names = [
-            Some(generalized_source_type.as_str()),
-            Some(target_type.as_str()),
+            Some(generalized_source_type.as_bytes()),
+            Some(target_type.as_bytes()),
         ];
         let gives_way = !is_conversion_or_interface_implementation_message(message);
         let is_said_already = match r.get_chain_message(0) {
@@ -979,7 +958,7 @@ impl<'p> Checker<'p> {
             _ => false,
         };
         if !is_said_already {
-            r.report_error(message, vec![generalized_source_type, target_type]);
+            self.report_error(r, message, &[generalized_source_name, target_name]);
         }
     }
 
@@ -997,8 +976,7 @@ impl<'p> Checker<'p> {
         };
         if is_readonly && self.is_mutable_array_or_tuple(target) {
             if report {
-                let (source, target) = (self.type_to_string(source), self.type_to_string(target));
-                r.report_error(4104, vec![source, target]);
+                self.report_error(r, 4104, &[Arg::Type(source), Arg::Type(target)]);
             }
             return false;
         }
@@ -1026,8 +1004,7 @@ impl<'p> Checker<'p> {
             _ => return,
         };
         if self.is_reference_to_global(source, wrapper) {
-            let (target, source) = (self.type_to_string(target), self.type_to_string(source));
-            r.report_error(2692, vec![target, source]);
+            self.report_error(r, 2692, &[Arg::Type(target), Arg::Type(source)]);
         }
     }
 
@@ -1035,30 +1012,28 @@ impl<'p> Checker<'p> {
     pub(super) fn report_unknown_jsx_attribute(
         &mut self,
         r: &mut Relater,
-        name: String,
+        prop: &Prop,
         error_target: TypeId,
-        in_type: String,
     ) {
         // `getSuggestedSymbolForNonexistentJSXAttribute`
         let properties = self.properties_of_type(error_target);
-        let specific = match name.as_str() {
-            "for" => Some("htmlFor"),
-            "class" => Some("className"),
+        let name = self.prop_to_string(prop);
+        let specific: Option<&[u8]> = match name.as_bytes() {
+            b"for" => Some(b"htmlFor"),
+            b"class" => Some(b"className"),
             _ => None,
         };
         let suggested = specific
             .and_then(|specific| {
                 properties
                     .iter()
-                    .position(|p| self.written_name(p.name) == specific.as_bytes())
+                    .position(|p| self.written_name(p.name) == specific)
             })
             .or_else(|| self.suggested_property(name.as_bytes(), &properties));
+        let args = [Arg::Bytes(name.as_bytes()), Arg::Type(error_target)];
         match suggested {
-            Some(i) => {
-                let suggestion = self.prop_to_string(&properties[i]);
-                r.report_error(2551, vec![name, in_type, suggestion]);
-            }
-            None => r.report_error(2339, vec![name, in_type]),
+            Some(i) => self.report_error(r, 2551, &[args[0], args[1], Arg::Prop(&properties[i])]),
+            None => self.report_error(r, 2339, &args),
         }
     }
 }
@@ -1088,11 +1063,7 @@ impl<'p> Checker<'p> {
         let Some(missing) = missing else {
             return Ternary::TRUE;
         };
-        let (key, source) = (
-            self.type_to_string(missing.key),
-            self.type_to_string(source),
-        );
-        r.report_error(2329, vec![key, source]);
+        self.report_error(r, 2329, &[Arg::Type(missing.key), Arg::Type(source)]);
         Ternary::FALSE
     }
 }
@@ -1124,20 +1095,23 @@ impl<'p> Checker<'p> {
                     }))
             });
             if declares_one_itself {
-                let description = String::from_utf8_lossy(written).into_owned();
-                let source_name = self.symbol_to_string(class);
                 let target_name = match *self.data(target) {
-                    TypeData::Ref { target: sym, .. } => self.symbol_to_string(sym),
-                    _ => self.type_to_string(target),
+                    TypeData::Ref { target: sym, .. } => Arg::Sym(sym),
+                    _ => Arg::Type(target),
                 };
-                r.report_error(18015, vec![description, source_name, target_name]);
+                self.report_error(
+                    r,
+                    18015,
+                    &[Arg::Bytes(written), Arg::Sym(class), target_name],
+                );
                 return;
             }
         }
         if let [only] = unmatched {
             let (source_type, target_type) = self.type_names_for_error_display(source, target);
             let name = self.prop_to_string(only);
-            r.report_error(2741, vec![name.clone(), source_type, target_type]);
+            let args = [&name, &source_type, &target_type].map(|arg| Arg::Bytes(arg.as_bytes()));
+            self.report_error(r, 2741, &args);
             if let Some(place) = self.place_of_first_prop_declaration(only) {
                 r.related_info.push(self.declared_here(place, name));
             }
@@ -1153,16 +1127,13 @@ impl<'p> Checker<'p> {
                 names.push(self.prop_to_string(prop));
             }
             let names = names.join(", ");
+            let args = [&source_type, &target_type, &names].map(|arg| Arg::Bytes(arg.as_bytes()));
             if unmatched.len() > 5 {
-                let more = (unmatched.len() - 4).to_string();
-                r.report_error(2740, vec![source_type, target_type, names, more]);
+                let more = Arg::Number(unmatched.len() - 4);
+                self.report_error(r, 2740, &[args[0], args[1], args[2], more]);
             } else {
-                r.report_error(2739, vec![source_type, target_type, names]);
+                self.report_error(r, 2739, &args);
             }
         }
     }
 }
-
-// ───────────────────────────── signatures ─────────────────────────────
-
-impl<'p> Checker<'p> {}

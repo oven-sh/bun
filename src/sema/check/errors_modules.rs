@@ -30,7 +30,7 @@ impl Checker<'_> {
             _ => None,
         }));
         keys.extend(hir.members.iter().filter_map(|m| match m.key {
-            PropKey::Computed(e) => Some((e, m.pos)),
+            PropKey::Computed(e) => Some((e, m.name_pos)),
             _ => None,
         }));
         for p in &hir.pat_props {
@@ -170,12 +170,10 @@ impl Checker<'_> {
                     code: 2724,
                 });
                 self.explain(at, 2724, |c| {
-                    // `GetSpellingSuggestion`: of those that are as close, the one declared first.
-                    let distance = |other: Atom| edit_distance(text, files.atoms.bytes(other));
-                    let suggested = exports
-                        .iter()
-                        .filter(|&candidate| is_candidate(candidate))
-                        .min_by(|a, b| distance(a.0).total_cmp(&distance(b.0)).then(a.1.cmp(&b.1)));
+                    let candidates = exports.iter().filter(|&candidate| is_candidate(candidate));
+                    let get_name = |candidate: &(Atom, Sym)| files.atoms.bytes(candidate.0);
+                    let suggested =
+                        get_spelling_suggestion(text, candidates, get_name, |a, b| a.1.cmp(&b.1));
                     vec![
                         fully_qualified_name(c, resolved),
                         c.atom_text(name),
@@ -831,7 +829,7 @@ pub(super) fn fully_qualified_name(c: &mut Checker<'_>, sym: Sym) -> String {
 }
 
 /// `GetRootDeclaration`: the variable or the parameter whose binding pattern contains `pat`.
-fn root_declaration(bound: &Bound, mut pat: PatId) -> PatParent {
+pub(super) fn root_declaration(bound: &Bound, mut pat: PatId) -> PatParent {
     loop {
         match bound.pat_parent[pat.idx()] {
             PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,

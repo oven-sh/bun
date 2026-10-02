@@ -429,22 +429,6 @@ impl Options {
 }
 
 impl Options {
-    /// The options of the one file at `path`, and the `files` it names. `config::load` also follows `extends` and `include`.
-    pub fn from_tsconfig(host: &dyn Host, path: &str) -> Option<Options> {
-        let json = Json::parse(&host.read(path)?)?;
-        let empty = Json::Object(Vec::new());
-        let compiler = json.get("compilerOptions").unwrap_or(&empty);
-        let mut options = Options::from_compiler_options(parent_dir(path), compiler);
-        if let Some(files) = json.get("files").and_then(Json::as_array) {
-            options.files = files
-                .iter()
-                .filter_map(Json::as_str)
-                .map(|f| normalize(&format!("{}/{f}", options.base_dir)))
-                .collect();
-        }
-        Some(options)
-    }
-
     /// What `compiler`, the `compilerOptions` of a configuration file in `base_dir`, comes to.
     pub fn from_compiler_options(base_dir: &str, compiler: &Json) -> Options {
         let mut options = Options {

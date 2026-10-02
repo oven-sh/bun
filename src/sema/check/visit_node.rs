@@ -695,7 +695,7 @@ impl Visitor<'_, '_> {
         }
         for (index, member) in hir.members.iter().enumerate() {
             let m = MemberId(index as u32);
-            let start = super::errors_x_properties_jsx::start_of_member_name(hir, m);
+            let start = hir[m].name_pos;
             self.literal_in_computed_name(member.key, start, VisitedKind::LiteralInMemberName(m));
             if matches!(
                 member.kind,

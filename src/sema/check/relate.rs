@@ -886,9 +886,7 @@ impl<'p> Checker<'p> {
             return result;
         }
         let is_stack_low = self.is_stack_low();
-        if is_stack_low {
-            self.guard("related");
-        }
+        if is_stack_low {}
         // A question asked while a type is being simplified passes no `enter`: what does not end has to be cut off here too.
         if self.is_out_of_time() || is_stack_low {
             self.gave_up();
@@ -1384,7 +1382,8 @@ impl<'p> Checker<'p> {
                 if let Some(r) = error_reporter {
                     let declared = self.enum_type(target);
                     let declared = self.type_to_string_fully_qualified(declared);
-                    r.report_error(2324, vec![self.symbol_to_string(member), declared]);
+                    let args = [Arg::Sym(member), Arg::Bytes(declared.as_bytes())];
+                    self.report_error(r, 2324, &args);
                 }
                 return false;
             };
@@ -1404,14 +1403,14 @@ impl<'p> Checker<'p> {
                 _ => continue,
             };
             if let Some(r) = error_reporter {
-                let mut args = vec![self.symbol_to_string(target), self.symbol_to_string(other)];
-                args.extend(
-                    values
-                        .into_iter()
-                        .flatten()
-                        .map(|v| self.enum_value_text(v)),
+                let count = 2 + values.iter().flatten().count();
+                let values = values.map(|v| v.map(|v| self.enum_value_text(v)).unwrap_or_default());
+                let [first, second] = values.each_ref().map(|v| Arg::Bytes(v.as_bytes()));
+                self.report_error(
+                    r,
+                    code,
+                    &[Arg::Sym(target), Arg::Sym(other), first, second][..count],
                 );
-                r.report_error(code, args);
             }
             return false;
         }
@@ -2353,13 +2352,23 @@ impl<'p> Checker<'p> {
     /// A type parameter that stands in for another while a variance is measured was looked at in a way that the variance
     /// does not account for. `instantiateType(t, reportUnreliableMapper)`
     fn report_unreliable(&mut self, t: TypeId) {
-        if self.p.types.flags(t).contains(TypeFlags::HAS_MARKER) {
+        if self
+            .p
+            .types
+            .object_flags(t)
+            .contains(ObjectFlags::HAS_MARKER)
+        {
             self.reliability |= REPORTS_UNRELIABLE;
         }
     }
 
     fn report_unmeasurable(&mut self, t: TypeId) {
-        if self.p.types.flags(t).contains(TypeFlags::HAS_MARKER) {
+        if self
+            .p
+            .types
+            .object_flags(t)
+            .contains(ObjectFlags::HAS_MARKER)
+        {
             self.reliability |= REPORTS_UNMEASURABLE;
         }
     }
@@ -2367,7 +2376,13 @@ impl<'p> Checker<'p> {
     /// `isMarkerType`, of a reference to a class or an interface.
     pub(super) fn is_marker_type(&mut self, t: TypeId) -> bool {
         // `getVariances`: arrays are never measured.
-        if !self.p.types.flags(t).contains(TypeFlags::HAS_MARKER) || self.is_array(t) {
+        if !self
+            .p
+            .types
+            .object_flags(t)
+            .contains(ObjectFlags::HAS_MARKER)
+            || self.is_array(t)
+        {
             return false;
         }
         let TypeData::Ref { target, .. } = self.data(t) else {
@@ -2771,8 +2786,6 @@ impl<'p> Checker<'p> {
                     } else {
                         target
                     };
-                    let source_string = self.type_to_string(shown_source);
-                    let target_string = self.type_to_string(shown_target);
                     let mut is_meant_to_be_called = false;
                     for construct in [false, true] {
                         if !is_meant_to_be_called
@@ -2784,7 +2797,7 @@ impl<'p> Checker<'p> {
                         }
                     }
                     let code = if is_meant_to_be_called { 2560 } else { 2559 };
-                    r.report_error(code, vec![source_string, target_string]);
+                    self.report_error(r, code, &[Arg::Type(shown_source), Arg::Type(shown_target)]);
                 }
                 return Ternary::FALSE;
             }
@@ -2836,8 +2849,11 @@ impl<'p> Checker<'p> {
     ) -> Option<bool> {
         let (source, target) = (self.erased_sig(implementation), self.erased_sig(overload));
         let (source_return, target_return) = (self.sig_return(source), self.sig_return(target));
-        let is_known =
-            |c: &Self, t: TypeId| !c.p.types.flags(t).contains(TypeFlags::HAS_UNRESOLVED);
+        let is_known = |c: &Self, t: TypeId| {
+            !c.p.types
+                .object_flags(t)
+                .contains(ObjectFlags::HAS_UNRESOLVED)
+        };
         if !is_known(self, source_return)
             || !is_known(self, target_return)
             || self
@@ -2960,21 +2976,21 @@ impl<'p> Checker<'p> {
                 if REPORT {
                     let error_target =
                         self.filter(reduced_target, |c, m| c.is_excess_property_check_target(m));
-                    let name = self.prop_to_string(prop);
-                    let in_type = self.type_to_string(error_target);
+                    let args = [Arg::Prop(prop), Arg::Type(error_target)];
                     if is_jsx {
-                        if let PropSource::Literal(file, p) = prop.source
+                        if let Some(&PropSource::Literal(file, p)) = Self::value_declaration(prop)
                             && r.error_node.0 == file
                         {
                             let end = self.end_of_jsx_attr_name(file, p);
                             r.error_node = (file, self.hir(file)[p].pos, end);
                         }
-                        self.report_unknown_jsx_attribute(r, name, error_target, in_type);
+                        self.report_unknown_jsx_attribute(r, prop, error_target);
                         return true;
                     }
                     // Only a name written as an identifier in the file at hand is taken for a slip of the pen.
-                    let is_identifier = match prop.source {
-                        PropSource::Literal(file, p) if r.error_node.0 == file => {
+                    // `prop.ValueDeclaration`
+                    let is_identifier = match Self::value_declaration(prop) {
+                        Some(&PropSource::Literal(file, p)) if r.error_node.0 == file => {
                             let (hir, written) = (self.hir(file), &self.hir(file)[p]);
                             r.error_node = (file, written.pos, self.end_of_prop_name(file, p));
                             matches!(written.key, PropKey::Name(_))
@@ -2991,11 +3007,11 @@ impl<'p> Checker<'p> {
                         let written = self.files().atoms.bytes(prop.name);
                         suggestion = self
                             .suggested_property(written, &properties)
-                            .map(|i| self.atom_text(properties[i].name));
+                            .map(|i| Arg::Atom(properties[i].name));
                     }
                     match suggestion {
-                        Some(suggestion) => r.report_error(2561, vec![name, in_type, suggestion]),
-                        None => r.report_error(2353, vec![name, in_type]),
+                        Some(name) => self.report_error(r, 2561, &[args[0], args[1], name]),
+                        None => self.report_error(r, 2353, &args),
                     }
                 }
                 return true;
@@ -3013,8 +3029,7 @@ impl<'p> Checker<'p> {
                     .holds()
                 {
                     if REPORT {
-                        let name = self.prop_to_string(prop);
-                        r.report_error(2326, vec![name]);
+                        self.report_error(r, 2326, &[Arg::Prop(prop)]);
                     }
                     return true;
                 }
@@ -3744,8 +3759,7 @@ impl<'p> Checker<'p> {
         {
             self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
             if REPORT && entry & COMPLEXITY_OVERFLOW != 0 {
-                let (source, target) = (self.type_to_string(source), self.type_to_string(target));
-                r.report_error(2859, vec![source, target]);
+                self.report_error(r, 2859, &[Arg::Type(source), Arg::Type(target)]);
             }
             if entry & COMPLEXITY_OVERFLOW != 0 {
                 // The comparison was cut short when it was made.
@@ -5781,24 +5795,24 @@ impl<'p> Checker<'p> {
                 let target_min_length = target_flags.iter().filter(is_required).count();
                 if !source_rest && source_arity < target_min_length {
                     if REPORT {
-                        let args = vec![source_arity.to_string(), target_min_length.to_string()];
-                        r.report_error(2618, args);
+                        let args = [Arg::Number(source_arity), Arg::Number(target_min_length)];
+                        self.report_error(r, 2618, &args);
                     }
                     return Ternary::FALSE;
                 }
                 if !target_has_rest_element && target_arity < source_min_length {
                     if REPORT {
-                        let args = vec![source_min_length.to_string(), target_arity.to_string()];
-                        r.report_error(2619, args);
+                        let args = [Arg::Number(source_min_length), Arg::Number(target_arity)];
+                        self.report_error(r, 2619, &args);
                     }
                     return Ternary::FALSE;
                 }
                 if !target_has_rest_element && (source_rest || target_arity < source_arity) {
                     if REPORT {
                         if source_min_length < target_min_length {
-                            r.report_error(2620, vec![target_min_length.to_string()]);
+                            self.report_error(r, 2620, &[Arg::Number(target_min_length)]);
                         } else {
-                            r.report_error(2621, vec![target_arity.to_string()]);
+                            self.report_error(r, 2621, &[Arg::Number(target_arity)]);
                         }
                     }
                     return Ternary::FALSE;
@@ -5833,7 +5847,7 @@ impl<'p> Checker<'p> {
                         && !source_flag.contains(ElemFlags::VARIADIC)
                     {
                         if REPORT {
-                            r.report_error(2624, vec![target_position.to_string()]);
+                            self.report_error(r, 2624, &[Arg::Number(target_position)]);
                         }
                         return Ternary::FALSE;
                     }
@@ -5841,9 +5855,8 @@ impl<'p> Checker<'p> {
                         && !target_flag.intersects(variable)
                     {
                         if REPORT {
-                            let args =
-                                vec![source_position.to_string(), target_position.to_string()];
-                            r.report_error(2625, args);
+                            let args = [Arg::Number(source_position), Arg::Number(target_position)];
+                            self.report_error(r, 2625, &args);
                         }
                         return Ternary::FALSE;
                     }
@@ -5851,7 +5864,7 @@ impl<'p> Checker<'p> {
                         && !source_flag.contains(ElemFlags::REQUIRED)
                     {
                         if REPORT {
-                            r.report_error(2623, vec![target_position.to_string()]);
+                            self.report_error(r, 2623, &[Arg::Number(target_position)]);
                         }
                         return Ternary::FALSE;
                     }
@@ -5896,16 +5909,16 @@ impl<'p> Checker<'p> {
                                 && source_position_from_end >= target_end_count
                                 && target_start_count != source_arity - target_end_count - 1
                             {
-                                let args = vec![
-                                    target_start_count.to_string(),
-                                    (source_arity - target_end_count - 1).to_string(),
-                                    target_position.to_string(),
+                                let args = [
+                                    Arg::Number(target_start_count),
+                                    Arg::Number(source_arity - target_end_count - 1),
+                                    Arg::Number(target_position),
                                 ];
-                                r.report_error(2627, args);
+                                self.report_error(r, 2627, &args);
                             } else {
                                 let args =
-                                    vec![source_position.to_string(), target_position.to_string()];
-                                r.report_error(2626, args);
+                                    [Arg::Number(source_position), Arg::Number(target_position)];
+                                self.report_error(r, 2626, &args);
                             }
                         }
                         return Ternary::FALSE;
@@ -5969,9 +5982,7 @@ impl<'p> Checker<'p> {
             for sp in &sm.shape().props {
                 if !excluded.contains(&sp.name) && tm.resolved.prop(sp.name).is_none() {
                     if REPORT {
-                        let (name, in_type) =
-                            (self.prop_to_string(sp), self.type_to_string(target));
-                        r.report_error(2339, vec![name, in_type]);
+                        self.report_error(r, 2339, &[Arg::Prop(sp), Arg::Type(target)]);
                     }
                     return Ternary::FALSE;
                 }
@@ -6054,18 +6065,17 @@ impl<'p> Checker<'p> {
         if sf.contains(PropFlags::PRIVATE) || tf.contains(PropFlags::PRIVATE) {
             if Self::value_declaration(source_prop) != Self::value_declaration(target_prop) {
                 if REPORT {
-                    let name = self.prop_to_string(target_prop);
+                    let name = Arg::Prop(target_prop);
                     if sf.contains(PropFlags::PRIVATE) && tf.contains(PropFlags::PRIVATE) {
-                        r.report_error(2442, vec![name]);
+                        self.report_error(r, 2442, &[name]);
                     } else {
                         let (private_in, other) = if sf.contains(PropFlags::PRIVATE) {
                             (source, target)
                         } else {
                             (target, source)
                         };
-                        let (private_in, other) =
-                            (self.type_to_string(private_in), self.type_to_string(other));
-                        r.report_error(2325, vec![name, private_in, other]);
+                        let args = [name, Arg::Type(private_in), Arg::Type(other)];
+                        self.report_error(r, 2325, &args);
                     }
                 }
                 return Ternary::FALSE;
@@ -6082,23 +6092,15 @@ impl<'p> Checker<'p> {
                         Some(class) => self.declared_type(class),
                         None => target,
                     };
-                    let args = vec![
-                        self.prop_to_string(target_prop),
-                        self.type_to_string(source_type),
-                        self.type_to_string(target_type),
-                    ];
-                    r.report_error(2443, args);
+                    let types = [source_type, target_type].map(Arg::Type);
+                    self.report_error(r, 2443, &[Arg::Prop(target_prop), types[0], types[1]]);
                 }
                 return Ternary::FALSE;
             }
         } else if sf.contains(PropFlags::PROTECTED) {
             if REPORT {
-                let args = vec![
-                    self.prop_to_string(target_prop),
-                    self.type_to_string(source),
-                    self.type_to_string(target),
-                ];
-                r.report_error(2444, args);
+                let args = [Arg::Prop(target_prop), Arg::Type(source), Arg::Type(target)];
+                self.report_error(r, 2444, &args);
             }
             return Ternary::FALSE;
         }
@@ -6121,8 +6123,7 @@ impl<'p> Checker<'p> {
         };
         if !related.holds() {
             if REPORT {
-                let name = self.prop_to_string(target_prop);
-                r.report_error(2326, vec![name]);
+                self.report_error(r, 2326, &[Arg::Prop(target_prop)]);
             }
             return Ternary::FALSE;
         }
@@ -6133,12 +6134,8 @@ impl<'p> Checker<'p> {
             && !matches!(target_prop.source, PropSource::Symbol(_))
         {
             if REPORT {
-                let args = vec![
-                    self.prop_to_string(target_prop),
-                    self.type_to_string(source),
-                    self.type_to_string(target),
-                ];
-                r.report_error(2327, args);
+                let args = [Arg::Prop(target_prop), Arg::Type(source), Arg::Type(target)];
+                self.report_error(r, 2327, &args);
             }
             return Ternary::FALSE;
         }
@@ -6416,7 +6413,7 @@ impl<'p> Checker<'p> {
                 && !self.is_abstract_signature(target_sigs[0])
             {
                 if REPORT {
-                    r.report_error(2517, Vec::new());
+                    self.report_error(r, 2517, &[]);
                 }
                 return Ternary::FALSE;
             }
@@ -6430,8 +6427,8 @@ impl<'p> Checker<'p> {
                     || t != Flags::PROTECTED && s.is_empty();
                 if !compatible {
                     if REPORT {
-                        let args = vec![visibility_to_string(s), visibility_to_string(t)];
-                        r.report_error(2672, args);
+                        let args = [s, t].map(|flags| Arg::Bytes(visibility_to_string(flags)));
+                        self.report_error(r, 2672, &args);
                     }
                     return Ternary::FALSE;
                 }
@@ -6505,9 +6502,7 @@ impl<'p> Checker<'p> {
                     should_elaborate = false;
                 }
                 if REPORT && should_elaborate {
-                    let (source, signature) =
-                        (self.type_to_string(source), self.signature_to_string(t));
-                    r.report_error(2658, vec![source, signature]);
+                    self.report_error(r, 2658, &[Arg::Type(source), Arg::Sig(t)]);
                 }
                 return Ternary::FALSE;
             }
@@ -6834,7 +6829,7 @@ impl<'p> Checker<'p> {
             if source_has_more_parameters {
                 if REPORT && check_mode & STRICT_ARITY == 0 {
                     let least = self.min_argument_count(&sp);
-                    r.report_error(2849, vec![least.to_string(), target_count.to_string()]);
+                    self.report_error(r, 2849, &[Arg::Number(least), Arg::Number(target_count)]);
                 }
                 return Ternary::FALSE;
             }
@@ -6886,7 +6881,7 @@ impl<'p> Checker<'p> {
             }
             if !related.holds() {
                 if REPORT {
-                    r.report_error(2685, Vec::new());
+                    self.report_error(r, 2685, &[]);
                 }
                 return Ternary::FALSE;
             }
@@ -6996,11 +6991,11 @@ impl<'p> Checker<'p> {
             }
             if !related.holds() {
                 if REPORT {
-                    let names = vec![
-                        self.labeled_parameter_name_at_position(source, &sp, i),
-                        self.labeled_parameter_name_at_position(target, &tp, i),
+                    let names = [
+                        Arg::Atom(self.labeled_parameter_name_at_position(source, &sp, i)),
+                        Arg::Atom(self.labeled_parameter_name_at_position(target, &tp, i)),
                     ];
-                    r.report_error(2328, names);
+                    self.report_error(r, 2328, &names);
                 }
                 return Ternary::FALSE;
             }
@@ -7036,8 +7031,7 @@ impl<'p> Checker<'p> {
                 // Only a type guard does where one is asked for.
                 None if !wanted.asserts => {
                     if REPORT {
-                        let signature = self.signature_to_string(source);
-                        r.report_error(1224, vec![signature]);
+                        self.report_error(r, 1224, &[Arg::Sig(source)]);
                     }
                     return Ternary::FALSE;
                 }
@@ -7070,7 +7064,7 @@ impl<'p> Checker<'p> {
                     (false, true) => 2203,
                     (false, false) => 2202,
                 };
-                r.report_error(marker, Vec::new());
+                self.report_error(r, marker, &[]);
             }
         }
         result
@@ -7088,15 +7082,15 @@ impl<'p> Checker<'p> {
         let mut related = Ternary::FALSE;
         if (given.asserts, given.param.is_none()) != (wanted.asserts, wanted.param.is_none()) {
             if REPORT {
-                r.report_error(2518, Vec::new());
+                self.report_error(r, 2518, &[]);
             }
         } else if given.param != wanted.param {
             if REPORT {
-                let names = vec![
-                    self.parameter_name_at_position(source.1, given.param.unwrap_or(0)),
-                    self.parameter_name_at_position(target.1, wanted.param.unwrap_or(0)),
+                let names = [
+                    Arg::Atom(self.parameter_name_at_position(source.1, given.param.unwrap_or(0))),
+                    Arg::Atom(self.parameter_name_at_position(target.1, wanted.param.unwrap_or(0))),
                 ];
-                r.report_error(1227, names);
+                self.report_error(r, 1227, &names);
             }
         } else {
             related = match (given.ty, wanted.ty) {
@@ -7106,11 +7100,9 @@ impl<'p> Checker<'p> {
             };
         }
         if REPORT && !related.holds() {
-            let predicates = vec![
-                self.type_predicate_text(given, source.1),
-                self.type_predicate_text(wanted, target.1),
-            ];
-            r.report_error(1226, predicates);
+            let given = self.type_predicate_text(given, source.1);
+            let wanted = self.type_predicate_text(wanted, target.1);
+            self.report_error(r, 1226, &[Arg::Bytes(&given), Arg::Bytes(&wanted)]);
         }
         related
     }
@@ -7236,8 +7228,7 @@ impl<'p> Checker<'p> {
             }
         }
         if REPORT {
-            let (key, source) = (self.type_to_string(key), self.type_to_string(source));
-            r.report_error(2329, vec![key, source]);
+            self.report_error(r, 2329, &[Arg::Type(key), Arg::Type(source)]);
         }
         Ternary::FALSE
     }
@@ -7254,12 +7245,10 @@ impl<'p> Checker<'p> {
         let state = state & !STATE_REGULAR;
         let related = self.is_related_to_ex::<REPORT>(r, source.1, target.1, REC_BOTH, state);
         if REPORT && !related.holds() {
-            let source_key = self.type_to_string(source.0);
             if source.0 == target.0 {
-                r.report_error(2634, vec![source_key]);
+                self.report_error(r, 2634, &[Arg::Type(source.0)]);
             } else {
-                let target_key = self.type_to_string(target.0);
-                r.report_error(2330, vec![source_key, target_key]);
+                self.report_error(r, 2330, &[Arg::Type(source.0), Arg::Type(target.0)]);
             }
         }
         related
@@ -7423,8 +7412,7 @@ impl<'p> Checker<'p> {
             let related = self.is_related_to_ex::<REPORT>(r, given, wanted, REC_BOTH, state);
             if !related.holds() {
                 if REPORT {
-                    let name = self.prop_to_string(prop);
-                    r.report_error(2530, vec![name]);
+                    self.report_error(r, 2530, &[Arg::Prop(prop)]);
                 }
                 return Ternary::FALSE;
             }

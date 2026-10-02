@@ -1157,7 +1157,7 @@ impl Unused<'_> {
             }) {
                 return self.scope_of_statement(StmtId(s as u32));
             }
-            if let Some(m) = hir.members.iter().position(|m| is_host(m.pos)) {
+            if let Some(m) = hir.members.iter().position(|m| is_host(m.start)) {
                 return self.scope_of_member(MemberId(m as u32));
             }
             if let Some(m) = hir.enum_members.iter().position(|m| is_host(m.pos)) {
@@ -1963,10 +1963,10 @@ impl Unused<'_> {
             return false;
         }
         let hir = self.hir;
-        let start = hir[m].pos;
+        let start = hir[m].start;
         let next = MemberId(m.0 + 1);
         if hir[class].members.range().contains(&next.idx()) {
-            return hir[next].pos > start && self.has_syntax_error_in(start, hir[next].pos - 1);
+            return hir[next].start > start && self.has_syntax_error_in(start, hir[next].start - 1);
         }
         self.has_syntax_error_in(start, closing_bracket_after(&hir.text, start as usize))
     }
@@ -2166,11 +2166,11 @@ impl Unused<'_> {
                         && !self.member_has_syntax_error(class, m)
                     {
                         out.push(Diagnostic {
-                            start: member.pos,
+                            start: member.name_pos,
                             code: 6133,
                         });
                         self.reported_on.borrow_mut().push((
-                            member.pos,
+                            member.name_pos,
                             6133,
                             Reported::MemberName(m),
                         ));

@@ -1882,12 +1882,12 @@ impl Checker<'_> {
                         if member.flags.contains(Flags::ABSTRACT) && member.init.is_some() =>
                     {
                         out.push(Diagnostic {
-                            start: member.pos,
+                            start: member.name_pos,
                             code: 1267,
                         });
                         let end = self.end_of_member_name(file, m);
-                        self.explain_to(member.pos, end, 1267, |c| {
-                            vec![c.source_text(file, member.pos, end)]
+                        self.explain_to(member.name_pos, end, 1267, |c| {
+                            vec![c.source_text(file, member.name_pos, end)]
                         });
                     }
                     MemberKind::Method
@@ -1896,12 +1896,12 @@ impl Checker<'_> {
                             && has_written_body(hir, member.func) =>
                     {
                         out.push(Diagnostic {
-                            start: member.pos,
+                            start: member.name_pos,
                             code: 1245,
                         });
                         let end = self.end_of_member_name(file, m);
-                        self.explain_to(member.pos, end, 1245, |c| {
-                            vec![c.source_text(file, member.pos, end)]
+                        self.explain_to(member.name_pos, end, 1245, |c| {
+                            vec![c.source_text(file, member.name_pos, end)]
                         });
                     }
                     MemberKind::Getter | MemberKind::Setter => {
@@ -1939,10 +1939,15 @@ impl Checker<'_> {
                 let mut both = |code: u32| {
                     for m in [getter, setter] {
                         out.push(Diagnostic {
-                            start: hir[m].pos,
+                            start: hir[m].name_pos,
                             code,
                         });
-                        self.note(hir[m].pos, self.end_of_member_name(file, m), code, vec![]);
+                        self.note(
+                            hir[m].name_pos,
+                            self.end_of_member_name(file, m),
+                            code,
+                            vec![],
+                        );
                     }
                 };
                 if get.contains(Flags::ABSTRACT) != set.contains(Flags::ABSTRACT) {
@@ -2330,7 +2335,7 @@ impl Checker<'_> {
                             .first()
                             .copied(),
                         Flags::PRIVATE | Flags::PROTECTED | Flags::ABSTRACT,
-                        member.pos,
+                        member.name_pos,
                     )
                 };
                 let overload = Overload {
@@ -2339,7 +2344,7 @@ impl Checker<'_> {
                     at,
                     // Of a constructor, `GetErrorRangeForNode` ends with the keyword.
                     end: if of == file && self.explains {
-                        self.end_of_name_at(of, member.pos)
+                        self.end_of_name_at(of, member.name_pos)
                     } else {
                         0
                     },
@@ -2791,7 +2796,7 @@ fn end_of_function_error(c: &Checker<'_>, file: FileId, f: FnId) -> u32 {
     let func = &hir[f];
     match (func.kind, bound.fns[f.idx()].owner) {
         (FnKind::Arrow | FnKind::Expr, FnOwner::Expr(e)) => c.error_end_inside_parentheses(file, e),
-        (FnKind::Constructor, FnOwner::Member(m)) => c.end_of_name_at(file, hir[m].pos),
+        (FnKind::Constructor, FnOwner::Member(m)) => c.end_of_name_at(file, hir[m].name_pos),
         (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => {
             c.end_of_name_at(file, func.name_pos)
         }

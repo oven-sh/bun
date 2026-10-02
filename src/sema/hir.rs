@@ -929,8 +929,10 @@ pub struct Member {
     pub ty: TypeNodeId,
     pub init: ExprId,
     pub func: FnId,
-    pub pos: u32,
-    /// Where its first token is: a decorator, a modifier, `get`, `set`, `*`, or `pos`.
+    /// `node.Name()`: the `[` of a computed name, the keyword of a constructor. A signature without a name: its `start`. A static block:
+    /// its `{`.
+    pub name_pos: u32,
+    /// Where its first token is: a decorator, a modifier, `get`, `set`, `*`, or `name_pos`.
     pub start: u32,
     /// Its `;` or `,` is part of it.
     pub loc: TextRange,
@@ -961,7 +963,6 @@ pub struct Class {
     /// The elements of `implements` clauses after the first, which are an error and which the checker never looks at.
     pub other_implements: IdList<TypeNodeId>,
     pub members: Span<MemberId>,
-    pub pos: u32,
     /// Where its first token is, decorators and modifiers included.
     pub start: u32,
     /// `node.Modifiers()`. Of a declaration, the list of its statement.
@@ -1699,46 +1700,6 @@ impl File {
     pub fn id_at<T: From<u32>>(&self, list: IdList<T>, i: usize) -> T {
         debug_assert!(i < list.len());
         T::from(self.ids[list.start as usize + i])
-    }
-
-    /// Bytes held, for reporting.
-    pub fn heap_size(&self) -> usize {
-        macro_rules! sum {
-            ($($f:ident),*) => { 0 $(+ self.$f.capacity() * std::mem::size_of_val(&self.$f[..]).checked_div(self.$f.len()).unwrap_or(0))* };
-        }
-        sum!(
-            ids,
-            numbers,
-            exprs,
-            stmts,
-            types,
-            pats,
-            pat_props,
-            pat_elems,
-            fns,
-            params,
-            type_params,
-            classes,
-            interfaces,
-            aliases,
-            enums,
-            enum_members,
-            modules,
-            members,
-            props,
-            var_decls,
-            calls,
-            cases,
-            jsx,
-            imports,
-            import_specs,
-            import_equals,
-            exports,
-            export_specs,
-            tuple_elems,
-            mapped,
-            modifiers
-        )
     }
 
     /// Of the short lists. The long ones are left to `fit`.

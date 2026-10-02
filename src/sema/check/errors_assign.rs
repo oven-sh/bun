@@ -291,7 +291,7 @@ impl Checker<'_> {
                 |c| {
                     let end =
                         c.end_if_explained(|c| c.end_of_member_name(file, MemberId(m as u32)));
-                    (member.pos, end)
+                    (member.name_pos, end)
                 },
                 member.init,
                 false,

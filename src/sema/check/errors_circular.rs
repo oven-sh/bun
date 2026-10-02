@@ -262,7 +262,7 @@ impl Checker<'_> {
         // `symbolToString`
         let (file, first) = members[0];
         let end = self.end_of_member_name(file, first);
-        let name = self.source_text(file, self.hir(file)[first].pos, end);
+        let name = self.source_text(file, self.hir(file)[first].name_pos, end);
         let ((file, accessor), code) = match (annotated_getter, annotated_setter) {
             (Some(getter), _) => (getter, 2502),
             (None, Some(setter)) => (setter, 2502),
@@ -277,7 +277,7 @@ impl Checker<'_> {
         };
         let at = (
             file,
-            self.hir(file)[accessor].pos,
+            self.hir(file)[accessor].name_pos,
             self.end_of_member_name(file, accessor),
         );
         let err = self.new_diagnostic(at, code, &[Arg::Text(&name)]);
@@ -400,7 +400,7 @@ impl Checker<'_> {
     fn name_of_function(&self, file: FileId, func: FnId) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let e = match bound.fns[func.idx()].owner {
-            FnOwner::Member(m) => return Some(hir[m].pos),
+            FnOwner::Member(m) => return Some(hir[m].name_pos),
             _ if hir[func].name.is_some() => return Some(hir[func].name_pos),
             FnOwner::Expr(e) => e,
             _ => return None,

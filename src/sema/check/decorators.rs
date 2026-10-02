@@ -282,7 +282,7 @@ impl<'p> Checker<'p> {
                     // `getLiteralTypeFromPropertyName`: a number only where a number is written.
                     PropKey::Name(name)
                         if matches!(
-                            hir.text.get(hir[m].pos as usize),
+                            hir.text.get(hir[m].name_pos as usize),
                             Some(b'0'..=b'9' | b'.')
                         ) =>
                     {
@@ -399,8 +399,8 @@ impl<'p> Checker<'p> {
             // Where it cannot be: said once for what is decorated, and nothing else is said from there to what is decorated.
             if bound.refused_decorators.contains(&e) {
                 let end = match owner {
-                    DecoratorOwner::Class(c) => hir[c].pos.max(hir[c].name_pos),
-                    DecoratorOwner::Member(m) => hir[m].pos,
+                    DecoratorOwner::Class(c) => hir[c].name_pos,
+                    DecoratorOwner::Member(m) => hir[m].name_pos,
                     DecoratorOwner::Param(p) => hir[hir[p].pat].pos,
                 };
                 self.never_checked.borrow_mut().push((at_sign + 1, end));

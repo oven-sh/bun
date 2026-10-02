@@ -395,7 +395,7 @@ impl Checker<'_> {
             }
             if matches!(member.kind, MemberKind::Property | MemberKind::Method)
                 && member.flags.contains(Flags::OPTIONAL)
-                && let Some(at) = question_token_after_key(member.key, member.pos)
+                && let Some(at) = question_token_after_key(member.key, member.name_pos)
             {
                 say(at, 8009);
                 is_question_token(at);

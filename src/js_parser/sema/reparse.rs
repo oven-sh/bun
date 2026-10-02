@@ -464,7 +464,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 ty: self.reparse_tag_type(&property.ty),
                 init: ExprId::NONE,
                 func: FnId::NONE,
-                pos: name.start,
+                name_pos: name.start,
                 start: tag.pos,
                 loc: TextRange {
                     pos: tag.pos,
@@ -765,7 +765,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                             ty: TypeNodeId::NONE,
                             init: ExprId::NONE,
                             func,
-                            pos: tag.name_pos,
+                            name_pos: tag.name_pos,
                             start: tag.name_pos,
                             // `tag.TagName()`
                             loc: TextRange {

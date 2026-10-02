@@ -2,101 +2,6 @@
 
 use super::*;
 
-/// `TypeFlags`, with the values of types.go: between types of different kinds they are the order of `CompareTypes`.
-mod tf {
-    pub(super) const ANY: u32 = 1 << 0;
-    pub(super) const UNKNOWN: u32 = 1 << 1;
-    pub(super) const UNDEFINED: u32 = 1 << 2;
-    pub(super) const NULL: u32 = 1 << 3;
-    pub(super) const VOID: u32 = 1 << 4;
-    pub(super) const STRING: u32 = 1 << 5;
-    pub(super) const NUMBER: u32 = 1 << 6;
-    pub(super) const BIGINT: u32 = 1 << 7;
-    pub(super) const BOOLEAN: u32 = 1 << 8;
-    pub(super) const ES_SYMBOL: u32 = 1 << 9;
-    pub(super) const STRING_LITERAL: u32 = 1 << 10;
-    pub(super) const NUMBER_LITERAL: u32 = 1 << 11;
-    pub(super) const BIGINT_LITERAL: u32 = 1 << 12;
-    pub(super) const BOOLEAN_LITERAL: u32 = 1 << 13;
-    pub(super) const UNIQUE_ES_SYMBOL: u32 = 1 << 14;
-    pub(super) const ENUM_LITERAL: u32 = 1 << 15;
-    pub(super) const ENUM: u32 = 1 << 16;
-    pub(super) const NON_PRIMITIVE: u32 = 1 << 17;
-    pub(super) const NEVER: u32 = 1 << 18;
-    pub(super) const TYPE_PARAMETER: u32 = 1 << 19;
-    pub(super) const OBJECT: u32 = 1 << 20;
-    pub(super) const INDEX: u32 = 1 << 21;
-    pub(super) const TEMPLATE_LITERAL: u32 = 1 << 22;
-    pub(super) const STRING_MAPPING: u32 = 1 << 23;
-    pub(super) const SUBSTITUTION: u32 = 1 << 24;
-    pub(super) const INDEXED_ACCESS: u32 = 1 << 25;
-    pub(super) const CONDITIONAL: u32 = 1 << 26;
-    pub(super) const UNION: u32 = 1 << 27;
-    pub(super) const INTERSECTION: u32 = 1 << 28;
-
-    pub(super) const NULLABLE: u32 = UNDEFINED | NULL;
-    pub(super) const LITERAL: u32 =
-        STRING_LITERAL | NUMBER_LITERAL | BIGINT_LITERAL | BOOLEAN_LITERAL;
-    pub(super) const UNIT: u32 = ENUM | LITERAL | UNIQUE_ES_SYMBOL | NULLABLE;
-    pub(super) const STRING_LIKE: u32 = STRING | STRING_LITERAL | TEMPLATE_LITERAL | STRING_MAPPING;
-    pub(super) const NUMBER_LIKE: u32 = NUMBER | NUMBER_LITERAL | ENUM;
-    pub(super) const BIGINT_LIKE: u32 = BIGINT | BIGINT_LITERAL;
-    pub(super) const BOOLEAN_LIKE: u32 = BOOLEAN | BOOLEAN_LITERAL;
-    pub(super) const ENUM_LIKE: u32 = ENUM | ENUM_LITERAL;
-    pub(super) const ES_SYMBOL_LIKE: u32 = ES_SYMBOL | UNIQUE_ES_SYMBOL;
-    pub(super) const VOID_LIKE: u32 = VOID | UNDEFINED;
-    pub(super) const PRIMITIVE: u32 = STRING_LIKE
-        | NUMBER_LIKE
-        | BIGINT_LIKE
-        | BOOLEAN_LIKE
-        | ENUM_LIKE
-        | ES_SYMBOL_LIKE
-        | VOID_LIKE
-        | NULL;
-    pub(super) const DEFINITELY_NON_NULLABLE: u32 = STRING_LIKE
-        | NUMBER_LIKE
-        | BIGINT_LIKE
-        | BOOLEAN_LIKE
-        | ENUM_LIKE
-        | ES_SYMBOL_LIKE
-        | OBJECT
-        | NON_PRIMITIVE;
-    pub(super) const DISJOINT_DOMAINS: u32 = NON_PRIMITIVE
-        | STRING_LIKE
-        | NUMBER_LIKE
-        | BIGINT_LIKE
-        | BOOLEAN_LIKE
-        | ES_SYMBOL_LIKE
-        | VOID_LIKE
-        | NULL;
-    pub(super) const INSTANTIABLE_NON_PRIMITIVE: u32 =
-        TYPE_PARAMETER | INDEXED_ACCESS | CONDITIONAL | SUBSTITUTION;
-    pub(super) const STRUCTURED_OR_INSTANTIABLE: u32 = OBJECT
-        | UNION
-        | INTERSECTION
-        | INSTANTIABLE_NON_PRIMITIVE
-        | INDEX
-        | TEMPLATE_LITERAL
-        | STRING_MAPPING;
-
-    // What is gathered of the members while an intersection is made. The last three use bits the mask leaves out.
-    pub(super) const INCLUDES_MASK: u32 = ANY
-        | UNKNOWN
-        | PRIMITIVE
-        | NEVER
-        | OBJECT
-        | UNION
-        | INTERSECTION
-        | NON_PRIMITIVE
-        | TEMPLATE_LITERAL
-        | STRING_MAPPING;
-    pub(super) const INCLUDES_MISSING_TYPE: u32 = TYPE_PARAMETER;
-    pub(super) const INCLUDES_EMPTY_OBJECT: u32 = CONDITIONAL;
-    pub(super) const INCLUDES_UNRESOLVED: u32 = 1 << 30;
-    /// `TypeFlagsIncludesError`
-    pub(super) const INCLUDES_ERROR: u32 = 1 << 31;
-}
-
 /// Where something is declared: the libraries first, then by file, then by position. `compareNodes`
 type Place = (bool, FileId, u32);
 
@@ -122,64 +27,6 @@ fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
 }
 
 impl<'p> Checker<'p> {
-    /// `Type.flags`
-    fn type_flags(&self, ty: TypeId) -> u32 {
-        match self.data(ty) {
-            TypeData::UnresolvedName { .. } => tf::ANY,
-            TypeData::Intrinsic(intrinsic) => match intrinsic {
-                Intrinsic::Unresolved
-                | Intrinsic::Any
-                | Intrinsic::Error
-                | Intrinsic::Auto
-                | Intrinsic::IntrinsicMarker => tf::ANY,
-                Intrinsic::Unknown => tf::UNKNOWN,
-                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
-                    tf::UNDEFINED
-                }
-                Intrinsic::Null | Intrinsic::NullDeclared => tf::NULL,
-                Intrinsic::Void => tf::VOID,
-                Intrinsic::String => tf::STRING,
-                Intrinsic::Number => tf::NUMBER,
-                Intrinsic::BigInt => tf::BIGINT,
-                Intrinsic::Symbol => tf::ES_SYMBOL,
-                Intrinsic::Object => tf::NON_PRIMITIVE,
-                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever => {
-                    tf::NEVER
-                }
-            },
-            TypeData::StringLit { .. } => tf::STRING_LITERAL,
-            TypeData::NumberLit { .. } => tf::NUMBER_LITERAL,
-            TypeData::BigIntLit { .. } => tf::BIGINT_LITERAL,
-            TypeData::BoolLit { .. } => tf::BOOLEAN_LITERAL,
-            TypeData::UniqueSymbol { .. } => tf::UNIQUE_ES_SYMBOL,
-            TypeData::EnumLit {
-                value: EnumValue::String(_),
-                ..
-            } => tf::ENUM_LITERAL | tf::STRING_LITERAL,
-            TypeData::EnumLit {
-                value: EnumValue::Number(_),
-                ..
-            } => tf::ENUM_LITERAL | tf::NUMBER_LITERAL,
-            TypeData::Enum { .. } => tf::ENUM,
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
-                tf::TYPE_PARAMETER
-            }
-            TypeData::Keyof(_) => tf::INDEX,
-            TypeData::Template { .. } => tf::TEMPLATE_LITERAL,
-            TypeData::StringMapping { .. } => tf::STRING_MAPPING,
-            TypeData::Substitution { .. } => tf::SUBSTITUTION,
-            TypeData::IndexedAccess { .. } => tf::INDEXED_ACCESS,
-            TypeData::Cond { .. } => tf::CONDITIONAL,
-            TypeData::Union(_) if self.is_boolean(ty) => tf::UNION | tf::BOOLEAN,
-            TypeData::Union(_) if self.union_enum_symbol(ty).is_some() => {
-                tf::UNION | tf::ENUM_LITERAL
-            }
-            TypeData::Union(_) => tf::UNION,
-            TypeData::Intersection(_) => tf::INTERSECTION,
-            _ => tf::OBJECT,
-        }
-    }
-
     fn add_to_union(&self, out: &mut Flat, ty: TypeId) {
         match self.data(ty) {
             TypeData::Union(members) => out.extend_from_slice(members),
@@ -267,8 +114,6 @@ impl<'p> Checker<'p> {
     /// come to the same whoever asks.
     #[inline(never)]
     fn union_anew(&mut self, given: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
-        self.time_trap();
-        self.guard("union");
         let mut members = Flat::new();
         for &ty in given {
             self.add_to_union(&mut members, ty);
@@ -451,8 +296,8 @@ impl<'p> Checker<'p> {
         self.p.types.intern_with(
             TypeData::Union(Box::from(members)),
             Provenance {
-                alias: None,
                 origin,
+                ..Provenance::default()
             },
         )
     }
@@ -517,8 +362,7 @@ impl<'p> Checker<'p> {
 
     /// `isPrimitiveOrObjectOrEmptyType`
     fn is_primitive_or_object_or_empty(&self, ty: TypeId) -> bool {
-        self.type_flags(ty) & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
-            || self.is_empty_anonymous(ty)
+        self.flags(ty) & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0 || self.is_empty_anonymous(ty)
     }
 
     /// Of `T & P` or `P & T`, where `T` is a type variable that extends nothing but primitives, `object` and `{}` and `P` is one
@@ -539,7 +383,7 @@ impl<'p> Checker<'p> {
         if !self.is_type_variable(variable) {
             return None;
         }
-        let flags = self.type_flags(primitive);
+        let flags = self.flags(primitive);
         // `isGenericStringLikeType`
         let is_generic_string_like = flags & (tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) != 0
             && !self.is_pattern_literal(primitive);
@@ -615,7 +459,7 @@ impl<'p> Checker<'p> {
         // Primitives and literals were dealt with above.
         if !members
             .iter()
-            .any(|&m| self.type_flags(m) & tf::STRUCTURED_OR_INSTANTIABLE != 0)
+            .any(|&m| self.flags(m) & tf::STRUCTURED_OR_INSTANTIABLE != 0)
         {
             return union;
         }
@@ -668,7 +512,7 @@ impl<'p> Checker<'p> {
         let mut count = 0usize;
         for i in (0..len).rev() {
             let source = members[i];
-            let source_flags = self.type_flags(source);
+            let source_flags = self.flags(source);
             if !has_empty_object && source_flags & tf::STRUCTURED_OR_INSTANTIABLE == 0 {
                 continue;
             }
@@ -709,7 +553,7 @@ impl<'p> Checker<'p> {
                 }
                 count += 1;
                 if let Some((name, unit)) = key_property
-                    && self.type_flags(target) & HAS_PROPERTIES != 0
+                    && self.flags(target) & HAS_PROPERTIES != 0
                     && let Some(other) = self.type_of_property(target, name)
                     && self.is_unit(other)
                     && self.with_freshness(other, false) != unit
@@ -813,8 +657,8 @@ impl<'p> Checker<'p> {
                         self.p.types.intern_with(
                             TypeData::Union(Box::from(&kept[..])),
                             Provenance {
-                                alias: None,
                                 origin: new_origin,
+                                ..Provenance::default()
                             },
                         )
                     }
@@ -912,7 +756,7 @@ impl<'p> Checker<'p> {
             // One placeholder or more, and object types that only tag it.
             let mut seen_placeholder = false;
             for &part in parts.iter() {
-                let flags = self.type_flags(part);
+                let flags = self.flags(part);
                 if flags & (tf::LITERAL | tf::NULLABLE) != 0
                     || self.is_pattern_literal_placeholder(part)
                 {
@@ -996,7 +840,7 @@ impl<'p> Checker<'p> {
                 }
                 continue;
             }
-            let flags = self.type_flags(ty);
+            let flags = self.flags(ty);
             if flags & (tf::ANY | tf::UNKNOWN) != 0 {
                 if ty == TypeId::UNRESOLVED {
                     includes |= tf::INCLUDES_UNRESOLVED;
@@ -1065,8 +909,6 @@ impl<'p> Checker<'p> {
         types: &[TypeId],
         no_constraint_reduction: bool,
     ) -> (TypeId, bool) {
-        self.guard("intersection");
-        self.time_trap();
         let mut set: Vec<TypeId> = Vec::with_capacity(types.len());
         let includes = self.add_types_to_intersection(&mut set, 0, types);
         if includes & tf::NEVER != 0 {
@@ -1133,7 +975,7 @@ impl<'p> Checker<'p> {
                     && self
                         .parts(t)
                         .iter()
-                        .all(|&p| self.type_flags(p) & tf::DEFINITELY_NON_NULLABLE != 0)
+                        .all(|&p| self.flags(p) & tf::DEFINITELY_NON_NULLABLE != 0)
             });
         let is_non_nullable = includes & tf::DEFINITELY_NON_NULLABLE != 0 || is_distributed_over;
         // `removeRedundantSupertypes`
@@ -1318,13 +1160,13 @@ impl<'p> Checker<'p> {
         let literals: Vec<TypeId> = set
             .iter()
             .copied()
-            .filter(|&t| self.type_flags(t) & tf::STRING_LITERAL != 0)
+            .filter(|&t| self.flags(t) & tf::STRING_LITERAL != 0)
             .collect();
         let mut i = set.len();
         while i > 0 {
             i -= 1;
             let pattern = set[i];
-            if self.type_flags(pattern) & (tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) == 0 {
+            if self.flags(pattern) & (tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) == 0 {
                 continue;
             }
             for &literal in &literals {
@@ -1359,7 +1201,7 @@ impl<'p> Checker<'p> {
             return false;
         };
         parts.iter().all(|&p| {
-            let flags = self.type_flags(p);
+            let flags = self.flags(p);
             flags & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
                 && flags & (tf::VOID | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) == 0
         })
@@ -1424,7 +1266,7 @@ impl<'p> Checker<'p> {
             if t == TypeId::UNDEFINED {
                 return has(TypeId::MISSING);
             }
-            let flags = self.type_flags(t);
+            let flags = self.flags(t);
             let primitive = if flags & tf::STRING_LITERAL != 0 {
                 TypeId::STRING
             } else if flags & (tf::ENUM | tf::NUMBER_LITERAL) != 0 {
@@ -1460,7 +1302,7 @@ impl<'p> Checker<'p> {
 
     /// `getSortOrderFlags`
     fn sort_order_flags(&self, ty: TypeId) -> u32 {
-        let flags = self.type_flags(ty);
+        let flags = self.flags(ty);
         if flags & tf::ENUM_LIKE != 0 && flags & tf::UNION == 0 {
             return tf::ENUM;
         }
@@ -1542,7 +1384,7 @@ impl<'p> Checker<'p> {
             TypeData::UniqueSymbol { symbol, .. } => match symbol {
                 UniqueSymbolDeclaration::Variable(variable) => self.symbol_place(variable),
                 UniqueSymbolDeclaration::Member(file, member) => {
-                    at(file, self.hir(file)[member].pos)
+                    at(file, self.hir(file)[member].name_pos)
                 }
                 UniqueSymbolDeclaration::SymbolConstructor => None,
             },

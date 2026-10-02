@@ -74,7 +74,7 @@ impl Checker<'_> {
                 continue;
             }
             let m = MemberId(i as u32);
-            let name = start_of_member_name(hir, m);
+            let name = hir[m].name_pos;
             self.check_grammar_of_property(file, m, owner, name, &mut said);
             // `checkGrammarModifiers` comes first, and what it objects to is all that is said.
             if !said.is_empty() && !are_modifiers_refused(hir, bound, m, name, out) {
@@ -200,7 +200,7 @@ impl Checker<'_> {
                 MemberOwner::TypeLiteral(_) => 1170,
             };
             let m = MemberId(i as u32);
-            let name = start_of_member_name(hir, m);
+            let name = hir[m].name_pos;
             if !is_invalid_dynamic_name(hir, member.key, name) {
                 continue;
             }
@@ -1458,59 +1458,6 @@ fn is_all_in_parentheses(text: &[u8], bracket: u32) -> bool {
     text.get(open) == Some(&b'(')
         && end_of_brackets(text, open)
             .is_some_and(|end| text.get(skip_trivia(text, end)) == Some(&b']'))
-}
-
-/// Whether an identifier is written at `pos` and what follows it closes no parenthesis: no parenthesis opens right before it then.
-/// A comment after it hides what follows.
-fn is_word_outside_parentheses(text: &[u8], pos: u32) -> bool {
-    let rest = &text[(pos as usize).min(text.len())..];
-    let length = word_at(text, pos as usize).len();
-    length > 0
-        && !rest[0].is_ascii_digit()
-        && !matches!(
-            rest[length..].trim_ascii_start().first(),
-            None | Some(b')' | b'/')
-        )
-}
-
-/// Where the name of the member `m` starts. That of a computed name is its bracket, where the member may be said to be where the
-/// expression in the brackets is: between the two there are only parentheses, type assertions and comments.
-pub(super) fn start_of_member_name(hir: &File, m: MemberId) -> u32 {
-    let text = &hir.text[..];
-    let pos = hir[m].pos;
-    if text.get(pos as usize) == Some(&b'[') {
-        return pos;
-    }
-    if !matches!(hir[m].key, PropKey::Computed(_)) {
-        // `[("a")]`
-        if is_word_outside_parentheses(text, pos) {
-            return pos;
-        }
-        let start = before_parentheses(text, pos);
-        if start == pos {
-            return pos;
-        }
-        let before = trim_trivia_end(upto(text, start));
-        return if before.ends_with(b"[") {
-            before.len() as u32 - 1
-        } else {
-            pos
-        };
-    }
-    let mut depth = 0u32;
-    let mut i = (pos as usize).min(text.len());
-    while i > 0 {
-        i -= 1;
-        match text[i] {
-            b')' | b']' | b'}' => depth += 1,
-            b'[' if depth == 0 => return i as u32,
-            b'{' | b';' if depth == 0 => break,
-            b'(' if depth == 0 => {}
-            b'(' | b'[' | b'{' => depth -= 1,
-            _ => {}
-        }
-    }
-    pos
 }
 
 /// Past the string or the template that starts at `start`.

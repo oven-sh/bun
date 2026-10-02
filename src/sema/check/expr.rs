@@ -6,8 +6,21 @@ use super::errors_x_operators::{is_literal_expression_of_object, language_versio
 use super::relate::Relation;
 use super::shape::{Access, Found};
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
+
+/// What `checkSuperExpression` finds on the way out from a `super`.
+struct SuperContainer {
+    /// `container`, if it is a function.
+    func: FnId,
+    /// `container`, if it is a member of a class, an interface or a type literal.
+    member: MemberId,
+    /// `immediateContainer == container`
+    is_immediate: bool,
+    is_in_computed_property_name: bool,
+    /// `isInConstructorArgumentInitializer`
+    is_in_constructor_argument_initializer: bool,
+}
 
 impl Slots {
     /// What a slot that holds `raw` says: the type, and whether it is uncertain.
@@ -828,10 +841,6 @@ impl<'p> Checker<'p> {
         let Some(index) = hir.ids(hir[c].args).position(|a| a == arg) else {
             return false;
         };
-        if self.outside_const_context.contains(&(file, call)) {
-            self.note_provisional_read();
-            return false;
-        }
         let callee = self.type_of_expr(file, hir[c].callee);
         let callee = self.non_nullable(callee);
         if self.is_any(callee) {
@@ -1262,39 +1271,18 @@ impl<'p> Checker<'p> {
         let PropSource::Assigned(declared_in, assignments) = &prop.source else {
             return None;
         };
-        let is_this_property = |&a: &ExprId| {
-            crate::bind::assignment_declaration_kind(hir, a)
-                == crate::bind::JsDeclarationKind::ThisProperty
-        };
-        // `thisAssignmentDeclarationTyped`
-        let is_annotated = |&a: &ExprId| hir.jsdoc_type(JsDocTypeOwner::Assign(a)).is_some();
         if *declared_in != file
-            || !assignments.iter().all(is_this_property)
-            || assignments.iter().any(is_annotated)
+            || !matches!(
+                self.is_constructor_declared_this_property(file, assignments),
+                super::shape::ThisAssignmentDeclaration::Constructor(declaring) if declaring == container
+            )
         {
             return None;
         }
-        // `getDeclaringConstructor`
-        let declaring = assignments
-            .iter()
-            .find_map(|&a| match self.this_container(file, a) {
-                Some(Ok(f)) if hir[f].kind == FnKind::Constructor => Some(f),
-                _ => None,
-            })?;
-        if declaring != container {
-            return None;
-        }
-        // `getTypeOfPropertyInBaseClass`
+        // `getFlowTypeOfProperty`
         let (class, _) = self.class_of_member_fn(file, container)?;
-        if let Some(&base) = self.base_types(self.class_sym(file, class)).first() {
-            let base = self.apparent_type(base);
-            if let Some(base_members) = self.members(base)
-                && let Some((inherited, mapper)) = self.property_of_type(&base_members, name)
-            {
-                return Some(self.type_of_prop(&inherited, mapper));
-            }
-        }
-        Some(self.undefined_as_declared())
+        let inherited = self.type_of_property_in_base_class(file, class, name);
+        Some(inherited.unwrap_or(self.undefined_as_declared()))
     }
 
     /// `lookupSymbolForPrivateIdentifierDeclaration`, `getPrivateIdentifierPropertyOfType`: the `#name` of `e` is that of the
@@ -1698,12 +1686,8 @@ impl<'p> Checker<'p> {
                 _ => TypeId::ERROR,
             },
             ExprKind::Ident(name) => self.type_of_identifier(file, e, name),
-            ExprKind::This => {
-                let ty = self.type_of_this(file, e);
-                self.check_this_is_typed(file, e);
-                ty
-            }
-            ExprKind::Super => self.type_of_super(file, e),
+            ExprKind::This => self.check_this_expression(file, e),
+            ExprKind::Super => self.check_super_expression(file, e),
             ExprKind::Null => TypeId::NULL,
             ExprKind::True => TypeId::FRESH_TRUE,
             ExprKind::False => TypeId::FRESH_FALSE,
@@ -2123,11 +2107,12 @@ impl<'p> Checker<'p> {
         };
         let Some(sym) = found else {
             return match name {
-                // In a property initializer or a static block the arguments object is an error (2815).
-                known::arguments
-                    if self.bound(file).is_arguments_object(e)
-                        && !self.is_in_property_initializer_or_static_block(file, e) =>
-                {
+                known::arguments if self.bound(file).is_arguments_object(e) => {
+                    if self.is_in_property_initializer_or_static_block(file, e) {
+                        let node = self.place_of_token(file, self.hir(file)[e].pos);
+                        self.error(node, 2815, &[]);
+                        return TypeId::ERROR;
+                    }
                     self.global_ref(known::IArguments, &[])
                 }
                 // `RequireSymbol`
@@ -2278,6 +2263,15 @@ impl<'p> Checker<'p> {
         loop {
             parent = match parent {
                 Parent::MemberInit(_) => return true,
+                // The name of a property is in the property. That of a method is in no block of it.
+                Parent::MemberKey(m)
+                    if hir[m].func.is_none()
+                        && matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)) =>
+                {
+                    return true;
+                }
+                Parent::MemberKey(m) => self.parent_of(file, Parent::MemberInit(m)),
+                Parent::MethodKey(p) => Parent::Expr(bound.prop_owner[p.idx()]),
                 Parent::FnBody(f) if hir[f].kind == FnKind::StaticBlock => return true,
                 // The block of a function that is no arrow function. The default of a parameter is not in it.
                 Parent::FnBody(f) if hir[f].kind != FnKind::Arrow => return false,
@@ -2320,17 +2314,16 @@ impl<'p> Checker<'p> {
             .ok()
     }
 
-    /// `GetThisContainer`, of what is directly in `parent`. `below`: the expression `parent` is the parent of, if it is one.
-    /// `include_arrows`: an arrow function is a container (`includeArrowFunctions`). `names_count`: the computed name of a member of
-    /// a class belongs to the member, which is what `checkThisExpression` makes of it; to everybody else it belongs to what is around
-    /// the class. `Err`: neither a function nor a class decides, and where the way out ended.
+    /// `GetThisContainer`, of what is directly in `parent`. `below`: the expression `parent` is the parent of, if it is one. `Ok`: a
+    /// function, or the class whose property it is and whether that is static. `Err`: any other container, `MemberKey` for a
+    /// `ComputedPropertyName`, or `None` where the way out is not kept track of.
     fn this_container_or_end(
         &self,
         file: FileId,
         mut parent: Parent,
         mut below: ExprId,
-        include_arrows: bool,
-        names_count: bool,
+        include_arrow_functions: bool,
+        include_class_computed_property_name: bool,
     ) -> Result<Result<FnId, (ClassId, bool)>, Parent> {
         let hir = self.hir(file);
         let bound = self.bound(file);
@@ -2350,7 +2343,7 @@ impl<'p> Checker<'p> {
                         Parent::ParamDefault(p) => bound.param_fn[p.idx()],
                         _ => unreachable!(),
                     };
-                    if include_arrows || hir[f].kind != FnKind::Arrow {
+                    if include_arrow_functions || hir[f].kind != FnKind::Arrow {
                         return Ok(Ok(f));
                     }
                     match bound.fns[f.idx()].owner {
@@ -2372,14 +2365,12 @@ impl<'p> Checker<'p> {
                     Named::Property(literal) | Named::Function(literal) => Parent::Expr(literal),
                     Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
                     Named::Member(m) => match bound.member_owner[m.idx()] {
-                        MemberOwner::Class(_) if names_count && hir[m].func.is_some() => {
-                            return Ok(Ok(hir[m].func));
-                        }
-                        MemberOwner::Class(c) if names_count => {
-                            return Ok(Err((c, hir[m].flags.contains(Flags::STATIC))));
+                        MemberOwner::Class(_) if include_class_computed_property_name => {
+                            return Err(Parent::MemberKey(m));
                         }
                         MemberOwner::Class(c) => self.outward(file, Parent::ClassExtends(c)),
-                        // What is around an interface or a type literal is not kept track of.
+                        MemberOwner::Interface(i) => Parent::Stmt(hir[i].stmt),
+                        // What is around a type literal is not kept track of.
                         _ => return Err(Parent::None),
                     },
                     Named::Unknown => return Err(Parent::None),
@@ -2426,65 +2417,200 @@ impl<'p> Checker<'p> {
             .sym(file, self.bound(file).class_symbol[c.idx()])
     }
 
-    /// `checkThisExpression`
-    fn type_of_this(&mut self, file: FileId, e: ExprId) -> TypeId {
+    /// `GetThisContainer(e, includeArrowFunctions, true)`. The `this` of `typeof this.x` (`checkIdentifier`) goes by where the type is
+    /// written, which is not where the binder puts the operand.
+    fn get_this_container(
+        &self,
+        file: FileId,
+        e: ExprId,
+        include_arrow_functions: bool,
+    ) -> Result<Result<FnId, (ClassId, bool)>, Parent> {
         use super::errors_misc::QueriedThisContainer;
-        let written_in = self.bound(file).expr_parent[e.idx()];
-        // The `this` of `typeof this.x` (`checkIdentifier`) goes by where the type is written, which is not where the binder puts
-        // the operand.
-        let container = if self.bound(file).is_in_type_query(e) {
-            match self.this_container_of_type_query(file, e) {
-                Some(QueriedThisContainer::Fn(func)) => Ok(Ok(func)),
-                Some(QueriedThisContainer::File) => Err(Parent::File),
-                Some(
-                    QueriedThisContainer::PropertySignature
-                    | QueriedThisContainer::Module
-                    | QueriedThisContainer::Enum,
-                ) => return TypeId::ANY,
-                // A property of a class. From inside its initializer the way out leads to it. From its annotation it leads past the
-                // class, and `type_of_entity` goes by the scope the type is written in.
-                Some(QueriedThisContainer::Property) => {
-                    match self.this_container_or_end(file, written_in, e, false, true) {
-                        Ok(Err(of_class)) => Ok(Err(of_class)),
-                        _ => return TypeId::UNRESOLVED,
-                    }
-                }
-                None => return TypeId::UNRESOLVED,
+        let bound = self.bound(file);
+        let written_in = bound.expr_parent[e.idx()];
+        let container =
+            self.this_container_or_end(file, written_in, e, include_arrow_functions, true);
+        if !bound.is_in_type_query(e) {
+            return container;
+        }
+        match self.this_container_of_type_query(file, e, include_arrow_functions) {
+            Some(QueriedThisContainer::Fn(func)) => Ok(Ok(func)),
+            Some(QueriedThisContainer::PropertySignature) => {
+                Err(Parent::MemberInit(MemberId::NONE))
             }
-        } else {
-            self.this_container_or_end(file, written_in, e, false, true)
-        };
-        match container {
-            Ok(container) => match self.declared_type_of_this(file, e, container) {
-                // `getFlowTypeOfReference(node, thisType)`
-                Some(declared) => self.narrow_this(file, e, declared),
-                None => TypeId::ANY,
-            },
-            // `tryGetThisTypeAtEx`: `undefinedType` in a file with an `ExternalModuleIndicator`, `globalThis` in any other, a CommonJS
-            // module too, tests or no tests.
-            Err(Parent::File) if !self.hir(file).has_module_syntax => self.intern(TypeData::Anon {
-                origin: Origin::GlobalThis,
-                mapper: MapperId::IDENTITY,
-            }),
-            Err(Parent::File) if self.p.files.options.strict_null_checks => TypeId::UNDEFINED,
-            Err(Parent::File) => TypeId::UNDEFINED_DECLARED,
-            // In a namespace or an enum nothing says what it is.
-            Err(Parent::Module(_) | Parent::EnumInit(_)) => TypeId::ANY,
-            Err(_) => TypeId::UNRESOLVED,
+            Some(QueriedThisContainer::File) => Err(Parent::File),
+            Some(QueriedThisContainer::Property) if !matches!(container, Ok(Err(_))) => {
+                Err(Parent::None)
+            }
+            // The binder puts the operand there.
+            Some(_) => container,
+            None => Err(Parent::None),
         }
     }
 
-    /// `tryGetThisTypeAtEx`, before the flow of control has its say: what `container`, which decides `this` at `e`, says it is.
-    /// `None`: nothing.
-    fn declared_type_of_this(
+    /// `checkThisBeforeSuper`
+    fn check_this_before_super(&mut self, file: FileId, e: ExprId, container: FnId, code: u32) {
+        let (hir, flow) = (self.hir(file), self.bound(file).expr_flow[e.idx()]);
+        if let Some((class, _)) = self.class_of_member_fn(file, container)
+            && hir[class].extends.is_some()
+            && !self.class_declaration_extends_null(self.class_sym(file, class))
+            && flow.is_some()
+            && !self.is_post_super(file, flow, &mut Vec::new(), &mut Vec::new())
+        {
+            self.error(self.place_of_token(file, hir[e].pos), code, &[]);
+        }
+    }
+
+    /// `checkThisExpression`
+    fn check_this_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let node = self.place_of_token(file, hir[e].pos);
+        let mut container = self.get_this_container(file, e, true);
+        let mut captured_by_arrow_function = false;
+        match container {
+            Ok(Ok(f)) if hir[f].kind == FnKind::Constructor => {
+                self.check_this_before_super(file, e, f, 17009);
+            }
+            Ok(Ok(f)) if hir[f].kind == FnKind::Arrow => {
+                container = self.get_this_container(file, e, false);
+                captured_by_arrow_function = true;
+            }
+            _ => {}
+        }
+        // `GetThisContainer`, of the name: what it is the name of.
+        let mut this_in_computed_property_name = false;
+        if let Err(Parent::MemberKey(m)) = container
+            && let MemberOwner::Class(class) = bound.member_owner[m.idx()]
+        {
+            container = match hir[m].func.some() {
+                Some(func) => Ok(Ok(func)),
+                None => Ok(Err((class, hir[m].flags.contains(Flags::STATIC)))),
+            };
+            this_in_computed_property_name = true;
+        }
+        // `checkThisInStaticClassFieldInitializerInDecoratedClass`
+        if let Ok(Err((class, true))) = container
+            && self.p.files.options.experimental_decorators
+            && !this_in_computed_property_name
+            && !bound.is_in_type_query(e)
+            && hir
+                .decorators
+                .iter()
+                .any(|d| d.0 == DecoratorOwner::Class(class))
+        {
+            self.error(node, 2816, &[]);
+        }
+        match container {
+            _ if this_in_computed_property_name => {
+                self.error(node, 2465, &[]);
+            }
+            Err(Parent::Module(_)) => {
+                self.error(node, 2331, &[]);
+            }
+            Err(Parent::EnumInit(_)) => {
+                self.error(node, 2332, &[]);
+            }
+            _ => {}
+        }
+        let is_global_this = |c: &Self, t: TypeId| {
+            matches!(
+                c.data(t),
+                TypeData::Anon {
+                    origin: Origin::GlobalThis,
+                    ..
+                }
+            )
+        };
+        let Some(t) = self.try_get_this_type_at_ex(file, e, container) else {
+            if !self.p.files.options.no_implicit_this {
+                return TypeId::ANY;
+            }
+            let of_statement = |c: &Self, s: StmtId| {
+                let range = c.error_range_of_stmt(file, s);
+                (bound.stmt_parent[s.idx()], ExprId::NONE, range)
+            };
+            // `container.Parent`, the expression `container` is, if it is one, and `GetErrorRangeForNode(container)`.
+            let outside = match container {
+                Ok(Ok(func)) => match bound.fns[func.idx()].owner {
+                    FnOwner::Stmt(s) => Some(of_statement(self, s)),
+                    FnOwner::Expr(owner) => {
+                        // What is expected of it has no say in the default of a parameter.
+                        if !self.is_in_parameter_initializer(file, e)
+                            && !self.is_context_known(file, owner)
+                        {
+                            return TypeId::ANY;
+                        }
+                        let range = if hir[func].kind == FnKind::Expr {
+                            (
+                                self.error_start_inside_parentheses(file, owner),
+                                self.error_end_inside_parentheses(file, owner),
+                            )
+                        } else {
+                            self.error_range_of_fn(file, func)
+                        };
+                        Some((bound.expr_parent[owner.idx()], owner, range))
+                    }
+                    FnOwner::Member(_) => None,
+                    _ => return TypeId::ANY,
+                },
+                Err(Parent::Module(m)) => Some(of_statement(self, hir[m].stmt)),
+                Err(Parent::EnumInit(m)) => Some(of_statement(
+                    self,
+                    hir[bound.enum_member_owner[m.idx()]].stmt,
+                )),
+                _ => None,
+            };
+            // `tryGetThisTypeAt(container)`
+            let shadowed = outside.filter(|&(parent, below, _)| {
+                let container = self.this_container_or_end(file, parent, below, false, false);
+                self.try_get_this_type_at_ex(file, below, container)
+                    .is_some_and(|t| self.is_known(t) && !is_global_this(self, t))
+            });
+            let shadowed =
+                shadowed.map(|(.., (from, to))| self.new_diagnostic((file, from, to), 2738, &[]));
+            let diagnostic = self.error(node, 2683, &[]);
+            if let Some(shadowed) = shadowed {
+                diagnostic.add_related_info(shadowed);
+            }
+            return TypeId::ANY;
+        };
+        if captured_by_arrow_function
+            && self.p.files.options.no_implicit_this
+            && is_global_this(self, t)
+        {
+            self.error(node, 7041, &[]);
+        }
+        // `getFlowTypeOfReference(node, thisType)`
+        if container.is_ok() {
+            self.narrow_this(file, e, t)
+        } else {
+            t
+        }
+    }
+
+    /// `tryGetThisTypeAtEx`, before the flow of control has its say.
+    fn try_get_this_type_at_ex(
         &mut self,
         file: FileId,
         e: ExprId,
-        container: Result<FnId, (ClassId, bool)>,
+        container: Result<Result<FnId, (ClassId, bool)>, Parent>,
     ) -> Option<TypeId> {
         let (class, is_static) = match container {
-            Err(of_class) => of_class,
-            Ok(func) => {
+            Ok(Err(of_class)) => of_class,
+            // `undefinedType` in a file with an `ExternalModuleIndicator`, `globalThis` in any other, a CommonJS module too.
+            Err(Parent::File) if !self.hir(file).has_module_syntax => {
+                return Some(self.intern(TypeData::Anon {
+                    origin: Origin::GlobalThis,
+                    mapper: MapperId::IDENTITY,
+                }));
+            }
+            Err(Parent::File) if self.p.files.options.strict_null_checks => {
+                return Some(TypeId::UNDEFINED);
+            }
+            Err(Parent::File) => return Some(TypeId::UNDEFINED_DECLARED),
+            Err(Parent::Module(_) | Parent::EnumInit(_) | Parent::MemberInit(_)) => return None,
+            Err(_) => return Some(TypeId::UNRESOLVED),
+            Ok(Ok(func)) => {
                 let f = &self.hir(file)[func];
                 if f.this_param.is_some() {
                     return Some(self.type_of_this_parameter(file, func));
@@ -2580,53 +2706,6 @@ impl<'p> Checker<'p> {
                 _ => TypeId::ANY,
             },
             _ => TypeId::ERROR,
-        }
-    }
-
-    /// Whether nothing says what `this` is at `e`, in a function of its own.
-    pub(super) fn is_this_implicitly_any(&mut self, file: FileId, e: ExprId) -> bool {
-        let Ok(Ok(func)) =
-            self.this_container_or_end(file, self.bound(file).expr_parent[e.idx()], e, false, true)
-        else {
-            return false;
-        };
-        if self.declared_type_of_this(file, e, Ok(func)).is_some() {
-            return false;
-        }
-        match self.bound(file).fns[func.idx()].owner {
-            // What is expected of it has no say in the default of a parameter.
-            FnOwner::Expr(owner) => {
-                self.is_in_parameter_initializer(file, e) || self.is_context_known(file, owner)
-            }
-            FnOwner::Stmt(_) => true,
-            _ => false,
-        }
-    }
-
-    /// `tryGetThisTypeAt(container)`, as `checkThisExpression` asks it about the container of a `this` nothing is said of: whether
-    /// around what is directly in `parent` something says what `this` is, and it is not `globalThis`. `below`: the expression
-    /// `parent` is the parent of, if it is one.
-    pub(super) fn is_this_said_around(
-        &mut self,
-        file: FileId,
-        parent: Parent,
-        below: ExprId,
-    ) -> bool {
-        match self.this_container_or_end(file, parent, below, false, false) {
-            Ok(Err(_)) => true,
-            Ok(Ok(func)) => match self.declared_type_of_this(file, below, Ok(func)) {
-                Some(this) => !matches!(
-                    self.data(this),
-                    TypeData::Anon {
-                        origin: Origin::GlobalThis,
-                        ..
-                    }
-                ),
-                None => false,
-            },
-            // At the top of a module it is `undefined`.
-            Err(Parent::File) => self.hir(file).has_module_syntax,
-            Err(_) => false,
         }
     }
 
@@ -3014,19 +3093,17 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// `getSuperContainer`, arrow functions seen through unless `super` is called: the member of a class, an interface or a type
-    /// literal that the `super` at `e` is written in, and its function, if it is in one. The name of a member, and what decorates
-    /// it, are worked out outside of what the member is a member of. With them: whether `e` is in a parameter of that function and
-    /// in no other function on the way there (`isInConstructorArgumentInitializer`). `Err`: there is no such member, and what
-    /// `super` is then.
-    fn super_container_or_end(
-        &self,
-        file: FileId,
-        e: ExprId,
-        is_call: bool,
-    ) -> Result<(MemberId, FnId, bool), TypeId> {
+    /// `getSuperContainer(e, stopOnFunctions = true)`, and again from each arrow function unless `super` is called.
+    fn super_container_or_end(&self, file: FileId, e: ExprId, is_call: bool) -> SuperContainer {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (mut parent, mut below) = (bound.expr_parent[e.idx()], e);
+        let mut found = SuperContainer {
+            func: FnId::NONE,
+            member: MemberId::NONE,
+            is_immediate: true,
+            is_in_computed_property_name: false,
+            is_in_constructor_argument_initializer: false,
+        };
         // Whether a function has been left on the way out, be it by its name or by a decorator.
         let mut through_function = false;
         loop {
@@ -3038,23 +3115,26 @@ impl<'p> Checker<'p> {
                 Parent::PropKey(..)
                 | Parent::PatKey(_)
                 | Parent::MemberKey(_)
-                | Parent::MethodKey(_) => match self.what_is_named(file, parent, below) {
-                    Named::Property(literal) => Parent::Expr(literal),
-                    Named::Function(literal) => {
-                        through_function = true;
-                        Parent::Expr(literal)
-                    }
-                    Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
-                    Named::Member(m) => match bound.member_owner[m.idx()] {
-                        MemberOwner::Class(c) => {
-                            through_function |= hir[m].func.is_some();
-                            self.outward(file, Parent::ClassExtends(c))
+                | Parent::MethodKey(_) => {
+                    found.is_in_computed_property_name = true;
+                    match self.what_is_named(file, parent, below) {
+                        Named::Property(literal) => Parent::Expr(literal),
+                        Named::Function(literal) => {
+                            through_function = true;
+                            Parent::Expr(literal)
                         }
-                        // What is around an interface or a type literal is not kept track of.
-                        _ => return Err(TypeId::UNRESOLVED),
-                    },
-                    Named::Unknown => return Err(TypeId::UNRESOLVED),
-                },
+                        Named::Element(p) => self.outward(file, Parent::PatPropDefault(p)),
+                        Named::Member(m) => match bound.member_owner[m.idx()] {
+                            MemberOwner::Class(c) => {
+                                through_function |= hir[m].func.is_some();
+                                self.outward(file, Parent::ClassExtends(c))
+                            }
+                            // What is around an interface or a type literal is not kept track of.
+                            _ => return found,
+                        },
+                        Named::Unknown => return found,
+                    }
+                }
                 Parent::Decorator(_, of) => {
                     through_function |= match of {
                         DecoratorOwner::Class(_) => false,
@@ -3063,7 +3143,10 @@ impl<'p> Checker<'p> {
                     };
                     self.outward(file, parent)
                 }
-                Parent::MemberInit(m) => return Ok((m, FnId::NONE, false)),
+                Parent::MemberInit(m) => {
+                    found.member = m;
+                    return found;
+                }
                 Parent::FnBody(_) | Parent::ParamDefault(_) => {
                     let f = match parent {
                         Parent::FnBody(f) => f,
@@ -3071,44 +3154,22 @@ impl<'p> Checker<'p> {
                         _ => unreachable!(),
                     };
                     if hir[f].kind != FnKind::Arrow || is_call {
-                        return match bound.fns[f.idx()].owner {
-                            FnOwner::Member(m) => Ok((
-                                m,
-                                f,
-                                matches!(parent, Parent::ParamDefault(_)) && !through_function,
-                            )),
-                            // `container.Parent.Kind == ast.KindObjectLiteralExpression`
-                            FnOwner::Expr(_)
-                                if !is_call
-                                    && matches!(
-                                        hir[f].kind,
-                                        FnKind::Method | FnKind::Getter | FnKind::Setter
-                                    ) =>
-                            {
-                                Err(TypeId::ANY)
-                            }
-                            // `isLegalUsageOfSuperExpression` holds in no other function.
-                            _ => Err(TypeId::ERROR),
-                        };
+                        found.func = f;
+                        if let FnOwner::Member(m) = bound.fns[f.idx()].owner {
+                            found.member = m;
+                        }
+                        found.is_in_constructor_argument_initializer =
+                            matches!(parent, Parent::ParamDefault(_)) && !through_function;
+                        return found;
                     }
-                    through_function = true;
+                    (through_function, found.is_immediate) = (true, false);
                     self.outward(file, Parent::FnBody(f))
                 }
                 Parent::EnumInit(member) => {
-                    let owner = bound.enum_member_owner[member.idx()];
-                    match hir
-                        .stmts
-                        .iter()
-                        .position(|s| matches!(s.kind, StmtKind::Enum(x) if x == owner))
-                    {
-                        Some(s) => bound.stmt_parent[s],
-                        None => return Err(TypeId::UNRESOLVED),
-                    }
+                    Parent::Stmt(hir[bound.enum_member_owner[member.idx()]].stmt)
                 }
-                // So it is outside of everything.
-                Parent::File | Parent::Module(_) => return Err(TypeId::ERROR),
-                Parent::None | Parent::Expr(_) => return Err(TypeId::UNRESOLVED),
-                Parent::Stmt(s) if s.is_none() => return Err(TypeId::UNRESOLVED),
+                Parent::File | Parent::Module(_) | Parent::None | Parent::Expr(_) => return found,
+                Parent::Stmt(s) if s.is_none() => return found,
                 other => self.outward(file, other),
             };
         }
@@ -3116,7 +3177,10 @@ impl<'p> Checker<'p> {
 
     /// The class whose member the `super` at `e` is written in, and whether that member is static.
     fn super_container(&self, file: FileId, e: ExprId, is_call: bool) -> Option<(ClassId, bool)> {
-        let (member, ..) = self.super_container_or_end(file, e, is_call).ok()?;
+        let member = self
+            .super_container_or_end(file, e, is_call)
+            .member
+            .some()?;
         match self.bound(file).member_owner[member.idx()] {
             MemberOwner::Class(c) => {
                 Some((c, self.hir(file)[member].flags.contains(Flags::STATIC)))
@@ -3125,33 +3189,64 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkSuperExpression`. Where it is an error, what is in error can be anything.
-    fn type_of_super(&mut self, file: FileId, e: ExprId) -> TypeId {
+    /// `checkSuperExpression`
+    fn check_super_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_call = matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(c) if hir[c].callee == e));
-        let (member, func, is_in_parameter) = match self.super_container_or_end(file, e, is_call) {
-            Ok(found) => found,
-            Err(answer) => return answer,
+        let node = self.place_of_token(file, hir[e].pos);
+        let is_call_expression = matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(c) if hir[c].callee == e));
+        let container = self.super_container_or_end(file, e, is_call_expression);
+        let func = container.func;
+        let is_constructor = func.is_some() && hir[func].kind == FnKind::Constructor;
+        // `container.Parent`
+        let class = match container.member.some().map(|m| bound.member_owner[m.idx()]) {
+            Some(MemberOwner::Class(class)) => Some(class),
+            _ => None,
         };
-        let is_in_constructor = func.is_some() && hir[func].kind == FnKind::Constructor;
-        // Only a constructor calls it.
-        if is_call && !is_in_constructor {
+        let is_in_object_literal = func.is_some()
+            && matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))
+            && matches!(
+                hir[func].kind,
+                FnKind::Method | FnKind::Getter | FnKind::Setter
+            );
+        // `isLegalUsageOfSuperExpression`
+        let is_legal = if is_call_expression {
+            is_constructor
+        } else {
+            class.is_some() || is_in_object_literal
+        };
+        if !is_legal {
+            let code = if container.is_in_computed_property_name {
+                2466
+            } else if is_call_expression {
+                2337
+            } else {
+                2660
+            };
+            self.error(node, code, &[]);
             return TypeId::ERROR;
         }
-        let MemberOwner::Class(class) = bound.member_owner[member.idx()] else {
-            return TypeId::ERROR;
+        if !is_call_expression && container.is_immediate && is_constructor {
+            self.check_this_before_super(file, e, func, 17011);
+        }
+        // "for object literal assume that type of 'super' is 'any'"
+        let Some(class) = class else {
+            return TypeId::ANY;
         };
-        let extends = hir[class].extends;
-        if extends.is_none() {
+        if hir[class].extends.is_none() {
+            self.error(node, 2335, &[]);
             return TypeId::ERROR;
         }
         let sym = self.class_sym(file, class);
         let constructor = self.base_constructor_type_of_class(sym);
         // `classDeclarationExtendsNull`
         if constructor == TypeId::NULL {
-            return if is_call { TypeId::ERROR } else { TypeId::NULL };
+            return if is_call_expression {
+                TypeId::ERROR
+            } else {
+                TypeId::NULL
+            };
         }
-        let is_static = hir[member].flags.contains(Flags::STATIC);
+        let is_static = hir[container.member].flags.contains(Flags::STATIC);
         let Some(base) = self.base_types(sym).first().copied() else {
             let sigs = self.super_constructor_sigs(sym);
             let instance = match sigs.first() {
@@ -3161,16 +3256,17 @@ impl<'p> Checker<'p> {
             if self.is_known(constructor) && self.is_known(instance) {
                 return TypeId::ERROR;
             }
-            return if is_static || is_call {
+            return if is_static || is_call_expression {
                 constructor
             } else {
                 TypeId::UNRESOLVED
             };
         };
-        if is_in_constructor && is_in_parameter {
+        if is_constructor && container.is_in_constructor_argument_initializer {
+            self.error(node, 2336, &[]);
             return TypeId::ERROR;
         }
-        if is_static || is_call {
+        if is_static || is_call_expression {
             constructor
         } else {
             base
@@ -5100,13 +5196,6 @@ impl<'p> Checker<'p> {
                     self.p.arg_contexts.insert((file, part), context);
                 }
             }
-        }
-    }
-
-    pub fn class_owner_expr(&self, file: FileId, c: ClassId) -> Option<ExprId> {
-        match self.bound(file).class_owner[c.idx()] {
-            ClassOwner::Expr(e) => Some(e),
-            ClassOwner::Stmt(_) => None,
         }
     }
 }

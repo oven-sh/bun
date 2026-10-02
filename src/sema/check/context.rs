@@ -535,7 +535,6 @@ impl<'p> Checker<'p> {
 
     /// What `e` is expected to be. `None`: nothing in particular.
     pub fn contextual_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        self.guard("contextual_type");
         let hir = self.hir(file);
         // `getContextualType`: a node inside a `with` statement has no contextual type.
         if hir.is_in_with(hir[e].pos) {
@@ -1025,6 +1024,14 @@ impl<'p> Checker<'p> {
     ) -> Option<TypeId> {
         let members = self.members(part)?;
         let (prop, mut mapper) = self.property_in(&members, name)?;
+        // `isCircularMappedProperty`
+        if let PropSource::Mapped(of, ..) = prop.source
+            && self.p.mapped_prop_types.get(&(of, prop.name)).is_none()
+            && self.stack[self.resolution_start.min(self.stack.len())..]
+                .contains(&Query::MappedProp(of, prop.name))
+        {
+            return None;
+        }
         // `getTypeWithThisArgument`
         if let Some(this) = this
             && let TypeData::Ref { target, .. } = self.data(part)

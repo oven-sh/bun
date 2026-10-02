@@ -30,7 +30,6 @@ impl<'p> Checker<'p> {
         if !self.has_type_variables(ty) {
             return false;
         }
-        self.guard("is_generic");
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().any(|&p| self.is_generic(p))
@@ -86,7 +85,6 @@ impl<'p> Checker<'p> {
         no_reducible_check: bool,
         no_index_signatures: bool,
     ) -> TypeId {
-        self.guard("keyof");
         // The keys of `NoInfer<T>` are those of `T`, and nothing is inferred to them either.
         if let TypeData::Substitution {
             base: of,
@@ -2409,7 +2407,6 @@ impl<'p> Checker<'p> {
 
     /// `getTemplateLiteralType`: `` `${A}text${B}` ``
     pub fn template_type(&mut self, texts: &[Atom], types: &[TypeId]) -> TypeId {
-        self.guard("template_type");
         if types.iter().any(|t| t.is_never()) {
             return TypeId::NEVER;
         }

@@ -15,14 +15,20 @@ use super::errors::Diagnostic;
 use super::*;
 use std::sync::Mutex;
 
-/// What goes into a message.
+/// `args ...any` of `NewDiagnostic` and `reportError`.
 #[derive(Copy, Clone)]
 pub(super) enum Arg<'a> {
     /// `TypeToString`
     Type(TypeId),
     /// `symbolToString`
     Sym(Sym),
+    /// `symbolToString`, of a property.
+    Prop(&'a Prop),
+    /// `signatureToString`
+    Sig(SigId),
     Atom(Atom),
+    Number(usize),
+    Bytes(&'a [u8]),
     Text(&'a str),
 }
 
@@ -92,23 +98,38 @@ impl Sink {
 }
 
 impl Checker<'_> {
-    /// `NewDiagnosticForNode`. The arguments are printed at once, as they are there: printing asks questions.
+    /// `StringifyArgs`. They are printed at once, as they are there: printing asks questions.
+    pub(super) fn stringify_args(&mut self, args: &[Arg<'_>]) -> Box<[Box<[u8]>]> {
+        args.iter()
+            .map(|arg| -> Box<[u8]> {
+                match *arg {
+                    Arg::Type(ty) => self.type_to_string(ty).into_bytes().into(),
+                    Arg::Sym(symbol) => self.symbol_to_string(symbol).into_bytes().into(),
+                    Arg::Prop(prop) => self.prop_to_string(prop).into_bytes().into(),
+                    Arg::Sig(signature) => self.signature_to_string(signature).into_bytes().into(),
+                    Arg::Atom(name) => self.files().atoms.bytes(name).into(),
+                    Arg::Number(number) => {
+                        bun_core::fmt::itoa(&mut bun_core::fmt::ItoaBuf::new(), number).into()
+                    }
+                    Arg::Bytes(bytes) => bytes.into(),
+                    Arg::Text(text) => text.as_bytes().into(),
+                }
+            })
+            .collect()
+    }
+
+    /// `NewDiagnosticForNode`
     pub(super) fn new_diagnostic(
         &mut self,
         at: (FileId, u32, u32),
         code: u32,
         args: &[Arg<'_>],
     ) -> Reported {
+        let args = self.stringify_args(args);
         let args = args
             .iter()
-            .map(|arg| match *arg {
-                Arg::Type(ty) => self.type_to_string(ty),
-                Arg::Sym(symbol) => self.symbol_to_string(symbol),
-                Arg::Atom(name) => self.atom_text(name),
-                Arg::Text(text) => text.to_owned(),
-            })
-            .collect();
-        Reported::new(at, code, args)
+            .map(|arg| String::from_utf8_lossy(arg).into_owned());
+        Reported::new(at, code, args.collect())
     }
 
     /// `NewDiagnosticChainForNode`

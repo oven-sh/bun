@@ -1,6 +1,6 @@
 //! From declarations and type syntax to types.
 
-use super::errors_x_enums_names::{Location, is_declared_before_use};
+use super::errors_x_enums_names::{Location, is_ambient_enum, is_declared_before_use};
 use super::*;
 use crate::bind::{Decl, PatParent, ScopeId, ScopeKind};
 use smallvec::SmallVec;
@@ -80,42 +80,15 @@ impl Evaluated {
     }
 }
 
-/// `evaluate` of evaluator.go, with `evaluateEntity` and `evaluateEnumMember` of the checker. Two ask: the checker, for one member at a
-/// time in whatever order it is asked, and `EnumValues`, which goes through a file in the order of `computeEnumMemberValues` and says
-/// what is said on the way.
-pub(super) trait Evaluator<'p> {
-    fn checker(&mut self) -> &mut Checker<'p>;
-
-    /// There is no room to go on.
-    fn give_up(&mut self);
-
-    /// `resolveEntityName(e, SymbolFlagsValue, ignoreErrors)`, in what is evaluated for `location`.
-    fn resolve_entity_name(&mut self, file: FileId, e: ExprId, location: Location) -> Option<Sym>;
-
-    /// Whether the initializer of the constant `d` can be gone into. `leave_variable` follows if it can.
-    fn enter_variable(&mut self, file: FileId, d: VarDeclId) -> bool;
-
-    fn leave_variable(&mut self);
-
-    /// The error `code` of `evaluateEnumMember` at `e`, which is about `symbol`.
-    fn report(&mut self, file: FileId, e: ExprId, code: u32, symbol: Sym);
-
-    /// `getEnumMemberValue`, in what is evaluated for `location`.
-    fn enum_member_value_at(
-        &mut self,
-        file: FileId,
-        member: EnumMemberId,
-        location: Location,
-    ) -> Evaluated;
-
+impl<'p> Checker<'p> {
     /// `evaluate`. `location`: what `e` is evaluated for, the member of an enum or the constant that it is (part of) the initializer of,
     /// or else the expression asked about. Parentheses are not kept, and nothing else is looked through.
-    fn evaluate(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
-        if self.checker().is_stack_low() {
-            self.give_up();
+    pub(super) fn evaluate(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
+        if self.is_stack_low() {
+            self.gave_up();
             return Evaluated::default();
         }
-        let hir = self.checker().hir(file);
+        let hir = self.hir(file);
         match hir[e].kind {
             // A `PrefixUnaryExpression`, which `typeof`, `void` and `delete` are not.
             ExprKind::Unary {
@@ -157,7 +130,7 @@ pub(super) trait Evaluator<'p> {
             },
             // `evaluateTemplateExpression`
             ExprKind::Template { exprs, texts } => {
-                let atoms = &self.checker().files().atoms;
+                let atoms = &self.files().atoms;
                 let mut text = atoms.bytes(hir.id_at(texts, 0)).to_vec();
                 let mut result = Evaluated {
                     is_syntactically_string: true,
@@ -171,7 +144,7 @@ pub(super) trait Evaluator<'p> {
                             ..Evaluated::default()
                         };
                     };
-                    text.extend_from_slice(self.checker().constant_text(value));
+                    text.extend_from_slice(self.constant_text(value));
                     text.extend_from_slice(atoms.bytes(hir.id_at(texts, i + 1)));
                     result.resolved_other_files |= of_span.resolved_other_files;
                     result.has_external_references |= of_span.has_external_references;
@@ -206,9 +179,8 @@ pub(super) trait Evaluator<'p> {
                     .and_then(|n| Evaluated::number(n).value)
             }
             (Some(a), Some(b), Some(BinOp::Add)) => {
-                let c = self.checker();
-                let text = [c.constant_text(a), c.constant_text(b)].concat();
-                Some(EnumValue::String(c.files().atoms.intern(&text)))
+                let text = [self.constant_text(a), self.constant_text(b)].concat();
+                Some(EnumValue::String(self.files().atoms.intern(&text)))
             }
             _ => None,
         };
@@ -223,7 +195,7 @@ pub(super) trait Evaluator<'p> {
 
     /// `evaluateEntity`: by what the names mean, never by the type of the expression.
     fn evaluate_entity(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
-        let (hir, files) = (self.checker().hir(file), self.checker().files());
+        let (hir, files) = (self.hir(file), self.files());
         if let ExprKind::Index { obj, index, .. } = hir[e].kind {
             let name = match hir[index].kind {
                 ExprKind::String(name) => name,
@@ -234,7 +206,7 @@ pub(super) trait Evaluator<'p> {
             if is_parenthesized(hir, index) || !is_entity_name_expression(hir, obj) {
                 return Evaluated::default();
             }
-            if let Some(root) = self.resolve_entity_name(file, obj, location)
+            if let Some(root) = self.resolve_entity_name_expression(file, obj, SymFlags::VALUE)
                 && files.flags(root).intersects(SymFlags::ENUM)
                 && let Some(member) = files.export(root, name)
                 && files.flags(member).contains(SymFlags::ENUM_MEMBER)
@@ -243,7 +215,7 @@ pub(super) trait Evaluator<'p> {
             }
             return Evaluated::default();
         }
-        let Some(symbol) = self.resolve_entity_name(file, e, location) else {
+        let Some(symbol) = self.resolve_entity_name_expression(file, e, SymFlags::VALUE) else {
             return Evaluated::default();
         };
         // `Infinity` and `NaN`, unless they are somebody's own.
@@ -260,14 +232,13 @@ pub(super) trait Evaluator<'p> {
         if files.flags(symbol).contains(SymFlags::ENUM_MEMBER) {
             return self.evaluate_enum_member(file, e, symbol, location);
         }
-        if let Some((of, d)) = self
-            .checker()
-            .constant_variable_declaration(symbol, location)
-            && self.enter_variable(of, d)
+        // Between files there is no before and after: constants of two files may be declared as each other.
+        if self.constant_depth <= 16
+            && let Some((of, d)) = self.constant_variable_declaration(symbol, location)
         {
-            let initializer = self.checker().hir(of)[d].init;
-            let result = self.evaluate(of, initializer, Location::Variable(of, d));
-            self.leave_variable();
+            self.constant_depth += 1;
+            let result = self.evaluate(of, self.hir(of)[d].init, Location::Variable(of, d));
+            self.constant_depth -= 1;
             if location.file() != of {
                 return Evaluated {
                     value: result.value,
@@ -294,7 +265,6 @@ pub(super) trait Evaluator<'p> {
     ) -> Evaluated {
         // `symbol.ValueDeclaration`
         let declaration = self
-            .checker()
             .files()
             .decls_of(symbol)
             .iter()
@@ -305,16 +275,18 @@ pub(super) trait Evaluator<'p> {
         let Some((of, member)) =
             declaration.filter(|&(of, member)| Location::Member(of, member) != location)
         else {
-            self.report(file, e, 2565, symbol);
+            let at = self.place_of_expr(file, e);
+            self.error(at, 2565, &[Arg::Sym(symbol)]);
             return Evaluated::default();
         };
-        if !is_declared_before_use(self.checker(), Location::Member(of, member), location) {
-            self.report(file, e, 2651, symbol);
+        if !is_declared_before_use(self, Location::Member(of, member), location) {
+            let at = self.place_of_expr(file, e);
+            self.error(at, 2651, &[]);
             return Evaluated::number(0.0);
         }
         let value = self.enum_member_value_at(of, member, location);
         // `location.Parent != declaration.Parent`
-        let owner = &self.checker().bound(of).enum_member_owner;
+        let owner = &self.bound(of).enum_member_owner;
         let is_of_the_same_enum = matches!(location, Location::Member(file, using)
             if file == of && owner[using.idx()] == owner[member.idx()]);
         Evaluated {
@@ -322,33 +294,6 @@ pub(super) trait Evaluator<'p> {
             ..value
         }
     }
-}
-
-impl<'p> Evaluator<'p> for Checker<'p> {
-    fn checker(&mut self) -> &mut Checker<'p> {
-        self
-    }
-
-    fn give_up(&mut self) {
-        self.gave_up();
-    }
-
-    fn resolve_entity_name(&mut self, file: FileId, e: ExprId, _: Location) -> Option<Sym> {
-        self.resolve_entity_name_expression(file, e, SymFlags::VALUE)
-    }
-
-    /// Between files there is no before and after: constants of two files may be declared as each other.
-    fn enter_variable(&mut self, _: FileId, _: VarDeclId) -> bool {
-        let has_room = self.constant_depth <= 16;
-        self.constant_depth += u32::from(has_room);
-        has_room
-    }
-
-    fn leave_variable(&mut self) {
-        self.constant_depth -= 1;
-    }
-
-    fn report(&mut self, _: FileId, _: ExprId, _: u32, _: Sym) {}
 
     /// `computeEnumMemberValues` goes through a declaration in order: where before and after do not count, in what is only declared, a
     /// later member of the declaration being gone through has no value yet.
@@ -1351,7 +1296,7 @@ impl<'p> Checker<'p> {
             if self.bound(file).infer_positions.is_empty() {
                 return None;
             }
-            return self.inferred_type_param_constraint(param, file, tp, false);
+            return self.inferred_type_param_constraint(param, file, tp);
         }
         let mut constraint = self.type_from_node(of, node);
         // To extend `any` is to extend nothing in particular. What a mapped type ranges over are keys all the same.
@@ -1522,12 +1467,11 @@ impl<'p> Checker<'p> {
 
     /// `getInferredTypeParameterConstraint`: what follows for `infer T` from where it is written.
     #[inline(never)]
-    pub(super) fn inferred_type_param_constraint(
+    fn inferred_type_param_constraint(
         &mut self,
         param: TypeId,
         file: FileId,
         tp: TypeParamId,
-        omit_type_references: bool,
     ) -> Option<TypeId> {
         use crate::bind::InferPosition;
         let bound = self.bound(file);
@@ -1549,19 +1493,17 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
-        if !omit_type_references {
-            if let Some(known) = self.p.inferred_constraints.get(&param) {
-                return known;
-            }
-            if !self.enter(Query::InferredConstraint(param)) {
-                return None;
-            }
+        if let Some(known) = self.p.inferred_constraints.get(&param) {
+            return known;
+        }
+        if !self.enter(Query::InferredConstraint(param)) {
+            return None;
         }
         let mut inferences = Vec::new();
         for &decl in decls {
             let Decl::TypeParam(p) = decl else { continue };
             match position_of(p) {
-                Some(InferPosition::TypeArgument(node, index)) if !omit_type_references => {
+                Some(InferPosition::TypeArgument(node, index)) => {
                     let hir = self.hir(file);
                     let TypeNodeKind::Ref { name, args } = hir[node].kind else {
                         continue;
@@ -1621,10 +1563,10 @@ impl<'p> Checker<'p> {
                     let mapper = self.mapper_from(&[key], &[over]);
                     inferences.push(self.instantiate(template, mapper));
                 }
-                Some(InferPosition::TypeArgument(..)) | None => {}
+                None => {}
             }
         }
-        let holds = !omit_type_references && self.leave();
+        let holds = self.leave();
         let constraint = if inferences.is_empty() {
             None
         } else {
@@ -1965,30 +1907,105 @@ impl<'p> Checker<'p> {
         if !self.enter(Query::Enum(file, member)) {
             return Evaluated::default();
         }
-        let hir = self.hir(file);
-        let value = if hir[member].init.is_some() {
-            self.evaluate(file, hir[member].init, Location::Member(file, member))
-        } else {
-            let owner = self.bound(file).enum_member_owner[member.idx()];
-            let flags = hir[owner].flags;
-            // `computeEnumMemberValue`: what an ambient enum that is not `const` does not say is computed.
-            if (flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration)
-                && !flags.contains(Flags::CONST)
-            {
-                Evaluated::default()
-            } else if hir[owner].members.start == member.0 {
-                Evaluated::number(0.0)
-            } else {
-                match self.enum_member_value(file, EnumMemberId(member.0 - 1)) {
-                    Some(EnumValue::Number(bits)) => Evaluated::number(f64::from_bits(bits) + 1.0),
-                    _ => Evaluated::default(),
-                }
-            }
-        };
+        let value = self.compute_enum_member_value(file, member);
         if self.leave() {
             self.p.enum_values.insert((file, member), value);
         }
         value
+    }
+
+    /// `computeEnumMemberValue`. `autoValue` and `previous` are asked for, not handed down.
+    fn compute_enum_member_value(&mut self, file: FileId, member: EnumMemberId) -> Evaluated {
+        let hir = self.hir(file);
+        let (name, pos) = (hir[member].name, hir[member].pos);
+        let at = (file, pos, self.end_of_name_at(file, pos));
+        // `IsComputedNonLiteralName`: `["a"]` and `[1]` are named by their literal, any other `[e]` has no name.
+        if hir.text.get(pos as usize) == Some(&b'[') && (name.is_none() || name == known::empty) {
+            self.error(at, 1164, &[]);
+        } else if is_bigint_literal_at(hir, pos)
+            || name.is_some()
+                && self.is_numeric_name(name)
+                && !matches!(
+                    self.files().atoms.bytes(name),
+                    b"Infinity" | b"-Infinity" | b"NaN"
+                )
+        {
+            self.error(at, 2452, &[]);
+        }
+        if hir[member].init.is_some() {
+            return self.compute_constant_enum_member_value(file, member);
+        }
+        let en = self.bound(file).enum_member_owner[member.idx()];
+        if is_ambient_enum(hir, en) && !hir[en].flags.contains(Flags::CONST) {
+            return Evaluated::default();
+        }
+        if hir[en].members.start == member.0 {
+            return Evaluated::number(0.0);
+        }
+        let previous = EnumMemberId(member.0 - 1);
+        let before = self.get_enum_member_value(file, previous);
+        let Some(EnumValue::Number(bits)) = before.value else {
+            self.error(at, 1061, &[]);
+            return Evaluated::default();
+        };
+        if self.p.files.options.isolated_modules
+            && hir[previous].init.is_some()
+            && before.resolved_other_files
+        {
+            self.error(at, 18056, &[]);
+        }
+        Evaluated::number(f64::from_bits(bits) + 1.0)
+    }
+
+    /// `computeConstantEnumMemberValue`
+    fn compute_constant_enum_member_value(
+        &mut self,
+        file: FileId,
+        member: EnumMemberId,
+    ) -> Evaluated {
+        let hir = self.hir(file);
+        let en = self.bound(file).enum_member_owner[member.idx()];
+        let is_const = hir[en].flags.contains(Flags::CONST);
+        let initializer = hir[member].init;
+        let result = self.evaluate(file, initializer, Location::Member(file, member));
+        // The parser has reported it.
+        if matches!(hir[initializer].kind, ExprKind::Missing) {
+            return result;
+        }
+        let at = self.place_of_written_expr(file, initializer);
+        match result.value {
+            Some(value) => {
+                if is_const
+                    && let EnumValue::Number(n) = value
+                    && !f64::from_bits(n).is_finite()
+                {
+                    let is_nan = f64::from_bits(n).is_nan();
+                    self.error(at, if is_nan { 2478 } else { 2477 }, &[]);
+                }
+                if self.p.files.options.isolated_modules
+                    && matches!(value, EnumValue::String(_))
+                    && !result.is_syntactically_string
+                {
+                    let name = format!(
+                        "{}.{}",
+                        self.atom_text(hir[en].name),
+                        self.atom_text(hir[member].name)
+                    );
+                    self.error(at, 18055, &[Arg::Text(&name)]);
+                }
+            }
+            None if is_const => {
+                self.error(at, 2474, &[]);
+            }
+            None if is_ambient_enum(hir, en) => {
+                self.error(at, 1066, &[]);
+            }
+            None => {
+                let ty = self.type_of_expr(file, initializer);
+                self.check_type_assignable_to(ty, TypeId::NUMBER, Some(at), Some(18033));
+            }
+        }
+        result
     }
 
     /// `evaluate(e, e)`: what `e` comes to, if it is made of nothing but literals, enum members and constants that are.
@@ -2769,7 +2786,12 @@ impl<'p> Checker<'p> {
 
     /// `getThisType`: `this` as a type, written at `node` in `scope`. Where there is no such thing it is in error, and what is in
     /// error has the error type.
-    fn this_type_at(&mut self, file: FileId, node: TypeNodeId, mut scope: ScopeId) -> TypeId {
+    pub(super) fn this_type_at(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mut scope: ScopeId,
+    ) -> TypeId {
         use crate::bind::{FnOwner, MemberOwner};
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `GetThisContainer`: a member of a type literal is as far as it gets.
@@ -2804,7 +2826,7 @@ impl<'p> Checker<'p> {
                 },
                 // Not in a method: in a property, or else in the head of the class or the name of a method, which are outside.
                 ScopeKind::Class(c) => {
-                    if let Some(m) = hir[c].members.iter().rev().find(|&m| hir[m].pos <= pos)
+                    if let Some(m) = hir[c].members.iter().rev().find(|&m| hir[m].start <= pos)
                         && hir[m].kind == MemberKind::Property
                     {
                         return if hir[m].flags.contains(Flags::STATIC) {
@@ -2815,7 +2837,7 @@ impl<'p> Checker<'p> {
                     }
                 }
                 ScopeKind::Interface(i) => {
-                    if hir[i].members.iter().any(|m| hir[m].pos <= pos) {
+                    if hir[i].members.iter().any(|m| hir[m].start <= pos) {
                         return self.this_type_in_scope(file, scope);
                     }
                 }
@@ -3009,7 +3031,7 @@ impl<'p> Checker<'p> {
                 reference,
                 Provenance {
                     alias: Some((alias, type_arguments.into())),
-                    origin: UnionOrigin::None,
+                    ..Provenance::default()
                 },
             ),
             None => self.intern(reference),

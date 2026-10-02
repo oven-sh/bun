@@ -745,7 +745,7 @@ impl Checker<'_> {
                         {
                             helpers |= SET_FUNCTION_NAME;
                         }
-                        if hir.text.get(member.pos as usize) == Some(&b'[') {
+                        if hir.text.get(member.name_pos as usize) == Some(&b'[') {
                             helpers |= PROP_KEY;
                         }
                     }
@@ -864,7 +864,7 @@ impl Checker<'_> {
                     }
                     is_computed
                 }
-                Parent::MemberInit(m) => is_computed_name_at(hir[m].pos),
+                Parent::MemberInit(m) => is_computed_name_at(hir[m].name_pos),
                 Parent::VarInit(d) if is_identifier(hir[d].pat) => false,
                 Parent::ParamDefault(p)
                     if is_identifier(hir[p].pat) && !hir[p].flags.contains(Flags::REST) =>
@@ -920,7 +920,7 @@ impl Checker<'_> {
                 continue;
             };
             requests.push(Request {
-                order: (put_off, class.pos),
+                order: (put_off, class.name_pos),
                 start,
                 end,
                 helpers: if has_computed_name {

@@ -571,7 +571,9 @@ impl Checker<'_> {
                 let name = hir[p].pat;
                 (hir[name].pos, self.end_of_pat(file, name), 2403)
             }
-            MemberDeclaration::Member(m) => (hir[m].pos, self.end_of_member_name(file, m), 2717),
+            MemberDeclaration::Member(m) => {
+                (hir[m].name_pos, self.end_of_member_name(file, m), 2717)
+            }
             _ => return,
         };
         out.push(Diagnostic { start, code });
@@ -589,7 +591,7 @@ impl Checker<'_> {
                     (of, c.hir(of)[p].pos, c.end_of_param(of, p))
                 }
                 (of, MemberDeclaration::Member(m)) => {
-                    let from = c.hir(of)[m].pos;
+                    let from = c.hir(of)[m].name_pos;
                     // The text of the default library is not kept.
                     let to = if c.hir(of).text.is_empty() {
                         from
@@ -899,7 +901,7 @@ impl Checker<'_> {
         for (key, places) in seen.drain(..) {
             if places.len() > 1 {
                 for (_, m) in places.into_iter().filter(|place| place.0 == file) {
-                    let start = hir[m].pos;
+                    let start = hir[m].start;
                     out.push(Diagnostic { start, code: 2374 });
                     let end = hir[m].loc.end;
                     self.explain_another(start, end, 2374, |c| vec![c.type_to_string(key)]);

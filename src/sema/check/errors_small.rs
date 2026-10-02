@@ -421,7 +421,7 @@ impl Checker<'_> {
                 continue;
             }
             let start = match bound.fns[f].owner {
-                FnOwner::Member(m) => hir[m].pos,
+                FnOwner::Member(m) => hir[m].name_pos,
                 _ => func.name_pos,
             };
             let params: SmallVec<[ParamId; 4]> = func

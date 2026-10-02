@@ -88,7 +88,7 @@ impl Checker<'_> {
                 let lib = name.to_lowercase();
                 let unqualified = lib.strip_prefix("lib.").unwrap_or(&lib);
                 let unqualified = unqualified.strip_suffix(".d.ts").unwrap_or(unqualified);
-                let suggestion = super::errors_x_regexp_scanner::spelling_suggestion(
+                let suggestion = spelling_suggestion(
                     unqualified.as_bytes(),
                     crate::resolve::LIB_NAMES.split(' ').map(str::as_bytes),
                 );
@@ -924,11 +924,11 @@ impl Checker<'_> {
             .max_by_key(|&s| hir.stmts[s].pos);
         let member = (0..hir.members.len())
             .filter(|&m| {
-                hir.members[m].pos <= at && matches!(bound.member_owner[m], MemberOwner::Class(_))
+                hir.members[m].start <= at && matches!(bound.member_owner[m], MemberOwner::Class(_))
             })
-            .max_by_key(|&m| hir.members[m].pos);
+            .max_by_key(|&m| hir.members[m].start);
         match (stmt, member) {
-            (stmt, Some(m)) if stmt.is_none_or(|s| hir.stmts[s].pos < hir.members[m].pos) => {
+            (stmt, Some(m)) if stmt.is_none_or(|s| hir.stmts[s].pos < hir.members[m].start) => {
                 hir.members[m].kind == MemberKind::Property
                     && hir.members[m].flags.contains(Flags::AMBIENT)
             }

@@ -13,7 +13,6 @@
 
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::*;
-use std::fmt::Write;
 
 /// Nothing is printed below this depth: a tree that got to hold itself would never end.
 const MAX_DEPTH: usize = 2000;
@@ -54,12 +53,6 @@ struct Dump<'a> {
     out: String,
     /// Every node that was come to: in which vector, and where in it.
     seen: std::collections::HashSet<(&'static str, u32)>,
-}
-
-/// `file`, in a form that is the same for every order its nodes can be pushed in.
-/// It recurses as deep as the tree is, down to `MAX_DEPTH`: to be called where there is room for that.
-pub fn dump(file: &File, atoms: &Interner) -> String {
-    dump_and_orphans(file, atoms).0
 }
 
 /// With the nodes nothing leads to, which whoever goes over a whole vector comes to all the same: `vector[index] pos=..`.
@@ -334,12 +327,13 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     put!(d, 0, "", "decorators[{}]:", decorators.len());
     for &(owner, expr) in decorators {
         let (kind, pos) = match owner {
-            DecoratorOwner::Class(id) => {
-                ("Class", file.classes.get(id.idx()).map(|class| class.pos))
-            }
+            DecoratorOwner::Class(id) => (
+                "Class",
+                file.classes.get(id.idx()).map(|class| class.name_pos),
+            ),
             DecoratorOwner::Member(id) => (
                 "Member",
-                file.members.get(id.idx()).map(|member| member.pos),
+                file.members.get(id.idx()).map(|member| member.name_pos),
             ),
             DecoratorOwner::Param(id) => {
                 ("Param", file.params.get(id.idx()).map(|param| param.pos))
@@ -353,47 +347,25 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     }
     let mut orphans = Vec::new();
     macro_rules! look_for_orphans {
-        ($($vector:ident),*) => {$(
+        ($($vector:ident . $pos:ident),*) => {$(
             for (i, node) in file.$vector.iter().enumerate() {
                 if !d.seen.contains(&(stringify!($vector), i as u32)) {
-                    orphans.push(format!("{}[{i}] pos={}", stringify!($vector), node.pos));
+                    orphans.push(format!("{}[{i}] pos={}", stringify!($vector), node.$pos));
                 }
             }
         )*};
     }
-    look_for_orphans!(types, fns, members, params, type_params, pats, exprs, stmts);
+    look_for_orphans!(
+        types.pos,
+        fns.start,
+        members.name_pos,
+        params.pos,
+        type_params.pos,
+        pats.pos,
+        exprs.pos,
+        stmts.pos
+    );
     (d.out, orphans)
-}
-
-/// Where two dumps part, `None` if they do not: the number of the line, the six lines before it, and from either side the line and
-/// the three after it.
-pub fn first_difference(a: &str, b: &str) -> Option<String> {
-    if a == b {
-        return None;
-    }
-    let old: Vec<&str> = a.lines().collect();
-    let new: Vec<&str> = b.lines().collect();
-    let at = old
-        .iter()
-        .zip(&new)
-        .position(|(old, new)| old != new)
-        .unwrap_or(old.len().min(new.len()));
-    let mut out = String::new();
-    let _ = writeln!(out, "line {}:", at + 1);
-    for line in &old[at.saturating_sub(6)..at] {
-        let _ = writeln!(out, "    {line}");
-    }
-    for (side, lines) in [("OLD ", &old), ("NEW ", &new)] {
-        let _ = writeln!(
-            out,
-            "{side}{}",
-            lines.get(at).copied().unwrap_or("<the end>")
-        );
-        for line in lines.iter().skip(at + 1).take(3) {
-            let _ = writeln!(out, "    {line}");
-        }
-    }
-    Some(out)
 }
 
 impl Dump<'_> {
@@ -1038,13 +1010,13 @@ impl Dump<'_> {
             ty,
             init,
             func,
-            pos,
+            name_pos,
             start,
             loc,
             modifiers,
         } = node!(self, depth, label, members, id);
         let mut head = format!(
-            "Member kind={} flags={flags:?} pos={pos} start={start} loc={}..{}",
+            "Member kind={} flags={flags:?} name_pos={name_pos} start={start} loc={}..{}",
             member_kind_name(kind),
             loc.pos,
             loc.end
@@ -1072,12 +1044,11 @@ impl Dump<'_> {
             implements,
             other_implements,
             members,
-            pos,
             start,
             modifiers,
         } = node!(self, depth, label, classes, id);
         let mut head = format!(
-            "Class name={} name_pos={name_pos} flags={flags:?} pos={pos} start={start}",
+            "Class name={} name_pos={name_pos} flags={flags:?} start={start}",
             self.q(name)
         );
         for modifier in self.file.modifier_list(modifiers) {
@@ -1614,86 +1585,5 @@ fn member_kind_name(kind: MemberKind) -> &'static str {
         MemberKind::ConstructSignature => "ConstructSignature",
         MemberKind::IndexSignature => "IndexSignature",
         MemberKind::StaticBlock => "StaticBlock",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `a + (1);`. `shuffled` pushes the operands the other way round, after nodes that nothing names.
-    fn sum(atoms: &Interner, shuffled: bool, pos_of_one: u32) -> File {
-        let mut file = File::default();
-        let a = ExprKind::Ident(atoms.intern_str("a"));
-        let (left, right) = if shuffled {
-            file.expr(ExprKind::Null, 99);
-            file.number(7.0);
-            let one = file.number(1.0);
-            let right = file.expr(ExprKind::Number(one), pos_of_one);
-            (file.expr(a, 0), right)
-        } else {
-            let left = file.expr(a, 0);
-            let one = file.number(1.0);
-            (left, file.expr(ExprKind::Number(one), pos_of_one))
-        };
-        let sum = file.expr(
-            ExprKind::Binary {
-                op: BinOp::Add,
-                left,
-                right,
-            },
-            0,
-        );
-        let stmt = file.stmt(StmtKind::Expr(sum), 0);
-        file.body = file.list(&[stmt]);
-        file.parens.push((right, 4));
-        file
-    }
-
-    #[test]
-    fn the_order_of_the_nodes_does_not_show() {
-        let atoms = Interner::new();
-        let old = dump(&sum(&atoms, false, 5), &atoms);
-        let new = dump(&sum(&atoms, true, 5), &atoms);
-        assert_eq!(first_difference(&old, &new), None);
-    }
-
-    #[test]
-    fn a_position_shows() {
-        let atoms = Interner::new();
-        let old = dump(&sum(&atoms, false, 5), &atoms);
-        let new = dump(&sum(&atoms, true, 6), &atoms);
-        let report = first_difference(&old, &new).unwrap();
-        assert!(
-            report
-                .lines()
-                .any(|l| l.starts_with("OLD ") && l.ends_with("right: Expr Number pos=5 1.0")),
-            "{report}"
-        );
-        assert!(
-            report
-                .lines()
-                .any(|l| l.starts_with("NEW ") && l.ends_with("right: Expr Number pos=6 1.0")),
-            "{report}"
-        );
-    }
-
-    #[test]
-    fn a_tree_that_holds_itself_ends() {
-        let work = || {
-            let mut file = File::default();
-            let block = file.stmt(StmtKind::Empty, 0);
-            let inside = file.list(&[block]);
-            file[block].kind = StmtKind::Block(inside);
-            file.body = inside;
-            dump(&file, &Interner::new())
-        };
-        let text = std::thread::Builder::new()
-            .stack_size(256 << 20)
-            .spawn(work)
-            .unwrap()
-            .join()
-            .unwrap();
-        assert!(text.contains("...\n"));
     }
 }

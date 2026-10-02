@@ -1369,7 +1369,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             member.modifiers = self
                 .b
                 .modifiers_with_decorators(member.modifiers, &decorators);
-            of_members.extend(decorators.into_iter().map(|(e, _)| (member.pos, e)));
+            of_members.extend(decorators.into_iter().map(|(e, _)| (member.name_pos, e)));
             members.push(member);
         }
         // `parseClassElement`: a `;` is a member, and has its comments.
@@ -1388,12 +1388,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.b.in_abstract_class = outer_is_abstract;
         self.b.classes_around -= 1;
         // Overloads go before what implements them.
-        members.sort_by_key(|m| m.pos);
+        members.sort_by_key(|m| m.name_pos);
         // As they are written; those of one member keep their order.
         of_members.sort_by_key(|d| d.0);
         let members = self.b.file.add_members(&members);
         for (at, e) in of_members {
-            if let Some(m) = members.iter().find(|&m| self.b.file[m].pos == at) {
+            if let Some(m) = members.iter().find(|&m| self.b.file[m].name_pos == at) {
                 self.b.file.decorators.push((DecoratorOwner::Member(m), e));
             }
         }
@@ -1415,7 +1415,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             implements,
             other_implements,
             members,
-            pos,
             start,
             modifiers,
         });
@@ -1433,7 +1432,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             ty: TypeNodeId::NONE,
             init: ExprId::NONE,
             func: FnId::NONE,
-            pos: 0,
+            name_pos: 0,
             start: 0,
             loc: TextRange::default(),
             modifiers: Span::EMPTY,
@@ -1441,10 +1440,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         if let Some(block) = property.class_static_block_ref() {
             member.kind = MemberKind::StaticBlock;
             member.flags = Flags::STATIC;
-            member.pos = self.pos_of(block.loc);
+            member.name_pos = self.pos_of(block.loc);
             member.start = self
                 .note(block.loc, Mark::MemberStart)
-                .unwrap_or(member.pos);
+                .unwrap_or(member.name_pos);
             let modifiers = self.modifiers_at(block.loc);
             member.modifiers = self.b.add_modifier_list(&modifiers);
             let body = FnBody::Block(self.stmts(block.stmts.as_slice(), false));
@@ -1452,14 +1451,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                 kind: FnKind::StaticBlock,
                 flags: Flags::STATIC,
                 name: Atom::NONE,
-                name_pos: member.pos,
+                name_pos: member.name_pos,
                 type_params: Span::EMPTY,
                 params: Span::EMPTY,
                 this_param: ParamId::NONE,
                 ret: TypeNodeId::NONE,
                 body,
-                anchor: member.pos,
-                pos: member.pos,
+                anchor: member.name_pos,
+                pos: member.name_pos,
                 start: member.start,
             });
             return member;
@@ -1467,8 +1466,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         let Some(key) = &property.key else {
             return member;
         };
-        member.pos = self.pos_of(key.loc);
-        member.start = member.pos;
+        member.name_pos = self.pos_of(key.loc);
+        member.start = member.name_pos;
         let is_computed = property.flags.contains(ast::flags::Property::IsComputed);
         member.key = self.key(key, is_computed);
         // `getDeclarationName`: a bigint names nothing.
@@ -1504,7 +1503,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             member.flags |= Flags::STRING_NAME;
         }
         if is_computed {
-            member.pos = self.start_of_computed_name(key);
+            member.name_pos = self.start_of_computed_name(key);
         } else if is_quoted || matches!(key.data, Data::ENumber(_) | Data::EBigInt(_)) {
             member.flags |= Flags::LITERAL_NAME;
         }
@@ -1544,7 +1543,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     on,
                     is_parent_ambient,
                     matches!(member.key, PropKey::Private(_)),
-                    member.pos,
+                    member.name_pos,
                 );
             }
             // `parseClassElement`: but not an accessor or a constructor.
@@ -1571,7 +1570,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.b.file[func].flags.remove(Flags::ASYNC);
             }
             self.b.file[func].name = member.key.name().unwrap_or(Atom::NONE);
-            self.b.file[func].name_pos = member.pos;
+            self.b.file[func].name_pos = member.name_pos;
             member.func = func;
             return member;
         }
@@ -1581,7 +1580,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 Modified::Property,
                 is_parent_ambient,
                 matches!(member.key, PropKey::Private(_)),
-                member.pos,
+                member.name_pos,
             );
         }
         member
@@ -1589,7 +1588,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             .remove(Flags::CONST | Flags::EXPORT | Flags::DEFAULT);
         // `checkVariableLikeDeclaration`
         if is_named_by_bigint {
-            self.b.file.checker_errors.push((member.pos, 1539));
+            self.b.file.checker_errors.push((member.name_pos, 1539));
         }
         member.init = self.optional_expr(property.initializer.as_ref().or(property.value.as_ref()));
         member

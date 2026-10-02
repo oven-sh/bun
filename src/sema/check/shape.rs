@@ -7,6 +7,15 @@ use crate::table::Handle;
 use crate::util::group_by_key;
 use smallvec::{SmallVec, smallvec};
 
+/// `thisAssignmentDeclarationKind`, with its location.
+#[derive(Copy, Clone)]
+pub(super) enum ThisAssignmentDeclaration {
+    None,
+    Typed(TypeNodeId),
+    Constructor(FnId),
+    Method,
+}
+
 /// A declaration of a property that does not say what the property is.
 #[derive(Copy, Clone)]
 pub(super) enum UntypedProperty {
@@ -91,26 +100,6 @@ impl Resolved {
             names: Names::of(&shape.props),
             shape,
         }
-    }
-
-    #[inline]
-    pub(super) fn bytes(&self) -> usize {
-        size_of::<Resolved>()
-            + self.shape.props.capacity() * size_of::<Prop>()
-            + (self.shape.call.capacity() + self.shape.construct.capacity()) * 4
-            + self.shape.index.capacity() * size_of::<IndexInfo>()
-            + self.names.places.len() * 4
-            + self
-                .shape
-                .props
-                .iter()
-                .map(|p| match &p.source {
-                    PropSource::Members(MemberList::Many(m)) => 16 + m.len() * 8,
-                    PropSource::Assigned(_, e) => 16 + e.len() * 4,
-                    PropSource::Intersected(_, props) => 16 + props.len() * size_of::<Prop>(),
-                    _ => 0,
-                })
-                .sum::<usize>()
     }
 
     #[inline]
@@ -604,7 +593,6 @@ impl<'p> Checker<'p> {
     }
 
     fn members_uncached(&mut self, ty: TypeId) -> Option<(Built<'p>, MapperId)> {
-        self.guard("members");
         match self.data(ty) {
             &TypeData::Substitution { base, constraint } => {
                 let both = self.substitution_intersection(base, constraint);
@@ -730,7 +718,7 @@ impl<'p> Checker<'p> {
             TypeData::ReverseMapped { source, mapped, of } => {
                 let (source, mapped, of) = (*source, *mapped, *of);
                 let resolved =
-                    self.shape_memo(ty, |c| c.build_reverse_mapped_shape(source, mapped, of));
+                    self.shape_memo(ty, |c| c.build_reverse_mapped_shape(ty, source, mapped, of));
                 Some((resolved, MapperId::IDENTITY))
             }
             TypeData::Tuple {
@@ -1302,7 +1290,7 @@ impl<'p> Checker<'p> {
             };
             let value = self.type_of_prop(&prop, MapperId::IDENTITY);
             // `isSymbolWithComputedName`. `["a"]` is kept as a plain name.
-            let name_start = super::errors_x_properties_jsx::start_of_member_name(hir, group[0]);
+            let name_start = hir[group[0]].name_pos;
             let has_computed_name = matches!(hir[group[0]].key, PropKey::Computed(_))
                 || hir.text.get(name_start as usize) == Some(&b'[');
             let component = has_computed_name.then_some(IndexComponent::Member(file, group[0]));
@@ -1658,7 +1646,7 @@ impl<'p> Checker<'p> {
                 let Some(&(file, member)) = list.first() else {
                     return false;
                 };
-                if !is_near(self.hir(file)[member].pos) {
+                if !is_near(self.hir(file)[member].name_pos) {
                     return false;
                 }
                 let loc = self.hir(file)[member].loc;
@@ -1725,11 +1713,7 @@ impl<'p> Checker<'p> {
         if self.left_a_circle {
             // `GetErrorRangeForNode`: the name, or the first token of a class expression without one.
             let declaration = &self.hir(file)[c];
-            let start = if declaration.name.is_some() {
-                declaration.name_pos
-            } else {
-                declaration.pos
-            };
+            let start = declaration.name_pos;
             let at = (file, start, self.end_of_token_at(file, start));
             let err = self.new_diagnostic(at, 2506, &[Arg::Sym(class)]);
             self.commit(err);
@@ -1966,8 +1950,7 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         // `GetErrorRangeForNode`
         let start = match declaration {
-            Decl::Class(c) if hir[c].name.is_some() => hir[c].name_pos,
-            Decl::Class(c) => hir[c].pos,
+            Decl::Class(c) => hir[c].name_pos,
             Decl::Interface(i) => hir[i].name_pos,
             _ => return None,
         };
@@ -3349,6 +3332,7 @@ impl<'p> Checker<'p> {
         let mut own_mapper = prop.mapper;
         let base = match &prop.source {
             PropSource::Type(t) | PropSource::Copy(t, ..) => *t,
+            PropSource::ReverseMapped(of, _) => self.type_of_reverse_mapped_prop(*of, prop.name),
             // `getTypeOfMappedSymbol` instantiates the template with `prop.mapper` before it adjusts for optionality.
             PropSource::Mapped(of, strips_optional, _) => {
                 own_mapper = MapperId::IDENTITY;
@@ -3480,16 +3464,9 @@ impl<'p> Checker<'p> {
         if in_report {
             self.resolution_start = self.stack.len() - 1;
         }
-        let ty = self.widened_type_of_assignments(file, name, assignments);
+        let first = assignments[0];
+        let ty = self.get_widened_type_for_assignment_declaration(file, name, assignments, first);
         self.resolution_start = resolution_start;
-        // The last step of `getWidenedTypeForAssignmentDeclaration`: in a JavaScript file an all-nullable type is an implicit `any`.
-        let ty = if self.hir(file).is_js && self.is_all_null_or_undefined(ty) {
-            let value_declaration = UntypedProperty::Assignment(assignments[0]);
-            self.report_implicit_any(file, value_declaration, TypeId::ANY);
-            TypeId::ANY
-        } else {
-            ty
-        };
         let is_cacheable = self.leave();
         // `reportCircularityError`
         if self.left_a_circle {
@@ -3537,7 +3514,7 @@ impl<'p> Checker<'p> {
         match declaration {
             UntypedProperty::Member(member) => (
                 file,
-                self.hir(file)[member].pos,
+                self.hir(file)[member].name_pos,
                 self.end_of_member_name(file, member),
             ),
             UntypedProperty::Assignment(e) => (
@@ -3569,9 +3546,9 @@ impl<'p> Checker<'p> {
         // `DeclarationNameToString(GetNameOfDeclaration(declaration))`
         let name = match declaration {
             UntypedProperty::Member(_) => self.source_text(file, at.1, at.2),
-            UntypedProperty::Assignment(e) => {
-                super::errors_implicit::name_of_assignment_declaration(self, file, e)
-            }
+            UntypedProperty::Assignment(e) => self
+                .name_of_assignment_declaration(file, e)
+                .unwrap_or_else(|| "(Missing)".to_owned()),
         };
         let diagnostic = self.new_diagnostic(at, code, &[Arg::Text(&name), Arg::Type(ty)]);
         self.add_error_or_suggestion(no_implicit_any, diagnostic);
@@ -3583,64 +3560,73 @@ impl<'p> Checker<'p> {
         ty.is_never() || self.every_type(ty, |_, member| member.is_undefined() || member.is_null())
     }
 
-    /// `getWidenedTypeForAssignmentDeclaration` without its last step, which replaces an all-nullable type by `any` in a
-    /// JavaScript file and reports that.
-    pub(super) fn widened_type_of_assignments(
+    /// `isConstructorDeclaredThisProperty`, of the symbol whose `Declarations` are `assignments`.
+    pub(super) fn is_constructor_declared_this_property(
+        &self,
+        file: FileId,
+        assignments: &[ExprId],
+    ) -> ThisAssignmentDeclaration {
+        use crate::bind::{JsDeclarationKind, assignment_declaration_kind};
+        let hir = self.hir(file);
+        let is_this_property =
+            |&e: &ExprId| assignment_declaration_kind(hir, e) == JsDeclarationKind::ThisProperty;
+        if assignments.is_empty() || !assignments.iter().all(is_this_property) {
+            return ThisAssignmentDeclaration::None;
+        }
+        // The last annotation counts.
+        let annotations = assignments.iter().rev();
+        let mut annotations = annotations.map(|&e| hir.jsdoc_type(JsDocTypeOwner::Assign(e)));
+        if let Some(annotation) = annotations.find(|node| node.is_some()) {
+            return ThisAssignmentDeclaration::Typed(annotation);
+        }
+        // `getDeclaringConstructor`
+        let constructor = assignments
+            .iter()
+            .find_map(|&e| match self.this_container(file, e) {
+                Some(Ok(func)) if hir[func].kind == FnKind::Constructor => Some(func),
+                _ => None,
+            });
+        constructor.map_or(
+            ThisAssignmentDeclaration::Method,
+            ThisAssignmentDeclaration::Constructor,
+        )
+    }
+
+    /// `getWidenedTypeForAssignmentDeclaration`, of the symbol `name` whose `Declarations` are `assignments`.
+    pub(super) fn get_widened_type_for_assignment_declaration(
         &mut self,
         file: FileId,
         name: Atom,
         assignments: &[ExprId],
+        value_declaration: ExprId,
     ) -> TypeId {
         use crate::bind::{JsDeclarationKind, assignment_declaration_kind};
         let hir = self.hir(file);
-        let is_this_property =
-            |e: ExprId| assignment_declaration_kind(hir, e) == JsDeclarationKind::ThisProperty;
-        let mut resolved = None;
-        // `thisAssignmentDeclarationMethod`
-        let mut is_method_only = false;
-        // `isConstructorDeclaredThisProperty`
-        let all_this = !assignments.is_empty() && assignments.iter().all(|&e| is_this_property(e));
-        // `thisAssignmentDeclarationTyped`: the last annotation counts.
-        let annotation = if all_this {
-            assignments
-                .iter()
-                .rev()
-                .map(|&e| hir.jsdoc_type(JsDocTypeOwner::Assign(e)))
-                .find(|node| node.is_some())
-        } else {
-            None
+        let kind = self.is_constructor_declared_this_property(file, assignments);
+        let inherited = |c: &mut Self| {
+            let class = c.class_of_this_property(file, value_declaration)?;
+            c.type_of_property_in_base_class(file, class, name)
         };
-        if let Some(annotation) = annotation {
-            resolved = Some(self.type_from_node(file, annotation));
-        } else if all_this {
-            let inherited = match self.class_of_this_property(file, assignments[0]) {
-                Some(class) => self.type_of_property_in_base_class(file, class, name),
-                None => None,
-            };
-            // `getDeclaringConstructor`
-            let constructor =
-                assignments
-                    .iter()
-                    .find_map(|&e| match self.this_container(file, e) {
-                        Some(Ok(func)) if hir[func].kind == FnKind::Constructor => Some(func),
-                        _ => None,
-                    });
-            match constructor {
-                Some(func) => {
-                    // `getFlowTypeOfProperty`: the walk starts from the inherited type, or from `undefinedType`.
-                    let initial = inherited.unwrap_or(self.undefined_as_declared());
-                    let first = UntypedProperty::Assignment(assignments[0]);
-                    resolved = self.flow_type_in_constructor_from(file, func, name, initial, first);
-                }
-                None => (resolved, is_method_only) = (inherited, true),
+        let resolved = match kind {
+            ThisAssignmentDeclaration::None => None,
+            ThisAssignmentDeclaration::Typed(annotation) => {
+                Some(self.type_from_node(file, annotation))
             }
-        }
+            ThisAssignmentDeclaration::Constructor(func) => {
+                // `getFlowTypeOfProperty`: the walk starts from the inherited type, or from `undefinedType`.
+                let initial = inherited(self).unwrap_or(self.undefined_as_declared());
+                let first = UntypedProperty::Assignment(value_declaration);
+                self.flow_type_in_constructor_from(file, func, name, initial, first)
+            }
+            ThisAssignmentDeclaration::Method => inherited(self),
+        };
+        let is_method_only = matches!(kind, ThisAssignmentDeclaration::Method);
         let ty = match resolved {
             Some(ty) => ty,
             None => {
                 let mut types = Vec::with_capacity(assignments.len());
                 let mut declared = None;
-                for &e in assignments {
+                for (i, &e) in assignments.iter().enumerate() {
                     // `declaration.Type()`: the first declaration that says what it is decides.
                     let annotation = hir.jsdoc_type(JsDocTypeOwner::Assign(e));
                     if annotation.is_some() {
@@ -3650,7 +3636,8 @@ impl<'p> Checker<'p> {
                     // `getAssignmentDeclarationInitializerType`
                     let assigned = match hir[e].kind {
                         ExprKind::Assign { target, value, .. } => {
-                            if is_this_property(e)
+                            if assignment_declaration_kind(hir, e)
+                                == JsDeclarationKind::ThisProperty
                                 && self.contains_same_named_this_property(file, name, target, value)
                             {
                                 continue;
@@ -3665,7 +3652,15 @@ impl<'p> Checker<'p> {
                         },
                         _ => continue,
                     };
-                    if !types.contains(&assigned) {
+                    // "We ignore initial assignments of undefined to CommonJS exports when there are multiple assignment declarations"
+                    let is_ignored = i == 0
+                        && assignments.len() > 1
+                        && assigned.is_undefined()
+                        && matches!(
+                            assignment_declaration_kind(hir, e),
+                            JsDeclarationKind::ExportsProperty(_)
+                        );
+                    if !is_ignored && !types.contains(&assigned) {
                         types.push(assigned);
                     }
                 }
@@ -3684,7 +3679,14 @@ impl<'p> Checker<'p> {
                 }
             }
         };
-        self.widened(ty)
+        let ty = self.widened(ty);
+        // "report an all-nullable or empty union as an implicit any in JS files"
+        if hir.is_js && self.is_all_null_or_undefined(ty) {
+            let value_declaration = UntypedProperty::Assignment(value_declaration);
+            self.report_implicit_any(file, value_declaration, TypeId::ANY);
+            return TypeId::ANY;
+        }
+        ty
     }
 
     /// `getThisClassAndSymbolTable`: the class whose member contains `e`, an assignment to `this.name`.
@@ -3705,7 +3707,7 @@ impl<'p> Checker<'p> {
 
     /// `getTypeOfPropertyInBaseClass`: the type of the property `name` in the first base type of `class`. `getDeclaringClass` is
     /// the instance type, for a static property too.
-    fn type_of_property_in_base_class(
+    pub(super) fn type_of_property_in_base_class(
         &mut self,
         file: FileId,
         class: ClassId,
@@ -3853,7 +3855,25 @@ impl<'p> Checker<'p> {
         target: ExprId,
         value: ExprId,
     ) -> TypeId {
+        use crate::bind::{JsDeclarationKind, assignment_declaration_kind};
         let hir = self.hir(file);
+        if matches!(
+            assignment_declaration_kind(hir, declaration),
+            JsDeclarationKind::ModuleExports | JsDeclarationKind::ExportsProperty(_)
+        ) {
+            // `GetRightMostAssignedExpression`, which steps through compound assignments too.
+            let mut rightmost = value;
+            while let ExprKind::Assign { value: next, .. } = hir[rightmost].kind {
+                rightmost = next;
+            }
+            if matches!(hir[rightmost].kind, ExprKind::Array(items) if items.is_empty()) {
+                let any_array = self.array_of(TypeId::ANY);
+                self.report_implicit_any(file, UntypedProperty::Assignment(declaration), any_array);
+                return any_array;
+            }
+            let ty = self.type_of_expr(file, rightmost);
+            return self.regular(ty);
+        }
         let ty = self.type_of_expr(file, value);
         // `checkExpressionForMutableLocation` does not go through `checkExpressionCached`: an object literal is a type of its own.
         let ty = match *self.data(ty) {
@@ -4078,8 +4098,13 @@ impl<'p> Checker<'p> {
                 self.report_circular_accessors(members);
             } else {
                 let end = self.end_of_member_name(file, first);
-                let name = self.source_text(file, member.pos, end);
-                self.report_circularity_error((file, member.pos, end), Arg::Text(&name), ty, false);
+                let name = self.source_text(file, member.name_pos, end);
+                self.report_circularity_error(
+                    (file, member.name_pos, end),
+                    Arg::Text(&name),
+                    ty,
+                    false,
+                );
             }
             return kept;
         }
@@ -4503,7 +4528,6 @@ impl<'p> Checker<'p> {
 
     /// `apparent_type`, of what may look like something else.
     fn apparent_type_of_other(&mut self, ty: TypeId) -> TypeId {
-        self.guard("apparent_type");
         // What extends nothing extends `unknown`.
         let ty = if self.is_deferred(ty) {
             self.base_constraint(ty)
@@ -4842,7 +4866,10 @@ impl<'p> Checker<'p> {
     pub(super) fn value_declaration(prop: &Prop) -> Option<&PropSource> {
         match &prop.source {
             // `addMemberForKeyTypeWorker` links `Declarations` to a mapped property, never a `ValueDeclaration`.
-            PropSource::Type(_) | PropSource::Mapped(..) | PropSource::Copy(_, _, false) => None,
+            PropSource::Type(_)
+            | PropSource::Mapped(..)
+            | PropSource::Copy(_, _, false)
+            | PropSource::ReverseMapped(..) => None,
             PropSource::Copy(_, of, true) => of.iter().find_map(Self::value_declaration),
             PropSource::Intersected(_, parts) => {
                 let mut declared = parts.iter().filter_map(Self::value_declaration);
@@ -4872,7 +4899,9 @@ impl<'p> Checker<'p> {
         fn add_declared(prop: &Prop, declared: &mut Vec<Prop>) {
             match &prop.source {
                 PropSource::Type(_) => {}
-                PropSource::Copy(_, parts, _) | PropSource::Intersected(_, parts) => {
+                PropSource::Copy(_, parts, _)
+                | PropSource::Intersected(_, parts)
+                | PropSource::ReverseMapped(_, parts) => {
                     parts.iter().for_each(|part| add_declared(part, declared));
                 }
                 PropSource::Mapped(..) => {
@@ -4973,7 +5002,12 @@ impl<'p> Checker<'p> {
     /// `ty` without the intersections nothing can be.
     #[inline]
     pub fn reduced(&mut self, ty: TypeId) -> TypeId {
-        if self.p.types.flags(ty).contains(TypeFlags::MAY_BE_REDUCED) {
+        if self
+            .p
+            .types
+            .object_flags(ty)
+            .contains(ObjectFlags::MAY_BE_REDUCED)
+        {
             self.reduced_members(ty)
         } else {
             ty
@@ -5034,7 +5068,6 @@ impl<'p> Checker<'p> {
         if is_plain_object(self.data(ty)) {
             return self.find_property_in(ty, ty, name, access);
         }
-        self.guard("type_of_property");
         if self.is_any(ty) {
             return Some((ty, Found::Property));
         }
@@ -5451,7 +5484,6 @@ impl<'p> Checker<'p> {
     }
 
     fn signatures_uncached(&mut self, ty: TypeId, construct: bool) -> Vec<SigId> {
-        self.guard("signatures");
         // `getReducedApparentType`: an intersection nothing can be has no signatures.
         let ty = self.reduced(ty);
         let ty = self.apparent_type(ty);
@@ -5986,27 +6018,27 @@ impl<'p> Checker<'p> {
             let left_name = if i < left_count {
                 self.parameter_name_at_position(left, i)
             } else {
-                String::new()
+                known::empty
             };
             let right_name = if i < right_count {
                 self.parameter_name_at_position(right, i)
             } else {
-                String::new()
+                known::empty
             };
-            let name = if left_name == right_name || right_name.is_empty() {
+            let name = if left_name == right_name || right_name == known::empty {
                 left_name
-            } else if left_name.is_empty() {
+            } else if left_name == known::empty {
                 right_name
             } else {
-                String::new()
+                known::empty
             };
-            let name = if name.is_empty() {
-                format!("arg{i}")
+            let name = if name == known::empty {
+                self.files().atoms.intern(format!("arg{i}").as_bytes())
             } else {
                 name
             };
             params.push(SigParam {
-                name: self.files().atoms.intern(name.as_bytes()),
+                name,
                 ty: if is_rest {
                     self.array_of(combined)
                 } else {

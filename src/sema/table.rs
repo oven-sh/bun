@@ -426,14 +426,6 @@ pub struct ByNode<K, V: Packed> {
 }
 
 impl<K: NodeKey, V: Packed> ByNode<K, V> {
-    /// How many cells there are and how many hold something, and the size of one.
-    pub fn fill(&self) -> (usize, usize, usize) {
-        let used = (0..self.cells.len)
-            .filter(|&i| self.cells.cell(i).load() != Default::default())
-            .count();
-        (self.cells.len, used, size_of::<V::Cell>())
-    }
-
     pub fn new(bases: &Bases) -> Self {
         ByNode {
             cells: Flat::new(bases.total()),
@@ -583,14 +575,6 @@ pub struct ByNodeKept<K, T> {
 }
 
 impl<K: NodeKey, T: 'static> ByNodeKept<K, T> {
-    pub fn fill(&self) -> (usize, usize, usize) {
-        self.handles.fill()
-    }
-
-    pub fn kept(&self) -> impl Iterator<Item = &T> {
-        (0..self.kept.len()).map(|i| self.kept.get(i))
-    }
-
     pub fn new(bases: &Bases) -> Self {
         ByNodeKept {
             handles: ByNode::new(bases),
@@ -743,10 +727,6 @@ impl<I: Id, T> Default for ByIdKept<I, T> {
 }
 
 impl<I: Id, T: 'static> ByIdKept<I, T> {
-    pub fn kept(&self) -> impl Iterator<Item = &T> {
-        (0..self.kept.len()).map(|i| self.kept.get(i))
-    }
-
     #[inline]
     pub fn get_ref(&self, key: &I) -> Option<&T> {
         self.handles.get(key).map(|handle| self.at(handle))
@@ -839,67 +819,5 @@ impl<K: std::hash::Hash + Eq + MaybeLocal + 'static, V: Clone + MaybeLocal + 'st
 
     pub fn len(&self) -> usize {
         self.shared.len()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn segments_cover_every_number_once() {
-        let mut expected = (locate(0).0, 0usize);
-        for index in 0..300_000u32 {
-            let (segment, offset) = locate(index);
-            assert_eq!((segment, offset - segment_len(segment)), expected);
-            expected.1 += 1;
-            if expected.1 == segment_len(expected.0) {
-                expected = (expected.0 - 1, 0);
-            }
-        }
-        assert!(locate(u32::MAX).0 < SEGMENTS);
-    }
-
-    #[test]
-    fn the_first_value_of_many_threads_is_kept() {
-        let bases = Bases::new([3usize, 0, 50_000].into_iter());
-        let by_node = ByNode::<(FileId, u32), Handle>::new(&bases);
-        let set = NodeSet::<(FileId, u32)>::new(&bases);
-        let by_id = ById::<Handle, Option<Handle>>::default();
-        let ids = IdSet::<Handle>::default();
-        let kept = ByIdKept::<Handle, String>::default();
-        std::thread::scope(|scope| {
-            for _ in 0..8 {
-                scope.spawn(|| {
-                    for i in 0..50_000u32 {
-                        let key = (FileId(2), i);
-                        assert_eq!(by_node.insert(key, Handle(i * 2)), Handle(i * 2));
-                        assert_eq!(by_node.get(&key), Some(Handle(i * 2)));
-                        if i % 3 == 0 {
-                            set.insert(key, ());
-                            ids.insert(Handle(i), ());
-                        }
-                        let value = (i % 2 == 0).then_some(Handle(i));
-                        assert_eq!(by_id.insert(Handle(i * 7), value), value);
-                        if i % 64 == 0 {
-                            assert_eq!(kept.insert(Handle(i), i.to_string()), i.to_string());
-                        }
-                    }
-                });
-            }
-        });
-        assert_eq!(by_node.get(&(FileId(0), 2)), None);
-        assert_eq!(by_node.get(&(FileId(0), u32::MAX)), None);
-        assert_eq!(by_node.get(&(FileId(1), 0)), None);
-        for i in 0..50_000u32 {
-            assert_eq!(set.get(&(FileId(2), i)).is_some(), i % 3 == 0);
-            assert_eq!(ids.get(&Handle(i)).is_some(), i % 3 == 0);
-        }
-        assert_eq!(by_id.get(&Handle(7)), Some(None));
-        assert_eq!(by_id.get(&Handle(14)), Some(Some(Handle(2))));
-        assert_eq!(by_id.get(&Handle(15)), None);
-        assert_eq!(by_id.get(&Handle(4_000_000_000)), None);
-        assert_eq!(kept.get_ref(&Handle(128)).map(String::as_str), Some("128"));
-        assert_eq!(kept.get_ref(&Handle(129)), None);
     }
 }

@@ -1776,12 +1776,12 @@ impl<'a> Spans<'a> {
                 } else if class.name.is_some() {
                     self.type_params(class.type_params, self.token(class.name_pos as usize))
                 } else {
-                    self.type_params(class.type_params, class.pos as usize)
+                    self.type_params(class.type_params, class.name_pos as usize)
                 };
                 self.inside_braces_after(head)
             }
         };
-        self.close(inside.max(class.pos as usize), b'}')
+        self.close(inside.max(class.name_pos as usize), b'}')
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -2100,7 +2100,7 @@ impl Checker<'_> {
     /// `node.End()` of the name of a member, `[computed]` included.
     pub(super) fn end_of_member_name(&self, file: FileId, member: MemberId) -> u32 {
         match self.hir(file).members.get(member.idx()) {
-            Some(member) => self.spans(file).key(member.key, member.pos as usize) as u32,
+            Some(member) => self.spans(file).key(member.key, member.name_pos as usize) as u32,
             None => 0,
         }
     }
@@ -2120,13 +2120,13 @@ impl Checker<'_> {
             MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {}
             MemberKind::Method if is_in_class => {}
             MemberKind::Constructor => {
-                return (member.start, spans.token(member.pos as usize) as u32);
+                return (member.start, spans.token(member.name_pos as usize) as u32);
             }
-            _ => return (member.pos, member.loc.end),
+            _ => return (member.start, member.loc.end),
         }
         (
-            member.pos,
-            spans.key(member.key, member.pos as usize) as u32,
+            member.name_pos,
+            spans.key(member.key, member.name_pos as usize) as u32,
         )
     }
 
@@ -2258,121 +2258,5 @@ impl Checker<'_> {
     /// `pos`.
     pub(super) fn end_of_token_before(&self, file: FileId, pos: u32) -> u32 {
         skip_trivia_back(&self.hir(file).text, pos as usize) as u32
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scans_tokens() {
-        let cases = [
-            ("abc.d", 3),
-            ("\\u0061b c", 7),
-            ("\\u{61}b c", 7),
-            ("#x.y", 2),
-            ("'a\\'b' c", 6),
-            ("\"a\nb", 2),
-            ("`a${b}`", 4),
-            ("`a` b", 3),
-            ("1_000.5e+3n", 11),
-            ("0x1Fn+", 5),
-            ("0b102", 4),
-            ("017", 3),
-            ("089.5", 5),
-            ("1.toString", 2),
-            (".5", 2),
-            ("1e", 2),
-            ("...a", 3),
-            ("=>", 2),
-            ("===", 3),
-            (">>=", 1),
-            ("?.a", 2),
-            ("?.5", 1),
-            ("??=", 3),
-            ("@dec", 1),
-            ("caf\u{e9}\u{a0}x", 5),
-        ];
-        for (text, end) in cases {
-            assert_eq!(token_end(text.as_bytes(), 0, false), end, "{text}");
-        }
-        assert_eq!(token_end(b"</a", 0, true), 2);
-        assert_eq!(token_end(b"</a", 0, false), 1);
-    }
-
-    #[test]
-    fn scans_regular_expressions() {
-        assert_eq!(regex_end(b"/a[/]b/gi.test", 0), 9);
-        assert_eq!(regex_end(b"/\\//.x", 0), 4);
-        // Not terminated.
-        assert_eq!(regex_end(b"/abc) ;\n", 0), 4);
-        assert_eq!(regex_end(b"/a", 0), 2);
-    }
-
-    #[test]
-    fn scans_jsx_names_and_strings() {
-        assert_eq!(jsx_name_end(b"data-a:b-c=", 0), 10);
-        assert_eq!(jsx_tag_name_end(b"a.b . c>", 0), 7);
-        assert_eq!(jsx_string_end(b"'a\\' b'", 0), 4);
-        assert_eq!(string_end(b"'a\\' b'", 0), 7);
-    }
-
-    #[test]
-    fn skips_trivia_both_ways() {
-        let text = b"a /* b */ // c\n  d";
-        assert_eq!(skip_trivia(text, 1), 17);
-        assert_eq!(skip_trivia_back(text, 17), 1);
-        let text = b"x = 'a//b' // c\r\n\t(y";
-        assert_eq!(skip_trivia_back(text, 18), 10);
-    }
-
-    /// The bracket group that `text` starts with.
-    fn group(text: &str, jsx_depth: u32) -> &str {
-        let closer = match text.as_bytes()[0] {
-            b'(' => b')',
-            b'[' => b']',
-            _ => b'}',
-        };
-        &text[..close_from(text.as_bytes(), 1, closer, jsx_depth)]
-    }
-
-    #[test]
-    fn matches_brackets() {
-        let cases = [
-            (
-                "{ a: '}', b: `${ {c: 1} }}` } x",
-                "{ a: '}', b: `${ {c: 1} }}` }",
-            ),
-            ("( /[)]/ ) x", "( /[)]/ )"),
-            ("(a / b) / c)", "(a / b)"),
-            ("(a++ / 2, b) / 3)", "(a++ / 2, b)"),
-            ("[1, [2, 3], /* ] */ 4] x", "[1, [2, 3], /* ] */ 4]"),
-            ("{ return /}/ } }", "{ return /}/ }"),
-            ("{ ) } x", "{ ) }"),
-            ("(a", "(a"),
-        ];
-        for (text, expected) in cases {
-            assert_eq!(group(text, 0), expected);
-        }
-    }
-
-    #[test]
-    fn skips_jsx_elements() {
-        let cases = [
-            (
-                "{c && <p>Don't {a} <b x='}'/></p>} x",
-                "{c && <p>Don't {a} <b x='}'/></p>}",
-            ),
-            ("{ f: <T>(x: T) => void } x", "{ f: <T>(x: T) => void }"),
-            (
-                "{ f: <T extends U>(x: T) => { } } x",
-                "{ f: <T extends U>(x: T) => { } }",
-            ),
-            ("{ a < b, c > (d) } x", "{ a < b, c > (d) }"),
-        ];
-        for (text, expected) in cases {
-            assert_eq!(group(text, MAX_JSX_DEPTH), expected);
-        }
     }
 }

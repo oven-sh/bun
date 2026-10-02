@@ -1,16 +1,14 @@
 //! Classes and interfaces against what they extend, and what only the inside of a class can get wrong:
 //! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript file); 2508 2509 2510 2545 2797
 //! 2675 (what a class extends); 2422 (what it implements); 2312 2499 (what an interface extends); 2725 (a class called `Object`);
-//! 2376 2401 (where `super()` is called); 2715 (an abstract property read while the instance is set up); 2816 (`this` in a static
-//! initializer of a decorated class).
+//! 2376 2377 2401 17005 (where `super()` is called); 2715 (an abstract property read while the instance is set up).
 //!
 //! Follows `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`, `checkMembersForOverrideModifier`,
 //! `checkMemberForOverrideModifier`, `getBaseConstructorTypeOfClass`, `resolveBaseTypesOfClass`, `resolveBaseTypesOfInterface`,
 //! `isValidBaseType`, `isMixinConstructorType`, `checkInterfaceDeclaration`, `checkClassNameCollisionWithObject`,
-//! `checkConstructorDeclaration`, `checkPropertyAccessibilityAtLocation` and
-//! `checkThisInStaticClassFieldInitializerInDecoratedClass` of TypeScript 7.0.2's checker.go.
+//! `checkConstructorDeclaration` and `checkPropertyAccessibilityAtLocation` of TypeScript 7.0.2's checker.go.
 
-use super::errors::{Diagnostic, is_close};
+use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
 use crate::resolve::ModuleKind;
@@ -159,7 +157,6 @@ impl Checker<'_> {
             return;
         }
         self.check_abstract_properties_in_constructors(file, &index, out);
-        self.check_this_in_static_initializers_of_decorated_classes(file, &index, out);
     }
 
     // ───────────────────────────── what a class extends and implements ─────────────────────────────
@@ -557,11 +554,7 @@ impl Checker<'_> {
         else {
             return;
         };
-        let start = if class.name.is_some() {
-            class.name_pos
-        } else {
-            class.pos
-        };
+        let start = class.name_pos;
         if !(own_is_mixin && (base_is_mixin || base_sigs.is_empty())) {
             out.push(Diagnostic { start, code: 2545 });
         } else if !class.flags.contains(Flags::ABSTRACT)
@@ -789,7 +782,7 @@ impl Checker<'_> {
             // `Flags::AMBIENT`, so there the source text decides.
             if member.flags.contains(Flags::AMBIENT)
                 && (!class.flags.contains(Flags::AMBIENT)
-                    || has_declare_modifier(&hir.text, member.pos))
+                    || has_declare_modifier(&hir.text, member.name_pos))
             {
                 continue;
             }
@@ -797,7 +790,7 @@ impl Checker<'_> {
                 let overrider = Overrider {
                     key: member.key,
                     flags: member.flags,
-                    start: member.pos,
+                    start: member.name_pos,
                     is_parameter: false,
                     member: m,
                     param: ParamId::NONE,
@@ -898,7 +891,7 @@ impl Checker<'_> {
         };
         let Some(base_prop) = base_prop else {
             if has_override && self.is_heritage_known(base_type, 0) {
-                let code = if self.has_similar_member(base_type, name) {
+                let code = if self.suggested_member(base_type, name).is_some() {
                     4117
                 } else {
                     4113
@@ -1007,8 +1000,8 @@ impl Checker<'_> {
         self.property_of_type(&members, name).map(|(prop, _)| prop)
     }
 
-    /// `getSuggestedSymbolForNonexistentClassMember`: whether `ty` has a property that `name` may be a misspelling of.
-    fn has_similar_member(&mut self, ty: TypeId, name: Atom) -> bool {
+    /// `getSuggestedSymbolForNonexistentClassMember`
+    fn suggested_member(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
         // `ast.SymbolName`: a private name is compared as written.
         let written = self.written_name(name);
         // The name of a symbol-keyed member is compared like any other. In tsgo it is `\xFE@description@<symbol id>`
@@ -1026,50 +1019,17 @@ impl Checker<'_> {
         let text = late_bound.as_deref().unwrap_or(written);
         let ty = self.reduced(ty);
         let apparent = self.apparent_type(ty);
-        self.members(apparent).is_some_and(|members| {
-            members.shape().props.iter().any(|prop| {
-                let candidate = self.written_name(prop.name);
-                // `getCandidateName`: an internal name is never suggested, and only `SymbolFlagsClassMember` counts, which the
-                // exports of a namespace merged with the class are not.
-                !matches!(prop.source, PropSource::Symbol(_))
-                    && !candidate.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
-                    && is_close(text, candidate)
-            })
-        })
-    }
-
-    /// `getSuggestedSymbolForNonexistentClassMember`: the property `has_similar_member` says there is. `GetSpellingSuggestion` takes
-    /// the closest, and of two that are as close the first.
-    fn suggested_member(&mut self, ty: TypeId, name: Atom) -> Option<Prop> {
-        let written = self.written_name(name);
-        let late_bound = written
-            .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
-            .map(|described| {
-                let description = &described[..described
-                    .iter()
-                    .rposition(|&b| b == b'@')
-                    .unwrap_or(described.len())];
-                [crate::atom::SYMBOL_NAME_PREFIX, description, &b"@0"[..]].concat()
-            });
-        let text = late_bound.as_deref().unwrap_or(written);
-        let ty = self.reduced(ty);
-        let apparent = self.apparent_type(ty);
         let members = self.members(apparent)?;
-        let mut best: Option<(f64, &Prop)> = None;
-        for prop in &members.shape().props {
-            let candidate = self.written_name(prop.name);
-            if matches!(prop.source, PropSource::Symbol(_))
-                || candidate.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
-                || !is_close(text, candidate)
-            {
-                continue;
-            }
-            let distance = edit_distance(text, candidate);
-            if best.is_none_or(|(least, _)| distance + 0.05 < least) {
-                best = Some((distance, prop));
-            }
-        }
-        best.map(|(_, prop)| prop.clone())
+        // `getCandidateName`: an internal name is never suggested, and only `SymbolFlagsClassMember` counts, which the exports of a
+        // namespace merged with the class are not.
+        let get_name = |prop: &Prop| match self.written_name(prop.name) {
+            _ if matches!(prop.source, PropSource::Symbol(_)) => &[][..],
+            name if name.starts_with(crate::atom::SYMBOL_NAME_PREFIX) => &[][..],
+            name => name,
+        };
+        // Of two that are as close, the first.
+        let compare = |_, _| std::cmp::Ordering::Equal;
+        get_spelling_suggestion(text, members.shape().props.iter(), get_name, compare).cloned()
     }
 
     /// Whether `prop` has declarations at all, and whether one of them says `abstract`. `None`: where it comes from is not kept.
@@ -1086,9 +1046,14 @@ impl Checker<'_> {
             | PropSource::Symbol(_)
             | PropSource::Assigned(..) => Some((true, false)),
             // `addMemberForKeyTypeWorker`: `prop.Declarations = modifiersProp.Declarations`
-            PropSource::Intersected(..) | PropSource::Copy(..) | PropSource::Mapped(..) => {
+            PropSource::Intersected(..)
+            | PropSource::Copy(..)
+            | PropSource::ReverseMapped(..)
+            | PropSource::Mapped(..) => {
                 let parts = match &prop.source {
-                    PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => &parts[..],
+                    PropSource::Intersected(_, parts)
+                    | PropSource::Copy(_, parts, _)
+                    | PropSource::ReverseMapped(_, parts) => &parts[..],
                     _ => prop.declared_by_modifiers_property(),
                 };
                 let (mut is_declared, mut is_abstract) = (false, false);
@@ -1173,13 +1138,11 @@ impl Checker<'_> {
 
     // ───────────────────────────── where `super()` is called ─────────────────────────────
 
-    /// The end of `checkConstructorDeclaration`: 2401 2376. Where fields are set up by assignments put in the constructor, they
+    /// The end of `checkConstructorDeclaration`: 2377 17005 2401 2376.
+    /// Where fields are set up by assignments put in the constructor, they
     /// go right after the call of `super`, which therefore has to be a statement of the constructor itself, and the first
     /// that has to do with `this`.
-    fn check_super_call_placement(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        if self.p.files.options.emit_standard_class_fields {
-            return;
-        }
+    fn check_super_call_placement(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_super_call = |e: ExprId| matches!(hir[e].kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Super));
         for f in 0..hir.fns.len() {
@@ -1197,6 +1160,23 @@ impl Checker<'_> {
                 continue;
             };
             if hir[c].extends.is_none() {
+                continue;
+            }
+            let class_extends_null = self.class_declaration_extends_null(self.class_sym(file, c));
+            // `findFirstSuperCall`
+            let Some(first) = self.sought_in_stmts(file, body, Sought::SuperCall) else {
+                if !class_extends_null {
+                    // `GetErrorRangeForNode`: up to the keyword.
+                    let end = self.end_of_name_at(file, hir[m].name_pos);
+                    self.error((file, hir[m].start, end), 2377, &[]);
+                }
+                continue;
+            };
+            if class_extends_null && let ExprKind::Call(call) = hir[first].kind {
+                let end = self.end_inside_parentheses(file, first);
+                self.error((file, hir[hir[call].callee].pos, end), 17005, &[]);
+            }
+            if self.p.files.options.emit_standard_class_fields {
                 continue;
             }
             // `isInstancePropertyWithInitializerOrPrivateIdentifierProperty`, or a parameter that declares a property.
@@ -1219,9 +1199,6 @@ impl Checker<'_> {
             if !has_to_be_at_root_level {
                 continue;
             }
-            let Some(first) = self.sought_in_stmts(file, body, Sought::SuperCall) else {
-                continue;
-            };
             // `superCallIsRootLevelInConstructor`
             if !hir
                 .ids(body)
@@ -1263,7 +1240,7 @@ impl Checker<'_> {
                 // `GetErrorRangeForNode`: up to the keyword.
                 self.note(
                     start,
-                    self.end_of_name_at(file, hir[m].pos),
+                    self.end_of_name_at(file, hir[m].name_pos),
                     2376,
                     Vec::new(),
                 );
@@ -1754,86 +1731,5 @@ impl Checker<'_> {
             // `symbolHasNonMethodDeclaration`
             && !prop.flags.contains(PropFlags::METHOD)
             && matches!(self.bound(f).member_owner[m.idx()], MemberOwner::Class(_))
-    }
-
-    // ───────────────────────────── `this` in a decorated class ─────────────────────────────
-
-    /// `checkThisInStaticClassFieldInitializerInDecoratedClass`: 2816. With the decorators of old the class may be replaced by what
-    /// decorates it, and `this` in the initializer of a static property would still be the one that was replaced.
-    fn check_this_in_static_initializers_of_decorated_classes(
-        &self,
-        file: FileId,
-        index: &ExprsByKind,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if !self.p.files.options.experimental_decorators
-            || !hir
-                .decorators
-                .iter()
-                .any(|d| matches!(d.0, DecoratorOwner::Class(_)))
-        {
-            return;
-        }
-        for &this in index.of(ExprTag::This) {
-            if bound.is_in_type_query(this) {
-                continue;
-            }
-            // `GetThisContainer`, through arrow functions.
-            let mut parent = bound.expr_parent[this.idx()];
-            // The outermost expression so far: a computed name is told by it.
-            let mut top = this;
-            let container = loop {
-                match parent {
-                    Parent::MemberInit(m) => break Some(m),
-                    Parent::FnBody(f) if hir[f].kind == FnKind::Arrow => {
-                        parent = self.outward(file, parent)
-                    }
-                    Parent::ParamDefault(p)
-                        if hir[bound.param_fn[p.idx()]].kind == FnKind::Arrow =>
-                    {
-                        parent = self.outward(file, Parent::FnBody(bound.param_fn[p.idx()]));
-                    }
-                    Parent::FnBody(_)
-                    | Parent::ParamDefault(_)
-                    | Parent::EnumInit(_)
-                    | Parent::Module(_)
-                    | Parent::File
-                    | Parent::None => break None,
-                    // The name of a member of an object literal is part of what is around the literal. That of a member of a class
-                    // has a rule of its own.
-                    Parent::PropKey(..)
-                    | Parent::PatKey(_)
-                    | Parent::MemberKey(_)
-                    | Parent::MethodKey(_) => match hir
-                        .props
-                        .iter()
-                        .position(|p| p.key == PropKey::Computed(top))
-                    {
-                        Some(p) => parent = Parent::Expr(bound.prop_owner[p]),
-                        None => break None,
-                    },
-                    Parent::Stmt(s) if s.is_none() => break None,
-                    Parent::Expr(x) => {
-                        top = x;
-                        parent = bound.expr_parent[x.idx()];
-                    }
-                    other => parent = self.outward(file, other),
-                }
-            };
-            if let Some(m) = container
-                && hir[m].flags.contains(Flags::STATIC)
-                && let MemberOwner::Class(c) = bound.member_owner[m.idx()]
-                && hir
-                    .decorators
-                    .iter()
-                    .any(|d| d.0 == DecoratorOwner::Class(c))
-            {
-                out.push(Diagnostic {
-                    start: hir[this].pos,
-                    code: 2816,
-                });
-            }
-        }
     }
 }

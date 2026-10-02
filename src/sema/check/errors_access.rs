@@ -239,10 +239,10 @@ impl Checker<'_> {
         }
         for (i, member) in hir.members.iter().enumerate() {
             if !matches!(bound.member_owner[i], MemberOwner::None)
-                && is_private_constructor_name(text, member.pos)
+                && is_private_constructor_name(text, member.name_pos)
             {
                 out.push(Diagnostic {
-                    start: member.pos,
+                    start: member.name_pos,
                     code: 18012,
                 });
             }
@@ -982,7 +982,7 @@ impl Checker<'_> {
             ExprKind::Dot { obj, chain, .. } => Some((file, e, obj, chain)),
             _ => None,
         });
-        let mut best: Option<(f64, ((u8, FileId, u32), &[u8]), Atom)> = None;
+        let mut candidates: Vec<(((u8, FileId, u32), &[u8]), Atom)> = Vec::new();
         // `getPropertiesOfUnionOrIntersectionType`: of a union, what all its members have, which is among what the first has. A
         // member with index signatures may have by them what only the next declares.
         for &member in self.parts(object) {
@@ -1032,19 +1032,14 @@ impl Checker<'_> {
                     return Some(prop.name);
                 }
                 // `compareSymbols` decides between two that are as close.
-                let distance = edit_distance(text, candidate);
-                let order = (self.order_of_property(prop), candidate);
-                if best.is_none_or(|(least, first, _)| {
-                    distance < least || distance == least && order < first
-                }) {
-                    best = Some((distance, order, prop.name));
-                }
+                candidates.push(((self.order_of_property(prop), candidate), prop.name));
             }
             if members.shape().index.is_empty() {
                 break;
             }
         }
-        best.map(|found| found.2)
+        get_spelling_suggestion(text, candidates.iter(), |c| c.0.1, |a, b| a.0.cmp(&b.0))
+            .map(|found| found.1)
     }
 
     /// `GetErrorRangeForNode(suggestion.ValueDeclaration)`, of the property `meant` of `object`. `createUnionOrIntersectionProperty`:
@@ -1070,7 +1065,7 @@ impl Checker<'_> {
         match *declared? {
             PropSource::Members(ref members) => {
                 let &(file, member) = members.first()?;
-                Some(self.place_of_token(file, self.hir(file)[member].pos))
+                Some(self.place_of_token(file, self.hir(file)[member].name_pos))
             }
             // All of the parameter, with its modifiers.
             PropSource::Parameter(file, param) => Some((
@@ -1094,7 +1089,8 @@ impl Checker<'_> {
             PropSource::Type(_)
             | PropSource::Intersected(..)
             | PropSource::Mapped(..)
-            | PropSource::Copy(..) => None,
+            | PropSource::Copy(..)
+            | PropSource::ReverseMapped(..) => None,
         }
     }
 
@@ -1188,7 +1184,7 @@ impl Checker<'_> {
         let declared = match &prop.source {
             PropSource::Members(declared) => declared
                 .first()
-                .map(|&(file, member)| (file, self.hir(file)[member].pos)),
+                .map(|&(file, member)| (file, self.hir(file)[member].name_pos)),
             PropSource::Parameter(file, param) => Some((*file, self.hir(*file)[*param].pos)),
             PropSource::Literal(file, literal) => Some((
                 *file,
@@ -1202,7 +1198,9 @@ impl Checker<'_> {
                 super::errors::place_of_first_declaration(self.files(), *symbol)
                     .map(|(_, file, pos)| (file, pos))
             }
-            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _)
+            PropSource::Intersected(_, parts)
+            | PropSource::Copy(_, parts, _)
+            | PropSource::ReverseMapped(_, parts)
                 if !parts.is_empty() =>
             {
                 return self.order_of_property(&parts[0]);
@@ -1959,9 +1957,9 @@ impl Checker<'_> {
                 matches!(hir[m].key, PropKey::Private(key) if as_written(atoms.bytes(key)) == written)
             });
             let args = [Arg::Text(&diag_name)];
-            let shadowing = self.place_of_token(file, hir[shadowing].pos);
+            let shadowing = self.place_of_token(file, hir[shadowing].name_pos);
             let shadowing = self.new_diagnostic(shadowing, 18017, &args);
-            let meant = meant.map(|m| self.place_of_token(file, hir[m].pos));
+            let meant = meant.map(|m| self.place_of_token(file, hir[m].name_pos));
             let meant = meant.map(|place| self.new_diagnostic(place, 18018, &args));
             let diagnostic = self.error(at, 18014, &[args[0], Arg::Type(left)]);
             diagnostic.add_related_info(shadowing);

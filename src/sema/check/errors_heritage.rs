@@ -59,11 +59,7 @@ impl Checker<'_> {
         if !self.is_known(class_type) {
             return;
         }
-        let name_or_node = if class.name.is_some() {
-            class.name_pos
-        } else {
-            class.pos
-        };
+        let name_or_node = class.name_pos;
         let this = self.intern(TypeData::ThisParam(sym));
         if class.extends.is_some()
             && let Some(&base) = self.base_types(sym).first()
@@ -334,11 +330,11 @@ impl Checker<'_> {
                 && !(some_fit_neither_way && self.is_member_assignable(plain, name))
             {
                 out.push(Diagnostic {
-                    start: member.pos,
+                    start: member.name_pos,
                     code: 2416,
                 });
                 let end = self.end_of_member_name(file, m);
-                self.explain_another(member.pos, end, 2416, |c| {
+                self.explain_another(member.name_pos, end, 2416, |c| {
                     let declared = match c.prop_of(plain.0, name) {
                         Some((prop, _)) => c.prop_to_string(&prop),
                         None => c.atom_text(name),
@@ -366,18 +362,14 @@ impl Checker<'_> {
                         None,
                         1,
                     );
-                    self.explain_chain(member.pos, 2416, |_| lines);
-                    self.relate(member.pos, 2416, |_| related);
+                    self.explain_chain(member.name_pos, 2416, |_| lines);
+                    self.relate(member.name_pos, 2416, |_| related);
                 }
                 issued = true;
             }
         }
         if !issued {
-            let at = if hir[c].name.is_some() {
-                hir[c].name_pos
-            } else {
-                hir[c].pos
-            };
+            let at = hir[c].name_pos;
             self.report_not_assignable(plain.0, plain.1, at, broad, out);
             self.explain_as_another(at);
             self.explain_base_with_this(at, broad, plain.1);
@@ -550,7 +542,7 @@ impl Checker<'_> {
                     let Some(&(f, first)) = decls.first() else {
                         continue;
                     };
-                    (f, self.hir(f)[first].pos)
+                    (f, self.hir(f)[first].name_pos)
                 }
                 PropSource::Parameter(f, p) => (*f, self.hir(*f)[self.hir(*f)[*p].pat].pos),
                 _ => continue,
@@ -626,11 +618,7 @@ impl Checker<'_> {
                 (_, false) => 2655,
                 (_, true) => 2650,
             };
-            let start = if hir[c].name.is_some() {
-                hir[c].name_pos
-            } else {
-                hir[c].pos
-            };
+            let start = hir[c].name_pos;
             out.push(Diagnostic { start, code });
             self.explain(start, code, |c| {
                 let names: Vec<String> = missed.iter().map(|prop| c.prop_to_string(prop)).collect();
@@ -697,7 +685,7 @@ impl Checker<'_> {
         };
         let member = &self.hir(of)[uninitialized];
         let is_identifier = !member.flags.contains(Flags::LITERAL_NAME)
-            && self.hir(of).text.get(member.pos as usize) != Some(&b'[');
+            && self.hir(of).text.get(member.name_pos as usize) != Some(&b'[');
         // `FindConstructorDeclaration`: the first that has a body.
         let constructor = hir[c].members.iter().find(|&m| {
             hir[m].kind == MemberKind::Constructor && !matches!(hir[hir[m].func].body, FnBody::None)
@@ -929,7 +917,7 @@ impl Checker<'_> {
             locals
                 .iter()
                 .any(|&(local, span)| local == f && span.range().contains(&m.idx()))
-                .then(|| (f, c.hir(f)[m].pos, Reported::Member(m)))
+                .then(|| (f, c.hir(f)[m].start, Reported::Member(m)))
         };
         for prop in &members.shape().props {
             let text = self.files().atoms.bytes(prop.name);
@@ -951,7 +939,7 @@ impl Checker<'_> {
                     .declarations_of_prop(prop)
                     .iter()
                     .find(|&&(f, m)| is_local(f, m))
-                    .map(|&(f, m)| (f, self.hir(f)[m].pos, Reported::Member(m))),
+                    .map(|&(f, m)| (f, self.hir(f)[m].start, Reported::Member(m))),
             };
             let prop_type = self.type_of_prop_as_read(prop, members.mapper);
             if !self.is_known(prop_type) {
@@ -997,11 +985,11 @@ impl Checker<'_> {
                     {
                         let (text, member) = (&self.hir(of).text, &self.hir(of)[m]);
                         if matches!(member.key, PropKey::Computed(_))
-                            || text.get(member.pos as usize) == Some(&b'[')
+                            || text.get(member.name_pos as usize) == Some(&b'[')
                         {
                             self.relate(start, 2411, |c| {
                                 let place = if text.is_empty() {
-                                    c.place_of_token(of, member.pos)
+                                    c.place_of_token(of, member.name_pos)
                                 } else {
                                     let (from, to) = c.error_range_of_member(of, m);
                                     (of, from, to)
@@ -1059,13 +1047,13 @@ impl Checker<'_> {
                         && !self.is_assignable(prop_type, info.value)
                     {
                         out.push(Diagnostic {
-                            start: member.pos,
+                            start: member.name_pos,
                             code: 2411,
                         });
                         let end = self.end_of_member_name(f, m);
-                        self.explain_another(member.pos, end, 2411, |c| {
+                        self.explain_another(member.name_pos, end, 2411, |c| {
                             vec![
-                                c.source_text(f, member.pos, end),
+                                c.source_text(f, member.name_pos, end),
                                 c.type_to_string(prop_type),
                                 c.type_to_string(info.key),
                                 c.type_to_string(info.value),

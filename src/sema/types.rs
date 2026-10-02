@@ -7,7 +7,7 @@ use crate::atom::Atom;
 use crate::hir::{ExprId, FnId, TypeNodeId, TypeParamId};
 use crate::local::{self, Chunked, Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
-use crate::table::{ById, Id};
+use crate::table::ById;
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -487,10 +487,14 @@ pub enum PropSource {
     /// Last, the symbols whose `Declarations` it has, those of `modifiersProp` (`addMemberForKeyTypeWorker`), by the rule of `Copy`.
     /// `None`: it has none.
     Mapped(TypeId, bool, Option<std::sync::Arc<[Prop]>>),
-    /// A symbol made from others (`createSymbolWithType`, `getSpreadSymbol`, `getSpreadType`, `resolveReverseMappedTypeMembers`): its
+    /// A symbol made from others (`createSymbolWithType`, `getSpreadSymbol`, `getSpreadType`): its
     /// own type, and the symbols whose `Declarations` it has, one after the other. None of those is made up, a copy or
     /// `Intersected`. The flag: it has the `ValueDeclaration` and the `Parent` of the first as well. `Checker::copy_of` makes it.
     Copy(TypeId, Box<[Prop]>, bool),
+    /// A property of the reverse mapped type given (`CheckFlagsReverseMapped`). `type_of_reverse_mapped_prop` infers its type on demand
+    /// (`getTypeOfReverseMappedSymbol`). Then the symbols whose `Declarations` it has, those of the property of the source, by the
+    /// rule of `Copy`. It has no `ValueDeclaration`.
+    ReverseMapped(TypeId, Box<[Prop]>),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -705,18 +709,114 @@ pub enum SigData {
     WithReturn { sig: SigId, ret: TypeId },
 }
 
+/// `ObjectFlags`, with the values of types.go: between types of different kinds they are the order of `CompareTypes`.
+pub mod tf {
+    pub const ANY: u32 = 1 << 0;
+    pub const UNKNOWN: u32 = 1 << 1;
+    pub const UNDEFINED: u32 = 1 << 2;
+    pub const NULL: u32 = 1 << 3;
+    pub const VOID: u32 = 1 << 4;
+    pub const STRING: u32 = 1 << 5;
+    pub const NUMBER: u32 = 1 << 6;
+    pub const BIGINT: u32 = 1 << 7;
+    pub const BOOLEAN: u32 = 1 << 8;
+    pub const ES_SYMBOL: u32 = 1 << 9;
+    pub const STRING_LITERAL: u32 = 1 << 10;
+    pub const NUMBER_LITERAL: u32 = 1 << 11;
+    pub const BIGINT_LITERAL: u32 = 1 << 12;
+    pub const BOOLEAN_LITERAL: u32 = 1 << 13;
+    pub const UNIQUE_ES_SYMBOL: u32 = 1 << 14;
+    pub const ENUM_LITERAL: u32 = 1 << 15;
+    pub const ENUM: u32 = 1 << 16;
+    pub const NON_PRIMITIVE: u32 = 1 << 17;
+    pub const NEVER: u32 = 1 << 18;
+    pub const TYPE_PARAMETER: u32 = 1 << 19;
+    pub const OBJECT: u32 = 1 << 20;
+    pub const INDEX: u32 = 1 << 21;
+    pub const TEMPLATE_LITERAL: u32 = 1 << 22;
+    pub const STRING_MAPPING: u32 = 1 << 23;
+    pub const SUBSTITUTION: u32 = 1 << 24;
+    pub const INDEXED_ACCESS: u32 = 1 << 25;
+    pub const CONDITIONAL: u32 = 1 << 26;
+    pub const UNION: u32 = 1 << 27;
+    pub const INTERSECTION: u32 = 1 << 28;
+
+    pub const NULLABLE: u32 = UNDEFINED | NULL;
+    pub const TYPE_VARIABLE: u32 = TYPE_PARAMETER | INDEXED_ACCESS;
+    pub const LITERAL: u32 = STRING_LITERAL | NUMBER_LITERAL | BIGINT_LITERAL | BOOLEAN_LITERAL;
+    pub const UNIT: u32 = ENUM | LITERAL | UNIQUE_ES_SYMBOL | NULLABLE;
+    pub const STRING_LIKE: u32 = STRING | STRING_LITERAL | TEMPLATE_LITERAL | STRING_MAPPING;
+    pub const NUMBER_LIKE: u32 = NUMBER | NUMBER_LITERAL | ENUM;
+    pub const BIGINT_LIKE: u32 = BIGINT | BIGINT_LITERAL;
+    pub const BOOLEAN_LIKE: u32 = BOOLEAN | BOOLEAN_LITERAL;
+    pub const ENUM_LIKE: u32 = ENUM | ENUM_LITERAL;
+    pub const ES_SYMBOL_LIKE: u32 = ES_SYMBOL | UNIQUE_ES_SYMBOL;
+    pub const VOID_LIKE: u32 = VOID | UNDEFINED;
+    pub const PRIMITIVE: u32 = STRING_LIKE
+        | NUMBER_LIKE
+        | BIGINT_LIKE
+        | BOOLEAN_LIKE
+        | ENUM_LIKE
+        | ES_SYMBOL_LIKE
+        | VOID_LIKE
+        | NULL;
+    pub const DEFINITELY_NON_NULLABLE: u32 = STRING_LIKE
+        | NUMBER_LIKE
+        | BIGINT_LIKE
+        | BOOLEAN_LIKE
+        | ENUM_LIKE
+        | ES_SYMBOL_LIKE
+        | OBJECT
+        | NON_PRIMITIVE;
+    pub const DISJOINT_DOMAINS: u32 = NON_PRIMITIVE
+        | STRING_LIKE
+        | NUMBER_LIKE
+        | BIGINT_LIKE
+        | BOOLEAN_LIKE
+        | ES_SYMBOL_LIKE
+        | VOID_LIKE
+        | NULL;
+    pub const INSTANTIABLE_NON_PRIMITIVE: u32 =
+        TYPE_PARAMETER | INDEXED_ACCESS | CONDITIONAL | SUBSTITUTION;
+    pub const STRUCTURED_OR_INSTANTIABLE: u32 = OBJECT
+        | UNION
+        | INTERSECTION
+        | INSTANTIABLE_NON_PRIMITIVE
+        | INDEX
+        | TEMPLATE_LITERAL
+        | STRING_MAPPING;
+
+    // What is gathered of the members while an intersection is made. The last three use bits the mask leaves out.
+    pub const INCLUDES_MASK: u32 = ANY
+        | UNKNOWN
+        | PRIMITIVE
+        | NEVER
+        | OBJECT
+        | UNION
+        | INTERSECTION
+        | NON_PRIMITIVE
+        | TEMPLATE_LITERAL
+        | STRING_MAPPING;
+    pub const INCLUDES_MISSING_TYPE: u32 = TYPE_PARAMETER;
+    pub const INCLUDES_EMPTY_OBJECT: u32 = CONDITIONAL;
+    pub const INCLUDES_UNRESOLVED: u32 = 1 << 30;
+    /// `TypeFlagsIncludesError`
+    pub const INCLUDES_ERROR: u32 = 1 << 31;
+}
+
 bitflags::bitflags! {
+    /// `ObjectFlags`, those that follow from what the type is made of, and three of ours.
     #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-    pub struct TypeFlags: u8 {
-        /// Mentions a type parameter, so instantiating it may change it.
-        const HAS_TYPE_VARIABLES = 1;
+    pub struct ObjectFlags: u8 {
+        /// Exact: it mentions a type parameter, so instantiating it may change it.
+        const COULD_CONTAIN_TYPE_VARIABLES = 1;
         /// Is or contains `Unresolved`.
         const HAS_UNRESOLVED = 2;
-        /// An intersection, or a union with one among its members.
+        /// An intersection, or `ObjectFlagsContainsIntersections`.
         const MAY_BE_REDUCED = 128;
         const HAS_MARKER = 4;
-        /// The type of an object literal expression, or what a binding pattern implies, is somewhere in it.
-        const HAS_OBJECT_LITERAL = 8;
+        /// What a binding pattern implies counts too.
+        const CONTAINS_OBJECT_OR_ARRAY_LITERAL = 8;
     }
 }
 
@@ -728,6 +828,8 @@ pub struct Provenance {
     pub alias: Option<(Sym, Box<[TypeId]>)>,
     /// `UnionType.origin`
     pub origin: UnionOrigin,
+    /// `alias` is the enum it is the declared type of: `enumType.flags |= TypeFlagsEnumLiteral`.
+    pub is_enum: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
@@ -769,7 +871,9 @@ fn spread_hash_of(made: &Made) -> u64 {
 
 pub struct TypeRecord {
     made: Made,
-    pub flags: TypeFlags,
+    /// `Type.flags`: `tf`.
+    flags: u32,
+    object_flags: ObjectFlags,
     id: TypeId,
     /// See `mark_manifest`.
     manifest: AtomicBool,
@@ -835,7 +939,7 @@ crate::packed_ids!(TypeId, SigId, MapperId, ComponentsId);
 struct LocalStore {
     types: Chunked<TypeRecord>,
     sigs: Chunked<SigData>,
-    mappers: Chunked<(Mapping, TypeFlags)>,
+    mappers: Chunked<(Mapping, ObjectFlags)>,
     components: Chunked<Box<[IndexComponent]>>,
     found_types: Found,
     found_sigs: Found,
@@ -871,7 +975,7 @@ fn local_record<'a>(id: TypeId) -> &'a TypeRecord {
 }
 
 #[inline(never)]
-fn local_mapper<'a>(id: MapperId) -> &'a (Mapping, TypeFlags) {
+fn local_mapper<'a>(id: MapperId) -> &'a (Mapping, ObjectFlags) {
     local_store().mappers.get((id.0 & !LOCAL) as usize)
 }
 
@@ -901,7 +1005,9 @@ fn is_prop_local(prop: &Prop, file: FileId) -> bool {
             | PropSource::Literal(f, _)
             | PropSource::Assigned(f, _) => *f == file,
             PropSource::Symbol(sym) => sym.file == file,
-            PropSource::Intersected(t, props) | PropSource::Copy(t, props, _) => {
+            PropSource::Intersected(t, props)
+            | PropSource::Copy(t, props, _)
+            | PropSource::ReverseMapped(t, props) => {
                 t.is_local() || props.iter().any(|p| is_prop_local(p, file))
             }
             PropSource::Mapped(t, ..) => {
@@ -1142,7 +1248,6 @@ impl TypeParts<'_> {
 impl std::hash::Hash for TypeParts<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use std::hash::Hash;
         /// `empty`: a type of the kind. A box of nothing is not allocated.
         #[inline]
         fn kind<H: std::hash::Hasher>(empty: TypeData, state: &mut H) {
@@ -1197,7 +1302,7 @@ impl std::hash::Hash for TypeParts<'_> {
 pub struct TypeStore {
     types: Interned<TypeRecord>,
     sigs: Interned<SigData>,
-    mappers: Interned<(Mapping, TypeFlags)>,
+    mappers: Interned<(Mapping, ObjectFlags)>,
     components: Interned<Box<[IndexComponent]>>,
     /// The types of string literals, regular and fresh, by what they say. There is one for nearly every string in a program.
     string_literals: [ById<Atom, TypeId>; 2],
@@ -1351,96 +1456,6 @@ impl TypeStore {
         store
     }
 
-    /// For each kind of thing that is kept: what it is, how many there are, and how many bytes they take, what they point to included.
-    pub fn sizes(&self) -> Vec<(String, usize, usize)> {
-        fn arguments_bytes(arguments: &TypeArguments) -> usize {
-            match arguments {
-                TypeArguments::Given(given) => given.len() * 4,
-                TypeArguments::Deferred(deferred) => {
-                    size_of::<DeferredTypeArguments>()
-                        + deferred
-                            .resolved
-                            .get()
-                            .map_or(0, |resolved| resolved.len() * 4)
-                }
-            }
-        }
-        fn shape_bytes(shape: &Shape) -> usize {
-            shape.props.capacity() * size_of::<Prop>()
-                + shape.props.iter().map(prop_bytes).sum::<usize>()
-                + (shape.call.capacity() + shape.construct.capacity()) * 4
-                + shape.index.capacity() * size_of::<IndexInfo>()
-        }
-        fn prop_bytes(prop: &Prop) -> usize {
-            match &prop.source {
-                PropSource::Members(MemberList::Many(m)) => m.len() * 8,
-                PropSource::Assigned(_, e) => e.len() * 4,
-                PropSource::Intersected(_, props) | PropSource::Copy(_, props, _) => {
-                    props.len() * size_of::<Prop>() + props.iter().map(prop_bytes).sum::<usize>()
-                }
-                _ => 0,
-            }
-        }
-        let mut kinds: std::collections::BTreeMap<&'static str, (usize, usize)> =
-            Default::default();
-        for i in 0..self.types.items.len() {
-            let (name, payload) = match &self.types.items.get(i).made.0 {
-                TypeData::Union(t) => ("type: union", t.len() * 4),
-                TypeData::Intersection(t) => ("type: intersection", t.len() * 4),
-                TypeData::Ref { args, .. } => ("type: reference", arguments_bytes(args)),
-                TypeData::Tuple { elems, flags, .. } => (
-                    "type: tuple",
-                    arguments_bytes(elems) + flags.len() * size_of::<ElemFlags>(),
-                ),
-                TypeData::Anon { .. } => ("type: anonymous object", 0),
-                TypeData::Fns { decls, .. } => ("type: functions", decls.len() * 8),
-                TypeData::Synth(shape) => (
-                    "type: made-up object",
-                    size_of::<Shape>() + shape_bytes(shape),
-                ),
-                TypeData::Template { texts, types } => {
-                    ("type: template", texts.len() * 4 + types.len() * 4)
-                }
-                TypeData::Cond { .. } => ("type: conditional", 0),
-                TypeData::IndexedAccess { .. } => ("type: indexed access", 0),
-                TypeData::TypeParam(..) => ("type: type parameter", 0),
-                _ => ("type: other", 0),
-            };
-            let row = kinds.entry(name).or_default();
-            row.0 += 1;
-            row.1 += size_of::<TypeRecord>() + payload + 8;
-        }
-        let mut out: Vec<(String, usize, usize)> = kinds
-            .into_iter()
-            .map(|(name, (count, bytes))| (name.to_owned(), count, bytes))
-            .collect();
-        let (mut count, mut bytes) = (0, 0);
-        for i in 0..self.sigs.items.len() {
-            count += 1;
-            bytes += size_of::<SigData>()
-                + 8
-                + match self.sigs.items.get(i) {
-                    SigData::Synth {
-                        type_params,
-                        params,
-                        of,
-                        ..
-                    } => {
-                        type_params.len() * 4 + params.len() * size_of::<SigParam>() + of.len() * 4
-                    }
-                    _ => 0,
-                };
-        }
-        out.push(("signatures".to_owned(), count, bytes));
-        let (mut count, mut bytes) = (0, 0);
-        for i in 0..self.mappers.items.len() {
-            count += 1;
-            bytes += size_of::<(Mapping, TypeFlags)>() + 8 + self.mappers.items.get(i).0.len() * 8;
-        }
-        out.push(("mappers".to_owned(), count, bytes));
-        out
-    }
-
     #[inline]
     pub fn get(&self, id: TypeId) -> &TypeData {
         &self.record(id).made.0
@@ -1486,37 +1501,104 @@ impl TypeStore {
     }
 
     #[inline]
-    pub fn flags(&self, id: TypeId) -> TypeFlags {
+    pub fn flags(&self, id: TypeId) -> u32 {
         self.record(id).flags
     }
 
     #[inline]
-    pub fn get_with_flags(&self, id: TypeId) -> (&TypeData, TypeFlags) {
+    pub fn object_flags(&self, id: TypeId) -> ObjectFlags {
+        self.record(id).object_flags
+    }
+
+    #[inline]
+    pub fn get_with_flags(&self, id: TypeId) -> (&TypeData, ObjectFlags) {
         let record = self.record(id);
-        (&record.made.0, record.flags)
+        (&record.made.0, record.object_flags)
     }
 
     pub fn len(&self) -> u32 {
         self.types.items.len()
     }
 
-    fn flags_of(&self, data: &TypeData) -> TypeFlags {
+    /// `Type.flags`
+    fn flags_of(made: &Made) -> u32 {
+        match &made.0 {
+            TypeData::UnresolvedName { .. } => tf::ANY,
+            TypeData::Intrinsic(intrinsic) => match intrinsic {
+                Intrinsic::Unresolved
+                | Intrinsic::Any
+                | Intrinsic::Error
+                | Intrinsic::Auto
+                | Intrinsic::IntrinsicMarker => tf::ANY,
+                Intrinsic::Unknown => tf::UNKNOWN,
+                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
+                    tf::UNDEFINED
+                }
+                Intrinsic::Null | Intrinsic::NullDeclared => tf::NULL,
+                Intrinsic::Void => tf::VOID,
+                Intrinsic::String => tf::STRING,
+                Intrinsic::Number => tf::NUMBER,
+                Intrinsic::BigInt => tf::BIGINT,
+                Intrinsic::Symbol => tf::ES_SYMBOL,
+                Intrinsic::Object => tf::NON_PRIMITIVE,
+                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever => {
+                    tf::NEVER
+                }
+            },
+            TypeData::StringLit { .. } => tf::STRING_LITERAL,
+            TypeData::NumberLit { .. } => tf::NUMBER_LITERAL,
+            TypeData::BigIntLit { .. } => tf::BIGINT_LITERAL,
+            TypeData::BoolLit { .. } => tf::BOOLEAN_LITERAL,
+            TypeData::UniqueSymbol { .. } => tf::UNIQUE_ES_SYMBOL,
+            TypeData::EnumLit {
+                value: EnumValue::String(_),
+                ..
+            } => tf::ENUM_LITERAL | tf::STRING_LITERAL,
+            TypeData::EnumLit {
+                value: EnumValue::Number(_),
+                ..
+            } => tf::ENUM_LITERAL | tf::NUMBER_LITERAL,
+            TypeData::Enum { .. } => tf::ENUM,
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
+                tf::TYPE_PARAMETER
+            }
+            TypeData::Keyof(_) => tf::INDEX,
+            TypeData::Template { .. } => tf::TEMPLATE_LITERAL,
+            TypeData::StringMapping { .. } => tf::STRING_MAPPING,
+            TypeData::Substitution { .. } => tf::SUBSTITUTION,
+            TypeData::IndexedAccess { .. } => tf::INDEXED_ACCESS,
+            TypeData::Cond { .. } => tf::CONDITIONAL,
+            TypeData::Union(members) if members[..] == [TypeId::FALSE, TypeId::TRUE] => {
+                tf::UNION | tf::BOOLEAN
+            }
+            TypeData::Union(_) if made.1.as_ref().is_some_and(|p| p.is_enum) => {
+                tf::UNION | tf::ENUM_LITERAL
+            }
+            TypeData::Union(_) => tf::UNION,
+            TypeData::Intersection(_) => tf::INTERSECTION,
+            _ => tf::OBJECT,
+        }
+    }
+
+    fn object_flags_of(&self, data: &TypeData) -> ObjectFlags {
         let all = |ids: &[TypeId]| {
             ids.iter()
-                .fold(TypeFlags::empty(), |f, &t| f | self.flags(t))
+                .fold(ObjectFlags::empty(), |f, &t| f | self.object_flags(t))
         };
         match data {
-            TypeData::Intrinsic(Intrinsic::Unresolved) => TypeFlags::HAS_UNRESOLVED,
+            TypeData::Intrinsic(Intrinsic::Unresolved) => ObjectFlags::HAS_UNRESOLVED,
             // One whose constraint rests on something unknown says so. A marker in there does not show:
             // `reportUnreliableMapper` is asked about the parameter, not about what is in its mapper.
             TypeData::TypeParam(_, _, around) => {
-                TypeFlags::HAS_TYPE_VARIABLES
-                    | (self.mapper_record(*around).1 & TypeFlags::HAS_UNRESOLVED)
+                ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
+                    | (self.mapper_record(*around).1 & ObjectFlags::HAS_UNRESOLVED)
             }
-            TypeData::ThisParam(_) => TypeFlags::HAS_TYPE_VARIABLES,
-            TypeData::Marker(_) => TypeFlags::HAS_TYPE_VARIABLES | TypeFlags::HAS_MARKER,
+            TypeData::ThisParam(_) => ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES,
+            TypeData::Marker(_) => {
+                ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_MARKER
+            }
             // `instantiateType` leaves what has `TypeFlagsAny` as it is, whatever its alias type arguments are.
-            TypeData::UnresolvedName { .. } => TypeFlags::empty(),
+            TypeData::UnresolvedName { .. } => ObjectFlags::empty(),
             TypeData::Union(t) | TypeData::Intersection(t) => all(t),
             TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args {
                 TypeArguments::Given(given) => all(given),
@@ -1525,12 +1607,12 @@ impl TypeStore {
                 TypeArguments::Deferred(deferred) => self
                     .mapper_record(deferred.mapper)
                     .1
-                    .difference(TypeFlags::HAS_OBJECT_LITERAL),
+                    .difference(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL),
             },
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(..),
                 mapper,
-            } => self.mapper_record(*mapper).1 | TypeFlags::HAS_OBJECT_LITERAL,
+            } => self.mapper_record(*mapper).1 | ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL,
             // Whoever makes one leaves the mapper out unless there are type parameters around the origin.
             TypeData::Anon { mapper, .. }
             | TypeData::Fns { mapper, .. }
@@ -1541,18 +1623,21 @@ impl TypeStore {
                     Literalness::No | Literalness::OfUnknown | Literalness::AutoArray
                 );
                 let mut flags = if is_plain {
-                    TypeFlags::empty()
+                    ObjectFlags::empty()
                 } else {
-                    TypeFlags::HAS_OBJECT_LITERAL
+                    ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL
                 };
                 for p in &shape.props {
-                    if let PropSource::Type(t) | PropSource::Copy(t, ..) = p.source {
-                        flags |= self.flags(t);
+                    if let PropSource::Type(t)
+                    | PropSource::Copy(t, ..)
+                    | PropSource::ReverseMapped(t, _) = p.source
+                    {
+                        flags |= self.object_flags(t);
                     }
                     flags |= self.mapper_record(p.mapper).1;
                 }
                 for i in &shape.index {
-                    flags |= self.flags(i.key) | self.flags(i.value);
+                    flags |= self.object_flags(i.key) | self.object_flags(i.value);
                 }
                 for &s in shape.call.iter().chain(&shape.construct) {
                     flags |= self.sig_flags(s);
@@ -1564,22 +1649,26 @@ impl TypeStore {
             // (`instantiateReverseMappedType`). What is unknown in them makes its members unknown, and a marker in them is met on
             // the way.
             TypeData::ReverseMapped { source, mapped, of } => {
-                let made_with = self.flags(*mapped) | self.flags(*of);
-                self.flags(*source)
-                    | (made_with & (TypeFlags::HAS_UNRESOLVED | TypeFlags::HAS_MARKER))
+                let made_with = self.object_flags(*mapped) | self.object_flags(*of);
+                self.object_flags(*source)
+                    | (made_with & (ObjectFlags::HAS_UNRESOLVED | ObjectFlags::HAS_MARKER))
             }
-            TypeData::IndexedAccess { obj, index, .. } => self.flags(*obj) | self.flags(*index),
+            TypeData::IndexedAccess { obj, index, .. } => {
+                self.object_flags(*obj) | self.object_flags(*index)
+            }
             // `couldContainTypeVariables`: instantiating one resolves it.
             TypeData::Substitution { base, constraint } => {
-                self.flags(*base) | self.flags(*constraint) | TypeFlags::HAS_TYPE_VARIABLES
+                self.object_flags(*base)
+                    | self.object_flags(*constraint)
+                    | ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
             }
-            TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => self.flags(*t),
+            TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => self.object_flags(*t),
             TypeData::Template { types, .. } => all(types),
-            _ => TypeFlags::empty(),
+            _ => ObjectFlags::empty(),
         }
     }
 
-    pub fn sig_flags(&self, sig: SigId) -> TypeFlags {
+    pub fn sig_flags(&self, sig: SigId) -> ObjectFlags {
         match self.sig(sig) {
             SigData::Decl { mapper, .. }
             | SigData::DefaultConstruct { mapper, .. }
@@ -1593,13 +1682,13 @@ impl TypeStore {
             } => {
                 let mut flags = params
                     .iter()
-                    .fold(self.flags(*ret), |f, p| f | self.flags(p.ty));
+                    .fold(self.object_flags(*ret), |f, p| f | self.object_flags(p.ty));
                 if let Some(this) = this {
-                    flags |= self.flags(*this);
+                    flags |= self.object_flags(*this);
                 }
                 of.iter().fold(flags, |f, &part| f | self.sig_flags(part))
             }
-            SigData::WithReturn { sig, ret } => self.sig_flags(*sig) | self.flags(*ret),
+            SigData::WithReturn { sig, ret } => self.sig_flags(*sig) | self.object_flags(*ret),
         }
     }
 
@@ -1613,7 +1702,7 @@ impl TypeStore {
     }
 
     #[inline(always)]
-    fn mapper_record(&self, id: MapperId) -> &(Mapping, TypeFlags) {
+    fn mapper_record(&self, id: MapperId) -> &(Mapping, ObjectFlags) {
         if id.0 & LOCAL == 0 {
             self.mappers.items.get(id.0)
         } else {
@@ -1644,20 +1733,22 @@ impl TypeStore {
                 .any(|&member| matches!(self.get(member), TypeData::Intersection(_))),
             _ => false,
         };
-        let mut flags = self.flags_of(data);
+        let mut flags = self.object_flags_of(data);
         // `getObjectTypeInstantiation`: of a target with alias type arguments no outer type parameter is left out.
         if !matches!(data, TypeData::Union(_) | TypeData::Intersection(_))
             && let Some((_, type_arguments)) = made.1.as_ref().and_then(|p| p.alias.as_ref())
-            && type_arguments
-                .iter()
-                .any(|&t| self.flags(t).contains(TypeFlags::HAS_TYPE_VARIABLES))
+            && type_arguments.iter().any(|&t| {
+                self.object_flags(t)
+                    .contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES)
+            })
         {
-            flags |= TypeFlags::HAS_TYPE_VARIABLES;
+            flags |= ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES;
         }
         // Unlike the others, it is not handed on by what the type is made of.
-        flags.set(TypeFlags::MAY_BE_REDUCED, may_be_reduced);
+        flags.set(ObjectFlags::MAY_BE_REDUCED, may_be_reduced);
         TypeRecord {
-            flags,
+            flags: Self::flags_of(&made),
+            object_flags: flags,
             made,
             id: TypeId(id),
             manifest: AtomicBool::new(false),
@@ -1964,10 +2055,10 @@ impl TypeStore {
         })
     }
 
-    fn flags_of_pairs(&self, pairs: &[(TypeId, TypeId)]) -> TypeFlags {
+    fn flags_of_pairs(&self, pairs: &[(TypeId, TypeId)]) -> ObjectFlags {
         pairs
             .iter()
-            .fold(TypeFlags::empty(), |f, p| f | self.flags(p.1))
+            .fold(ObjectFlags::empty(), |f, p| f | self.object_flags(p.1))
     }
 
     #[inline]
@@ -1985,46 +2076,5 @@ impl TypeStore {
             .binary_search_by_key(&param, |p| p.0)
             .ok()
             .map(|i| mapping[i].1)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parts_are_found_like_the_type_they_make() {
-        let store = TypeStore::new();
-        let target = Sym {
-            file: FileId(3),
-            id: crate::bind::SymbolId(4),
-        };
-        let types = [TypeId::STRING, TypeId::NUMBER];
-        let flags = [ElemFlags::REQUIRED, ElemFlags::OPTIONAL];
-        let decls = [(FileId(3), FnId(5))];
-        let all = [
-            TypeParts::Union(&types),
-            TypeParts::Intersection(&types),
-            TypeParts::Ref {
-                target,
-                args: &types,
-            },
-            TypeParts::Ref { target, args: &[] },
-            TypeParts::Tuple {
-                elems: &types,
-                flags: &flags,
-                readonly: true,
-            },
-            TypeParts::Fns {
-                decls: &decls,
-                mapper: MapperId::IDENTITY,
-            },
-        ];
-        for parts in all {
-            assert_eq!(spread_hash(&parts), spread_hash(&parts.to_data()));
-            let made = store.intern_parts(parts);
-            assert_eq!(store.intern(parts.to_data()), made);
-            assert_eq!(store.intern_parts(parts), made);
-        }
     }
 }

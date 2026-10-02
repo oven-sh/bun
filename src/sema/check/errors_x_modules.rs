@@ -37,9 +37,6 @@ struct Cx<'a> {
     last_keyword: std::cell::Cell<(u32, bool, Option<(usize, usize)>)>,
     /// `IsExternalModule`, as the program has it.
     is_module: bool,
-    /// The program has it for a script, and it may be a module all the same: `xm_may_be_module`. What depends on which it is is
-    /// not said.
-    may_be_module: bool,
     /// Not `hasParseDiagnostics`: what `grammarErrorOnNode` has to say is only said of a file that parses.
     grammar: bool,
     /// `IsInJSFile`
@@ -130,11 +127,8 @@ impl Checker<'_> {
             file,
             text: &hir.text,
             is_module: module.is_module(),
-            may_be_module: self.xm_may_be_module(file),
             grammar: !has_parse_diagnostics(hir) && !has_import_assertions(&hir.text, uses),
-            is_js: [".js", ".jsx", ".mjs", ".cjs"]
-                .iter()
-                .any(|e| path.ends_with(e)),
+            is_js: hir.is_js,
             is_verbatim,
             verbatim_commonjs: is_verbatim && self.xm_emits_commonjs(file),
             esm_syntax_code: if path.ends_with(".cts") || path.ends_with(".cjs") {
@@ -212,24 +206,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `file`, which the program has for a script, may be a module: `GetEmitModuleDetectionKind` makes one of every source
-    /// file when `module` is one of Node's and `moduleDetection` is not said, `isFileForcedToBeModuleByFormat` of every one that is
-    /// an ECMAScript module by its package.
-    fn xm_may_be_module(&self, file: FileId) -> bool {
-        let module = self.files().module(file);
-        !module.is_module()
-            && module.hir.kind != FileKind::Declaration
-            && (self.p.files.options.module.is_node() || module.says_esm)
-    }
-
     /// `GetEmitModuleFormatOfFile(file) == ModuleKindCommonJS`
     pub(super) fn xm_emits_commonjs(&self, file: FileId) -> bool {
-        // `GetImpliedNodeFormatForEmitWorker`
-        match self.files().module(file).implied_format {
-            ResolutionMode::Require => true,
-            ResolutionMode::Import => false,
-            ResolutionMode::None => self.p.files.options.module == ModuleKind::CommonJs,
-        }
+        self.xm_emit_module_format(file) == ModuleKind::CommonJs
     }
 
     /// `GetEmitModuleFormatOfFile`
@@ -423,9 +402,7 @@ impl Checker<'_> {
                 StmtKind::Import(i) => self.xm_import(cx, s, i, around, out),
                 StmtKind::ImportEquals(i) => self.xm_import_equals(cx, s, i, around, out),
                 StmtKind::ExportNamed(x) => self.xm_export_named(cx, s, x, around, out),
-                StmtKind::ExportStar { spec, alias, .. } => {
-                    self.xm_export_star(cx, s, spec, alias, around, out)
-                }
+                StmtKind::ExportStar { .. } => self.xm_export_star(cx, s, around, out),
                 StmtKind::ExportDefault(e) => {
                     self.xm_export_assignment(cx, s, e, false, around, out)
                 }
@@ -439,9 +416,6 @@ impl Checker<'_> {
                     }
                     let code = if around.module.is_some() {
                         1316
-                    } else if cx.may_be_module {
-                        // 1314 or 1315.
-                        continue;
                     } else if !cx.is_module {
                         1314
                     } else if hir.kind != FileKind::Declaration {
@@ -505,7 +479,6 @@ impl Checker<'_> {
             }
             // `TryParsePattern`
             if !is_augmentation
-                && !cx.may_be_module
                 && let ModuleName::String(name) = module.name
                 && files
                     .atoms
@@ -551,7 +524,7 @@ impl Checker<'_> {
             && self.bound(cx.file).module_instance_state[m.idx()]
                 != ModuleInstanceState::NonInstantiated
         {
-            if !cx.is_module && !cx.may_be_module {
+            if !cx.is_module {
                 out.push(Diagnostic {
                     start: name_pos,
                     code: 1280,
@@ -572,8 +545,7 @@ impl Checker<'_> {
             }
         }
 
-        // What is left tells a declaration from an addition, which is a matter of whether the file is a module.
-        if !is_ambient_module || cx.may_be_module {
+        if !is_ambient_module {
             return;
         }
         if is_augmentation {
@@ -714,15 +686,6 @@ impl Checker<'_> {
             }
             return false;
         };
-        // What a file declares that may be a module after all may not be there to be added to.
-        if !self.xm_is_a_file(found)
-            && files
-                .decls(found)
-                .iter()
-                .any(|&(of, _)| self.xm_may_be_module(of))
-        {
-            return false;
-        }
         // `resolveExternalModuleSymbol`
         let main = files.module_value(found);
         let flags = files.flags(main);
@@ -814,10 +777,7 @@ impl Checker<'_> {
                 return false;
             }
             // `isTopLevelInExternalModuleAugmentation`: there it has been said that the statement has no business being there.
-            if !around.is_augmentation
-                && !cx.may_be_module
-                && is_relative_name(self.files().atoms.bytes(spec))
-            {
+            if !around.is_augmentation && is_relative_name(self.files().atoms.bytes(spec)) {
                 out.push(Diagnostic { start, code: 2439 });
                 self.note(start, self.end_of_stmt(cx.file, s), 2439, Vec::new());
                 return false;
@@ -891,9 +851,6 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) -> bool {
         let (files, options) = (self.files(), &self.p.files.options);
-        if cx.may_be_module {
-            return false;
-        }
         let is_found = match self.xm_module_of_specifier(cx.file, spec) {
             Some(found) => {
                 !self.xm_is_a_file(found) || is_collected || self.xm_is_looked_for(cx, spec)
@@ -1383,21 +1340,21 @@ impl Checker<'_> {
     }
 
     /// `checkExportDeclaration`, of `export * from` and `export * as alias from`
-    fn xm_export_star(
-        &self,
-        cx: &Cx<'_>,
-        s: StmtId,
-        spec: Atom,
-        alias: Atom,
-        around: Around,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn xm_export_star(&self, cx: &Cx<'_>, s: StmtId, around: Around, out: &mut Vec<Diagnostic>) {
         let files = self.files();
         let statement = self.hir(cx.file)[s];
         let pos = statement.pos;
-        // `export type *`
-        let star = after_export(cx.text, pos);
-        let is_type_only = word_at(cx.text, star) == b"type";
+        let StmtKind::ExportStar {
+            spec,
+            alias,
+            type_only: is_type_only,
+            star_pos,
+            alias_pos,
+            ..
+        } = statement.kind
+        else {
+            return;
+        };
         if self.xm_is_in_place(cx, s, spec, true, around, out) {
             if !self.xm_module_is_missing(
                 cx,
@@ -1423,35 +1380,23 @@ impl Checker<'_> {
                     && !cx.is_js
                     && !around.is_ambient
                     && !is_type_only
-                    && cx.text.get(star) == Some(&b'*')
                 {
-                    // `checkAliasSymbol`, of what starts at the star.
+                    // `checkAliasSymbol`, of `* as alias`.
                     out.push(Diagnostic {
-                        start: star as u32,
+                        start: star_pos,
                         code: cx.esm_syntax_code,
                     });
-                    // `* as alias`
-                    let word = skip_trivia(cx.text, star + 1);
-                    let name = skip_trivia(cx.text, word_end(cx.text, word));
-                    let end = self.end_of_name_at(cx.file, name as u32);
-                    self.note(star as u32, end, cx.esm_syntax_code, Vec::new());
+                    let end = self.end_of_name_at(cx.file, alias_pos);
+                    self.note(star_pos, end, cx.esm_syntax_code, Vec::new());
                 }
             }
             // `checkModuleExportName`, of the name in `export * as name`, unless 2498 was all there is to say.
-            let asterisk = if is_type_only {
-                skip_trivia(cx.text, word_end(cx.text, star))
-            } else {
-                star
-            };
             if alias.is_some()
-                && cx.text.get(asterisk) == Some(&b'*')
                 && !self
                     .xm_module_of_specifier(cx.file, spec)
                     .is_some_and(|module| files.export(module, known::export_equals).is_some())
             {
-                let word = skip_trivia(cx.text, asterisk + 1);
-                let name = skip_trivia(cx.text, word_end(cx.text, word));
-                self.xm_module_export_name(cx, name as u32, out);
+                self.xm_module_export_name(cx, alias_pos, out);
             }
         } else {
             let may_be_used = around.module.is_none()
@@ -2434,9 +2379,4 @@ fn says_module(text: &[u8], name_pos: u32, inherited: bool) -> bool {
 fn after_equals(text: &[u8], name_pos: u32) -> Option<u32> {
     let at = skip_trivia(text, word_end(text, name_pos as usize));
     (text.get(at) == Some(&b'=')).then(|| skip_trivia(text, at + 1) as u32)
-}
-
-/// Where what follows the `export` at `pos` starts.
-fn after_export(text: &[u8], pos: u32) -> usize {
-    skip_trivia(text, word_end(text, pos as usize))
 }

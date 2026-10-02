@@ -15,7 +15,7 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, ScopeKind};
+use crate::bind::{Decl, MemberOwner, Parent};
 use crate::resolve::ModuleKind;
 use crate::util::FxHashSet;
 
@@ -314,85 +314,6 @@ fn tuple_element_flags(hir: &hir::File, elem: &TupleElem) -> ElemFlags {
 /// `isVariadicTupleElement`: `...T`, where `T` is not written as an array.
 fn is_variadic_element(hir: &hir::File, elem: &TupleElem) -> bool {
     tuple_element_flags(hir, elem) == ElemFlags::VARIADIC
-}
-
-/// The member that is written around `pos`: the last one that starts before it.
-fn member_around(hir: &hir::File, members: Span<MemberId>, pos: u32) -> Option<MemberId> {
-    members.iter().take_while(|&m| hir[m].pos <= pos).last()
-}
-
-/// `getThisType`: whether the `this` type written at `node` is in a member of a class or an interface that is not static, with
-/// nothing in between that has a `this` of its own (`GetThisContainer`).
-fn is_this_type_available(
-    hir: &hir::File,
-    bound: &Bound,
-    node: TypeNodeId,
-    parents: &[TypeNodeId],
-) -> bool {
-    // The members of a type literal are as far as it gets.
-    let mut at = node;
-    while parents[at.idx()].is_some() {
-        at = parents[at.idx()];
-        if matches!(hir[at].kind, TypeNodeKind::Object(_)) {
-            return false;
-        }
-    }
-    let pos = hir[node].pos;
-    let mut scope = bound.type_scope[node.idx()];
-    while scope.is_some() {
-        let s = &bound.scopes[scope.idx()];
-        match s.kind {
-            ScopeKind::Fn(f) => match hir[f].kind {
-                FnKind::Arrow | FnKind::FunctionType | FnKind::ConstructorType => {}
-                FnKind::Decl | FnKind::Expr | FnKind::StaticBlock => return false,
-                kind => {
-                    let FnOwner::Member(m) = bound.fns[f.idx()].owner else {
-                        return false;
-                    };
-                    if !matches!(
-                        bound.member_owner[m.idx()],
-                        MemberOwner::Class(_) | MemberOwner::Interface(_)
-                    ) || hir[m].flags.contains(Flags::STATIC)
-                    {
-                        return false;
-                    }
-                    // Of a constructor only the body will do.
-                    return kind != FnKind::Constructor
-                        || matches!(hir[f].body, FnBody::Block(body) if hir.ids(body).next().is_some_and(|first| hir[first].pos <= pos));
-                }
-            },
-            // Not in a method: in a field, or else in the head of the class, which is outside.
-            ScopeKind::Class(c) => {
-                if let Some(m) = member_around(hir, hir[c].members, pos)
-                    && hir[m].kind == MemberKind::Property
-                {
-                    return !hir[m].flags.contains(Flags::STATIC);
-                }
-            }
-            ScopeKind::Interface(i) => {
-                if member_around(hir, hir[i].members, pos).is_some() {
-                    return true;
-                }
-            }
-            ScopeKind::Module(_) | ScopeKind::Enum(_) | ScopeKind::File => return false,
-            // Those after the first two only say which part of something a name is written in: what they lie in is come to next.
-            ScopeKind::Block
-            | ScopeKind::TypeAlias(_)
-            | ScopeKind::TypeParams
-            | ScopeKind::TypeParamList(_)
-            | ScopeKind::Param(_)
-            | ScopeKind::ReturnType(_)
-            | ScopeKind::Extends
-            | ScopeKind::InferConstraint
-            | ScopeKind::StaticMember
-            | ScopeKind::ComputedName
-            | ScopeKind::BaseExpression
-            | ScopeKind::PropertyDeclaration(..)
-            | ScopeKind::PropertyType(..) => {}
-        }
-        scope = s.parent;
-    }
-    false
 }
 
 /// A key that says which member is meant whatever the type parameters around it are.
@@ -1242,11 +1163,11 @@ impl Checker<'_> {
                 _ => continue,
             };
             out.push(Diagnostic {
-                start: member.pos,
+                start: member.name_pos,
                 code,
             });
             let end = self.end_of_member_name(file, MemberId(m as u32));
-            self.explain_to(member.pos, end, code, |_| vec![]);
+            self.explain_to(member.name_pos, end, code, |_| vec![]);
         }
         for (t, node) in hir.types.iter().enumerate() {
             if matches!(node.kind, TypeNodeKind::UniqueSymbol)
@@ -1314,7 +1235,8 @@ impl Checker<'_> {
         for (t, node) in hir.types.iter().enumerate() {
             if matches!(node.kind, TypeNodeKind::Keyword(Keyword::This))
                 && !bound.is_unchecked_type(t)
-                && !is_this_type_available(hir, bound, TypeNodeId(t as u32), parents)
+                && self.this_type_at(file, TypeNodeId(t as u32), bound.type_scope[t])
+                    == TypeId::ERROR
                 && !self.is_in_unresolved_assignment_type(file, TypeNodeId(t as u32), parents)
             {
                 out.push(Diagnostic {
@@ -1379,7 +1301,7 @@ impl Checker<'_> {
             if hir
                 .early_errors
                 .iter()
-                .any(|&(start, _)| (member.pos..func.pos).contains(&start))
+                .any(|&(start, _)| (member.start..func.pos).contains(&start))
                 || func.params.len() != 1
             {
                 continue;
@@ -1432,11 +1354,11 @@ impl Checker<'_> {
                 });
             } else if member.ty.is_none() {
                 out.push(Diagnostic {
-                    start: member.pos,
+                    start: member.start,
                     code: 1021,
                 });
                 let end = member.loc.end;
-                self.explain_to(member.pos, end, 1021, |_| vec![]);
+                self.explain_to(member.start, end, 1021, |_| vec![]);
             }
         }
     }
@@ -1475,7 +1397,7 @@ impl Checker<'_> {
                 continue;
             }
             // `checkGrammarModifiers` comes first, and what it objects to is all that is said.
-            let modifiers = member.start..member.pos;
+            let modifiers = member.start..member.name_pos;
             if hir
                 .early_errors
                 .iter()
@@ -1497,11 +1419,11 @@ impl Checker<'_> {
             let start = match first.kind {
                 MemberKind::Constructor | MemberKind::StaticBlock => first.start,
                 MemberKind::Method if !is_in_class => first.start,
-                _ => first.pos,
+                _ => first.name_pos,
             };
             out.push(Diagnostic { start, code: 7061 });
             let end = match first.kind {
-                MemberKind::Constructor => self.end_of_name_at(file, first.pos),
+                MemberKind::Constructor => self.end_of_name_at(file, first.name_pos),
                 MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {
                     self.end_of_member_name(file, all.at(0))
                 }
@@ -1548,7 +1470,7 @@ impl Checker<'_> {
                             .iter()
                             .filter(|&o| hir[o].key == PropKey::Private(name))
                             .map(|o| Diagnostic {
-                                start: hir[o].pos,
+                                start: hir[o].name_pos,
                                 code: 2804,
                             }),
                     );
@@ -1565,7 +1487,7 @@ impl Checker<'_> {
             // Outside every class the front end gives a private name no key (`getDeclarationName`), so the text decides.
             let is_private = match member.key {
                 PropKey::Private(_) => true,
-                PropKey::None => is_private_name_at(hir, member.pos),
+                PropKey::None => is_private_name_at(hir, member.name_pos),
                 _ => false,
             };
             if !is_private
@@ -1578,7 +1500,7 @@ impl Checker<'_> {
             }
             match member.kind {
                 MemberKind::Property => out.push(Diagnostic {
-                    start: member.pos,
+                    start: member.name_pos,
                     code: 18016,
                 }),
                 // `GetErrorRangeForNode` has no case for a method signature: the error starts at the first modifier.

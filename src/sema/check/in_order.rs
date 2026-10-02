@@ -480,6 +480,10 @@ impl Checker<'_> {
                 for m in hir[e].members.iter() {
                     self.check_expression(file, hir[m].init);
                 }
+                // `computeEnumMemberValues`
+                for m in hir[e].members.iter() {
+                    self.get_enum_member_value(file, m);
+                }
             }
             _ => {}
         }

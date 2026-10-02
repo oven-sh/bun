@@ -154,84 +154,61 @@ impl Checker<'_> {
             return self.checked(syntactic, None, Vec::new(), false);
         }
         self.checking = Some(file);
-        self.emit_resolver_links = Default::default();
         if self.p.files.options.emits_first {
             self.inline_const_enums(file);
         }
         self.check_source_file(file);
-        // `BUN_SEMA_TRACE_PASSES=1`: which pass added or removed each error.
-        static TRACE_PASSES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let trace_passes =
-            *TRACE_PASSES.get_or_init(|| std::env::var_os("BUN_SEMA_TRACE_PASSES").is_some());
-        macro_rules! pass {
-            ($name:ident) => {{
-                let before = if trace_passes {
-                    out.clone()
-                } else {
-                    Vec::new()
-                };
-                self.$name(file, &mut out);
-                if trace_passes {
-                    trace_pass(
-                        &self.files().modules[file.idx()].path,
-                        stringify!($name),
-                        &before,
-                        &out,
-                    );
-                }
-            }};
-        }
-        pass!(check_declare_modifiers);
-        pass!(check_empty_declaration_lists);
-        pass!(check_modules);
-        pass!(check_names);
-        pass!(check_type_argument_counts);
-        pass!(check_properties_initialized);
-        pass!(check_writes);
-        pass!(check_property_accesses);
-        pass!(check_calls);
-        pass!(check_unused);
-        pass!(check_grammar);
-        pass!(check_grammar_modifiers);
-        pass!(check_duplicates);
-        pass!(check_heritage);
-        pass!(check_jsx);
-        pass!(check_implicit_any);
-        pass!(check_overloads);
-        pass!(check_use_before_declaration);
-        pass!(check_iteration);
-        pass!(check_names_and_exports);
-        pass!(check_control_flow);
-        pass!(check_declarations);
-        pass!(check_small_things);
-        pass!(check_circularities);
-        pass!(check_assignments);
-        pass!(check_x_aliases);
+        self.check_declare_modifiers(file, &mut out);
+        self.check_empty_declaration_lists(file, &mut out);
+        self.check_modules(file, &mut out);
+        self.check_names(file, &mut out);
+        self.check_type_argument_counts(file, &mut out);
+        self.check_properties_initialized(file, &mut out);
+        self.check_writes(file, &mut out);
+        self.check_property_accesses(file, &mut out);
+        self.check_calls(file, &mut out);
+        self.check_unused(file, &mut out);
+        self.check_grammar(file, &mut out);
+        self.check_grammar_modifiers(file, &mut out);
+        self.check_duplicates(file, &mut out);
+        self.check_heritage(file, &mut out);
+        self.check_jsx(file, &mut out);
+        self.check_implicit_any(file, &mut out);
+        self.check_overloads(file, &mut out);
+        self.check_use_before_declaration(file, &mut out);
+        self.check_iteration(file, &mut out);
+        self.check_names_and_exports(file, &mut out);
+        self.check_control_flow(file, &mut out);
+        self.check_declarations(file, &mut out);
+        self.check_small_things(file, &mut out);
+        self.check_circularities(file, &mut out);
+        self.check_assignments(file, &mut out);
+        self.check_x_aliases(file, &mut out);
         // It takes back what has been said of specifiers that are never resolved.
-        pass!(check_x_modules);
-        pass!(check_x_classes);
-        pass!(check_x_collisions);
-        pass!(check_x_identifiers);
-        pass!(check_x_properties_jsx);
+        self.check_x_modules(file, &mut out);
+        self.check_x_classes(file, &mut out);
+        self.check_x_collisions(file, &mut out);
+        self.check_x_identifiers(file, &mut out);
+        self.check_x_properties_jsx(file, &mut out);
         // `checkGrammarRegularExpressionLiteral`
         if !has_parse_diagnostics {
-            pass!(check_x_regexp_scanner);
+            self.check_x_regexp_scanner(file, &mut out);
         }
-        pass!(check_x_typenodes);
-        pass!(recount_type_arguments_of_circular_aliases);
+        self.check_x_typenodes(file, &mut out);
+        self.recount_type_arguments_of_circular_aliases(file, &mut out);
         // These three put other words in the place of what has been said: of declarations that are not one symbol after all, of what is
         // assigned, of names that are not found.
-        pass!(check_x_signatures);
-        pass!(check_x_operators);
-        pass!(check_x_enums_names);
-        pass!(check_reflect_collisions);
-        pass!(check_type_arguments_of_jsdoc_primitives);
-        pass!(check_external_emit_helpers);
+        self.check_x_signatures(file, &mut out);
+        self.check_x_operators(file, &mut out);
+        self.check_x_enums_names(file, &mut out);
+        self.check_reflect_collisions(file, &mut out);
+        self.check_type_arguments_of_jsdoc_primitives(file, &mut out);
+        self.check_external_emit_helpers(file, &mut out);
         // It takes back what has been said of decorators that are out of place.
-        pass!(report_decorators);
+        self.report_decorators(file, &mut out);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
-        pass!(check_x_statements);
-        pass!(take_back_export_assignments_in_namespaces);
+        self.check_x_statements(file, &mut out);
+        self.take_back_export_assignments_in_namespaces(file, &mut out);
         // These name a type, which is not asked for before everything has been checked.
         if self.explains {
             for &(start, code) in &hir.early_errors {
@@ -244,7 +221,7 @@ impl Checker<'_> {
         let semantic = std::mem::take(&mut out);
         self.check_module_exports_assignments(file, &mut out);
         if self.files().options.emits_declaration_files {
-            pass!(check_declaration_emit);
+            self.check_declaration_emit(file, &mut out);
         }
         self.commit_reported_from(0);
         self.is_type_checked = true;
@@ -1274,7 +1251,7 @@ impl Checker<'_> {
                 .iter()
                 .filter(|&&(_, s)| files.flags(s).intersects(module_member))
                 .map(|&(other, s)| (files.atoms.bytes(other), Meant::Symbol(s)));
-            return match closest(files, text, candidates) {
+            return match get_spelling_suggestion_for_name(files, text, candidates) {
                 Some(Meant::Symbol(meant)) => (2724, Some(meant)),
                 _ => (2724, None),
             };
@@ -1804,11 +1781,11 @@ impl Checker<'_> {
                 };
                 if !is_assigned {
                     out.push(Diagnostic {
-                        start: member.pos,
+                        start: member.name_pos,
                         code: 2564,
                     });
-                    if hir.text.get(member.pos as usize) == Some(&b'[') {
-                        let (start, end) = (member.pos, self.end_of_member_name(file, m));
+                    if hir.text.get(member.name_pos as usize) == Some(&b'[') {
+                        let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
                         self.explain_to(start, end, 2564, |c| {
                             vec![c.source_text(file, start, end)]
                         });
@@ -3108,7 +3085,7 @@ impl Checker<'_> {
         self.explain(start, code, |c| {
             let end = c.end_of_member_name(file, property);
             vec![
-                c.source_text(file, c.hir(file)[property].pos, end),
+                c.source_text(file, c.hir(file)[property].name_pos, end),
                 c.atom_text(name),
             ]
         });
@@ -3211,15 +3188,6 @@ impl Checker<'_> {
                 ClassOwner::Stmt(s) => Parent::Stmt(s),
             };
         }
-    }
-}
-
-fn trace_pass(path: &str, pass: &str, before: &[Diagnostic], after: &[Diagnostic]) {
-    for d in after.iter().filter(|d| !before.contains(d)) {
-        eprintln!("PASS\t{path}\t{}\t{}\tadded by\t{pass}", d.start, d.code);
-    }
-    for d in before.iter().filter(|d| !after.contains(d)) {
-        eprintln!("PASS\t{path}\t{}\t{}\tREMOVED by\t{pass}", d.start, d.code);
     }
 }
 
@@ -3337,83 +3305,18 @@ fn is_name_of_a_library_feature(name: &[u8]) -> bool {
     )
 }
 
-/// Whether somebody who wrote `name` may have meant `candidate`.
+/// Whether `GetSpellingSuggestion` would take `candidate` for `name`, were it the only one.
 pub(super) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
-    let allowed_difference = 2.max(name.len() * 34 / 100);
-    if name.len().abs_diff(candidate.len()) > allowed_difference
-        || candidate == name
-        // `getCandidateName`: the name of a module, `InternalSymbolNamePrefix`.
-        || matches!(candidate.first(), Some(b'"' | 0xFE))
-    {
-        return false;
-    }
-    // Two letters are told apart at a glance, unless it is by their case.
-    if candidate.len() < 3 && !candidate.eq_ignore_ascii_case(name) {
-        return false;
-    }
-    let worst = (name.len() * 4 / 10 + 1) as f32;
-    edit_distance_within(name, candidate, worst - 0.1)
+    let only = std::iter::once(candidate);
+    get_spelling_suggestion(name, only, get_candidate_name, |a, b| a.cmp(b)).is_some()
 }
 
-/// Levenshtein's distance, where changing a letter costs two and changing its case next to nothing, is at most `max`.
-fn edit_distance_within(a: &[u8], b: &[u8], max: f32) -> bool {
-    const LONGEST: usize = 63;
-    if a.len() > LONGEST || b.len() > LONGEST {
-        return false;
+/// `getCandidateName`: neither the name of a module nor `InternalSymbolNamePrefix`.
+fn get_candidate_name(name: &[u8]) -> &[u8] {
+    match name {
+        [b'"' | 0xFE, ..] => &[],
+        name => name,
     }
-    let mut rows = [[0f32; LONGEST + 1]; 2];
-    let big = max + 0.01;
-    for (j, cell) in rows[0].iter_mut().enumerate().take(b.len() + 1) {
-        *cell = j as f32;
-    }
-    for i in 1..=a.len() {
-        let (previous, current) = {
-            let (first, second) = rows.split_at_mut(1);
-            if i % 2 == 1 {
-                (&first[0], &mut second[0])
-            } else {
-                (&second[0], &mut first[0])
-            }
-        };
-        let at = i as f32;
-        let from = if at > max {
-            (at - max).ceil() as usize
-        } else {
-            1
-        };
-        let to = if b.len() as f32 > max + at {
-            (max + at).floor() as usize
-        } else {
-            b.len()
-        };
-        current[0] = at;
-        let mut least = at;
-        for cell in &mut current[1..from.min(b.len() + 1)] {
-            *cell = big;
-        }
-        for j in from..=to {
-            let distance = if a[i - 1] == b[j - 1] {
-                previous[j - 1]
-            } else {
-                let change = previous[j - 1]
-                    + if a[i - 1].eq_ignore_ascii_case(&b[j - 1]) {
-                        0.1
-                    } else {
-                        2.0
-                    };
-                (previous[j] + 1.0).min(current[j - 1] + 1.0).min(change)
-            };
-            current[j] = distance;
-            least = least.min(distance);
-        }
-        for cell in &mut current[(to + 1).min(b.len() + 1)..=b.len()] {
-            *cell = big;
-        }
-        if least > max {
-            return false;
-        }
-    }
-    rows[a.len() % 2][b.len()] <= max
 }
 
 // ───────────────────────────── what goes into the messages ─────────────────────────────
@@ -3501,25 +3404,6 @@ pub(crate) enum Meant {
     Word(&'static str),
 }
 
-/// What `levenshteinWithMax` measures: changing a letter costs two, and changing its case next to nothing.
-pub(super) fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
-    let mut previous: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();
-    let mut current = vec![0.0; b.len() + 1];
-    for (i, x) in a.iter().enumerate() {
-        current[0] = (i + 1) as f64;
-        for (j, y) in b.iter().enumerate() {
-            current[j + 1] = if x == y {
-                previous[j]
-            } else {
-                let change = previous[j] + if x.eq_ignore_ascii_case(y) { 0.1 } else { 2.0 };
-                (previous[j + 1] + 1.0).min(current[j] + 1.0).min(change)
-            };
-        }
-        std::mem::swap(&mut previous, &mut current);
-    }
-    previous[b.len()]
-}
-
 /// Where the first declaration of `sym` is: the libraries first, then by file, then by position. `compareSymbols`, `compareNodes`
 pub(super) fn place_of_first_declaration(files: &Files, sym: Sym) -> Option<(bool, FileId, u32)> {
     let (file, decl) = files.decls_of(sym).first().copied()?;
@@ -3527,38 +3411,25 @@ pub(super) fn place_of_first_declaration(files: &Files, sym: Sym) -> Option<(boo
     Some((!files.module(file).is_lib, file, pos))
 }
 
-/// `GetSpellingSuggestion`: which of `candidates` is closest to `name`, of those that are close. Of two that are as close, the one
-/// declared first (`compareSymbols`).
-fn closest<'a>(
+/// `getSpellingSuggestionForName`
+fn get_spelling_suggestion_for_name<'a>(
     files: &Files,
     name: &[u8],
     candidates: impl Iterator<Item = (&'a [u8], Meant)>,
 ) -> Option<Meant> {
-    let mut best: Option<(f64, Option<(bool, FileId, u32)>, &'a [u8], Meant)> = None;
-    for (text, meant) in candidates {
-        if !is_close(name, text) {
-            continue;
+    let place = |meant: Meant| match meant {
+        Meant::Symbol(sym) => place_of_first_declaration(files, sym),
+        Meant::Word(_) => None,
+    };
+    // `compareSymbols`
+    let compare = |a: (&'a [u8], Meant), b: (&'a [u8], Meant)| {
+        match (place(a.1), place(b.1)) {
+            (Some(a), Some(b)) => a.cmp(&b),
+            (a, b) => b.is_some().cmp(&a.is_some()),
         }
-        let distance = edit_distance(name, text);
-        let place = match meant {
-            Meant::Symbol(sym) => place_of_first_declaration(files, sym),
-            Meant::Word(_) => None,
-        };
-        let is_better = best.is_none_or(|(least, first, first_text, _)| {
-            distance
-                .total_cmp(&least)
-                .then_with(|| match (place, first) {
-                    (Some(place), Some(first)) => place.cmp(&first),
-                    _ => first.is_some().cmp(&place.is_some()),
-                })
-                .then_with(|| text.cmp(first_text))
-                .is_lt()
-        });
-        if is_better {
-            best = Some((distance, place, text, meant));
-        }
-    }
-    best.map(|best| best.3)
+        .then_with(|| a.0.cmp(b.0))
+    };
+    get_spelling_suggestion(name, candidates, |c| get_candidate_name(c.0), compare).map(|c| c.1)
 }
 
 /// `getSuggestedSymbolForNonexistentSymbol`
@@ -3622,9 +3493,9 @@ impl Files {
                     }
                     let locals = bound.table(s.locals).iter();
                     let locals = locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
-                    closest(files, text, locals.filter(fits).map(named))
+                    get_spelling_suggestion_for_name(files, text, locals.filter(fits).map(named))
                 }
-                SymbolTable::Exports(container) => closest(
+                SymbolTable::Exports(container) => get_spelling_suggestion_for_name(
                     files,
                     text,
                     files.each_export(container).filter(fits).map(named),
@@ -3653,7 +3524,11 @@ impl Files {
                         )
                         .map(|word| (word.as_bytes(), Meant::Word(word)));
                     let globals = files.globals.iter().copied();
-                    closest(files, text, globals.filter(fits).map(named).chain(words))
+                    get_spelling_suggestion_for_name(
+                        files,
+                        text,
+                        globals.filter(fits).map(named).chain(words),
+                    )
                 }
             };
             match meant? {
@@ -4391,14 +4266,9 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
         // `parseErrorForMissingSemicolonAfter`
         1435 => {
             let word = word_at(c, file, start);
-            let keywords = VIABLE_KEYWORD_SUGGESTIONS
-                .iter()
-                .map(|&keyword| (keyword.as_bytes(), Meant::Word(keyword)));
-            // `GetSpellingSuggestion` counts code points. One byte for each will do: the keywords are ASCII, and the first byte of a
-            // longer code point is none of their letters.
-            let letters: Vec<u8> = word.bytes().filter(|byte| byte & 0xC0 != 0x80).collect();
-            let suggestion = match closest(c.files(), &letters, keywords) {
-                Some(Meant::Word(keyword)) => keyword.to_owned(),
+            let keywords = VIABLE_KEYWORD_SUGGESTIONS.iter().map(|k| k.as_bytes());
+            let suggestion = match spelling_suggestion(word.as_bytes(), keywords) {
+                Some(keyword) => keyword,
                 // `getSpaceSuggestion`
                 _ => match VIABLE_KEYWORD_SUGGESTIONS
                     .iter()
@@ -4465,7 +4335,7 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             let signature = hir
                 .members
                 .iter()
-                .position(|m| m.kind == MemberKind::IndexSignature && m.pos == start);
+                .position(|m| m.kind == MemberKind::IndexSignature && m.start == start);
             if let Some(m) = signature {
                 let end = hir.members[m].loc.end;
                 c.note(start, end, code, Vec::new());
@@ -4540,8 +4410,8 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             let class = hir
                 .classes
                 .iter()
-                .filter(|class| class.pos >= start && class.extends.is_some())
-                .min_by_key(|class| class.pos);
+                .filter(|class| class.name_pos >= start && class.extends.is_some())
+                .min_by_key(|class| class.name_pos);
             let extended = match class.map(|class| hir[class.extends].kind) {
                 Some(ExprKind::Ident(name) | ExprKind::Dot { name, .. }) => c.atom_text(name),
                 _ => return,
@@ -4662,7 +4532,11 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
 impl Checker<'_> {
     /// Whether the resolver worked `ty` out, all of it. Nothing is said about what it did not.
     pub(super) fn is_known(&self, ty: TypeId) -> bool {
-        !self.p.types.flags(ty).contains(TypeFlags::HAS_UNRESOLVED)
+        !self
+            .p
+            .types
+            .object_flags(ty)
+            .contains(ObjectFlags::HAS_UNRESOLVED)
     }
 
     /// `isGlobalNaN`

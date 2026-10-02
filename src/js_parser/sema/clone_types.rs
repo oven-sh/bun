@@ -982,7 +982,7 @@ impl Builder<'_> {
             },
             init: ExprId::NONE,
             func,
-            pos: pos(loc),
+            name_pos: pos(loc),
             start: pos(start),
             loc: TextRange {
                 pos: pos(full_start),

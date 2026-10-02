@@ -1,11 +1,11 @@
 //! Smaller checks of expressions and statements, called where the type is computed or by the walk: 1345 2872 2873, 2869 2871 5076,
-//! 2703 2704 2790 18011, 2378, 2683, 2678.
+//! 2703 2704 2790 18011, 2378, 2678.
 //!
-//! Follows `checkTruthinessOfType`, `checkNullishCoalesceOperands`, `checkDeleteExpression`, `checkAccessorDeclaration`,
-//! `checkThisExpression` and `checkSwitchStatement` of TypeScript 7.0.2's checker.go.
+//! Follows `checkTruthinessOfType`, `checkNullishCoalesceOperands`, `checkDeleteExpression`, `checkAccessorDeclaration`
+//! and `checkSwitchStatement` of TypeScript 7.0.2's checker.go.
 
 use super::*;
-use crate::bind::{FnOwner, MemberOwner, Parent, ScopeKind, UNREACHABLE};
+use crate::bind::{FnOwner, Parent, ScopeKind, UNREACHABLE};
 
 const ALWAYS: u8 = 1;
 const NEVER: u8 = 2;
@@ -68,27 +68,6 @@ impl Checker<'_> {
         self.error(at, code, &[]);
     }
 
-    /// The end of `checkThisExpression`: 2683.
-    pub(super) fn check_this_is_typed(&mut self, file: FileId, e: ExprId) {
-        if !self.p.files.options.no_implicit_this {
-            return;
-        }
-        let is_implicit = if self.bound(file).is_in_type_query(e) {
-            self.is_queried_this_implicitly_any(file, e)
-        } else {
-            self.is_this_implicitly_any(file, e)
-        };
-        if is_implicit {
-            let shadowed = self.container_shadowing_this(file, e);
-            let shadowed = shadowed.map(|container| self.new_diagnostic(container, 2738, &[]));
-            let at = self.place_of_token(file, self.hir(file)[e].pos);
-            let diagnostic = self.error(at, 2683, &[]);
-            if let Some(shadowed) = shadowed {
-                diagnostic.add_related_info(shadowed);
-            }
-        }
-    }
-
     /// `checkSwitchStatement`, of one `case test:` of a `switch (expr)`: 2678.
     pub(super) fn check_case_clause(&mut self, file: FileId, expr: ExprId, test: ExprId) {
         let (subject, case) = (self.type_of_expr(file, expr), self.type_of_expr(file, test));
@@ -122,7 +101,7 @@ impl Checker<'_> {
             return;
         }
         let (start, end) = match bound.fns[f.idx()].owner {
-            FnOwner::Member(m) => (hir[m].pos, self.end_of_member_name(file, m)),
+            FnOwner::Member(m) => (hir[m].name_pos, self.end_of_member_name(file, m)),
             FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
                 Parent::Prop(p) => (hir[p].pos, self.end_of_prop_name(file, p)),
                 _ => return,
@@ -258,6 +237,7 @@ impl Checker<'_> {
         &self,
         file: FileId,
         this: ExprId,
+        include_arrow_functions: bool,
     ) -> Option<QueriedThisContainer> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let query = hir.types.iter().position(|t| {
@@ -299,10 +279,8 @@ impl Checker<'_> {
             match s.kind {
                 // These have the `this` of what is around them.
                 ScopeKind::Fn(f)
-                    if matches!(
-                        hir[f].kind,
-                        FnKind::Arrow | FnKind::FunctionType | FnKind::ConstructorType
-                    ) => {}
+                    if matches!(hir[f].kind, FnKind::FunctionType | FnKind::ConstructorType)
+                        || hir[f].kind == FnKind::Arrow && !include_arrow_functions => {}
                 ScopeKind::Fn(f) => return Some(QueriedThisContainer::Fn(f)),
                 // Its type parameters, and what it extends and implements, are not in a member of it.
                 ScopeKind::Class(c) => {
@@ -332,109 +310,6 @@ impl Checker<'_> {
             scope = s.parent;
         }
         None
-    }
-
-    /// `checkThisExpression`, to which `checkIdentifier` hands the `this` of `typeof this.x`: whether `tryGetThisTypeAtEx` finds
-    /// nothing that says what it is.
-    fn is_queried_this_implicitly_any(&mut self, file: FileId, this: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match self.this_container_of_type_query(file, this) {
-            Some(QueriedThisContainer::Fn(f)) => {
-                hir[f].this_ty(hir).is_none()
-                    && match bound.fns[f.idx()].owner {
-                        FnOwner::Stmt(_) => true,
-                        // That of a class has the `this` of the class.
-                        FnOwner::Member(m) => matches!(
-                            bound.member_owner[m.idx()],
-                            MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_)
-                        ),
-                        // What is expected of it may say. With a function type in between it is not found out from here.
-                        FnOwner::Expr(_) => {
-                            matches!(self.this_container(file, this), Some(Ok(g)) if g == f)
-                                && self.is_this_implicitly_any(file, this)
-                        }
-                        _ => false,
-                    }
-            }
-            Some(
-                QueriedThisContainer::PropertySignature
-                | QueriedThisContainer::Module
-                | QueriedThisContainer::Enum,
-            ) => true,
-            _ => false,
-        }
-    }
-
-    /// The end of `checkThisExpression`: 2738 at the function the `this` at `e` belongs to, if something says what `this` is around
-    /// that function.
-    fn container_shadowing_this(&mut self, file: FileId, e: ExprId) -> Option<(FileId, u32, u32)> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let container = if bound.is_in_type_query(e) {
-            match self.this_container_of_type_query(file, e) {
-                Some(QueriedThisContainer::Fn(f)) => Some(f),
-                _ => None,
-            }
-        } else {
-            match self.this_container(file, e) {
-                Some(Ok(f)) => Some(f),
-                _ => None,
-            }
-        };
-        let Some(func) = container else {
-            return None;
-        };
-        // What is around it, and its `GetErrorRangeForNode`.
-        let (around, below, (from, to)) = match bound.fns[func.idx()].owner {
-            FnOwner::Stmt(s) => (
-                bound.stmt_parent[s.idx()],
-                ExprId::NONE,
-                self.error_range_of_stmt(file, s),
-            ),
-            FnOwner::Expr(owner) => {
-                let range = if hir[func].kind == FnKind::Expr {
-                    (
-                        self.error_start_inside_parentheses(file, owner),
-                        self.error_end_inside_parentheses(file, owner),
-                    )
-                } else {
-                    self.error_range_of_fn(file, func)
-                };
-                (bound.expr_parent[owner.idx()], owner, range)
-            }
-            _ => return None,
-        };
-        if !self.is_this_said_around(file, around, below) {
-            return None;
-        }
-        Some((file, from, to))
-    }
-
-    /// The same for a `this` in the body of a namespace or in an enum, which is what `container` stands for.
-    pub(super) fn declaration_shadowing_this(
-        &mut self,
-        file: FileId,
-        container: Parent,
-    ) -> Vec<super::explain::Related> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let declares_it = |s: &Stmt| match (s.kind, container) {
-            (StmtKind::Module(m), Parent::Module(of)) => m == of,
-            (StmtKind::Enum(e), Parent::EnumInit(member)) => {
-                e == bound.enum_member_owner[member.idx()]
-            }
-            _ => false,
-        };
-        let Some(s) = hir.stmts.iter().position(declares_it) else {
-            return Vec::new();
-        };
-        if !self.is_this_said_around(file, bound.stmt_parent[s], ExprId::NONE) {
-            return Vec::new();
-        }
-        let (from, to) = self.error_range_of_stmt(file, StmtId(s as u32));
-        vec![super::explain::Related {
-            at: Some((file, from, to)),
-            code: 2738,
-            args: Vec::new(),
-        }]
     }
 
     /// `getSyntacticTruthySemantics`

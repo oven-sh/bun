@@ -143,9 +143,11 @@ impl Checker<'_> {
         match &prop.source {
             PropSource::Members(members) => {
                 let &(file, member) = members.first()?;
-                Some(self.place_in_file(file, self.hir(file)[member].pos, |c| {
-                    c.error_range_of_member(file, member)
-                }))
+                Some(
+                    self.place_in_file(file, self.hir(file)[member].name_pos, |c| {
+                        c.error_range_of_member(file, member)
+                    }),
+                )
             }
             &PropSource::Parameter(file, param) => {
                 let start = self.hir(file)[param].pos;
@@ -167,7 +169,9 @@ impl Checker<'_> {
                 self.place_of_declaration(file, decl)
             }
             PropSource::Assigned(..) => self.place_of_prop(prop),
-            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => parts
+            PropSource::Intersected(_, parts)
+            | PropSource::Copy(_, parts, _)
+            | PropSource::ReverseMapped(_, parts) => parts
                 .iter()
                 .find_map(|part| self.first_declaration_of_prop(part, depth + 1)),
             // `addMemberForKeyTypeWorker`: those of the property of the type the modifiers are taken from.
@@ -210,11 +214,7 @@ impl Checker<'_> {
         match decl {
             Decl::Class(class) => {
                 let class = &self.hir(file)[class];
-                let start = if class.name.is_some() {
-                    class.name_pos
-                } else {
-                    class.pos
-                };
+                let start = class.name_pos;
                 Some(self.place_of_token(file, start))
             }
             Decl::Fn(func) => Some(self.place_of_signature_declaration(file, func)),
@@ -233,7 +233,7 @@ impl Checker<'_> {
         let key_type = self.key_type_of_name(name)?;
         let info = self.applicable_index(&members, key_type, Some(name))?;
         let (file, m) = info.declaration?;
-        let start = self.hir(file)[m].pos;
+        let start = self.hir(file)[m].start;
         Some(self.place_in_file(file, start, |c| c.error_range_of_member(file, m)))
     }
 }

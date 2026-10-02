@@ -970,7 +970,7 @@ impl Bound {
         };
         for m in members.iter() {
             let member = &f[m];
-            declare_assignments_before(member.pos, &mut declare);
+            declare_assignments_before(member.name_pos, &mut declare);
             // `bindParameter`
             if member.kind == MemberKind::Constructor && class.is_some() && member.func.is_some() {
                 for parameter in f[member.func].params.iter() {
@@ -1462,20 +1462,6 @@ impl Bound {
         (meaning & self.symbols[local.idx()].flags)
             .intersects(SymFlags::VALUE)
             .then_some((code, property))
-    }
-
-    pub fn heap_size(&self) -> usize {
-        self.symbols.capacity() * std::mem::size_of::<Symbol>()
-            + self.entries.capacity() * 8
-            + self.large_tables.capacity() * 13
-            + self.expr_symbol.capacity() * 4
-            + self.expr_parent.capacity() * 8
-            + self.expr_flow.capacity() * 4
-            + self.stmt_parent.capacity() * 8
-            + self.type_scope.capacity() * 4
-            + self.flow.capacity() * std::mem::size_of::<Flow>()
-            + self.flow_edges.capacity() * 4
-            + self.pat_parent.capacity() * 12
     }
 }
 

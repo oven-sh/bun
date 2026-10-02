@@ -134,14 +134,10 @@ impl Checker<'_> {
             Decl::ImportSpec(s) => self.end_of_import_spec(file, s),
             Decl::ExportSpec(s) => self.end_of_export_spec(file, s),
             // `* as ns`
-            Decl::ExportStarAs(_) => {
-                let text = &hir.text[..];
-                let word = skip_trivia(text, node.start as usize + 1);
-                match eat_word(text, word, b"as") {
-                    Some(end) => self.end_of_name_at(file, skip_trivia(text, end) as u32),
-                    None => 0,
-                }
-            }
+            Decl::ExportStarAs(s) => match hir[s].kind {
+                StmtKind::ExportStar { alias_pos, .. } => self.end_of_name_at(file, alias_pos),
+                _ => 0,
+            },
             Decl::ImportEquals(_) | Decl::ExportExpr(_) | Decl::UmdGlobal(_) => {
                 self.end_of_stmt(file, node.stmt)
             }
@@ -511,27 +507,9 @@ impl Checker<'_> {
         if target_flags == SymFlags::all() {
             return;
         }
-        let mut is_type = !target_flags.intersects(SymFlags::VALUE);
-        // `combineValueAndTypeSymbols`: a property of the `export =` value with the same name adds the value meaning.
-        let member = match decl {
-            Decl::ImportSpec(s) => hir[s].imported,
-            Decl::ExportSpec(s) if spec.is_some() => hir[s].local,
-            _ => Atom::NONE,
-        };
-        if is_type
-            && member.is_some()
-            && member != known::default
-            && let Some(equals) = module.and_then(|m| files.export(m, known::export_equals))
-        {
-            let Some(value) = files.resolve_symbol(equals) else {
-                return;
-            };
-            let ty = self.type_of_symbol(value);
-            if !self.is_known(ty) || self.is_any(ty) {
-                return;
-            }
-            is_type = self.imported_property_of_export_equals(sym).is_none();
-        }
+        // `combineValueAndTypeSymbols`: what it makes is a value.
+        let is_type = !target_flags.intersects(SymFlags::VALUE)
+            && self.combined_symbol_of_alias(sym).is_none();
         // A type-only import or export already has a grammar error in a JavaScript file.
         if hir.is_js && is_type {
             // `node.PropertyNameOrName()`
@@ -788,7 +766,7 @@ impl Checker<'_> {
             }
             for &decl in &symbol.decls {
                 let Decl::Require(pat) = decl else { continue };
-                let Some((spec, part)) = bound.required_by(hir, pat) else {
+                let Some((spec, _)) = bound.required_by(hir, pat) else {
                     continue;
                 };
                 let sym = files.sym(file, SymbolId(i as u32));
@@ -796,25 +774,11 @@ impl Checker<'_> {
                 let Some(target) = files.resolve_alias(sym) else {
                     continue;
                 };
-                if files.symbol_flags(target).intersects(SymFlags::VALUE) {
-                    continue;
-                }
-                // `combineValueAndTypeSymbols`: a property of the `export =` value with the same name adds the value meaning.
-                if part.is_some()
-                    && let Some(equals) = files
-                        .module_of_specifier_as(file, spec, ResolutionMode::Require)
-                        .and_then(|m| files.export(m, known::export_equals))
+                // `combineValueAndTypeSymbols`: what it makes is a value.
+                if files.symbol_flags(target).intersects(SymFlags::VALUE)
+                    || self.combined_symbol_of_alias(sym).is_some()
                 {
-                    let Some(value) = files.resolve_symbol(equals) else {
-                        continue;
-                    };
-                    let ty = self.type_of_symbol(value);
-                    if !self.is_known(ty)
-                        || self.is_any(ty)
-                        || self.imported_property_of_export_equals(sym).is_some()
-                    {
-                        continue;
-                    }
+                    continue;
                 }
                 // `node.PropertyNameOrName()`
                 let start = match bound.pat_parent[pat.idx()] {
@@ -1179,8 +1143,12 @@ impl Checker<'_> {
         if !files.options.module.is_node() || !files.module(file).is_esm {
             return;
         }
+        let is_json = |spec: Atom| {
+            let module = files.module_of_specifier(file, spec);
+            module.is_some_and(|module| files.is_only_importable_as_default(file, module))
+        };
         for import in &hir.imports {
-            if import.named.is_empty() || !self.xa_is_json_file(file, import.spec) {
+            if import.named.is_empty() || !is_json(import.spec) {
                 continue;
             }
             for s in import.named.iter().filter(|&s| !hir[s].is_name_missing()) {
@@ -1188,29 +1156,13 @@ impl Checker<'_> {
             }
         }
         for export in &hir.exports {
-            if export.spec.is_none()
-                || export.items.is_empty()
-                || !self.xa_is_json_file(file, export.spec)
-            {
+            if export.spec.is_none() || export.items.is_empty() || !is_json(export.spec) {
                 continue;
             }
             for s in export.items.iter() {
                 self.xa_imported_from_json(hir[s].local, hir[s].local_pos, out);
             }
         }
-    }
-
-    /// The rest of `isOnlyImportableAsDefault`: to Node, a JSON file has a default and nothing else.
-    fn xa_is_json_file(&self, file: FileId, spec: Atom) -> bool {
-        let files = self.files();
-        let Some(module) = files.module_of_specifier(file, spec) else {
-            return false;
-        };
-        if !files.symbol(module).decls.contains(&Decl::File) {
-            return false;
-        }
-        let path = files.module(module.file).path.as_str();
-        path.ends_with(".json") || path.ends_with(".d.json.ts")
     }
 
     fn xa_imported_from_json(&self, name: Atom, start: u32, out: &mut Vec<Diagnostic>) {
@@ -1331,16 +1283,18 @@ impl Checker<'_> {
                             false,
                             false,
                         ),
-                        StmtKind::ExportStar { spec, alias, .. } => {
-                            let type_only = says_export_type(text, hir[stmt].pos);
-                            (
-                                spec,
-                                SiteKind::Export,
-                                !type_only,
-                                type_only && alias.is_none(),
-                                false,
-                            )
-                        }
+                        StmtKind::ExportStar {
+                            spec,
+                            alias,
+                            type_only,
+                            ..
+                        } => (
+                            spec,
+                            SiteKind::Export,
+                            !type_only,
+                            type_only && alias.is_none(),
+                            false,
+                        ),
                         StmtKind::ImportEquals(x) => {
                             let ImportEqualsTarget::Require(said) = hir[x].target else {
                                 continue;
@@ -2045,12 +1999,6 @@ fn string_literal(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
         end += if text[end] == b'\\' { 2 } else { 1 };
     }
     (end < text.len()).then(|| (&text[at + 1..end], end + 1))
-}
-
-/// Whether the statement at `pos` starts `export type`.
-fn says_export_type(text: &[u8], pos: u32) -> bool {
-    eat_word(text, pos as usize, b"export")
-        .is_some_and(|end| eat_word(text, skip_trivia(text, end), b"type").is_some())
 }
 
 /// Where the specifier of `import("m")` or `typeof import("m")`, the type at `pos`, is.

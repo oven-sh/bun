@@ -188,7 +188,12 @@ struct Found {
 
 /// Which statement of a file declares what.
 struct Statements {
+    interfaces: Vec<StmtId>,
+    aliases: Vec<StmtId>,
+    enums: Vec<StmtId>,
+    modules: Vec<StmtId>,
     imports: Vec<StmtId>,
+    import_equals: Vec<StmtId>,
     exports: Vec<StmtId>,
 }
 
@@ -214,6 +219,8 @@ struct DeclarationEmit<'c, 'p> {
     in_class_expression: bool,
     /// `lateStatementReplacementMap`: the statements something is written for.
     written: FxHashSet<StmtId>,
+    interface_scopes: Vec<ScopeId>,
+    module_scopes: Vec<ScopeId>,
 }
 
 impl Checker<'_> {
@@ -287,6 +294,18 @@ impl<'p> Checker<'p> {
 
 impl<'c, 'p> DeclarationEmit<'c, 'p> {
     fn new(c: &'c mut Checker<'p>, file: FileId) -> DeclarationEmit<'c, 'p> {
+        let (hir, bound) = (c.hir(file), c.bound(file));
+        let mut interface_scopes = vec![ScopeId::NONE; hir.interfaces.len()];
+        let mut module_scopes = vec![ScopeId::NONE; hir.modules.len()];
+        for (i, scope) in bound.scopes.iter().enumerate() {
+            match scope.kind {
+                ScopeKind::Interface(interface) => {
+                    interface_scopes[interface.idx()] = ScopeId(i as u32);
+                }
+                ScopeKind::Module(module) => module_scopes[module.idx()] = ScopeId(i as u32),
+                _ => {}
+            }
+        }
         let top = Enclosing::at_scope(file, ScopeId(0));
         let isolated_declarations = c.new_isolated_declarations(file);
         DeclarationEmit {
@@ -304,11 +323,19 @@ impl<'c, 'p> DeclarationEmit<'c, 'p> {
             suppresses_new_contexts: false,
             in_class_expression: false,
             written: FxHashSet::default(),
+            interface_scopes,
+            module_scopes,
         }
     }
 
     fn file(&self) -> FileId {
         self.tracker.current_source_file
+    }
+
+    /// `tx.resolver`, which is the one the node builder asks.
+    fn with_resolver<T>(&mut self, ask: impl FnOnce(&mut EmitResolver<'_, 'p>) -> T) -> T {
+        let file = self.file();
+        self.c.with_emit_resolver(file, ask)
     }
 }
 
@@ -344,10 +371,54 @@ impl EmitResolverLinks {
     }
 }
 
+/// `EmitResolver`, `symbolaccessibility.go` and `modulespecifiers`: the checker, and where they memoize.
+pub(super) struct EmitResolver<'a, 'p> {
+    pub(super) c: &'a mut Checker<'p>,
+    pub(super) links: &'a mut EmitResolverLinks,
+}
+
+/// The links of the `EmitResolver`, which the printers and the declaration transformer go by, kept while they are asked from one file.
+#[derive(Default)]
+pub(super) struct SymbolChainCache {
+    file: Option<FileId>,
+    links: EmitResolverLinks,
+}
+
 impl<'p> Checker<'p> {
+    /// Asks the `EmitResolver` something for a printer whose enclosing declaration is in `file`.
+    pub(super) fn with_emit_resolver<T>(
+        &mut self,
+        file: FileId,
+        ask: impl FnOnce(&mut EmitResolver<'_, 'p>) -> T,
+    ) -> T {
+        let mut cache = std::mem::take(&mut self.symbol_chain_cache);
+        if cache.file != Some(file) {
+            cache = SymbolChainCache {
+                file: Some(file),
+                links: EmitResolverLinks::default(),
+            };
+        }
+        let result = ask(&mut EmitResolver {
+            c: &mut *self,
+            links: &mut cache.links,
+        });
+        self.symbol_chain_cache = cache;
+        result
+    }
+
     /// `lookupSymbolChain` of a symbol that is no type parameter: whether the chain starts with `globalThis`, and the rest of it.
-    /// `fake_locals`: those of the blocks `enterNewScope` has made up around `at`.
     pub(super) fn lookup_symbol_chain_at(
+        &mut self,
+        symbol: Sym,
+        is_value: bool,
+        yields_module: bool,
+        at: Enclosing,
+    ) -> (bool, Vec<Sym>) {
+        self.lookup_symbol_chain_in_fake_scopes_at(symbol, is_value, yields_module, at, Vec::new())
+    }
+
+    /// The same from inside the blocks `enterNewScope` makes up, whose locals are `fake_locals`.
+    pub(super) fn lookup_symbol_chain_in_fake_scopes_at(
         &mut self,
         symbol: Sym,
         is_value: bool,
@@ -360,10 +431,12 @@ impl<'p> Checker<'p> {
         } else {
             Meaning::Type
         };
-        // A question asked on the way has locals of its own.
-        let outer = std::mem::replace(&mut self.emit_resolver_links.fake_locals, fake_locals);
-        let mut chain = self.symbol_chain_ex(symbol, at, meaning, yields_module, 0);
-        self.emit_resolver_links.fake_locals = outer;
+        let mut chain = self.with_emit_resolver(at.file, |resolver| {
+            resolver.links.fake_locals = fake_locals;
+            let chain = resolver.symbol_chain_ex(symbol, at, meaning, yields_module, 0);
+            resolver.links.fake_locals.clear();
+            chain
+        });
         let starts_with_global_this =
             chain.len() > 1 && chain[0] == self.files().global_this_symbol;
         if starts_with_global_this {
@@ -380,7 +453,7 @@ impl<'p> Checker<'p> {
         at: Enclosing,
     ) -> (bool, Vec<Sym>) {
         let symbol = self.module_clone(originating_import);
-        self.lookup_symbol_chain_at(symbol, true, yields_module, at, Vec::new())
+        self.lookup_symbol_chain_at(symbol, true, yields_module, at)
     }
 
     /// `lookupSymbolChain(symbol, SymbolFlagsValue)` without `yieldModuleSymbol`, of a member of the class or the interface `container`.
@@ -390,20 +463,25 @@ impl<'p> Checker<'p> {
         container: Sym,
         at: Enclosing,
     ) -> Vec<Sym> {
-        let parents = self.with_alternative_containers(container, None, at, Meaning::Value);
-        for parent in self.sorted_by_best_name(parents, at) {
-            let chain = self.symbol_chain_ex(parent, at, Meaning::Value, false, 1);
-            if !chain.is_empty() {
-                return chain;
+        self.with_emit_resolver(at.file, |resolver| {
+            let parents = resolver.with_alternative_containers(container, None, at, Meaning::Value);
+            for parent in resolver.sorted_by_best_name(parents, at) {
+                let chain = resolver.symbol_chain_ex(parent, at, Meaning::Value, false, 1);
+                if !chain.is_empty() {
+                    return chain;
+                }
             }
-        }
-        Vec::new()
+            Vec::new()
+        })
     }
 
     /// `IsTypeSymbolAccessible`
     pub(super) fn is_type_symbol_accessible_at(&mut self, symbol: Sym, at: Enclosing) -> bool {
-        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false, 0)
-            .is_some_and(|access| access.is_accessible())
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver
+                .is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false, 0)
+                .is_some_and(|access| access.is_accessible())
+        })
     }
 
     /// `lookupSymbolChain` as `symbolToExpression` asks it for `symbolToStringEx(symbol, enclosingDeclaration, SymbolFlagsNone, ..)`,
@@ -421,13 +499,51 @@ impl<'p> Checker<'p> {
         } else {
             (Meaning::None, 0)
         };
-        let mut chain = self.symbol_chain_ex(symbol, at, meaning, false, depth);
+        let mut chain = self.with_emit_resolver(at.file, |resolver| {
+            resolver.symbol_chain_ex(symbol, at, meaning, false, depth)
+        });
         let starts_with_global_this =
             chain.len() > 1 && chain[0] == self.files().global_this_symbol;
         if starts_with_global_this {
             chain.remove(0);
         }
         (starts_with_global_this, chain)
+    }
+
+    /// `getAccessibleSymbolChain` as `lookup_symbol_chain_for_symbol_to_string` asks it, of a property: the alias it is written as.
+    pub(super) fn accessible_alias_of_property_at(
+        &mut self,
+        property: &Prop,
+        file: FileId,
+        scope: ScopeId,
+    ) -> Option<Sym> {
+        let at = Enclosing::at_scope(file, scope);
+        self.with_emit_resolver(file, |resolver| {
+            resolver.accessible_alias_of_property(property, at)
+        })
+    }
+
+    /// `getSpecifierForModuleSymbol`
+    pub(super) fn specifier_for_module_symbol_at(&mut self, module: Sym, at: Enclosing) -> String {
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver.specifier_for_module_symbol(module, at.file, ResolutionMode::None)
+        })
+    }
+
+    /// The specifier of the import type `symbolToTypeNode` writes for `module`, and its `resolution-mode` attribute.
+    pub(super) fn import_type_specifier_at(
+        &mut self,
+        module: Sym,
+        at: Enclosing,
+        allows_node_modules_relative_paths: bool,
+    ) -> (String, Option<&'static str>) {
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver.import_type_specifier_and_mode(
+                module,
+                at.file,
+                allows_node_modules_relative_paths,
+            )
+        })
     }
 }
 
@@ -443,8 +559,11 @@ impl<'p> Checker<'p> {
         at: Enclosing,
     ) -> bool {
         let meaning = Meaning::of(meaning, with_export_value);
-        self.is_symbol_accessible(symbol, at, meaning, false)
-            .is_accessible()
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver
+                .is_symbol_accessible(symbol, at, meaning, false)
+                .is_accessible()
+        })
     }
 
     /// `isTriviallySerializableComputedName`, of the computed property name `[name]` written in `file`.
@@ -460,8 +579,11 @@ impl<'p> Checker<'p> {
         let Some((first, _)) = self.first_identifier(file, name) else {
             return false;
         };
-        self.is_entity_name_visible(first, None, Meaning::ValueOfName, at, false)
-            .is_accessible()
+        self.with_emit_resolver(at.file, |resolver| {
+            resolver
+                .is_entity_name_visible(first, None, Meaning::ValueOfName, at, false)
+                .is_accessible()
+        })
     }
 
     /// `exportTypeLinks.Get(symbol).target` of a symbol `cloneTypeAsModuleType` made, which has the flags, the name, the declarations,
@@ -509,7 +631,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
-    pub(super) fn is_external_module_symbol(&self, symbol: Sym) -> bool {
+    fn is_external_module_symbol(&self, symbol: Sym) -> bool {
         self.files()
             .parts(self.target_of_module_clone(symbol))
             .iter()
@@ -520,13 +642,15 @@ impl<'p> Checker<'p> {
     fn is_external_module_part(&self, part: Sym) -> bool {
         let files = self.files();
         files.symbol(part).decls.iter().any(|&decl| match decl {
-            // `IsExternalOrCommonJSModule`, which a JSON file is not.
-            Decl::File => {
-                files.module(part.file).is_module() && self.hir(part.file).kind != FileKind::Json
-            }
+            Decl::File => files.module(part.file).is_module(),
             Decl::Module(m) => matches!(self.hir(part.file)[m].name, ModuleName::String(_)),
             _ => false,
         })
+    }
+
+    /// `getMergedSymbol`
+    fn merged_symbol(&self, symbol: Sym) -> Sym {
+        self.files().canonical(symbol)
     }
 
     /// `getMergedSymbol(symbol.ExportSymbol)`
@@ -655,34 +779,42 @@ impl<'p> Checker<'p> {
 
 // ───────────────────────────── what is visible ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p> EmitResolver<'_, 'p> {
     fn statements_of(&mut self, file: FileId) -> Rc<Statements> {
-        if let Some(known) = self.emit_resolver_links.statements.get(&file) {
+        if let Some(known) = self.links.statements.get(&file) {
             return Rc::clone(known);
         }
-        let hir = self.hir(file);
+        let hir = self.c.hir(file);
         let mut statements = Statements {
+            interfaces: vec![StmtId::NONE; hir.interfaces.len()],
+            aliases: vec![StmtId::NONE; hir.aliases.len()],
+            enums: vec![StmtId::NONE; hir.enums.len()],
+            modules: vec![StmtId::NONE; hir.modules.len()],
             imports: vec![StmtId::NONE; hir.imports.len()],
+            import_equals: vec![StmtId::NONE; hir.import_equals.len()],
             exports: vec![StmtId::NONE; hir.exports.len()],
         };
         for (i, statement) in hir.stmts.iter().enumerate() {
             let s = StmtId(i as u32);
             match statement.kind {
+                StmtKind::Interface(id) => statements.interfaces[id.idx()] = s,
+                StmtKind::TypeAlias(id) => statements.aliases[id.idx()] = s,
+                StmtKind::Enum(id) => statements.enums[id.idx()] = s,
+                StmtKind::Module(id) => statements.modules[id.idx()] = s,
                 StmtKind::Import(id) => statements.imports[id.idx()] = s,
+                StmtKind::ImportEquals(id) => statements.import_equals[id.idx()] = s,
                 StmtKind::ExportNamed(id) => statements.exports[id.idx()] = s,
                 _ => {}
             }
         }
         let statements = Rc::new(statements);
-        self.emit_resolver_links
-            .statements
-            .insert(file, Rc::clone(&statements));
+        self.links.statements.insert(file, Rc::clone(&statements));
         statements
     }
 
     /// The statement that is the declaration `decl`, or that an import or an export specifier is written in.
     fn statement_of(&mut self, file: FileId, decl: Decl) -> Option<StmtId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let statement = match decl {
             Decl::Fn(f) => match bound.fns[f.idx()].owner {
                 FnOwner::Stmt(s) => s,
@@ -692,11 +824,11 @@ impl<'p> Checker<'p> {
                 ClassOwner::Stmt(s) => s,
                 ClassOwner::Expr(_) => return None,
             },
-            Decl::Interface(i) => hir[i].stmt,
-            Decl::Alias(a) => hir[a].stmt,
-            Decl::Enum(e) => hir[e].stmt,
-            Decl::Module(m) => hir[m].stmt,
-            Decl::ImportEquals(i) => hir[i].stmt,
+            Decl::Interface(i) => self.statements_of(file).interfaces[i.idx()],
+            Decl::Alias(a) => self.statements_of(file).aliases[a.idx()],
+            Decl::Enum(e) => self.statements_of(file).enums[e.idx()],
+            Decl::Module(m) => self.statements_of(file).modules[m.idx()],
+            Decl::ImportEquals(i) => self.statements_of(file).import_equals[i.idx()],
             Decl::ImportDefault(i) | Decl::ImportNamespace(i) => {
                 self.statements_of(file).imports[i.idx()]
             }
@@ -723,19 +855,17 @@ impl<'p> Checker<'p> {
             Decl::Param(pat) | Decl::Require(pat) => Decl::Var(pat),
             decl => decl,
         };
-        if let Some(&known) = self.emit_resolver_links.visibility.get(&(file, decl)) {
+        if let Some(&known) = self.links.visibility.get(&(file, decl)) {
             return known;
         }
         let is_visible = self.determine_if_declaration_is_visible(file, decl);
-        self.emit_resolver_links
-            .visibility
-            .insert((file, decl), is_visible);
+        self.links.visibility.insert((file, decl), is_visible);
         is_visible
     }
 
     /// `determineIfDeclarationIsVisible`
     fn determine_if_declaration_is_visible(&mut self, file: FileId, decl: Decl) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let (flags, container) = match decl {
             Decl::File | Decl::UmdGlobal(_) | Decl::TypeParam(_) => return true,
             Decl::Var(pat) => match bound.pat_parent[pat.idx()] {
@@ -807,7 +937,7 @@ impl<'p> Checker<'p> {
             }
             _ => return false,
         };
-        let is_module = self.files().module(file).is_module();
+        let is_module = self.c.files().module(file).is_module();
         // `IsExternalModuleAugmentation`
         if let Decl::Module(m) = decl
             && !matches!(hir[m].name, ModuleName::Ident(_))
@@ -840,7 +970,7 @@ impl<'p> Checker<'p> {
 
     /// `isDeclarationVisible`, of what has parameters. A type that is written is taken to be written where it is seen.
     fn is_function_visible(&mut self, file: FileId, f: FnId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         match bound.fns[f.idx()].owner {
             FnOwner::Stmt(_) => self.is_declaration_visible(file, Decl::Fn(f)),
             FnOwner::Member(m) => {
@@ -876,12 +1006,12 @@ impl<'p> Checker<'p> {
         paints: bool,
     ) -> Option<Vec<(FileId, StmtId)>> {
         let mut aliases: Vec<(FileId, StmtId)> = Vec::new();
-        let flags = self.flags_of(symbol);
-        for (file, decl) in self.decls_of(symbol) {
+        let flags = self.c.flags_of(symbol);
+        for (file, decl) in self.c.decls_of(symbol) {
             if self.is_declaration_visible(file, decl) {
                 continue;
             }
-            let (hir, bound) = (self.hir(file), self.bound(file));
+            let (hir, bound) = (self.c.hir(file), self.c.bound(file));
             let statement = match decl {
                 // `getAnyImportSyntax`, `IsLateVisibilityPaintedStatement`
                 Decl::ImportDefault(_)
@@ -951,7 +1081,7 @@ impl<'p> Checker<'p> {
                 return None;
             }
             if paints {
-                self.emit_resolver_links.paint_visible(file, decl);
+                self.links.paint_visible(file, decl);
                 if !aliases.contains(&(file, statement)) {
                     aliases.push((file, statement));
                 }
@@ -971,19 +1101,20 @@ impl<'p> Checker<'p> {
         should_compute_alias_to_make_visible: bool,
     ) -> Access {
         let found = self
+            .c
             .files()
             .resolve_name(at.file, at.scope, first, meaning.flags());
         let mut result = Access {
             accessibility: Accessibility::NotResolved,
             aliases: Vec::new(),
-            symbol_name: self.atom_text(first),
+            symbol_name: self.c.atom_text(first),
             module_name: String::new(),
-            error_node: start.map(|start| (start, self.end_of_name_at(at.file, start))),
+            error_node: start.map(|start| (start, self.c.end_of_name_at(at.file, start))),
         };
         let Some(symbol) = found else {
             return result;
         };
-        if meaning == Meaning::Type && self.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
+        if meaning == Meaning::Type && self.c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
             return Access::accessible(Vec::new());
         }
         match self.has_visible_declarations(symbol, should_compute_alias_to_make_visible) {
@@ -998,14 +1129,14 @@ impl<'p> Checker<'p> {
 
 // ───────────────────────────── what can be named ─────────────────────────────
 
-impl<'p> Checker<'p> {
+impl<'p> EmitResolver<'_, 'p> {
     /// `getExportsOfSymbol`
     fn exports_of_symbol(&mut self, symbol: Sym) -> Rc<Vec<(Atom, Sym)>> {
-        let symbol = self.target_of_module_clone(symbol);
-        if let Some(known) = self.emit_resolver_links.exports.get(&symbol) {
+        let symbol = self.c.target_of_module_clone(symbol);
+        if let Some(known) = self.links.exports.get(&symbol) {
             return Rc::clone(known);
         }
-        let files = self.files();
+        let files = self.c.files();
         let exports = if symbol == files.global_this_symbol {
             Vec::new()
         } else if files.flags(symbol).intersects(SymFlags::MODULE) {
@@ -1015,16 +1146,14 @@ impl<'p> Checker<'p> {
             files.exports(symbol)
         };
         let exports = Rc::new(exports);
-        self.emit_resolver_links
-            .exports
-            .insert(symbol, Rc::clone(&exports));
+        self.links.exports.insert(symbol, Rc::clone(&exports));
         exports
     }
 
     /// `someSymbolTableInScope`: the tables, innermost first.
     fn tables_in_scope(&self, at: Enclosing) -> Vec<Table> {
-        let files = self.files();
-        let bound = self.bound(at.file);
+        let files = self.c.files();
+        let bound = self.c.bound(at.file);
         let mut tables = Vec::new();
         let mut scope = at.scope;
         while scope.is_some() {
@@ -1065,10 +1194,10 @@ impl<'p> Checker<'p> {
         if name.is_none() {
             return None;
         }
-        let files = self.files();
+        let files = self.c.files();
         match table {
             Table::Locals(file, scope) => {
-                let bound = self.bound(file);
+                let bound = self.c.bound(file);
                 bound
                     .lookup(bound.scopes[scope.idx()].locals, name)
                     .map(|id| Sym { file, id })
@@ -1097,15 +1226,15 @@ impl<'p> Checker<'p> {
 
     /// `symbols[symbol.Name]`
     fn lookup_symbol(&mut self, table: Table, symbol: Sym) -> Option<Sym> {
-        self.lookup(table, self.name_of(symbol))
+        self.lookup(table, self.c.name_of(symbol))
     }
 
     /// The symbols of `table`, each with the name it is there under.
     fn symbols_in_table(&mut self, table: Table) -> Vec<(Atom, Sym)> {
-        let files = self.files();
+        let files = self.c.files();
         match table {
             Table::Locals(file, scope) => {
-                let bound = self.bound(file);
+                let bound = self.c.bound(file);
                 bound
                     .table(bound.scopes[scope.idx()].locals)
                     .iter()
@@ -1114,15 +1243,15 @@ impl<'p> Checker<'p> {
             }
             Table::TypeMembers(symbol) => {
                 let mut parameters = Vec::new();
-                for (file, decl) in self.decls_of(symbol) {
-                    let hir = self.hir(file);
+                for (file, decl) in self.c.decls_of(symbol) {
+                    let hir = self.c.hir(file);
                     let type_params = match decl {
                         Decl::Class(class) => hir[class].type_params,
                         Decl::Interface(interface) => hir[interface].type_params,
                         _ => continue,
                     };
                     for parameter in type_params.iter() {
-                        let id = self.bound(file).type_param_symbol[parameter.idx()];
+                        let id = self.c.bound(file).type_param_symbol[parameter.idx()];
                         if id.is_some() {
                             parameters.push((hir[parameter].name, Sym { file, id }));
                         }
@@ -1140,19 +1269,19 @@ impl<'p> Checker<'p> {
 
     /// `getSymbolTableAliases`, each with the name it is in the table under.
     fn aliases_in_table(&mut self, table: Table) -> Rc<Vec<(Atom, Sym)>> {
-        let files = self.files();
+        let files = self.c.files();
         let is_globals = match table {
             Table::ResolvedExports(symbol) => symbol == files.global_this_symbol,
             table => table == Table::Globals,
         };
-        if is_globals && let Some(known) = &self.emit_resolver_links.global_aliases {
+        if is_globals && let Some(known) = &self.links.global_aliases {
             return Rc::clone(known);
         }
         let mut aliases = self.symbols_in_table(table);
         aliases.retain(|entry| files.flags(entry.1).contains(SymFlags::ALIAS));
         let aliases = Rc::new(aliases);
         if is_globals {
-            self.emit_resolver_links.global_aliases = Some(Rc::clone(&aliases));
+            self.links.global_aliases = Some(Rc::clone(&aliases));
         }
         aliases
     }
@@ -1177,9 +1306,9 @@ impl<'p> Checker<'p> {
         visited: &mut Vec<(Sym, Table)>,
     ) -> Rc<Vec<Sym>> {
         // What is found past the locals of a block that is made up holds for that block alone.
-        let is_kept = self.emit_resolver_links.fake_locals.is_empty();
+        let is_kept = self.links.fake_locals.is_empty();
         let key = (symbol, at.file, at.scope, meaning);
-        if is_kept && let Some(known) = self.emit_resolver_links.chains.get(&key) {
+        if is_kept && let Some(known) = self.links.chains.get(&key) {
             return Rc::clone(known);
         }
         let mut result = Vec::new();
@@ -1191,9 +1320,7 @@ impl<'p> Checker<'p> {
         }
         let result = Rc::new(result);
         if is_kept {
-            self.emit_resolver_links
-                .chains
-                .insert(key, Rc::clone(&result));
+            self.links.chains.insert(key, Rc::clone(&result));
         }
         result
     }
@@ -1254,7 +1381,7 @@ impl<'p> Checker<'p> {
             return vec![symbol];
         }
         let mut candidates: Vec<Vec<Sym>> = Vec::new();
-        if let Some(export_symbol) = res.and_then(|res| self.export_symbol_of(res))
+        if let Some(export_symbol) = res.and_then(|res| self.c.export_symbol_of(res))
             && self.is_accessible(
                 symbol,
                 at,
@@ -1268,7 +1395,7 @@ impl<'p> Checker<'p> {
             candidates.push(vec![symbol]);
         }
         for alias in self.aliases_to_try(table, at, ignores_qualification, is_local_name_lookup) {
-            let Some(resolved) = self.resolve_alias_or_unknown(alias) else {
+            let Some(resolved) = self.resolve_alias(alias) else {
                 continue;
             };
             let candidate = self.candidate_list_for_symbol(
@@ -1286,11 +1413,11 @@ impl<'p> Checker<'p> {
         }
         if !candidates.is_empty() {
             // The first of the shortest.
-            candidates.sort_by(|a, b| self.compare_symbol_chains(a, b));
+            candidates.sort_by(|a, b| self.c.compare_symbol_chains(a, b));
             return candidates.swap_remove(0);
         }
         if table == Table::Globals {
-            let global_this = self.files().global_this_symbol;
+            let global_this = self.c.files().global_this_symbol;
             return self.candidate_list_for_symbol(
                 symbol,
                 at,
@@ -1312,13 +1439,13 @@ impl<'p> Checker<'p> {
         ignores_qualification: bool,
         is_local_name_lookup: bool,
     ) -> Vec<Sym> {
-        let is_in_module = self.hir(at.file).has_module_syntax;
+        let is_in_module = self.c.hir(at.file).has_module_syntax;
         let mut aliases = Vec::new();
         for &(name, alias) in self.aliases_in_table(table).iter() {
             if name == known::export_equals || name == known::default {
                 continue;
             }
-            let decls = self.decls_of(alias);
+            let decls = self.c.decls_of(alias);
             // `isUMDExportSymbol`
             if is_in_module && matches!(decls.first(), Some((_, Decl::UmdGlobal(_)))) {
                 continue;
@@ -1337,26 +1464,22 @@ impl<'p> Checker<'p> {
 
     /// `getAccessibleSymbolChain(property, enclosingDeclaration, SymbolFlagsNone, ..)`. A property is in no table, so the chain is
     /// an alias that resolves to it.
-    pub(super) fn accessible_alias_of_property(
-        &mut self,
-        property: &Prop,
-        at: Enclosing,
-    ) -> Option<Sym> {
+    fn accessible_alias_of_property(&mut self, property: &Prop, at: Enclosing) -> Option<Sym> {
         // `isPropertyOrMethodDeclarationSymbol`
         let is_property_or_method_declaration = match &property.source {
             PropSource::Members(list) => list.iter().all(|&(file, member)| {
                 let is_in_class = matches!(
-                    self.bound(file).member_owner[member.idx()],
+                    self.c.bound(file).member_owner[member.idx()],
                     MemberOwner::Class(_)
                 );
-                match self.hir(file)[member].kind {
+                match self.c.hir(file)[member].kind {
                     MemberKind::Getter | MemberKind::Setter => true,
                     MemberKind::Property | MemberKind::Method => is_in_class,
                     _ => false,
                 }
             }),
             PropSource::Literal(file, written) => matches!(
-                self.hir(*file)[*written].kind,
+                self.c.hir(*file)[*written].kind,
                 PropKind::Method | PropKind::Getter | PropKind::Setter
             ),
             _ => false,
@@ -1367,13 +1490,13 @@ impl<'p> Checker<'p> {
         for table in self.tables_in_scope(at) {
             let mut candidates = Vec::new();
             for alias in self.aliases_to_try(table, at, false, true) {
-                if self.property_of_alias(alias) == Some(property)
+                if self.c.property_of_alias(alias) == Some(property)
                     && self.can_qualify_symbol(at, alias, Meaning::None, &mut Vec::new())
                 {
                     candidates.push(alias);
                 }
             }
-            candidates.sort_by(|&a, &b| self.compare_symbols_of_chain(a, b));
+            candidates.sort_by(|&a, &b| self.c.compare_symbols_of_chain(a, b));
             if let Some(&first) = candidates.first() {
                 return Some(first);
             }
@@ -1383,15 +1506,16 @@ impl<'p> Checker<'p> {
 
     /// `resolveAlias`: what the alias is declared to stand for, and on from there while that is an alias and nothing else
     /// (`resolveSymbol`, `isNonLocalAlias`).
-    fn resolve_alias_or_unknown(&mut self, alias: Sym) -> Option<Sym> {
-        if let Some(combined) = self.combined_symbol_of_alias(alias) {
+    fn resolve_alias(&mut self, alias: Sym) -> Option<Sym> {
+        if let Some(combined) = self.c.combined_symbol_of_alias(alias) {
             return Some(combined);
         }
-        match self.originating_import_of_alias(alias) {
-            Some(originating_import) => Some(self.module_clone(originating_import)),
+        match self.c.originating_import_of_alias(alias) {
+            Some(originating_import) => Some(self.c.module_clone(originating_import)),
             None => Some(
-                self.target_of_alias(alias)
-                    .unwrap_or(self.files().unknown_symbol),
+                self.c
+                    .target_of_alias(alias)
+                    .unwrap_or(self.c.files().unknown_symbol),
             ),
         }
     }
@@ -1450,11 +1574,11 @@ impl<'p> Checker<'p> {
         ignores_qualification: bool,
         visited: &mut Vec<(Sym, Table)>,
     ) -> bool {
-        let merged = self.files().canonical(from_table);
+        let merged = self.c.merged_symbol(from_table);
         if symbol != merged && Some(symbol) != resolved {
             return false;
         }
-        !self.is_external_module_symbol(from_table)
+        !self.c.is_external_module_symbol(from_table)
             && (ignores_qualification || self.can_qualify_symbol(at, merged, meaning, visited))
     }
 
@@ -1469,7 +1593,7 @@ impl<'p> Checker<'p> {
         if !self.needs_qualification(from_table, at, meaning) {
             return true;
         }
-        match self.parent_of_symbol(from_table) {
+        match self.c.parent_of_symbol(from_table) {
             Some(parent) => !self
                 .accessible_symbol_chain_ex(parent, at, meaning.left(), visited)
                 .is_empty(),
@@ -1479,8 +1603,8 @@ impl<'p> Checker<'p> {
 
     /// `needsQualification`
     fn needs_qualification(&mut self, symbol: Sym, at: Enclosing, meaning: Meaning) -> bool {
-        let name = self.name_of(symbol);
-        for &(local, flags, found) in &self.emit_resolver_links.fake_locals {
+        let name = self.c.name_of(symbol);
+        for &(local, flags, found) in &self.links.fake_locals {
             if local == name && found == Some(symbol) {
                 return false;
             }
@@ -1492,18 +1616,19 @@ impl<'p> Checker<'p> {
             let Some(found) = self.lookup_symbol(table, symbol) else {
                 continue;
             };
-            let found = self.files().canonical(found);
+            let found = self.c.merged_symbol(found);
             if found == symbol {
                 return false;
             }
-            let flags = self.flags_of(found);
+            let flags = self.c.flags_of(found);
             let resolves_alias = flags.contains(SymFlags::ALIAS)
                 && !self
+                    .c
                     .decls_of(found)
                     .iter()
                     .any(|d| matches!(d.1, Decl::ExportSpec(_)));
             let flags = if resolves_alias {
-                self.files().symbol_flags(found)
+                self.c.files().symbol_flags(found)
             } else {
                 flags
             };
@@ -1516,46 +1641,42 @@ impl<'p> Checker<'p> {
 
     /// `getAliasForSymbolInContainer`
     fn alias_for_symbol_in_container(&mut self, container: Sym, symbol: Sym) -> Option<Sym> {
-        if Some(container) == self.parent_of_symbol(symbol) {
+        if Some(container) == self.c.parent_of_symbol(symbol) {
             return Some(symbol);
         }
-        if container == self.files().global_this_symbol {
+        if container == self.c.files().global_this_symbol {
             return None;
         }
-        if let Some(equals) = self.files().export(container, known::export_equals)
-            && self.is_same_reference(equals, symbol)
+        if let Some(equals) = self.c.files().export(container, known::export_equals)
+            && self.c.is_same_reference(equals, symbol)
         {
             return Some(container);
         }
         let exports = self.exports_of_symbol(container);
-        let name = self.name_of(symbol);
+        let name = self.c.name_of(symbol);
         if let Some(quick) = exports.iter().find(|export| export.0 == name)
-            && self.is_same_reference(quick.1, symbol)
+            && self.c.is_same_reference(quick.1, symbol)
         {
             return Some(quick.1);
         }
         let mut same = Vec::new();
         for &(_, exported) in exports.iter() {
-            if self.is_same_reference(exported, symbol) {
+            if self.c.is_same_reference(exported, symbol) {
                 same.push(exported);
             }
         }
         same.into_iter()
-            .min_by(|&a, &b| self.compare_symbols_of_chain(a, b))
+            .min_by(|&a, &b| self.c.compare_symbols_of_chain(a, b))
     }
 
     /// `getAlternativeContainingModules`
     fn alternative_containing_modules(&mut self, symbol: Sym, at: Enclosing) -> Rc<Vec<Sym>> {
-        if let Some(known) = self
-            .emit_resolver_links
-            .containing_modules
-            .get(&(symbol, at.file))
-        {
+        if let Some(known) = self.links.containing_modules.get(&(symbol, at.file)) {
             return Rc::clone(known);
         }
-        let files = self.files();
+        let files = self.c.files();
         let mut results = Vec::new();
-        for &specifier in &self.bound(at.file).specifiers {
+        for &specifier in &self.c.bound(at.file).specifiers {
             if let Some(module) = files.module_of_specifier(at.file, specifier)
                 && self.alias_for_symbol_in_container(module, symbol).is_some()
             {
@@ -1576,7 +1697,7 @@ impl<'p> Checker<'p> {
             }
         }
         let results = Rc::new(results);
-        self.emit_resolver_links
+        self.links
             .containing_modules
             .insert((symbol, at.file), Rc::clone(&results));
         results
@@ -1590,7 +1711,7 @@ impl<'p> Checker<'p> {
         at: Enclosing,
         meaning: Meaning,
     ) -> Rc<Vec<Sym>> {
-        let flags = self.flags_of(container);
+        let flags = self.c.flags_of(container);
         if meaning != Meaning::Value
             || flags.intersects(SymFlags::VALUE)
             || !flags.intersects(SymFlags::TYPE)
@@ -1598,16 +1719,16 @@ impl<'p> Checker<'p> {
             return Rc::default();
         }
         let key = (container, at.file, at.scope);
-        if let Some(known) = self.emit_resolver_links.variable_matches.get(&key) {
+        if let Some(known) = self.links.variable_matches.get(&key) {
             return Rc::clone(known);
         }
-        let declared = self.declared_type(container);
+        let declared = self.c.declared_type(container);
         let mut matches = Vec::new();
-        if self.is_object_type(declared) {
+        if self.c.is_object_type(declared) {
             for table in self.tables_in_scope(at) {
                 for (_, symbol) in self.symbols_in_table(table) {
-                    if self.flags_of(symbol).intersects(SymFlags::VALUE)
-                        && self.type_of_symbol(symbol) == declared
+                    if self.c.flags_of(symbol).intersects(SymFlags::VALUE)
+                        && self.c.type_of_symbol(symbol) == declared
                     {
                         matches.push(symbol);
                     }
@@ -1616,12 +1737,10 @@ impl<'p> Checker<'p> {
                     break;
                 }
             }
-            matches.sort_by(|&a, &b| self.compare_symbols_of_chain(a, b));
+            matches.sort_by(|&a, &b| self.c.compare_symbols_of_chain(a, b));
         }
         let matches = Rc::new(matches);
-        self.emit_resolver_links
-            .variable_matches
-            .insert(key, Rc::clone(&matches));
+        self.links.variable_matches.insert(key, Rc::clone(&matches));
         matches
     }
 
@@ -1636,9 +1755,9 @@ impl<'p> Checker<'p> {
     ) -> Vec<Sym> {
         // `getFileSymbolIfFileSymbolExportEqualsContainer`
         let mut additional = Vec::new();
-        if let Some(module) = self.external_module_container_of_symbol(container)
-            && let Some(equals) = self.files().export(module, known::export_equals)
-            && self.is_same_reference(equals, container)
+        if let Some(module) = self.c.external_module_container_of_symbol(container)
+            && let Some(equals) = self.c.files().export(module, known::export_equals)
+            && self.c.is_same_reference(equals, container)
         {
             additional.push(module);
         }
@@ -1646,7 +1765,10 @@ impl<'p> Checker<'p> {
             Some(symbol) => self.alternative_containing_modules(symbol, at),
             None => Rc::default(),
         };
-        let is_in_scope = self.flags_of(container).intersects(meaning.left().flags())
+        let is_in_scope = self
+            .c
+            .flags_of(container)
+            .intersects(meaning.left().flags())
             && !self
                 .accessible_symbol_chain(container, at, Meaning::Namespace)
                 .is_empty();
@@ -1667,7 +1789,7 @@ impl<'p> Checker<'p> {
     /// The part of `getContainersOfSymbol` for the class expression `e` on the right of `a.b = class ..`: the module for
     /// `module.exports = ..` and `exports.b = ..`, otherwise what `a` resolves to.
     fn container_of_assigned_class_expression(&self, file: FileId, e: ExprId) -> Option<Sym> {
-        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
         let Parent::Expr(assignment) = bound.expr_parent[e.idx()] else {
             return None;
         };
@@ -1683,15 +1805,15 @@ impl<'p> Checker<'p> {
             return None;
         };
         if value != e
-            || is_parenthesized(self.hir(file), e)
-            || is_parenthesized(self.hir(file), target)
+            || is_parenthesized(self.c.hir(file), e)
+            || is_parenthesized(self.c.hir(file), target)
         {
             return None;
         }
         let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[target].kind else {
             return None;
         };
-        if !is_entity_name_expression(self.hir(file), obj) {
+        if !is_entity_name_expression(self.c.hir(file), obj) {
             return None;
         }
         // `IsModuleExportsAccessExpression(left) || IsExportsIdentifier(left.Expression())`
@@ -1704,23 +1826,23 @@ impl<'p> Checker<'p> {
                 .then(|| files.file_symbol(file));
         }
         match hir[obj].kind {
-            ExprKind::Ident(name) => self.symbol_of_identifier(file, obj, name),
+            ExprKind::Ident(name) => self.c.symbol_of_identifier(file, obj, name),
             _ => None,
         }
     }
 
     /// `getContainersOfSymbol`
     fn containers_of_symbol(&mut self, symbol: Sym, at: Enclosing, meaning: Meaning) -> Vec<Sym> {
-        if let Some(container) = self.parent_of_symbol(symbol)
-            && !self.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER)
+        if let Some(container) = self.c.parent_of_symbol(symbol)
+            && !self.c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER)
         {
             return self.with_alternative_containers(container, Some(symbol), at, meaning);
         }
-        let files = self.files();
+        let files = self.c.files();
         let mut candidates: Vec<Sym> = Vec::new();
-        for (file, decl) in self.decls_of(symbol) {
+        for (file, decl) in self.c.decls_of(symbol) {
             // `IsAmbientModule`
-            if matches!(decl, Decl::Module(m) if !matches!(self.hir(file)[m].name, ModuleName::Ident(_)))
+            if matches!(decl, Decl::Module(m) if !matches!(self.c.hir(file)[m].name, ModuleName::Ident(_)))
                 || matches!(
                     decl,
                     Decl::ImportDefault(_)
@@ -1732,7 +1854,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             if let Decl::Class(class) = decl
-                && let ClassOwner::Expr(e) = self.bound(file).class_owner[class.idx()]
+                && let ClassOwner::Expr(e) = self.c.bound(file).class_owner[class.idx()]
             {
                 if let Some(candidate) = self.container_of_assigned_class_expression(file, e)
                     && !candidates.contains(&candidate)
@@ -1744,7 +1866,7 @@ impl<'p> Checker<'p> {
             let Some(statement) = self.statement_of(file, decl) else {
                 continue;
             };
-            let bound = self.bound(file);
+            let bound = self.c.bound(file);
             let candidate = match bound.stmt_parent[statement.idx()] {
                 // A direct child of a module.
                 Parent::File if files.module(file).is_module() => files.file_symbol(file),
@@ -1804,7 +1926,7 @@ impl<'p> Checker<'p> {
                 }
             }
             // Whatever a module means can be written as an `import` type.
-            if self.is_external_module_symbol(symbol) {
+            if self.c.is_external_module_symbol(symbol) {
                 if paints {
                     early_module_bail = true;
                     continue;
@@ -1830,9 +1952,9 @@ impl<'p> Checker<'p> {
         Some(Access {
             accessibility: Accessibility::NotAccessible,
             aliases: Vec::new(),
-            symbol_name: self.symbol_text(initial),
+            symbol_name: self.c.symbol_text(initial),
             module_name: if had != initial {
-                self.symbol_text(had)
+                self.c.symbol_text(had)
             } else {
                 String::new()
             },
@@ -1861,19 +1983,19 @@ impl<'p> Checker<'p> {
         let mut result = Access {
             accessibility: Accessibility::NotAccessible,
             aliases: Vec::new(),
-            symbol_name: self.symbol_text(symbol),
+            symbol_name: self.c.symbol_text(symbol),
             module_name: String::new(),
             error_node: None,
         };
-        if let Some(module) = self.external_module_container_of_symbol(symbol)
-            && Some(module) != self.external_module_container(at.file, at.scope)
+        if let Some(module) = self.c.external_module_container_of_symbol(symbol)
+            && Some(module) != self.c.external_module_container(at.file, at.scope)
         {
             result.accessibility = Accessibility::CannotBeNamed;
-            result.module_name = self.symbol_text(module);
+            result.module_name = self.c.symbol_text(module);
             // `ErrorNode`: `enclosingDeclaration`, if it is in JavaScript. A variable declaration is where the error is anyway.
-            if self.hir(at.file).is_js && at.variable.is_none() && at.fake_scope == 0 {
-                let start = self.skip_trivia_from(at.file, 0);
-                result.error_node = Some((start, self.end_of_token_at(at.file, start)));
+            if self.c.hir(at.file).is_js && at.variable.is_none() && at.fake_scope == 0 {
+                let start = self.c.skip_trivia_from(at.file, 0);
+                result.error_node = Some((start, self.c.end_of_token_at(at.file, start)));
             }
         }
         result
@@ -1913,7 +2035,7 @@ impl SymbolTrackerImpl {
 
     fn name_range_of_member(&self, c: &Checker<'_>, m: MemberId) -> (u32, u32) {
         (
-            c.hir(self.current_source_file)[m].pos,
+            c.hir(self.current_source_file)[m].name_pos,
             c.end_of_member_name(self.current_source_file, m),
         )
     }
@@ -2051,7 +2173,7 @@ impl SymbolTrackerImpl {
                     FnOwner::Member(m) if hir[f].kind == FnKind::Method => {
                         self.name_range_of_member(c, m)
                     }
-                    FnOwner::Member(m) => (hir[m].pos, hir[m].loc.end),
+                    FnOwner::Member(m) => (hir[m].start, hir[m].loc.end),
                     _ if hir[f].name.is_some() => (
                         hir[f].name_pos,
                         c.end_of_name_at(self.current_source_file, hir[f].name_pos),
@@ -2205,7 +2327,9 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
             return true;
         }
         let meaning = Meaning::of(meaning, false);
-        let access = c.is_symbol_accessible(symbol, at, meaning, true);
+        let access = c.with_emit_resolver(self.current_source_file, |resolver| {
+            resolver.is_symbol_accessible(symbol, at, meaning, true)
+        });
         self.handle_symbol_accessibility_error(c, access)
     }
 
@@ -2376,7 +2500,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             // `isDeclarationAndNotVisible`
             let is_visible = match declaration {
                 Decl::Var(pat) => self.is_binding_name_visible(pat),
-                _ => self.c.is_declaration_visible(file, declaration),
+                _ => self
+                    .with_resolver(|resolver| resolver.is_declaration_visible(file, declaration)),
             };
             if !is_visible {
                 continue;
@@ -2551,7 +2676,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             visited.push(symbol);
             at = None;
             for (file, decl) in files.decls(symbol) {
-                self.c.emit_resolver_links.paint_visible(file, decl);
+                self.with_resolver(|resolver| resolver.links.paint_visible(file, decl));
                 // `import a = b.c` makes `b` visible.
                 if let Decl::ImportEquals(i) = decl
                     && let ImportEqualsTarget::Entity(names) = self.c.hir(file)[i].target
@@ -2638,7 +2763,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         };
         let file = self.file();
         if let Some(decl) = decl
-            && !self.c.is_declaration_visible(file, decl)
+            && !self.with_resolver(|resolver| resolver.is_declaration_visible(file, decl))
         {
             return false;
         }
@@ -2663,7 +2788,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 true
             }
             StmtKind::Interface(i) => {
-                self.enter(bound.interface_scope[i.idx()]);
+                self.enter(self.interface_scopes[i.idx()]);
                 for tp in hir[i].type_params.iter() {
                     self.visit_type_parameter(tp, 4004);
                 }
@@ -2696,7 +2821,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 true
             }
             StmtKind::Module(m) => {
-                self.enter(bound.module_scope[m.idx()]);
+                self.enter(self.module_scopes[m.idx()]);
                 for inner in hir.ids(hir[m].body) {
                     self.visit_statement(inner);
                 }
@@ -2721,7 +2846,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// `transformImportEqualsDeclaration`
     fn transform_import_equals(&mut self, i: ImportEqualsId, s: StmtId) -> bool {
         let file = self.file();
-        if !self.c.is_declaration_visible(file, Decl::ImportEquals(i)) {
+        if !self
+            .with_resolver(|resolver| resolver.is_declaration_visible(file, Decl::ImportEquals(i)))
+        {
             return false;
         }
         let hir = self.c.hir(self.file());
@@ -2746,7 +2873,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
         let hir = self.c.hir(file);
         match hir[pat].kind {
             PatKind::Missing => false,
-            PatKind::Ident(_) => self.c.is_declaration_visible(file, Decl::Var(pat)),
+            PatKind::Ident(_) => {
+                self.with_resolver(|resolver| resolver.is_declaration_visible(file, Decl::Var(pat)))
+            }
             PatKind::Object(props) => props
                 .iter()
                 .any(|p| self.is_binding_name_visible(hir[p].value)),
@@ -2767,7 +2896,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
         }
         let scope = match bound.stmt_parent[s.idx()] {
             Parent::File => ScopeId(0),
-            Parent::Module(m) => bound.module_scope[m.idx()],
+            Parent::Module(m) => self.module_scopes[m.idx()],
             _ => self.enclosing.scope,
         };
         let is_commonjs = bound.commonjs_indicator.is_some();
@@ -2984,9 +3113,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
                         let ty = self.c.type_of_index_component(component);
                         self.c.type_to_type_node(
                             ty,
-                            Some(self.enclosing),
+                            self.enclosing,
                             DECLARATION_EMIT_NODE_BUILDER_FLAGS,
-                            Some(&mut self.tracker),
+                            &mut self.tracker,
                         );
                     }
                     continue;
@@ -2995,9 +3124,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 let value = self.c.instantiate(info.value, mapper);
                 self.c.type_to_type_node(
                     value,
-                    Some(self.enclosing),
+                    self.enclosing,
                     DECLARATION_EMIT_NODE_BUILDER_FLAGS,
-                    Some(&mut self.tracker),
+                    &mut self.tracker,
                 );
             }
         }
@@ -3389,9 +3518,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
     /// `checkEntityNameVisibility`
     fn check_entity_name_visibility(&mut self, first: Atom, start: u32, meaning: Meaning) {
         let at = self.enclosing;
-        let access = self
-            .c
-            .is_entity_name_visible(first, Some(start), meaning, at, true);
+        let access = self.with_resolver(|resolver| {
+            resolver.is_entity_name_visible(first, Some(start), meaning, at, true)
+        });
         self.tracker
             .handle_symbol_accessibility_error(self.c, access);
     }
@@ -3508,6 +3637,53 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     // ───────────────────────────── types that are not ─────────────────────────────
 
+    /// `isOptionalParameter`
+    fn is_optional_parameter(&self, file: FileId, p: ParamId) -> bool {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        if hir[p].flags.contains(Flags::OPTIONAL) {
+            return true;
+        }
+        // One with an initializer can be left out if none after it has to be given.
+        hir[p].default.is_some()
+            && !hir[bound.param_fn[p.idx()]].params.iter().any(|other| {
+                other.0 > p.0
+                    && !hir[other].flags.intersects(Flags::OPTIONAL | Flags::REST)
+                    && hir[other].default.is_none()
+            })
+    }
+
+    /// `requiresAddingImplicitUndefined`, of a parameter.
+    fn requires_adding_implicit_undefined(
+        &mut self,
+        file: FileId,
+        p: ParamId,
+        at: Enclosing,
+    ) -> bool {
+        if !self.c.files().options.strict_null_checks {
+            return false;
+        }
+        let parameter = self.c.hir(file)[p];
+        let is_optional = self.is_optional_parameter(file, p);
+        let is_property = parameter.flags.contains(Flags::PARAMETER_PROPERTY);
+        // `isRequiredInitializedParameter`, `isOptionalUninitializedParameterProperty`
+        let may_be_undefined = if parameter.default.is_some() {
+            !is_optional && (!is_property || self.c.is_function_like_declaration(at))
+        } else {
+            is_optional && is_property
+        };
+        if !may_be_undefined {
+            return false;
+        }
+        // `declaredParameterTypeContainsUndefined`
+        if parameter.ty.is_none() {
+            return true;
+        }
+        let declared = self.c.type_from_node(file, parameter.ty);
+        self.c.is_known(declared)
+            && !self.c.is_error_type(declared)
+            && !self.c.contains_undefined(declared)
+    }
+
     /// `shouldPrintWithInitializer`: the literal type of a constant that is written with its value.
     fn literal_const_type(&mut self, node: Typed) -> Option<TypeId> {
         let hir = self.c.hir(self.file());
@@ -3571,10 +3747,9 @@ impl<'p> DeclarationEmit<'_, 'p> {
             Typed::Signature(f) => hir[f].ret,
             Typed::Element(_) | Typed::Export(..) => TypeNodeId::NONE,
         };
-        let file = self.file();
         if annotation.is_some()
             && !matches!(node, Typed::Parameter(p)
-                if self.c.requires_adding_implicit_undefined(file, p, Some(self.enclosing)))
+                if self.requires_adding_implicit_undefined(self.file(), p, self.enclosing))
         {
             return self.visit_type(annotation, false);
         }
@@ -3980,11 +4155,12 @@ fn module_name_from_package_exports(
     )
 }
 
-impl<'p> Checker<'p> {
+impl<'p> EmitResolver<'_, 'p> {
     /// The relative specifiers `file` mentions, in the order it does.
     fn relative_specifiers_of(&self, file: FileId) -> Vec<&'p str> {
-        let files = self.files();
-        self.bound(file)
+        let files = self.c.files();
+        self.c
+            .bound(file)
             .specifiers
             .iter()
             .filter_map(|&specifier| std::str::from_utf8(files.atoms.bytes(specifier)).ok())
@@ -3994,7 +4170,7 @@ impl<'p> Checker<'p> {
 
     /// `GetDefaultResolutionModeForFile`
     fn default_resolution_mode_for_file(&self, file: FileId) -> ResolutionMode {
-        let files = self.files();
+        let files = self.c.files();
         let options = &files.options;
         // `importSyntaxAffectsModuleResolution`
         if options.resolves_like_node
@@ -4016,7 +4192,7 @@ impl<'p> Checker<'p> {
         if mode != ResolutionMode::None {
             return mode;
         }
-        match self.enclosing_module_specifier_mode {
+        match self.c.enclosing_module_specifier_mode {
             Some(mode) => mode,
             None => self.default_resolution_mode_for_file(importing),
         }
@@ -4029,7 +4205,7 @@ impl<'p> Checker<'p> {
         prefers_js: bool,
         mode: ResolutionMode,
     ) -> Ending {
-        let files = self.files();
+        let files = self.c.files();
         let mode = if mode == ResolutionMode::None {
             self.default_resolution_mode_for_file(importing)
         } else {
@@ -4086,7 +4262,7 @@ impl<'p> Checker<'p> {
         prefers_js: bool,
         mode: ResolutionMode,
     ) -> Vec<Ending> {
-        let files = self.files();
+        let files = self.c.files();
         let allows_ts = files.options.allow_importing_ts_extensions
             || is_declaration_file_name(&files.module(importing).path);
         if mode == ResolutionMode::Import && files.options.resolves_like_node {
@@ -4112,7 +4288,7 @@ impl<'p> Checker<'p> {
 
     /// `processEnding`
     fn process_ending(&self, file_name: &str, allowed: &[Ending]) -> String {
-        let files = self.files();
+        let files = self.c.files();
         let extension = known_extension(file_name);
         if matches!(extension, "" | ".json" | ".mjs" | ".cjs") {
             return file_name.to_owned();
@@ -4188,7 +4364,7 @@ impl<'p> Checker<'p> {
         mode: ResolutionMode,
         prefers_js: bool,
     ) -> String {
-        let files = self.files();
+        let files = self.c.files();
         let options = &files.options;
         let Some((top_level_node_modules, top_level_package_name, package_root)) =
             node_module_path_parts(path)
@@ -4285,7 +4461,7 @@ impl<'p> Checker<'p> {
             ".cts" => ".d.cts",
             _ => return None,
         };
-        for (output_dir, root_dir) in &self.files().options.referenced_outputs {
+        for (output_dir, root_dir) in &self.c.files().options.referenced_outputs {
             if let Some(relative) = path.strip_prefix(root_dir.as_str())
                 && relative.starts_with('/')
             {
@@ -4304,7 +4480,7 @@ impl<'p> Checker<'p> {
         targets: &[(String, bool)],
         importing: &str,
     ) -> Vec<(String, bool)> {
-        let links = &self.files().linked_directories;
+        let links = &self.c.files().linked_directories;
         let mut paths = Vec::new();
         let mut directory = parent_dir(real);
         while !links.is_empty() && !directory.is_empty() && directory != "/" {
@@ -4342,7 +4518,7 @@ impl<'p> Checker<'p> {
         mode: ResolutionMode,
         target_mode: ResolutionMode,
     ) -> String {
-        let from = parent_dir(&self.files().module(importing).path);
+        let from = parent_dir(&self.c.files().module(importing).path);
         // How far up from the importing file the directory is that `path` is in.
         let distance = |path: &str| {
             let (mut directory, mut up) = (from, 0);
@@ -4430,7 +4606,7 @@ impl<'p> Checker<'p> {
         allowed_endings: &[Ending],
         paths_only: bool,
     ) -> String {
-        let files = self.files();
+        let files = self.c.files();
         let options = &files.options;
         if paths_only && options.paths.is_empty() {
             return String::new();
@@ -4496,7 +4672,7 @@ impl<'p> Checker<'p> {
         source_directory: &str,
         allowed_endings: &[Ending],
     ) -> String {
-        let root_dirs = &self.files().options.root_dirs;
+        let root_dirs = &self.c.files().options.root_dirs;
         // `getPathsRelativeToRootDirs`
         let relative_to_root_dirs = |path: &str| -> Vec<String> {
             root_dirs
@@ -4535,7 +4711,7 @@ impl<'p> Checker<'p> {
         allowed_endings: &[Ending],
         base_directory: &str,
     ) -> String {
-        for (key, values) in &self.files().options.paths {
+        for (key, values) in &self.c.files().options.paths {
             for pattern_text in values {
                 let normalized = join(base_directory, pattern_text);
                 let pattern = relative_path_from_directory(base_directory, &normalized);
@@ -4576,7 +4752,7 @@ impl<'p> Checker<'p> {
         importing: FileId,
         mode: ResolutionMode,
     ) -> String {
-        let files = self.files();
+        let files = self.c.files();
         let from = files.module(importing);
         let target_mode = if mode == ResolutionMode::None {
             self.default_resolution_mode_for_file(importing)
@@ -4584,7 +4760,7 @@ impl<'p> Checker<'p> {
             mode
         };
         // What the file is imported by already.
-        'existing: for &specifier in &self.bound(importing).specifiers {
+        'existing: for &specifier in &self.c.bound(importing).specifiers {
             for used in [
                 from.default_mode,
                 ResolutionMode::Import,
@@ -4598,7 +4774,7 @@ impl<'p> Checker<'p> {
                     || used == ResolutionMode::None
                     || target_mode == ResolutionMode::None
                 {
-                    return self.atom_text(specifier);
+                    return self.c.atom_text(specifier);
                 }
                 break 'existing;
             }
@@ -4624,24 +4800,24 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSpecifierForModuleSymbol`
-    pub(super) fn specifier_for_module_symbol(
+    fn specifier_for_module_symbol(
         &mut self,
         symbol: Sym,
         importing: FileId,
         mode: ResolutionMode,
     ) -> String {
         let resolution_mode = self.resolution_mode_for_specifier(importing, mode);
-        if let Some(known) =
-            self.emit_resolver_links
-                .specifiers
-                .get(&(symbol, importing, resolution_mode))
+        if let Some(known) = self
+            .links
+            .specifiers
+            .get(&(symbol, importing, resolution_mode))
         {
             return known.clone();
         }
-        let decls = self.decls_of(symbol);
+        let decls = self.c.decls_of(symbol);
         // `isAmbientModuleSymbolName(symbol.Name)`
         let ambient_name = match decls.first() {
-            Some(&(file, Decl::Module(m))) => match self.hir(file)[m].name {
+            Some(&(file, Decl::Module(m))) => match self.c.hir(file)[m].name {
                 ModuleName::String(name) => Some(name),
                 _ => None,
             },
@@ -4654,9 +4830,9 @@ impl<'p> Checker<'p> {
                 Decl::File => target = target.or(Some(file)),
                 // `tryGetModuleNameFromAmbientModule`
                 Decl::Module(m) => {
-                    if let ModuleName::String(name) = self.hir(file)[m].name {
-                        let name = self.atom_text(name);
-                        if !self.hir(file).has_module_syntax || !is_relative(&name) {
+                    if let ModuleName::String(name) = self.c.hir(file)[m].name {
+                        let name = self.c.atom_text(name);
+                        if !self.c.hir(file).has_module_syntax || !is_relative(&name) {
                             specifier = specifier.or(Some(name));
                         }
                     }
@@ -4666,14 +4842,14 @@ impl<'p> Checker<'p> {
         }
         let specifier = match (ambient_name, specifier, target) {
             // Without a file, `StripQuotes(symbol.Name)`.
-            (Some(name), _, None) => self.atom_text(name),
+            (Some(name), _, None) => self.c.atom_text(name),
             (_, Some(name), _) => name,
-            (_, None, target) => match target.or_else(|| self.source_file_of_module(symbol)) {
+            (_, None, target) => match target.or_else(|| self.c.source_file_of_module(symbol)) {
                 Some(target) => self.get_module_specifiers(target, importing, mode),
                 None => String::new(),
             },
         };
-        self.emit_resolver_links
+        self.links
             .specifiers
             .insert((symbol, importing, resolution_mode), specifier.clone());
         specifier
@@ -4682,7 +4858,7 @@ impl<'p> Checker<'p> {
     /// `sortByBestName`
     fn sort_by_best_name(&self, a: &(Sym, String), b: &(Sym, String)) -> std::cmp::Ordering {
         if a.1.is_empty() || b.1.is_empty() {
-            return self.compare_symbols_of_chain(a.0, b.0);
+            return self.c.compare_symbols_of_chain(a.0, b.0);
         }
         match (path_is_relative(&a.1), path_is_relative(&b.1)) {
             (false, true) => std::cmp::Ordering::Less,
@@ -4695,7 +4871,7 @@ impl<'p> Checker<'p> {
     fn sorted_by_best_name(&mut self, parents: Vec<Sym>, at: Enclosing) -> Vec<Sym> {
         let mut named: Vec<(Sym, String)> = Vec::with_capacity(parents.len());
         for parent in parents {
-            let name = if self.is_external_module_symbol(parent) {
+            let name = if self.c.is_external_module_symbol(parent) {
                 self.specifier_for_module_symbol(parent, at.file, ResolutionMode::None)
             } else {
                 String::new()
@@ -4746,15 +4922,16 @@ impl<'p> Checker<'p> {
                 }
                 // The module says with `export =` that it is the symbol.
                 let is_the_module = self
+                    .c
                     .files()
                     .export(parent, known::export_equals)
-                    .is_some_and(|equals| self.is_same_reference(equals, symbol));
+                    .is_some_and(|equals| self.c.is_same_reference(equals, symbol));
                 if !is_the_module {
                     if chain.is_empty() {
                         let last = self
                             .alias_for_symbol_in_container(parent, symbol)
                             .unwrap_or(symbol);
-                        chain.push(self.target_of_module_clone(last));
+                        chain.push(self.c.target_of_module_clone(last));
                     }
                     parent_chain.append(&mut chain);
                 }
@@ -4764,31 +4941,32 @@ impl<'p> Checker<'p> {
         }
         // A parent that is an external module is not written, unless the chain may start with it.
         if chain.is_empty()
-            && (depth == 0 || yields_module || !self.is_external_module_symbol(symbol))
+            && (depth == 0 || yields_module || !self.c.is_external_module_symbol(symbol))
         {
             // What `cloneTypeAsModuleType` made is written as its target: it has the name and the declarations of that.
-            chain.push(self.target_of_module_clone(symbol));
+            chain.push(self.c.target_of_module_clone(symbol));
         }
         chain
     }
 
     /// The part of `symbolToTypeNode` that writes `import("specifier")` for `module`: the specifier, and the `resolution-mode` attribute.
-    pub(super) fn import_type_specifier_and_mode(
+    fn import_type_specifier_and_mode(
         &mut self,
         module: Sym,
         importing: FileId,
         allows_node_modules_relative_paths: bool,
     ) -> (String, Option<&'static str>) {
-        let files = self.files();
+        let files = self.c.files();
         let is_node = files.options.resolves_like_node;
         // `GetEmitModuleFormatOfFile`
         let context_format = files.module(importing).implied_format;
         let target_format = self
+            .c
             .decls_of(module)
             .into_iter()
             .find(|d| d.1 == Decl::File)
             .map(|d| d.0)
-            .or_else(|| self.source_file_of_module(module))
+            .or_else(|| self.c.source_file_of_module(module))
             .map(|file| files.module(file).implied_format);
         let mut specifier = String::new();
         let mut mode = None;

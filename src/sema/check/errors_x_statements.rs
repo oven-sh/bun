@@ -1352,7 +1352,7 @@ impl Checker<'_> {
                 MemberDeclaration::Member(m) => Some((
                     compared_modifiers(hir[m].flags),
                     hir[m].kind == MemberKind::Property,
-                    hir[m].pos,
+                    hir[m].name_pos,
                 )),
                 MemberDeclaration::Parameter(p) => {
                     Some((compared_modifiers(hir[p].flags), true, hir[hir[p].pat].pos))

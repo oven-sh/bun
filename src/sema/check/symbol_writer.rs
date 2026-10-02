@@ -249,7 +249,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             // `declareSymbolEx`: a name that names nothing, `#x` with no class around it or `1n`, gives a symbol all the same
             // (`InternalSymbolNameMissing`), which is in no table.
             VisitedKind::MemberName(m) | VisitedKind::LiteralInMemberName(m) => {
-                let start = super::errors_x_properties_jsx::start_of_member_name(hir, m);
+                let start = hir[m].name_pos;
                 (!matches!(hir[m].key, PropKey::None) || is_written_name(hir, start))
                     .then(|| self.property_of_member(m))
             }
@@ -525,7 +525,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 let is_queried = bound.is_in_type_query(e);
                 // `GetThisContainer`
                 let function = if is_queried {
-                    match self.c.this_container_of_type_query(file, e) {
+                    match self.c.this_container_of_type_query(file, e, false) {
                         Some(QueriedThisContainer::Fn(function)) => Some(function),
                         _ => None,
                     }
@@ -1240,7 +1240,9 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                         .collect(),
                 }
             }
-            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => {
+            PropSource::Intersected(_, parts)
+            | PropSource::Copy(_, parts, _)
+            | PropSource::ReverseMapped(_, parts) => {
                 let mut declarations = Vec::new();
                 for part in parts.iter() {
                     declarations.extend(self.declarations_of_property(part, depth));
@@ -1435,10 +1437,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             _ => {}
         }
         let declarations = self.declarations_of_property(prop, 0);
-        if let Some(alias) = self
-            .c
-            .accessible_alias_of_property(prop, Enclosing::at_scope(self.file, at))
-        {
+        if let Some(alias) = self.c.accessible_alias_of_property_at(prop, self.file, at) {
             return (
                 self.symbol_chain_to_string(false, &[alias], at),
                 declarations,
@@ -1583,16 +1582,34 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         }
         let name = self.c.symbol_to_string(symbol);
         // `startsWithSingleOrDoubleQuote`: a function that `declare module "m" {}` adds to goes by its own name.
-        if name.starts_with(['"', '\'']) && self.c.is_external_module_symbol(symbol) {
-            let specifier =
-                self.c
-                    .specifier_for_module_symbol(symbol, self.file, ResolutionMode::None);
+        if name.starts_with(['"', '\'']) && self.is_external_module(symbol) {
+            let specifier = self
+                .c
+                .specifier_for_module_symbol_at(symbol, Enclosing::at_scope(self.file, at));
             // `getSpecifierForModuleSymbol`: without a file, `StripQuotes(symbol.Name)` (`isAmbientModuleSymbolName`).
             if !specifier.is_empty() {
                 return super::print::quoted(&specifier, '"', true);
             }
         }
         name
+    }
+
+    /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
+    fn is_external_module(&self, symbol: Sym) -> bool {
+        let files = self.c.files();
+        files
+            .decls(symbol)
+            .into_iter()
+            .any(|(file, decl)| match decl {
+                // `IsExternalOrCommonJSModule`, which a JSON file is not.
+                Decl::File => {
+                    files.module(file).is_module() && self.c.hir(file).kind != FileKind::Json
+                }
+                Decl::Module(module) => {
+                    matches!(self.c.hir(file)[module].name, ModuleName::String(_))
+                }
+                _ => false,
+            })
     }
 }
 

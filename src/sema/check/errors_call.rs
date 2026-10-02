@@ -3,9 +3,9 @@
 //!
 //! The order of the checks, what is said and where follow `resolveCallExpression`, `resolveNewExpression`,
 //! `resolveTaggedTemplateExpression`, `resolveCall`, `chooseOverload`, `isSignatureApplicable`, `reportCallResolutionErrors` and
-//! `getArgumentArityError` of TypeScript 7.0.2's checker.go. One thing differs: an argument has one type here, the one it got
-//! when the call was resolved, where they look at it again for each candidate. Whenever that leaves it open whether a candidate
-//! fits, nothing is said.
+//! `getArgumentArityError` of TypeScript 7.0.2's checker.go. One thing differs: an argument that is no literal has one type here,
+//! the one it got when the call was resolved, where they look at it again for each candidate (`arg_type_under`). Whenever that
+//! leaves it open whether a candidate fits, nothing is said.
 
 use super::call::{Arg, Args, CallLike, CallState, ResolvedCall};
 use super::errors::Diagnostic;
@@ -919,10 +919,19 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the types of the arguments were all found out.
-    fn are_argument_types_known(&mut self, file: FileId, args: &[Arg]) -> bool {
-        args.iter().all(|&arg| {
-            let ty = self.arg_type(file, arg);
+    /// Whether the types of the arguments were all found out. `params`: what the signature they are held against takes. Empty: the
+    /// call is resolved, and they are what they are kept as.
+    fn are_argument_types_known(
+        &mut self,
+        file: FileId,
+        args: &[Arg],
+        params: &[SigParam],
+    ) -> bool {
+        args.iter().enumerate().all(|(i, &arg)| {
+            let ty = match self.param_type_at(params, i) {
+                Some(param) => self.arg_type_under(file, arg, param),
+                None => self.arg_type(file, arg),
+            };
             self.is_known(ty) && !matches!(arg, Arg::Expr(x) if self.is_uncertain(file, x))
         })
     }
@@ -957,7 +966,7 @@ impl Checker<'_> {
         // A call that is being resolved cannot say what it expects of an argument. The candidate at hand does, in
         // `is_signature_applicable`. The arguments of any other call are what they are, whatever they are held against.
         let is_under_way = self.stack.contains(&Query::Call(file, e));
-        if !is_under_way && !self.are_argument_types_known(file, &args) {
+        if !is_under_way && !self.are_argument_types_known(file, &args, &[]) {
             return None;
         }
         let type_args = match node {
@@ -1456,8 +1465,8 @@ impl Checker<'_> {
         // `checkExpressionWithContextualType`: a call that is being resolved cannot say what it expects of an argument, so `sig`
         // does, but for what is settled already.
         let settled = self.contextual.len();
+        let expected = self.sig_params(sig);
         if self.stack.contains(&Query::Call(file, e)) {
-            let expected = self.sig_params(sig);
             for (i, &arg) in args.iter().enumerate() {
                 if let Arg::Expr(x) = arg
                     && self.explicit_context(file, x).is_none()
@@ -1470,7 +1479,7 @@ impl Checker<'_> {
             }
         }
         // Nothing is decided on the strength of an argument that could not be found out.
-        let applicable = if self.are_argument_types_known(file, args) {
+        let applicable = if self.are_argument_types_known(file, args, &expected) {
             self.signature_applicability(s, sig, Relation::Assignable, false, report)
         } else {
             Applicable::Unknown
@@ -1555,7 +1564,7 @@ impl Checker<'_> {
             let Some(wanted) = self.param_type_at(&params, i) else {
                 continue;
             };
-            let given = self.arg_type(file, arg);
+            let given = self.arg_type_under(file, arg, wanted);
             if !self.is_known(given)
                 || !self.is_known(wanted)
                 || matches!(arg, Arg::Expr(x) if self.is_uncertain(file, x))

@@ -2506,15 +2506,6 @@ impl Files {
         }
     }
 
-    /// What is wrong before any file is looked at: with the options, and with what they name. The codes, in order, each once.
-    pub fn configuration_errors(&self) -> Vec<u32> {
-        let mut all = self.options.errors.clone();
-        all.extend(self.program_errors.iter().map(|problem| problem.code));
-        all.sort_unstable();
-        all.dedup();
-        all
-    }
-
     /// What is wrong with what the options name, no file being to blame. What is wrong with the options themselves is in `options.problems`.
     pub fn program_problems(&self) -> &[Problem] {
         &self.program_errors
@@ -4014,15 +4005,6 @@ impl Files {
             return None;
         }
         self.module_export(symbol, self.module_exports_name()?)
-    }
-
-    /// `getTargetOfImportEqualsDeclaration`: the `"module.exports"` export that `pat`, the `x` of `const x = require(..)`, stands for.
-    pub fn required_module_exports(&self, file: FileId, pat: PatId) -> Option<Sym> {
-        let (spec, None) = self.bound(file).required_by(self.hir(file), pat)? else {
-            return None;
-        };
-        let module = self.module_of_specifier_as(file, spec, ResolutionMode::Require)?;
-        self.module_exports_export(self.module_value(module))
     }
 
     /// `getTargetOfModuleDefault`: what `default` of `module` is to an import or export declaration in `file`. A default that is made up

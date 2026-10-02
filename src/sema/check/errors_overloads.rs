@@ -386,14 +386,14 @@ impl Checker<'_> {
             if member.kind == MemberKind::Constructor {
                 member.start
             } else {
-                member.pos
+                member.name_pos
             }
         };
         // `GetErrorRangeForNode`: up to the end of the name, or of the keyword of a constructor.
         let end_of = |i: usize| {
             let m = members.at(i);
             if hir[m].kind == MemberKind::Constructor {
-                self.end_of_token_at(file, hir[m].pos)
+                self.end_of_token_at(file, hir[m].name_pos)
             } else {
                 self.end_of_member_name(file, m)
             }
@@ -405,7 +405,10 @@ impl Checker<'_> {
             let member = &hir[members.at(i)];
             // `NodeIsMissing(name)`: nothing is written where the name would be, not even `""` or `[""]`.
             if matches!(member.key, PropKey::Name(known::empty))
-                && !matches!(hir.text.get(member.pos as usize), Some(b'"' | b'\'' | b'['))
+                && !matches!(
+                    hir.text.get(member.name_pos as usize),
+                    Some(b'"' | b'\'' | b'[')
+                )
             {
                 return;
             }
@@ -418,10 +421,10 @@ impl Checker<'_> {
                         if next.flags.contains(Flags::STATIC) != is_static {
                             let code = if is_static { 2387 } else { 2388 };
                             out.push(Diagnostic {
-                                start: next.pos,
+                                start: next.name_pos,
                                 code,
                             });
-                            self.note(next.pos, end_of(i + 1), code, Vec::new());
+                            self.note(next.name_pos, end_of(i + 1), code, Vec::new());
                         }
                         return;
                     }
@@ -434,7 +437,7 @@ impl Checker<'_> {
                         let name = if member.kind == MemberKind::Constructor {
                             "(Missing)".to_owned()
                         } else {
-                            self.source_text(file, member.pos, end_of(i))
+                            self.source_text(file, member.name_pos, end_of(i))
                         };
                         self.note(start_of(next), end_of(i + 1), 2389, vec![name]);
                         return;

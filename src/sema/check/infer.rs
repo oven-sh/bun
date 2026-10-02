@@ -1969,9 +1969,10 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `resolveReverseMappedTypeMembers`. The types of the properties are worked out along with it.
+    /// `resolveReverseMappedTypeMembers`, of `ty`.
     pub(super) fn build_reverse_mapped_shape(
         &mut self,
+        ty: TypeId,
         source: TypeId,
         target: TypeId,
         of: TypeId,
@@ -1985,21 +1986,6 @@ impl<'p> Checker<'p> {
             self.mapped_decl(file, node).readonly == MappedModifier::Add
         });
         let limited = self.limited_constraint(target, of);
-        // `{ [P in keyof T[K]]: X }` was made from the same as `{ [P in keyof T]: X }`. Said so, fewer types come of it.
-        let mut for_props = (target, of);
-        if let TypeData::IndexedAccess { obj, index, .. } = *self.data(of)
-            && matches!(self.data(obj), TypeData::TypeParam(..))
-            && matches!(self.data(index), TypeData::TypeParam(..))
-        {
-            // `replaceIndexedAccess`: `[T][0]` is `T`.
-            let zero = self.number_literal(0.0, false);
-            let one = self.tuple(&[obj], &[ElemFlags::REQUIRED], false);
-            let mapper = self.mapper_from(&[index, obj], &[zero, one]);
-            let replaced = self.instantiate(target, mapper);
-            if self.mapped_origin(replaced).is_some() {
-                for_props = (replaced, obj);
-            }
-        }
         for prop in &members.shape().props {
             // What the rest of the constraint does not let through would not have come through the mapping.
             if let Some(limited) = limited
@@ -2008,10 +1994,8 @@ impl<'p> Checker<'p> {
             {
                 continue;
             }
-            let ty = self.type_of_prop_with_missing(prop, members.mapper);
-            let ty = self
-                .infer_reverse_mapped_type(ty, for_props.0, for_props.1)
-                .unwrap_or(TypeId::UNKNOWN);
+            // `links.propertyType = c.getTypeOfSymbol(prop)`
+            self.type_of_prop_with_missing(prop, members.mapper);
             let mut flags = PropFlags::empty();
             if !adds_optional && prop.flags.contains(PropFlags::OPTIONAL) {
                 flags |= PropFlags::OPTIONAL;
@@ -2022,7 +2006,7 @@ impl<'p> Checker<'p> {
             shape.props.push(Prop {
                 name: prop.name,
                 flags,
-                source: Self::copy_of(ty, &[prop], false),
+                source: PropSource::ReverseMapped(ty, Self::declared_properties(&[prop]).into()),
                 mapper: MapperId::IDENTITY,
             });
         }
@@ -2043,6 +2027,37 @@ impl<'p> Checker<'p> {
             ));
         }
         shape
+    }
+
+    /// `getTypeOfReverseMappedSymbol`, of the property `name` of the reverse mapped type `ty`.
+    pub(super) fn type_of_reverse_mapped_prop(&mut self, ty: TypeId, name: Atom) -> TypeId {
+        let TypeData::ReverseMapped { source, mapped, of } = *self.data(ty) else {
+            return TypeId::UNRESOLVED;
+        };
+        let Some(members) = self.members(source) else {
+            return TypeId::UNRESOLVED;
+        };
+        let Some(prop) = members.resolved.prop(name) else {
+            return TypeId::UNRESOLVED;
+        };
+        let property_type = self.type_of_prop_with_missing(prop, members.mapper);
+        // `{ [P in keyof T[K]]: X }` was made from the same as `{ [P in keyof T]: X }`. Said so, fewer types come of it.
+        let (mut mapped, mut of) = (mapped, of);
+        if let TypeData::IndexedAccess { obj, index, .. } = *self.data(of)
+            && matches!(self.data(obj), TypeData::TypeParam(..))
+            && matches!(self.data(index), TypeData::TypeParam(..))
+        {
+            // `replaceIndexedAccess`: `[T][0]` is `T`.
+            let zero = self.number_literal(0.0, false);
+            let one = self.tuple(&[obj], &[ElemFlags::REQUIRED], false);
+            let mapper = self.mapper_from(&[index, obj], &[zero, one]);
+            let replaced = self.instantiate(mapped, mapper);
+            if self.mapped_origin(replaced).is_some() {
+                (mapped, of) = (replaced, obj);
+            }
+        }
+        self.infer_reverse_mapped_type(property_type, mapped, of)
+            .unwrap_or(TypeId::UNKNOWN)
     }
 
     /// `getLimitedConstraint`: of `{ [P in keyof T & K]: X }`, the `K`.
@@ -2072,6 +2087,10 @@ impl<'p> Checker<'p> {
         target: TypeId,
         of: TypeId,
     ) -> Option<TypeId> {
+        if let Some(cached) = self.p.reverse_mapped_cache.get(&(source, target, of)) {
+            return Some(cached.unwrap_or(TypeId::UNKNOWN));
+        }
+        let before = self.what_only_holds_for_now();
         self.reverse_mapped_source_stack.push(source);
         self.reverse_mapped_target_stack.push(target);
         let saved = self.reverse_expanding;
@@ -2106,6 +2125,11 @@ impl<'p> Checker<'p> {
         self.reverse_mapped_source_stack.pop();
         self.reverse_mapped_target_stack.pop();
         self.reverse_expanding = saved;
+        if self.what_only_holds_for_now() == before && result.is_none_or(|ty| self.is_known(ty)) {
+            self.p
+                .reverse_mapped_cache
+                .insert((source, target, of), result);
+        }
         result
     }
 
@@ -2789,7 +2813,9 @@ impl<'p> Checker<'p> {
                     }
                     for p in &shape.props {
                         match p.source {
-                            PropSource::Type(t) | PropSource::Copy(t, ..) => left.push(t),
+                            PropSource::Type(t)
+                            | PropSource::Copy(t, ..)
+                            | PropSource::ReverseMapped(t, _) => left.push(t),
                             _ => left.extend(values(p.mapper)),
                         }
                     }

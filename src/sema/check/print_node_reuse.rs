@@ -6,7 +6,6 @@ use super::super::errors_isolated_declarations::{
     Emit, Pseudo, PseudoElement, PseudoElementKind, PseudoParam,
 };
 use super::super::errors_misc::QueriedThisContainer;
-use super::super::errors_x_properties_jsx::start_of_member_name;
 use super::*;
 
 // ───────────────────────────── declarations (`nodebuilderimpl.go`) ─────────────────────────────
@@ -213,7 +212,7 @@ impl<'p> Printer<'_, 'p> {
                 let first = prop.declared_by_modifiers_property().first()?;
                 self.value_declaration_of_property(first, depth + 1)
             }
-            PropSource::Copy(_, of, _) if depth < 8 => {
+            PropSource::Copy(_, of, _) | PropSource::ReverseMapped(_, of) if depth < 8 => {
                 self.value_declaration_of_property(of.first()?, depth + 1)
             }
             _ => None,
@@ -244,9 +243,10 @@ impl<'p> Printer<'_, 'p> {
         // `requiresAddingImplicitUndefined`
         let requires_undefined = match node {
             SyntaxNode::Param(p) => {
-                let enclosing_declaration = self.enclosing_declaration;
-                self.c
-                    .requires_adding_implicit_undefined(file, p, enclosing_declaration)
+                let in_function = self
+                    .enclosing_declaration
+                    .is_some_and(|at| self.c.is_function_like_declaration(at));
+                self.c.iso_requires_implicit_undefined(file, p, in_function)
             }
             SyntaxNode::Member(m) => {
                 is_optional_reverse_mapped
@@ -920,19 +920,16 @@ impl<'p> Printer<'_, 'p> {
             Some(symbol) if self.c.is_symbol_accessible_at(symbol, meaning, false, at) => {
                 self.track_symbol(symbol, meaning);
                 let (starts_with_global_this, chain) =
-                    self.c
-                        .lookup_symbol_chain_at(symbol, is_typeof, true, at, Vec::new());
+                    self.c.lookup_symbol_chain_at(symbol, is_typeof, true, at);
                 (!starts_with_global_this).then(|| chain[0])
             }
             _ => None,
         };
         // Otherwise `getExternalModuleFileFromDeclaration`.
         let module = parent
-            .filter(|&parent| self.c.is_external_module_symbol(parent))
+            .filter(|&parent| self.is_external_module(parent))
             .unwrap_or(target);
-        let name = self
-            .c
-            .specifier_for_module_symbol(module, at.file, ResolutionMode::None);
+        let name = self.c.specifier_for_module_symbol_at(module, at);
         if name.contains("/node_modules/") {
             self.encountered_error = true;
             self.report(Report::LikelyUnsafeImportRequired(
@@ -1333,7 +1330,7 @@ impl<'p> Printer<'_, 'p> {
         let name = match member.key {
             // A string keeps its quotes and is escaped anew, a number is written in its canonical form.
             PropKey::Name(name) => {
-                let start = start_of_member_name(hir, m);
+                let start = hir[m].name_pos;
                 match hir.text.get(start as usize) {
                     Some(b'\'') => quoted(&self.text(name), '\'', false),
                     Some(b'"') => quoted(&self.text(name), '"', false),
@@ -1345,8 +1342,8 @@ impl<'p> Printer<'_, 'p> {
                 }
             }
             // `#x` with no class around it names nothing (`getDeclarationName`). The node has the name all the same.
-            PropKey::None if is_private_name_at(hir, start_of_member_name(hir, m)) => {
-                self.property_key_text(file, member.key, start_of_member_name(hir, m))
+            PropKey::None if is_private_name_at(hir, hir[m].name_pos) => {
+                self.property_key_text(file, member.key, hir[m].name_pos)
             }
             PropKey::None => String::new(),
             PropKey::Computed(e) => {
@@ -1361,9 +1358,7 @@ impl<'p> Printer<'_, 'p> {
                 }
                 format!("[{name}]")
             }
-            PropKey::Private(_) => {
-                self.property_key_text(file, member.key, start_of_member_name(hir, m))
-            }
+            PropKey::Private(_) => self.property_key_text(file, member.key, hir[m].name_pos),
         };
         let is_named = !name.is_empty();
         if member.func.is_none() && member.kind != MemberKind::Property {
@@ -1507,7 +1502,7 @@ impl<'p> Printer<'_, 'p> {
         };
         let scope = bound.type_scope[query.idx()];
         let this = first_identifier(hir, expr);
-        let symbol = match self.c.this_container_of_type_query(file, this) {
+        let symbol = match self.c.this_container_of_type_query(file, this, false) {
             Some(QueriedThisContainer::Fn(f)) => match bound.fns[f.idx()].owner {
                 FnOwner::Stmt(_) => bound.fn_symbol[f.idx()],
                 FnOwner::Member(m) => match bound.member_owner[m.idx()] {

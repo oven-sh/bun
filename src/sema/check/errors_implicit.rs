@@ -7,57 +7,11 @@
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent};
 
 /// `isEmptyArrayLiteralType`, decided by syntax because there is no `implicitNeverType`: `e` is written `[]`.
 fn is_empty_array_literal(hir: &hir::File, e: ExprId) -> bool {
     matches!(hir[e].kind, ExprKind::Array(items) if items.is_empty())
-}
-
-/// `DeclarationNameToString(GetNameOfDeclaration(e))`, of `a.name = value`, `a["name"] = value` or
-/// `Object.defineProperty(a, "name", descriptor)`.
-pub(super) fn name_of_assignment_declaration(c: &Checker<'_>, file: FileId, e: ExprId) -> String {
-    let hir = c.hir(file);
-    let written = |x: ExprId| c.source_text(file, c.start_of(file, x), c.end_of_expr(file, x));
-    match hir[e].kind {
-        ExprKind::Assign { target, .. } => match hir[target].kind {
-            ExprKind::Dot { name, .. } => c.atom_text(name),
-            // `GetElementOrPropertyAccessName`: a literal key, without the parentheses around it.
-            ExprKind::Index { index, .. }
-                if matches!(hir[index].kind, ExprKind::String(_) | ExprKind::Number(_))
-                    || matches!(hir[index].kind, ExprKind::Template { exprs, .. } if exprs.is_empty()) =>
-            {
-                c.source_text(file, hir[index].pos, c.end_inside_parentheses(file, index))
-            }
-            _ => written(target),
-        },
-        _ => match crate::bind::define_property_call(hir, e) {
-            Some((_, key)) => written(key),
-            None => "(Missing)".to_owned(),
-        },
-    }
-}
-
-/// Notes what `reportImplicitAny` says of `e`, an assignment or a call of `Object.defineProperty` that declares a property of type
-/// `ty`. The error is on the whole of `e`. Not `has_name`: it is `module.exports = value`.
-fn explain_assignment_declaration(
-    c: &mut Checker<'_>,
-    file: FileId,
-    e: ExprId,
-    code: u32,
-    has_name: bool,
-    ty: &'static str,
-) {
-    let start = c.start_inside_parentheses(file, e);
-    let end = c.end_inside_parentheses(file, e);
-    c.explain_to(start, end, code, |c| {
-        let name = if has_name {
-            name_of_assignment_declaration(c, file, e)
-        } else {
-            "(Missing)".to_owned()
-        };
-        vec![name, ty.to_owned()]
-    });
 }
 
 impl Checker<'_> {
@@ -178,7 +132,6 @@ impl Checker<'_> {
             }
         }
         let is_checked_js = hir.is_js && self.is_check_js(file);
-        self.check_assignment_declarations_implicit_any(file, out);
         if is_checked_js {
             self.check_binding_element_defaults_implicit_any(file, out);
         }
@@ -312,79 +265,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `getWidenedTypeForAssignmentDeclaration`, `getAssignmentDeclarationInitializerType`: implicit `any` of the exports of a
-    /// CommonJS module that assignments declare. 7008 at each assignment of `[]`, and at `symbol.ValueDeclaration` if every assigned
-    /// type is `null` or `undefined`. `type_of_assigned_prop` reports those of properties.
-    fn check_assignment_declarations_implicit_any(
-        &mut self,
-        file: FileId,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `reportImplicitAny` reports nothing in a JavaScript file without `checkJs`.
-        if hir.is_js && !self.is_check_js(file) {
-            return;
-        }
-        if bound.commonjs_indicator.is_some() {
-            for (i, symbol) in bound.symbols.iter().enumerate() {
-                // `getTypeOfSymbol` resolves a symbol that is only an alias with `getTypeOfAlias`.
-                if !symbol.flags.intersects(SymFlags::VALUE) {
-                    continue;
-                }
-                let Some(value_declaration) = self.commonjs_value_declaration(file, symbol) else {
-                    continue;
-                };
-                let mut is_nullable = self.assignment_declarations_are_nullable(
-                    self.files().sym(file, SymbolId(i as u32)),
-                );
-                for &decl in &symbol.decls {
-                    let (Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment)) =
-                        decl
-                    else {
-                        continue;
-                    };
-                    // The declarations are read up to the first that says what it is.
-                    if hir.jsdoc_type(JsDocTypeOwner::Assign(assignment)).is_some() {
-                        break;
-                    }
-                    // `GetRightMostAssignedExpression` also steps through compound assignments.
-                    let mut rightmost = assignment;
-                    while let ExprKind::Assign { value, .. } = hir[rightmost].kind {
-                        rightmost = value;
-                    }
-                    if is_empty_array_literal(hir, rightmost) {
-                        out.push(Diagnostic {
-                            start: self.start_inside_parentheses(file, assignment),
-                            code: 7008,
-                        });
-                        let has_name = matches!(decl, Decl::ExportsProperty(_));
-                        explain_assignment_declaration(
-                            self, file, assignment, 7008, has_name, "any[]",
-                        );
-                    }
-                    is_nullable &= !self.is_uncertain(file, rightmost);
-                }
-                if is_nullable {
-                    out.push(Diagnostic {
-                        start: self.start_inside_parentheses(file, value_declaration),
-                        code: 7008,
-                    });
-                    let has_name = !symbol
-                        .decls
-                        .contains(&Decl::ModuleExports(value_declaration));
-                    explain_assignment_declaration(
-                        self,
-                        file,
-                        value_declaration,
-                        7008,
-                        has_name,
-                        "any",
-                    );
-                }
-            }
-        }
-    }
-
     /// `isPrivateWithinAmbient`, of the member `func` is.
     fn is_private_within_ambient(&self, file: FileId, func: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -420,7 +300,7 @@ impl Checker<'_> {
     fn start_of_accessor_name(&mut self, file: FileId, func: FnId) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (key, pos) = match bound.fns[func.idx()].owner {
-            FnOwner::Member(m) => (hir[m].key, hir[m].pos),
+            FnOwner::Member(m) => (hir[m].key, hir[m].name_pos),
             FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
                 Parent::Prop(p) => (hir[p].key, hir[p].pos),
                 _ => return None,
@@ -445,7 +325,7 @@ impl Checker<'_> {
     fn start_of_signature(&self, file: FileId, func: FnId) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match bound.fns[func.idx()].owner {
-            FnOwner::Member(m) => hir[m].pos,
+            FnOwner::Member(m) => hir[m].name_pos,
             _ if hir[func].name.is_some() => hir[func].name_pos,
             _ => hir[func].pos,
         }

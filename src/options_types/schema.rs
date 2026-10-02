@@ -152,6 +152,12 @@ pub mod api {
         pub token: Box<[u8]>,
         /// email
         pub email: Box<[u8]>,
+        /// Set by `from_url` when the credentials were written into the URL.
+        /// `Scope::from_api` takes those as complete as written: `http://user@host/`
+        /// authenticates as `user` with an empty password (what npm sends for that
+        /// URL), whereas a `username` configured on its own (`.npmrc` `username`
+        /// without `_password`, bunfig `username` without `password`) sends nothing.
+        pub credentials_from_url: bool,
     }
 
     impl NpmRegistry {
@@ -159,12 +165,15 @@ pub mod api {
             let url = bun_url::URL::parse(str);
             let mut registry = NpmRegistry::default();
 
-            if url.username.is_empty() && !url.password.is_empty() {
-                registry.token = Box::from(url.password);
-                registry.url = url.href_without_auth();
-            } else if !url.username.is_empty() && !url.password.is_empty() {
+            if !url.username.is_empty() {
                 registry.username = Box::from(url.username);
                 registry.password = Box::from(url.password);
+                registry.credentials_from_url = true;
+                registry.url = url.href_without_auth();
+            } else if !url.password.is_empty() {
+                // `http://:token@host/`
+                registry.token = Box::from(url.password);
+                registry.credentials_from_url = true;
                 registry.url = url.href_without_auth();
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.

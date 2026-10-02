@@ -8,27 +8,37 @@
 
 namespace Bun {
 
-// Reads every element of `arrayLike` into `out` before the caller reads any byte
-// length or raw pointer, so a getter or proxy trap cannot invalidate an element
-// that was already measured. `accept` rejects an element by returning false. A
-// type check belongs there, so a list that lies about its length (a Proxy `length`
-// trap, a sparse array) fails at its first bad element, not after O(length) reads.
+// Returns the elements of `arrayLike` once no read of them can run user code any more, so the caller can take byte
+// lengths and raw pointers from them. `accept(element, index)` returns false to reject an element and stop. A hole-free
+// contiguous JSArray runs no user code on read, so it is returned in place: the span points into its butterfly and is
+// valid until the next call that can run JS. Every other shape is read once into `storage`.
+// The caller checks for an exception first, then for `storage.hasOverflowed()`.
 template<typename Accept>
-void collectArrayLike(JSC::JSGlobalObject* globalObject, JSC::JSObject* arrayLike, JSC::MarkedArgumentBuffer& out, const Accept& accept)
+std::span<const JSC::EncodedJSValue> collectArrayLike(JSC::JSGlobalObject* globalObject, JSC::JSObject* arrayLike, JSC::MarkedArgumentBuffer& storage, const Accept& accept)
 {
-    // A sparse array's length says nothing about its element count, so only pre-size for dense storage.
-    if (auto* array = dynamicDowncast<JSC::JSArray>(arrayLike); array && !JSC::hasAnyArrayStorage(array->indexingType())) [[likely]] {
-        out.ensureCapacity(array->length());
-        if (out.hasOverflowed()) [[unlikely]]
-            return;
+    if (auto* array = dynamicDowncast<JSC::JSArray>(arrayLike); array && JSC::hasContiguous(array->indexingType())) [[likely]] {
+        auto* butterfly = array->butterfly();
+        std::span elements { reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()), butterfly->publicLength() };
+        size_t index = 0;
+        for (; index < elements.size(); index++) {
+            JSC::JSValue element = JSC::JSValue::decode(elements[index]);
+            // A hole reads through the prototype chain.
+            if (!element) [[unlikely]]
+                break;
+            if (!accept(element, index)) [[unlikely]]
+                return {};
+        }
+        if (index == elements.size()) [[likely]]
+            return elements;
     }
 
     JSC::forEachInArrayLike(globalObject, arrayLike, [&](JSC::JSValue element) -> bool {
-        if (!accept(element))
+        if (!accept(element, storage.size()))
             return false;
-        out.append(element);
-        return !out.hasOverflowed();
+        storage.append(element);
+        return !storage.hasOverflowed();
     });
+    return { JSC::ArgList(storage).data(), storage.size() };
 }
 
 } // namespace Bun

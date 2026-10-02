@@ -271,3 +271,45 @@ describe("rejects the first invalid element without reading the rest of the list
     throw new Error("expected the call to throw");
   }
 });
+
+describe("a dense array is read in place, every other shape through its property reads", () => {
+  test("a hole with no inherited value is rejected as undefined", () => {
+    const list = [Buffer.from("aa"), , Buffer.from("cc")];
+    expect(() => Buffer.concat(list as Buffer[])).toThrow(
+      'The "list[1]" argument must be an instance of Buffer or Uint8Array. Received undefined',
+    );
+    expect(() => Bun.concatArrayBuffers(list as Buffer[])).toThrow("Expected TypedArray");
+  });
+
+  test("a hole reads the value the prototype chain has at that index", () => {
+    const proto = Object.create(Array.prototype);
+    proto[1] = Buffer.from("bb");
+    const list = [Buffer.from("aa"), , Buffer.from("cc")];
+    Object.setPrototypeOf(list, proto);
+    expect(Buffer.concat(list as Buffer[]).toString()).toBe("aabbcc");
+    expect(Buffer.from(Bun.concatArrayBuffers(list as Buffer[])).toString()).toBe("aabbcc");
+  });
+
+  test("a wrong type wins over an earlier detached buffer, like in Node", () => {
+    const detached = new Uint8Array(8);
+    detached.buffer.transfer();
+    expect(() => Buffer.concat([detached, Buffer.from("aa")])).toThrow("ArrayBufferView is detached");
+    expect(() => Buffer.concat([detached, 1 as any])).toThrow(
+      'The "list[1]" argument must be an instance of Buffer or Uint8Array. Received type number (1)',
+    );
+  });
+
+  test("elements that only the list references survive the allocation of the result", () => {
+    for (let round = 0; round < 2000; round++) {
+      const list: Uint8Array[] = [];
+      for (let i = 0; i < 16; i++) list.push(new Uint8Array(64).fill(round + i));
+      if (round % 50 === 0) Bun.gc(true);
+      const out = Buffer.concat(list);
+      if (out.length !== 16 * 64) throw new Error(`round ${round}: length ${out.length}`);
+      for (let i = 0; i < 16; i++) {
+        const want = (round + i) & 0xff;
+        if (out[i * 64] !== want || out[i * 64 + 63] !== want) throw new Error(`round ${round}: chunk ${i} is wrong`);
+      }
+    }
+  });
+});

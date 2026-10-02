@@ -132,10 +132,10 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
     };
 
-    MarkedArgumentBuffer args;
+    MarkedArgumentBuffer storage;
     bool any_buffer = false;
     bool any_typed = false;
-    Bun::collectArrayLike(lexicalGlobalObject, array, args, [&](JSValue element) -> bool {
+    auto elements = Bun::collectArrayLike(lexicalGlobalObject, array, storage, [&](JSValue element, size_t) -> bool {
         if (dynamicDowncast<JSC::JSArrayBufferView>(element)) {
             any_typed = true;
             return true;
@@ -148,15 +148,15 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
         return false;
     });
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (args.hasOverflowed()) [[unlikely]] {
+    if (storage.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         return {};
     }
 
     // Nothing between here and the memcpy loop calls back into JavaScript, so the lengths read now are the lengths copied below.
     size_t byteLength = 0;
-    for (size_t i = 0; i < args.size(); i++) {
-        JSValue element = args.at(i);
+    for (size_t i = 0; i < elements.size(); i++) {
+        JSValue element = JSValue::decode(elements[i]);
         if (auto* typedArray = dynamicDowncast<JSC::JSArrayBufferView>(element)) {
             if (typedArray->isDetached()) [[unlikely]] {
                 return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
@@ -186,8 +186,8 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
     auto* head = reinterpret_cast<char*>(buffer->data());
 
     if (!any_buffer) {
-        for (size_t i = 0; i < args.size() && remain > 0; i++) {
-            auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(args.at(i));
+        for (size_t i = 0; i < elements.size() && remain > 0; i++) {
+            auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(JSValue::decode(elements[i]));
             size_t length = std::min(remain, view->byteLength());
             if (length > 0)
                 memcpy(head, view->vector(), length);
@@ -195,8 +195,8 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
             head += length;
         }
     } else if (!any_typed) {
-        for (size_t i = 0; i < args.size() && remain > 0; i++) {
-            auto* view = uncheckedDowncast<JSC::JSArrayBuffer>(args.at(i));
+        for (size_t i = 0; i < elements.size() && remain > 0; i++) {
+            auto* view = uncheckedDowncast<JSC::JSArrayBuffer>(JSValue::decode(elements[i]));
             size_t length = std::min(remain, view->impl()->byteLength());
             if (length > 0)
                 memcpy(head, view->impl()->data(), length);
@@ -204,8 +204,8 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
             head += length;
         }
     } else {
-        for (size_t i = 0; i < args.size() && remain > 0; i++) {
-            auto element = args.at(i);
+        for (size_t i = 0; i < elements.size() && remain > 0; i++) {
+            auto element = JSValue::decode(elements[i]);
             size_t length = 0;
             if (auto* view = dynamicDowncast<JSC::JSArrayBuffer>(element)) {
                 length = std::min(remain, view->impl()->byteLength());

@@ -6991,11 +6991,9 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 }
 
 // Collects every ArrayBufferView in a JSArray and the (data, byteLength) span
-// of each. Two passes, mirroring Buffer.concat: the first reads every element
-// into a MarkedArgumentBuffer, so any user code an indexed read can run
-// (getters, proxy traps) finishes before the second pass takes raw pointers.
-// A backing store detached during the first pass reads back as a zero-length
-// span.
+// of each. Bun::collectArrayLike finishes every read that can run user code
+// (getters, proxy traps) before this takes raw pointers. A backing store
+// detached during those reads reads back as a zero-length span.
 //
 // When `pinBuffers` is true, each view's backing ArrayBuffer is materialized
 // and pinned before its data pointer is read, so the span stays valid after
@@ -7020,20 +7018,20 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
         return 1;
     JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(value.asCell());
 
-    JSC::MarkedArgumentBuffer values;
+    JSC::MarkedArgumentBuffer storage;
     bool allViews = true;
-    Bun::collectArrayLike(globalObject, array, values, [&](JSC::JSValue element) -> bool {
+    auto elements = Bun::collectArrayLike(globalObject, array, storage, [&](JSC::JSValue element, size_t) -> bool {
         allViews = !!dynamicDowncast<JSC::JSArrayBufferView>(element);
         return allViews;
     });
     RETURN_IF_EXCEPTION(scope, -1);
     if (!allViews)
         return 1;
-    if (values.hasOverflowed()) [[unlikely]]
+    if (storage.hasOverflowed()) [[unlikely]]
         return 2;
 
-    for (unsigned i = 0; i < unsigned(values.size()); i++) {
-        auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(values.at(i));
+    for (auto element : elements) {
+        auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(JSC::JSValue::decode(element));
         if (pinBuffers) {
             // possiblySharedBuffer() converts a FastTypedArray (GC-movable
             // storage, no ArrayBuffer yet) into a malloc-backed one and can

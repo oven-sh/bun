@@ -1532,7 +1532,8 @@ interface Clipboard extends EventTarget {
    *
    * @returns the text, or `""` when nothing (or nothing textual) is on the
    * clipboard. Rejects with a `"NotAllowedError"` `DOMException` when the
-   * platform clipboard cannot be reached at all.
+   * platform clipboard cannot be reached at all, or when the text is too
+   * large for a string.
    */
   readText(): Promise<string>;
   /**

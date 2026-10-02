@@ -33,6 +33,7 @@
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMPromiseDeferred.h"
+#include "helpers.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -55,6 +56,19 @@ Clipboard::~Clipboard()
 void Clipboard::fireClipboardEvent(const AtomString& type)
 {
     dispatchEvent(ClipboardEvent::create(type, EventInit {}, Event::IsTrusted::Yes));
+}
+
+// Null when the text does not fit a string. `String::fromUTF8ReplacingInvalidSequences`
+// aborts the process on such text, and also on 1 GiB of text that is not all ASCII.
+static String textFromClipboard(std::span<const uint8_t> utf8)
+{
+    if (utf8.empty())
+        return emptyString();
+    // A string holds UTF-16 units, and UTF-8 has at least one byte for each.
+    size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(String::MaxLength));
+    if (utf8.size() > maxLength && simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(utf8.data()), utf8.size()) > maxLength) [[unlikely]]
+        return {};
+    return Zig::convertUTF8ToString(utf8);
 }
 
 ClipboardCompletion Clipboard::writeCompletion(Ref<DeferredPromise>&& promise)
@@ -84,7 +98,11 @@ void Clipboard::readText(Ref<DeferredPromise>&& promise)
         }
         String text = emptyString();
         if (!representations.empty())
-            text = String::fromUTF8ReplacingInvalidSequences({ representations[0].bytes, representations[0].length });
+            text = textFromClipboard({ representations[0].bytes, representations[0].length });
+        if (text.isNull()) [[unlikely]] {
+            promise->reject(ExceptionCode::NotAllowedError, "The text on the clipboard is too large to read as a string."_s);
+            return;
+        }
         promise->resolve<IDLDOMString>(text);
         protectedThis->fireClipboardEvent(eventNames().pasteEvent);
     });

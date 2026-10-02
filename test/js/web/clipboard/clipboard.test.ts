@@ -8,6 +8,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
+import { totalmem } from "node:os";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 
@@ -832,6 +833,34 @@ describe("readText / writeText", () => {
       expect(await (await emptyItems[0].getType("text/plain")).text()).toBe("");
     },
   );
+
+  // A string has a length limit, and a clipboard can hold more text than that.
+  // The child lowers the limit, so the text is 1 MiB and not 2 GiB.
+  test.skipIf(!machineHasClipboard)("readText() rejects text that is too large for a string", async () => {
+    expect(clipboardReachable).toBe(true);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+          let pastes = 0;
+          navigator.clipboard.addEventListener("paste", () => pastes++);
+          await navigator.clipboard.writeText(Buffer.alloc(1024 * 1024 + 1, "a").toString());
+          setSyntheticAllocationLimitForTesting(1024 * 1024);
+          const tooLarge = await navigator.clipboard.readText().then(text => text.length, e => e.name + ": " + e.message);
+          const pastesForTooLarge = pastes;
+          await navigator.clipboard.writeText("fits");
+          console.log(JSON.stringify({ tooLarge, pastesForTooLarge, fits: await navigator.clipboard.readText() }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`child exited with ${exitCode}\n${stderr}`);
+    expect(JSON.parse(stdout)).toEqual({ tooLarge: TEXT_TOO_LARGE, pastesForTooLarge: 0, fits: "fits" });
+  });
 });
 
 // The POSIX backend has no clipboard API to call: it runs `wl-paste`/`wl-copy`,
@@ -846,6 +875,7 @@ const NO_DISPLAY =
   "NotAllowedError: The clipboard requires a Wayland or X11 display, but neither $WAYLAND_DISPLAY nor $DISPLAY is set.";
 const NO_HELPER = "NotAllowedError: No clipboard helper was found. Install `wl-clipboard` (Wayland) or `xclip` (X11).";
 const HELPER_FAILED = "NotAllowedError: The clipboard helper program failed to access the clipboard.";
+const TEXT_TOO_LARGE = "NotAllowedError: The text on the clipboard is too large to read as a string.";
 
 // Available to every child script: settle a promise into something JSON can
 // carry, read what a stand-in recorded, and print the one line the test reads.
@@ -1058,6 +1088,39 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
       `,
     );
     expect(result).toEqual({ types: ["text/html"], html: "<b>hi</b>" });
+  });
+
+  // A string has a length limit, and a helper can print more text than that.
+  // The child lowers the limit to 1 MiB, so no helper has to print 2 GiB. The
+  // limit counts UTF-16 units, which "two-byte" has half as many of as bytes.
+  test("readText() rejects text that is too large for a string", async () => {
+    const { result } = await runWithHelpers(
+      { xclip: `cat "$CLIP_DIR/$(cat "$CLIP_DIR/selection")"` },
+      `
+        const { writeFileSync } = require("node:fs");
+        require("bun:internal-for-testing").setSyntheticAllocationLimitForTesting(1024 * 1024);
+        let pastes = 0;
+        navigator.clipboard.addEventListener("paste", () => pastes++);
+        const result = {};
+        for (const selection of ["fits", "too-large", "two-byte"]) {
+          pastes = 0;
+          writeFileSync(CLIP_DIR + "/selection", selection);
+          result[selection] = { ...(await settle(navigator.clipboard.readText(), text => text.length)), pastes };
+        }
+        print(result);
+      `,
+      {},
+      {
+        "fits": Buffer.alloc(1024 * 1024, "a").toString(),
+        "too-large": Buffer.alloc(1024 * 1024 + 1, "a").toString(),
+        "two-byte": Buffer.alloc(1024 * 1024 + 2, "é").toString(),
+      },
+    );
+    expect(result).toEqual({
+      "fits": { ok: 1024 * 1024, pastes: 1 },
+      "too-large": { error: TEXT_TOO_LARGE, pastes: 0 },
+      "two-byte": { ok: 512 * 1024 + 1, pastes: 1 },
+    });
   });
 
   test("Wayland helpers are preferred, X11 ones are the fallback, and read() is best-effort per type", async () => {
@@ -1296,6 +1359,34 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
       log: ["xclip -selection clipboard -in", "xclip -selection clipboard -in"],
     });
   });
+});
+
+// Not concurrent with the tests above: the child holds several GiB, so small
+// machines skip. The stand-in prints the bytes of "first-bytes" and then 1 GiB
+// of "a". With one character that is not ASCII in front, the conversion to a
+// string aborted the process at this size, which is half the limit of a
+// string. With a byte in front that is not UTF-8, the text is rejected: the
+// conversion that replaces such bytes cannot take this size.
+describe.skipIf(!isLinux || totalmem() < 10 * 1024 ** 3)("POSIX helper backend, 1 GiB of text", () => {
+  test("readText() reads text that is not all ASCII, and rejects text that is not UTF-8", async () => {
+    const { result } = await runWithHelpers(
+      { xclip: `cat "$CLIP_DIR/first-bytes"; head -c 1073741824 /dev/zero | tr '\\000' a` },
+      `
+        const { writeFileSync } = require("node:fs");
+        const read = firstBytes => {
+          writeFileSync(CLIP_DIR + "/first-bytes", Buffer.from(firstBytes));
+          return settle(navigator.clipboard.readText(), text => [text.length, text.charCodeAt(0), text.charCodeAt(1)]);
+        };
+        print({ notAllAscii: await read([0xc3, 0xa9]), notUtf8: await read([0x80]) });
+      `,
+      // The stand-in needs more than the 10 seconds of a helper run on a slow machine.
+      { BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT: "240" },
+    );
+    expect(result).toEqual({
+      notAllAscii: { ok: [1024 ** 3 + 1, 0xe9, 0x61] },
+      notUtf8: { error: TEXT_TOO_LARGE },
+    });
+  }, 300_000);
 });
 
 // The in-process backends with operations arriving from several pool threads

@@ -1162,9 +1162,51 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
+    /// `parseJSONText`, but for `validateJsonValue`: the expression of its one statement. `{}` for a text that says nothing.
+    #[cold]
+    pub(crate) fn parse_json_text(&mut self) -> PResult<Expr> {
+        let p = self;
+        let loc = p.lexer.loc();
+        let mut expressions: bun_alloc::ArenaVec<'_, Expr> = bun_alloc::ArenaVec::new_in(p.arena);
+        while p.lexer.token != T::TEndOfFile {
+            let is_no_name = |p: &mut Self| p.step() && p.lexer.token != T::TColon;
+            let is_value = match p.lexer.token {
+                T::TOpenBracket | T::TTrue | T::TFalse | T::TNull => true,
+                T::TMinus => p.look_ahead(|p| {
+                    p.step() && p.lexer.token == T::TNumericLiteral && is_no_name(p)
+                }),
+                T::TNumericLiteral | T::TStringLiteral => p.look_ahead(is_no_name),
+                _ => false,
+            };
+            expressions.push(if is_value {
+                p.parse_prefix(Level::Lowest, None, EFlags::None)?
+            } else {
+                Self::pfx_t_open_brace(p, None)?
+            });
+            if expressions.len() == 1 && p.lexer.token != T::TEndOfFile {
+                let range = p.lexer.range();
+                p.lexer.ts_error(range, 1012);
+            }
+        }
+        Ok(match expressions.len() {
+            0 => p.new_expr(E::Object::default(), loc),
+            1 => expressions[0],
+            _ => {
+                let items = ExprNodeList::from_bump_vec(expressions);
+                p.new_expr(
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            }
+        })
+    }
+
     fn pfx_t_open_brace(p: &mut Self, errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        p.lexer.next()?;
+        p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         let mut properties: bun_alloc::ArenaVec<'_, G::Property> =
             bun_alloc::ArenaVec::new_in(p.arena);

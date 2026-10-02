@@ -387,12 +387,13 @@ impl Checker<'_> {
     /// `isReadonlySymbol`: of what a namespace or a module exports, constants and the members of enums.
     fn is_read_only(&self, prop: &Prop) -> bool {
         match prop.source {
-            PropSource::Symbol(export) => (self.files().resolve_alias_if_needed(export))
-                .is_some_and(|target| {
+            PropSource::Symbol(export) if !self.is_member_symbol(export) => {
+                (self.files().resolve_alias_if_needed(export)).is_some_and(|target| {
                     let flags = self.files().flags(target);
                     flags.contains(SymFlags::ENUM_MEMBER)
                         || flags.intersects(SymFlags::VARIABLE) && flags.contains(SymFlags::CONST)
-                }),
+                })
+            }
             _ => prop.flags.contains(PropFlags::READONLY),
         }
     }

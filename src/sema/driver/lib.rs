@@ -21,7 +21,7 @@ use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{Host, Phase, join};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema::verify::verify_project_references;
-use std::sync::Mutex;
+use bun_threading::Guarded;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -149,8 +149,6 @@ pub struct Request<'a> {
     pub progress: Option<&'a Progress>,
     /// Of all that is loaded, only the files with this in their path are checked. For looking into one file of a big project.
     pub only: Option<&'a [u8]>,
-    /// The process ends once the errors have been shown.
-    pub ends_the_process: bool,
     /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
     pub keeps_everything: bool,
     /// As `tsc` does: if something does not parse, that is all that is said. If the options do not go together, that is. Only then come the
@@ -201,6 +199,8 @@ pub struct Report {
     pub has_bun_types_installed: bool,
     /// The configuration file that was used. Empty if there is none.
     pub config_path: Vec<u8>,
+    /// `listFiles`, `listFilesOnly`: the files of the program, in its order.
+    pub listed_files: Vec<Vec<u8>>,
     pub files_loaded: usize,
     pub files_checked: usize,
     /// How many projects were checked, if the configuration has `references`. Otherwise 0.
@@ -230,6 +230,7 @@ impl Report {
     fn merge(&mut self, other: Report) {
         self.diagnostics.extend(other.diagnostics);
         self.incomplete.extend(other.incomplete);
+        self.listed_files.extend(other.listed_files);
         self.has_bun_types_installed |= other.has_bun_types_installed;
         self.files_loaded += other.files_loaded;
         self.files_checked += other.files_checked;
@@ -360,8 +361,16 @@ fn roots_of_paths(
     roots
 }
 
-pub fn check(request: &Request) -> Report {
-    let mut report = check_what_is_asked(request);
+/// Checks what `request` asks for. `then` is handed the report WHILE ALL THAT WAS LOADED IS STILL THERE. Giving back millions of small pieces
+/// of memory one by one takes a while, and the system takes it all back at once: who ends the process does so in `then`. For who returns
+/// from it, all is dropped.
+pub fn check_then<R>(request: &Request, then: impl FnOnce(Report) -> R) -> R {
+    let threads = match request.threads {
+        0 => std::thread::available_parallelism().map_or(4, usize::from),
+        n => n,
+    };
+    let disk = host::Disk::new(threads);
+    let (mut report, _program) = check_what_is_asked(&disk, request);
     if cfg!(windows) {
         for said in &mut report.diagnostics {
             host::show_drives(&mut said.text);
@@ -369,16 +378,16 @@ pub fn check(request: &Request) -> Report {
             related.for_each(|related| host::show_drives(&mut related.text));
         }
     }
-    report
+    then(report)
 }
 
-fn check_what_is_asked(request: &Request) -> Report {
+pub fn check(request: &Request) -> Report {
+    check_then(request, |report| report)
+}
+
+/// With the report, the program that was checked last.
+fn check_what_is_asked(disk: &host::Disk, request: &Request) -> (Report, Option<Box<Program>>) {
     let started = Instant::now();
-    let threads = match request.threads {
-        0 => std::thread::available_parallelism().map_or(4, usize::from),
-        n => n,
-    };
-    let disk = host::Disk::new(threads);
     let cwd = host::from_native(request.cwd);
     let mut report = Report::default();
 
@@ -389,14 +398,14 @@ fn check_what_is_asked(request: &Request) -> Report {
                 let inside = join(&path, b"tsconfig.json");
                 if !disk.is_file(&inside) {
                     report.diagnostics.push(global(5057, &[path]));
-                    return report;
+                    return (report, None);
                 }
                 Some(inside)
             } else if disk.is_file(&path) {
                 Some(path)
             } else {
                 report.diagnostics.push(global(5058, &[path]));
-                return report;
+                return (report, None);
             }
         }
         // The project the first thing named belongs to, or else the one around here.
@@ -410,14 +419,14 @@ fn check_what_is_asked(request: &Request) -> Report {
                 } else {
                     dirname::<Posix>(&first).to_vec()
                 };
-                config::find_config(&disk, &dir)
+                config::find_config(disk, &dir)
             })
-            .or_else(|| config::find_config(&disk, &cwd)),
+            .or_else(|| config::find_config(disk, &cwd)),
     };
     let mut project = match &config_path {
         // Nothing is written, whatever the project says. Without `references` this is `tsc --noEmit`: what is only wrong with where
         // output would go is not looked into. With them it is `tsc -b`, which has no `--noEmit`.
-        Some(path) => config::load_overriding(&disk, path, &|has_references| {
+        Some(path) => config::load_overriding(disk, path, &|has_references| {
             overriding_options(request, has_references && request.paths.is_empty())
         }),
         None => {
@@ -428,14 +437,14 @@ fn check_what_is_asked(request: &Request) -> Report {
                     options.push((option.0.clone(), option.1.clone()));
                 }
             }
-            config::without_config(&disk, &cwd, options, Vec::new())
+            config::without_config(disk, &cwd, options, Vec::new())
         }
     };
-    report.config_path = project.config_path.clone();
+    report.config_path.clone_from(&project.config_path);
     let mut named = None;
     if !request.paths.is_empty() {
         let mut roots = roots_of_paths(
-            &disk,
+            disk,
             &cwd,
             request.paths,
             project.options.allow_js,
@@ -450,7 +459,7 @@ fn check_what_is_asked(request: &Request) -> Report {
             .cloned()
             .collect();
         project.files.extend(more);
-        project.options.files = project.files.clone();
+        project.options.files.clone_from(&project.files);
         // That the project itself names no files is beside the point.
         project
             .errors
@@ -458,15 +467,19 @@ fn check_what_is_asked(request: &Request) -> Report {
         roots.sort_unstable();
         named = Some(roots);
     }
-    let report = if named.is_none() && !project.references.is_empty() {
-        check_with_references(&disk, project, request, report, started)
+    if named.is_none() && !project.references.is_empty() {
+        check_with_references(disk, project, request, report, started)
     } else {
-        check_what_is_named(&disk, project, request, report, started, named, None)
-    };
-    if request.ends_the_process {
-        std::mem::forget(disk);
+        check_what_is_named(
+            disk,
+            project,
+            request,
+            report,
+            started,
+            named.as_deref(),
+            None,
+        )
     }
-    report
 }
 
 struct ReferencedProject {
@@ -534,7 +547,7 @@ fn check_with_references(
     request: &Request,
     mut report: Report,
     started: Instant,
-) -> Report {
+) -> (Report, Option<Box<Program>>) {
     let mut graph = Graph {
         host,
         overrides: overriding_options(request, true),
@@ -556,7 +569,7 @@ fn check_with_references(
     if !errors.is_empty() {
         report.diagnostics.append(&mut errors);
         report.load_time = started.elapsed();
-        return report;
+        return (report, None);
     }
     report.diagnostics.append(&mut not_found);
     let resolved = |path: &[u8]| Some(&projects[(*index_of.get(path)?)?].project);
@@ -589,7 +602,7 @@ fn check_with_references(
         })
         .collect();
     let references: Vec<Vec<usize>> = projects.iter().map(|p| p.references.clone()).collect();
-    let last = projects.len() - 1;
+    let mut program = None;
     for (index, referenced) in projects.into_iter().enumerate() {
         let mut project = referenced.project;
         if project.files.is_empty() && !project.references.is_empty() {
@@ -618,24 +631,24 @@ fn check_with_references(
             .flat_map(|i| roots[i].iter().map(Vec::as_slice))
             .filter(|path| !own.contains(path))
             .collect();
-        let request = Request {
-            ends_the_process: request.ends_the_process && index == last,
-            ..*request
-        };
-        report.merge(check_what_is_named(
+        // Not two programs at a time.
+        drop(program.take());
+        let checked = check_what_is_named(
             host,
             project,
-            &request,
+            request,
             Report::default(),
             Instant::now(),
             None,
             Some(&owned_elsewhere),
-        ));
+        );
+        report.merge(checked.0);
+        program = checked.1;
         report.projects_checked += 1;
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
     sort_and_deduplicate(&mut report.diagnostics);
-    report
+    (report, program)
 }
 
 /// `SortAndDeduplicateDiagnostics`, with `CompareDiagnostics`.
@@ -656,7 +669,7 @@ pub fn check_project(
     report: Report,
     started: Instant,
 ) -> Report {
-    check_what_is_named(host, project, request, report, started, None, None)
+    check_what_is_named(host, project, request, report, started, None, None).0
 }
 
 /// `check_project`. `named`: of all that is loaded, only these files, sorted, and what they refer to is checked.
@@ -667,9 +680,9 @@ fn check_what_is_named(
     request: &Request,
     mut report: Report,
     started: Instant,
-    named: Option<Vec<Vec<u8>>>,
+    named: Option<&[Vec<u8>]>,
     owned_elsewhere: Option<&FxHashSet<&[u8]>>,
-) -> Report {
+) -> (Report, Option<Box<Program>>) {
     let threads = match request.threads {
         0 => std::thread::available_parallelism().map_or(4, usize::from),
         n => n,
@@ -736,7 +749,7 @@ fn check_what_is_named(
                 code: 0,
                 ..global(6053, &[""; 0])
             });
-            return report;
+            return (report, None);
         }
     }
     report.has_bun_types_installed = project
@@ -757,6 +770,8 @@ fn check_what_is_named(
         project.options.skip_default_lib_check,
     );
 
+    let written = std::mem::take(&mut project.compiler_options_as_written);
+    let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_what_nothing_refers_to = !request.keeps_everything;
     project.options.has_project_references = !project.references.is_empty();
     let before = host.times();
@@ -771,6 +786,10 @@ fn check_what_is_named(
     }
     if let Some(loaded) = request.loaded {
         loaded(&program);
+    }
+    if is_true(b"listFiles") || is_true(b"listFilesOnly") {
+        let path = |&file: &FileId| program.files.module(file).path.clone();
+        report.listed_files = program.files.order.iter().map(path).collect();
     }
     about_options.extend(
         program
@@ -794,7 +813,7 @@ fn check_what_is_named(
         })
         .map(|i| FileId(i as u32))
         .collect();
-    let is_reached = named.as_ref().map(|named| {
+    let is_reached = named.map(|named| {
         let modules = &program.files.modules;
         let mut is_reached = vec![false; modules.len()];
         let mut to_follow: Vec<usize> = (0..modules.len())
@@ -822,6 +841,9 @@ fn check_what_is_named(
     if let Some(only) = request.only {
         to_check.retain(|&f| program.files.modules[f.idx()].path.contains_str(only));
     }
+    if is_true(b"listFilesOnly") && request.stops_where_tsc_does {
+        to_check.clear();
+    }
     // `program.files`: what is imported comes before what imports it, so a file's own walk is the first to come to what it declares.
     // Who asks first is a fact of the program: neither the name of a directory nor a clock has a say.
     to_check.sort_by_key(|&f| program.files.rank_of_file(f));
@@ -835,8 +857,8 @@ fn check_what_is_named(
         progress.bytes_to_check.store(bytes, Ordering::Relaxed);
         progress.to_check.store(to_check.len(), Ordering::Relaxed);
     }
-    let found: Mutex<Vec<Diagnostic>> = Mutex::new(Vec::new());
-    let incomplete: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+    let found: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
+    let incomplete: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
     // The text of the default library is not kept.
     let text_of = |file: FileId| {
@@ -902,7 +924,7 @@ fn check_what_is_named(
         if let Some(progress) = request.progress {
             progress.errors.fetch_add(shown.len(), Ordering::Relaxed);
         }
-        found.lock().unwrap().extend(shown);
+        found.lock().extend(shown);
     };
     let new_checker = |only_syntax: bool| {
         let mut checker = program.checker();
@@ -912,7 +934,7 @@ fn check_what_is_named(
         checker
     };
     // What was found in the files that the checker of another file may still report in.
-    let unfinished: Mutex<Vec<(FileId, Checked)>> = Mutex::new(Vec::new());
+    let unfinished: Guarded<Vec<(FileId, Checked)>> = Guarded::new(Vec::new());
     let check_file = |file: FileId, only_syntax: bool| {
         // Dropped last, after all that was found out about the file.
         let _at_hand = program.files.bring_in(host, file);
@@ -927,24 +949,23 @@ fn check_what_is_named(
         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
         // What was found stands. What was not may be missing, and that is said.
         if checker.ran_out_of_stack() {
-            incomplete.lock().unwrap().push(module.path.clone());
+            incomplete.lock().push(module.path.clone());
         }
         // Nothing refers to a file that is only at hand for now, and what does not parse is nobody else's business.
         if only_syntax || module.is_transient {
             show(file, checker.finish_file(file, checked));
         } else {
-            unfinished.lock().unwrap().push((file, checked));
+            unfinished.lock().push((file, checked));
         }
     };
     let finish_files = || {
-        let unfinished: Vec<Mutex<Option<(FileId, Checked)>>> = unfinished
+        let unfinished: Vec<Guarded<Option<(FileId, Checked)>>> = unfinished
             .lock()
-            .unwrap()
             .drain(..)
-            .map(|one| Mutex::new(Some(one)))
+            .map(|one| Guarded::new(Some(one)))
             .collect();
         for_each_parallel(threads, unfinished.len(), &|i| {
-            let (file, checked) = unfinished[i].lock().unwrap().take().unwrap();
+            let (file, checked) = unfinished[i].lock().take().unwrap();
             if !program.has_nothing_to_finish(file, &checked) {
                 show(file, new_checker(false).finish_file(file, checked));
             }
@@ -980,7 +1001,7 @@ fn check_what_is_named(
                 .map(|i| FileId(i as u32))
                 .collect();
             for_each_parallel(threads, suspects.len(), &|i| check_file(suspects[i], true));
-            let mut found = found.lock().unwrap();
+            let mut found = found.lock();
             if !found.is_empty() {
                 report.diagnostics.append(&mut found);
                 report.files_checked = 0;
@@ -997,7 +1018,7 @@ fn check_what_is_named(
         }
         for_each_parallel(threads, to_check.len(), &take);
         finish_files();
-        report.diagnostics.append(&mut found.lock().unwrap());
+        report.diagnostics.append(&mut found.lock());
         report.diagnostics.extend(global_errors());
         // `iterateBaseline`: whoever writes something for every file does so for the files that are not checked as well.
         if let Some(after_file) = request.after_file {
@@ -1021,7 +1042,7 @@ fn check_what_is_named(
         }
     }
     report.deepest_stack = deepest_stack.into_inner();
-    report.incomplete = incomplete.into_inner().unwrap();
+    report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.sort();
     report.incomplete.dedup();
     sort_and_deduplicate(&mut report.diagnostics);
@@ -1034,9 +1055,5 @@ fn check_what_is_named(
     if let Some(checked) = request.checked {
         checked(&program);
     }
-    // Giving back millions of small pieces of memory one by one takes a while, and the system takes it all back at once.
-    if request.ends_the_process {
-        std::mem::forget(program);
-    }
-    report
+    (report, Some(Box::new(program)))
 }

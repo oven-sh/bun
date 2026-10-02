@@ -40,10 +40,16 @@ impl<'p> Checker<'p> {
                 _ => List::One((file, declaration)),
             };
         }
-        let parent = bound.symbols[symbol.idx()].parent;
+        let (parent, name) = (
+            bound.symbols[symbol.idx()].parent,
+            bound.symbols[symbol.idx()].name,
+        );
         let is_static = match declaration {
             Decl::Member(member) => hir[member].flags.contains(Flags::STATIC),
-            Decl::ThisProperty(e) => bound.this_property(hir, e).is_some_and(|it| it.1),
+            Decl::Expando(_) => true,
+            Decl::ThisProperty(_) if parent.is_some() => {
+                bound.lookup(bound.symbols[parent.idx()].exports, name) == Some(symbol)
+            }
             _ => false,
         };
         if parent.is_some()
@@ -99,6 +105,22 @@ impl<'p> Checker<'p> {
                     && hir[m].flags.contains(Flags::STATIC) == is_static
                 {
                     computed.push((file, Decl::Member(m), hir[m].key, flags.0));
+                }
+            }
+        }
+        // `checkObjectLiteral` takes the exports as the binder left them.
+        if is_static
+            && !files.flags(container).contains(SymFlags::OBJECT_LITERAL)
+            && let Some(assignments) = files.export(container, known::assignment_declaration)
+        {
+            for &(file, decl) in files.decls_of(assignments).iter() {
+                let hir = self.hir(file);
+                if let Decl::Expando(e) = decl
+                    && let ExprKind::Assign { target, .. } = hir[e].kind
+                    && let ExprKind::Index { index, .. } = hir[target].kind
+                {
+                    let flags = SymFlags::PROPERTY | SymFlags::ASSIGNMENT;
+                    computed.push((file, decl, PropKey::Computed(index), flags));
                 }
             }
         }

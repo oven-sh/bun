@@ -8,14 +8,16 @@ pub(crate) struct Builder<'a> {
     pub(crate) atoms: &'a Interner,
     /// The short names this thread has interned, each at the place its spelling gives it. The last to come to a place has it.
     seen_names: Box<[std::cell::Cell<SeenName>]>,
+    /// `File::keyword_identifier_positions`
+    pub(crate) keyword_identifier_positions: std::cell::RefCell<Vec<u32>>,
 
     /// The TypeScript syntax nodes the parser built.
-    pub(crate) ts: bun_ast::ts_syntax::Syntax,
+    pub(crate) ts: crate::sema::ts_syntax::Syntax,
     /// Parts of cloned nodes that the lowering still has to fill in.
     pub(crate) pending: Vec<super::clone_types::PendingPart>,
     /// The modifiers of the statements being lowered, those of the innermost last.
     pub(crate) statement_modifiers: Vec<Modifier>,
-    /// How many classes what is being lowered is written in.
+    /// How many classes what is being lowered is written in. While the file is parsed, whether what is being read is written in one.
     pub(crate) classes_around: u32,
     /// `IsInJSFile`
     pub(crate) is_js: bool,
@@ -76,6 +78,7 @@ impl<'a> Builder<'a> {
             file: ROOM.take(),
             atoms,
             seen_names,
+            keyword_identifier_positions: Default::default(),
 
             ts: Default::default(),
             pending: Vec::new(),
@@ -84,6 +87,17 @@ impl<'a> Builder<'a> {
             is_js,
             statement_start: 0,
         }
+    }
+
+    /// `atom`, of the text of an `Identifier` that is at `pos`, or is a child of the node that starts there. Not needed for what
+    /// `IsIdentifierName` says yes to, nor in a JSDoc comment.
+    #[inline]
+    pub(crate) fn identifier(&self, text: &[u8], pos: u32) -> Atom {
+        let atom = self.atom(text);
+        if atom.is_keyword_identifier() {
+            self.keyword_identifier_positions.borrow_mut().push(pos);
+        }
+        atom
     }
 
     pub(crate) fn atom(&self, text: &[u8]) -> Atom {

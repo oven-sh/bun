@@ -100,19 +100,20 @@ describe.concurrent("bun check", () => {
       "6 | const ada: User = {
       7 |   id: "1",
             ^^
-      error TS2322: Type 'string' is not assignable to type 'number'.
-            at index.ts:7:3
-            note: The expected type comes from property 'id' which is declared here on type 'User'
-              at index.ts:2:3
-              2 |   id: number;
-                    ^^
+      error: TS2322: Type 'string' is not assignable to type 'number'.
+          at index.ts:7:3
+
+      2 |   id: number;
+            ^^
+      note: The expected type comes from property 'id' which is declared here on type 'User'
+         at index.ts:2:3
 
        9 | };
       10 | 
       11 | console.log(ada.nmae);
                            ^^^^
-      error TS2339: Property 'nmae' does not exist on type 'User'.
-            at index.ts:11:17"
+      error: TS2339: Property 'nmae' does not exist on type 'User'.
+          at index.ts:11:17"
     `);
     expect(exitCode).toBe(1);
   });
@@ -201,21 +202,23 @@ describe.concurrent("bun check", () => {
       "1 | import type { User } from "./types";
       2 | const ada: User = { id: 1 };
                 ^^^
-      error TS2741: Property 'email' is missing in type '{ id: number; }' but required in type 'User'.
-            at index.ts:2:7
-            note: 'email' is declared here.
-              at types.ts:3:3
-              3 |   email: string;
-                    ^^^^^
+      error: TS2741: Property 'email' is missing in type '{ id: number; }' but required in type 'User'.
+          at index.ts:2:7
+
+      3 |   email: string;
+            ^^^^^
+      note: 'email' is declared here.
+         at types.ts:3:3
 
       2 | const ada: User = { id: 1 };
       3 | const o = { colour: "red" };
       4 | o.color;
             ^^^^^
-      error TS2551: Property 'color' does not exist on type '{ colour: string; }'. Did you mean 'colour'?
-            at index.ts:4:3
-            note: 'colour' is declared here.
-              at index.ts:3:13"
+      error: TS2551: Property 'color' does not exist on type '{ colour: string; }'. Did you mean 'colour'?
+          at index.ts:4:3
+
+      note: 'colour' is declared here.
+         at index.ts:3:13"
     `);
     expect(agent.stdout).toMatchInlineSnapshot(`
       "<error file="index.ts" line="2" column="7" code="TS2741">
@@ -264,26 +267,26 @@ describe.concurrent("bun check", () => {
       expect(stdout).toMatchInlineSnapshot(`
         "1 | console.lgo(0);
                     ^^^
-        error TS2339: Property 'lgo' does not exist on type '{ log(...args: unknown[]): void; }'.
-              at a.ts:1:9
-              60 times in 2 files
-                40  a.ts:1
-                20  b.ts:1
+        error: TS2339: Property 'lgo' does not exist on type '{ log(...args: unknown[]): void; }'.
+            at a.ts:1:9
+            60 times in 2 files
+              40  a.ts:1
+              20  b.ts:1
 
         19 | console.lgo(18);
         20 | console.lgo(19);
         21 | const a: string = 1, b: string = 2, c: string = 3;
                    ^
-        error TS2322: Type 'number' is not assignable to type 'string'.
-              at b.ts:21:7
-              3 times on this line
+        error: TS2322: Type 'number' is not assignable to type 'string'.
+            at b.ts:21:7
+            3 times on this line
 
         20 | console.lgo(19);
         21 | const a: string = 1, b: string = 2, c: string = 3;
         22 | missing;
              ^^^^^^^
-        error TS2304: Cannot find name 'missing'.
-              at b.ts:22:1"
+        error: TS2304: Cannot find name 'missing'.
+            at b.ts:22:1"
       `);
       expect(stderr).toMatchInlineSnapshot(`
         "Found 64 errors in 2 files, checked 2 files [time]
@@ -338,7 +341,7 @@ describe.concurrent("bun check", () => {
     test("--all shows every one, and so does what is not for reading", async () => {
       using dir = project(files);
       const [all, plain] = await Promise.all([check(dir, ["--pretty", "--all"]), check(dir)]);
-      expect(all.stdout.match(/error TS/g)).toHaveLength(64);
+      expect(all.stdout.match(/error: TS/g)).toHaveLength(64);
       expect(plain.stdout.split("\n")).toHaveLength(64);
     });
 
@@ -359,7 +362,7 @@ describe.concurrent("bun check", () => {
         "a.ts": Array.from({ length: 50 }, (_, i) => `console.lgo(${i});`).join("\n") + `\nexport {};\n`,
       });
       const { stdout } = await check(dir, ["--pretty"]);
-      expect(stdout.match(/error TS/g)).toHaveLength(50);
+      expect(stdout.match(/error: TS/g)).toHaveLength(50);
     });
   });
 
@@ -474,6 +477,26 @@ describe.concurrent("bun check", () => {
       expect(stdout).toMatchInlineSnapshot(
         `"src/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
       );
+    });
+
+    test("--listFiles and --listFilesOnly", async () => {
+      using dir = project({
+        "a.ts": `import "./b";\nexport const a: string = 1;\n`,
+        "b.ts": `export {};\n`,
+      });
+      const [after, only] = await Promise.all([check(dir, ["--listFiles"]), check(dir, ["--listFilesOnly"])]);
+      // TypeScript's own files come first. A file comes after what it imports.
+      const listed = (stdout: string) => stdout.split("\n").filter(line => !line.includes("/typescript/lib/lib."));
+      expect(after.stdout).toContain("/typescript/lib/lib.es5.d.ts");
+      expect(listed(after.stdout).map(line => line.replace(/^\S*\//, ""))).toEqual([
+        "a.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.",
+        "b.ts",
+        "a.ts",
+        "console.d.ts",
+      ]);
+      expect(listed(only.stdout).map(line => line.replace(/^\S*\//, ""))).toEqual(["b.ts", "a.ts", "console.d.ts"]);
+      expect(after.exitCode).toBe(1);
+      expect(only.exitCode).toBe(0);
     });
 
     test("extends, with comments and trailing commas", async () => {
@@ -827,16 +850,16 @@ describe.concurrent("bun check", () => {
       expect(pretty.stdout).toMatchInlineSnapshot(`
         "1 | const é = "é";
         2 |  const 名前: number = é;
-                   ^^^^
-        error TS2322: Type 'string' is not assignable to type 'number'.
-              at a.ts:2:8
+                   ^^
+        error: TS2322: Type 'string' is not assignable to type 'number'.
+            at a.ts:2:8
 
         1 | const é = "é";
         2 |  const 名前: number = é;
         3 | const s = "😀😀"; const n: number = s;
                                     ^
-        error TS2322: Type 'string' is not assignable to type 'number'.
-              at a.ts:3:25"
+        error: TS2322: Type 'string' is not assignable to type 'number'.
+            at a.ts:3:25"
       `);
     });
 

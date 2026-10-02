@@ -345,6 +345,10 @@ pub enum Decls {
     #[default]
     None,
     One(Decl),
+    #[expect(
+        clippy::box_collection,
+        reason = "one word, not three: with a `Vec` a `Symbol` is 56 bytes, and it is asserted to be 48 at most"
+    )]
     Many(Box<Vec<Decl>>),
 }
 
@@ -736,9 +740,6 @@ pub struct Bound {
     /// Those of the import and export statements directly in the ambient modules a script declares, and the names of the modules
     /// added to there: looked for unless relative.
     pub ambient_specifiers: Few<Atom>,
-    /// `this.name = value` and `this["name"] = value` in the members of a class, in JavaScript, where it declares the property: the
-    /// class, whether it is the static side, the name, the assignment. Sorted.
-    pub this_properties: Few<(ClassId, bool, Atom, ExprId)>,
     /// `CommonJSModuleIndicator`: what shows that the file is a CommonJS module.
     pub commonjs_indicator: Option<ExprId>,
     /// `declareCommonJSVariable`: `module.Members["exports"]`. `NONE`: there is no such `module`.
@@ -1143,74 +1144,6 @@ impl Bound {
     /// (`node.Symbol != nil`). That includes a key that names no property, as in `f[a + b] = value`.
     pub fn is_expando_declaration(&self, e: ExprId) -> bool {
         self.expando_declarations.binary_search(&e).is_ok()
-    }
-
-    /// `bindThisPropertyAssignment`: the class, whether it is the static side, and the name of the property that `e` declares, if `e`
-    /// is `this.name = value` or `this["name"] = value` in a member of a class, in JavaScript. `this_properties` has all of them.
-    pub fn this_property(&self, f: &File, e: ExprId) -> Option<(ClassId, bool, Atom)> {
-        if !f.is_js || assignment_declaration_kind(f, e) != JsDeclarationKind::ThisProperty {
-            return None;
-        }
-        let ExprKind::Assign { target, .. } = f[e].kind else {
-            return None;
-        };
-        // `getDeclarationName`
-        let name = match f[target].kind {
-            ExprKind::Dot { name, name_pos, .. } if !is_private_name_at(f, name_pos) => name,
-            ExprKind::Index { index, .. } => string_literal_text(f, index),
-            _ => return None,
-        };
-        if name.is_none() {
-            return None;
-        }
-        // `GetThisContainer`
-        let mut parent = self.expr_parent[e.idx()];
-        let member = loop {
-            parent = match parent {
-                Parent::Expr(x) if x.is_some() => self.expr_parent[x.idx()],
-                Parent::Stmt(s) if s.is_some() => self.stmt_parent[s.idx()],
-                Parent::VarInit(d) => Parent::Stmt(self.var_stmt[d.idx()]),
-                Parent::Prop(p) => Parent::Expr(self.prop_owner[p.idx()]),
-                Parent::Case(c) => Parent::Stmt(self.case_stmt[c.idx()]),
-                Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                    let function = match parent {
-                        Parent::FnBody(function) => function,
-                        Parent::ParamDefault(p) => self.param_fn[p.idx()],
-                        _ => unreachable!(),
-                    };
-                    match self.fns[function.idx()].owner {
-                        FnOwner::Expr(owner) if f[function].kind == FnKind::Arrow => {
-                            self.expr_parent[owner.idx()]
-                        }
-                        FnOwner::Member(m) => break m,
-                        _ => return None,
-                    }
-                }
-                Parent::MemberInit(m) => break m,
-                _ => return None,
-            };
-        };
-        let MemberOwner::Class(class) = self.member_owner[member.idx()] else {
-            return None;
-        };
-        let is_static =
-            f[member].flags.contains(Flags::STATIC) || f[member].kind == MemberKind::StaticBlock;
-        Some((class, is_static, name))
-    }
-
-    /// Those of one side of `class`.
-    pub fn this_properties_of(
-        &self,
-        class: ClassId,
-        is_static: bool,
-    ) -> &[(ClassId, bool, Atom, ExprId)] {
-        let start = self
-            .this_properties
-            .partition_point(|x| (x.0, x.1) < (class, is_static));
-        let end = self
-            .this_properties
-            .partition_point(|x| (x.0, x.1) <= (class, is_static));
-        &self.this_properties[start..end]
     }
 
     /// `node.Symbol`. `NONE`: it is not kept for a declaration of that kind, none of which has a local symbol.

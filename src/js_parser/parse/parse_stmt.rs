@@ -165,7 +165,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             })
         {
             let default_range = p.lexer.range();
-            p.push_statement_modifier(bun_ast::ts_syntax::Flags::DEFAULT, default_range.loc);
+            p.push_statement_modifier(crate::sema::ts_syntax::Flags::DEFAULT, default_range.loc);
             p.lexer.next()?;
             opts.is_name_optional = true;
             if p.lexer.token == T::TClass || p.lexer.is_contextual_keyword(b"abstract") {
@@ -340,7 +340,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TEnum {
-            p.push_statement_modifier(bun_ast::ts_syntax::Flags::CONST, loc);
+            p.push_statement_modifier(crate::sema::ts_syntax::Flags::CONST, loc);
             return p.parse_typescript_enum_stmt(loc, opts);
         }
 
@@ -1296,7 +1296,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
-        p.push_statement_modifier(bun_ast::ts_syntax::Flags::EXPORT, loc);
+        p.push_statement_modifier(crate::sema::ts_syntax::Flags::EXPORT, loc);
         p.lexer.next()?;
 
         if p.lexer.token == T::TAt && p.lexer.tolerant {
@@ -1382,7 +1382,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if p.lexer.is_contextual_keyword(b"async") {
                     let async_range = p.lexer.range();
-                    p.push_statement_modifier(bun_ast::ts_syntax::Flags::ASYNC, async_range.loc);
+                    p.push_statement_modifier(
+                        crate::sema::ts_syntax::Flags::ASYNC,
+                        async_range.loc,
+                    );
                     p.lexer.next()?;
                     if p.lexer.has_newline_before {
                         p.log().add_range_error(
@@ -1466,7 +1469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let default_loc = p.lexer.loc();
-                p.push_statement_modifier(bun_ast::ts_syntax::Flags::DEFAULT, default_loc);
+                p.push_statement_modifier(crate::sema::ts_syntax::Flags::DEFAULT, default_loc);
                 p.lexer.next()?;
 
                 if p.lexer.token == T::TAt && p.lexer.tolerant {
@@ -1489,7 +1492,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     if p.lexer.token == T::TFunction && !p.lexer.has_newline_before {
                         p.push_statement_modifier(
-                            bun_ast::ts_syntax::Flags::ASYNC,
+                            crate::sema::ts_syntax::Flags::ASYNC,
                             async_range.loc,
                         );
                         p.lexer.next()?;
@@ -1630,7 +1633,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                 {
                     let abstract_loc = p.real_loc(expr.loc);
-                    p.push_statement_modifier(bun_ast::ts_syntax::Flags::ABSTRACT, abstract_loc);
+                    p.push_statement_modifier(
+                        crate::sema::ts_syntax::Flags::ABSTRACT,
+                        abstract_loc,
+                    );
                     let mut stmt_opts = ParseStatementOptions {
                         ts_decorators: opts.ts_decorators.take(),
                         is_name_optional: true,
@@ -2546,7 +2552,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let async_full_start = p.lexer.full_start();
             p.lexer.next()?;
             if p.lexer.token == T::TFunction && !p.lexer.has_newline_before {
-                p.push_statement_modifier(bun_ast::ts_syntax::Flags::ASYNC, async_range.loc);
+                p.push_statement_modifier(crate::sema::ts_syntax::Flags::ASYNC, async_range.loc);
                 p.lexer.next()?;
 
                 return p.parse_fn_stmt(async_range.loc, opts, Some(async_range));
@@ -2621,7 +2627,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
     ) -> Result<Option<Stmt>> {
-        use bun_ast::ts_syntax::Flags as Modifier;
+        use crate::sema::ts_syntax::Flags as Modifier;
         // `parseModifiersEx`. `async function` and `abstract class` are left for `parse_stmt`.
         let modifier_at = |p: &Self| match p.lexer.raw() {
             b"public" => Some((Modifier::PUBLIC, T::TEndOfFile)),
@@ -2861,7 +2867,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
-                    p.push_statement_modifier(bun_ast::ts_syntax::Flags::ABSTRACT, loc);
+                    p.push_statement_modifier(crate::sema::ts_syntax::Flags::ABSTRACT, loc);
                     return Ok(Some(p.parse_class_stmt(loc, opts)?));
                 }
                 if opts.ts_decorators.is_some() {
@@ -2922,7 +2928,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 opts.lexical_decl = LexicalDecl::AllowAll;
                 opts.is_typescript_declare = true;
-                p.push_statement_modifier(bun_ast::ts_syntax::Flags::AMBIENT, loc);
+                p.push_statement_modifier(crate::sema::ts_syntax::Flags::AMBIENT, loc);
 
                 // "@decorator declare class Foo {}"
                 // "@decorator declare abstract class Foo {}"

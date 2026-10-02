@@ -5532,7 +5532,7 @@ impl<'p> Checker<'p> {
         if !skip_optional
             && sf.contains(PropFlags::OPTIONAL)
             && !tf.contains(PropFlags::OPTIONAL)
-            && !matches!(target_prop.source, PropSource::Symbol(_))
+            && !matches!(target_prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym))
         {
             if REPORT {
                 let args = [Arg::Prop(target_prop), Arg::Type(source), Arg::Type(target)];
@@ -5546,21 +5546,21 @@ impl<'p> Checker<'p> {
     /// The class a property is declared in.
     pub(super) fn declaring_class(&self, prop: &Prop) -> Option<Sym> {
         let (file, member) = match &prop.source {
-            PropSource::Members(members) => *members.first()?,
-            PropSource::Parameter(file, param) => {
-                let bound = self.bound(*file);
-                match bound.fns[bound.param_fn[param.idx()].idx()].owner {
-                    crate::bind::FnOwner::Member(member) => (*file, member),
-                    _ => return None,
+            PropSource::Symbol(sym) => match self.files().value_declaration(*sym)? {
+                (file, crate::bind::Decl::Member(member)) => (file, member),
+                (file, crate::bind::Decl::ParameterProperty(param)) => {
+                    let bound = self.bound(file);
+                    match bound.fns[bound.param_fn[param.idx()].idx()].owner {
+                        crate::bind::FnOwner::Member(member) => (file, member),
+                        _ => return None,
+                    }
                 }
-            }
-            // `this.name = value` in a member of a class.
-            PropSource::Assigned(file, assignments) => {
-                let first = *assignments.first()?;
-                let bound = self.bound(*file);
-                let class = bound.this_property(self.hir(*file), first)?.0;
-                return Some(self.files().sym(*file, bound.class_symbol[class.idx()]));
-            }
+                // `this.name = value` in a member of a class.
+                (_, crate::bind::Decl::ThisProperty(_)) => {
+                    return self.files().parent_of_symbol(*sym);
+                }
+                _ => return None,
+            },
             _ => return None,
         };
         match self.bound(file).member_owner[member.idx()] {

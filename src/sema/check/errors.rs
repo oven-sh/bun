@@ -72,10 +72,6 @@ impl Checker<'_> {
         self.release_shapes_for_now();
         self.is_type_checked = false;
         let hir = self.hir(file);
-        if hir.kind == FileKind::Json {
-            self.check_json_file(file);
-            return self.checked(None, false);
-        }
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate: only the second depends on whether the
         // file is checked.
         self.checking = Some(file);
@@ -126,18 +122,15 @@ impl Checker<'_> {
             ));
         }
         self.get_additional_js_syntactic_diagnostics(file);
-        if self.only_syntax || !self.reports_semantic_errors(file) {
+        // `getBindAndCheckDiagnostics` has nothing to say of a JSON file.
+        let is_json = hir.kind == FileKind::Json;
+        if self.only_syntax || is_json || !self.reports_semantic_errors(file) {
             return self.checked(None, false);
         }
         self.settle_what_was_noted_ahead();
         let syntactic = std::mem::take(&mut self.reported);
         for d in early {
-            if d.code == 1212 || d.code == 1359 {
-                if !has_parse_diagnostics && hir.syntax_errors == 0 {
-                    self.check_contextual_identifier(file, d.start, d.code);
-                    explain_early_error(self, file, d.start, d.code);
-                }
-            } else if !has_parse_diagnostics || !is_grammar_error(d.code) {
+            if !has_parse_diagnostics || !is_grammar_error(d.code) {
                 self.reported.push(d);
             }
         }
@@ -190,7 +183,6 @@ impl Checker<'_> {
         // It takes back what has been said of decorators that are out of place.
         self.report_decorators(file);
         self.check_strict_mode_statements(file);
-        self.check_modifiers_of_merged_declarations(file);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
         self.take_back_what_is_never_checked(file);
         // These name a type, which is not asked for before everything has been checked.
@@ -282,25 +274,6 @@ impl Checker<'_> {
         out.into_iter().map(|d| self.explained(d)).collect()
     }
 
-    /// `GetSyntacticDiagnostics` of a JSON file. `getBindAndCheckDiagnostics` has nothing to say of one.
-    fn check_json_file(&mut self, file: FileId) {
-        let parsed = crate::json::Expression::parse_with_errors(&self.hir(file).text);
-        for error in parsed.map_or_else(Vec::new, |parsed| parsed.1) {
-            let end = if error.end > error.start {
-                error.end
-            } else {
-                super::explain::NO_LENGTH
-            };
-            let expected = [Arg::Bytes(error.expected)];
-            let args = if error.expected.is_empty() {
-                &[][..]
-            } else {
-                &expected[..]
-            };
-            self.error_at((file, error.start, end), error.code, args);
-        }
-    }
-
     /// `AddRelatedInfo`, of what arrives as an early error.
     fn relate_early_errors(&mut self, file: FileId, errors: &[(u32, u32)]) {
         let hir = self.hir(file);
@@ -335,140 +308,6 @@ impl Checker<'_> {
             self.relate(start, code, |_| {
                 vec![Reported::bare((file, from, to), related)]
             });
-        }
-    }
-
-    /// `checkContextualIdentifier`: 1212 1213 1214, 1262 1359, of a reserved word the parser came upon at `start` where a name goes.
-    /// `code`: 1359 if it says the word is `await`.
-    fn check_contextual_identifier(&mut self, file: FileId, start: u32, code: u32) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // The name of a member can be any word.
-        if hir.enum_members.iter().any(|m| m.pos == start) {
-            return;
-        }
-        let ident = hir
-            .exprs
-            .iter()
-            .position(|e| e.pos == start && matches!(e.kind, ExprKind::Ident(_)));
-        let pat = if ident.is_none() {
-            hir.pats
-                .iter()
-                .position(|p| p.pos == start && matches!(p.kind, PatKind::Ident(_)))
-        } else {
-            None
-        };
-        // Of `class await {}` the parser points at what comes after the name.
-        let class = if ident.is_some() || pat.is_some() {
-            None
-        } else {
-            hir.classes.iter().position(|c| {
-                c.name.is_some()
-                    && (c.name_pos == start
-                        || hir
-                            .text
-                            .get(c.name_pos as usize..)
-                            .is_some_and(|name| name.starts_with(b"await"))
-                            && skip_trivia(&hir.text, c.name_pos as usize + b"await".len())
-                                == start as usize)
-            })
-        };
-        let start = class.map_or(start, |c| hir.classes[c].name_pos);
-        let around = if let Some(e) = ident {
-            bound.expr_parent[e]
-        } else if let Some(p) = pat {
-            let mut root = PatId(p as u32);
-            loop {
-                match bound.pat_parent[root.idx()] {
-                    PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
-                    PatParent::Param(param) if bound.param_fn[param.idx()].is_some() => {
-                        break Parent::FnBody(bound.param_fn[param.idx()]);
-                    }
-                    PatParent::Var(d) => break Parent::VarInit(d),
-                    PatParent::Param(_) | PatParent::None => break Parent::None,
-                }
-            }
-        } else if let Some(c) = class {
-            // The name of a class is a name where the class is written.
-            match bound.class_owner[c] {
-                ClassOwner::Expr(x) if x.is_some() => Parent::Expr(x),
-                ClassOwner::Stmt(s) if s.is_some() => Parent::Stmt(s),
-                _ => Parent::None,
-            }
-        } else {
-            Parent::None
-        };
-        // Where to go outwards from: an expression itself, so that the member whose computed name it is can be found.
-        let from = match ident {
-            Some(e) if !matches!(around, Parent::None) => Parent::Expr(ExprId(e as u32)),
-            _ => around,
-        };
-        let is_module = self.files().module(file).is_module();
-        // `await` is a name like any other, except at the top of a module and where something can be awaited.
-        if code == 1359
-            || hir
-                .text
-                .get(start as usize..)
-                .is_some_and(|name| name.starts_with(b"await"))
-        {
-            // `IsInTopLevelContext`: in no function, namespace or enum, nor in the initializer of a property. A computed name is
-            // worked out where the class is.
-            let mut at = from;
-            let is_at_top = loop {
-                at = match at {
-                    Parent::File => break true,
-                    Parent::None
-                    | Parent::FnBody(_)
-                    | Parent::ParamDefault(_)
-                    | Parent::Module(_)
-                    | Parent::MemberInit(_)
-                    | Parent::EnumInit(_) => break false,
-                    Parent::Expr(x) if x.is_none() => break false,
-                    Parent::Expr(key)
-                        if matches!(
-                            bound.expr_parent[key.idx()],
-                            Parent::MemberKey(_) | Parent::MethodKey(_)
-                        ) =>
-                    {
-                        match hir
-                            .members
-                            .iter()
-                            .position(|m| m.key == PropKey::Computed(key))
-                        {
-                            Some(m) => self.outward(file, Parent::MemberInit(MemberId(m as u32))),
-                            // Of a method of an object literal, which is not kept track of.
-                            None => break false,
-                        }
-                    }
-                    Parent::PropKey(owner, _) if owner.is_some() => Parent::Expr(owner),
-                    other => self.outward(file, other),
-                };
-            };
-            // `NodeFlagsAwaitContext`: the nearest function decides, and a static block counts as one that can.
-            let can_await = self.enclosing_fn(file, around).is_some_and(|f| {
-                hir[f].flags.contains(Flags::ASYNC) || hir[f].kind == FnKind::StaticBlock
-            });
-            if is_module && is_at_top {
-                self.error_at((file, start, 0), 1262, &[]);
-            } else if can_await || matches!(around, Parent::None) {
-                {
-                    let arg0 = word_at(self, file, start);
-                    self.error_at((file, start, 0), 1359, &[Arg::Text(&arg0)]);
-                }
-            }
-            return;
-        }
-        // `getStrictModeIdentifierMessage`: why the mode is strict is part of what is said. `GetContainingClass` starts at what the name
-        // is in, so the name of a class is in that class.
-        let code = if class.is_some() || !self.classes_around(file, from).is_empty() {
-            1213
-        } else if is_module {
-            1214
-        } else {
-            1212
-        };
-        {
-            let arg0 = word_at(self, file, start);
-            self.error_at((file, start, 0), code, &[Arg::Text(&arg0)]);
         }
     }
 
@@ -2157,7 +1996,7 @@ impl Files {
                         .into_iter()
                         .filter(|&(_, wrapper)| {
                             meaning.intersects(SymFlags::TYPE_ALIAS)
-                                && files.globals.contains_key(&wrapper)
+                                && files.globals.contains_key(wrapper)
                         })
                         .map(|(primitive, _)| primitive)
                         .chain(
@@ -2897,8 +2736,7 @@ impl Checker<'_> {
 
     /// Where `e` starts as it is written.
     pub(super) fn start_of(&self, file: FileId, e: ExprId) -> u32 {
-        let hir = self.hir(file);
-        open_parenthesis(hir, e).unwrap_or_else(|| start_inside_parentheses(hir, e))
+        start_of(self.hir(file), e)
     }
 
     /// Where `e` starts, not counting parentheses around the whole of it.
@@ -2912,7 +2750,13 @@ impl Checker<'_> {
         file: FileId,
         decl: Decl,
     ) -> Option<(u32, u32)> {
-        let node = self.hir(file).node(decl);
+        let hir = self.hir(file);
+        // The text of the default library and of JSON is not kept: there is nothing to tell an end by.
+        if hir.text.is_empty() {
+            let start = self.declaration_name_start(file, decl)?;
+            return Some((start, start));
+        }
+        let node = hir.node(decl);
         (node.is_some()).then(|| self.get_error_range_for_node(file, node))
     }
 }
@@ -3106,18 +2950,23 @@ impl<'p> Checker<'p> {
             return false;
         };
         match Self::value_declaration(prop) {
-            Some(PropSource::Members(members)) => members.iter().any(|&(other, m)| {
-                other == file
-                    && bound.member_owner[m.idx()] == bound.member_owner[constructor.idx()]
-            }),
-            Some(PropSource::Parameter(other, p)) => *other == file && bound.param_fn[p.idx()] == f,
-            // `isLocalThisPropertyAssignment`
-            Some(PropSource::Assigned(other, assignments)) => {
-                *other == file
-                    && matches!(bound.member_owner[constructor.idx()], MemberOwner::Class(class)
-                    if assignments.first().is_some_and(|&first| {
-                        bound.this_property(hir, first).is_some_and(|x| x.0 == class)
-                    }))
+            Some(&PropSource::Symbol(sym)) => {
+                let declarations = self.files().decls_of(sym);
+                declarations.iter().any(|&(other, decl)| {
+                    other == file
+                        && match decl {
+                            Decl::Member(m) => {
+                                bound.member_owner[m.idx()] == bound.member_owner[constructor.idx()]
+                            }
+                            Decl::ParameterProperty(p) => bound.param_fn[p.idx()] == f,
+                            // `isLocalThisPropertyAssignment`
+                            Decl::ThisProperty(_) => {
+                                matches!(bound.member_owner[constructor.idx()], MemberOwner::Class(class)
+                                    if self.files().parent_of_symbol(sym) == Some(self.class_sym(file, class)))
+                            }
+                            _ => false,
+                        }
+                })
             }
             _ => false,
         }

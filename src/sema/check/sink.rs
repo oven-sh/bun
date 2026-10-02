@@ -12,7 +12,7 @@
 //! What is reported with no question under way stays there until `check_file` ends, and is handed to `finish_file`.
 
 use super::*;
-use std::sync::Mutex;
+use bun_threading::Guarded;
 
 /// `args ...any` of `NewDiagnostic` and `reportError`.
 #[derive(Copy, Clone)]
@@ -110,11 +110,11 @@ fn compare_message_chain_content(a: &[Reported], b: &[Reported]) -> std::cmp::Or
 }
 
 /// For each file what has been reported in it.
-pub(super) struct Sink(Box<[Mutex<Vec<Reported>>]>);
+pub(super) struct Sink(Box<[Guarded<Vec<Reported>>]>);
 
 impl Sink {
     pub(super) fn new(files: usize) -> Sink {
-        Sink((0..files).map(|_| Mutex::default()).collect())
+        Sink((0..files).map(|_| Guarded::default()).collect())
     }
 }
 
@@ -127,7 +127,7 @@ impl super::Program {
             && hir.jsdoc_errors.is_empty()
             && files.module(file).missing_references.is_empty()
             && files.include_problems_in(file).next().is_none()
-            && self.sink.0[file.idx()].lock().unwrap().is_empty()
+            && self.sink.0[file.idx()].lock().is_empty()
     }
 }
 
@@ -234,6 +234,11 @@ impl Checker<'_> {
     pub(super) fn add_diagnostic(&mut self, diagnostic: Reported) -> &mut Reported {
         // "Discard diagnostics created while at the maximum number of recursive TypeToString invocations."
         if self.serialization_level >= MAX_SERIALIZATION_LEVEL {
+            // For a diagnostic in another file, tsgo's result depends on file order. Mark the innermost query non-cacheable so that
+            // the owning file recomputes it during its own check and reports the diagnostic there.
+            if self.checking != Some(diagnostic.file) {
+                self.mark_tainted_from(self.frames.len().saturating_sub(1));
+            }
             return self.discarded.insert(diagnostic);
         }
         self.reported.push(diagnostic);
@@ -263,10 +268,7 @@ impl Checker<'_> {
         if self.is_type_checked && self.checking == Some(diagnostic.file) {
             return;
         }
-        self.p.sink.0[diagnostic.file.idx()]
-            .lock()
-            .unwrap()
-            .push(diagnostic);
+        self.p.sink.0[diagnostic.file.idx()].lock().push(diagnostic);
     }
 
     /// `CompareDiagnostics`
@@ -288,7 +290,7 @@ impl Checker<'_> {
 
     /// What all the checkers have reported in `file`, but for where `checkSourceFile` never comes.
     pub(super) fn drain_sink(&self, file: FileId, never_checked: &[(u32, u32)]) -> Vec<Reported> {
-        let mut reported = std::mem::take(&mut *self.p.sink.0[file.idx()].lock().unwrap());
+        let mut reported = std::mem::take(&mut *self.p.sink.0[file.idx()].lock());
         reported.retain(|d| {
             !never_checked
                 .iter()

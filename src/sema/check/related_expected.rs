@@ -70,52 +70,7 @@ impl Checker<'_> {
     /// nothing declares it.
     fn first_declaration_of_property(&mut self, ty: TypeId, name: Atom) -> Option<Option<Place>> {
         let (prop, _) = self.get_property_of_type(ty, name)?;
-        Some(self.first_declaration_of_prop(prop, 0))
-    }
-
-    /// `GetErrorRangeForNode` of `prop.Declarations[0]`
-    fn first_declaration_of_prop(&mut self, prop: &Prop, depth: u32) -> Option<Place> {
-        match &prop.source {
-            PropSource::Members(members) => {
-                let &(file, member) = members.first()?;
-                Some(
-                    self.place_in_file(file, self.hir(file)[member].name_pos, |c| {
-                        c.error_range_of_member(file, member)
-                    }),
-                )
-            }
-            &PropSource::Parameter(file, param) => {
-                let start = self.hir(file)[param].pos;
-                Some(self.place_in_file(file, start, |c| (start, c.end_of_param(file, param))))
-            }
-            &PropSource::Literal(file, written) => {
-                let hir::Prop { kind, pos, .. } = self.hir(file)[written];
-                // A method or an accessor is pointed at by its name.
-                let end = match kind {
-                    PropKind::Method | PropKind::Getter | PropKind::Setter => {
-                        self.end_of_prop_name(file, written)
-                    }
-                    _ => self.end_of_prop(file, written),
-                };
-                Some((file, pos, end))
-            }
-            &PropSource::Symbol(sym) => {
-                let (file, decl) = self.files().decls_of(sym).first().copied()?;
-                self.place_of_declaration(file, decl)
-            }
-            PropSource::Assigned(..) => self.place_of_prop(prop),
-            PropSource::Intersected(_, parts)
-            | PropSource::Copy(_, parts, _)
-            | PropSource::ReverseMapped(_, parts) => parts
-                .iter()
-                .find_map(|part| self.first_declaration_of_prop(part, depth + 1)),
-            // `addMemberForKeyTypeWorker`: those of the property of the type the modifiers are taken from.
-            PropSource::Mapped(..) => prop
-                .declared_by_modifiers_property()
-                .iter()
-                .find_map(|part| self.first_declaration_of_prop(part, depth + 1)),
-            PropSource::Type(_) => None,
-        }
+        Some(self.place_of_first_prop_declaration(prop))
     }
 
     /// `GetErrorRangeForNode` of `ty.symbol.Declarations[0]`

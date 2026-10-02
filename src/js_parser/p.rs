@@ -395,7 +395,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// `Parser::parse_only`: where what does not say so itself starts.
     pub(crate) starts_for_parse_only: Option<StartsForParseOnly>,
     /// Where the type syntax that gets skipped is, when something wants to know. See `crate::sema`.
-    pub(crate) type_syntax: Option<Box<crate::sema::TypeSyntax>>,
+    pub(crate) type_syntax: Option<Box<crate::sema::TypeSyntax<'a>>>,
     /// Tolerant mode only. The tag name of the JSX element whose child is about to be parsed (`openingTag` of `parseJsxChildren`).
     pub(crate) jsx_parent_tag: Option<&'a [u8]>,
     /// Tolerant mode only. In `<div><span></div>`, the closing tag that the child read and its parent takes, with where it starts
@@ -8459,7 +8459,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
         self.lexer.restore(&snapshot.lexer);
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
-        self.rewind_type_syntax(snapshot.noted);
+        self.rewind_type_syntax(&snapshot.noted);
 
         let log = self.log();
         log.msgs.truncate(snapshot.log_msgs_len);

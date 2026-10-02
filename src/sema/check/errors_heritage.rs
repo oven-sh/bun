@@ -241,37 +241,29 @@ impl Checker<'_> {
     }
 
     /// The members that declare `prop`, if members of classes or interfaces do.
-    fn declarations_of_prop<'a>(&self, prop: &'a Prop) -> &'a [(FileId, MemberId)] {
-        match &prop.source {
-            PropSource::Members(members) => members,
-            _ => &[],
+    fn declarations_of_prop(&mut self, prop: &Prop) -> SmallVec<[(FileId, MemberId); 2]> {
+        match prop.source {
+            PropSource::Symbol(sym) => self.members_of_symbol(sym),
+            _ => SmallVec::new(),
         }
     }
 
     /// What `checkKindsOfPropertyMemberOverrides` asks of the symbol of a property: whether it is a property, has a getter, has a
     /// setter, is a method. `None`: what declares it does not tell.
-    fn kinds_of_prop(&self, prop: &Prop) -> Option<(bool, bool, bool, bool)> {
+    fn kinds_of_prop(&mut self, prop: &Prop) -> Option<(bool, bool, bool, bool)> {
         match &prop.source {
-            PropSource::Members(decls) if !decls.is_empty() => {
-                let (mut property, mut getter, mut setter, mut method) =
-                    (false, false, false, false);
-                for &(f, m) in decls.iter() {
-                    let member = &self.hir(f)[m];
-                    match member.kind {
-                        MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
-                            (getter, setter) = (true, true)
-                        }
-                        MemberKind::Property => property = true,
-                        MemberKind::Getter => getter = true,
-                        MemberKind::Setter => setter = true,
-                        MemberKind::Method => method = true,
-                        _ => {}
-                    }
-                }
-                Some((property, getter, setter, method))
+            PropSource::Symbol(sym) => {
+                let flags = self.flags_of_property(*sym);
+                // What an assignment declares does not tell.
+                let tells = flags.intersects(SymFlags::CLASS_MEMBER)
+                    && !self.is_declared_by_assignment(*sym);
+                tells.then_some((
+                    flags.contains(SymFlags::PROPERTY),
+                    flags.contains(SymFlags::GET_ACCESSOR),
+                    flags.contains(SymFlags::SET_ACCESSOR),
+                    flags.contains(SymFlags::METHOD),
+                ))
             }
-            // A parameter that declares a property.
-            PropSource::Parameter(..) => Some((true, false, false, false)),
             // `createUnionOrIntersectionProperty`: accessors if all the members of the intersection have the same ones, else a property.
             // A method besides (`CheckFlagsSyntheticMethod`) if it is one in all of them.
             PropSource::Intersected(_, parts) => {
@@ -295,12 +287,15 @@ impl Checker<'_> {
     /// Whether an interface declares `prop`, or one of the properties an intersection makes it of.
     fn is_declared_in_interface(&self, prop: &Prop) -> bool {
         match &prop.source {
-            PropSource::Members(decls) => decls.iter().any(|&(f, m)| {
-                matches!(
-                    self.bound(f).member_owner[m.idx()],
-                    MemberOwner::Interface(_)
-                )
-            }),
+            PropSource::Symbol(sym) => {
+                let members = members_among(&self.files().decls_of(*sym));
+                members.iter().any(|&(f, m)| {
+                    matches!(
+                        self.bound(f).member_owner[m.idx()],
+                        MemberOwner::Interface(_)
+                    )
+                })
+            }
             PropSource::Intersected(_, parts) => {
                 parts.iter().any(|part| self.is_declared_in_interface(part))
             }
@@ -360,15 +355,14 @@ impl Checker<'_> {
                 continue;
             }
             // The name of `derived.ValueDeclaration`.
-            let (derived_file, start) = match &derived.source {
-                PropSource::Members(decls) => {
-                    let Some(&(f, first)) = decls.first() else {
-                        continue;
-                    };
-                    (f, self.hir(f)[first].name_pos)
-                }
-                PropSource::Parameter(f, p) => (*f, self.hir(*f)[self.hir(*f)[*p].pat].pos),
-                _ => continue,
+            let PropSource::Symbol(sym) = derived.source else {
+                continue;
+            };
+            let Some((derived_file, declaration)) = self.files().value_declaration(sym) else {
+                continue;
+            };
+            let Some(start) = self.declaration_name_start(derived_file, declaration) else {
+                continue;
             };
             if derived_file != file {
                 continue;
@@ -492,10 +486,9 @@ impl Checker<'_> {
         class_type: TypeId,
     ) -> bool {
         let hir = self.hir(file);
-        let PropSource::Members(decls) = &derived.source else {
-            return false;
-        };
-        if hir.kind == FileKind::Declaration
+        let decls = self.declarations_of_prop(derived);
+        if decls.is_empty()
+            || hir.kind == FileKind::Declaration
             || hir[c].flags.contains(Flags::AMBIENT)
             || decls.iter().any(|&(f, m)| {
                 let member = &self.hir(f)[m];
@@ -764,7 +757,7 @@ impl Checker<'_> {
                 let prop = Prop {
                     name: Atom::NONE,
                     flags,
-                    source: PropSource::Members(MemberList::One((f, m))),
+                    source: PropSource::Symbol(self.symbol_of_member(f, m)),
                     mapper: MapperId::IDENTITY,
                 };
                 let prop_type = self.type_of_prop_as_read(&prop, members.mapper);
@@ -790,17 +783,20 @@ impl Checker<'_> {
         if is_private {
             return;
         }
-        let declarations = self.declarations_of_prop(prop);
+        let declarations = match prop.source {
+            PropSource::Symbol(sym) => self.declarations_of_property(sym),
+            _ => List::default(),
+        };
         // `localPropDeclaration`
-        let local_prop = match prop.source {
-            PropSource::Parameter(f, p) => {
+        let local_prop = declarations.iter().find_map(|&(f, decl)| match decl {
+            Decl::ParameterProperty(p) => {
                 let bound = self.bound(f);
                 matches!(bound.fns[bound.param_fn[p.idx()].idx()].owner, FnOwner::Member(m) if cx.is_local(f, m))
                     .then(|| (f, self.hir(f).node(p)))
             }
-            _ => (declarations.iter().find(|&&(f, m)| cx.is_local(f, m)))
-                .map(|&(f, m)| (f, self.hir(f).node(m))),
-        };
+            Decl::Member(m) if cx.is_local(f, m) => Some((f, self.hir(f).node(m))),
+            _ => None,
+        });
         for info in cx.infos {
             let applies = match name_type {
                 Some(name_type) => self.is_applicable_index_type(name_type, info.key),
@@ -829,7 +825,7 @@ impl Checker<'_> {
             // `propDeclaration`
             let mut related = None;
             if local_prop.is_none()
-                && let Some(&(of, m)) = declarations.first()
+                && let Some(&(of, Decl::Member(m))) = declarations.first()
                 && let (text, member) = (&self.hir(of).text, &self.hir(of)[m])
                 && (matches!(member.key, PropKey::Computed(_))
                     || text.get(member.name_pos as usize) == Some(&b'['))

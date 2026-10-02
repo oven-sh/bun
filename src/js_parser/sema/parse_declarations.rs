@@ -6,7 +6,7 @@
 //! tokens: nothing here moves the lexer back, and nothing reads the source text.
 //!
 //! What `bun_ast` can say is kept as what it is (`S::Class`, `S::Function`, `S::Local`, `S::Enum`, `S::Namespace`), and
-//! [`lower`](super::lower) treats it like any other. What it cannot say is a [`Mark`] or a `bun_ast::ts_syntax` node.
+//! [`lower`](super::lower) treats it like any other. What it cannot say is a [`Mark`] or a `crate::sema::ts_syntax` node.
 
 use super::Mark;
 use super::keep::{TypeMemberParts, modifier_flag};
@@ -14,8 +14,9 @@ use crate::Error;
 use crate::lexer::{PropertyModifierKeyword, T};
 use crate::p::P;
 use crate::parser::{PropertyOpts, TypeParameterFlag};
-use bun_ast::ts_syntax as ts;
+use crate::sema::ts_syntax as ts;
 use bun_ast::{E, G, Loc, LocRef, Ref, S, Stmt};
+use bun_sema::hir::TypeNodeKind;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// The name of a declaration that declares no symbol, because an ordinary build drops it.
@@ -116,12 +117,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let implemented = if implemented.is_some() {
                 implemented
             } else {
-                let error = ts::TypeData::Error {
-                    is_syntax_error: false,
-                };
-                syntax.ast.add_type(error, start)
+                syntax.b.add_type(TypeNodeKind::Error, start)
             };
-            self.note(class_keyword, clause, implemented.index() as u32);
+            self.note(class_keyword, clause, implemented.0);
         }
     }
 
@@ -138,16 +136,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         parameter.end = self.lexer.full_start();
         if let Some(syntax) = &mut self.type_syntax {
-            let this = ts::PatternData::Identifier(bun_ast::StoreStr::new(b"this"));
+            let this = bun_sema::hir::PatKind::Ident(bun_sema::atom::known::this);
             let name_end = Loc {
                 start: name.start + b"this".len() as i32,
             };
-            parameter.pattern = syntax.ast.add_pattern(this, name, name_end);
+            parameter.pattern = syntax.b.add_pattern(this, name, name_end);
             if has_type {
                 parameter.ty = syntax.last_type_or_error();
             }
-            let kept = syntax.ast.add_param(parameter);
-            self.note(open_parens_loc, Mark::ThisParameter, kept.index() as u32);
+            let kept = syntax.b.add_params(&[parameter]).at(0);
+            self.note(open_parens_loc, Mark::ThisParameter, kept.0);
         }
     }
 
@@ -200,8 +198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.should_keep_types()
             && let Some(Ok(built)) = self.build_type_member(&member)
         {
-            let syntax = self.type_syntax_mut();
-            syntax.last_index_signature = syntax.ast.add_member(built);
+            self.type_syntax_mut().last_index_signature = Some(built);
         }
         Ok(())
     }
@@ -219,28 +216,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         let end = self.lexer.full_start();
         let syntax = self.type_syntax_mut();
-        let member = std::mem::replace(&mut syntax.last_index_signature, ts::MemberId::NONE);
         let base = modifiers_base.min(syntax.statement_modifiers.len());
-        if member.is_some() {
+        if let Some(mut kept) = syntax.last_index_signature.take() {
             let modifiers = syntax
-                .ast
+                .b
+                .ts
                 .add_modifiers(&syntax.statement_modifiers[base..]);
             let flags = syntax.statement_modifiers[base..]
                 .iter()
                 .fold(ts::Flags::empty(), |flags, modifier| flags | modifier.flag);
             let first_modifier = syntax.statement_modifiers.get(base).map(|first| first.loc);
-            let signature = syntax.ast[member].signature;
-            syntax.ast[signature].flags |= flags;
-            let kept = &mut syntax.ast[member];
+            syntax.b.file[kept.signature].flags |= flags;
             kept.flags |= flags;
             kept.modifiers = modifiers;
             if let Some(first) = first_modifier {
                 kept.loc = first;
             }
             (kept.start, kept.full_start, kept.end) = (start, full_start, end);
+            let made = syntax.b.member(&kept);
+            syntax.class_index_signatures.push(made);
+            let payload = syntax.class_index_signatures.len() as u32 - 1;
             syntax
                 .notes
-                .add(class_keyword, Mark::IndexSignature, member.index() as u32);
+                .add(class_keyword, Mark::IndexSignature, payload);
         }
         syntax.statement_modifiers.truncate(base);
     }
@@ -257,14 +255,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if kept.is_none() {
             return Ok(false);
         }
-        let ts::TypeData::Reference { name, args } = self.type_syntax_mut().ast[kept].data else {
+        let TypeNodeKind::Ref { mut name, args } = self.type_syntax_mut().b.file[kept].kind else {
             return Ok(false);
         };
         if self.lexer.token != T::TQuestionDot || !args.is_empty() {
             return Ok(false);
         }
         let here = self.lexer.snapshot();
-        let mut names = self.type_syntax_mut().ast[name].to_vec();
+        let mut names: Vec<ts::Name> = Vec::new();
         while matches!(self.lexer.token, T::TDot | T::TQuestionDot) {
             self.lexer.next()?;
             if !self.lexer.is_identifier_or_keyword() {
@@ -291,9 +289,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let end = self.lexer.full_start();
         let syntax = self.type_syntax_mut();
-        let name = syntax.ast.add_names(&names);
-        syntax.ast[kept].data = ts::TypeData::Reference { name, args };
-        syntax.ast[kept].end = end;
+        for next in names {
+            let text = syntax.b.atom(&next.text);
+            name = syntax
+                .b
+                .file
+                .append_to_entity_name(name, text, next.loc.start as u32);
+        }
+        syntax.b.file[kept].kind = TypeNodeKind::Ref { name, args };
+        syntax.b.file[kept].end = end.start as u32;
         Ok(true)
     }
 
@@ -304,8 +308,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match &self.type_syntax {
             // `number` is a name like any other to `parseLeftHandSideExpressionOrHigher`.
             Some(syntax) if kept.is_some() => matches!(
-                syntax.ast[kept].data,
-                ts::TypeData::Reference { .. } | ts::TypeData::Keyword(_)
+                syntax.b.file[kept].kind,
+                TypeNodeKind::Ref { .. } | TypeNodeKind::Keyword(_)
             ),
             _ => true,
         }
@@ -542,7 +546,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if syntax.module_syntax.is_empty() {
             return;
         }
-        let specifiers = syntax.ast.add_specifiers(specifiers);
+        let specifiers = syntax.b.ts.add_specifiers(specifiers);
         if let Some(kept) = syntax.module_syntax.last_mut() {
             kept.specifiers = Some(specifiers);
             kept.clause_end = end;
@@ -660,7 +664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `tryParseImportClause`: without a clause there is nothing for a modifier to be on.
         let has_clause =
             kept.default_name.is_some() || namespace.is_some() || kept.specifiers.is_some();
-        let import = self.type_syntax_mut().ast.add_import(ts::Import {
+        let import = self.type_syntax_mut().b.ts.add_import(ts::Import {
             clause_loc: kept.clause_loc,
             clause_end: kept.clause_end,
             is_type_only: kept.is_type_only,
@@ -720,7 +724,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let reference = match external {
             Some(external) => external,
             None => ts::ModuleReference::EntityName(
-                syntax.ast.add_names(&syntax.name_stack[names_base..]),
+                syntax.b.add_names(&syntax.name_stack[names_base..]),
             ),
         };
         syntax.name_stack.truncate(names_base);
@@ -736,7 +740,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ),
             None => (missing, false, false),
         };
-        let import = syntax.ast.add_import_equals(ts::ImportEquals {
+        let import = syntax.b.ts.add_import_equals(ts::ImportEquals {
             name,
             is_type_only,
             reference,
@@ -771,7 +775,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `checkExportSpecifier`, `checkModuleExportName`: without a module, a string names nothing that could be exported.
         if let (ts::ExportClause::Named(specifiers), None) = (clause, kept.module) {
             for specifier in specifiers.iter() {
-                if let Some(name) = self.type_syntax_mut().ast[specifier].property_name
+                if let Some(name) = self.type_syntax_mut().b.ts[specifier].property_name
                     && name.is_string
                 {
                     let range = bun_ast::Range {
@@ -782,7 +786,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
-        let export = self.type_syntax_mut().ast.add_export(ts::Export {
+        let export = self.type_syntax_mut().b.ts.add_export(ts::Export {
             is_type_only: kept.is_type_only,
             clause,
             module: kept.module,

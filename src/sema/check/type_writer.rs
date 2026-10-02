@@ -4,9 +4,8 @@
 use super::enclosing_declaration::Enclosing;
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
-use crate::bind::{
-    ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, SymbolId, flags_of_member,
-};
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, SymbolId, flags_of_member};
+use crate::node::{Kind, Node, NodeData, Part};
 
 /// `typeWriterResult`
 pub struct TypeAtLocation {
@@ -56,7 +55,7 @@ impl Checker<'_> {
                 continue;
             }
             let ty = self.get_type_of_visited_node(file, node);
-            if self.is_error_type(ty) && !self.is_error_type_written_as_any(file, node.kind) {
+            if self.is_error_type(ty) && !self.is_error_type_written_as_any(file, node.node) {
                 found.push((node.start, format!("{:?}", node.kind)));
             }
         }
@@ -77,11 +76,11 @@ impl Checker<'_> {
             return;
         }
         let ty = self.get_type_of_visited_node(file, node);
-        let type_text = if ty == TypeId::ERROR && self.is_error_type_written_as_any(file, node.kind)
+        let type_text = if ty == TypeId::ERROR && self.is_error_type_written_as_any(file, node.node)
         {
             "any".to_owned()
         } else {
-            self.type_text_of_visited_node(file, node.kind, ty, walk)
+            self.type_text_of_visited_node(file, node, ty, walk)
         };
         results.push(TypeAtLocation {
             start: node.start,
@@ -94,7 +93,7 @@ impl Checker<'_> {
     fn type_text_of_visited_node(
         &mut self,
         file: FileId,
-        kind: VisitedKind,
+        VisitedNode { node, kind, .. }: VisitedNode,
         ty: TypeId,
         walk: &mut TypeWalk,
     ) -> String {
@@ -117,8 +116,12 @@ impl Checker<'_> {
             self.enclosing_module_specifier_mode =
                 self.mode_of_module_specifier_of_declaration(file, decl);
         }
+        let hir = self.hir(file);
         let enclosing_declaration = Enclosing {
-            variable: self.parent_variable_declaration(file, kind),
+            variable: match hir.data(hir.parent(node)) {
+                NodeData::VarDecl(declaration) => declaration,
+                _ => VarDeclId::NONE,
+            },
             ..Enclosing::at_scope(file, scope)
         };
         let text = self.type_to_string_for_baseline_with(ty, Some(enclosing_declaration));
@@ -169,86 +172,30 @@ impl Checker<'_> {
     }
 
     /// The exceptions of `writeTypeOrSymbol`: whether the error type of the node is written `any` in a test without errors too.
-    fn is_error_type_written_as_any(&self, file: FileId, kind: VisitedKind) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match kind {
-            // `IsBindingElement(node.Parent)`, `IsLabelName(node)`, `IsMetaProperty(node.Parent)`,
-            // `IsPropertyAccessOrQualifiedName(node.Parent)`, `isIntrinsicJsxTag`
-            VisitedKind::BindingPropertyName(_)
-            | VisitedKind::JsxIntrinsicTagName(..)
-            | VisitedKind::Label(_)
-            | VisitedKind::ImportDeferName(_)
-            | VisitedKind::AccessName(_) => true,
-            // `isImportStatementName`, `isExportStatementName`, `IsGlobalScopeAugmentation(node.Parent)`
-            VisitedKind::SpecifierPropertyName(..) => true,
-            VisitedKind::DeclarationName(decl, _) => match decl {
-                Decl::ImportDefault(_)
-                | Decl::ImportSpec(_)
-                | Decl::ImportEquals(_)
-                | Decl::ExportSpec(_) => true,
-                Decl::Module(m) => matches!(hir[m].name, ModuleName::Global),
-                _ => false,
-            },
-            VisitedKind::BindingName(pat) => matches!(
-                bound.pat_parent[pat.idx()],
-                PatParent::Prop(..) | PatParent::Elem(..)
-            ),
-            VisitedKind::Expression(e) | VisitedKind::Parenthesized(e, _) => {
-                self.is_child_of_parent_of_expr(file, kind)
-                    && match bound.expr_parent[e.idx()] {
-                        Parent::Expr(parent) if parent.is_some() => {
-                            matches!(hir[parent].kind, ExprKind::Dot { obj, .. } if obj == e)
-                        }
-                        // `isExportStatementName`
-                        Parent::Stmt(s) if s.is_some() => matches!(
-                            hir[s].kind,
-                            StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
-                        ),
-                        Parent::PatPropDefault(_) | Parent::PatElemDefault(_) => true,
-                        _ => false,
-                    }
-            }
-            // `IsPropertyAccessOrQualifiedName(node.Parent)`
-            VisitedKind::TypeReferenceName(node, _)
-            | VisitedKind::HeritageClauseName(node, _)
-            | VisitedKind::HeritageClausePropertyAccess(node, _)
-            | VisitedKind::ImportTypeQualifierName(node, _) => matches!(
-                hir[node].kind,
-                TypeNodeKind::Ref { name, .. } | TypeNodeKind::Import { name, .. } if name.len() > 1
-            ),
-            VisitedKind::ImportEqualsName(import, _) => {
-                matches!(hir[import].target, ImportEqualsTarget::Entity(entity) if entity.len() > 1)
-            }
-            _ => false,
-        }
-    }
-
-    /// `node.Parent`, if that is a variable declaration.
-    fn parent_variable_declaration(&self, file: FileId, kind: VisitedKind) -> VarDeclId {
-        let bound = self.bound(file);
-        match kind {
-            VisitedKind::BindingName(pat) => match bound.pat_parent[pat.idx()] {
-                PatParent::Var(declaration) => declaration,
-                _ => VarDeclId::NONE,
-            },
-            VisitedKind::Expression(e) | VisitedKind::Parenthesized(e, _)
-                if self.is_child_of_parent_of_expr(file, kind) =>
-            {
-                match bound.expr_parent[e.idx()] {
-                    Parent::VarInit(declaration) => declaration,
-                    _ => VarDeclId::NONE,
-                }
-            }
-            _ => VarDeclId::NONE,
-        }
-    }
-
-    /// Whether the node is the child `bound.expr_parent` speaks of: an expression with all the parentheses around it.
-    fn is_child_of_parent_of_expr(&self, file: FileId, kind: VisitedKind) -> bool {
-        match kind {
-            VisitedKind::Parenthesized(_, depth) => depth == 0,
-            VisitedKind::Expression(e) => !is_parenthesized(self.hir(file), e),
-            _ => false,
+    fn is_error_type_written_as_any(&self, file: FileId, node: Node) -> bool {
+        let hir = self.hir(file);
+        let parent = hir.parent(node);
+        match hir.kind(parent) {
+            // `IsBindingElement`, `IsPropertyAccessOrQualifiedName`, `IsMetaProperty`, of `node.Parent`; the names of specifiers
+            // (`isImportStatementName`, `isExportStatementName`)
+            Kind::BindingElement
+            | Kind::PropertyAccessExpression
+            | Kind::QualifiedName
+            | Kind::MetaProperty
+            | Kind::ImportSpecifier
+            | Kind::ExportSpecifier => true,
+            // `IsLabelName`
+            _ if node.part() == Some(Part::Label) => true,
+            // `IsGlobalScopeAugmentation(node.Parent)`
+            Kind::ModuleDeclaration => matches!(hir.data(parent), NodeData::Stmt(s)
+                if matches!(hir[s].kind, StmtKind::Module(m) if matches!(hir[m].name, ModuleName::Global))),
+            // `isImportStatementName`
+            Kind::ImportClause | Kind::ImportEqualsDeclaration => hir.name(parent) == node,
+            // `isExportStatementName`
+            Kind::ExportAssignment => hir.expression(parent) == node,
+            // `isIntrinsicJsxTag`
+            _ => matches!(hir.data(node), NodeData::Expr(tag)
+                if hir.is_jsx_tag_name(node) && self.jsx_intrinsic_tag_name(file, tag).is_some()),
         }
     }
 
@@ -264,10 +211,10 @@ impl Checker<'_> {
             | VisitedKind::Parenthesized(e, _)
             | VisitedKind::AccessName(e) => {
                 // `IsExpressionWithTypeArgumentsInClassExtendsClause(node.Parent)`: the base type, unless it is `any` or there is none.
-                if self.is_child_of_parent_of_expr(file, node.kind)
-                    && let Parent::ClassExtends(c) = self.bound(file).expr_parent[e.idx()]
-                {
-                    let class = self.class_sym(file, c);
+                let parent = hir.parent(node.node);
+                // What a class extends after the first has no `ExpressionWithTypeArguments` around it.
+                if matches!(parent.part(), Some(Part::Base | Part::Extends)) {
+                    let class = self.class_sym(file, hir.class_of(parent.row()));
                     if let Some(&base) = self.base_types(class).first()
                         && !base.is_any()
                     {
@@ -322,9 +269,6 @@ impl Checker<'_> {
                 }),
                 _ => TypeId::ERROR,
             },
-            VisitedKind::Directive(index) => {
-                self.string_literal(hir.directives[index as usize].1, false)
-            }
             VisitedKind::ThisParameter(f) => self.type_of_this_parameter(file, f),
             // `getRegularTypeOfExpression` of the access, and of the name it ends with (`isRightSideOfQualifiedNameOrPropertyAccess`).
             VisitedKind::HeritageClauseName(reference, index)
@@ -608,6 +552,7 @@ impl Checker<'_> {
         let prop = self
             .member_name(file, member.key)
             .and_then(|name| self.prop_of(container, name));
+        let own = PropSource::Symbol(self.symbol_of_member(file, m));
         let own_symbol = |name: Atom, mapper: MapperId| {
             let mut flags = PropFlags::empty();
             if member.flags.contains(Flags::OPTIONAL) {
@@ -619,7 +564,7 @@ impl Checker<'_> {
             Prop {
                 name,
                 flags,
-                source: PropSource::Members(MemberList::One((file, m))),
+                source: own.clone(),
                 mapper,
             }
         };
@@ -629,22 +574,11 @@ impl Checker<'_> {
         };
         let name = prop.name;
         // `declareSymbolEx`, `mergeSymbol`, `lateBindMember`: what the symbol of that name refused has a symbol of its own.
-        let in_table = match Self::value_declaration(&prop) {
-            Some(PropSource::Members(list)) => {
-                list.first().map(|&(of, first)| (of, Decl::Member(first)))
-            }
-            Some(&PropSource::Parameter(of, parameter)) => {
-                Some((of, Decl::ParameterProperty(parameter)))
-            }
-            _ => None,
-        };
-        let has_own_symbol = match in_table {
-            Some(first) => !self
-                .declarations_of_member(file, Decl::Member(m))
-                .contains(&first),
+        let has_own_symbol = match Self::value_declaration(&prop) {
+            Some(in_table @ PropSource::Symbol(_)) => *in_table != own,
             // Put together of declarations that have type parameters of their own: what the binder says. `prototype`, which
             // `bindClassLikeDeclaration` declares without a declaration, refuses a late bound member too.
-            None => {
+            _ => {
                 bound.is_member_in_no_table(m)
                     || name == known::prototype
                         && member.flags.contains(Flags::STATIC)

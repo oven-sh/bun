@@ -1,6 +1,6 @@
 use super::*;
 use crate::atom::known;
-use crate::util::{group_by_key, number_repeated};
+use crate::util::number_repeated;
 
 /// A label while the file is bound.
 struct Label {
@@ -1312,17 +1312,9 @@ impl<'f> Binder<'f> {
             if name.is_some() {
                 self.declare_symbol(exports, owner, decl, flags, SymFlags::PROPERTY_EXCLUDES);
             } else {
-                // `addLateBoundAssignmentDeclarationToSymbol`. `isLateBindableAST`: a key such as `a + b` or `-1` names no property.
+                // `isLateBindableAST`: a key such as `a + b` or `-1` is not a property name.
                 if is_entity_name_expression(self.f, key) {
-                    let name = known::assignment_declaration;
-                    match self.tables[exports.idx()].get(&name) {
-                        Some(&all) => self.add_declaration_to_symbol(all, decl, SymFlags::empty()),
-                        None => {
-                            let all =
-                                self.bind_anonymous_declaration(decl, SymFlags::empty(), name);
-                            self.tables[exports.idx()].insert(name, all);
-                        }
-                    }
+                    self.add_late_bound_assignment_declaration_to_symbol(decl, owner);
                 }
                 // The parent is the one `lateBindMember` gives the symbol it makes.
                 let symbol = self.bind_anonymous_declaration(decl, flags, known::computed);
@@ -1331,24 +1323,6 @@ impl<'f> Binder<'f> {
             self.b.expando_declarations.push(e);
         }
         self.b.expando_declarations.as_mut_slice().sort_unstable();
-    }
-
-    /// `bindThisPropertyAssignment`, `getThisClassAndSymbolTable`: in a constructor, a method, an accessor, an initializer or a static
-    /// block, `this.name = value` and `this["name"] = value` declare a property of the class. In a function of its own they declare
-    /// nothing, and neither does `this.#name = value`. A numeric key is not collected: the binder cannot spell a number.
-    fn collect_this_properties(&mut self) {
-        if !self.f.is_js {
-            return;
-        }
-        for e in (0..self.f.exprs.len() as u32).map(ExprId) {
-            if let Some((class, is_static, name)) = self.b.this_property(self.f, e) {
-                self.b.this_properties.push((class, is_static, name, e));
-            }
-        }
-        // By class and side. In one, what has one name is together, the names in the order they are first assigned to.
-        let properties = self.b.this_properties.as_mut_slice();
-        group_by_key(properties, |property| (property.0, property.1, property.2));
-        properties.sort_by_key(|property| (property.0, property.1));
     }
 
     fn finish(mut self) -> Bound {
@@ -1486,7 +1460,6 @@ impl<'f> Binder<'f> {
             .as_mut_slice()
             .sort_unstable_by_key(|p| p.0);
         self.bind_deferred_expando_assignments();
-        self.collect_this_properties();
         // Tables, flat.
         self.b.tables.reserve_exact(self.tables.len());
         self.b
@@ -3960,12 +3933,23 @@ impl<'f> Binder<'f> {
         self.is_reached = around_reached;
     }
 
-    /// `bindThisPropertyAssignment`, `getThisClassAndSymbolTable`. A name that is worked out declares nothing here.
+    /// `addLateBoundAssignmentDeclarationToSymbol`
+    fn add_late_bound_assignment_declaration_to_symbol(&mut self, decl: Decl, symbol: SymbolId) {
+        let (exports, name) = (self.get_exports(symbol), known::assignment_declaration);
+        match self.tables[exports.idx()].get(&name) {
+            Some(&all) => self.add_declaration_to_symbol(all, decl, SymFlags::empty()),
+            None => {
+                let all = self.bind_anonymous_declaration(decl, SymFlags::empty(), name);
+                self.tables[exports.idx()].insert(name, all);
+            }
+        }
+    }
+
+    /// `bindThisPropertyAssignment`, `getThisClassAndSymbolTable`
     fn bind_this_property_assignment(&mut self, e: ExprId) {
         let decl = Decl::ThisProperty(e);
         if self.this_member.is_none()
             || assignment_declaration_kind(self.f, e) != JsDeclarationKind::ThisProperty
-            || self.get_declaration_name(decl).is_none()
             || matches!(self.f[e].kind, ExprKind::Assign { target, .. }
                 if matches!(self.f[target].kind, ExprKind::Dot { name_pos, .. } if is_private_name_at(self.f, name_pos)))
         {
@@ -3981,7 +3965,12 @@ impl<'f> Binder<'f> {
             } else {
                 self.get_members(class)
             };
-        let flags = SymFlags::PROPERTY | SymFlags::ASSIGNMENT;
+        let mut flags = SymFlags::PROPERTY | SymFlags::ASSIGNMENT;
+        // `HasDynamicName`. `node.Symbol` ends up as the symbol declared last.
+        if self.get_declaration_name(decl).is_none() {
+            self.add_late_bound_assignment_declaration_to_symbol(decl, class);
+            flags = SymFlags::PROPERTY;
+        }
         self.declare_symbol_ex(table, class, decl, flags, SymFlags::empty(), true);
     }
 

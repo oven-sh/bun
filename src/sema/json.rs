@@ -1,4 +1,11 @@
-//! Enough of JSON to read `tsconfig.json` (comments, trailing commas) and `package.json`.
+//! What a `package.json` says, and a `tsconfig.json` as the one parser reads it.
+
+use crate::atom::Interner;
+use crate::check::spans::Spans;
+use crate::hir::{
+    ExprId, ExprKind, File, PropId, PropKey, PropKind, StmtKind, UnOp, is_parenthesized, start_of,
+};
+use crate::resolve::{Host, Options};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Json {
@@ -28,20 +35,6 @@ impl Json {
         } else {
             None
         }
-    }
-
-    /// Whether there is nothing in `text` but space and comments.
-    pub fn is_blank(text: &[u8]) -> bool {
-        let mut p = Parser {
-            text,
-            at: 0,
-            depth: 0,
-        };
-        if text.starts_with(b"\xEF\xBB\xBF") {
-            p.at = 3;
-        }
-        p.skip();
-        p.at == text.len()
     }
 
     pub fn get(&self, key: &[u8]) -> Option<&Json> {
@@ -230,712 +223,187 @@ impl Parser<'_> {
     }
 }
 
-/// What `parseJSONText` makes of a JSON module that is not JSON: TypeScript's parser reports the errors and goes on.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Expression {
-    pub kind: ExpressionKind,
-    /// Where it starts. One that is missing: where the token that is no expression starts.
-    pub pos: u32,
-    /// `node.End()`
-    pub end: u32,
+/// The expression of the one statement of a JSON file.
+fn root_expression(hir: &File) -> Option<ExprId> {
+    hir.ids(hir.body).find_map(|s| match hir[s].kind {
+        StmtKind::ExportAssign(e) => Some(e),
+        _ => None,
+    })
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExpressionKind {
-    Null,
-    Bool(bool),
-    Number(f64),
-    String(Vec<u8>),
-    Identifier(Vec<u8>),
-    /// What stands where an expression is missing, and for a hole in an array.
-    Missing,
-    Array(Vec<Expression>),
-    Object(Vec<Property>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PropertyName {
-    /// An identifier, a string, or a number in the spelling `String(n)` gives it.
-    Name(Vec<u8>),
-    Computed(Expression),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Property {
-    pub name: PropertyName,
-    pub name_pos: u32,
-    /// `None`: `{ name }`
-    pub initializer: Option<Expression>,
-}
-
-/// What `parseJSONText` objects to, from where to where.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SyntaxError {
-    pub start: u32,
-    pub end: u32,
-    pub code: u32,
-    /// The token in `'{0}' expected.`
-    pub expected: &'static [u8],
-}
-
-impl Expression {
-    /// `parseJSONText`. `None` for text that takes more of the parser than literals, names, objects and arrays.
-    pub fn parse(text: &[u8]) -> Option<Expression> {
-        Some(Expression::parse_with_errors(text)?.0)
-    }
-
-    /// The same, with `SourceFile.Diagnostics()`.
-    pub fn parse_with_errors(text: &[u8]) -> Option<(Expression, Vec<SyntaxError>)> {
-        let mut p = TolerantParser {
-            scanner: Parser {
-                text,
-                at: 0,
-                depth: 0,
-            },
-            token: Token::EndOfFile,
-            contexts: 0,
-            token_start: 0,
-            full_start: 0,
-            errors: Vec::new(),
-            invalid: Vec::new(),
-            computed_names: 0,
-        };
-        if text.starts_with(b"\xEF\xBB\xBF") {
-            p.scanner.at = 3;
-        }
-        p.next_token()?;
-        let mut expressions = Vec::new();
-        while p.token != Token::EndOfFile {
-            // Nothing is expected after the first expression.
-            if expressions.len() == 1 {
-                p.error_at_token(1012, b"");
+/// The end of `parseJSONText`, of the file `hir` that reads `text`: what `validateJsonValue` objects to is among what the parser does.
+pub fn validate_json(hir: &mut File, text: &[u8]) {
+    /// `validateJsonValue`, `validateJsonObjectLiteral`
+    fn validate_json_value(spans: Spans<'_>, e: ExprId, refused: &mut Vec<(u32, u32, u32)>) {
+        let hir = spans.hir;
+        let is_double_quoted = |at: u32| spans.text.get(at as usize) == Some(&b'"');
+        let start = start_of(hir, e);
+        let code = match hir[e].kind {
+            _ if is_parenthesized(hir, e) => 1328,
+            ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => return,
+            ExprKind::String(_) if is_double_quoted(start) => return,
+            ExprKind::String(_) => 1327,
+            ExprKind::Unary {
+                op: UnOp::Minus,
+                operand,
+            } if matches!(hir[operand].kind, ExprKind::Number(_)) => return,
+            ExprKind::Array(items) => {
+                return hir
+                    .ids(items)
+                    .for_each(|item| validate_json_value(spans, item, refused));
             }
-            let is_literal = match p.token.clone() {
-                Token::OpenBracket => {
-                    expressions.push(p.parse_array_literal_expression()?);
-                    continue;
-                }
-                Token::Word(word) => matches!(word.as_slice(), b"true" | b"false" | b"null"),
-                Token::Minus => {
-                    let is_number = p.look_ahead(|p| {
-                        p.next_token()?;
-                        if !matches!(p.token, Token::Number(_)) {
-                            return Some(false);
-                        }
-                        p.next_token()?;
-                        Some(p.token != Token::Colon)
-                    })?;
-                    if is_number {
-                        expressions.push(p.parse_prefix_unary_expression()?);
+            ExprKind::Object(props) => {
+                for p in props.iter() {
+                    let prop = hir[p];
+                    if prop.kind != PropKind::Init {
+                        refused.push((prop.start, 1136, spans.prop(p) as u32));
                         continue;
                     }
-                    false
-                }
-                Token::Number(_) | Token::String(_) => p.look_ahead(|p| {
-                    p.next_token()?;
-                    Some(p.token != Token::Colon)
-                })?,
-                _ => false,
-            };
-            expressions.push(if is_literal {
-                p.parse_literal_expression()?
-            } else {
-                p.parse_object_literal_expression()?
-            });
-        }
-        // Several expressions at the top are the elements of an array.
-        let expression = if expressions.len() == 1 {
-            expressions.pop()?
-        } else {
-            let start = expressions.first().map_or(0, |first| first.pos as usize);
-            p.at(start, ExpressionKind::Array(expressions))
-        };
-        p.errors.append(&mut p.invalid);
-        Some((expression, p.errors))
-    }
-}
-
-#[derive(Clone, PartialEq)]
-enum Token {
-    OpenBrace,
-    CloseBrace,
-    OpenBracket,
-    CloseBracket,
-    Comma,
-    Colon,
-    Semicolon,
-    Minus,
-    String(Vec<u8>),
-    Number(f64),
-    /// An identifier or a keyword.
-    Word(Vec<u8>),
-    EndOfFile,
-}
-
-/// `PCObjectLiteralMembers`, `PCArrayLiteralMembers`
-const OBJECT_LITERAL_MEMBERS: u8 = 1;
-const ARRAY_LITERAL_MEMBERS: u8 = 2;
-
-/// `KindFirstReservedWord` to `KindLastReservedWord`
-pub(crate) fn is_reserved_word(word: &[u8]) -> bool {
-    matches!(
-        word,
-        b"break"
-            | b"case"
-            | b"catch"
-            | b"class"
-            | b"const"
-            | b"continue"
-            | b"debugger"
-            | b"default"
-            | b"delete"
-            | b"do"
-            | b"else"
-            | b"enum"
-            | b"export"
-            | b"extends"
-            | b"false"
-            | b"finally"
-            | b"for"
-            | b"function"
-            | b"if"
-            | b"import"
-            | b"in"
-            | b"instanceof"
-            | b"new"
-            | b"null"
-            | b"return"
-            | b"super"
-            | b"switch"
-            | b"this"
-            | b"throw"
-            | b"true"
-            | b"try"
-            | b"typeof"
-            | b"var"
-            | b"void"
-            | b"while"
-            | b"with"
-    )
-}
-
-/// `IsModifierKind`, `get` and `set`
-fn is_modifier_or_accessor_keyword(word: &[u8]) -> bool {
-    matches!(
-        word,
-        b"abstract"
-            | b"accessor"
-            | b"async"
-            | b"const"
-            | b"declare"
-            | b"default"
-            | b"export"
-            | b"in"
-            | b"private"
-            | b"protected"
-            | b"public"
-            | b"readonly"
-            | b"out"
-            | b"override"
-            | b"static"
-            | b"get"
-            | b"set"
-    )
-}
-
-/// The part of TypeScript's parser that JSON with errors in it takes. Every function is `None` for what it does not read.
-struct TolerantParser<'a> {
-    scanner: Parser<'a>,
-    token: Token,
-    /// `parsingContexts`
-    contexts: u8,
-    /// `TokenStart`. The token ends where the scanner is.
-    token_start: usize,
-    /// `TokenFullStart`, `nodePos()`: where the token before ends.
-    full_start: usize,
-    /// `p.diagnostics`, as far as parsing goes.
-    errors: Vec<SyntaxError>,
-    /// What `validateJsonValue` adds in the end.
-    invalid: Vec<SyntaxError>,
-    /// How many computed names are being read. `validateJsonValue` does not look into them.
-    computed_names: u32,
-}
-
-impl TolerantParser<'_> {
-    /// `finishNode`
-    fn at(&self, start: usize, kind: ExpressionKind) -> Expression {
-        Expression {
-            kind,
-            pos: start as u32,
-            end: self.full_start as u32,
-        }
-    }
-
-    /// `parseErrorAtRange`: an error where the last one is adds nothing.
-    fn error_at(&mut self, start: usize, end: usize, code: u32, expected: &'static [u8]) {
-        let (start, end) = (start as u32, end as u32);
-        if self.errors.last().is_none_or(|last| last.start != start) {
-            self.errors.push(SyntaxError {
-                start,
-                end,
-                code,
-                expected,
-            });
-        }
-    }
-
-    /// `parseErrorAtCurrentToken`
-    fn error_at_token(&mut self, code: u32, expected: &'static [u8]) {
-        self.error_at(self.token_start, self.scanner.at, code, expected);
-    }
-
-    /// `validateJsonValue`, `validateJsonObjectLiteral`: objects to the node that starts at `start` and ends with the last token taken.
-    fn refuse(&mut self, start: usize, code: u32) {
-        if self.computed_names == 0 {
-            self.invalid.push(SyntaxError {
-                start: start as u32,
-                end: self.full_start.max(start) as u32,
-                code,
-                expected: b"",
-            });
-        }
-    }
-
-    fn next_token(&mut self) -> Option<()> {
-        self.full_start = self.scanner.at;
-        self.scanner.skip();
-        let start = self.scanner.at;
-        self.token_start = start;
-        let Some(c) = self.scanner.peek() else {
-            self.token = Token::EndOfFile;
-            return Some(());
-        };
-        self.token = match c {
-            b'"' | b'\'' => Token::String(self.scan_string(c)?),
-            b'0'..=b'9' => Token::Number(self.scan_number()?),
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
-                while matches!(
-                    self.scanner.peek(),
-                    Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
-                ) {
-                    self.scanner.at += 1;
-                }
-                // The rest of a name that is not ASCII, or is written with an escape.
-                if matches!(self.scanner.peek(), Some(b'\\' | 0x80..=0xFF)) {
-                    return None;
-                }
-                let word = &self.scanner.text[start..self.scanner.at];
-                Token::Word(word.to_vec())
-            }
-            _ => {
-                self.scanner.at += 1;
-                match c {
-                    b'{' => Token::OpenBrace,
-                    b'}' => Token::CloseBrace,
-                    b'[' => Token::OpenBracket,
-                    b']' => Token::CloseBracket,
-                    b',' => Token::Comma,
-                    b':' => Token::Colon,
-                    b';' => Token::Semicolon,
-                    b'-' if !matches!(self.scanner.peek(), Some(b'-' | b'=')) => Token::Minus,
-                    _ => return None,
-                }
-            }
-        };
-        Some(())
-    }
-
-    /// `scanString`, of a string that ends on the line it starts on.
-    fn scan_string(&mut self, quote: u8) -> Option<Vec<u8>> {
-        let s = &mut self.scanner;
-        s.at += 1;
-        let mut out = Vec::new();
-        loop {
-            let c = s.peek()?;
-            s.at += 1;
-            match c {
-                _ if c == quote => break,
-                b'\n' | b'\r' => return None,
-                b'\\' => {
-                    let e = s.peek()?;
-                    s.at += 1;
-                    match e {
-                        b'n' => out.push(b'\n'),
-                        b't' => out.push(b'\t'),
-                        b'r' => out.push(b'\r'),
-                        b'b' => out.push(8),
-                        b'f' => out.push(12),
-                        b'v' => out.push(11),
-                        b'u' => {
-                            let hex = std::str::from_utf8(s.text.get(s.at..s.at + 4)?).ok()?;
-                            s.at += 4;
-                            let c = char::from_u32(u32::from_str_radix(hex, 16).ok()?)
-                                .unwrap_or('\u{FFFD}');
-                            out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
-                        }
-                        b'0'..=b'9' | b'x' | b'\n' | b'\r' => return None,
-                        other => out.push(other),
+                    if !is_double_quoted(prop.pos) {
+                        refused.push((prop.pos, 1327, spans.prop_name(p) as u32));
                     }
+                    validate_json_value(spans, prop.value, refused);
                 }
-                _ => out.push(c),
+                return;
             }
-        }
-        Some(out)
-    }
-
-    fn scan_digits(&mut self) -> bool {
-        let start = self.scanner.at;
-        while matches!(self.scanner.peek(), Some(b'0'..=b'9')) {
-            self.scanner.at += 1;
-        }
-        self.scanner.at > start
-    }
-
-    /// `scanNumber`, of a decimal literal.
-    fn scan_number(&mut self) -> Option<f64> {
-        let start = self.scanner.at;
-        self.scan_digits();
-        if self.scanner.text[start] == b'0' && self.scanner.at - start > 1 {
-            return None;
-        }
-        if self.scanner.peek() == Some(b'.') {
-            self.scanner.at += 1;
-            self.scan_digits();
-        }
-        if matches!(self.scanner.peek(), Some(b'e' | b'E')) {
-            self.scanner.at += 1;
-            if matches!(self.scanner.peek(), Some(b'+' | b'-')) {
-                self.scanner.at += 1;
-            }
-            if !self.scan_digits() {
-                return None;
-            }
-        }
-        // `0x1`, `1n`, `1_000`, `1a`
-        if matches!(
-            self.scanner.peek(),
-            Some(b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' | 0x80..=0xFF)
-        ) {
-            return None;
-        }
-        std::str::from_utf8(&self.scanner.text[start..self.scanner.at])
-            .ok()?
-            .parse()
-            .ok()
-    }
-
-    /// `lookAhead`
-    fn look_ahead<T>(&mut self, look: impl FnOnce(&mut Self) -> Option<T>) -> Option<T> {
-        let (at, token) = (self.scanner.at, self.token.clone());
-        let (token_start, full_start) = (self.token_start, self.full_start);
-        let result = look(self);
-        self.scanner.at = at;
-        self.token = token;
-        (self.token_start, self.full_start) = (token_start, full_start);
-        result
-    }
-
-    /// `isListElement`. `None` for a reserved word where an expression may start.
-    fn is_list_element(&self, kind: u8) -> Option<bool> {
-        if kind == OBJECT_LITERAL_MEMBERS {
-            // A computed name, or `isLiteralPropertyName`.
-            return Some(matches!(
-                self.token,
-                Token::OpenBracket | Token::Word(_) | Token::String(_) | Token::Number(_)
-            ));
-        }
-        // A hole, or `isStartOfExpression`.
-        match &self.token {
-            Token::Word(word) if matches!(word.as_slice(), b"true" | b"false" | b"null") => {
-                Some(true)
-            }
-            Token::Word(word) if is_reserved_word(word) => None,
-            Token::Word(_)
-            | Token::Comma
-            | Token::OpenBrace
-            | Token::OpenBracket
-            | Token::Minus
-            | Token::String(_)
-            | Token::Number(_) => Some(true),
-            _ => Some(false),
-        }
-    }
-
-    /// `isListTerminator`
-    fn is_list_terminator(&self, kind: u8) -> bool {
-        self.token == Token::EndOfFile
-            || self.token
-                == if kind == OBJECT_LITERAL_MEMBERS {
-                    Token::CloseBrace
-                } else {
-                    Token::CloseBracket
-                }
-    }
-
-    /// `isInSomeParsingContext`
-    fn is_in_some_parsing_context(&self) -> Option<bool> {
-        for kind in [OBJECT_LITERAL_MEMBERS, ARRAY_LITERAL_MEMBERS] {
-            if self.contexts & kind != 0
-                && (self.is_list_element(kind)? || self.is_list_terminator(kind))
-            {
-                return Some(true);
-            }
-        }
-        Some(false)
-    }
-
-    /// `parseDelimitedList`
-    fn parse_delimited_list<T>(
-        &mut self,
-        kind: u8,
-        parse_element: fn(&mut Self) -> Option<T>,
-    ) -> Option<Vec<T>> {
-        let saved = self.contexts;
-        self.contexts |= kind;
-        let mut list = Vec::new();
-        loop {
-            if self.is_list_element(kind)? {
-                list.push(parse_element(self)?);
-                if self.token == Token::Comma {
-                    self.next_token()?;
-                    continue;
-                }
-                if self.is_list_terminator(kind) {
-                    break;
-                }
-                // The comma is missing. A semicolon in its place is skipped.
-                self.error_at_token(1005, b",");
-                if kind == OBJECT_LITERAL_MEMBERS && self.token == Token::Semicolon {
-                    self.next_token()?;
-                }
-                continue;
-            }
-            if self.is_list_terminator(kind) {
-                break;
-            }
-            // `abortParsingListOrMoveToNextToken`, `parsingContextErrors`
-            let code = if kind == OBJECT_LITERAL_MEMBERS {
-                1136
-            } else {
-                1137
-            };
-            self.error_at_token(code, b"");
-            if self.is_in_some_parsing_context()? {
-                break;
-            }
-            self.next_token()?;
-        }
-        self.contexts = saved;
-        Some(list)
-    }
-
-    /// `parseLiteralExpression`, `parseTokenNode`
-    fn parse_literal_expression(&mut self) -> Option<Expression> {
-        let start = self.token_start;
-        let is_single_quoted = self.scanner.text.get(start) == Some(&b'\'');
-        let literal = match std::mem::replace(&mut self.token, Token::EndOfFile) {
-            Token::String(text) => ExpressionKind::String(text),
-            Token::Number(n) => ExpressionKind::Number(n),
-            Token::Word(word) if word == b"true" => ExpressionKind::Bool(true),
-            Token::Word(word) if word == b"false" => ExpressionKind::Bool(false),
-            Token::Word(word) if word == b"null" => ExpressionKind::Null,
-            _ => return None,
+            _ => 1328,
         };
-        self.next_token()?;
-        // `isDoubleQuotedString`
-        if is_single_quoted {
-            self.refuse(start, 1327);
-        }
-        Some(self.at(start, literal))
+        refused.push((start, code, spans.expr(e) as u32));
     }
+    let mut refused = Vec::new();
+    if let Some(root) = root_expression(hir).filter(|_| !hir.has_errors) {
+        validate_json_value(Spans { hir, text }, root, &mut refused);
+    }
+    hir.has_parse_diagnostics |= !refused.is_empty();
+    hir.early_errors
+        .extend(refused.iter().map(|&(start, code, _)| (start, code)));
+    hir.error_ends.extend(refused);
+}
 
-    /// `parsePrefixUnaryExpression`, of `-` before a number.
-    fn parse_prefix_unary_expression(&mut self) -> Option<Expression> {
-        let start = self.token_start;
-        self.next_token()?;
-        let Token::Number(n) = self.token else {
-            return None;
+/// `TsConfigSourceFile`
+pub struct TsConfigSourceFile {
+    hir: File,
+    atoms: Interner,
+    /// `convertConfigFileToObject`: the object that is read. `None`: there is none at the root, nor in a list at the root.
+    pub root: Option<ExprId>,
+}
+
+impl TsConfigSourceFile {
+    /// `NewTsconfigSourceFileFromFilePath`. `None`: the parser gave up.
+    pub fn parse(host: &dyn Host, text: std::borrow::Cow<'static, [u8]>) -> Option<Self> {
+        let atoms = Interner::new();
+        let mut hir = host.parse(b"/tsconfig.json", &text, &atoms, &Options::default());
+        hir.text = text;
+        let is_object = |e: &ExprId| matches!(hir[*e].kind, ExprKind::Object(_));
+        let root = root_expression(&hir).filter(|_| !hir.has_errors)?;
+        let root = match hir[root].kind {
+            ExprKind::Array(items) => hir.ids(items).find(is_object),
+            _ => Some(root).filter(is_object),
         };
-        self.next_token()?;
-        // `parseMemberExpressionRest`
-        if self.token == Token::OpenBracket {
-            return None;
-        }
-        Some(self.at(start, ExpressionKind::Number(-n)))
+        Some(TsConfigSourceFile { hir, atoms, root })
     }
 
-    fn enter(&mut self) -> Option<()> {
-        self.scanner.depth += 1;
-        (self.scanner.depth <= 200).then_some(())
-    }
-
-    /// `parseArrayLiteralExpression`
-    fn parse_array_literal_expression(&mut self) -> Option<Expression> {
-        let start = self.token_start;
-        self.enter()?;
-        if self.token == Token::OpenBracket {
-            self.next_token()?;
-        } else {
-            self.error_at_token(1005, b"[");
-        }
-        let elements = self.parse_delimited_list(
-            ARRAY_LITERAL_MEMBERS,
-            Self::parse_argument_or_array_literal_element,
-        )?;
-        if self.token == Token::CloseBracket {
-            self.next_token()?;
-        } else {
-            self.error_at_token(1005, b"]");
-        }
-        self.scanner.depth -= 1;
-        Some(self.at(start, ExpressionKind::Array(elements)))
-    }
-
-    /// `parseArgumentOrArrayLiteralElement`
-    fn parse_argument_or_array_literal_element(&mut self) -> Option<Expression> {
-        if self.token == Token::Comma {
-            self.refuse(self.token_start, 1328);
-            return Some(self.at(self.token_start, ExpressionKind::Missing));
-        }
-        self.parse_assignment_expression_or_higher()
-    }
-
-    /// `parseObjectLiteralExpression`. Without the `{` the members are read all the same.
-    fn parse_object_literal_expression(&mut self) -> Option<Expression> {
-        let start = self.token_start;
-        self.enter()?;
-        if self.token == Token::OpenBrace {
-            self.next_token()?;
-        } else {
-            self.error_at_token(1005, b"{");
-        }
-        let properties =
-            self.parse_delimited_list(OBJECT_LITERAL_MEMBERS, Self::parse_object_literal_element)?;
-        if self.token == Token::CloseBrace {
-            self.next_token()?;
-        } else {
-            self.error_at_token(1005, b"}");
-        }
-        self.scanner.depth -= 1;
-        Some(self.at(start, ExpressionKind::Object(properties)))
-    }
-
-    /// `parseObjectLiteralElement`
-    fn parse_object_literal_element(&mut self) -> Option<Property> {
-        let start = self.token_start;
-        let is_double_quoted = self.scanner.text.get(start) == Some(&b'"');
-        let mut token_is_identifier = false;
-        // `parsePropertyName`
-        let name = match std::mem::replace(&mut self.token, Token::EndOfFile) {
-            Token::Word(word) => {
-                self.next_token()?;
-                // `nextTokenCanFollowModifier`: before anything else the word may be a modifier.
-                let is_the_name = matches!(
-                    self.token,
-                    Token::Colon | Token::Comma | Token::CloseBrace | Token::EndOfFile
-                );
-                if !is_the_name && is_modifier_or_accessor_keyword(&word) {
-                    return None;
-                }
-                // `isIdentifier`, which for these two depends on what is around.
-                if matches!(word.as_slice(), b"await" | b"yield") && self.token != Token::Colon {
-                    return None;
-                }
-                token_is_identifier = !is_reserved_word(&word);
-                PropertyName::Name(word)
-            }
-            Token::String(text) => {
-                self.next_token()?;
-                PropertyName::Name(text)
-            }
-            Token::Number(n) => {
-                self.next_token()?;
-                PropertyName::Name(crate::atom::number_to_string(n).into_bytes())
-            }
-            // `parseComputedPropertyName`
-            Token::OpenBracket => {
-                self.next_token()?;
-                self.computed_names += 1;
-                let expression = self.parse_assignment_expression_or_higher();
-                self.computed_names -= 1;
-                let expression = expression?;
-                if self.token != Token::CloseBracket {
-                    return None;
-                }
-                self.next_token()?;
-                PropertyName::Computed(expression)
-            }
-            _ => return None,
+    /// `SourceFile.Diagnostics`: the code, what goes into the message, from where to where.
+    pub fn diagnostics(&self) -> impl Iterator<Item = (u32, Vec<Vec<u8>>, u32, u32)> {
+        let hir = &self.hir;
+        let is_the_parsers = |e: &&(u32, u32)| {
+            crate::check::errors_js::SYNTACTIC_ERRORS
+                .binary_search(&e.1)
+                .is_ok()
         };
-        if token_is_identifier && self.token != Token::Colon {
-            // It is no `PropertyAssignment`.
-            self.refuse(start, 1136);
-            return Some(Property {
-                name,
-                name_pos: start as u32,
-                initializer: None,
-            });
-        }
-        if !is_double_quoted {
-            self.refuse(start, 1327);
-        }
-        if self.token == Token::Colon {
-            self.next_token()?;
-        } else {
-            self.error_at_token(1005, b":");
-        }
-        Some(Property {
-            name,
-            name_pos: start as u32,
-            initializer: Some(self.parse_assignment_expression_or_higher()?),
+        let errors = hir.early_errors.iter().filter(is_the_parsers);
+        errors.map(|&(start, code)| {
+            let mut ends = hir.error_ends.iter();
+            let end = ends.find(|e| e.0 == start && e.1 == code);
+            let mut named = hir.error_arguments.iter();
+            let named = named.find(|named| (named.0, named.1) == (start, code));
+            let args = named.map(|named| named.2.iter().map(|arg| arg.to_vec()).collect());
+            (
+                code,
+                args.unwrap_or_default(),
+                start,
+                end.map_or(start, |e| e.2),
+            )
         })
     }
 
-    /// `parseAssignmentExpressionOrHigher`, of a literal, a name, an object, an array, or nothing at all.
-    fn parse_assignment_expression_or_higher(&mut self) -> Option<Expression> {
-        let start = self.token_start;
-        let expression = match self.token.clone() {
-            Token::OpenBrace => self.parse_object_literal_expression()?,
-            Token::OpenBracket => self.parse_array_literal_expression()?,
-            Token::Minus => self.parse_prefix_unary_expression()?,
-            Token::String(_) | Token::Number(_) => self.parse_literal_expression()?,
-            Token::Word(word) => {
-                if matches!(word.as_slice(), b"true" | b"false" | b"null") {
-                    self.parse_literal_expression()?
-                } else if is_reserved_word(&word)
-                    || matches!(word.as_slice(), b"async" | b"await" | b"yield")
-                {
-                    return None;
-                } else {
-                    self.next_token()?;
-                    self.refuse(start, 1328);
-                    self.at(start, ExpressionKind::Identifier(word))
-                }
-            }
-            // `parseIdentifier(Expression_expected)`: no token is taken. `createIdentifierWithDiagnostic`: at the end of the file it is said
-            // where the last token ends.
-            _ => {
-                if self.token == Token::EndOfFile {
-                    self.error_at(self.full_start, self.full_start, 1109, b"");
-                } else {
-                    self.error_at_token(1109, b"");
-                }
-                self.refuse(start, 1328);
-                return Some(self.at(start, ExpressionKind::Missing));
-            }
+    /// `ForEachPropertyAssignment`: the first property of `object` called `name` or `other`.
+    pub fn property(&self, object: ExprId, name: &[u8], other: &[u8]) -> Option<PropId> {
+        let ExprKind::Object(props) = self.hir[object].kind else {
+            return None;
         };
-        // The expression goes on: an element access, an operator, an assertion.
-        match &self.token {
-            Token::OpenBracket | Token::Minus => None,
-            Token::Word(word)
-                if matches!(
-                    word.as_slice(),
-                    b"as" | b"satisfies" | b"in" | b"instanceof"
-                ) =>
-            {
-                None
+        props.iter().find(|&p| match self.hir[p] {
+            crate::hir::Prop {
+                kind: PropKind::Init,
+                key: PropKey::Name(key),
+                ..
+            } => {
+                let key = self.atoms.bytes(key);
+                key == name || !other.is_empty() && key == other
             }
-            _ => Some(expression),
+            _ => false,
+        })
+    }
+
+    pub fn initializer(&self, p: PropId) -> ExprId {
+        self.hir[p].value
+    }
+
+    pub fn elements(&self, array: ExprId) -> impl Iterator<Item = ExprId> {
+        let items = match self.hir[array].kind {
+            ExprKind::Array(items) => items,
+            _ => Default::default(),
+        };
+        self.hir.ids(items)
+    }
+
+    /// From where to where the name of `p` is written.
+    pub fn name_span(&self, p: PropId) -> (u32, u32) {
+        (self.hir[p].pos, Spans::of(&self.hir).prop_name(p) as u32)
+    }
+
+    pub fn span(&self, e: ExprId) -> (u32, u32) {
+        (start_of(&self.hir, e), Spans::of(&self.hir).expr(e) as u32)
+    }
+
+    /// `convertPropertyValueToJson`. What is not in the expected format is `null`, which stays in a list.
+    pub fn convert_property_value_to_json(&self, e: ExprId) -> Json {
+        let hir = &self.hir;
+        match hir[e].kind {
+            _ if is_parenthesized(hir, e) => Json::Null,
+            ExprKind::True => Json::Bool(true),
+            ExprKind::False => Json::Bool(false),
+            ExprKind::String(text) => Json::String(self.atoms.bytes(text).to_vec()),
+            ExprKind::Number(n) => Json::Number(hir.numbers[n as usize]),
+            ExprKind::Unary {
+                op: UnOp::Minus,
+                operand,
+            } => match hir[operand].kind {
+                ExprKind::Number(n) => Json::Number(-hir.numbers[n as usize]),
+                _ => Json::Null,
+            },
+            ExprKind::Array(_) => Json::Array(
+                self.elements(e)
+                    .map(|element| self.convert_property_value_to_json(element))
+                    .collect(),
+            ),
+            // `convertObjectLiteralExpressionToJson`
+            ExprKind::Object(props) => {
+                let mut result: Vec<(Vec<u8>, Json)> = Vec::new();
+                for p in props.iter() {
+                    let (PropKind::Init, PropKey::Name(key)) = (hir[p].kind, hir[p].key) else {
+                        continue;
+                    };
+                    let key = self.atoms.bytes(key);
+                    let value = self.convert_property_value_to_json(hir[p].value);
+                    match result.iter_mut().find(|entry| entry.0 == key) {
+                        Some(entry) => entry.1 = value,
+                        None => result.push((key.to_vec(), value)),
+                    }
+                }
+                Json::Object(result)
+            }
+            _ => Json::Null,
         }
     }
 }

@@ -11,7 +11,6 @@ pub mod config;
 pub mod config_options;
 pub mod hir;
 pub mod json;
-pub mod json_places;
 pub mod local;
 pub mod messages;
 pub mod node;

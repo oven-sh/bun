@@ -5,10 +5,10 @@
 //! is kept like the type syntax of a TypeScript file. [`super::reparse`] makes ordinary nodes of the tags of the comments that belong
 //! to a node.
 
+use crate::sema::ts_syntax as ts;
 use bun_ast::op::Level;
-use bun_ast::ts_syntax as ts;
 use bun_ast::{Range, StoreStr};
-use bun_sema::hir::Flags;
+use bun_sema::hir::{Flags, TypeNodeKind};
 
 use super::TypeSyntax;
 use crate::Error;
@@ -130,7 +130,7 @@ pub(crate) struct Callback {
 pub(crate) struct ClassName {
     /// `a.b.c`
     pub(crate) name: Vec<Name>,
-    pub(crate) type_args: Option<ts::IdList<ts::Type>>,
+    pub(crate) type_args: Option<ts::Types>,
     /// Where the token after the type arguments starts.
     pub(crate) end: u32,
 }
@@ -217,6 +217,8 @@ pub(crate) struct JsDoc {
 #[derive(Default)]
 pub(crate) struct Comments {
     pub(crate) list: Vec<JsDoc>,
+    /// The rows of the types in them.
+    pub(crate) types: super::clone_types::CommentTypes,
 }
 
 impl Comments {
@@ -232,26 +234,26 @@ pub(crate) fn is_jsdoc_like(comment: &[u8]) -> bool {
 }
 
 /// `isObjectOrObjectArrayTypeReference`
-fn is_object_or_object_array(syntax: &ts::Syntax, ty: ts::TypeId) -> bool {
+fn is_object_or_object_array(file: &bun_sema::hir::File, ty: ts::TypeId) -> bool {
     if ty.is_none() {
         return false;
     }
-    match syntax[ty].data {
-        ts::TypeData::Keyword(ts::Keyword::Object) => true,
-        ts::TypeData::Array(element) => is_object_or_object_array(syntax, element),
-        ts::TypeData::Reference { name, args } => {
-            args.is_empty() && matches!(&syntax[name], [name] if &*name.text == b"Object")
+    match file[ty].kind {
+        TypeNodeKind::Keyword(ts::Keyword::Object) => true,
+        TypeNodeKind::Array(element) => is_object_or_object_array(file, element),
+        TypeNodeKind::Ref { name, args } => {
+            args.is_empty() && file.texts(name).eq([bun_sema::atom::known::Object])
         }
         _ => false,
     }
 }
 
-/// Reads every JSDoc comment the lexer of `p` recorded. `syntax` is what the parser kept of the file, to which the types in the
-/// comments are added.
+/// Reads every JSDoc comment the lexer of `p` recorded. `syntax` is what the parser kept of the file. The types in the comments
+/// become rows of a tree of their own.
 pub(crate) fn read_comments<'a>(
     p: &mut P<'a, true, false>,
-    syntax: TypeSyntax,
-) -> (TypeSyntax, Comments) {
+    mut syntax: TypeSyntax<'a>,
+) -> (TypeSyntax<'a>, Comments) {
     let mut comments = Comments::default();
     if !syntax.keep_types || !p.lexer.tolerant {
         return (syntax, comments);
@@ -259,6 +261,8 @@ pub(crate) fn read_comments<'a>(
     let source: &'a [u8] = p.lexer.contents;
     let ranges = core::mem::take(&mut p.lexer.all_comments);
     let flags = core::mem::take(&mut p.lexer.comment_flags);
+    let file = core::mem::take(&mut syntax.b.file);
+    let pending = core::mem::take(&mut syntax.b.pending);
     p.type_syntax = Some(Box::new(syntax));
     // `PCJSDocComment`: like `PCJsxChildren`, any token is an element of it, so no list skips a token it has no use for.
     let outer_contexts = core::mem::replace(
@@ -288,7 +292,10 @@ pub(crate) fn read_comments<'a>(
     p.lexer.comment_flags = flags;
     p.lexer.list_contexts = outer_contexts;
     p.lexer.skips_jsdoc_asterisks = false;
-    let syntax = *p.type_syntax.take().expect("set above");
+    let mut syntax = *p.type_syntax.take().expect("set above");
+    comments.types.file = core::mem::replace(&mut syntax.b.file, file);
+    comments.types.pending = core::mem::replace(&mut syntax.b.pending, pending);
+    comments.types.made = core::mem::take(&mut syntax.comment_rows);
     (syntax, comments)
 }
 
@@ -829,8 +836,30 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.p.lexer.skips_jsdoc_asterisks = skips;
     }
 
+    /// What `read` reads makes rows: which, is kept for `DeepCloneReparse`.
+    fn keeping_rows<R>(&mut self, read: impl FnOnce(&mut Self) -> R) -> R {
+        let before = self.p.type_syntax_mut().rows();
+        let result = read(self);
+        let syntax = self.p.type_syntax_mut();
+        let after = syntax.rows();
+        // What an attempt that was given up read is gone.
+        while syntax
+            .comment_rows
+            .last()
+            .is_some_and(|made| made.1.types > before.types || made.1.ids > before.ids)
+        {
+            syntax.comment_rows.pop();
+        }
+        syntax.comment_rows.push((before, after));
+        result
+    }
+
     /// `parseTypeOrTypePredicate`, from the current token on.
     fn read_type(&mut self) -> ts::TypeId {
+        self.keeping_rows(Self::read_type_worker)
+    }
+
+    fn read_type_worker(&mut self) -> ts::TypeId {
         // `parseTypeReference` at a token that is none: the name is missing (1110), and the token stays.
         if !self.is_in_lexer && self.token == Token::Unknown {
             self.error_at_token(1110);
@@ -847,16 +876,18 @@ impl<'p, 'a> Reader<'p, 'a> {
     }
 
     /// `parseTypeArguments`, from the current token on.
-    fn read_type_arguments(&mut self) -> Option<ts::IdList<ts::Type>> {
+    fn read_type_arguments(&mut self) -> Option<ts::Types> {
         if self.token != Token::LessThan {
             return None;
         }
-        self.enter_lexer();
-        let result = self.p.skip_type_script_type_arguments::<false, false>();
-        match self.leave_lexer(result) {
-            Some(true) => self.p.type_syntax_mut().last_type_args.take(),
-            _ => None,
-        }
+        self.keeping_rows(|this| {
+            this.enter_lexer();
+            let result = this.p.skip_type_script_type_arguments::<false, false>();
+            match this.leave_lexer(result) {
+                Some(true) => this.p.type_syntax_mut().last_type_args.take(),
+                _ => None,
+            }
+        })
     }
 
     /// `parseExpression`, from the current token on. Nothing is made of it.
@@ -970,7 +1001,7 @@ impl<'p, 'a> Reader<'p, 'a> {
     fn is_object_or_object_array(&mut self, ty: Option<TypeExpr>) -> bool {
         match ty {
             Some(expr) if !expr.is_variadic && !expr.is_optional => {
-                is_object_or_object_array(&self.p.type_syntax_mut().ast, expr.ty)
+                is_object_or_object_array(&self.p.type_syntax_mut().b.file, expr.ty)
             }
             _ => false,
         }
@@ -979,8 +1010,8 @@ impl<'p, 'a> Reader<'p, 'a> {
     fn is_array_type(&mut self, ty: Option<TypeExpr>) -> bool {
         match ty {
             Some(expr) if !expr.is_variadic && !expr.is_optional && expr.ty.is_some() => matches!(
-                self.p.type_syntax_mut().ast[expr.ty].data,
-                ts::TypeData::Array(_)
+                self.p.type_syntax_mut().b.file[expr.ty].kind,
+                TypeNodeKind::Array(_)
             ),
             _ => false,
         }

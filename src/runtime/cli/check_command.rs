@@ -218,19 +218,11 @@ fn run(
     paths: &[Vec<u8>],
     compiler_options: &[CompilerOption],
     threads: usize,
-    ends_the_process: bool,
+    then: impl FnOnce(Report) -> Report,
 ) -> Report {
     // For a person who is watching.
     if !Output::is_stderr_tty() || Output::is_ai_agent() {
-        return run_quietly(
-            cwd,
-            project,
-            paths,
-            compiler_options,
-            threads,
-            ends_the_process,
-            None,
-        );
+        return run_quietly(cwd, project, paths, compiler_options, threads, None, then);
     }
     let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
     let style = style_for(
@@ -243,18 +235,22 @@ fn run(
     );
     std::thread::scope(|scope| {
         let shown = scope.spawn(|| show_progress(&progress, &is_done, &style));
-        let report = run_quietly(
+        let progress = Some(&progress);
+        run_quietly(
             cwd,
             project,
             paths,
             compiler_options,
             threads,
-            ends_the_process,
-            Some(&progress),
-        );
-        is_done.store(true, Ordering::Release);
-        shown.thread().unpark();
-        report
+            progress,
+            |report| {
+                is_done.store(true, Ordering::Release);
+                shown.thread().unpark();
+                // The line is gone before anything else is said.
+                let _ = shown.join();
+                then(report)
+            },
+        )
     })
 }
 
@@ -264,11 +260,11 @@ fn run_quietly(
     paths: &[Vec<u8>],
     compiler_options: &[CompilerOption],
     threads: usize,
-    ends_the_process: bool,
     progress: Option<&Progress>,
+    then: impl FnOnce(Report) -> Report,
 ) -> Report {
     let global = global_node_modules();
-    bun_sema_driver::check(&Request {
+    let request = Request {
         cwd,
         project,
         paths,
@@ -278,14 +274,14 @@ fn run_quietly(
         global_node_modules: global.as_deref(),
         progress,
         only: None,
-        ends_the_process,
         keeps_everything: false,
         stops_where_tsc_does: true,
         says_it_as_typescript_does: false,
         loaded: None,
         checked: None,
         after_file: None,
-    })
+    };
+    bun_sema_driver::check_then(&request, then)
 }
 
 /// A person at a terminal gets the source around each error, and so does an agent, in tags and without colors, which spares it opening
@@ -331,57 +327,65 @@ impl CheckCommand {
             &options.paths,
             &options.compiler_options,
             options.threads,
-            // Where leaks are looked for, all is given back.
-            !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES,
-        );
-        let shown_from = bun_sema_driver::host::from_native(&cwd);
-        // The errors are the output, as they are of `tsc`. How it went is said on the side.
-        let mut out = Vec::new();
-        format::write_diagnostics(
-            &mut out,
-            &report,
-            &style_for(
-                &shown_from,
-                options.pretty,
-                bun_core::Fd::stdout(),
-                Output::is_stdout_tty(),
-                Output::enable_ansi_colors_stdout(),
-                options.all,
-            ),
-        );
-        let _ = Output::writer().write_all(&out);
-        let mut summary = Vec::new();
-        format::write_summary(
-            &mut summary,
-            &report,
-            &Style {
-                color: Output::enable_ansi_colors_stderr(),
-                ..style_for(
-                    &shown_from,
-                    options.pretty,
-                    bun_core::Fd::stderr(),
-                    Output::is_stderr_tty(),
-                    true,
-                    options.all,
-                )
+            // The process ends while all that was loaded is still there. Where leaks are looked for, all is given back first.
+            |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
+                true => report,
+                false => say_and_exit(&report, &options, &cwd),
             },
         );
-        if options.timing {
-            use std::io::Write;
-            let _ = writeln!(
-                summary,
-                "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} KB of stack at the most",
-                report.files_loaded,
-                report.load_time.as_secs_f64() * 1000.0,
-                report.files_checked,
-                report.check_time.as_secs_f64() * 1000.0,
-                report.deepest_stack / 1024,
-            );
-        }
-        let _ = Output::error_writer().write_all(&summary);
-        Output::flush();
-        Global::exit(u32::from(!report.is_ok()));
+        say_and_exit(&report, &options, &cwd)
     }
+}
+
+/// Shows what was found and ends the process.
+fn say_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
+    let shown_from = bun_sema_driver::host::from_native(cwd);
+    // The errors are the output, as they are of `tsc`. How it went is said on the side.
+    let mut out = Vec::new();
+    format::write_diagnostics(
+        &mut out,
+        report,
+        &style_for(
+            &shown_from,
+            options.pretty,
+            bun_core::Fd::stdout(),
+            Output::is_stdout_tty(),
+            Output::enable_ansi_colors_stdout(),
+            options.all,
+        ),
+    );
+    let _ = Output::writer().write_all(&out);
+    let mut summary = Vec::new();
+    format::write_summary(
+        &mut summary,
+        report,
+        &Style {
+            color: Output::enable_ansi_colors_stderr(),
+            ..style_for(
+                &shown_from,
+                options.pretty,
+                bun_core::Fd::stderr(),
+                Output::is_stderr_tty(),
+                true,
+                options.all,
+            )
+        },
+    );
+    if options.timing {
+        use std::io::Write;
+        let _ = writeln!(
+            summary,
+            "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} KB of stack at the most",
+            report.files_loaded,
+            report.load_time.as_secs_f64() * 1000.0,
+            report.files_checked,
+            report.check_time.as_secs_f64() * 1000.0,
+            report.deepest_stack / 1024,
+        );
+    }
+    let _ = Output::error_writer().write_all(&summary);
+    Output::flush();
+    Global::exit(u32::from(!report.is_ok()));
 }
 
 /// Type checks `entry_points` and everything they import before they are run or bundled. Says what is wrong on stderr, which leaves
@@ -417,7 +421,7 @@ pub(crate) fn check_project_before() -> bool {
 
 fn check_and_say(paths: &[Vec<u8>], compiler_options: &[CompilerOption]) -> bool {
     let cwd = working_directory();
-    let report = run(&cwd, None, paths, compiler_options, 0, false);
+    let report = run(&cwd, None, paths, compiler_options, 0, |report| report);
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {
         return true;
     }

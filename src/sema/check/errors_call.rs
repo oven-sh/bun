@@ -447,7 +447,9 @@ impl Checker<'_> {
                 let object = self.apparent_type(object);
                 let (prop, _) = self.prop_ref(object, name)?;
                 match &prop.source {
-                    PropSource::Symbol(sym) => self.variable_in_need_of_a_type_annotation(*sym)?,
+                    PropSource::Symbol(sym) if !self.is_member_symbol(*sym) => {
+                        self.variable_in_need_of_a_type_annotation(*sym)?
+                    }
                     // Neither is `SymbolFlagsProperty`.
                     _ if prop
                         .flags
@@ -618,8 +620,7 @@ impl Checker<'_> {
             return false;
         };
         match &prop.source {
-            PropSource::Members(members) => members
-                .iter()
+            PropSource::Symbol(sym) => (self.members_of_symbol(*sym).iter())
                 .any(|&(f, m)| self.hir(f)[m].kind == MemberKind::Getter),
             PropSource::Literal(f, p) => self.hir(*f)[*p].kind == PropKind::Getter,
             _ => false,

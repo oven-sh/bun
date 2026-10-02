@@ -9,7 +9,6 @@ use super::explain::NOWHERE;
 use super::explain_relation::RelationDiagnostic;
 use super::relate::Relation;
 use super::related::Place;
-use super::sink::held;
 use super::*;
 use crate::bind::{FnOwner, Parent};
 
@@ -81,7 +80,6 @@ impl Checker<'_> {
         }
         self.check_assertions(file);
         self.check_literals_against_patterns(file);
-        self.check_redeclared_variables(file);
         // `checkExportAssignment`: what is exported is held against the type of its `@type` tag.
         for &(owner, node) in &hir.jsdoc_types {
             let JsDocTypeOwner::Export(s) = owner else {
@@ -655,103 +653,6 @@ impl Checker<'_> {
         Ok(self.member_name(file, key))
     }
 
-    /// `checkVariableLikeDeclaration`, of a declaration that is not the first of its symbol: 2403, `var x: A` and later `var x: B`.
-    fn check_redeclared_variables(&mut self, file: FileId) {
-        use crate::bind::{Decl, SymbolId};
-        let bound = self.bound(file);
-        for i in 0..bound.symbols.len() {
-            let symbol = &bound.symbols[i];
-            if !symbol.flags.intersects(SymFlags::FUNCTION_SCOPED_VARIABLE)
-                || symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
-            {
-                continue;
-            }
-            let sym = self.files().sym(file, SymbolId(i as u32));
-            if sym.file == file && sym.id.idx() != i {
-                continue;
-            }
-            // What declares no value shares the name freely, and is never `symbol.ValueDeclaration`.
-            let is_value_module = self.files().flags(sym).contains(SymFlags::VALUE_MODULE);
-            let mut decls = self.files().decls(sym);
-            decls.retain(|d| {
-                !matches!(
-                    d.1,
-                    Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_)
-                ) && (is_value_module || !matches!(d.1, Decl::Module(_)))
-                    && (!matches!(d.1, Decl::Var(_) | Decl::Param(_))
-                        || self.is_symbol_of_declaration(sym, *d))
-            });
-            // Only among variables: with any other value the name is taken twice, which is said elsewhere.
-            if decls.len() < 2
-                || !decls
-                    .iter()
-                    .all(|d| matches!(d.1, Decl::Var(_) | Decl::Param(_)))
-            {
-                continue;
-            }
-            // The type of `symbol.ValueDeclaration`. `Some(None)`: there is one, and nothing is held against it.
-            let mut first_type: Option<Option<TypeId>> = None;
-            let mut value_declaration = (file, PatId::NONE);
-            for &(of, decl) in &decls {
-                let (Decl::Var(pat) | Decl::Param(pat)) = decl else {
-                    continue;
-                };
-                let written = self.var_decl_of_pat(of, pat);
-                // `declareSymbolEx`: `let` and `const` share a name with nothing. Whichever comes second gets a symbol of its own.
-                let is_var = written.is_none_or(|d| self.hir(of)[d].kind == VarKind::Var);
-                let Some(first) = first_type else {
-                    let ty = if is_var {
-                        let ty = self.type_of_pat(of, pat);
-                        self.convert_auto_to_any(ty)
-                    } else {
-                        TypeId::UNRESOLVED
-                    };
-                    first_type = Some((!self.is_error_type(ty)).then_some(ty));
-                    value_declaration = (of, pat);
-                    continue;
-                };
-                let Some(declared) = first else { continue };
-                // A second parameter of the name is a name taken twice.
-                if !is_var || !matches!(decl, Decl::Var(_)) || of != file {
-                    continue;
-                }
-                let here = self.type_of_pat(of, pat);
-                let here = self.convert_auto_to_any(here);
-                if self.is_error_type(here) || self.is_identical(declared, here) {
-                    continue;
-                }
-                let start = self.hir(of)[pat].pos;
-                let end = self.end_of_pat(of, pat);
-                self.error_at(
-                    (file, start, end),
-                    2403,
-                    &[
-                        Arg::Text(&self.source_text(of, start, end)),
-                        Arg::Type(declared),
-                        Arg::Type(here),
-                    ],
-                );
-                let (first_of, first_name) = value_declaration;
-                self.relate(start, 2403, |c| {
-                    // `GetErrorRangeForNode`: all of a parameter, the name of anything else.
-                    let at = match c.bound(first_of).pat_parent[first_name.idx()] {
-                        crate::bind::PatParent::Param(p) => (
-                            first_of,
-                            c.hir(first_of)[p].pos,
-                            c.end_of_param(first_of, p),
-                        ),
-                        _ => c.place_of_token(first_of, c.hir(first_of)[first_name].pos),
-                    };
-                    vec![Reported::new(
-                        at,
-                        6203,
-                        held(vec![c.source_text(of, start, end)]),
-                    )]
-                });
-            }
-        }
-    }
-
     /// `symbol.ValueDeclaration` of the symbol the name `pat` declares.
     pub(super) fn value_declaration_of_variable_name(
         &self,
@@ -779,17 +680,6 @@ impl Checker<'_> {
                 PatParent::Param(_) | PatParent::None => return None,
             }
         }
-    }
-
-    /// `getSymbolOfDeclaration(declaration) == sym`. The local symbol of a module or a namespace also lists what is exported under its
-    /// name, which adds no value to it and is never its `ValueDeclaration`.
-    fn is_symbol_of_declaration(
-        &self,
-        sym: Sym,
-        (file, decl): (FileId, crate::bind::Decl),
-    ) -> bool {
-        let own = self.bound(file).symbol_of_declaration(decl);
-        own.is_some() && self.files().sym(file, own) == sym
     }
 
     /// `getTypeFromImportTypeNode`: the symbol `import("spec").A.B` names as a type. `None` if the module or a name is not found.

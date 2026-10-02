@@ -42,7 +42,6 @@ impl Checker<'_> {
         let is_object_of_access = !in_type_query
             && matches!(parent, Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e));
         // From the outside in: where each starts and ends.
-        let own = error_start(self, file, e);
         let mut levels: Vec<(u32, u32)> = Vec::new();
         if let Some(open) = open_parenthesis(hir, e) {
             let inside = self.start_inside_parentheses(file, e) as usize;
@@ -53,7 +52,7 @@ impl Checker<'_> {
             }
         }
         let is_parenthesized = !levels.is_empty();
-        levels.extend(own.map(|start| (start, self.error_end_inside_parentheses(file, e))));
+        levels.push(self.get_error_range_for_node(file, hir.node(e)));
         // Only the outermost is where `e` seems to be, and only a name is at the right of an import or an export assignment.
         let is_ok = |level: usize| {
             level == 0
@@ -101,7 +100,7 @@ impl Checker<'_> {
                 report(self, decl, known::globalThis);
             }
         }
-        if let Some(&symbol) = files.globals.get(&known::undefined) {
+        if let Some(&symbol) = files.globals.get(known::undefined) {
             for &(of, decl) in files.decls_of(files.canonical(symbol)).iter() {
                 // `IsTypeDeclaration`
                 let is_type = matches!(
@@ -274,17 +273,7 @@ impl Checker<'_> {
                 let end = hir[jsx].opening_end;
                 self.error_at((file, x.pos, end), 2686, &[Arg::Atom(looked_up)]);
             } else if of_elements {
-                // The name of the tag, which follows the `<`.
-                let start = skip_trivia(&hir.text, x.pos as usize + 1);
-                self.error_at(
-                    (
-                        file,
-                        start as u32,
-                        jsx_tag_name_end(&hir.text, start) as u32,
-                    ),
-                    2686,
-                    &[Arg::Atom(factory)],
-                );
+                self.error(file, hir[jsx].tag, 2686, &[Arg::Atom(factory)]);
             }
         }
     }
@@ -356,7 +345,7 @@ pub(super) fn means_umd_global(
 
 /// What goes by `name` globally, if that is nothing but `export as namespace name`.
 fn umd_global(files: &Files, name: Atom) -> Option<Sym> {
-    let symbol = *files.globals.get(&name)?;
+    let symbol = *files.globals.get(name)?;
     (files.flags(symbol).contains(SymFlags::ALIAS)
         && files
             .decls(symbol)
@@ -375,29 +364,3 @@ pub(super) fn is_primitive_type_name(name: &[u8]) -> bool {
 }
 
 // ───────────────────────────── where things are written ─────────────────────────────
-
-/// `GetErrorRangeForNode`, of `e` less the parentheses around it: where an error about it starts. `None`: it cannot be told.
-fn error_start(c: &Checker<'_>, file: FileId, e: ExprId) -> Option<u32> {
-    let hir = c.hir(file);
-    match hir[e].kind {
-        // The keyword is pointed at.
-        ExprKind::Satisfies { ty, .. } => {
-            let before = trim_trivia_end(hir.text.get(..hir[ty].pos as usize)?);
-            before
-                .ends_with(b"satisfies")
-                .then(|| before.len() as u32 - 9)
-        }
-        // `<T>e`
-        ExprKind::As { expr, ty } if hir[ty].pos < c.start_of(file, expr) => {
-            let before = trim_trivia_end(hir.text.get(..hir[ty].pos as usize)?);
-            before.ends_with(b"<").then(|| before.len() as u32 - 1)
-        }
-        ExprKind::As { expr, .. } => Some(c.start_of(file, expr)),
-        // The name, of what has one.
-        ExprKind::Fn(f) if hir[f].kind == FnKind::Expr && hir[f].name.is_some() => {
-            Some(hir[f].name_pos)
-        }
-        ExprKind::Class(k) if hir[k].name.is_some() => Some(hir[k].name_pos),
-        _ => Some(c.start_inside_parentheses(file, e)),
-    }
-}

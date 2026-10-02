@@ -5,7 +5,7 @@
 //! its binder.go.
 
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent, ScopeKind};
+use crate::bind::{Decl, Parent, PatParent, ScopeKind};
 
 impl Checker<'_> {
     /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot get past a `let` or a `const` of the same name on its way up.
@@ -52,81 +52,7 @@ impl Checker<'_> {
         }
     }
 
-    /// What `checkContextualIdentifier` of binder.go says of what is declared by the name of `await` at the top of a module: 1262.
-    fn check_names_that_are_keywords(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.kind == FileKind::Declaration {
-            return;
-        }
-        let Some(r#await) = self.files().atoms.lookup(b"await") else {
-            return;
-        };
-        if !self.files().module(file).is_module() {
-            return;
-        }
-        // Not in a function, a member of a class or a namespace.
-        let is_at_the_top = |mut s: StmtId| loop {
-            match bound.stmt_parent[s.idx()] {
-                Parent::Stmt(outer) if outer.is_some() => s = outer,
-                Parent::Case(c) => s = bound.case_stmt[c.idx()],
-                Parent::File => return true,
-                _ => return false,
-            }
-        };
-        for symbol in &bound.symbols {
-            if symbol.name != r#await {
-                continue;
-            }
-            for &decl in &symbol.decls {
-                let at_the_top_of_the_file = |start: u32| (start, true);
-                let (start, at_the_top) = match decl {
-                    Decl::Var(pat) => {
-                        let mut root = pat;
-                        let d = loop {
-                            match bound.pat_parent[root.idx()] {
-                                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
-                                    root = outer
-                                }
-                                PatParent::Var(d) => break d,
-                                _ => break VarDeclId::NONE,
-                            }
-                        };
-                        if d.is_none() || hir[d].flags.contains(Flags::AMBIENT) {
-                            continue;
-                        }
-                        let stmt = bound.var_stmt[d.idx()];
-                        (hir[pat].pos, stmt.is_some() && is_at_the_top(stmt))
-                    }
-                    Decl::Fn(f)
-                        if hir[f].kind == FnKind::Decl
-                            && !hir[f].flags.contains(Flags::AMBIENT) =>
-                    {
-                        match bound.fns[f.idx()].owner {
-                            FnOwner::Stmt(s) => (hir[f].name_pos, is_at_the_top(s)),
-                            _ => continue,
-                        }
-                    }
-                    Decl::Class(c) if !hir[c].flags.contains(Flags::AMBIENT) => {
-                        match bound.class_owner[c.idx()] {
-                            ClassOwner::Stmt(s) => (hir[c].name_pos, is_at_the_top(s)),
-                            _ => continue,
-                        }
-                    }
-                    Decl::ImportDefault(i) => at_the_top_of_the_file(hir[i].default_pos),
-                    Decl::ImportNamespace(i) => at_the_top_of_the_file(hir[i].namespace_pos),
-                    Decl::ImportSpec(s) => at_the_top_of_the_file(hir[s].pos),
-                    Decl::ImportEquals(i) => at_the_top_of_the_file(hir[i].name_pos),
-                    _ => continue,
-                };
-                if at_the_top {
-                    self.error_at((file, start, 0), 1262, &[]);
-                }
-            }
-        }
-    }
-
     pub(super) fn check_small_things(&mut self, file: FileId) {
-        self.check_names_that_are_keywords(file);
         self.check_vars_not_shadowed(file);
     }
 

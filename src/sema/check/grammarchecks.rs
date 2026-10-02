@@ -227,13 +227,16 @@ impl Checker<'_> {
     ) -> bool {
         let hir = self.hir(file);
         let f = &hir[func];
-        // `FindUseStrictPrologue` finds nothing in a file without a directive, which is nearly every file.
         let FnBody::Block(statements) = f.body else {
             return false;
         };
-        if hir.directives.is_empty() {
+        let Some(directive) = hir
+            .stmts
+            .get(hir.find_use_strict_prologue(statements).idx())
+        else {
             return false;
-        }
+        };
+        let use_strict_directive = (file, directive.start, directive.loc.end);
         let non_simple_parameters: SmallVec<[ParamId; 4]> = (f.params.iter())
             .filter(|&p| {
                 hir[p].default.is_some()
@@ -244,26 +247,6 @@ impl Checker<'_> {
         if non_simple_parameters.is_empty() || language_version(self) < ScriptTarget::ES2016 {
             return false;
         }
-        // `FindUseStrictPrologue`: the directives of the body come after the signature and before the first statement.
-        let signature_end = hir[f.params.at(f.params.len() - 1)].loc.end;
-        let first_statement = hir.ids(statements).next().map(|s| hir[s].start);
-        let body = signature_end..first_statement.unwrap_or_else(|| self.end_of_fn(file, func));
-        let is_use_strict = |at: u32| {
-            let written = hir.text.get(at as usize..at as usize + 12);
-            matches!(written, Some(b"\"use strict\"" | b"'use strict'"))
-        };
-        let Some(start) = (hir.directives.iter().map(|directive| directive.0))
-            .find(|&at| body.contains(&at) && is_use_strict(at))
-        else {
-            return false;
-        };
-        // The statement, with its `;`.
-        let semicolon = skip_trivia(&hir.text, start as usize + 12);
-        let use_strict_directive = if hir.text.get(semicolon) == Some(&b';') {
-            (file, start, semicolon as u32 + 1)
-        } else {
-            (file, start, start + 12)
-        };
         let mut related = Vec::with_capacity(non_simple_parameters.len());
         for (index, &parameter) in non_simple_parameters.iter().enumerate() {
             let used_here = Reported::bare(use_strict_directive, 1349);

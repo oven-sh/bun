@@ -125,12 +125,13 @@ In a terminal, `bun check` shows the source around each error and the declaratio
 2 |
 3 | const message = greet({ id: "1", name: "Ada" });
                             ^^
-error TS2322: Type 'string' is not assignable to type 'number'.
-      at src/index.ts:3:25
-      note: The expected type comes from property 'id' which is declared here on type 'User'
-        at src/user.ts:2:3
-        2 |   id: number;
-              ^^
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at src/index.ts:3:25
+
+2 |   id: number;
+      ^^
+note: The expected type comes from property 'id' which is declared here on type 'User'
+   at src/user.ts:2:3
 
 Found 1 error in 1 file, checked 2 files [14ms]
 ```
@@ -146,11 +147,11 @@ Above 50 errors, the terminal format shows each distinct error once. Under it, `
 ```txt
 1 | export const v0: number = "0";
                  ^^
-error TS2322: Type 'string' is not assignable to type 'number'.
-      at m1.ts:1:14
-      60 times in 2 files
-        30  m1.ts:1
-        30  m2.ts:1
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at m1.ts:1:14
+    60 times in 2 files
+      30  m1.ts:1
+      30  m2.ts:1
 ```
 
 Use `--all` to show every error. The one-line format always shows every error.
@@ -205,7 +206,7 @@ These differences are intended:
 - `bun check` only checks. It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, whatever `noEmit`, `declaration`, or `incremental` say. Use [`bun build`](/bundler) to produce JavaScript, and `tsc` to produce declaration files.
 - There is no `--watch` mode.
 - `bun check` does not load language service plugins from the `plugins` compiler option.
-- Options that only print information, such as `listFiles` and `explainFiles`, have no effect.
+- Of the options that only print information, `listFiles` and `listFilesOnly` work. The others, such as `explainFiles` and `traceResolution`, have no effect.
 
 ## CLI usage
 

@@ -446,37 +446,8 @@ impl Checker<'_> {
 
     /// `prop.ValueDeclaration`
     fn value_declaration_of(&self, prop: &Prop) -> Option<(FileId, Node)> {
-        Some(match *Self::value_declaration(prop)? {
-            PropSource::Members(ref members) => {
-                let &(file, member) = members.first()?;
-                (file, self.hir(file).node(member))
-            }
-            PropSource::Parameter(file, p) => (file, self.hir(file).node(p)),
-            PropSource::Literal(file, p) => (file, self.hir(file).node(p)),
-            PropSource::Assigned(file, ref assignments) => {
-                (file, self.hir(file).node(*assignments.first()?))
-            }
-            // `SetValueDeclaration`: the first that declares a value, a namespace only if nothing else does. An alias declares none.
-            PropSource::Symbol(s) => {
-                let decls = self.files().decls_of(self.files().canonical(s));
-                let is_value = |d: &&(FileId, Decl)| {
-                    matches!(
-                        d.1,
-                        Decl::Var(_)
-                            | Decl::Fn(_)
-                            | Decl::Class(_)
-                            | Decl::Enum(_)
-                            | Decl::EnumMember(_)
-                    )
-                };
-                let &(file, decl) = decls
-                    .iter()
-                    .find(is_value)
-                    .or_else(|| decls.iter().find(|d| matches!(d.1, Decl::Module(_))))?;
-                (file, self.hir(file).node(decl))
-            }
-            _ => return None,
-        })
+        let (file, decl) = self.value_declaration_of_prop(prop)?;
+        Some((file, self.hir(file).node(decl)))
     }
 
     /// `checkPropertyNotUsedBeforeDeclaration`, of the property access `e`.

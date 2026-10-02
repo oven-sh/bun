@@ -752,15 +752,7 @@ impl Checker<'_> {
                 continue;
             }
             let start = hir[reference].pos;
-            self.error_at(
-                (
-                    file,
-                    start,
-                    entity_name_end(&hir.text, start as usize) as u32,
-                ),
-                1272,
-                &[],
-            );
+            self.error(file, name, 1272, &[]);
             self.relate(start, 1272, |c| {
                 // The first of its declarations that declares an alias.
                 let declared = c
@@ -1096,10 +1088,11 @@ impl Checker<'_> {
                     return;
                 };
                 let start = hir[e].pos;
-                if matches!(kind, ExprKind::ImportMeta)
-                    || is_other_import_meta_property(&hir.text, start)
-                {
-                    let end = meta_property_end(&hir.text, start, b"import");
+                let end = match kind {
+                    ExprKind::ImportMeta => Some(hir[e].end),
+                    _ => other_import_meta_property_end(&hir.text, start),
+                };
+                if let Some(end) = end {
                     self.error_at((file, start, end), code, &[]);
                 }
             }
@@ -1107,9 +1100,7 @@ impl Checker<'_> {
             ExprKind::NewTarget(_) => {
                 let node = self.hir(file).node(e);
                 if self.hir(file).get_new_target_container(node).is_none() {
-                    let start = hir[e].pos;
-                    let end = meta_property_end(&hir.text, start, b"new");
-                    self.error_at((file, start, end), 17013, &[Arg::Text("new.target")]);
+                    self.error(file, e, 17013, &[Arg::Bytes(b"new.target")]);
                 }
             }
             _ => {}
@@ -1238,20 +1229,14 @@ fn eat(text: &[u8], at: usize, c: u8) -> Option<usize> {
     (text.get(at) == Some(&c)).then_some(at + 1)
 }
 
-/// Whether `import.name` is written at `pos`, the name being neither `meta` nor `defer`. It is kept as a missing expression.
-fn is_other_import_meta_property(text: &[u8], pos: u32) -> bool {
-    eat_word(text, pos as usize, b"import")
-        .and_then(|end| eat(text, end, b'.'))
-        .is_some_and(|dot_end| eat_word(text, skip_trivia(text, dot_end), b"defer").is_none())
-}
-
-/// Where the meta-property `keyword.name` at `pos` ends. 0 if that is not what is written there.
-fn meta_property_end(text: &[u8], pos: u32, keyword: &[u8]) -> u32 {
-    let Some(dot_end) = eat_word(text, pos as usize, keyword).and_then(|end| eat(text, end, b'.'))
-    else {
-        return 0;
-    };
-    word_end(text, skip_trivia(text, dot_end)) as u32
+/// The end offset of the invalid meta-property `import.<name>` at `pos`, where `<name>` is neither `meta` nor `defer`. The parser lowers it
+/// to `ExprKind::Missing`, whose `end` does not cover the name.
+fn other_import_meta_property_end(text: &[u8], pos: u32) -> Option<u32> {
+    let dot_end = eat_word(text, pos as usize, b"import").and_then(|end| eat(text, end, b'.'))?;
+    let name = skip_trivia(text, dot_end);
+    eat_word(text, name, b"defer")
+        .is_none()
+        .then(|| word_end(text, name) as u32)
 }
 
 /// The string literal at `at`: what is between the quotes, as written, and where it ends.
@@ -1301,21 +1286,6 @@ fn suggested_import_source(specifier: &str, is_esm: bool, prefers_ts: bool) -> S
         (_, false) => ".js",
     };
     format!("{stem}{suggested}")
-}
-
-/// Where the entity name `a.b.c` that starts at `start` ends.
-fn entity_name_end(text: &[u8], start: usize) -> usize {
-    let mut end = word_end(text, start);
-    loop {
-        let Some(after_dot) = eat(text, end, b'.') else {
-            return end;
-        };
-        let next = skip_trivia(text, after_dot);
-        if word_end(text, next) == next {
-            return end;
-        }
-        end = word_end(text, next);
-    }
 }
 
 /// `isCommentOrBlankLine`

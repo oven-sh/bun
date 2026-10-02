@@ -93,11 +93,7 @@ impl Checker<'_> {
             Decl::ImportNamespace(i) => hir[i].namespace_pos,
             Decl::ImportSpec(s) => hir[s].pos,
             Decl::ImportEquals(i) => hir[i].name_pos,
-            Decl::UmdGlobal(stmt) => start_after_tokens(
-                &hir.text,
-                self.start_after_modifiers(file, stmt),
-                &[b"export", b"as", b"namespace"],
-            )?,
+            Decl::UmdGlobal(stmt) => hir.start(hir.name(hir.node(stmt))),
             // The name of `export { a as b }` is `b`.
             Decl::ExportSpec(spec) => hir[spec].pos,
             Decl::ExportStarAs(stmt) => match hir[stmt].kind {
@@ -579,7 +575,12 @@ impl Checker<'_> {
                     && is_not_overload(self, &it)
                     && let Some((start, end)) = self.error_range_of_declaration(file, decl)
                 {
-                    self.error_at((file, start, end), 2323, &[Arg::Atom(id)]);
+                    // `InternalSymbolNamePrefix` (0xFE) is not valid UTF-8, so it prints as U+FFFD.
+                    let name = match id == known::assignment_declaration {
+                        true => Arg::Text("\u{FFFD}assignment"),
+                        false => Arg::Atom(id),
+                    };
+                    self.error_at((file, start, end), 2323, &[name]);
                 }
             }
         }
@@ -604,21 +605,23 @@ impl Checker<'_> {
         let is_declaration_file = hir.kind == FileKind::Declaration;
         let classes = hir.classes.iter().map(|class| {
             let is_ambient = class.flags.contains(Flags::AMBIENT) || is_declaration_file;
-            (class.members, is_ambient)
+            (class.members, is_ambient, true)
         });
-        let interfaces = hir.interfaces.iter().map(|it| (it.members, true));
+        let interfaces = (hir.interfaces.iter()).map(|it| (it.members, true, false));
         let literals = hir.types.iter().filter_map(|node| match node.kind {
-            TypeNodeKind::Object(members) => Some((members, true)),
+            TypeNodeKind::Object(members) => Some((members, true, false)),
             _ => None,
         });
-        for (members, is_ambient) in classes.chain(interfaces).chain(literals) {
+        for (members, is_ambient, is_class) in classes.chain(interfaces).chain(literals) {
             // One member has nothing to clash with, unless it declares more than itself, or is static as the `prototype` of every class is.
             if members.len() > 1
                 || members.iter().any(|m| {
                     hir[m].kind == MemberKind::Constructor || hir[m].flags.contains(Flags::STATIC)
                 })
             {
-                self.check_object_type_for_duplicate_declarations(file, members, is_ambient);
+                self.check_object_type_for_duplicate_declarations(
+                    file, members, is_ambient, is_class,
+                );
             }
             for is_static in [false, true] {
                 let computed = members.iter().find(|&m| {
@@ -674,16 +677,19 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkObjectTypeForDuplicateDeclarations`, without the private names.
+    /// `checkObjectTypeForDuplicateDeclarations`
     fn check_object_type_for_duplicate_declarations(
         &mut self,
         file: FileId,
         members: Span<MemberId>,
         is_ambient: bool,
+        check_private_names: bool,
     ) {
         let hir = self.hir(file);
         // `instanceNames`, `staticNames`: 1 for a property, 2 for an accessor, 3 once errors have been reported.
         let mut names: SmallVec<[(Atom, bool, u8); 4]> = SmallVec::new();
+        // 1 for what is not static, 2 for what is.
+        let mut private_names: SmallVec<[(Atom, u8); 4]> = SmallVec::new();
         for m in members.iter() {
             let member = &hir[m];
             let mut declared: SmallVec<[(Decl, Atom, u8, bool); 2]> = SmallVec::new();
@@ -701,6 +707,18 @@ impl Checker<'_> {
                     self.error_at((file, member.name_pos, 0), 2699, &[]);
                     self.explain_static_name_conflict(file, m, name);
                 }
+                if check_private_names && matches!(member.key, PropKey::Private(_)) {
+                    let at = private_names.iter().position(|it| it.0 == name);
+                    let at = at.unwrap_or_else(|| {
+                        private_names.push((name, 0));
+                        private_names.len() - 1
+                    });
+                    let before = private_names[at].1;
+                    private_names[at].1 |= if is_static { 2 } else { 1 };
+                    if before != 3 && private_names[at].1 == 3 {
+                        self.report_duplicate_member_errors(file, members, name, None, 2804);
+                    }
+                }
                 let kind = match member.kind {
                     MemberKind::Property if !member.flags.contains(Flags::ACCESSOR) => 1,
                     MemberKind::Property | MemberKind::Getter | MemberKind::Setter => 2,
@@ -717,7 +735,8 @@ impl Checker<'_> {
                     None => names.push((name, is_static, kind)),
                     Some(state) if state.2 == 1 || state.2 == 2 && kind != 2 => {
                         state.2 = 3;
-                        self.report_duplicate_member_errors(file, members, name, is_static);
+                        let is_static = Some(is_static);
+                        self.report_duplicate_member_errors(file, members, name, is_static, 2300);
                     }
                     Some(_) => {}
                 }
@@ -725,13 +744,14 @@ impl Checker<'_> {
         }
     }
 
-    /// `reportDuplicateMemberErrors`, with `checkStatic`.
+    /// `reportDuplicateMemberErrors`. `is_static` is `None` without `checkStatic`.
     fn report_duplicate_member_errors(
         &mut self,
         file: FileId,
         members: Span<MemberId>,
         name: Atom,
-        is_static: bool,
+        is_static: Option<bool>,
+        code: u32,
     ) {
         let hir = self.hir(file);
         for m in members.iter() {
@@ -745,7 +765,7 @@ impl Checker<'_> {
                         named.push(Decl::ParameterProperty(p));
                     }
                 }
-            } else if member.flags.contains(Flags::STATIC) == is_static
+            } else if is_static.is_none_or(|it| it == member.flags.contains(Flags::STATIC))
                 && flags_of_member(member).is_some_and(|it| it.0.intersects(SymFlags::CLASS_MEMBER))
                 && self.declared_member_name(file, member.key) == Some(name)
             {
@@ -761,7 +781,7 @@ impl Checker<'_> {
                 let first = first.and_then(|(of, first)| self.place_of_declaration(of, first));
                 let (of, from, to) = first.unwrap_or(place);
                 let text = Arg::Bytes(&self.hir(of).text[from as usize..to as usize]);
-                self.error_at(place, 2300, &[text]);
+                self.error_at(place, code, &[text]);
             }
         }
     }
@@ -826,17 +846,4 @@ impl Checker<'_> {
             &[Arg::Text(&name)],
         );
     }
-}
-
-/// The start of the token that follows `tokens`, which are written in that order from `pos`. `None` if the text differs or was not kept.
-fn start_after_tokens(text: &[u8], pos: u32, tokens: &[&[u8]]) -> Option<u32> {
-    let mut at = pos as usize;
-    for &token in tokens {
-        at = skip_trivia(text, at);
-        if !text.get(at..)?.starts_with(token) {
-            return None;
-        }
-        at += token.len();
-    }
-    Some(skip_trivia(text, at) as u32)
 }

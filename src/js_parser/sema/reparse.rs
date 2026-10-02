@@ -6,8 +6,8 @@
 
 use std::rc::Rc;
 
-use bun_ast::ts_syntax as ts;
-use bun_sema::atom::Atom;
+use crate::sema::ts_syntax as ts;
+use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 use smallvec::SmallVec;
 
@@ -352,7 +352,8 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// `addDeepCloneReparse`, of the type of a type expression.
     fn reparse_type(&mut self, expr: TypeExpr) -> TypeNodeId {
         self.note_checker_errors(expr.pos, expr.end);
-        let mut ty = self.b.clone_type(expr.ty);
+        let jsdoc = std::rc::Rc::clone(&self.jsdoc);
+        let mut ty = self.b.clone_type(&jsdoc.types, expr.ty);
         let file = &mut self.b.file;
         if ty.is_none() {
             ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), expr.pos, expr.pos);
@@ -489,8 +490,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             && !ty.is_variadic
             && !ty.is_optional
             && ty.ty.is_some()
-            && matches!(self.b.ts[ty.ty].data, ts::TypeData::Reference { name, args }
-                if args.is_empty() && matches!(&self.b.ts[name], [name] if &*name.text == b"const"));
+            && matches!(self.jsdoc.types.file[ty.ty].kind, TypeNodeKind::Ref { name, args }
+                if args.is_empty() && self.jsdoc.types.file.texts(name).eq([known::r#const]));
         let kind = if is_const {
             ExprKind::AsConst(e)
         } else if is_assertion {
@@ -981,7 +982,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         };
         let start = class_name.name.first().map_or(0, |first| first.start);
         self.note_checker_errors(start, class_name.end);
-        self.b.clone_type_list(type_args)
+        let jsdoc = std::rc::Rc::clone(&self.jsdoc);
+        self.b.clone_type_list(&jsdoc.types, type_args)
     }
 
     /// `@augments`, `@extends`: the type arguments go to the `extends` clause, if that names the same class.
@@ -1350,10 +1352,13 @@ impl<'p, 'a> Lower<'p, 'a> {
             TagType::Literal { is_array, .. } => is_array,
             TagType::Expr(expr) if expr.is_optional || expr.ty.is_none() => false,
             TagType::Expr(expr) if expr.is_variadic => true,
-            TagType::Expr(expr) => match self.b.ts[expr.ty].data {
-                ts::TypeData::Array(_) => true,
-                ts::TypeData::Reference { name, .. } => matches!(&self.b.ts[name],
-                    [name] if matches!(&*name.text, b"Array" | b"ReadonlyArray")),
+            TagType::Expr(expr) => match self.jsdoc.types.file[expr.ty].kind {
+                TypeNodeKind::Array(_) => true,
+                TypeNodeKind::Ref { name, .. } => {
+                    let mut texts = self.jsdoc.types.file.texts(name);
+                    name.len() == 1
+                        && matches!(texts.next(), Some(known::Array | known::ReadonlyArray))
+                }
                 _ => false,
             },
         }

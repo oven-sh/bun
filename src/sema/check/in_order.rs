@@ -544,7 +544,6 @@ impl Checker<'_> {
             let sym = self.files().sym(file, symbol);
             self.declared_type(sym);
             self.type_of_symbol(sym);
-            self.check_private_names_of_both_kinds(file, class);
             self.check_type_nodes(file, decl.extends_args);
             self.check_expression(file, decl.extends);
             self.check_type_arguments_of_base(file, class, sym);
@@ -751,8 +750,13 @@ impl Checker<'_> {
                 self.check_type_nodes(file, args);
                 self.check_type_reference_or_import(file, node);
             }
-            // `checkImportType` does not look at the type arguments.
-            TypeNodeKind::Import { .. } => self.check_type_reference_or_import(file, node),
+            // `checkImportType` checks the argument, never the type arguments. A non-literal argument is stored in `args` (`spec` is `NONE`).
+            TypeNodeKind::Import { spec, args, .. } => {
+                if spec.is_none() {
+                    self.check_type_nodes(file, args);
+                }
+                self.check_type_reference_or_import(file, node)
+            }
             // `checkThisType`
             TypeNodeKind::Keyword(Keyword::This) => {
                 self.type_from_node(file, node);

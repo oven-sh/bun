@@ -305,6 +305,11 @@ impl<'p> Checker<'p> {
         }
         let mut afresh = is_rechecked;
         let mut visible_from = self.resolution_start;
+        // `checkExpression` has no guard against re-entry. What was being checked when the members of a class were asked for is
+        // checked again if their index signatures lead back to it, and finds the members in place (`resolveDeclaredMembers`).
+        if let Some(&(floor, ..)) = self.declared_index_infos_under_way.last() {
+            visible_from = visible_from.max(floor);
+        }
         if !self.contextual_binding_patterns.is_empty() {
             if let Some(floor) = self.contextual_pattern_floor(file, e) {
                 afresh = true;
@@ -949,7 +954,7 @@ impl<'p> Checker<'p> {
                 // `o` is by rights is not known.
                 if self
                     .prop_ref(apparent, name)
-                    .is_some_and(|(prop, _)| !matches!(prop.source, PropSource::Members(_)))
+                    .is_some_and(|(prop, _)| !matches!(prop.source, PropSource::Symbol(_)))
                 {
                     return (TypeId::UNRESOLVED, stops);
                 }
@@ -1007,6 +1012,10 @@ impl<'p> Checker<'p> {
             // It is not narrowed.
             return (TypeId::ERROR, stops);
         };
+        let prop = match how {
+            Found::ByIndex => None,
+            _ => self.prop_ref(apparent, name).map(|(prop, _)| prop),
+        };
         if how == Found::ByIndex {
             // `indexInfo.isReadonly && (IsAssignmentTarget(node) || isDeleteTarget(node))`
             let is_deleted = matches!(bound.expr_parent[e.idx()], Parent::Expr(p)
@@ -1039,7 +1048,17 @@ impl<'p> Checker<'p> {
                 let node = (file, start, self.end_inside_parentheses(file, e));
                 self.error_at(node, 2806, &[]);
             }
-            self.check_property_accessibility(file, e, is_super, apparent, name, name_pos);
+            // Every `a.b` comes here. `check_property_accessibility_at_location` looks the property up again and then starts with
+            // this test: of an object, which is its own apparent type, it finds the same one.
+            let is_within_reach = !is_super
+                && self.is_object_type(apparent)
+                && prop.is_some_and(|prop| {
+                    !prop.flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH)
+                        && !matches!(prop.source, PropSource::Intersected(..))
+                });
+            if !is_within_reach {
+                self.check_property_accessibility(file, e, is_super, apparent, name, name_pos);
+            }
         }
         if target.written
             && self
@@ -1051,10 +1070,6 @@ impl<'p> Checker<'p> {
             self.error_at(right, 2540, &[Arg::Text(&text)]);
             return (TypeId::ERROR, stops);
         }
-        let prop = match how {
-            Found::ByIndex => None,
-            _ => self.prop_ref(apparent, name).map(|found| found.0),
-        };
         // The access ends with its name.
         let right = (file, name_pos, hir[e].end);
         (
@@ -1100,12 +1115,14 @@ impl<'p> Checker<'p> {
         let container = hir.function_of(container);
         let apparent = self.apparent_type(receiver);
         let (prop, _) = self.prop_of(apparent, name)?;
-        let PropSource::Assigned(declared_in, assignments) = &prop.source else {
+        let PropSource::Symbol(sym) = prop.source else {
             return None;
         };
-        if *declared_in != file
+        let assignments = self.assignments_of_symbol(sym);
+        if sym.file != file
+            || !self.is_declared_by_assignment(sym)
             || !matches!(
-                self.is_constructor_declared_this_property(file, assignments),
+                self.is_constructor_declared_this_property(file, &assignments),
                 super::shape::ThisAssignmentDeclaration::Constructor(declaring) if declaring == container
             )
         {

@@ -472,12 +472,29 @@ impl Checker<'_> {
             }
             let Some(first) = &found else {
                 let is_private = match &prop.source {
-                    PropSource::Members(members) => members.iter().any(|&(f, m)| {
-                        let member = &self.hir(f)[m];
-                        member.flags.contains(Flags::PRIVATE)
-                            || matches!(member.key, PropKey::Private(_))
-                    }),
-                    PropSource::Parameter(f, p) => self.hir(*f)[*p].flags.contains(Flags::PRIVATE),
+                    PropSource::Symbol(sym) => {
+                        // Every access comes here: late binding is asked only of what can have more than one declaration.
+                        let symbol = self.files().symbol(*sym);
+                        let declarations = if symbol.decls.len() == 1
+                            && symbol.name != known::computed
+                            && !symbol.flags.contains(SymFlags::MERGED)
+                        {
+                            self.files().decls_of(*sym)
+                        } else {
+                            self.declarations_of_property(*sym)
+                        };
+                        declarations.iter().any(|&(f, decl)| match decl {
+                            Decl::Member(m) => {
+                                let member = &self.hir(f)[m];
+                                member.flags.contains(Flags::PRIVATE)
+                                    || matches!(member.key, PropKey::Private(_))
+                            }
+                            Decl::ParameterProperty(p) => {
+                                self.hir(f)[p].flags.contains(Flags::PRIVATE)
+                            }
+                            _ => false,
+                        })
+                    }
                     _ => false,
                 };
                 if !is_private {
@@ -493,7 +510,16 @@ impl Checker<'_> {
         let Some((prop, _)) = found else { return };
         let is_write_only = at.is_some_and(|e| u.is_write_only(e));
         match &prop.source {
-            PropSource::Members(members) => {
+            PropSource::Symbol(sym)
+                if let Some((of, Decl::ParameterProperty(p))) =
+                    self.files().value_declaration(*sym) =>
+            {
+                if of == file && !is_write_only {
+                    u.read_parameter_properties.push(p)
+                }
+            }
+            PropSource::Symbol(sym) => {
+                let members = &self.members_of_symbol(*sym);
                 // Written to and no more, unless writing runs a setter.
                 let has_setter = members.iter().any(|&(f, m)| {
                     let member = &self.hir(f)[m];
@@ -513,9 +539,6 @@ impl Checker<'_> {
                 }
                 u.read_members
                     .extend(members.iter().filter(|m| m.0 == file).map(|m| m.1));
-            }
-            PropSource::Parameter(of, p) if *of == file && !is_write_only => {
-                u.read_parameter_properties.push(*p)
             }
             _ => {}
         }

@@ -1047,7 +1047,7 @@ impl<'p> Checker<'p> {
             let written = self.written_name(first.name);
             let declares_one_itself = sm.shape().props.iter().any(|p| {
                 self.written_name(p.name) == written
-                    && matches!(&p.source, PropSource::Members(decls) if decls.iter().any(|&(file, m)| {
+                    && matches!(p.source, PropSource::Symbol(sym) if members_among(&self.files().decls_of(sym)).iter().any(|&(file, m)| {
                         let bound = self.bound(file);
                         matches!(bound.member_owner[m.idx()], crate::bind::MemberOwner::Class(c) if self.files().sym(file, bound.class_symbol[c.idx()]) == class)
                     }))

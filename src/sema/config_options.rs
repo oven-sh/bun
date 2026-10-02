@@ -4,11 +4,14 @@
 //! Configuration files are written for all versions of TypeScript. What an older version took and the current one has removed is let
 //! through without a word. Only what never meant anything is a mistake.
 
-use crate::json::Json;
+use crate::hir::ExprId;
+use crate::json::{Json, TsConfigSourceFile};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Element {
     String,
+    /// `IsFilePath`
+    FilePath,
     Object,
 }
 
@@ -16,6 +19,8 @@ enum Element {
 enum Kind {
     Boolean,
     String,
+    /// `IsFilePath`
+    FilePath,
     Number,
     Object,
     List(Element),
@@ -23,210 +28,161 @@ enum Kind {
     OneOf(&'static [&'static [u8]], &'static [&'static [u8]]),
 }
 
-/// `optionDeclarations`, less what is only for the command line. Sorted by name.
-const OPTIONS: &[(&[u8], Kind)] = &[
-    (b"all", Kind::Boolean),
-    (b"allowArbitraryExtensions", Kind::Boolean),
-    (b"allowImportingTsExtensions", Kind::Boolean),
-    (b"allowJs", Kind::Boolean),
-    (b"allowSyntheticDefaultImports", Kind::Boolean),
-    (b"allowUmdGlobalAccess", Kind::Boolean),
-    (b"allowUnreachableCode", Kind::Boolean),
-    (b"allowUnusedLabels", Kind::Boolean),
-    (b"alwaysStrict", Kind::Boolean),
-    (b"assumeChangesOnlyAffectDirectDependencies", Kind::Boolean),
-    (b"baseUrl", Kind::String),
-    (b"charset", Kind::String),
-    (b"checkJs", Kind::Boolean),
-    (b"checkers", Kind::Number),
-    (b"composite", Kind::Boolean),
-    (b"customConditions", Kind::List(Element::String)),
-    (b"declaration", Kind::Boolean),
-    (b"declarationDir", Kind::String),
-    (b"declarationMap", Kind::Boolean),
-    (b"deduplicatePackages", Kind::Boolean),
-    (b"diagnostics", Kind::Boolean),
-    (b"disableReferencedProjectLoad", Kind::Boolean),
-    (b"disableSizeLimit", Kind::Boolean),
-    (b"disableSolutionSearching", Kind::Boolean),
-    (b"disableSourceOfProjectReferenceRedirect", Kind::Boolean),
-    (b"downlevelIteration", Kind::Boolean),
-    (b"emitBOM", Kind::Boolean),
-    (b"emitDeclarationOnly", Kind::Boolean),
-    (b"emitDecoratorMetadata", Kind::Boolean),
-    (b"erasableSyntaxOnly", Kind::Boolean),
-    (b"esModuleInterop", Kind::Boolean),
-    (b"exactOptionalPropertyTypes", Kind::Boolean),
-    (b"experimentalDecorators", Kind::Boolean),
-    (b"explainFiles", Kind::Boolean),
-    (b"extendedDiagnostics", Kind::Boolean),
-    (b"forceConsistentCasingInFileNames", Kind::Boolean),
-    (b"generateCpuProfile", Kind::String),
-    (b"generateTrace", Kind::String),
-    (b"ignoreDeprecations", Kind::String),
-    (b"importHelpers", Kind::Boolean),
-    (
-        b"importsNotUsedAsValues",
-        Kind::OneOf(&[b"remove", b"preserve", b"error"], &[]),
-    ),
-    (b"incremental", Kind::Boolean),
-    (b"init", Kind::Boolean),
-    (b"inlineSourceMap", Kind::Boolean),
-    (b"inlineSources", Kind::Boolean),
-    (b"isolatedDeclarations", Kind::Boolean),
-    (b"isolatedModules", Kind::Boolean),
-    (
-        b"jsx",
-        Kind::OneOf(
-            &[
-                b"preserve",
-                b"react-native",
-                b"react-jsx",
-                b"react-jsxdev",
-                b"react",
-            ],
-            &[],
-        ),
-    ),
-    (b"jsxFactory", Kind::String),
-    (b"jsxFragmentFactory", Kind::String),
-    (b"jsxImportSource", Kind::String),
-    (b"keyofStringsOnly", Kind::Boolean),
-    (b"lib", Kind::List(Element::String)),
-    (b"libReplacement", Kind::Boolean),
-    (b"listEmittedFiles", Kind::Boolean),
-    (b"listFiles", Kind::Boolean),
-    (b"mapRoot", Kind::String),
-    (b"maxNodeModuleJsDepth", Kind::Number),
-    (
-        b"module",
-        Kind::OneOf(
-            &[
-                b"commonjs",
-                b"es6",
-                b"es2015",
-                b"es2020",
-                b"es2022",
-                b"esnext",
-                b"node16",
-                b"node18",
-                b"node20",
-                b"nodenext",
-                b"preserve",
-            ],
+bun_core::comptime_string_map! {
+    /// `CommandLineCompilerOptionsMap`, less what is only for the command line: by the name in lower case, the name and what it takes.
+    static OPTIONS: (&'static [u8], Kind) = {
+        b"all" => (b"all", Kind::Boolean),
+        b"allowarbitraryextensions" => (b"allowArbitraryExtensions", Kind::Boolean),
+        b"allowimportingtsextensions" => (b"allowImportingTsExtensions", Kind::Boolean),
+        b"allowjs" => (b"allowJs", Kind::Boolean),
+        b"allowsyntheticdefaultimports" => (b"allowSyntheticDefaultImports", Kind::Boolean),
+        b"allowumdglobalaccess" => (b"allowUmdGlobalAccess", Kind::Boolean),
+        b"allowunreachablecode" => (b"allowUnreachableCode", Kind::Boolean),
+        b"allowunusedlabels" => (b"allowUnusedLabels", Kind::Boolean),
+        b"alwaysstrict" => (b"alwaysStrict", Kind::Boolean),
+        b"assumechangesonlyaffectdirectdependencies" => (b"assumeChangesOnlyAffectDirectDependencies", Kind::Boolean),
+        b"baseurl" => (b"baseUrl", Kind::FilePath),
+        b"charset" => (b"charset", Kind::String),
+        b"checkjs" => (b"checkJs", Kind::Boolean),
+        b"checkers" => (b"checkers", Kind::Number),
+        b"composite" => (b"composite", Kind::Boolean),
+        b"customconditions" => (b"customConditions", Kind::List(Element::String)),
+        b"declaration" => (b"declaration", Kind::Boolean),
+        b"declarationdir" => (b"declarationDir", Kind::FilePath),
+        b"declarationmap" => (b"declarationMap", Kind::Boolean),
+        b"deduplicatepackages" => (b"deduplicatePackages", Kind::Boolean),
+        b"diagnostics" => (b"diagnostics", Kind::Boolean),
+        b"disablereferencedprojectload" => (b"disableReferencedProjectLoad", Kind::Boolean),
+        b"disablesizelimit" => (b"disableSizeLimit", Kind::Boolean),
+        b"disablesolutionsearching" => (b"disableSolutionSearching", Kind::Boolean),
+        b"disablesourceofprojectreferenceredirect" => (b"disableSourceOfProjectReferenceRedirect", Kind::Boolean),
+        b"downleveliteration" => (b"downlevelIteration", Kind::Boolean),
+        b"emitbom" => (b"emitBOM", Kind::Boolean),
+        b"emitdeclarationonly" => (b"emitDeclarationOnly", Kind::Boolean),
+        b"emitdecoratormetadata" => (b"emitDecoratorMetadata", Kind::Boolean),
+        b"erasablesyntaxonly" => (b"erasableSyntaxOnly", Kind::Boolean),
+        b"esmoduleinterop" => (b"esModuleInterop", Kind::Boolean),
+        b"exactoptionalpropertytypes" => (b"exactOptionalPropertyTypes", Kind::Boolean),
+        b"experimentaldecorators" => (b"experimentalDecorators", Kind::Boolean),
+        b"explainfiles" => (b"explainFiles", Kind::Boolean),
+        b"extendeddiagnostics" => (b"extendedDiagnostics", Kind::Boolean),
+        b"forceconsistentcasinginfilenames" => (b"forceConsistentCasingInFileNames", Kind::Boolean),
+        b"generatecpuprofile" => (b"generateCpuProfile", Kind::String),
+        b"generatetrace" => (b"generateTrace", Kind::String),
+        b"ignoredeprecations" => (b"ignoreDeprecations", Kind::String),
+        b"importhelpers" => (b"importHelpers", Kind::Boolean),
+        b"importsnotusedasvalues" => (b"importsNotUsedAsValues", Kind::OneOf(&[b"remove", b"preserve", b"error"], &[])),
+        b"incremental" => (b"incremental", Kind::Boolean),
+        b"init" => (b"init", Kind::Boolean),
+        b"inlinesourcemap" => (b"inlineSourceMap", Kind::Boolean),
+        b"inlinesources" => (b"inlineSources", Kind::Boolean),
+        b"isolateddeclarations" => (b"isolatedDeclarations", Kind::Boolean),
+        b"isolatedmodules" => (b"isolatedModules", Kind::Boolean),
+        b"jsx" => (b"jsx", Kind::OneOf(&[b"preserve", b"react-native", b"react-jsx", b"react-jsxdev", b"react"], &[])),
+        b"jsxfactory" => (b"jsxFactory", Kind::String),
+        b"jsxfragmentfactory" => (b"jsxFragmentFactory", Kind::String),
+        b"jsximportsource" => (b"jsxImportSource", Kind::String),
+        b"keyofstringsonly" => (b"keyofStringsOnly", Kind::Boolean),
+        b"lib" => (b"lib", Kind::List(Element::String)),
+        b"libreplacement" => (b"libReplacement", Kind::Boolean),
+        b"listemittedfiles" => (b"listEmittedFiles", Kind::Boolean),
+        b"listfiles" => (b"listFiles", Kind::Boolean),
+        b"listfilesonly" => (b"listFilesOnly", Kind::Boolean),
+        b"maproot" => (b"mapRoot", Kind::String),
+        b"maxnodemodulejsdepth" => (b"maxNodeModuleJsDepth", Kind::Number),
+        b"module" => (b"module", Kind::OneOf(
+            &[b"commonjs", b"es6", b"es2015", b"es2020", b"es2022", b"esnext", b"node16", b"node18", b"node20", b"nodenext", b"preserve"],
             &[b"none", b"amd", b"system", b"umd"],
-        ),
-    ),
-    (
-        b"moduleDetection",
-        Kind::OneOf(&[b"auto", b"legacy", b"force"], &[]),
-    ),
-    (
-        b"moduleResolution",
-        Kind::OneOf(
+        )),
+        b"moduledetection" => (b"moduleDetection", Kind::OneOf(&[b"auto", b"legacy", b"force"], &[])),
+        b"moduleresolution" => (b"moduleResolution", Kind::OneOf(
             &[b"node16", b"nodenext", b"bundler"],
             &[b"classic", b"node", b"node10"],
-        ),
-    ),
-    (b"moduleSuffixes", Kind::List(Element::String)),
-    (b"newLine", Kind::OneOf(&[b"crlf", b"lf"], &[])),
-    (b"noCheck", Kind::Boolean),
-    (b"noEmit", Kind::Boolean),
-    (b"noEmitHelpers", Kind::Boolean),
-    (b"noEmitOnError", Kind::Boolean),
-    (b"noErrorTruncation", Kind::Boolean),
-    (b"noFallthroughCasesInSwitch", Kind::Boolean),
-    (b"noImplicitAny", Kind::Boolean),
-    (b"noImplicitOverride", Kind::Boolean),
-    (b"noImplicitReturns", Kind::Boolean),
-    (b"noImplicitThis", Kind::Boolean),
-    (b"noImplicitUseStrict", Kind::Boolean),
-    (b"noLib", Kind::Boolean),
-    (b"noPropertyAccessFromIndexSignature", Kind::Boolean),
-    (b"noResolve", Kind::Boolean),
-    (b"noStrictGenericChecks", Kind::Boolean),
-    (b"noUncheckedIndexedAccess", Kind::Boolean),
-    (b"noUncheckedSideEffectImports", Kind::Boolean),
-    (b"noUnusedLocals", Kind::Boolean),
-    (b"noUnusedParameters", Kind::Boolean),
-    (b"out", Kind::String),
-    (b"outDir", Kind::String),
-    (b"outFile", Kind::String),
-    (b"paths", Kind::Object),
-    (b"plugins", Kind::List(Element::Object)),
-    (b"pprofDir", Kind::String),
-    (b"preserveConstEnums", Kind::Boolean),
-    (b"preserveSymlinks", Kind::Boolean),
-    (b"preserveValueImports", Kind::Boolean),
-    (b"preserveWatchOutput", Kind::Boolean),
-    (b"pretty", Kind::Boolean),
-    (b"project", Kind::String),
-    (b"quiet", Kind::Boolean),
-    (b"reactNamespace", Kind::String),
-    (b"removeComments", Kind::Boolean),
-    (b"resolveJsonModule", Kind::Boolean),
-    (b"resolvePackageJsonExports", Kind::Boolean),
-    (b"resolvePackageJsonImports", Kind::Boolean),
-    (b"rewriteRelativeImportExtensions", Kind::Boolean),
-    (b"rootDir", Kind::String),
-    (b"rootDirs", Kind::List(Element::String)),
-    (b"singleThreaded", Kind::Boolean),
-    (b"skipDefaultLibCheck", Kind::Boolean),
-    (b"skipLibCheck", Kind::Boolean),
-    (b"sourceMap", Kind::Boolean),
-    (b"sourceRoot", Kind::String),
-    (b"stableTypeOrdering", Kind::Boolean),
-    (b"strict", Kind::Boolean),
-    (b"strictBindCallApply", Kind::Boolean),
-    (b"strictBuiltinIteratorReturn", Kind::Boolean),
-    (b"strictFunctionTypes", Kind::Boolean),
-    (b"strictNullChecks", Kind::Boolean),
-    (b"strictPropertyInitialization", Kind::Boolean),
-    (b"stripInternal", Kind::Boolean),
-    (b"suppressExcessPropertyErrors", Kind::Boolean),
-    (b"suppressImplicitAnyIndexErrors", Kind::Boolean),
-    (
-        b"target",
-        Kind::OneOf(
-            &[
-                b"es6", b"es2015", b"es2016", b"es2017", b"es2018", b"es2019", b"es2020",
-                b"es2021", b"es2022", b"es2023", b"es2024", b"es2025", b"esnext",
-            ],
+        )),
+        b"modulesuffixes" => (b"moduleSuffixes", Kind::List(Element::String)),
+        b"newline" => (b"newLine", Kind::OneOf(&[b"crlf", b"lf"], &[])),
+        b"nocheck" => (b"noCheck", Kind::Boolean),
+        b"noemit" => (b"noEmit", Kind::Boolean),
+        b"noemithelpers" => (b"noEmitHelpers", Kind::Boolean),
+        b"noemitonerror" => (b"noEmitOnError", Kind::Boolean),
+        b"noerrortruncation" => (b"noErrorTruncation", Kind::Boolean),
+        b"nofallthroughcasesinswitch" => (b"noFallthroughCasesInSwitch", Kind::Boolean),
+        b"noimplicitany" => (b"noImplicitAny", Kind::Boolean),
+        b"noimplicitoverride" => (b"noImplicitOverride", Kind::Boolean),
+        b"noimplicitreturns" => (b"noImplicitReturns", Kind::Boolean),
+        b"noimplicitthis" => (b"noImplicitThis", Kind::Boolean),
+        b"noimplicitusestrict" => (b"noImplicitUseStrict", Kind::Boolean),
+        b"nolib" => (b"noLib", Kind::Boolean),
+        b"nopropertyaccessfromindexsignature" => (b"noPropertyAccessFromIndexSignature", Kind::Boolean),
+        b"noresolve" => (b"noResolve", Kind::Boolean),
+        b"nostrictgenericchecks" => (b"noStrictGenericChecks", Kind::Boolean),
+        b"nouncheckedindexedaccess" => (b"noUncheckedIndexedAccess", Kind::Boolean),
+        b"nouncheckedsideeffectimports" => (b"noUncheckedSideEffectImports", Kind::Boolean),
+        b"nounusedlocals" => (b"noUnusedLocals", Kind::Boolean),
+        b"nounusedparameters" => (b"noUnusedParameters", Kind::Boolean),
+        b"out" => (b"out", Kind::String),
+        b"outdir" => (b"outDir", Kind::FilePath),
+        b"outfile" => (b"outFile", Kind::FilePath),
+        b"paths" => (b"paths", Kind::Object),
+        b"plugins" => (b"plugins", Kind::List(Element::Object)),
+        b"pprofdir" => (b"pprofDir", Kind::String),
+        b"preserveconstenums" => (b"preserveConstEnums", Kind::Boolean),
+        b"preservesymlinks" => (b"preserveSymlinks", Kind::Boolean),
+        b"preservevalueimports" => (b"preserveValueImports", Kind::Boolean),
+        b"preservewatchoutput" => (b"preserveWatchOutput", Kind::Boolean),
+        b"pretty" => (b"pretty", Kind::Boolean),
+        b"project" => (b"project", Kind::String),
+        b"quiet" => (b"quiet", Kind::Boolean),
+        b"reactnamespace" => (b"reactNamespace", Kind::String),
+        b"removecomments" => (b"removeComments", Kind::Boolean),
+        b"resolvejsonmodule" => (b"resolveJsonModule", Kind::Boolean),
+        b"resolvepackagejsonexports" => (b"resolvePackageJsonExports", Kind::Boolean),
+        b"resolvepackagejsonimports" => (b"resolvePackageJsonImports", Kind::Boolean),
+        b"rewriterelativeimportextensions" => (b"rewriteRelativeImportExtensions", Kind::Boolean),
+        b"rootdir" => (b"rootDir", Kind::FilePath),
+        b"rootdirs" => (b"rootDirs", Kind::List(Element::FilePath)),
+        b"singlethreaded" => (b"singleThreaded", Kind::Boolean),
+        b"skipdefaultlibcheck" => (b"skipDefaultLibCheck", Kind::Boolean),
+        b"skiplibcheck" => (b"skipLibCheck", Kind::Boolean),
+        b"sourcemap" => (b"sourceMap", Kind::Boolean),
+        b"sourceroot" => (b"sourceRoot", Kind::String),
+        b"stabletypeordering" => (b"stableTypeOrdering", Kind::Boolean),
+        b"strict" => (b"strict", Kind::Boolean),
+        b"strictbindcallapply" => (b"strictBindCallApply", Kind::Boolean),
+        b"strictbuiltiniteratorreturn" => (b"strictBuiltinIteratorReturn", Kind::Boolean),
+        b"strictfunctiontypes" => (b"strictFunctionTypes", Kind::Boolean),
+        b"strictnullchecks" => (b"strictNullChecks", Kind::Boolean),
+        b"strictpropertyinitialization" => (b"strictPropertyInitialization", Kind::Boolean),
+        b"stripinternal" => (b"stripInternal", Kind::Boolean),
+        b"suppressexcesspropertyerrors" => (b"suppressExcessPropertyErrors", Kind::Boolean),
+        b"suppressimplicitanyindexerrors" => (b"suppressImplicitAnyIndexErrors", Kind::Boolean),
+        b"target" => (b"target", Kind::OneOf(
+            &[b"es6", b"es2015", b"es2016", b"es2017", b"es2018", b"es2019", b"es2020", b"es2021", b"es2022", b"es2023", b"es2024", b"es2025", b"esnext"],
             &[b"es3", b"es5"],
-        ),
-    ),
-    (b"traceResolution", Kind::Boolean),
-    (b"tsBuildInfoFile", Kind::String),
-    (b"typeRoots", Kind::List(Element::String)),
-    (b"types", Kind::List(Element::String)),
-    (b"useDefineForClassFields", Kind::Boolean),
-    (b"useUnknownInCatchVariables", Kind::Boolean),
-    (b"verbatimModuleSyntax", Kind::Boolean),
-    (b"version", Kind::Boolean),
-];
+        )),
+        b"traceresolution" => (b"traceResolution", Kind::Boolean),
+        b"tsbuildinfofile" => (b"tsBuildInfoFile", Kind::FilePath),
+        b"typeroots" => (b"typeRoots", Kind::List(Element::FilePath)),
+        b"types" => (b"types", Kind::List(Element::String)),
+        b"usedefineforclassfields" => (b"useDefineForClassFields", Kind::Boolean),
+        b"useunknownincatchvariables" => (b"useUnknownInCatchVariables", Kind::Boolean),
+        b"verbatimmodulesyntax" => (b"verbatimModuleSyntax", Kind::Boolean),
+        b"version" => (b"version", Kind::Boolean),
+    };
+}
 
-/// The options declared `IsCommandLineOnly` (tsoptions).
-const COMMAND_LINE_ONLY_OPTIONS: [&[u8]; 6] = [
-    b"help",
-    b"ignoreConfig",
-    b"listFilesOnly",
-    b"locale",
-    b"showConfig",
-    b"watch",
-];
+bun_core::comptime_string_set! {
+    /// The options declared `IsCommandLineOnly` (tsoptions).
+    static COMMAND_LINE_ONLY_OPTIONS = { b"help", b"ignoreConfig", b"listFilesOnly", b"locale", b"showConfig", b"watch" };
+}
 
-/// What older versions took and TypeScript 7 has no such option as.
-const REMOVED: &[&[u8]] = &[
-    b"charset",
-    b"importsNotUsedAsValues",
-    b"keyofStringsOnly",
-    b"noImplicitUseStrict",
-    b"noStrictGenericChecks",
-    b"out",
-    b"preserveValueImports",
-    b"suppressExcessPropertyErrors",
-    b"suppressImplicitAnyIndexErrors",
-];
+bun_core::comptime_string_set! {
+    /// What older versions took and TypeScript 7 has no such option as.
+    static REMOVED = {
+        b"charset", b"importsNotUsedAsValues", b"keyofStringsOnly", b"noImplicitUseStrict", b"noStrictGenericChecks", b"out",
+        b"preserveValueImports", b"suppressExcessPropertyErrors", b"suppressImplicitAnyIndexErrors",
+    };
+}
 
 /// Something wrong with an option.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -243,17 +199,15 @@ pub struct Problem {
 /// What `--name text` on a command line means: the option as it is spelled, whatever the case of `name`, and its value. `None`: there is
 /// no such option, it takes something that cannot be written in a word, or `text` is not the kind of thing it takes.
 pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
-    let &(name, kind) = OPTIONS
-        .iter()
-        .find(|option| option.0.eq_ignore_ascii_case(name))?;
+    let &(name, kind) = OPTIONS.get_ascii_case_insensitive(name)?;
     let value = match kind {
         Kind::Boolean if text.eq_ignore_ascii_case(b"true") => Json::Bool(true),
         Kind::Boolean if text.eq_ignore_ascii_case(b"false") => Json::Bool(false),
         Kind::Boolean | Kind::Object | Kind::List(Element::Object) => return None,
-        Kind::String | Kind::OneOf(..) => Json::String(text.to_vec()),
+        Kind::String | Kind::FilePath | Kind::OneOf(..) => Json::String(text.to_vec()),
         Kind::Number => Json::Number(std::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()?),
         // `ParseListTypeOption`: of the items only those that are one of a few words are trimmed.
-        Kind::List(Element::String) => Json::Array(
+        Kind::List(Element::String | Element::FilePath) => Json::Array(
             text.trim_ascii()
                 .split(|&b| b == b',')
                 .map(|item| {
@@ -273,11 +227,7 @@ pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
 
 /// Whether the option `name`, whatever its case, is one of a few words or yes or no, and the words it can be.
 pub fn choices(name: &[u8]) -> Option<&'static [&'static [u8]]> {
-    match OPTIONS
-        .iter()
-        .find(|option| option.0.eq_ignore_ascii_case(name))?
-        .1
-    {
+    match OPTIONS.get_ascii_case_insensitive(name)?.1 {
         Kind::Boolean => Some(&[b"true", b"false"]),
         Kind::OneOf(now, _) => Some(now),
         _ => None,
@@ -285,164 +235,48 @@ pub fn choices(name: &[u8]) -> Option<&'static [&'static [u8]]> {
 }
 
 fn kind_of(name: &[u8]) -> Option<Kind> {
-    OPTIONS
-        .binary_search_by_key(&name, |option| option.0)
-        .ok()
-        .map(|at| OPTIONS[at].1)
+    let option = OPTIONS.get_ascii_case_insensitive(name)?;
+    (option.0 == name).then_some(option.1)
 }
 
-/// `getSpellingSuggestion`: the option whose name is nearest to `name`, if any is near.
+/// `IsFilePath`, of the option `name` or of the elements of the list it takes.
+pub(crate) fn is_file_path(name: &[u8]) -> bool {
+    matches!(
+        kind_of(name),
+        Some(Kind::FilePath | Kind::List(Element::FilePath))
+    )
+}
+
+/// `getSpellingSuggestion`, as `createUnknownOptionError` asked it before TypeScript 7: the option whose name is nearest to `name`.
 fn nearest(name: &[u8]) -> Option<&'static [u8]> {
-    let lower = name.to_ascii_lowercase();
-    // The same but for upper and lower case is as near as can be.
-    if let Some(option) = OPTIONS.iter().find(|o| o.0.eq_ignore_ascii_case(name)) {
-        return Some(option.0);
-    }
-    let most = (name.len() as f64 * 0.34).floor().max(1.0) as usize;
-    OPTIONS
-        .iter()
-        .filter(|o| o.0.len().abs_diff(name.len()) <= most)
-        .map(|o| (distance(&lower, &o.0.to_ascii_lowercase()), o.0))
-        .filter(|&(distance, _)| distance <= most)
-        .min_by_key(|&(distance, _)| distance)
-        .map(|(_, name)| name)
+    let names = OPTIONS.values().map(|option| option.0);
+    crate::check::errors_x_regexp_scanner::get_spelling_suggestion(
+        name,
+        names,
+        |name| name,
+        Ord::cmp,
+    )
 }
 
-/// How many letters have to be put in, taken out or changed to make `a` of `b`.
-fn distance(a: &[u8], b: &[u8]) -> usize {
-    let (a, b) = (a, b);
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, x) in a.iter().enumerate() {
-        let mut diagonal = row[0];
-        row[0] = i + 1;
-        for (j, y) in b.iter().enumerate() {
-            let changed = diagonal + usize::from(x != y);
-            diagonal = row[j + 1];
-            row[j + 1] = changed.min(row[j] + 1).min(row[j + 1] + 1);
-        }
-    }
-    row[b.len()]
-}
-
-/// Where the options are written in `text`: for each, the name, where the name is and where the value is.
-fn spans(text: &[u8]) -> Vec<(Vec<u8>, (u32, u32), (u32, u32))> {
-    let mut out = Vec::new();
-    let mut at = 0;
-    // How many brackets are open, and at which count `compilerOptions` opened.
-    let (mut depth, mut inside) = (0usize, None);
-    // The last name met where a name can be, and where the value after it starts.
-    let mut name: Option<(Vec<u8>, (u32, u32))> = None;
-    let mut value: Option<(Vec<u8>, (u32, u32), u32)> = None;
-    let mut last_end = 0;
-    while at < text.len() {
-        let c = text[at];
-        match c {
-            b'/' if text.get(at + 1) == Some(&b'/') => {
-                at += bun_core::strings::index_of_char_usize(&text[at..], b'\n')
-                    .unwrap_or(text.len() - at);
-                continue;
-            }
-            b'/' if text.get(at + 1) == Some(&b'*') => {
-                at += bun_core::strings::index_of(&text[at..], b"*/")
-                    .map_or(text.len() - at, |end| end + 2);
-                continue;
-            }
-            b' ' | b'\t' | b'\r' | b'\n' => {
-                at += 1;
-                continue;
-            }
-            _ => {}
-        }
-        let is_at_options = inside.is_some_and(|opened| depth == opened);
-        // A value starts with whatever comes after the colon.
-        if is_at_options
-            && c != b':'
-            && let Some((name, span)) =
-                name.take_if(|_| value.is_none() && text[..at].ends_with_colon())
-        {
-            value = Some((name, span, at as u32));
-        }
-        match c {
-            b'"' | b'\'' => {
-                let start = at;
-                at += 1;
-                while at < text.len() && text[at] != c {
-                    at += 1 + usize::from(text[at] == b'\\');
-                }
-                at = (at + 1).min(text.len());
-                last_end = at;
-                if value.is_none() {
-                    let written = &text[start + 1..at.saturating_sub(1).max(start + 1)];
-                    name = Some((written.to_vec(), (start as u32, at as u32)));
-                }
-                continue;
-            }
-            b'{' | b'[' => {
-                if c == b'{'
-                    && depth == 1
-                    && inside.is_none()
-                    && name.as_ref().is_some_and(|n| n.0 == b"compilerOptions")
-                {
-                    inside = Some(2);
-                    name = None;
-                }
-                depth += 1;
-            }
-            b'}' | b']' => {
-                depth = depth.saturating_sub(1);
-                if inside.is_some_and(|opened| depth < opened) {
-                    if let Some((name, span, start)) = value.take() {
-                        out.push((name, span, (start, last_end as u32)));
-                    }
-                    return out;
-                }
-                last_end = at + 1;
-            }
-            b',' if is_at_options => {
-                if let Some((name, span, start)) = value.take() {
-                    out.push((name, span, (start, last_end as u32)));
-                }
-                name = None;
-            }
-            b':' | b',' => {}
-            _ => last_end = at + 1,
-        }
-        at += 1;
-    }
-    out
-}
-
-trait EndsWithColon {
-    fn ends_with_colon(&self) -> bool;
-}
-
-impl EndsWithColon for [u8] {
-    /// Whether the last thing written is a colon. Comments between a colon and a value are rare enough to be taken for part of the value.
-    fn ends_with_colon(&self) -> bool {
-        self.iter()
-            .rev()
-            .find(|c| !c.is_ascii_whitespace())
-            .is_some_and(|&c| c == b':')
-    }
-}
-
-/// `convertJsonOption` for each of `options`, which is what `compilerOptions` says in the file that reads `text`. `as_typescript_does`:
+/// `convertJsonOption` for each of `options`, which is what `written`, the `compilerOptions` of `file`, says. `as_typescript_does`:
 /// going by TypeScript 7 alone, to which what only older versions took means nothing, and which suggests nothing but another case.
 pub fn problems(
-    text: &[u8],
+    file: &TsConfigSourceFile,
+    written: ExprId,
     options: &[(Vec<u8>, Json)],
     as_typescript_does: bool,
 ) -> Vec<Problem> {
-    let spans = spans(text);
     let span_of = |name: &[u8], of_value: bool| {
-        spans
-            .iter()
-            .find(|s| s.0 == name)
-            .map(|s| if of_value { s.2 } else { s.1 })
+        let property = file.property(written, name, b"")?;
+        Some(if of_value {
+            file.span(file.initializer(property))
+        } else {
+            file.name_span(property)
+        })
     };
     let mut out = Vec::new();
     for (name, value) in options {
-        if COMMAND_LINE_ONLY_OPTIONS.contains(&name.as_slice()) {
+        if COMMAND_LINE_ONLY_OPTIONS.contains(name) {
             out.push(Problem {
                 name: name.clone(),
                 code: 6266,
@@ -451,13 +285,13 @@ pub fn problems(
             });
             continue;
         }
-        let is_removed = |name: &[u8]| as_typescript_does && REMOVED.contains(&name);
+        let is_removed = |name: &[u8]| as_typescript_does && REMOVED.contains(name);
         let Some(kind) = kind_of(name).filter(|_| !is_removed(name)) else {
             let meant = if as_typescript_does {
                 OPTIONS
-                    .iter()
+                    .get_ascii_case_insensitive(name)
                     .map(|option| option.0)
-                    .find(|known| known.eq_ignore_ascii_case(name) && !is_removed(known))
+                    .filter(|known| !is_removed(known))
             } else {
                 nearest(name)
             };
@@ -487,14 +321,16 @@ pub fn problems(
         };
         match kind {
             Kind::Boolean if value.as_bool().is_none() => wrong(b"boolean"),
-            Kind::String if value.as_str().is_none() => wrong(b"string"),
+            Kind::String | Kind::FilePath if value.as_str().is_none() => wrong(b"string"),
             Kind::Number if !matches!(value, Json::Number(_)) => wrong(b"number"),
             Kind::Object if value.as_object().is_none() => wrong(b"object"),
             Kind::List(element) => match value.as_array() {
                 None => wrong(b"Array"),
                 Some(items) => {
                     let (is_right, takes): (fn(&Json) -> bool, _) = match element {
-                        Element::String => (|item| item.as_str().is_some(), b"string"),
+                        Element::String | Element::FilePath => {
+                            (|item| item.as_str().is_some(), b"string")
+                        }
                         Element::Object => (|item| item.as_object().is_some(), b"object"),
                     };
                     if !items.iter().all(is_right) {

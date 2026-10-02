@@ -4,7 +4,6 @@ use super::relate::Ternary;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
-use crate::util::group_by_key;
 use smallvec::{SmallVec, smallvec};
 
 /// `thisAssignmentDeclarationKind`, with its location.
@@ -514,6 +513,14 @@ impl<'p> Checker<'p> {
                 kept: Some(kept),
             };
         }
+        // `resolveDeclaredMembers` has the members in place before it asks for the index signatures. To resolve them again meanwhile is
+        // no resolution that comes round: nothing is entered, and what is handed out is for now.
+        if (self.declared_index_infos_under_way.iter())
+            .any(|it| self.stack.get(it.0 - 1) == Some(&Query::Shape(key)))
+        {
+            let shape = build(self);
+            return self.shape_for_now(shape);
+        }
         if !self.enter(Query::Shape(key)) {
             // `enter` also refuses for want of room.
             let is_under_way = !self.is_stack_low()
@@ -754,6 +761,9 @@ impl<'p> Checker<'p> {
         if member.flags.contains(Flags::PROTECTED) {
             flags |= PropFlags::PROTECTED;
         }
+        if member.flags.contains(Flags::ABSTRACT) {
+            flags |= PropFlags::ABSTRACT;
+        }
         match member.kind {
             MemberKind::Method => flags |= PropFlags::METHOD,
             MemberKind::Getter | MemberKind::Setter => flags |= PropFlags::ACCESSOR,
@@ -960,7 +970,7 @@ impl<'p> Checker<'p> {
                         };
                         let mut flags = PropFlags::empty();
                         if param.flags.contains(Flags::OPTIONAL) {
-                            flags |= PropFlags::OPTIONAL;
+                            flags |= PropFlags::OPTIONAL | PropFlags::WITHOUT_OPTIONALITY;
                         }
                         if param.flags.contains(Flags::READONLY) {
                             flags |= PropFlags::READONLY;
@@ -971,10 +981,16 @@ impl<'p> Checker<'p> {
                         if param.flags.contains(Flags::PROTECTED) {
                             flags |= PropFlags::PROTECTED;
                         }
+                        let symbol = self
+                            .bound(file)
+                            .symbol_of_declaration(Decl::ParameterProperty(p));
+                        if symbol.is_none() {
+                            continue;
+                        }
                         b.add(Prop {
                             name,
                             flags,
-                            source: PropSource::Parameter(file, p),
+                            source: PropSource::Symbol(self.files().sym(file, symbol)),
                             mapper: MapperId::IDENTITY,
                         });
                     }
@@ -982,7 +998,11 @@ impl<'p> Checker<'p> {
                 MemberKind::StaticBlock => {}
             }
         }
-        if !computed.is_empty() {
+        // Whoever resolves the members while their index signatures are worked out finds the members, and none of those.
+        if !computed.is_empty()
+            && !(self.declared_index_infos_under_way.iter())
+                .any(|it| (it.1, it.2) == (file, computed[0]))
+        {
             // `getMembersOfSymbol`: the table of what instances have holds the type parameters, the constructor and the signatures
             // too.
             let has_type_params = match self.bound(file).member_owner[computed[0].idx()] {
@@ -999,47 +1019,69 @@ impl<'p> Checker<'p> {
                 )
             };
             let holds_more = !want_static && (has_type_params || members.iter().any(has_nameless));
+            self.declared_index_infos_under_way
+                .push((self.stack.len(), file, computed[0]));
             self.add_index_signatures_of_computed_names(b, file, &computed, &groups, holds_more);
+            self.declared_index_infos_under_way.pop();
         }
         b.reserve(groups.len());
+        // Whether a name is late bound among the instance members, and among the static ones. Asked once for all of them.
+        let mut is_late_bound = [None; 2];
         for (name, group) in groups {
-            let mut list: Vec<(FileId, MemberId)> = group.iter().map(|&m| (file, m)).collect();
-            let Some(i) = b.position(name) else {
-                let flags = self.flags_of_declarations(&list);
-                b.add_new(Prop {
-                    name,
-                    flags,
-                    source: PropSource::Members(list.into()),
-                    mapper: MapperId::IDENTITY,
-                });
-                continue;
+            let sym = self.symbol_of_member(file, group[0]);
+            let is_static = self.hir(file)[group[0]].flags.contains(Flags::STATIC);
+            let is_late_bound = !early
+                && match is_late_bound[is_static as usize] {
+                    Some(known) => known,
+                    None => {
+                        let bound = self.bound(file);
+                        let own = bound.symbol_of_declaration(Decl::Member(group[0]));
+                        let parent = bound.symbols[own.idx()].parent;
+                        let known = parent.is_some()
+                            && (self.late_bound_members(self.files().sym(file, parent), is_static))
+                                .is_some();
+                        is_late_bound[is_static as usize] = Some(known);
+                        known
+                    }
+                };
+            // All its declarations, in whichever declaration of the class or the interface they are written. Overloads of a merged
+            // interface stay in the order declared; calls reorder them (`reorder_candidates`).
+            let list = if is_late_bound {
+                self.members_of_symbol(sym)
+            } else {
+                members_among(&self.files().decls_of(sym))
             };
-            // Overloads of a merged interface stay in the order declared; calls reorder them (`reorder_candidates`).
-            if let PropSource::Members(existing) = &b.shape.props[i].source {
-                list.splice(0..0, existing.iter().copied());
-                let flags = self.flags_of_declarations(&list);
-                b.add(Prop {
-                    name,
-                    flags,
-                    source: PropSource::Members(list.into()),
-                    mapper: MapperId::IDENTITY,
-                });
-                continue;
+            let prop = Prop {
+                name,
+                flags: self.flags_of_declarations(&list),
+                source: PropSource::Symbol(sym),
+                mapper: MapperId::IDENTITY,
+            };
+            match b.position(name) {
+                None => b.add_new(prop),
+                // The symbol once more, in another declaration of the class or the interface, or one that `declareSymbolEx` or
+                // `mergeSymbol` refused: the first says what the property is, but for whether it may be left out.
+                Some(i) => {
+                    let there = &mut b.shape.props[i];
+                    let mut other = prop.flags;
+                    // A parameter property and a member of one name are one symbol. `symbol.ValueDeclaration` speaks for it.
+                    if there.source == prop.source
+                        && matches!(
+                            self.files().value_declaration(sym),
+                            Some((_, Decl::Member(_)))
+                        )
+                    {
+                        other = std::mem::replace(&mut there.flags, other);
+                    }
+                    if other.contains(PropFlags::OPTIONAL)
+                        && !there.flags.contains(PropFlags::OPTIONAL)
+                    {
+                        let is_method = there.flags.contains(PropFlags::METHOD);
+                        there.flags |= PropFlags::OPTIONAL;
+                        (there.flags).set(PropFlags::WITHOUT_OPTIONALITY, !is_method);
+                    }
+                }
             }
-            let mut flags = self.flags_of_declarations(&list);
-            let earlier = b.shape.props[i].clone();
-            if matches!(earlier.source, PropSource::Parameter(..)) {
-                b.add(Prop {
-                    name,
-                    flags,
-                    source: PropSource::Members(list.into()),
-                    mapper: MapperId::IDENTITY,
-                });
-                continue;
-            }
-            // The first says what the property is (`SetValueDeclaration`), but for whether it may be left out.
-            flags = earlier.flags | flags & PropFlags::OPTIONAL;
-            b.shape.props[i].flags = flags;
         }
     }
 
@@ -1092,6 +1134,14 @@ impl<'p> Checker<'p> {
             .any(|&(f, m)| self.hir(f)[m].flags.contains(Flags::OPTIONAL))
         {
             flags |= PropFlags::OPTIONAL;
+            // A method may be undefined if any of its declarations may be left out (`getTypeOfFuncClassEnumModule`), a property if
+            // the declaration that says what it is may (`getTypeForVariableLikeDeclaration`).
+            let (f, first) = list[0];
+            if !flags.contains(PropFlags::METHOD)
+                && !self.hir(f)[first].flags.contains(Flags::OPTIONAL)
+            {
+                flags |= PropFlags::WITHOUT_OPTIONALITY;
+            }
         }
         if list.iter().all(|d| kind(d) == MemberKind::Setter) {
             flags |= PropFlags::WRITE_ONLY;
@@ -1204,11 +1254,10 @@ impl<'p> Checker<'p> {
             if !(found[0].3 && !is_symbol || found[1].3 && is_numeric || found[2].3 && is_symbol) {
                 continue;
             }
-            let list: Vec<(FileId, MemberId)> = group.iter().map(|&m| (file, m)).collect();
             let prop = Prop {
                 name: *name,
                 flags: Self::member_flags(&hir[group[0]]),
-                source: PropSource::Members(list.into()),
+                source: PropSource::Symbol(self.symbol_of_member(file, group[0])),
                 mapper: MapperId::IDENTITY,
             };
             let value = self.type_of_prop(&prop, MapperId::IDENTITY);
@@ -1272,10 +1321,10 @@ impl<'p> Checker<'p> {
 
     /// `isStaticPrivateIdentifierProperty`
     pub(super) fn is_static_private_name(&self, prop: &Prop) -> bool {
-        matches!(&prop.source, PropSource::Members(list) if list.first().is_some_and(|&(file, m)| {
+        matches!(self.value_declaration_of_prop(prop), Some((file, Decl::Member(m))) if {
             let member = &self.hir(file)[m];
             matches!(member.key, PropKey::Private(_)) && member.flags.contains(Flags::STATIC)
-        }))
+        })
     }
 
     /// `isSpreadableProperty`: own properties are taken to be what is no method, no accessor and no `#x`, and whatever is not
@@ -1289,8 +1338,9 @@ impl<'p> Checker<'p> {
             is_private: &mut bool,
         ) {
             match source {
-                PropSource::Members(list) => {
-                    for &(file, m) in list.iter() {
+                PropSource::Symbol(sym) => {
+                    for &(file, decl) in c.files().decls_of(*sym).iter() {
+                        let Decl::Member(m) = decl else { continue };
                         *in_class |= matches!(
                             c.bound(file).member_owner[m.idx()],
                             crate::bind::MemberOwner::Class(_)
@@ -1568,21 +1618,18 @@ impl<'p> Checker<'p> {
     /// compared, whatever files they are in.
     fn is_within_ranges_of_declarations(&self, prop: &Prop, ranges: &[(u32, u32)]) -> bool {
         let is_near = |pos: u32| ranges.iter().any(|&(from, to)| from <= pos && pos < to);
-        let (start, end) = match Self::value_declaration(prop) {
-            Some(PropSource::Parameter(file, parameter)) => {
-                let pos = self.hir(*file)[*parameter].pos;
+        let (start, end) = match self.value_declaration_of_prop(prop) {
+            Some((file, Decl::ParameterProperty(parameter))) => {
+                let pos = self.hir(file)[parameter].pos;
                 if !is_near(pos) {
                     return false;
                 }
                 (
-                    self.hir(*file)[*parameter].loc.pos,
-                    self.end_of_param(*file, *parameter),
+                    self.hir(file)[parameter].loc.pos,
+                    self.end_of_param(file, parameter),
                 )
             }
-            Some(PropSource::Members(list)) => {
-                let Some(&(file, member)) = list.first() else {
-                    return false;
-                };
+            Some((file, Decl::Member(member))) => {
                 if !is_near(self.hir(file)[member].name_pos) {
                     return false;
                 }
@@ -2135,8 +2182,8 @@ impl<'p> Checker<'p> {
                     let members = hir[c].members;
                     self.add_members(&mut b, file, members, true, false);
                     self.add_this_properties(&mut b, file, c, true);
-                    if hir.is_js && file == sym.file {
-                        self.add_expandos(&mut b, file, sym.id);
+                    if hir.is_js {
+                        self.add_late_bound_expandos(&mut b, sym);
                     }
                     // `symbol.Members[InternalSymbolNameConstructor]`: `declareClassMember` puts a static one in the exports.
                     let constructors: Vec<MemberId> = hir[c]
@@ -2266,10 +2313,7 @@ impl<'p> Checker<'p> {
             Origin::Function(sym) => {
                 b.shape.call = self.sigs_of_function_declarations(sym);
                 self.add_namespace_exports(&mut b, sym);
-                // What is assigned to a name declares it only if nothing else does. `mergeSymbolTable`: every part brings its own.
-                for part in self.files().parts(sym) {
-                    self.add_expandos(&mut b, part.file, part.id);
-                }
+                self.add_late_bound_expandos(&mut b, sym);
             }
             Origin::EnumObject(sym) => {
                 // A number gives back the name of the member that has it.
@@ -2434,58 +2478,41 @@ impl<'p> Checker<'p> {
         all
     }
 
-    /// `getExportsOfSymbol`, of what `bindDeferredExpandoAssignment` declares among the exports of `owner`: (name, declaration),
-    /// those of one name together. `lateBindMember`: `f[key] = value` declares the property that the type of `key` names, together
-    /// with the `f.name = value` of that name. A key whose type names nothing declares nothing. `checkObjectLiteral` takes the
-    /// exports as the binder left them.
-    pub(super) fn expandos_of(&mut self, file: FileId, owner: SymbolId) -> Vec<(Atom, ExprId)> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let of = &bound.symbols[owner.idx()];
-        let mut all = Vec::new();
-        let mut is_grouped = true;
-        for &(name, symbol) in bound.table(of.exports) {
-            for &decl in &bound.symbols[symbol.idx()].decls {
-                let Decl::Expando(e) = decl else {
-                    continue;
-                };
-                if name != known::assignment_declaration {
-                    all.push((name, e));
-                } else if !of.flags.contains(SymFlags::OBJECT_LITERAL)
-                    && let ExprKind::Assign { target, .. } = hir[e].kind
-                    && let ExprKind::Index { index, .. } = hir[target].kind
-                    && let Some(name) = self.member_name(file, PropKey::Computed(index))
-                {
-                    all.push((name, e));
-                    is_grouped = false;
-                }
-            }
+    /// `lateBindMember`, of `f[key] = value`: it declares the property that the type of `key` names, together with the `f.name = value`
+    /// of that name. A key whose type names nothing declares nothing.
+    fn add_late_bound_expandos(&mut self, b: &mut Builder, owner: Sym) {
+        let files = self.files();
+        let Some(all) = files.export(owner, known::assignment_declaration) else {
+            return;
+        };
+        // `checkObjectLiteral` takes the exports as the binder left them.
+        if files.flags(owner).contains(SymFlags::OBJECT_LITERAL) {
+            return;
         }
-        if !is_grouped {
-            all.sort_unstable_by_key(|assignment| assignment.1);
-            group_by_key(&mut all, |assignment| assignment.0);
-        }
-        all
-    }
-
-    /// The properties that assignments declare for `owner`, where nothing else declares them.
-    fn add_expandos(&mut self, b: &mut Builder, file: FileId, owner: SymbolId) {
-        for of_name in self.expandos_of(file, owner).chunk_by(|a, b| a.0 == b.0) {
-            let name = of_name[0].0;
-            if !b.has(name) {
+        for &(file, decl) in files.decls_of(all).iter() {
+            if let Decl::Expando(e) = decl
+                && let ExprKind::Assign { target, .. } = self.hir(file)[e].kind
+                && let ExprKind::Index { index, .. } = self.hir(file)[target].kind
+                && let Some(name) = self.declared_member_name(file, PropKey::Computed(index))
+                && !b.has(name)
+                && let Some(&(of, first)) = self.declarations_of_member(file, decl).first()
+            {
                 b.add(Prop {
                     name,
                     flags: PropFlags::empty(),
-                    source: PropSource::Assigned(file, of_name.iter().map(|x| x.1).collect()),
+                    source: PropSource::Symbol(
+                        files.sym(of, self.bound(of).symbol_of_declaration(first)),
+                    ),
                     mapper: MapperId::IDENTITY,
                 });
             }
         }
     }
 
-    /// `shape`, which has no properties, with those that assignments declare for `owner`, in the order of `getNamedMembers`.
-    /// `NONE`: there are none.
+    /// `shape`, which has no properties, with `getExportsOfSymbol(owner)`, which assignments declare, in the order of `getNamedMembers`.
     pub(super) fn with_expandos(&mut self, shape: Shape, file: FileId, owner: SymbolId) -> Shape {
-        if owner.is_none() {
+        // Every function expression and every object literal comes here.
+        if owner.is_none() || self.bound(file).symbols[owner.idx()].exports.is_none() {
             return shape;
         }
         let mut b = Builder {
@@ -2493,7 +2520,9 @@ impl<'p> Checker<'p> {
             ..Default::default()
         };
         let before = b.shape.props.len();
-        self.add_expandos(&mut b, file, owner);
+        let owner = self.files().sym(file, owner);
+        self.add_namespace_exports(&mut b, owner);
+        self.add_late_bound_expandos(&mut b, owner);
         if b.shape.props.len() > before {
             self.get_named_members(&mut b.shape.props, |_| true, &[]);
         }
@@ -2508,15 +2537,19 @@ impl<'p> Checker<'p> {
         class: ClassId,
         is_static: bool,
     ) {
-        let list = self.bound(file).this_properties_of(class, is_static);
-        let mut i = 0;
-        while i < list.len() {
-            let name = list[i].2;
-            let end = i + list[i..].iter().take_while(|x| x.2 == name).count();
-            if !b.has(name) {
-                let assignments: Box<[ExprId]> = list[i..end].iter().map(|x| x.3).collect();
+        // Every class comes here.
+        if !self.hir(file).is_js {
+            return;
+        }
+        let (bound, files) = (self.bound(file), self.files());
+        let of = &bound.symbols[bound.class_symbol[class.idx()].idx()];
+        for &(name, symbol) in bound.table(if is_static { of.exports } else { of.members }) {
+            let sym = files.sym(file, symbol);
+            if let Some((of, Decl::ThisProperty(first))) = files.value_declaration(sym)
+                && !b.has(name)
+            {
                 // `getDeclarationModifierFlagsFromSymbol`: the modifiers of `symbol.ValueDeclaration`.
-                let modifiers = self.hir(file).jsdoc_modifiers_of(assignments[0]);
+                let modifiers = self.hir(of).jsdoc_modifiers_of(first);
                 let mut flags = PropFlags::empty();
                 flags.set(PropFlags::READONLY, modifiers.contains(Flags::READONLY));
                 flags.set(PropFlags::PRIVATE, modifiers.contains(Flags::PRIVATE));
@@ -2524,27 +2557,22 @@ impl<'p> Checker<'p> {
                 b.add(Prop {
                     name,
                     flags,
-                    source: PropSource::Assigned(file, assignments),
+                    source: PropSource::Symbol(sym),
                     mapper: MapperId::IDENTITY,
                 });
             }
-            i = end;
         }
     }
 
     /// The values a namespace merged with a function, a class or an enum exports.
     fn add_namespace_exports(&mut self, b: &mut Builder, sym: Sym) {
         for (name, export) in self.exports_in_order(sym) {
-            // What assignments alone declare is left to `add_expandos`, the static members to `add_members`.
-            let is_expando = |d: &(FileId, Decl)| {
-                matches!(
-                    d.1,
-                    Decl::Expando(_) | Decl::Member(_) | Decl::ThisProperty(_)
-                )
-            };
+            // The static members are left to `add_members`, what they assign to `this` to `add_this_properties`.
+            let is_member =
+                |d: &(FileId, Decl)| matches!(d.1, Decl::Member(_) | Decl::ThisProperty(_));
             if self.symbol_is_value(export)
                 && !b.has(name)
-                && !self.files().decls_of(export).iter().all(is_expando)
+                && !self.files().decls_of(export).iter().all(is_member)
             {
                 b.add(Prop {
                     name,
@@ -2821,7 +2849,7 @@ impl<'p> Checker<'p> {
                 // Optional if every property, method or accessor among them is: a variable of a module or of `globalThis` has no say.
                 let optional = list
                     .iter()
-                    .filter(|p| !matches!(p.source, PropSource::Symbol(_)))
+                    .filter(|p| !matches!(p.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)))
                     .all(|p| p.flags.contains(PropFlags::OPTIONAL));
                 prop.flags.set(PropFlags::OPTIONAL, optional);
                 prop.flags
@@ -2940,8 +2968,9 @@ impl<'p> Checker<'p> {
         // A `nameType` is kept of a name that is worked out (`lateBindMember`), and in an object literal of any name in brackets
         // (`checkObjectLiteral`).
         let is_written_out = match &prop.source {
-            PropSource::Members(list) => {
-                matches!(self.hir(list[0].0)[list[0].1].key, PropKey::Name(_))
+            PropSource::Symbol(sym) => {
+                matches!(self.files().value_declaration(*sym), Some((file, Decl::Member(m)))
+                    if matches!(self.hir(file)[m].key, PropKey::Name(_)))
             }
             PropSource::Literal(file, written) => {
                 let hir = self.hir(*file);
@@ -3240,18 +3269,12 @@ impl<'p> Checker<'p> {
                 own_mapper = MapperId::IDENTITY;
                 self.type_of_mapped_prop(*of, prop, *strips_optional)
             }
-            PropSource::Members(members) => {
-                // A method may be undefined if any of its declarations may be left out (`getTypeOfFuncClassEnumModule`), a
-                // property if the declaration that says what it is may (`getTypeForVariableLikeDeclaration`).
-                let (file, first) = members[0];
-                adds_undefined = prop.flags.contains(PropFlags::OPTIONAL)
-                    && (prop.flags.contains(PropFlags::METHOD)
-                        || self.hir(file)[first].flags.contains(Flags::OPTIONAL));
-                self.type_of_members(members)
-            }
-            PropSource::Parameter(file, p) => self.type_of_param(*file, *p),
             PropSource::Literal(file, p) => self.type_of_literal_prop(*file, *p),
-            PropSource::Symbol(sym) => self.type_of_symbol(*sym),
+            PropSource::Symbol(sym) => {
+                let optionality = PropFlags::OPTIONAL | PropFlags::WITHOUT_OPTIONALITY;
+                adds_undefined = prop.flags & optionality == PropFlags::OPTIONAL;
+                self.type_of_symbol(*sym)
+            }
             PropSource::Intersected(whole, parts) => {
                 let key = (*whole, prop.name);
                 let at = whole.0.wrapping_add(prop.name.0.wrapping_mul(31)) as usize % RECENT_PROPS;
@@ -3277,9 +3300,6 @@ impl<'p> Checker<'p> {
                     }
                     all
                 }
-            }
-            PropSource::Assigned(file, assignments) => {
-                self.type_of_assigned_prop(*file, prop.name, assignments)
             }
         };
         let ty = if self.has_type_variables(base) {
@@ -3329,87 +3349,6 @@ impl<'p> Checker<'p> {
             self.p.optional_properties.insert(ty, optional);
         }
         optional
-    }
-
-    /// `getTypeOfVariableOrParameterOrPropertyWorker`, `case KindBinaryExpression, KindCallExpression`: the type of the property
-    /// `name` declared by `assignments` (`f.name = value`, `this.name = value`, `Object.defineProperty(f, "name", descriptor)`).
-    /// It is a type resolution, identified by the first declaration (`symbol.ValueDeclaration`).
-    pub(super) fn type_of_assigned_prop(
-        &mut self,
-        file: FileId,
-        name: Atom,
-        assignments: &[ExprId],
-    ) -> TypeId {
-        let key = (file, assignments[0]);
-        if let Some(cached) = self.p.assigned_prop_types.get(&key) {
-            return cached;
-        }
-        // `checkCallExpression` checks the descriptor of `Object.defineProperty(f, "name", descriptor)` before anything asks for the
-        // type of `name`: what `reportNonexistentProperty` prints for an access in the descriptor starts the resolution.
-        let in_report = !self.reporting_nonexistent.is_empty()
-            && matches!(self.hir(file)[assignments[0]].kind, ExprKind::Call(_));
-        // What `reportCircularityError` returns for `symbol.ValueDeclaration`.
-        let annotation = self
-            .hir(file)
-            .jsdoc_type(JsDocTypeOwner::Assign(assignments[0]));
-        let in_a_circle = super::symbols::circularity_error_type(annotation);
-        if in_report
-            && self.stack[self.resolution_start..].contains(&Query::Assigned(file, assignments[0]))
-        {
-            return in_a_circle;
-        }
-        if !self.enter(Query::Assigned(file, assignments[0])) {
-            // `getTypeOfVariableOrParameterOrProperty` keeps what `reportCircularityError` returns: whoever asks next has the answer.
-            return if self.came_full_circle {
-                self.p.assigned_prop_types.insert(key, in_a_circle)
-            } else {
-                TypeId::UNRESOLVED
-            };
-        }
-        // `checkExpressionCached` has no guard against re-entry: the descriptor is checked again from the start.
-        let resolution_start = self.resolution_start;
-        if in_report {
-            self.resolution_start = self.stack.len() - 1;
-        }
-        let first = assignments[0];
-        let ty = self.get_widened_type_for_assignment_declaration(file, name, assignments, first);
-        self.resolution_start = resolution_start;
-        let is_cacheable = self.leave();
-        // `reportCircularityError`
-        if self.left_a_circle {
-            let kept = self.p.assigned_prop_types.insert(key, in_a_circle);
-            let hir = self.hir(file);
-            let declaration = assignments[0];
-            let at = (
-                file,
-                self.start_inside_parentheses(file, declaration),
-                self.end_inside_parentheses(file, declaration),
-            );
-            // `GetNonAssignedNameOfDeclaration`: of `f["a"] = e` and `Object.defineProperty(f, "a", d)` the `"a"`, as it is written.
-            let named = match hir[declaration].kind {
-                ExprKind::Assign { target, .. } => match hir[target].kind {
-                    ExprKind::Index { index, .. } => Some(index),
-                    _ => None,
-                },
-                ExprKind::Call(call) => hir.ids(hir[call].args).nth(1),
-                _ => None,
-            };
-            if let Some(named) = named {
-                let written = self.source_text(
-                    file,
-                    self.start_inside_parentheses(file, named),
-                    self.end_inside_parentheses(file, named),
-                );
-                self.report_circularity_error(at, Arg::Text(&written), in_a_circle, false);
-            } else {
-                self.report_circularity_error(at, Arg::Atom(name), in_a_circle, false);
-            }
-            return kept;
-        }
-        if is_cacheable {
-            self.p.assigned_prop_types.insert(key, ty);
-        }
-        ty
     }
 
     /// `GetErrorRangeForNode`, of `declaration`: of a property declaration or signature its name.
@@ -3764,12 +3703,12 @@ impl<'p> Checker<'p> {
 
     /// `isReadonlySymbol`: whether a declaration of `prop` is a read-only assignment declaration.
     pub(super) fn has_readonly_assignment_declaration(&mut self, prop: &Prop) -> bool {
-        let PropSource::Assigned(file, declarations) = &prop.source else {
+        let PropSource::Symbol(sym) = prop.source else {
             return false;
         };
-        declarations
-            .iter()
-            .any(|&e| self.is_readonly_assignment_declaration(*file, e))
+        self.files().flags(sym).contains(SymFlags::ASSIGNMENT)
+            && (self.assignments_of_symbol(sym).iter())
+                .any(|&e| self.is_readonly_assignment_declaration(sym.file, e))
     }
 
     /// `getAssignmentDeclarationInitializerType` for `declaration`, the assignment `target = value`, which declares the property
@@ -3869,7 +3808,8 @@ impl<'p> Checker<'p> {
         }
         // `getWriteTypeOfAccessors`: what the setter says it takes. If it does not say, what is read.
         let setter: Option<(FileId, FnId)> = match &prop.source {
-            PropSource::Members(members) => members
+            PropSource::Symbol(sym) => self
+                .members_of_symbol(*sym)
                 .iter()
                 .find(|&&(f, m)| self.hir(f)[m].kind == MemberKind::Setter)
                 .map(|&(f, m)| (f, self.hir(f)[m].func)),
@@ -3907,82 +3847,16 @@ impl<'p> Checker<'p> {
         self.type_of_prop(prop, outer)
     }
 
-    /// `getTypeOfSymbol(member.Symbol)`, as far as this file declares it, if `member` is the first declaration of its symbol: that
-    /// is what `member_types` keeps a type by. Of a later declaration, what that alone says.
+    /// `getTypeOfSymbol(member.Symbol)`, if `member` is `symbol.ValueDeclaration`. Of a later declaration, what that alone says:
+    /// `getWidenedTypeForVariableLikeDeclaration`, which is not kept.
     pub(super) fn type_of_member_declaration(&mut self, file: FileId, member: MemberId) -> TypeId {
-        let (declaration, bound) = (Decl::Member(member), self.bound(file));
-        let symbol = bound.symbols.get(bound.member_symbol[member.idx()].idx());
-        let all = symbol.map_or(&[][..], |symbol| &symbol.decls[..]);
-        if all.len() > 1 && all[0] == declaration {
-            let members: SmallVec<[(FileId, MemberId); 4]> = all
-                .iter()
-                .filter_map(|of_symbol| match *of_symbol {
-                    Decl::Member(m) => Some((file, m)),
-                    _ => None,
-                })
-                .collect();
-            return self.type_of_members(&members);
-        }
-        self.type_of_members(&[(file, member)])
-    }
-
-    pub(super) fn type_of_member_declarations(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
-        self.type_of_members(members)
-    }
-
-    /// The type the declarations `members` of one property give it.
-    #[inline]
-    fn type_of_members(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
-        if let Some(known) = self.p.member_types.get(&members[0]) {
-            return known;
-        }
-        self.resolve_type_of_members(members)
-    }
-
-    /// `type_of_members`, where nothing is kept yet.
-    fn resolve_type_of_members(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
-        let (file, first) = members[0];
-        let member = &self.hir(file)[first];
-        let is_accessor =
-            self.has_get_or_set_accessor(members) || member.flags.contains(Flags::ACCESSOR);
-        if !self.enter(Query::Member(file, first)) {
-            return if !self.came_full_circle {
-                TypeId::UNRESOLVED
-            } else if is_accessor {
-                // `getTypeOfAccessors`
-                TypeId::ERROR
-            } else {
-                super::symbols::circularity_error_type(member.ty)
-            };
-        }
-        let ty = self.type_of_members_uncached(members);
-        let holds = self.leave();
-        if self.left_a_circle {
-            self.p.circular_members.insert((file, first), ());
-            let ty = if is_accessor {
-                TypeId::ANY
-            } else {
-                super::symbols::circularity_error_type(member.ty)
-            };
-            let kept = self.p.member_types.insert((file, first), ty);
-            if is_accessor {
-                self.report_circular_accessors(members);
-            } else {
-                let end = self.end_of_member_name(file, first);
-                let name = self.source_text(file, member.name_pos, end);
-                self.report_circularity_error(
-                    (file, member.name_pos, end),
-                    Arg::Text(&name),
-                    ty,
-                    false,
-                );
+        if self.bound(file).member_symbol[member.idx()].is_some() {
+            let sym = self.symbol_of_member(file, member);
+            if self.files().value_declaration(sym) == Some((file, Decl::Member(member))) {
+                return self.type_of_symbol(sym);
             }
-            return kept;
         }
-        if holds {
-            self.p.member_types.insert((file, first), ty);
-        }
-        ty
+        self.type_of_members_uncached(&[(file, member)])
     }
 
     /// `symbol.Flags&(SymbolFlagsGetAccessor|SymbolFlagsSetAccessor) != 0`
@@ -3992,7 +3866,7 @@ impl<'p> Checker<'p> {
             .any(|&(f, m)| matches!(self.hir(f)[m].kind, MemberKind::Getter | MemberKind::Setter))
     }
 
-    fn type_of_members_uncached(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
+    pub(super) fn type_of_members_uncached(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
         let (file, first) = members[0];
         let hir = self.hir(file);
         let member = &hir[first];
@@ -4395,9 +4269,11 @@ impl<'p> Checker<'p> {
 
     /// `apparent_type`, of what may look like something else.
     fn apparent_type_of_other(&mut self, ty: TypeId) -> TypeId {
-        // What extends nothing extends `unknown`.
+        // An unconstrained type parameter has the base constraint `unknown`. The original type is passed as the `this` argument
+        // (`getTypeWithThisArgument`, `getApparentTypeOfIntersectionType`): in inherited members `this` is `ty` itself.
         let ty = if self.is_deferred(ty) {
-            self.base_constraint(ty)
+            let constraint = self.base_constraint(ty);
+            self.type_with_this_argument(constraint, ty)
         } else {
             ty
         };
@@ -4728,6 +4604,90 @@ impl<'p> Checker<'p> {
         matches!(*self.data(ty), TypeData::Anon { origin: Origin::Module(module) | Origin::Namespace { module, .. }, .. } if self.files().is_type_only_star_export(module, name))
     }
 
+    /// `getSymbolOfDeclaration(member)`. A late bound symbol goes by the symbol the binder gave the first of its declarations.
+    pub(super) fn symbol_of_member(&mut self, file: FileId, m: MemberId) -> Sym {
+        let own = (file, Decl::Member(m));
+        let (of, first) = match self.hir(file)[m].key {
+            PropKey::Computed(_) => {
+                let declarations = self.declarations_of_member(file, own.1);
+                declarations.first().copied().unwrap_or(own)
+            }
+            _ => own,
+        };
+        self.files()
+            .sym(of, self.bound(of).symbol_of_declaration(first))
+    }
+
+    /// Whether `sym` is a member of a class, an interface or a type literal, or a parameter property: not what a module, a namespace or
+    /// an enum exports.
+    pub(super) fn is_member_symbol(&self, sym: Sym) -> bool {
+        matches!(
+            self.files().value_declaration(sym),
+            Some((
+                _,
+                Decl::Member(_)
+                    | Decl::ParameterProperty(_)
+                    | Decl::Expando(_)
+                    | Decl::ThisProperty(_)
+            ))
+        )
+    }
+
+    /// `symbol.Declarations`, of the symbol of a property.
+    pub(super) fn declarations_of_property(&mut self, sym: Sym) -> List<'p, (FileId, Decl)> {
+        match self.files().decls_of(sym).first() {
+            Some(&(file, first)) => self.declarations_of_member(file, first),
+            None => List::default(),
+        }
+    }
+
+    /// Whether `symbol.ValueDeclaration` is an assignment. A property that is written after `this.name = value` is one symbol with it,
+    /// and is what says what it is.
+    pub(super) fn is_declared_by_assignment(&self, sym: Sym) -> bool {
+        matches!(
+            self.files().value_declaration(sym),
+            Some((_, Decl::Expando(_) | Decl::ThisProperty(_)))
+        )
+    }
+
+    /// Those of them that are assignments, in the file of the symbol.
+    pub(super) fn assignments_of_symbol(&mut self, sym: Sym) -> SmallVec<[ExprId; 2]> {
+        let assignment = |&(file, decl): &(FileId, Decl)| match decl {
+            Decl::Expando(e) | Decl::ThisProperty(e) if file == sym.file => Some(e),
+            _ => None,
+        };
+        (self.declarations_of_property(sym).iter())
+            .filter_map(assignment)
+            .collect()
+    }
+
+    /// Those of them that are members of classes, interfaces and type literals.
+    pub(super) fn members_of_symbol(&mut self, sym: Sym) -> SmallVec<[(FileId, MemberId); 2]> {
+        members_among(&self.declarations_of_property(sym))
+    }
+
+    /// `symbol.Flags`, of the symbol of a property. `lateBindMember`: each declaration adds the flags of its own symbol.
+    pub(super) fn flags_of_property(&mut self, sym: Sym) -> SymFlags {
+        let flags = self.files().flags(sym);
+        if self.files().symbol(sym).name != known::computed {
+            return flags;
+        }
+        let declarations = self.declarations_of_property(sym);
+        declarations.iter().fold(flags, |flags, &(file, decl)| {
+            let own = self.bound(file).symbol_of_declaration(decl);
+            flags | self.bound(file).symbols[own.idx()].flags
+        })
+    }
+
+    /// `prop.ValueDeclaration`
+    pub(super) fn value_declaration_of_prop(&self, prop: &Prop) -> Option<(FileId, Decl)> {
+        match Self::value_declaration(prop)? {
+            &PropSource::Symbol(sym) => self.files().value_declaration(sym),
+            &PropSource::Literal(file, p) => Some((file, Decl::Property(p))),
+            _ => None,
+        }
+    }
+
     /// `ValueDeclaration`: what says where `prop` is declared. `None`: it is made up, or it stands for properties of the members of
     /// an intersection that are declared in several places (`createUnionOrIntersectionProperty`), those that are made up aside.
     pub(super) fn value_declaration(prop: &Prop) -> Option<&PropSource> {
@@ -5045,7 +5005,7 @@ impl<'p> Checker<'p> {
                 let mut prop = prop.clone();
                 self.instantiate_prop(&mut prop, mapper);
                 // `prop.Flags&SymbolFlagsClassMember`: a variable of a module or of `globalThis` has no say.
-                if !matches!(prop.source, PropSource::Symbol(_)) {
+                if !matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)) {
                     flags |= prop.flags & PropFlags::OPTIONAL;
                 }
                 flags |= prop.flags & (PropFlags::READONLY | access);
@@ -5933,4 +5893,13 @@ impl<'p> Checker<'p> {
             of: of.into(),
         })
     }
+}
+
+/// Those of `declarations` that are members of classes, interfaces and type literals.
+pub(super) fn members_among(declarations: &[(FileId, Decl)]) -> SmallVec<[(FileId, MemberId); 2]> {
+    let member = |&(file, decl): &(FileId, Decl)| match decl {
+        Decl::Member(m) => Some((file, m)),
+        _ => None,
+    };
+    declarations.iter().filter_map(member).collect()
 }

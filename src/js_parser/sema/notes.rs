@@ -17,7 +17,7 @@
 use super::{Mark, TypeSyntax};
 use crate::p::P;
 use crate::parser::{SkipTypeParameterResult, TypeParameterFlag};
-use bun_ast::ts_syntax as ts;
+use crate::sema::ts_syntax as ts;
 use bun_ast::{Expr, Loc};
 
 const NO_NOTE: u32 = u32::MAX;
@@ -55,7 +55,93 @@ pub(crate) struct Checkpoint {
     after_skipped: u32,
     stray_decorators: u32,
     unclosed_literals: u32,
+    type_stack: u32,
+    name_stack: u32,
+    rows: Rows,
 }
+
+macro_rules! rows {
+    ($($list:ident),*) => {
+        /// How many rows of the tree there were, of the kinds the parser makes, and what else it leaves in the tree.
+        #[derive(Copy, Clone, Default)]
+        pub(crate) struct Rows {
+            $(pub(crate) $list: u32,)*
+            pub(crate) pending: u32,
+            pub(crate) syntax_errors: u32,
+            error_pos: u32,
+        }
+
+        impl Rows {
+            /// Appends to `to` the rows `from` has from these on up to `end`. Returns by how much those of each vector have moved, and
+            /// how many syntax errors are among them.
+            pub(crate) fn copy(
+                &self,
+                end: &Rows,
+                from: &bun_sema::hir::File,
+                to: &mut bun_sema::hir::File,
+            ) -> Rows {
+                Rows {
+                    $($list: {
+                        let moved = (to.$list.len() as u32).wrapping_sub(self.$list);
+                        if end.$list > self.$list {
+                            let rows = &from.$list[self.$list as usize..end.$list as usize];
+                            to.$list.extend_from_slice(rows);
+                        }
+                        moved
+                    },)*
+                    pending: 0,
+                    syntax_errors: end.syntax_errors - self.syntax_errors,
+                    error_pos: 0,
+                }
+            }
+        }
+
+        impl TypeSyntax<'_> {
+            pub(crate) fn rows(&self) -> Rows {
+                let file = &self.b.file;
+                Rows {
+                    $($list: file.$list.len() as u32,)*
+                    pending: self.b.pending.len() as u32,
+                    syntax_errors: file.syntax_errors,
+                    error_pos: file.error_pos,
+                }
+            }
+
+            /// Takes back the rows that were made since.
+            pub(crate) fn rewind_rows(&mut self, to: Rows) {
+                let file = &mut self.b.file;
+                $(if file.$list.len() > to.$list as usize {
+                    file.$list.truncate(to.$list as usize);
+                })*
+                file.modifiers_of_params.truncate(to.params as usize);
+                (file.syntax_errors, file.error_pos) = (to.syntax_errors, to.error_pos);
+                self.b.pending.truncate(to.pending as usize);
+            }
+        }
+    };
+}
+rows!(
+    ids,
+    numbers,
+    exprs,
+    types,
+    pats,
+    pat_props,
+    pat_elems,
+    fns,
+    params,
+    type_params,
+    members,
+    tuple_elems,
+    mapped,
+    modifiers,
+    names,
+    early_errors,
+    error_ends,
+    error_arguments,
+    checker_errors,
+    specifier_uses
+);
 
 /// The notes of one file.
 #[derive(Default)]
@@ -234,7 +320,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn note_type(&mut self, at: &mut Loc, what: Mark) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
             let ty = syntax.last_type_or_error();
-            syntax.notes.add(at, what, ty.index() as u32);
+            syntax.notes.add(at, what, ty.0);
         }
     }
 
@@ -259,7 +345,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// A note of a type that was parsed before the node was.
     #[inline]
     pub(crate) fn note_kept_type(&mut self, at: &mut Loc, what: Mark, ty: ts::TypeId) {
-        self.note(at, what, ty.index() as u32);
+        self.note(at, what, ty.0);
     }
 
     /// The type arguments that were parsed last, as the payload of a note. `None` if they are unusable.
@@ -269,7 +355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && let Some(syntax) = &mut self.type_syntax
             && let Some(arguments) = syntax.last_type_args.take()
         {
-            syntax.notes.ranges.push(arguments.parts());
+            syntax.notes.ranges.push([arguments.start, arguments.len]);
             return Some(syntax.notes.ranges.len() as u32 - 1);
         }
         None
@@ -277,10 +363,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// The type arguments that were parsed last. Empty if they are unusable.
     #[inline]
-    pub(crate) fn take_kept_type_argument_list(&mut self) -> ts::IdList<ts::Type> {
+    pub(crate) fn take_kept_type_argument_list(&mut self) -> ts::Types {
         match &mut self.type_syntax {
             Some(syntax) if TYPESCRIPT => syntax.last_type_args.take().unwrap_or_default(),
-            _ => ts::IdList::EMPTY,
+            _ => ts::Types::EMPTY,
         }
     }
 
@@ -289,12 +375,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn note_type_arguments_read_as_parameters(
         &mut self,
         close_paren: &mut Loc,
-        parameters: Option<ts::Span<ts::TypeParam>>,
+        parameters: Option<ts::TypeParams>,
     ) {
         if let Some(syntax) = &mut self.type_syntax
             && let Some(parameters) = parameters
         {
-            syntax.notes.ranges.push(parameters.parts());
+            syntax.notes.ranges.push([parameters.start, parameters.len]);
             let payload = syntax.notes.ranges.len() as u32 - 1;
             syntax
                 .notes
@@ -316,7 +402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn kept_type_parameters(
         &mut self,
         skipped: SkipTypeParameterResult,
-    ) -> Option<ts::Span<ts::TypeParam>> {
+    ) -> Option<ts::TypeParams> {
         match &mut self.type_syntax {
             Some(syntax)
                 if TYPESCRIPT && skipped != SkipTypeParameterResult::DidNotSkipAnything =>
@@ -332,7 +418,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parse_type_parameters(
         &mut self,
         flags: TypeParameterFlag,
-    ) -> Result<Option<ts::Span<ts::TypeParam>>, crate::Error> {
+    ) -> Result<Option<ts::TypeParams>, crate::Error> {
         let skipped = self.skip_type_script_type_parameters(flags)?;
         Ok(self.kept_type_parameters(skipped))
     }
@@ -342,13 +428,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn note_type_parameters(
         &mut self,
         at: &mut Loc,
-        parameters: Option<ts::Span<ts::TypeParam>>,
+        parameters: Option<ts::TypeParams>,
     ) {
         if TYPESCRIPT
             && let Some(syntax) = &mut self.type_syntax
             && let Some(parameters) = parameters
         {
-            syntax.notes.ranges.push(parameters.parts());
+            syntax.notes.ranges.push([parameters.start, parameters.len]);
             let payload = syntax.notes.ranges.len() as u32 - 1;
             syntax.notes.add(at, Mark::TypeParameters, payload);
         }
@@ -359,16 +445,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn note_cast_to_type_parameter(
         &mut self,
         operand: &mut Expr,
-        parameters: Option<ts::Span<ts::TypeParam>>,
+        parameters: Option<ts::TypeParams>,
         less_than: Loc,
     ) {
         self.note_token_full_start(&mut operand.loc, Mark::End);
         self.note_loc(&mut operand.loc, Mark::LessThan, less_than);
         if let Some(syntax) = &mut self.type_syntax {
-            syntax
-                .notes
-                .ranges
-                .push(parameters.unwrap_or_default().parts());
+            let parameters = parameters.unwrap_or_default();
+            syntax.notes.ranges.push([parameters.start, parameters.len]);
             let payload = syntax.notes.ranges.len() as u32 - 1;
             syntax
                 .notes
@@ -392,7 +476,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn note_expr(&mut self, at: &mut Loc, what: Mark, expression: Expr) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
-            let kept = syntax.ast.add_expression(expression);
+            let kept = syntax.b.ts.add_expression(expression);
             syntax.notes.add(at, what, kept.index() as u32);
         }
     }
@@ -414,7 +498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
             syntax.pending_type_arguments = None;
             if let Some(arguments) = syntax.last_type_args.take() {
-                syntax.notes.ranges.push(arguments.parts());
+                syntax.notes.ranges.push([arguments.start, arguments.len]);
                 let payload = syntax.notes.ranges.len() as u32 - 1;
                 syntax.pending_type_arguments = Some((payload, next));
                 let less_than = less_than.start.max(0) as u32;
@@ -678,6 +762,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 after_skipped: syntax.after_skipped.len() as u32,
                 stray_decorators: syntax.stray_decorators.len() as u32,
                 unclosed_literals: syntax.unclosed_literals.len() as u32,
+                type_stack: syntax.type_stack.len() as u32,
+                name_stack: syntax.name_stack.len() as u32,
+                rows: syntax.rows(),
             },
             _ => Checkpoint::default(),
         }
@@ -685,31 +772,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// `rewind`: an attempt that is abandoned leaves nothing behind, also of nodes that were there before it.
     #[inline]
-    pub(crate) fn rewind_type_syntax(&mut self, to: Checkpoint) {
+    pub(crate) fn rewind_type_syntax(&mut self, to: &Checkpoint) {
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
             syntax.rewind(to);
         }
     }
 }
 
-impl TypeSyntax {
+impl TypeSyntax<'_> {
     /// The type that `parse_and_keep_type` parsed last. If it is unusable, an error type where it starts.
     pub(super) fn last_type_or_error(&mut self) -> ts::TypeId {
         if self.last_type.is_none() {
-            let start = Loc {
-                start: self.last_type_start,
-            };
-            let error = ts::TypeData::Error {
-                is_syntax_error: true,
-            };
-            self.last_type = self.ast.add_type(error, start);
+            self.last_type = self.b.error_type(self.last_type_start.max(0) as u32);
         }
         self.last_type
     }
 
     #[cold]
     #[inline(never)]
-    fn rewind(&mut self, snapshot: Checkpoint) {
+    fn rewind(&mut self, snapshot: &Checkpoint) {
         let Notes {
             nodes,
             notes,
@@ -727,6 +808,46 @@ impl TypeSyntax {
             .truncate(snapshot.stray_decorators as usize);
         self.unclosed_literals
             .truncate(snapshot.unclosed_literals as usize);
+        self.type_stack.truncate(snapshot.type_stack as usize);
+        self.name_stack.truncate(snapshot.name_stack as usize);
+        self.rewind_rows(snapshot.rows);
+        // What was read last in the attempt is gone with its rows. What was read before it is still what was read last.
+        let file = &self.b.file;
+        if self.last_type.is_some() && self.last_type.idx() >= file.types.len() {
+            self.last_type = ts::TypeId::NONE;
+        }
+        if self.last_binding.is_some() && self.last_binding.idx() >= file.pats.len() {
+            self.last_binding = ts::PatternId::NONE;
+        }
+        // A list of nothing is where it was made all the same.
+        macro_rules! still_there {
+            ($list:expr, $rows:expr) => {
+                match $list {
+                    Some(list) if list.is_empty() => Some(Default::default()),
+                    list => list.filter(|list| list.range().end <= $rows.len()),
+                }
+            };
+        }
+        self.last_type_args = still_there!(self.last_type_args, file.ids);
+        self.last_params = still_there!(self.last_params, file.params);
+        self.last_type_params = still_there!(self.last_type_params, file.type_params);
+        self.last_object_type = self.last_object_type.filter(|body| match body {
+            super::keep::ObjectTypeBody::Members(members) => {
+                members.range().end <= file.members.len()
+            }
+            super::keep::ObjectTypeBody::Mapped(mapped) => {
+                mapped.param.idx() < file.type_params.len()
+                    && mapped.members.range().end <= file.members.len()
+                    && (mapped.ty.is_none() || mapped.ty.idx() < file.types.len())
+            }
+        });
+        self.pending_fn_type_head = self
+            .pending_fn_type_head
+            .filter(|head| head.is_within(file.type_params.len()));
+        self.last_index_signature = self
+            .last_index_signature
+            .filter(|member| member.signature.idx() < file.fns.len());
+        self.last_postfix_nullable = None;
     }
 }
 

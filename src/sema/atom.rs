@@ -9,6 +9,13 @@ pub struct Atom(pub u32);
 
 impl Atom {
     pub const NONE: Atom = Atom(u32::MAX);
+
+    /// Whether it is a word binder.go knows an `Identifier` by: `KindFirstFutureReservedWord` to `KindLastFutureReservedWord`,
+    /// `await` (`checkContextualIdentifier`), `eval`, `arguments` (`isEvalOrArgumentsIdentifier`).
+    #[inline]
+    pub fn is_keyword_identifier(self) -> bool {
+        self.0.wrapping_sub(known::implements.0) <= known::arguments.0 - known::implements.0
+    }
     #[inline]
     pub fn is_none(self) -> bool {
         self == Atom::NONE
@@ -59,6 +66,18 @@ known_atoms! {
     returned = "return=",
     this = "this",
     undefined = "undefined",
+    // `Atom::is_keyword_identifier`: from here to `arguments`.
+    implements = "implements",
+    interface = "interface",
+    let_ = "let",
+    package = "package",
+    private = "private",
+    protected = "protected",
+    public = "public",
+    r#static = "static",
+    r#yield = "yield",
+    r#await = "await",
+    eval = "eval",
     arguments = "arguments",
     constructor = "constructor",
     prototype = "prototype",
@@ -150,7 +169,6 @@ known_atoms! {
     apply = "apply",
     bind = "bind",
     args = "args",
-    eval = "eval",
     React = "React",
     r#const = "const",
     global = "global",
@@ -179,7 +197,6 @@ known_atoms! {
     WeakMap = "WeakMap",
     WeakSet = "WeakSet",
     Reflect = "Reflect",
-    let_ = "let",
     __esModule = "__esModule",
     async_ = "async",
     AsyncDisposable = "AsyncDisposable",

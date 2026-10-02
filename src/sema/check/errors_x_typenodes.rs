@@ -1,7 +1,7 @@
 //! Types as they are written, and what looking one type up in another comes to:
 //! 1257 1265 1266 2574 (tuple types),
 //! 1338 2838 (`infer`), 1354 (`readonly`), 2795 (`intrinsic`), 2526 (`this`), 1021 1268 1337 (index signatures),
-//! 7061 (mapped types), 2804 18016 (private names), 1176 (interfaces), 1099 1009 (lists of type arguments, `import()`),
+//! 7061 (mapped types), 18016 (private names), 1176 (interfaces), 1099 1009 (lists of type arguments, `import()`),
 //! 2848 2635 (instantiation expressions), 2536 4105 2542 2862 2514 (`T[K]`, `a[k]`).
 //!
 //! Follows `checkTupleType`,
@@ -581,49 +581,6 @@ impl Checker<'_> {
             _ => first.loc.end,
         };
         self.error_at((file, start, end), 7061, &[]);
-    }
-
-    /// The end of `checkObjectTypeForDuplicateDeclarations`: 2804, one private name for something static and something that is not.
-    pub(super) fn check_private_names_of_both_kinds(&mut self, file: FileId, c: ClassId) {
-        let hir = self.hir(file);
-        let class = &hir[c];
-        // 1 for what is not static, 2 for what is.
-        let mut seen: Vec<(Atom, u8)> = Vec::new();
-        for m in class.members.iter() {
-            let PropKey::Private(name) = hir[m].key else {
-                continue;
-            };
-            let at = match seen.iter().position(|s| s.0 == name) {
-                Some(at) => at,
-                None => {
-                    seen.push((name, 0));
-                    seen.len() - 1
-                }
-            };
-            if seen[at].1 == 3 {
-                continue;
-            }
-            seen[at].1 |= if hir[m].flags.contains(Flags::STATIC) {
-                2
-            } else {
-                1
-            };
-            if seen[at].1 == 3 {
-                // `reportDuplicateMemberErrors`
-                for o in class
-                    .members
-                    .iter()
-                    .filter(|&o| hir[o].key == PropKey::Private(name))
-                {
-                    let at = self.place_of_token(file, hir[o].name_pos);
-                    self.error_at(
-                        at,
-                        2804,
-                        &[Arg::Bytes(&hir.text[at.1 as usize..at.2 as usize])],
-                    );
-                }
-            }
-        }
     }
 
     /// `checkPropertySignature`, `checkMethodDeclaration`: 18016 for a signature with a private name. A property signature is always

@@ -71,13 +71,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 p.lexer.expect(T::TIdentifier)?;
             }
-            // The name is read in the [Await] context around the function.
-            if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                && p.lexer.tolerant
-                && name_text == b"await"
-            {
-                p.report_fn_named_await(name_loc);
-            }
             // Difference
             let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text);
             name = Some(js_ast::LocRef {
@@ -220,24 +213,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .ts_error(range, if is_reserved_word { 1359 } else { 1003 });
         self.lexer.put_up_with(before)?;
         Ok(full_start)
-    }
-
-    /// `checkContextualIdentifier`: a function is named "await" in an [Await] context (1359). Reported with the message of
-    /// `parse_binding`. At the top level of a file, the checker decides.
-    #[cold]
-    #[inline(never)]
-    fn report_fn_named_await(&mut self, name_loc: bun_ast::Loc) {
-        if self.fn_or_arrow_data_parse.is_top_level || self.lexer.is_log_disabled {
-            return;
-        }
-        self.log().add_range_error(
-            Some(self.source),
-            bun_ast::Range {
-                loc: name_loc,
-                len: 5,
-            },
-            b"Cannot use \"yield\" or \"await\" here.",
-        );
     }
 
     pub(crate) fn parse_fn(
@@ -753,7 +728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if is_first {
             p.drop_modifiers(modifiers_base);
             let first_token = if first_modifier.is_some() { start } else { loc };
-            let mut parameter = bun_ast::ts_syntax::Param::at(first_token);
+            let mut parameter = crate::sema::ts_syntax::Param::at(first_token);
             parameter.full_start = full_start;
             p.keep_this_parameter(open_parens_loc, parameter, loc, has_type);
             p.note_stray_decorators(decorators.slice(), loc);
@@ -835,15 +810,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Don't declare the name "arguments" since it's shadowed and inaccessible
             let name_loc = p.lexer.loc();
-            // `parseFunctionExpression`: unless the function is async, which `validate_function_name` covers, the name is read in
-            // the [Await] context around it.
-            if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                && p.lexer.tolerant
-                && !is_async
-                && text == b"await"
-            {
-                p.report_fn_named_await(name_loc);
-            }
             let ref_ = if !text.is_empty() && text != arguments_str {
                 p.declare_symbol(js_ast::symbol::Kind::HoistedFunction, name_loc, text)?
             } else {

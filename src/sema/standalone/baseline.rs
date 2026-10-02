@@ -1296,7 +1296,6 @@ fn run_one(
         global_node_modules: None,
         progress: None,
         only: None,
-        ends_the_process: false,
         keeps_everything: false,
         stops_where_tsc_does: false,
         says_it_as_typescript_does: true,
@@ -1545,7 +1544,7 @@ impl Watched {
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     for (name, since) in UNDER_WAY.lock().unwrap().iter().flatten() {
-                        if since.elapsed() > std::time::Duration::from_secs(600) {
+                        if since.elapsed() > std::time::Duration::from_secs(60) {
                             eprintln!("STUCK: {name} has been under way for ten minutes. The run ends here.");
                             std::process::exit(3);
                         }

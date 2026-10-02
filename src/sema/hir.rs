@@ -59,6 +59,7 @@ define_id!(
     ImportEqualsId,
     ModifierId,
     NameId,
+    ParenId,
 );
 
 impl From<Atom> for u32 {
@@ -162,7 +163,13 @@ impl<T: From<u32>> Span<T> {
 }
 
 /// A list most files have nothing in. It takes one word, not three, until something is put in. Otherwise it is a `Vec`.
-pub struct Few<T>(Option<Box<Vec<T>>>);
+pub struct Few<T>(
+    #[expect(
+        clippy::box_collection,
+        reason = "one word, not three: a file has 66 of these, nearly all empty; as `Vec`s they are 42 MB more on 40,000 files"
+    )]
+    Option<Box<Vec<T>>>,
+);
 
 impl<T: 'static> Few<T> {
     const NOTHING: &'static Vec<T> = &Vec::new();
@@ -1254,6 +1261,28 @@ pub enum Keyword {
     Intrinsic,
 }
 
+impl Keyword {
+    /// `TokenToString`
+    pub fn text(self) -> &'static [u8] {
+        match self {
+            Keyword::Any => b"any",
+            Keyword::Unknown => b"unknown",
+            Keyword::Never => b"never",
+            Keyword::Void => b"void",
+            Keyword::Undefined => b"undefined",
+            Keyword::Null => b"null",
+            Keyword::String => b"string",
+            Keyword::Number => b"number",
+            Keyword::Boolean => b"boolean",
+            Keyword::BigInt => b"bigint",
+            Keyword::Symbol => b"symbol",
+            Keyword::Object => b"object",
+            Keyword::This => b"this",
+            Keyword::Intrinsic => b"intrinsic",
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct TypeNode {
     pub kind: TypeNodeKind,
@@ -1523,9 +1552,6 @@ pub struct File {
     /// The decorators of missing declarations and of `this` parameters, which `checkDecorators` never looks at: from where the
     /// expression starts to where what comes after the decorators starts. The expressions are statements of their own.
     pub stray_decorators: Few<(u32, u32)>,
-    /// The directives: where each is written, and what it says. An `ExpressionStatement` of a string literal in tsgo. No statement
-    /// is kept for one.
-    pub directives: Few<(u32, Atom)>,
     /// Where module specifiers are written, but for those of `import()`, which are expressions.
     pub specifier_uses: Vec<SpecifierUse>,
 
@@ -1597,6 +1623,11 @@ pub struct File {
     pub parents: std::sync::OnceLock<crate::node::Parents>,
     /// `File::is_in_ambient_or_type_node`
     pub ambient_or_type_places: std::sync::OnceLock<Places>,
+    /// Where an `Identifier` is whose text is one of `Atom::is_keyword_identifier`, or where the node starts that it is a child of.
+    /// As the parser came to them, what it gave up on too.
+    pub keyword_identifier_positions: Few<u32>,
+    /// `File::keyword_identifiers`
+    pub keyword_identifiers: std::sync::OnceLock<Box<[Node]>>,
 }
 
 macro_rules! arenas {
@@ -1838,6 +1869,27 @@ impl File {
         Span::new(start as u32, (self.names.len() - start) as u32)
     }
 
+    /// `before.text`, as the parser comes to it.
+    pub fn append_to_entity_name(
+        &mut self,
+        before: Span<NameId>,
+        text: Atom,
+        place: u32,
+    ) -> Span<NameId> {
+        let mut start = before.start;
+        // Something else was named since.
+        if before.range().end != self.names.len() {
+            start = self.names.len() as u32;
+            self.names.extend_from_within(before.range());
+        }
+        let place = match before.is_empty() {
+            true => place,
+            false => place | Name::QUALIFIED,
+        };
+        self.names.push(Name { text, place });
+        Span::new(start, before.len + 1)
+    }
+
     /// What the names of an entity name say.
     #[inline]
     pub fn texts(
@@ -1881,7 +1933,6 @@ impl File {
             jsdoc_param_errors,
             js_diagnostics,
             decorators,
-            directives,
             comment_directives
         );
     }
@@ -1955,7 +2006,7 @@ impl File {
     }
 }
 
-/// `IsParenthesizedExpression`, of what is right around `e`. The tree has no node for parentheses.
+/// `IsParenthesizedExpression`, of what is right around `e`.
 #[inline]
 pub fn is_parenthesized(hir: &File, e: ExprId) -> bool {
     open_parenthesis(hir, e).is_some()
@@ -1990,6 +2041,11 @@ pub fn jsx_expression_around(hir: &File, e: ExprId) -> Option<(u32, u32)> {
     found
         .ok()
         .map(|i| (hir.jsx_expressions[i].1, hir.jsx_expressions[i].2))
+}
+
+/// Where `e` starts as it is written.
+pub fn start_of(hir: &File, e: ExprId) -> u32 {
+    open_parenthesis(hir, e).unwrap_or_else(|| start_inside_parentheses(hir, e))
 }
 
 /// `GetTokenPosOfNode`: where `e` starts, not counting parentheses around the whole of it.

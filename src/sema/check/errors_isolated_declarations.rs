@@ -900,12 +900,9 @@ impl<'p> Checker<'p> {
             MemberOwner::None => return TypeId::UNRESOLVED,
         };
         if let Some(members) = self.members(holder) {
-            for prop in &members.shape().props {
-                if let PropSource::Members(list) = &prop.source
-                    && list.contains(&(file, m))
-                {
-                    return self.type_of_prop(prop, MapperId::IDENTITY);
-                }
+            let source = PropSource::Symbol(self.symbol_of_member(file, m));
+            if let Some(prop) = members.shape().props.iter().find(|it| it.source == source) {
+                return self.type_of_prop(prop, MapperId::IDENTITY);
             }
         }
         self.type_of_member_declaration(file, m)
@@ -930,9 +927,10 @@ impl<'p> Checker<'p> {
         };
         let mut targets = Vec::new();
         for prop in &members.shape().props {
-            if let PropSource::Assigned(of, assignments) = &prop.source
-                && *of == file
-                && let Some(&first) = assignments.first()
+            if let PropSource::Symbol(sym) = prop.source
+                && let Some((of, Decl::Expando(first) | Decl::ThisProperty(first))) =
+                    self.files().value_declaration(sym)
+                && of == file
                 && let ExprKind::Assign { target, .. } = self.hir(file)[first].kind
             {
                 targets.push(target);
@@ -990,7 +988,7 @@ impl<'p> Checker<'p> {
                 .shape()
                 .props
                 .iter()
-                .any(|prop| matches!(prop.source, PropSource::Assigned(..)))
+                .any(|prop| matches!(prop.source, PropSource::Symbol(sym) if self.is_declared_by_assignment(sym)))
         })
     }
 
@@ -1843,10 +1841,7 @@ impl<'p> Checker<'p> {
                 }
                 _ => 1,
             },
-            PropSource::Members(members) => members.len(),
-            PropSource::Assigned(_, assignments) => assignments.len(),
-            PropSource::Parameter(..) => 1,
-            PropSource::Symbol(sym) => self.files().decls_of(*sym).len(),
+            PropSource::Symbol(sym) => self.declarations_of_property(*sym).len(),
             PropSource::Copy(_, of, _) | PropSource::ReverseMapped(_, of) => {
                 of.iter().map(|p| self.iso_declaration_count(p)).sum()
             }

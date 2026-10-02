@@ -38,11 +38,7 @@ impl Checker<'_> {
         if !matches!(self.hir(file)[operand].kind, ExprKind::Missing)
             && !self.is_valid_const_assertion_argument(file, operand)
         {
-            let hir = self.hir(file);
-            match is_parenthesized(hir, operand) {
-                true => self.error(file, hir.node(operand).with(Part::Paren), 1355, &[]),
-                false => self.error(file, operand, 1355, &[]),
-            };
+            self.error(file, self.hir(file).child(operand), 1355, &[]);
         }
     }
 

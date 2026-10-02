@@ -138,23 +138,98 @@ impl<'p> Checker<'p> {
 
     #[inline(never)]
     fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
+        let value_declaration = self.files().value_declaration(sym);
+        // A parameter property is what its parameter is, which is a question of its own.
+        if let Some((file, Decl::ParameterProperty(p))) = value_declaration {
+            let ty = self.type_of_param(file, p);
+            // Kept here once it is kept there: every `this.x` asks.
+            if (self.p.pat_types.get(file, self.hir(file)[p].pat.idx())).is_some() {
+                self.p.symbol_types.insert(sym, ty);
+            }
+            return ty;
+        }
+        // Before the question is entered: `lateBindMember` asks what the names of the other members are, which may lead back here.
+        let mut members = SmallVec::new();
+        if self.files().flags(sym).intersects(SymFlags::CLASS_MEMBER) {
+            members = self.members_of_symbol(sym);
+            if let Some(known) = self.p.symbol_types.get(&sym) {
+                return known;
+            }
+        }
+        // `checkCallExpression` checks the descriptor of `Object.defineProperty(f, "name", descriptor)` before anything asks for the
+        // type of `name`: what `reportNonexistentProperty` prints for an access in the descriptor starts the resolution.
+        let in_report = !self.reporting_nonexistent.is_empty()
+            && matches!(value_declaration, Some((file, Decl::Expando(e)))
+                if matches!(self.hir(file)[e].kind, ExprKind::Call(_)));
+        if in_report && self.stack[self.resolution_start..].contains(&Query::Symbol(sym)) {
+            return self.type_of_circular_symbol(sym, None);
+        }
         if !self.enter(Query::Symbol(sym)) {
-            return if self.came_full_circle {
-                self.type_of_circular_symbol(sym, None)
-            } else {
-                TypeId::UNRESOLVED
+            if !self.came_full_circle {
+                return TypeId::UNRESOLVED;
+            }
+            let ty = self.type_of_circular_symbol(sym, None);
+            // `getTypeOfVariableOrParameterOrProperty` keeps what `reportCircularityError` returns: whoever asks next has the answer.
+            return match value_declaration {
+                Some((_, Decl::Expando(_) | Decl::ThisProperty(_))) => {
+                    self.p.symbol_types.insert(sym, ty)
+                }
+                _ => ty,
             };
         }
-        let ty = self.type_of_symbol_uncached(sym);
+        // `checkExpressionCached` has no guard against re-entry: the descriptor is checked again from the start.
+        let resolution_start = self.resolution_start;
+        if in_report {
+            self.resolution_start = self.stack.len() - 1;
+        }
+        let ty = match members.is_empty() {
+            true => self.type_of_symbol_uncached(sym),
+            false => self.type_of_members_uncached(&members),
+        };
+        self.resolution_start = resolution_start;
         let holds = self.leave();
         if self.left_a_circle {
             let ty = self.type_of_circular_symbol(sym, Some(ty));
             let kept = self.p.symbol_types.insert(sym, ty);
+            let flags = self.files().flags(sym);
+            if let Some((file, Decl::Member(first))) = value_declaration {
+                if flags.intersects(SymFlags::ACCESSOR) {
+                    self.report_circular_accessors(&members);
+                } else {
+                    let (hir, end) = (self.hir(file), self.end_of_member_name(file, first));
+                    let start = hir[first].name_pos;
+                    let name = Arg::Bytes(&hir.text[start as usize..end as usize]);
+                    self.report_circularity_error((file, start, end), name, ty, false);
+                }
+            } else if let Some((
+                file,
+                Decl::Expando(declaration) | Decl::ThisProperty(declaration),
+            )) = value_declaration
+            {
+                let hir = self.hir(file);
+                let range = |c: &Self, e: ExprId| {
+                    (
+                        file,
+                        c.start_inside_parentheses(file, e),
+                        c.end_inside_parentheses(file, e),
+                    )
+                };
+                // `GetNonAssignedNameOfDeclaration`: of `f["a"] = e` and `Object.defineProperty(f, "a", d)` the `"a"`, as it is written.
+                let named = match hir[declaration].kind {
+                    ExprKind::Assign { target, .. } => match hir[target].kind {
+                        ExprKind::Index { index, .. } => Some(index),
+                        _ => None,
+                    },
+                    ExprKind::Call(call) => hir.ids(hir[call].args).nth(1),
+                    _ => None,
+                };
+                let name = match named.map(|named| range(self, named)) {
+                    Some((_, start, end)) => Arg::Bytes(&hir.text[start as usize..end as usize]),
+                    None => Arg::Atom(self.files().symbol(sym).name),
+                };
+                self.report_circularity_error(range(self, declaration), name, ty, false);
             // `getTypeOfAlias` reports a circle through a symbol that is only an alias at the target of the alias.
-            if self
-                .files()
-                .flags(sym)
-                .intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
+            } else if flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
                 && let Some(at) = self.place_of_export_value_declaration(sym)
             {
                 self.report_circularity_error(at, Arg::Sym(sym), ty, false);
@@ -210,26 +285,19 @@ impl<'p> Checker<'p> {
         self.report_circularity_error((file, start, end), Arg::Atom(name), ty, is_bare_parameter);
     }
 
-    /// `symbol.ValueDeclaration` of `export default e`, `export = e`, `module.exports = e` and `exports.a = e`. None of them has a
-    /// name, so an error starts where the declaration starts.
+    /// The error range of `symbol.ValueDeclaration` for `export default e`, `export = e`, `module.exports = e`, `exports.a = e`, and for
+    /// the CommonJS variables `exports` and `module`, whose declaration is the source file (`declareCommonJSVariable`).
     fn place_of_export_value_declaration(&self, sym: Sym) -> Option<(FileId, u32, u32)> {
-        let (file, symbol) = (sym.file, self.files().symbol(sym));
-        match symbol.decls.first() {
-            Some(&Decl::ExportExpr(stmt)) => Some((
-                file,
-                self.hir(file)[stmt].start,
-                self.end_of_stmt(file, stmt),
-            )),
-            Some(&(Decl::ModuleExports(_) | Decl::ExportsProperty(_))) => {
-                let assignment = self.commonjs_value_declaration(symbol)?;
-                Some((
-                    file,
-                    self.start_inside_parentheses(file, assignment),
-                    self.end_inside_parentheses(file, assignment),
-                ))
-            }
-            _ => None,
-        }
+        let (file, declaration) = self.files().value_declaration(sym)?;
+        let is_export = matches!(
+            declaration,
+            Decl::ExportExpr(_)
+                | Decl::ModuleExports(_)
+                | Decl::ExportsProperty(_)
+                | Decl::CommonJsVariable
+        );
+        let (start, end) = self.error_range_of_declaration(file, declaration)?;
+        is_export.then_some((file, start, end))
     }
 
     /// The type of `sym` when the resolution of its type depends on itself. `resolved`: what it came to, if `popTypeResolution` found
@@ -240,12 +308,20 @@ impl<'p> Checker<'p> {
         if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE) {
             return resolved.unwrap_or(TypeId::ERROR);
         }
+        // `getTypeOfAccessors`: `errorType` where `pushTypeResolution` finds the circle, `anyType` where `popTypeResolution` does.
+        if flags.intersects(SymFlags::ACCESSOR) {
+            return resolved.map_or(TypeId::ERROR, |_| TypeId::ANY);
+        }
         // `symbol.ValueDeclaration.Type()`
         for (file, decl) in declarations_of(self.files(), sym) {
             let hir = self.hir(file);
             let annotation = match decl {
                 Decl::Var(pat) | Decl::Param(pat) => self.type_annotation_of_pat(file, pat),
+                Decl::Member(m) => hir[m].ty,
                 Decl::ExportExpr(stmt) => hir.jsdoc_type(JsDocTypeOwner::Export(stmt)),
+                Decl::Expando(e) | Decl::ThisProperty(e) => {
+                    hir.jsdoc_type(JsDocTypeOwner::Assign(e))
+                }
                 Decl::ModuleExports(_) | Decl::ExportsProperty(_) => {
                     match self.commonjs_value_declaration(self.files().symbol(sym)) {
                         Some(assignment) => hir.jsdoc_type(JsDocTypeOwner::Assign(assignment)),
@@ -390,8 +466,7 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        // `declareClassMember`, `bindClassLikeDeclaration`: the static members of a class and its `prototype` are among its exports, each
-        // one symbol with what a namespace that is merged with the class exports under the name.
+        // `bindClassLikeDeclaration`: the `prototype` of a class is among its exports.
         let name = self.files().symbol(sym).name;
         if flags.intersects(SymFlags::CLASS_MEMBER)
             && let Some(class) = self.files().parent_of_symbol(sym)
@@ -413,9 +488,14 @@ impl<'p> Checker<'p> {
     /// `getTypeOfVariableOrParameterOrPropertyWorker`, `case KindBinaryExpression, KindCallExpression`. `None`: no assignment declares `sym`.
     fn type_of_assignment_declarations(&mut self, sym: Sym) -> Option<TypeId> {
         let (mut expandos, mut exports) = (Vec::new(), Vec::new());
-        for (file, decl) in declarations_of(self.files(), sym) {
+        // Every class, function and enum comes here: late binding adds only to what assignments declare.
+        let declarations = match self.files().flags(sym).contains(SymFlags::ASSIGNMENT) {
+            true => self.declarations_of_property(sym),
+            false => self.files().decls_of(sym),
+        };
+        for &(file, decl) in declarations.iter() {
             match decl {
-                Decl::Expando(e) if file == sym.file => expandos.push(e),
+                Decl::Expando(e) | Decl::ThisProperty(e) if file == sym.file => expandos.push(e),
                 Decl::ModuleExports(e) | Decl::ExportsProperty(e) if file == sym.file => {
                     exports.push(e)
                 }
@@ -426,7 +506,10 @@ impl<'p> Checker<'p> {
         // `SetValueDeclaration`: an assignment gives way to any other declaration of a value.
         let others = SymFlags::VALUE.difference(SymFlags::PROPERTY);
         if !expandos.is_empty() && !self.files().flags(sym).intersects(others) {
-            return Some(self.type_of_assigned_prop(sym.file, name, &expandos));
+            let first = expandos[0];
+            return Some(
+                self.get_widened_type_for_assignment_declaration(sym.file, name, &expandos, first),
+            );
         }
         let value_declaration = self
             .commonjs_value_declaration(self.files().symbol(sym))
@@ -3206,7 +3289,6 @@ impl<'p> Checker<'p> {
                         | Query::Symbol(_)
                         | Query::Return(..)
                         | Query::ReturnAtFirstLook(..)
-                        | Query::Member(..)
                 )
             })
     }

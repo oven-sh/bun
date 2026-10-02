@@ -10,6 +10,7 @@ path = "lib.rs"
 bun_core.workspace = true
 bun_paths.workspace = true
 bun_semver.workspace = true
+bun_threading.workspace = true
 bstr.workspace = true
 smallvec.workspace = true
 bitflags.workspace = true

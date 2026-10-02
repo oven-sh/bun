@@ -30,7 +30,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_computed: bool,
         key: &mut Expr,
         key_range: bun_ast::Range,
-        type_parameters: Option<bun_ast::ts_syntax::Span<bun_ast::ts_syntax::TypeParam>>,
+        type_parameters: Option<crate::sema::ts_syntax::TypeParams>,
     ) -> crate::CrateResult<Option<G::Property>> {
         let p = self;
         if p.lexer.token == T::TOpenParen && kind != PropertyKind::Get && kind != PropertyKind::Set

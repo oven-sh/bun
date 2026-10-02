@@ -1,7 +1,7 @@
 //! Import and export declarations: from the nodes that `parse_declarations` kept to `bun_sema::hir`.
 
 use super::lower::Lower;
-use bun_ast::ts_syntax as ts;
+use crate::sema::ts_syntax as ts;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
@@ -102,7 +102,7 @@ impl Lower<'_, '_> {
                 } else {
                     self.b.atom(&imported.text)
                 },
-                local: self.b.atom(&name.text),
+                local: self.b.identifier(&name.text, pos(name.loc)),
                 pos: pos(name.loc),
                 type_only: is_type_only,
                 imported_pos: pos(imported.loc),
@@ -112,13 +112,15 @@ impl Lower<'_, '_> {
         }
         let named = self.b.file.add_import_specs(&named);
         let (default, default_pos) = match import.default_name {
-            Some(name) => (self.b.atom(&name.text), pos(name.loc)),
+            Some(name) => (self.b.identifier(&name.text, pos(name.loc)), pos(name.loc)),
             None => (Atom::NONE, 0),
         };
         let (namespace, namespace_pos, namespace_start) = match import.namespace {
-            Some(ts::NamespaceImport { star_loc, name }) => {
-                (self.b.atom(&name.text), pos(name.loc), pos(star_loc))
-            }
+            Some(ts::NamespaceImport { star_loc, name }) => (
+                self.b.identifier(&name.text, pos(name.loc)),
+                pos(name.loc),
+                pos(star_loc),
+            ),
             None => (Atom::NONE, 0, 0),
         };
         let declaration = self.b.file.add_import(Import {
@@ -152,13 +154,7 @@ impl Lower<'_, '_> {
         }
         let mut expression = ExprId::NONE;
         let target = match import.reference {
-            ts::ModuleReference::EntityName(names) => {
-                let names: Vec<(Atom, u32)> = self.b.ts[names]
-                    .iter()
-                    .map(|name| (self.b.atom(&name.text), pos(name.loc)))
-                    .collect();
-                ImportEqualsTarget::Entity(self.b.file.entity_name(names.into_iter()))
-            }
+            ts::ModuleReference::EntityName(names) => ImportEqualsTarget::Entity(names),
             ts::ModuleReference::External {
                 text: Some(text),
                 loc,
@@ -189,7 +185,7 @@ impl Lower<'_, '_> {
             }
         };
         let declaration = self.b.file.add_import_equals(ImportEquals {
-            name: self.b.atom(&import.name.text),
+            name: self.b.identifier(&import.name.text, pos(import.name.loc)),
             name_pos: pos(import.name.loc),
             target,
             expression,
@@ -225,7 +221,9 @@ impl Lower<'_, '_> {
             } => {
                 let kind = StmtKind::ExportStar {
                     spec,
-                    alias: alias.map_or(Atom::NONE, |alias| self.b.atom(&alias.text)),
+                    alias: alias.map_or(Atom::NONE, |alias| {
+                        self.b.identifier(&alias.text, pos(alias.loc))
+                    }),
                     type_only: export.is_type_only,
                     mode,
                     star_pos: pos(star_loc),
@@ -274,7 +272,7 @@ impl Lower<'_, '_> {
 
     /// `NamespaceExportDeclaration`, which makes no module of the file.
     pub(super) fn namespace_export_declaration(&mut self, name: ts::Name, at: u32) -> StmtId {
-        let name = self.b.atom(&name.text);
+        let name = self.b.identifier(&name.text, pos(name.loc));
         self.b.file.stmt(StmtKind::ExportAsNamespace(name), at)
     }
 }

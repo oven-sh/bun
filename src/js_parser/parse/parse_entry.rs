@@ -479,6 +479,7 @@ impl<'a> Parser<'a> {
         mut self,
         atoms: &'a bun_sema::atom::Interner,
         is_declaration_file: bool,
+        is_json: bool,
         await_is_a_name: bool,
         parsing: &core::cell::Cell<core::time::Duration>,
     ) -> (bun_sema::hir::File, bool) {
@@ -521,7 +522,8 @@ impl<'a> Parser<'a> {
         let mut __p = scopeguard::guard(slot, |mut s| unsafe { s.assume_init_drop() });
         // SAFETY: as above.
         let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
-        let mut type_syntax = Box::new(crate::sema::TypeSyntax::new());
+        let builder = crate::sema::builder::Builder::new(p.lexer.is_javascript_file(), atoms);
+        let mut type_syntax = Box::new(crate::sema::TypeSyntax::new(builder));
         type_syntax.keep_types |= is_declaration_file;
         type_syntax.has_jsdoc = p.lexer.is_javascript_file();
         p.type_syntax = Some(type_syntax);
@@ -545,7 +547,16 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
         let began = std::time::Instant::now();
-        let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts);
+        let stmts = if is_json {
+            // `bindSourceFileIfExternalModule`: a JSON file is `export =` what it says.
+            p.parse_json_text().map(|value| {
+                let mut stmts = crate::parser::StmtList::new_in(p.arena);
+                stmts.push(p.s(S::ExportEquals { value }, bun_ast::Loc { start: 0 }));
+                stmts
+            })
+        } else {
+            p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)
+        };
         parsing.set(parsing.get() + began.elapsed());
         let awaited = p.top_level_await_keyword.len > 0;
         let Ok(stmts) = stmts else {
@@ -599,7 +610,7 @@ impl<'a> Parser<'a> {
         }
         let syntax = *p.type_syntax.take().unwrap();
         let mut file =
-            crate::sema::lower::Lower::run(p, syntax, stmts.as_slice(), atoms, is_declaration_file);
+            crate::sema::lower::Lower::run(p, syntax, stmts.as_slice(), is_declaration_file);
         file.comment_directives = comment_directives.into();
         crate::sema::comments::process_pragmas_into_fields(
             &p.lexer,

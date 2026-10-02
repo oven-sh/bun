@@ -658,7 +658,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if is_written && p.current_scope().kind == ScopeKind::Entry {
                     p.ts_checker_error(p.lexer.range_from(at), 1141);
                 }
-                external = Some(bun_ast::ts_syntax::ModuleReference::External {
+                external = Some(crate::sema::ts_syntax::ModuleReference::External {
                     text: None,
                     loc: at,
                     expression: is_written.then_some(specifier),

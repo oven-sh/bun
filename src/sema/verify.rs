@@ -6,8 +6,7 @@
 use crate::config::{
     Project, resolve_config_file_name_of_project_reference, starts_with_config_dir_template,
 };
-use crate::json::Json;
-use crate::json_places::{self, Value};
+use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{JsxEmit, ModuleKind, Options, path_is_relative};
 use crate::util::FxHashSet;
 use bstr::ByteSlice;
@@ -116,57 +115,46 @@ impl Problem {
         self
     }
 
-    /// From where to where it is in the configuration file that reads `text`. `None`: it is about no place in it.
-    pub fn span_in(&self, text: &[u8]) -> Option<(u32, u32)> {
+    /// From where to where it is in the configuration file. `None`: it is about no place in it.
+    pub fn span_in(&self, file: &TsConfigSourceFile) -> Option<(u32, u32)> {
         if self.at == Place::Nowhere {
             return None;
         }
-        let root = json_places::parse(text)?;
-        let of = |value: &Value| (value.from, value.to);
+        let root = file.root?;
+        let value_of =
+            |object, name: &[u8]| Some(file.initializer(file.property(object, name, b"")?));
         if let Place::Reference(index) = self.at {
-            return root
-                .member(b"references", b"")?
-                .value
-                .element(index)
-                .map(of);
+            let list = value_of(root, b"references")?;
+            return file.elements(list).nth(index).map(|e| file.span(e));
         }
         if let Place::Top(name) | Place::TopElement(name, _) = &self.at {
-            let list = &root.member(name, b"")?.value;
-            let (Place::TopElement(_, said), json_places::Written::Array(elements)) =
-                (&self.at, &list.what)
-            else {
-                return Some(of(list));
+            let list = value_of(root, name)?;
+            let Place::TopElement(_, said) = &self.at else {
+                return Some(file.span(list));
             };
-            let is_it = |e: &&Value| {
-                text.get(e.from as usize + 1..(e.to as usize).saturating_sub(1)) == Some(said)
-            };
-            return elements.iter().find(is_it).map(of);
+            let is_it = |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(said);
+            return file.elements(list).find(is_it).map(|e| file.span(e));
         }
-        let options = root.member(b"compilerOptions", b"")?;
-        let paths = || options.value.member(b"paths", b"");
+        let options = file.property(root, b"compilerOptions", b"")?;
+        let written = file.initializer(options);
+        let in_paths = |key: &[u8]| file.property(value_of(written, b"paths")?, key, b"");
         let found = match &self.at {
             Place::Nowhere
             | Place::CompilerOptions
             | Place::Top(_)
             | Place::TopElement(..)
             | Place::Reference(_) => None,
-            Place::Key(name, other) => options
-                .value
-                .member(name, other)
-                .map(|m| (m.name_from, m.name_to)),
-            Place::Value(name) => options.value.member(name, b"").map(|m| of(&m.value)),
-            Place::PathsKey(key) => paths()
-                .and_then(|p| p.value.member(key, b""))
-                .map(|m| (m.name_from, m.name_to)),
-            Place::PathsValue(key) => paths()
-                .and_then(|p| p.value.member(key, b""))
-                .map(|m| of(&m.value)),
-            Place::PathsElement(key, index) => paths()
-                .and_then(|p| p.value.member(key, b""))
-                .and_then(|m| m.value.element(*index))
-                .map(of),
+            Place::Key(name, other) => file
+                .property(written, name, other)
+                .map(|p| file.name_span(p)),
+            Place::Value(name) => value_of(written, name).map(|e| file.span(e)),
+            Place::PathsKey(key) => in_paths(key).map(|p| file.name_span(p)),
+            Place::PathsValue(key) => in_paths(key).map(|p| file.span(file.initializer(p))),
+            Place::PathsElement(key, index) => in_paths(key)
+                .and_then(|p| file.elements(file.initializer(p)).nth(*index))
+                .map(|e| file.span(e)),
         };
-        Some(found.unwrap_or((options.name_from, options.name_to)))
+        Some(found.unwrap_or_else(|| file.name_span(options)))
     }
 }
 

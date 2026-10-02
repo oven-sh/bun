@@ -91,8 +91,7 @@ impl<'p> Printer<'_, 'p> {
     ) -> Node {
         // `GetDeclarationOfKind`
         let declaration = match prop.source {
-            PropSource::Members(ref list) => list
-                .iter()
+            PropSource::Symbol(symbol) => (self.c.members_of_symbol(symbol).iter())
                 .find(|&&(file, member)| self.c.hir(file)[member].kind == kind)
                 .map(|&(file, member)| (file, SyntaxNode::Member(member))),
             PropSource::Literal(file, p) => {
@@ -183,11 +182,21 @@ impl<'p> Printer<'_, 'p> {
         depth: u32,
     ) -> Option<(FileId, SyntaxNode)> {
         match &prop.source {
-            PropSource::Members(list) => {
-                let &(file, member) = list.first()?;
-                Some((file, SyntaxNode::Member(member)))
-            }
-            PropSource::Parameter(file, parameter) => Some((*file, SyntaxNode::Param(*parameter))),
+            PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol)? {
+                (file, Decl::Member(member)) => Some((file, SyntaxNode::Member(member))),
+                (file, Decl::ParameterProperty(parameter)) => {
+                    Some((file, SyntaxNode::Param(parameter)))
+                }
+                // Of assignments the first that is annotated says what the type is.
+                (file, Decl::Expando(first) | Decl::ThisProperty(first)) => {
+                    let (hir, list) = (self.c.hir(file), self.c.assignments_of_symbol(*symbol));
+                    let annotated = list
+                        .iter()
+                        .find(|&&e| hir.jsdoc_type(JsDocTypeOwner::Assign(e)).is_some());
+                    Some((file, SyntaxNode::Expr(*annotated.unwrap_or(&first))))
+                }
+                _ => None,
+            },
             PropSource::Literal(file, written) => {
                 // A JSX attribute has no inferred type.
                 let owner = self.c.bound(*file).prop_owner[written.idx()];
@@ -197,15 +206,6 @@ impl<'p> Printer<'_, 'p> {
                 let declarations = self.c.bound(*file).declarations_of_literal_member(*written);
                 let first = declarations.first().copied().unwrap_or(*written);
                 is_in_object_literal.then_some((*file, SyntaxNode::Prop(first)))
-            }
-            // Of assignments the first that is annotated says what the type is.
-            PropSource::Assigned(file, list) => {
-                let hir = self.c.hir(*file);
-                let annotated = list
-                    .iter()
-                    .find(|&&e| hir.jsdoc_type(JsDocTypeOwner::Assign(e)).is_some());
-                let &declaration = annotated.or_else(|| list.first())?;
-                Some((*file, SyntaxNode::Expr(declaration)))
             }
             PropSource::Mapped(..) if depth < 8 => {
                 let first = prop.declared_by_modifiers_property().first()?;
@@ -938,22 +938,7 @@ impl<'p> Printer<'_, 'p> {
         let pos = hir[node].pos;
         Some(match hir[node].kind {
             TypeNodeKind::Error | TypeNodeKind::Heritage(_) => return None,
-            TypeNodeKind::Keyword(keyword) => Node::simple(match keyword {
-                Keyword::Any => &b"any"[..],
-                Keyword::Unknown => b"unknown",
-                Keyword::Never => b"never",
-                Keyword::Void => b"void",
-                Keyword::Undefined => b"undefined",
-                Keyword::Null => b"null",
-                Keyword::String => b"string",
-                Keyword::Number => b"number",
-                Keyword::Boolean => b"boolean",
-                Keyword::BigInt => b"bigint",
-                Keyword::Symbol => b"symbol",
-                Keyword::Object => b"object",
-                Keyword::This => b"this",
-                Keyword::Intrinsic => b"intrinsic",
-            }),
+            TypeNodeKind::Keyword(keyword) => Node::simple(keyword.text()),
             TypeNodeKind::Ref { .. } => return self.try_visit_type_reference(file, node),
             TypeNodeKind::Typeof { .. } => return self.try_visit_type_query(file, node),
             TypeNodeKind::IndexedAccess { .. } => return self.try_visit_indexed_access(file, node),

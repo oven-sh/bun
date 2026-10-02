@@ -116,7 +116,6 @@ impl Checker<'_> {
         };
         self.xm_statements(&cx, hir.body, top);
         self.xm_statements_out_of_place(&cx, top);
-        self.xm_statements_in_blocks(&cx);
         self.xm_static_blocks(&cx);
         self.xm_import_calls_and_types(&cx);
         // A circle goes through a file by an alias others can get at, or by one that stands for another name of the file.
@@ -592,17 +591,53 @@ impl Checker<'_> {
         !self.resolve_external_module(cx.file, written, site)
     }
 
-    /// `checkGrammarModuleElementContext` leaves the imports and exports alone that are directly in neither the file nor a namespace.
-    /// Their module is looked for all the same for a name they declare (`resolveAlias`), or for the exports of the file
-    /// (`getExportsOfModuleWorker`).
+    /// `checkGrammarModuleElementContext` leaves the imports, exports and module declarations alone that are directly in neither the
+    /// file nor a module declaration. The module of an import or an export is looked for all the same for a name it declares
+    /// (`resolveAlias`), or for the exports of the file (`getExportsOfModuleWorker`). 1211 for a class declaration.
     fn xm_statements_out_of_place(&mut self, cx: &Cx<'_>, top: Around) {
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
+        let says_grammar_errors = cx.grammar && !cx.text.is_empty();
         for (i, statement) in hir.stmts.iter().enumerate() {
-            if matches!(
-                bound.stmt_parent[i],
-                Parent::None | Parent::File | Parent::Module(_)
-            ) {
+            if matches!(bound.stmt_parent[i], Parent::None) {
                 continue;
+            }
+            // `checkClassDeclaration`: only `export default class` can do without a name.
+            if says_grammar_errors
+                && let StmtKind::Class(c) = statement.kind
+                && hir[c].name.is_none()
+                && !hir[c].flags.contains(Flags::DEFAULT)
+                // `default` without `export` (1029) is a modifier all the same.
+                && hir.find_modifier(statement.modifiers, Flags::DEFAULT).is_none()
+            {
+                let start = hir[c].start;
+                self.error_at((cx.file, start, 0), 1211, &[]);
+            }
+            if matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_)) {
+                continue;
+            }
+            let code = match statement.kind {
+                StmtKind::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)) => 1235,
+                StmtKind::Module(_) => 1234,
+                StmtKind::Import(_) | StmtKind::ImportEquals(_) => {
+                    if cx.is_js {
+                        1473
+                    } else {
+                        1232
+                    }
+                }
+                StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
+                    if cx.is_js {
+                        1474
+                    } else {
+                        1233
+                    }
+                }
+                StmtKind::ExportAssign(_) => 1231,
+                StmtKind::ExportDefault(_) => 1258,
+                _ => continue,
+            };
+            if says_grammar_errors {
+                self.error_at((cx.file, statement.start, 0), code, &[]);
             }
             let s = StmtId(i as u32);
             match statement.kind {
@@ -1094,8 +1129,16 @@ impl Checker<'_> {
             self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), code, &[]);
             return;
         }
+        // `node.Flags&NodeFlagsAmbient`: what follows `declare` is parsed in an ambient context.
+        let is_ambient = around.is_ambient
+            || hir
+                .find_modifier(hir[s].modifiers, Flags::AMBIENT)
+                .is_some();
+        if is_ambient && cx.grammar && e.is_some() && !is_entity_name_expression(hir, e) {
+            self.error_at(self.place_of_written_expr(cx.file, e), 2714, &[]);
+        }
         // The rest is about what a compiler that sees one file at a time makes of it.
-        if around.is_ambient || !self.p.files.options.isolated_modules {
+        if is_ambient || !self.p.files.options.isolated_modules {
             return;
         }
         // `isIllegalExportDefaultInCJS`: nothing else is said then.
@@ -1344,22 +1387,9 @@ impl Checker<'_> {
         }))
     }
 
-    /// `checkGrammarImportCallExpression`, `checkImportType`, `getTypeFromImportTypeNode`
+    /// `checkImportType`, `getTypeFromImportTypeNode`
     fn xm_import_calls_and_types(&mut self, cx: &Cx<'_>) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        if cx.grammar && cx.is_verbatim && self.p.files.options.module == ModuleKind::CommonJs {
-            let index = self.exprs_by_kind(cx.file);
-            for &e in index.of(ExprTag::ImportCall) {
-                if !bound.is_unchecked(e.idx()) {
-                    let start = hir[e].pos;
-                    self.error_at(
-                        (cx.file, start, self.end_inside_parentheses(cx.file, e)),
-                        cx.esm_syntax_code,
-                        &[],
-                    );
-                }
-            }
-        }
         for (i, node) in hir.types.iter().enumerate() {
             let TypeNodeKind::Import {
                 spec,
@@ -1413,71 +1443,6 @@ impl Checker<'_> {
     }
 
     // ───────────────────────────── what is written where it cannot be ─────────────────────────────
-
-    /// `checkGrammarModuleElementContext`, of the statements that are neither at the top of the file nor at the top of a namespace. 1211 for a class declaration without a name, wherever it is.
-    fn xm_statements_in_blocks(&mut self, cx: &Cx<'_>) {
-        if !cx.grammar || cx.text.is_empty() {
-            return;
-        }
-        let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
-        for (i, s) in hir.stmts.iter().enumerate() {
-            // Only declarations, imports and exports are looked at.
-            if !matches!(
-                s.kind,
-                StmtKind::Var(_)
-                    | StmtKind::Fn(_)
-                    | StmtKind::Class(_)
-                    | StmtKind::Interface(_)
-                    | StmtKind::TypeAlias(_)
-                    | StmtKind::Enum(_)
-                    | StmtKind::Module(_)
-                    | StmtKind::Import(_)
-                    | StmtKind::ImportEquals(_)
-                    | StmtKind::ExportNamed(_)
-                    | StmtKind::ExportStar { .. }
-                    | StmtKind::ExportAssign(_)
-                    | StmtKind::ExportDefault(_)
-            ) || matches!(bound.stmt_parent[i], Parent::None)
-            {
-                continue;
-            }
-            // `checkClassDeclaration`: only `export default class` can do without a name.
-            if let StmtKind::Class(c) = s.kind
-                && hir[c].name.is_none()
-                && !hir[c].flags.contains(Flags::DEFAULT)
-                // `default` without `export` (1029) is a modifier all the same.
-                && hir.find_modifier(s.modifiers, Flags::DEFAULT).is_none()
-            {
-                let start = hir[c].start;
-                self.error_at((cx.file, start, 0), 1211, &[]);
-            }
-            if matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_)) {
-                continue;
-            }
-            let code = match s.kind {
-                StmtKind::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)) => 1235,
-                StmtKind::Module(_) => 1234,
-                StmtKind::Import(_) | StmtKind::ImportEquals(_) => {
-                    if cx.is_js {
-                        1473
-                    } else {
-                        1232
-                    }
-                }
-                StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
-                    if cx.is_js {
-                        1474
-                    } else {
-                        1233
-                    }
-                }
-                StmtKind::ExportAssign(_) => 1231,
-                StmtKind::ExportDefault(_) => 1258,
-                _ => continue,
-            };
-            self.error_at((cx.file, s.start, 0), code, &[]);
-        }
-    }
 
     /// `reportObviousModifierErrors`, of `static { }`: nothing goes before it.
     fn xm_static_blocks(&mut self, cx: &Cx<'_>) {

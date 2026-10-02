@@ -8,13 +8,12 @@
 
 use super::errors::is_close;
 use super::*;
-use crate::bind::{Decl, Parent, PatParent, ScopeId};
+use crate::bind::{Decl, PatParent, ScopeId};
 
 impl Checker<'_> {
     pub(super) fn check_names_and_exports(&mut self, file: FileId) {
         self.check_computed_names(file);
         self.check_exports(file);
-        self.check_ambient_export_assignments(file);
         self.check_type_only_names_used_as_values(file);
     }
 
@@ -246,29 +245,6 @@ impl Checker<'_> {
                     file,
                     self.files().sym(file, bound.module_symbol[m.idx()]),
                 );
-            }
-        }
-    }
-
-    /// `checkExportAssignment`: 2714, what `export =` or `export default` names in an ambient context is an entity name.
-    fn check_ambient_export_assignments(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_declaration_file = hir.kind == FileKind::Declaration;
-        for (i, s) in hir.stmts.iter().enumerate() {
-            let (StmtKind::ExportAssign(e) | StmtKind::ExportDefault(e)) = s.kind else {
-                continue;
-            };
-            // In a block or in a namespace it is out of place, and no more is said of it.
-            let is_ambient = match bound.stmt_parent[i] {
-                Parent::File => is_declaration_file,
-                Parent::Module(m) if !matches!(hir[m].name, ModuleName::Ident(_)) => {
-                    is_declaration_file || hir[m].flags.contains(Flags::AMBIENT)
-                }
-                _ => continue,
-            };
-            if is_ambient && e.is_some() && !is_entity_name_expression(self.hir(file), e) {
-                let start = self.start_of(file, e);
-                self.error_at((file, start, self.end_of_expr(file, e)), 2714, &[]);
             }
         }
     }

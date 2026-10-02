@@ -450,7 +450,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.arena);
         let mut had_type_only = false;
-        let mut kept: smallvec::SmallVec<[bun_ast::ts_syntax::Specifier; 8]> =
+        let mut kept: smallvec::SmallVec<[crate::sema::ts_syntax::Specifier; 8]> =
             smallvec::SmallVec::new();
         // `parseBracketedList`: without a "{" there is no list, and no "}" is expected.
         if p.lexer.token != T::TOpenBrace {
@@ -468,7 +468,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             let start = p.lexer.loc();
             let specifier = p.parse_specifier_tolerant(is_import)?;
-            kept.push(bun_ast::ts_syntax::Specifier {
+            kept.push(crate::sema::ts_syntax::Specifier {
                 loc: start,
                 is_type_only: specifier.is_type_only,
                 property_name: specifier.property_name.map(ModuleExportName::syntax),
@@ -816,8 +816,8 @@ struct ModuleExportName<'a> {
 }
 
 impl ModuleExportName<'_> {
-    fn syntax(self) -> bun_ast::ts_syntax::ModuleExportName {
-        bun_ast::ts_syntax::ModuleExportName {
+    fn syntax(self) -> crate::sema::ts_syntax::ModuleExportName {
+        crate::sema::ts_syntax::ModuleExportName {
             text: bun_ast::StoreStr::new(self.text),
             loc: self.range.loc,
             end: self.range.end(),

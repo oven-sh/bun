@@ -157,7 +157,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `lookAhead`
     #[cold]
     #[inline(never)]
-    fn look_ahead(&mut self, scan: impl FnOnce(&mut Self) -> bool) -> bool {
+    pub(crate) fn look_ahead(&mut self, scan: impl FnOnce(&mut Self) -> bool) -> bool {
         let here = self.lexer.snapshot();
         self.lexer.is_log_disabled = true;
         let found = scan(self);
@@ -166,7 +166,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `nextToken` during lookahead. Returns false on a lexer error, which ends the lookahead.
-    fn step(&mut self) -> bool {
+    pub(crate) fn step(&mut self) -> bool {
         self.lexer.next().is_ok()
     }
 

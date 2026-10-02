@@ -199,7 +199,7 @@ fn main() {
             type AfterFile<'a> =
                 &'a (dyn Fn(&mut bun_sema::check::Checker<'_>, bun_sema::program::FileId) + Sync);
             let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
-            let report = bun_sema_driver::check(&bun_sema_driver::Request {
+            let request = bun_sema_driver::Request {
                 compiler_options: &[],
                 cwd: cwd.as_bytes(),
                 project: project.as_deref().map(str::as_bytes),
@@ -216,7 +216,6 @@ fn main() {
                     .iter()
                     .find_map(|a| a.strip_prefix("--only="))
                     .map(str::as_bytes),
-                ends_the_process: true,
                 keeps_everything: args.iter().any(|a| a == "--keep"),
                 stops_where_tsc_does: !args.iter().any(|a| a == "--every-stage"),
                 says_it_as_typescript_does: false,
@@ -226,69 +225,73 @@ fn main() {
                     .then_some(&list_loaded as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 checked: None,
                 after_file,
-            });
-            let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
-            let style = Style {
-                layout: if has("--plain") {
-                    Layout::Plain
-                } else if has("--agent") {
-                    Layout::Agent
-                } else {
-                    Layout::Pretty
-                },
-                color: !has("--no-color") && !has("--plain") && !has("--agent"),
-                cwd: &cwd,
-                github_annotations: has("--github"),
-                width: args
-                    .iter()
-                    .find_map(|a| a.strip_prefix("--width="))
-                    .and_then(|w| w.parse().ok())
-                    .unwrap_or_else(bun_sema_standalone::terminal_width),
-                show_all: has("--all"),
             };
-            if shows_progress {
-                let _ = std::io::stderr().write_all(bun_sema_driver::format::ERASE_LINE);
-            }
-            let mut out = Vec::new();
-            write_diagnostics(&mut out, &report, &style);
-            let _ = std::io::stdout().write_all(&out);
-            let mut error_types = error_types.into_inner().unwrap();
-            error_types.retain(|at| !report.diagnostics.iter().any(|d| d.path == at.0.as_bytes()));
-            error_types.sort();
-            for (path, line, column, kind) in &error_types {
-                println!("{path}({line},{column}): ERROR-TYPE {kind}");
-            }
-            let mut summary = Vec::new();
-            write_summary(&mut summary, &report, &style);
-            let _ = std::io::stderr().write_all(&summary);
-            if has("--timing") {
-                eprintln!(
-                    "loaded {} files in {:.3}s, checked {} in {:.3}s, peak {:.2} GB",
-                    report.files_loaded,
-                    report.load_time.as_secs_f64(),
-                    report.files_checked,
-                    report.check_time.as_secs_f64(),
-                    bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
-                );
-                // Discover, link and merge are the wall time of one thread. The others are summed over all threads.
-                let phases = bun_sema::resolve::Phase::ALL.iter().zip(report.load_phases);
-                let phases: Vec<String> = phases
-                    .map(|(phase, time)| format!("{phase:?} {:.3}", time.as_secs_f64()))
-                    .collect();
-                eprintln!("load: {}", phases.join(", ").to_lowercase());
-                let (instructions, cycles) = bun_sema_standalone::instructions_and_cycles();
-                eprintln!(
-                    "instructions {:.2} G, cycles {:.2} G",
-                    instructions as f64 / 1e9,
-                    cycles as f64 / 1e9
-                );
-                let loading = instructions_of_loading.load(std::sync::atomic::Ordering::Relaxed);
-                eprintln!(
-                    "instructions of checking {:.2} G",
-                    instructions.saturating_sub(loading) as f64 / 1e9
-                );
-            }
-            std::process::exit(i32::from(report.error_count() > 0));
+            bun_sema_driver::check_then(&request, |report| {
+                let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
+                let style = Style {
+                    layout: if has("--plain") {
+                        Layout::Plain
+                    } else if has("--agent") {
+                        Layout::Agent
+                    } else {
+                        Layout::Pretty
+                    },
+                    color: !has("--no-color") && !has("--plain") && !has("--agent"),
+                    cwd: &cwd,
+                    github_annotations: has("--github"),
+                    width: args
+                        .iter()
+                        .find_map(|a| a.strip_prefix("--width="))
+                        .and_then(|w| w.parse().ok())
+                        .unwrap_or_else(bun_sema_standalone::terminal_width),
+                    show_all: has("--all"),
+                };
+                if shows_progress {
+                    let _ = std::io::stderr().write_all(bun_sema_driver::format::ERASE_LINE);
+                }
+                let mut out = Vec::new();
+                write_diagnostics(&mut out, &report, &style);
+                let _ = std::io::stdout().write_all(&out);
+                let mut error_types = std::mem::take(&mut *error_types.lock().unwrap());
+                error_types
+                    .retain(|at| !report.diagnostics.iter().any(|d| d.path == at.0.as_bytes()));
+                error_types.sort();
+                for (path, line, column, kind) in &error_types {
+                    println!("{path}({line},{column}): ERROR-TYPE {kind}");
+                }
+                let mut summary = Vec::new();
+                write_summary(&mut summary, &report, &style);
+                let _ = std::io::stderr().write_all(&summary);
+                if has("--timing") {
+                    eprintln!(
+                        "loaded {} files in {:.3}s, checked {} in {:.3}s, peak {:.2} GB",
+                        report.files_loaded,
+                        report.load_time.as_secs_f64(),
+                        report.files_checked,
+                        report.check_time.as_secs_f64(),
+                        bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
+                    );
+                    // Discover, link and merge are the wall time of one thread. The others are summed over all threads.
+                    let phases = bun_sema::resolve::Phase::ALL.iter().zip(report.load_phases);
+                    let phases: Vec<String> = phases
+                        .map(|(phase, time)| format!("{phase:?} {:.3}", time.as_secs_f64()))
+                        .collect();
+                    eprintln!("load: {}", phases.join(", ").to_lowercase());
+                    let (instructions, cycles) = bun_sema_standalone::instructions_and_cycles();
+                    eprintln!(
+                        "instructions {:.2} G, cycles {:.2} G",
+                        instructions as f64 / 1e9,
+                        cycles as f64 / 1e9
+                    );
+                    let loading =
+                        instructions_of_loading.load(std::sync::atomic::Ordering::Relaxed);
+                    eprintln!(
+                        "instructions of checking {:.2} G",
+                        instructions.saturating_sub(loading) as f64 / 1e9
+                    );
+                }
+                std::process::exit(i32::from(report.error_count() > 0));
+            })
         }
         Some("baselines") => {
             // baselines --lib=<dir> --testlib=<dir> [--only=substring] [--out=dir] [--report=file] [--threads=n]

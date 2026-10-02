@@ -453,55 +453,18 @@ bitflags::bitflags! {
         /// Of an object literal type that is no longer fresh: nor is an object literal that is its type
         /// (`getRegularTypeOfObjectLiteral`, `transformTypeOfMembers`).
         const REGULAR = 2048;
+        /// `OPTIONAL`, and yet `undefined` is not added to the type of the symbol: the `?` is on a declaration after
+        /// `symbol.ValueDeclaration`, the one `isOptionalDeclaration` is asked about, or on a parameter property, whose type has it.
+        const WITHOUT_OPTIONALITY = 4096;
         /// `CheckFlags` of what `createUnionOrIntersectionProperty` makes for a union.
         const READ_PARTIAL = 1 << 13;
         const WRITE_PARTIAL = 1 << 14;
         const HAS_NON_UNIFORM_TYPE = 1 << 15;
         const HAS_LITERAL_TYPE = 1 << 16;
-    }
-}
-
-/// The members that declare a property. Mostly it is one.
-#[derive(Clone, Debug)]
-pub enum MemberList {
-    One((FileId, crate::hir::MemberId)),
-    /// Not one.
-    Many(Box<[(FileId, crate::hir::MemberId)]>),
-}
-
-impl std::ops::Deref for MemberList {
-    type Target = [(FileId, crate::hir::MemberId)];
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        match self {
-            MemberList::One(one) => std::slice::from_ref(one),
-            MemberList::Many(many) => many,
-        }
-    }
-}
-
-impl From<Vec<(FileId, crate::hir::MemberId)>> for MemberList {
-    fn from(list: Vec<(FileId, crate::hir::MemberId)>) -> MemberList {
-        if let [one] = list[..] {
-            return MemberList::One(one);
-        }
-        MemberList::Many(list.into_boxed_slice())
-    }
-}
-
-impl PartialEq for MemberList {
-    #[inline]
-    fn eq(&self, other: &MemberList) -> bool {
-        **self == **other
-    }
-}
-
-impl Eq for MemberList {}
-
-impl std::hash::Hash for MemberList {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (**self).hash(state);
+        const ABSTRACT = 1 << 17;
+        /// Without any of these a property is within reach from everywhere but through `super`
+        /// (`checkPropertyAccessibilityAtLocation`). Of accessors the one in use has the say, so they are looked at.
+        const MAY_BE_OUT_OF_REACH = Self::PRIVATE.bits() | Self::PROTECTED.bits() | Self::ABSTRACT.bits() | Self::ACCESSOR.bits();
     }
 }
 
@@ -510,17 +473,12 @@ impl std::hash::Hash for MemberList {
 pub enum PropSource {
     /// It is made up: nothing declares it.
     Type(TypeId),
-    /// Members of classes, interfaces and type literals that declare it: overloads, a getter and a setter, merged declarations.
-    Members(MemberList),
-    /// A constructor parameter with a modifier.
-    Parameter(FileId, crate::hir::ParamId),
     /// A property of an object literal.
     Literal(FileId, crate::hir::PropId),
-    /// An export of a module or a namespace, a static side of an enum.
+    /// A member of a class, an interface or a type literal, a parameter property, an export of a module or a namespace, a member of an
+    /// enum, what `f.name = value`, `this.name = value` or `Object.defineProperty(f, "name", descriptor)` declare. A late bound symbol
+    /// goes by the symbol the binder gave the first of its declarations.
     Symbol(Sym),
-    /// The assignment declarations that declare it: `f.name = value`, `this.name = value`,
-    /// `Object.defineProperty(f, "name", descriptor)`. The first one is `symbol.ValueDeclaration`.
-    Assigned(FileId, Box<[ExprId]>),
     /// Of the intersection given: the properties of that name that several of its members have. It is all of them at once.
     Intersected(TypeId, Box<[Prop]>),
     /// A property of the mapped type given (`containingType`). Its type is the template of that type instantiated with
@@ -1049,10 +1007,7 @@ fn is_prop_local(prop: &Prop, file: FileId) -> bool {
     prop.mapper.is_local()
         || match &prop.source {
             PropSource::Type(t) => t.is_local(),
-            PropSource::Members(members) => members.iter().any(|m| m.0 == file),
-            PropSource::Parameter(f, _)
-            | PropSource::Literal(f, _)
-            | PropSource::Assigned(f, _) => *f == file,
+            PropSource::Literal(f, _) => *f == file,
             PropSource::Symbol(sym) => sym.file == file,
             PropSource::Intersected(t, props)
             | PropSource::Copy(t, props, _)

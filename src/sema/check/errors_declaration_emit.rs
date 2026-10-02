@@ -1060,7 +1060,7 @@ impl<'p> Checker<'p> {
                 .iter()
                 .find(|export| export.0 == name)
                 .map(|export| export.1),
-            Table::ResolvedExports(_) | Table::Globals => files.globals.get(&name).copied(),
+            Table::ResolvedExports(_) | Table::Globals => files.globals.get(name).copied(),
         }
     }
 
@@ -1313,17 +1313,21 @@ impl<'p> Checker<'p> {
     ) -> Option<Sym> {
         // `isPropertyOrMethodDeclarationSymbol`
         let is_property_or_method_declaration = match &property.source {
-            PropSource::Members(list) => list.iter().all(|&(file, member)| {
-                let is_in_class = matches!(
-                    self.bound(file).member_owner[member.idx()],
-                    MemberOwner::Class(_)
-                );
-                match self.hir(file)[member].kind {
-                    MemberKind::Getter | MemberKind::Setter => true,
-                    MemberKind::Property | MemberKind::Method => is_in_class,
-                    _ => false,
-                }
-            }),
+            PropSource::Symbol(symbol) => {
+                let list = self.members_of_symbol(*symbol);
+                !list.is_empty()
+                    && list.iter().all(|&(file, member)| {
+                        let is_in_class = matches!(
+                            self.bound(file).member_owner[member.idx()],
+                            MemberOwner::Class(_)
+                        );
+                        match self.hir(file)[member].kind {
+                            MemberKind::Getter | MemberKind::Setter => true,
+                            MemberKind::Property | MemberKind::Method => is_in_class,
+                            _ => false,
+                        }
+                    })
+            }
             PropSource::Literal(file, written) => matches!(
                 self.hir(*file)[*written].kind,
                 PropKind::Method | PropKind::Getter | PropKind::Setter

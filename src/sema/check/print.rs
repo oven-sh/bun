@@ -1783,7 +1783,7 @@ impl<'p> Printer<'_, 'p> {
         let files = self.c.files();
         let is_module = self.c.is_external_module_symbol(symbol);
         let name = files.symbol(symbol).name;
-        let is_global = name.is_some() && files.globals.get(&name) == Some(&symbol);
+        let is_global = name.is_some() && files.globals.get(name) == Some(&symbol);
         if is_global && !is_module {
             return Some(vec![symbol]);
         }
@@ -3259,27 +3259,14 @@ impl<'p> Printer<'_, 'p> {
             Place::At(c.place_in_program_order(file, pos))
         };
         match &prop.source {
-            PropSource::Members(list) => match list.first() {
-                Some(&(file, member)) => at(&*self.c, file, self.c.hir(file)[member].name_pos),
-                None => Place::Nowhere,
-            },
-            PropSource::Parameter(file, parameter) => {
-                at(&*self.c, *file, self.c.hir(*file)[*parameter].pos)
-            }
             PropSource::Literal(file, written) => {
-                let hir = self.c.hir(*file);
-                // The nodes of a JSON file have no positions. Its properties are numbered in source order.
-                let pos = if hir.kind == FileKind::Json {
-                    written.0
-                } else {
-                    hir[*written].pos
-                };
-                at(&*self.c, *file, pos)
+                at(&*self.c, *file, self.c.hir(*file)[*written].pos)
             }
-            PropSource::Symbol(symbol) => self.place_of_symbol(*symbol),
-            PropSource::Assigned(file, list) => match list.first() {
-                Some(&first) => at(&*self.c, *file, self.c.hir(*file)[first].pos),
-                None => Place::Nowhere,
+            PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol) {
+                Some((file, Decl::Expando(first) | Decl::ThisProperty(first))) => {
+                    at(&*self.c, file, self.c.hir(file)[first].pos)
+                }
+                _ => self.place_of_symbol(*symbol),
             },
             PropSource::Intersected(_, parts)
             | PropSource::Copy(_, parts, _)
@@ -3361,7 +3348,29 @@ impl<'p> Printer<'_, 'p> {
             is_computed: false,
         };
         match &prop.source {
-            PropSource::Members(list) => {
+            PropSource::Symbol(symbol) => {
+                let list = self.c.members_of_symbol(*symbol);
+                let assignments = match list.is_empty() {
+                    true => self.c.assignments_of_symbol(*symbol),
+                    false => smallvec::SmallVec::new(),
+                };
+                if list.is_empty() && assignments.is_empty() {
+                    out.push(plain);
+                }
+                for &declaration in assignments.iter() {
+                    let hir = self.c.hir(symbol.file);
+                    let is_string = match hir[declaration].kind {
+                        ExprKind::Assign { target, .. } => match hir[target].kind {
+                            ExprKind::Index { index, .. } => {
+                                let key = self.c.type_of_expr(symbol.file, index);
+                                self.c.is_string_like(key)
+                            }
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                    out.push(WrittenName { is_string, ..plain });
+                }
                 for &(file, member) in list.iter() {
                     let hir = self.c.hir(file);
                     let member = &hir[member];
@@ -3385,23 +3394,6 @@ impl<'p> Printer<'_, 'p> {
                     out.push(name);
                 }
             }
-            PropSource::Parameter(..) | PropSource::Symbol(_) => out.push(plain),
-            PropSource::Assigned(file, list) => {
-                let hir = self.c.hir(*file);
-                for &declaration in list.iter() {
-                    let is_string = match hir[declaration].kind {
-                        ExprKind::Assign { target, .. } => match hir[target].kind {
-                            ExprKind::Index { index, .. } => {
-                                let key = self.c.type_of_expr(*file, index);
-                                self.c.is_string_like(key)
-                            }
-                            _ => false,
-                        },
-                        _ => false,
-                    };
-                    out.push(WrittenName { is_string, ..plain });
-                }
-            }
             PropSource::Intersected(_, parts)
             | PropSource::Copy(_, parts, _)
             | PropSource::ReverseMapped(_, parts)
@@ -3423,10 +3415,10 @@ impl<'p> Printer<'_, 'p> {
     /// The expression in the brackets of the first declaration of `prop`, if it is written `a` or `a.b.c`.
     fn computed_key_text(&mut self, prop: &Prop, depth: u32) -> Option<Vec<u8>> {
         let (file, key) = match &prop.source {
-            PropSource::Members(list) => {
-                let &(file, member) = list.first()?;
-                (file, self.c.hir(file)[member].key)
-            }
+            PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol)? {
+                (file, Decl::Member(member)) => (file, self.c.hir(file)[member].key),
+                _ => return None,
+            },
             PropSource::Literal(file, written) => (*file, self.c.hir(*file)[*written].key),
             PropSource::Intersected(_, parts)
             | PropSource::Copy(_, parts, _)
@@ -3550,17 +3542,6 @@ impl<'p> Printer<'_, 'p> {
     /// `getNameOfSymbolAsWritten`, of a property: its name as its first declaration writes it.
     fn name_of_property_as_written(&mut self, prop: &Prop, depth: u32) -> Vec<u8> {
         match &prop.source {
-            PropSource::Members(list) => {
-                if let Some(&(file, member)) = list.first() {
-                    let member = &self.c.hir(file)[member];
-                    return self.declaration_name_to_string(file, member.key, member.name_pos);
-                }
-            }
-            PropSource::Parameter(file, parameter) => {
-                let hir = self.c.hir(*file);
-                let pos = hir[hir[*parameter].pat].pos;
-                return self.declaration_name_to_string(*file, PropKey::Name(prop.name), pos);
-            }
             PropSource::Literal(file, property) => {
                 let written = &self.c.hir(*file)[*property];
                 let end = self.c.end_of_prop_name(*file, *property);
@@ -3573,13 +3554,25 @@ impl<'p> Printer<'_, 'p> {
                     .text_of_name(*file, written.pos, end)
                     .unwrap_or_else(|| self.property_key_text(*file, written.key, written.pos));
             }
-            PropSource::Symbol(symbol) => return self.symbol_to_text(*symbol),
-            PropSource::Assigned(file, list) => {
-                if let Some(&first) = list.first()
-                    && let Some(text) = self.c.name_of_assignment_declaration(*file, first)
-                {
-                    return text.into_bytes();
-                }
+            PropSource::Symbol(symbol) => {
+                return match self.c.files().value_declaration(*symbol) {
+                    Some((file, Decl::Member(member))) => {
+                        let member = &self.c.hir(file)[member];
+                        self.declaration_name_to_string(file, member.key, member.name_pos)
+                    }
+                    Some((file, Decl::ParameterProperty(parameter))) => {
+                        let hir = self.c.hir(file);
+                        let pos = hir[hir[parameter].pat].pos;
+                        self.declaration_name_to_string(file, PropKey::Name(prop.name), pos)
+                    }
+                    Some((file, Decl::Expando(first) | Decl::ThisProperty(first))) => {
+                        match self.c.name_of_assignment_declaration(file, first) {
+                            Some(text) => text.into_bytes(),
+                            None => self.name_from_name_type(prop.name),
+                        }
+                    }
+                    _ => self.symbol_to_text(*symbol),
+                };
             }
             PropSource::Intersected(_, parts)
             | PropSource::Copy(_, parts, _)
@@ -3651,17 +3644,14 @@ impl<'p> Printer<'_, 'p> {
 
     /// Whether the accessor `prop` is declared in a class, and whether it is an `accessor` field.
     fn accessor_declaration(&self, prop: &Prop) -> (bool, bool) {
-        match &prop.source {
-            PropSource::Members(list) => match list.first() {
-                Some(&(file, member)) => (
-                    matches!(
-                        self.c.bound(file).member_owner[member.idx()],
-                        MemberOwner::Class(_)
-                    ),
-                    self.c.hir(file)[member].kind == MemberKind::Property,
+        match self.c.value_declaration_of_prop(prop) {
+            Some((file, Decl::Member(member))) if matches!(prop.source, PropSource::Symbol(_)) => (
+                matches!(
+                    self.c.bound(file).member_owner[member.idx()],
+                    MemberOwner::Class(_)
                 ),
-                None => (false, false),
-            },
+                self.c.hir(file)[member].kind == MemberKind::Property,
+            ),
             _ => (false, false),
         }
     }
@@ -3670,9 +3660,8 @@ impl<'p> Printer<'_, 'p> {
     fn name_of_setter_parameter(&mut self, prop: &Prop) -> Vec<u8> {
         let mut setter: Option<(FileId, FnId)> = None;
         match &prop.source {
-            PropSource::Members(list) => {
-                setter = list
-                    .iter()
+            PropSource::Symbol(symbol) => {
+                setter = (self.c.members_of_symbol(*symbol).iter())
                     .find(|&&(file, member)| self.c.hir(file)[member].kind == MemberKind::Setter)
                     .map(|&(file, member)| (file, self.c.hir(file)[member].func));
             }
@@ -3707,9 +3696,9 @@ impl<'p> Printer<'_, 'p> {
     /// The start of `addPropertyToElementList`, of a property that a `unique symbol` names.
     fn track_late_bound_name(&mut self, prop: &Prop, depth: u32) {
         let (file, key) = match &prop.source {
-            PropSource::Members(list) => match list.first() {
-                Some(&(file, m)) => (file, self.c.hir(file)[m].key),
-                None => return,
+            PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol) {
+                Some((file, Decl::Member(m))) => (file, self.c.hir(file)[m].key),
+                _ => return,
             },
             PropSource::Literal(file, p) => (*file, self.c.hir(*file)[*p].key),
             PropSource::Intersected(_, parts)
@@ -3741,7 +3730,6 @@ impl<'p> Printer<'_, 'p> {
                 self.c.write_prop(&mut name, prop);
                 return self.report(Report::NonSerializableProperty(name));
             }
-            _ => return,
         };
         // `hasLateBindableName`
         if let PropKey::Computed(e) = key

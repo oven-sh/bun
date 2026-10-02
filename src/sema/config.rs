@@ -2,8 +2,12 @@
 //!
 //! A port of `internal/tsoptions/tsconfigparsing.go` and `internal/vfs/vfsmatch/vfsmatch.go`.
 
-use crate::json::Json;
-use crate::resolve::{Host, Options, contains_path, join, to_file_name_lower_case};
+use crate::config_options::is_file_path;
+use crate::json::{Json, TsConfigSourceFile};
+use crate::resolve::{
+    Host, Options, contains_path, join, known_extension, remove_file_extension,
+    supported_extensions, to_file_name_lower_case,
+};
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
 use bun_paths::platform::Posix;
@@ -42,7 +46,7 @@ impl ConfigError {
         let at = (!config_path.is_empty())
             .then(|| host.read(config_path))
             .flatten()
-            .and_then(|text| problem.span_in(&text))
+            .and_then(|text| problem.span_in(&TsConfigSourceFile::parse(host, text)?))
             .map(|(from, to)| (config_path.to_vec(), from, to));
         ConfigError {
             code: problem.code,
@@ -159,17 +163,6 @@ fn substitute_if_template(value: &[u8], base: &[u8]) -> Option<Vec<u8>> {
     starts_with_config_dir_template(value).then(|| substitute_config_dir(value, base))
 }
 
-/// Options declared with `IsFilePath`, and lists whose elements are.
-const PATH_OPTIONS: &[&[u8]] = &[
-    b"baseUrl",
-    b"rootDir",
-    b"outDir",
-    b"outFile",
-    b"declarationDir",
-    b"tsBuildInfoFile",
-];
-const PATH_LIST_OPTIONS: &[&[u8]] = &[b"rootDirs", b"typeRoots"];
-
 /// `normalizeNonListOptionValue`
 fn absolute_unless_template(value: &[u8], base: &[u8]) -> Vec<u8> {
     let value = value.replace(b"\\", b"/");
@@ -197,61 +190,6 @@ fn merge_compiler_options(target: &mut Vec<(Vec<u8>, Json)>, source: Vec<(Vec<u8
     }
 }
 
-/// `parseDelimitedList`: what is written after a member or an element with no comma in between, from where to where its first token goes.
-fn after_missing_commas(
-    text: &[u8],
-    value: &crate::json_places::Value,
-    found: &mut Vec<(u32, u32)>,
-) {
-    use crate::json_places::Written;
-    // Between two of them there is nothing but commas, blanks and comments.
-    let has_comma = |from: u32, to: u32| {
-        let mut at = from as usize;
-        while at < to as usize {
-            match text[at] {
-                b',' => return true,
-                b'/' if text.get(at + 1) == Some(&b'/') => {
-                    at += bun_core::strings::index_of_char_usize(&text[at..], b'\n')
-                        .unwrap_or(text.len() - at);
-                }
-                b'/' if text.get(at + 1) == Some(&b'*') => {
-                    at += bun_core::strings::index_of(&text[at + 2..], b"*/")
-                        .map_or(text.len() - at, |end| end + 4);
-                }
-                _ => at += 1,
-            }
-        }
-        false
-    };
-    match &value.what {
-        Written::Object(members) => {
-            for pair in members.windows(2) {
-                if !has_comma(pair[0].value.to, pair[1].name_from) {
-                    found.push((pair[1].name_from, pair[1].name_to));
-                }
-            }
-            for member in members {
-                after_missing_commas(text, &member.value, found);
-            }
-        }
-        Written::Array(elements) => {
-            for pair in elements.windows(2) {
-                if !has_comma(pair[0].to, pair[1].from) {
-                    let to = match pair[1].what {
-                        Written::Other => pair[1].to,
-                        _ => pair[1].from + 1,
-                    };
-                    found.push((pair[1].from, to));
-                }
-            }
-            for element in elements {
-                after_missing_commas(text, element, found);
-            }
-        }
-        Written::Other => {}
-    }
-}
-
 /// `parseConfig`
 fn parse_config(
     host: &dyn Host,
@@ -270,49 +208,41 @@ fn parse_config(
         errors.push(ConfigError::new(5083, &[path]));
         return None;
     };
-    let json = if Json::is_blank(&text) {
-        Json::Object(Vec::new())
-    } else {
-        match Json::parse(&text) {
-            Some(json) => json,
-            None => {
-                errors.push(ConfigError::new(5014, &[path, b"invalid JSON"]));
-                return None;
-            }
-        }
+    let Some(file) = TsConfigSourceFile::parse(host, text) else {
+        errors.push(ConfigError::new(5014, &[path, b"invalid JSON"]));
+        return None;
     };
+    let at = |(from, to): (u32, u32)| (path.to_vec(), from, to);
+    let reported = errors.len();
+    errors.extend(
+        file.diagnostics()
+            .map(|(code, args, from, to)| ConfigError {
+                args,
+                at: Some(at((from, to))),
+                ..ConfigError::new(code, &[])
+            }),
+    );
+    // `ParseExtendedConfig`: a file that is extended and does not parse counts for nothing.
+    if !stack.is_empty() && errors.len() > reported {
+        return None;
+    }
     // `convertConfigFileToObject`
-    let json = match json {
-        Json::Object(_) => json,
-        other => {
-            let first_object = match other {
-                Json::Array(items) => items
-                    .into_iter()
-                    .find(|item| matches!(item, Json::Object(_))),
-                _ => None,
+    let json = match file.root {
+        Some(root) => file.convert_property_value_to_json(root),
+        None => {
+            let name = if path.ends_with(b"/jsconfig.json") {
+                b"jsconfig.json"
+            } else {
+                b"tsconfig.json"
             };
-            first_object.unwrap_or_else(|| {
-                let name = if path.ends_with(b"/jsconfig.json") {
-                    b"jsconfig.json"
-                } else {
-                    b"tsconfig.json"
-                };
-                errors.push(ConfigError::new(5092, &[name]));
-                Json::Object(Vec::new())
-            })
+            errors.push(ConfigError::new(5092, &[name]));
+            Json::Object(Vec::new())
         }
     };
+    // Where what `name` is set to is written.
+    let value_of = |name: &[u8]| Some(file.initializer(file.property(file.root?, name, b"")?));
     let base = dirname::<Posix>(path);
     let mut own = Raw::default();
-    // `SourceFile.Diagnostics`
-    if let Some(root) = crate::json_places::parse(&text) {
-        let mut found = Vec::new();
-        after_missing_commas(&text, &root, &mut found);
-        errors.extend(found.into_iter().map(|(from, to)| ConfigError {
-            at: Some((path.to_vec(), from, to)),
-            ..ConfigError::new(1005, &[b",".as_slice()])
-        }));
-    }
     // `getDefaultCompilerOptions`
     if path.ends_with(b"/jsconfig.json") {
         for (key, value) in [
@@ -324,8 +254,11 @@ fn parse_config(
             own.compiler.push((key.to_vec(), value));
         }
     }
-    if let Some(compiler) = json.get(b"compilerOptions").and_then(Json::as_object) {
-        let problems = crate::config_options::problems(&text, compiler, as_typescript_does);
+    if let Some(compiler) = json.get(b"compilerOptions").and_then(Json::as_object)
+        && let Some(written) = value_of(b"compilerOptions")
+    {
+        let problems =
+            crate::config_options::problems(&file, written, compiler, as_typescript_does);
         // `convertJsonOption`: what is wrong is as good as not said.
         let left_out: Vec<Vec<u8>> = problems
             .iter()
@@ -334,7 +267,7 @@ fn parse_config(
         errors.extend(problems.into_iter().map(|problem| ConfigError {
             code: problem.code,
             args: problem.args,
-            at: problem.span.map(|(from, to)| (path.to_vec(), from, to)),
+            at: problem.span.map(at),
             chain: Vec::new(),
             is_about_options: false,
         }));
@@ -344,10 +277,10 @@ fn parse_config(
                 continue;
             }
             let value = match value {
-                Json::String(s) if PATH_OPTIONS.contains(&key.as_slice()) => {
+                Json::String(s) if is_file_path(key) => {
                     Json::String(absolute_unless_template(s, base))
                 }
-                Json::Array(list) if PATH_LIST_OPTIONS.contains(&key.as_slice()) => Json::Array(
+                Json::Array(list) if is_file_path(key) => Json::Array(
                     list.iter()
                         .map(|item| match item {
                             Json::String(s) => Json::String(absolute_unless_template(s, base)),
@@ -372,10 +305,7 @@ fn parse_config(
             .is_some_and(|value| !matches!(value, Json::Array(_) | Json::Null))
         {
             errors.push(ConfigError {
-                at: crate::json_places::parse(&text).and_then(|root| {
-                    let value = &root.member(name, b"")?.value;
-                    Some((path.to_vec(), value.from, value.to))
-                }),
+                at: value_of(name).map(|value| at(file.span(value))),
                 ..ConfigError::new(5024, &[name, b"Array"])
             });
         }
@@ -417,13 +347,10 @@ fn parse_config(
         let reported = errors.len();
         let Some(extended_path) = extends_config_path(host, name, base, errors) else {
             // `CreateDiagnosticForNodeInSourceFileOrCompilerDiagnostic`, at `valueExpression`.
-            let at = crate::json_places::parse(&text).and_then(|root| {
-                let value = &root.member(b"extends", b"")?.value;
-                let value = value.element(*i).unwrap_or(value);
-                Some((path.to_vec(), value.from, value.to))
-            });
+            let value =
+                value_of(b"extends").map(|value| file.elements(value).nth(*i).unwrap_or(value));
             for error in &mut errors[reported..] {
-                error.at = at.clone();
+                error.at = value.map(|value| at(file.span(value)));
             }
             continue;
         };
@@ -608,12 +535,12 @@ fn project_from_raw(
     // `handleOptionConfigDirTemplateSubstitution`
     for (key, value) in &mut raw.compiler {
         match value {
-            Json::String(s) if PATH_OPTIONS.contains(&key.as_slice()) => {
+            Json::String(s) if is_file_path(key) => {
                 if let Some(substituted) = substitute_if_template(s, base) {
                     *s = substituted;
                 }
             }
-            Json::Array(list) if PATH_LIST_OPTIONS.contains(&key.as_slice()) => {
+            Json::Array(list) if is_file_path(key) => {
                 for item in list {
                     if let Json::String(s) = item
                         && let Some(substituted) = substitute_if_template(s, base)
@@ -717,7 +644,7 @@ fn project_from_raw(
             ],
         ));
     }
-    options.files = files.clone();
+    options.files.clone_from(&files);
     Project {
         config_path: config_path.to_vec(),
         options,
@@ -731,43 +658,11 @@ fn project_from_raw(
     }
 }
 
-/// `SupportedTSExtensions`, `AllSupportedExtensions`: in each group what comes first wins.
-const TS_EXTENSIONS: &[&[&[u8]]] = &[
-    &[b".ts", b".tsx", b".d.ts"],
-    &[b".cts", b".d.cts"],
-    &[b".mts", b".d.mts"],
-];
-const ALL_EXTENSIONS: &[&[&[u8]]] = &[
-    &[b".ts", b".tsx", b".d.ts", b".js", b".jsx"],
-    &[b".cts", b".d.cts", b".cjs"],
-    &[b".mts", b".d.mts", b".mjs"],
-];
-
-/// `ChangeExtension`: `.d.ts` and its like count as one extension.
+/// `ChangeExtension`
 fn change_extension(path: &[u8], extension: &[u8]) -> Vec<u8> {
-    for known in [
-        b".d.ts".as_slice(),
-        b".d.mts",
-        b".d.cts",
-        b".ts",
-        b".tsx",
-        b".mts",
-        b".cts",
-        b".js",
-        b".jsx",
-        b".mjs",
-        b".cjs",
-        b".json",
-    ] {
-        if let Some(stem) = path.strip_suffix(known) {
-            return [&stem[..], &extension[..]].concat();
-        }
-    }
-    match path.rfind_byte(b'.') {
-        Some(dot) if dot > path.rfind_byte(b'/').map_or(0, |s| s + 1) => {
-            [&path[..dot], extension].concat()
-        }
-        _ => [&path[..], &extension[..]].concat(),
+    match known_extension(path) {
+        b"" => path.to_vec(),
+        _ => [remove_file_extension(path), extension].concat(),
     }
 }
 
@@ -842,11 +737,7 @@ fn file_names_from_specs(
             to_file_name_lower_case(file)
         }
     };
-    let supported = if options.allow_js {
-        ALL_EXTENSIONS
-    } else {
-        TS_EXTENSIONS
-    };
+    let supported = supported_extensions(options);
     let mut literal_files = OrderedFiles::default();
     let mut wildcard_files = OrderedFiles::default();
     let mut wildcard_json_files = OrderedFiles::default();
@@ -1375,15 +1266,15 @@ fn match_files(
     let mut level: Vec<Vec<u8>> = bases.clone();
     let mut asked: crate::util::FxHashSet<Vec<u8>> = Default::default();
     while !level.is_empty() {
-        let found: Vec<std::sync::Mutex<Option<Listed>>> =
+        let found: Vec<bun_threading::Guarded<Option<Listed>>> =
             level.iter().map(|_| Default::default()).collect();
         host.parallel(level.len(), &|i| {
             host.realpath(&level[i]);
-            *found[i].lock().unwrap() = Some(visitor.matchers.list(&level[i]));
+            *found[i].lock() = Some(visitor.matchers.list(&level[i]));
         });
         let mut next = Vec::new();
         for (path, listed) in level.into_iter().zip(found) {
-            let listed = listed.into_inner().unwrap().unwrap();
+            let listed = listed.lock().take().unwrap();
             for directory in &listed.directories {
                 if asked.insert(host.realpath(directory)) {
                     next.push(directory.clone());

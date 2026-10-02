@@ -7,7 +7,7 @@
 
 use super::sink::held;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
+use crate::bind::{Decl, FnOwner, Parent, PatParent, Symbol, SymbolId};
 use smallvec::SmallVec;
 
 type TypeParams = SmallVec<[TypeParamId; 8]>;
@@ -195,28 +195,11 @@ impl Checker<'_> {
             }
             // `getTypeOfSymbol`: the properties and accessors among the declarations of one symbol are one property, known by the
             // first.
-            let all: SmallVec<[(FileId, MemberId); 2]> =
-                if bound.member_owner[i] == MemberOwner::None {
-                    SmallVec::new()
-                } else {
-                    self.declarations_of_member(file, Decl::Member(member))
-                        .iter()
-                        .filter_map(|&(of, declaration)| match declaration {
-                            Decl::Member(m)
-                                if matches!(
-                                    self.hir(of)[m].kind,
-                                    MemberKind::Property | MemberKind::Getter | MemberKind::Setter
-                                ) =>
-                            {
-                                Some((of, m))
-                            }
-                            _ => None,
-                        })
-                        .collect()
-                };
-            if all.first() == Some(&(file, member)) {
-                self.type_of_member_declarations(&all);
-            } else if hir[member].kind == MemberKind::Property {
+            let is_first = bound.member_symbol[i].is_some() && {
+                let sym = self.symbol_of_member(file, member);
+                self.files().value_declaration(sym) == Some((file, Decl::Member(member)))
+            };
+            if is_first || hir[member].kind == MemberKind::Property {
                 self.type_of_member_declaration(file, member);
             }
         }
@@ -314,11 +297,15 @@ impl Checker<'_> {
     /// side. `Object.defineProperty(f, "a", descriptor)` resolves it only if the descriptor reads the property.
     fn check_circular_assignment_declarations(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for &declaration in bound
-            .expando_declarations
-            .iter()
-            .chain(bound.this_properties.iter().map(|property| &property.3))
-        {
+        if !hir.is_js {
+            return;
+        }
+        let this_properties =
+            (bound.symbols.iter().flat_map(|symbol| &symbol.decls)).filter_map(|decl| match decl {
+                Decl::ThisProperty(e) => Some(e),
+                _ => None,
+            });
+        for &declaration in bound.expando_declarations.iter().chain(this_properties) {
             let checked = match hir[declaration].kind {
                 ExprKind::Assign { target, .. } => target,
                 _ => declaration,
@@ -330,15 +317,7 @@ impl Checker<'_> {
     /// `getTypeOfMappedSymbol`: 2615 at `c.currentNode`, the type node being checked when the type of a property of a mapped type
     /// turns out to depend on itself.
     fn check_circular_mapped_properties(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `checkSourceElement` makes each type node the current node, checks its children, then resolves the node. Children have
-        // lower ids.
-        for n in 0..hir.types.len() {
-            let node = TypeNodeId(n as u32);
-            if !bound.is_unchecked_type(n) && self.is_resolved_by_check(file, node) {
-                self.type_from_node(file, node);
-            }
-        }
+        let hir = self.hir(file);
         if self.p.circular_mapped_props.len() == 0 {
             return;
         }

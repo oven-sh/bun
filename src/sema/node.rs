@@ -9,13 +9,16 @@
 //! bits, which [`Part`] of it. So `parent` goes up level by level as `node.Parent` does, and the levels take no memory.
 //!
 //! Rows that are no node: the statement around what is in the head of a `for`, the `Pat` of an omitted element, the `TupleElem` of a
-//! plain element, the `Assign` of `{ a = 1 }`. What a class extends after the first has no `ExpressionWithTypeArguments` around it.
-//! tsgo's nodes that are not there yet, so `parent` goes past them: `ParenthesizedType`, `JsxExpression`,
-//! the literal of a `LiteralType` and of a template, module specifiers, `ImportAttributes`, `WithStatement` (a `Block` of two), directives, tokens.
+//! plain element, the `Assign` of `{ a = 1 }`, what stands for the specifier of `import()` and for the empty `{}` of JSX. What a class
+//! extends after the first has no `ExpressionWithTypeArguments` around it. An import or export from what is no string is an
+//! `EmptyStatement`, a `WithStatement` a `Block` of two.
+//! tsgo's nodes that are not there yet, so `parent` goes past them: `ParenthesizedType`, tokens.
 
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, Parent};
-use crate::check::spans::{skip_trivia, start_of_token_before};
+use crate::check::spans::{
+    jsx_identifier_end, skip_trivia, skip_trivia_back, start_of_token_before,
+};
 use crate::hir::*;
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
@@ -111,6 +114,22 @@ impl Kind {
             )
     }
 
+    /// `IsDeclarationNode`: the kinds whose nodes have a `DeclarationBase`.
+    #[rustfmt::skip]
+    pub fn is_declaration(self) -> bool {
+        use Kind::*;
+        self.is_function_like() || self.is_class_like() || matches!(self,
+            VariableDeclaration | Parameter | BindingElement | MissingDeclaration | InterfaceDeclaration
+            | TypeAliasDeclaration | JSTypeAliasDeclaration | EnumDeclaration | ImportDeclaration
+            | JSImportDeclaration | NamespaceImport | ExportAssignment | NamespaceExportDeclaration
+            | NamespaceExport | ExportSpecifier | SemicolonClassElement | ClassStaticBlockDeclaration
+            | NoSubstitutionTemplateLiteral | BinaryExpression | CallExpression | ObjectLiteralExpression
+            | SpreadAssignment | MappedType | TypeLiteral | NamedTupleMember | JsxAttributes | JsxAttribute
+            | ModuleDeclaration | ImportEqualsDeclaration | ExportDeclaration | ImportClause
+            | ImportSpecifier | TypeParameter | JSDocTypeLiteral | SourceFile | EnumMember
+            | PropertySignature | PropertyDeclaration | PropertyAssignment | ShorthandPropertyAssignment)
+    }
+
     /// `IsClassLike`
     pub fn is_class_like(self) -> bool {
         matches!(self, Kind::ClassDeclaration | Kind::ClassExpression)
@@ -180,8 +199,8 @@ parts! {
     Span = 18,
     /// The literal in the brackets of `["a"]` and `[0]`.
     NameLiteral = 19,
-    /// The `ParenthesizedExpression` around an expression, all levels as one. It belongs to the row of the expression.
-    Paren = 20,
+    /// `Namespace` of a `JsxNamespacedName`. It belongs to the row of the name of the tag, or of the attribute.
+    Namespace = 20,
     /// The `QualifiedName` that ends with a name, a `PropertyAccessExpression` in a heritage clause. It belongs to the row of that name.
     Qualified = 21,
     /// What a `LiteralType` is of; the `SymbolKeyword` of `unique symbol`.
@@ -200,6 +219,8 @@ parts! {
     Specifier = 28,
     /// The `ImportKeyword` that is called in `import("m")`; the `AssertsKeyword` of a type predicate; the `AwaitKeyword` of `for await`.
     Keyword = 29,
+    /// `Name()` of a `JsxNamespacedName`.
+    LocalName = 30,
 }
 
 impl Node {
@@ -346,14 +367,15 @@ node_vectors! {
     15 tuple_elems TupleElemId TupleElem;
     16 modifiers ModifierId Modifier;
     17 names NameId Name;
+    18 parens ParenId Paren;
 }
 
 /// `node.Parent`, of every node of a file.
 pub struct Parents {
     /// By row: one load.
     rows: Box<[Node]>,
-    /// Of the `ParenthesizedExpression` and the `TemplateSpan` around an expression and of the `QualifiedName` that ends with a name, which
-    /// are what `rows` has for it. Sorted.
+    /// Of the `TemplateSpan` and the `JsxExpression` around an expression and of the `QualifiedName` that ends with a name, which are
+    /// what `rows` has for it. Sorted.
     around: Box<[(Node, Node)]>,
 }
 
@@ -423,10 +445,11 @@ impl ToNode for ExprId {
     }
 
     fn to_child(self, file: &File) -> Node {
-        if self.is_some() && is_parenthesized(file, self) {
-            self.row(file).with(Part::Paren)
-        } else {
-            self.to_node(file)
+        // The outermost of the parentheses around it is the last.
+        let after = file.parens.partition_point(|p| p.0.0 <= self.0);
+        match after.checked_sub(1) {
+            Some(last) if file.parens[last].0 == self => ParenId(last as u32).row(file),
+            _ => self.to_node(file),
         }
     }
 }
@@ -543,11 +566,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
         let file = self.file;
         match data {
             NodeData::None => false,
-            NodeData::File => {
-                self.list(file.body)
-                    || file.import_attributes.iter().any(|&(_, e)| self.one(e))
-                    || file.specifier_expressions.iter().any(|&e| self.one(e))
-            }
+            NodeData::File => self.list(file.body),
             NodeData::Part(part, row) => self.part_of(part, row),
             NodeData::Expr(e) => self.expr(e, node),
             NodeData::Stmt(s) => self.span(file[s].modifiers) || self.stmt(s, node),
@@ -617,6 +636,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
                 matches!(file[m].kind, ModifierKind::Decorator(e) if self.one(e))
             }
             NodeData::Name(_) => false,
+            NodeData::Paren(_) => (self.visit)(file.expression(node)),
         }
     }
 
@@ -668,9 +688,30 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
         match self.file.exprs.get(e.idx()).map(|e| e.kind) {
             None => false,
             Some(ExprKind::Jsx(_)) => self.one(e),
-            Some(ExprKind::String(_)) if !self.file.is_in_braces(e) => self.one(e),
+            Some(ExprKind::String(_)) if jsx_expression_around(self.file, e).is_none() => {
+                self.one(e)
+            }
             Some(_) => self.one(e.row(self.file).with(Part::JsxExpression)),
         }
+    }
+
+    /// What is written in the declaration `s` for a module specifier that is no string, and its `ImportAttributes`. Hardly a file
+    /// has either.
+    fn after_from(&mut self, s: StmtId) -> bool {
+        let file = self.file;
+        let (start, end) = (file[s].start, file[s].loc.end);
+        // One that the parser missed is where the next token is.
+        let mut specifiers = file.specifier_expressions.iter();
+        specifiers
+            .any(|&e| (start + 1..=file.token_after(end)).contains(&file[e].pos) && self.one(e))
+            || self.import_attributes(start, end)
+    }
+
+    /// The `ImportAttributes` of what goes from `start` to `end`: the first that are written in it.
+    fn import_attributes(&mut self, start: u32, end: u32) -> bool {
+        let mut all = self.file.import_attributes.iter();
+        all.find(|of| (start..end).contains(&of.0))
+            .is_some_and(|of| self.one(of.1))
     }
 
     /// What is in the head of a `for` statement, which has no statement around it.
@@ -725,9 +766,13 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             | ExprKind::True
             | ExprKind::False
             | ExprKind::Number(_)
-            | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex => false,
+            ExprKind::String(_) => {
+                file.is_namespaced_tag_name(e)
+                    && (self.one(node.with(Part::Namespace))
+                        || self.one(node.with(Part::LocalName)))
+            }
             ExprKind::ImportMeta | ExprKind::NewTarget(_) => self.one(node.with(Part::Name)),
             ExprKind::Template { exprs, .. } if exprs.is_empty() => false,
             ExprKind::Template { exprs, .. } => {
@@ -741,7 +786,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             ExprKind::Object(properties) => self.span(properties),
             ExprKind::Fn(f) => self.one(file.name(node)) || self.function(f, node),
             ExprKind::Class(c) => self.span(file[c].modifiers) || self.class(c, node),
-            ExprKind::Dot { obj, .. } => self.one(obj) || self.one(node.with(Part::Name)),
+            ExprKind::Dot { obj, .. } => {
+                !file.is_import_keyword(obj) && self.one(obj) || self.one(node.with(Part::Name))
+            }
             ExprKind::Index { obj, index, .. } => self.one(obj) || self.one(index),
             ExprKind::Call(c) | ExprKind::New(c) => self.call(c),
             ExprKind::Unary { operand, .. } => self.one(operand),
@@ -757,7 +804,10 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             ExprKind::AsConst(operand) if file.is_type_assertion(e, operand) => {
                 self.one(node.with(Part::ConstType)) || self.one(operand)
             }
-            ExprKind::AsConst(operand) => self.one(operand) || self.one(node.with(Part::ConstType)),
+            ExprKind::AsConst(operand) => {
+                let is_written = file.start_of_part(Part::ConstType, node) != 0;
+                self.one(operand) || self.part(node, Part::ConstType, is_written)
+            }
             ExprKind::Yield { value, .. } => self.one(value),
             // `<T>e` has its type first.
             ExprKind::As { expr, ty } if file[ty].pos < file[expr].pos => {
@@ -782,7 +832,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             ExprKind::ImportCall { args } => {
                 self.one(node.with(Part::Keyword))
                     || self.list(file.type_args_of_import_call(args))
-                    || self.list(args)
+                    // `import()`: what stands for the specifier is no node.
+                    || (file.ids(args))
+                        .any(|arg| !matches!(file[arg].kind, ExprKind::Missing) && self.one(arg))
             }
         }
     }
@@ -790,7 +842,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
     fn stmt(&mut self, s: StmtId, node: Node) -> bool {
         let file = self.file;
         match file[s].kind {
-            StmtKind::Empty | StmtKind::Debugger => false,
+            StmtKind::Debugger => false,
+            // It also stands for an import or an export from what is no string.
+            StmtKind::Empty => self.after_from(s),
             StmtKind::Break(label) | StmtKind::Continue(label) => {
                 self.part(node, Part::Label, label.is_some())
             }
@@ -863,6 +917,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
                     || import.clause_end > import.clause_start;
                 self.part(node, Part::ImportClause, has_clause)
                     || self.part(node, Part::Specifier, import.spec.is_some())
+                    || self.after_from(s)
             }
             StmtKind::ImportEquals(i) => {
                 self.one(node.with(Part::Name))
@@ -876,10 +931,12 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             StmtKind::ExportNamed(x) => {
                 self.one(node.with(Part::ExportClause))
                     || self.part(node, Part::Specifier, file[x].spec.is_some())
+                    || self.after_from(s)
             }
             StmtKind::ExportStar { alias, spec, .. } => {
                 self.part(node, Part::ExportClause, alias.is_some())
                     || self.part(node, Part::Specifier, spec.is_some())
+                    || self.after_from(s)
             }
             StmtKind::ExportAsNamespace(_) => self.one(node.with(Part::Name)),
         }
@@ -902,9 +959,12 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
                 self.one(node.with(Part::Head)) || self.wrapped(types, Part::Span)
             }
             TypeNodeKind::Heritage(e) => self.one(e),
-            TypeNodeKind::Ref { name, args } | TypeNodeKind::Import { name, args, .. } => {
-                self.one(name) || self.list(args)
+            TypeNodeKind::Import { name, args, .. } => {
+                self.import_attributes(file[t].pos, file[t].end)
+                    || self.one(name)
+                    || self.list(args)
             }
+            TypeNodeKind::Ref { name, args } => self.one(name) || self.list(args),
             TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => self.list(types),
             TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
                 self.one(t)
@@ -957,16 +1017,20 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
             | Part::Head
             | Part::Tail
             | Part::Specifier
-            | Part::Keyword => false,
+            | Part::Namespace
+            | Part::LocalName => false,
+            Part::Keyword => self.part(row, Part::Name, file.is_deferred_import_call(row)),
             Part::Literal => {
                 file.kind_of_part(part, row) == Kind::PrefixUnaryExpression
                     && self.one(row.with(Part::Operand))
             }
             Part::ConstType => self.one(row.with(Part::Name)),
-            // `{}` is empty, and the dots of `{...e}` are its own.
+            // What stands for the empty `{}` is put where the brace is. The dots of `{...e}` are its own.
             Part::JsxExpression => match file.data(row) {
                 NodeData::Expr(e) => match file[e].kind {
-                    ExprKind::Missing => false,
+                    ExprKind::Missing if file.text.get(file[e].pos as usize) == Some(&b'{') => {
+                        false
+                    }
                     ExprKind::Spread(inner) => self.one(inner),
                     _ => self.one(e),
                 },
@@ -977,6 +1041,12 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
                 (PropKey::Computed(e), _) => self.one(e),
                 (_, NameKind::ComputedString | NameKind::ComputedNumber) => {
                     self.one(row.with(Part::NameLiteral))
+                }
+                (_, NameKind::Jsx) => {
+                    file.colon_of_jsx_name(file.start_of_part(part, row))
+                        .is_some()
+                        && (self.one(row.with(Part::Namespace))
+                            || self.one(row.with(Part::LocalName)))
                 }
                 _ => false,
             },
@@ -1026,9 +1096,6 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, V> {
                     NodeData::Expr(e) => self.one(e),
                     _ => self.one(row),
                 }) || self.one(row.with(Part::Tail))
-            }
-            Part::Paren => {
-                matches!(file.data(row), NodeData::Expr(e) if (self.visit)(file.node(e)))
             }
             Part::DeclarationList => match statement {
                 Some(StmtKind::Var(declarations)) => self.span(declarations),
@@ -1102,7 +1169,7 @@ impl File {
         let is_import = || matches!(self.data(row), NodeData::Stmt(s) if matches!(self[s].kind, StmtKind::Import(_)));
         match node.part() {
             None => Node::NONE,
-            Some(Part::Paren | Part::Span | Part::Qualified | Part::JsxExpression) => {
+            Some(Part::Span | Part::Qualified | Part::JsxExpression) => {
                 let around = &self.parents().around;
                 let at = around.binary_search_by_key(&node, |&(wrapper, _)| wrapper);
                 at.map_or(Node::NONE, |at| around[at].1)
@@ -1114,8 +1181,16 @@ impl File {
             Some(Part::NameLiteral) => row.with(Part::Name),
             Some(Part::Operand) => row.with(Part::Literal),
             Some(Part::Tail) => row.with(Part::Span),
+            Some(Part::Namespace | Part::LocalName)
+                if matches!(self.data(row), NodeData::Prop(_)) =>
+            {
+                row.with(Part::Name)
+            }
             Some(Part::Name) if matches!(self.data(row), NodeData::Expr(e) if matches!(self[e].kind, ExprKind::AsConst(_))) => {
                 row.with(Part::ConstType)
+            }
+            Some(Part::Name) if matches!(self.data(row), NodeData::Expr(e) if matches!(self[e].kind, ExprKind::ImportCall { .. })) => {
+                row.with(Part::Keyword)
             }
             Some(Part::Specifier) if matches!(self.data(row), NodeData::Stmt(s) if matches!(self[s].kind, StmtKind::ImportEquals(_))) => {
                 row.with(Part::ModuleReference)
@@ -1178,6 +1253,8 @@ impl File {
             ),
             NodeData::Modifier(m) => matches!(self[m].kind, ModifierKind::Decorator(_)),
             NodeData::Name(_) | NodeData::ImportSpec(_) | NodeData::ExportSpec(_) => false,
+            // They go between afterwards.
+            NodeData::Paren(_) => false,
             // One that is only its type is no node, and comes after the tuple that holds the type.
             NodeData::TupleElem(e) => e.to_node(self) == node,
             NodeData::Part(
@@ -1190,7 +1267,9 @@ impl File {
                 | Part::Tail
                 | Part::ConstType
                 | Part::Specifier
-                | Part::Keyword,
+                | Part::Keyword
+                | Part::Namespace
+                | Part::LocalName,
                 _,
             ) => false,
             NodeData::Part(Part::Name | Part::PropertyName, row) => {
@@ -1237,7 +1316,9 @@ impl File {
                     | Part::Tail
                     | Part::ConstType
                     | Part::Specifier
-                    | Part::Keyword,
+                    | Part::Keyword
+                    | Part::Namespace
+                    | Part::LocalName,
                 ) => return false,
                 // Told from the row.
                 Some(_) => {}
@@ -1252,12 +1333,12 @@ impl File {
         };
         self.children_of_all_rows(&mut v, &at_hand, &open);
         // The parentheses go between afterwards: the list of them is short, and to ask of every expression whether it is in it is not.
-        for &(e, ..) in &self.parens {
-            let (row, parentheses) = (e.row(self), e.row(self).with(Part::Paren));
-            // All levels are one.
-            if rows[row.idx()].is_some() && rows[row.idx()] != parentheses {
-                around.push((parentheses, rows[row.idx()]));
-                rows[row.idx()] = parentheses;
+        for p in 0..self.parens.len() as u32 {
+            let parentheses = ParenId(p).row(self);
+            let inner = self.expression(parentheses).row();
+            rows[parentheses.idx()] = rows[inner.idx()];
+            if rows[inner.idx()].is_some() {
+                rows[inner.idx()] = parentheses;
             }
         }
         // The last word here too.
@@ -1342,11 +1423,36 @@ impl File {
             && written.is_some_and(|text| text.starts_with(b"with"))
     }
 
-    /// Whether a `{` stands before `e` and the parentheses around it.
-    fn is_in_braces(&self, e: ExprId) -> bool {
-        let start = open_parenthesis(self, e).unwrap_or(self[e].pos) as usize;
-        let before = self.text.get(..start).unwrap_or_default();
-        before.trim_ascii_end().last() == Some(&b'{')
+    /// Where the `:` of the `JsxNamespacedName` is that starts at `pos`. `None`: the name there is an identifier.
+    fn colon_of_jsx_name(&self, pos: u32) -> Option<u32> {
+        let colon = skip_trivia(&self.text, jsx_identifier_end(&self.text, pos as usize));
+        (self.text.get(colon) == Some(&b':')).then_some(colon as u32)
+    }
+
+    /// Whether `e` is the name of a JSX tag that is written `a:b`. A string literal starts with its quote, and `JsxText` after a `>`
+    /// or a `}`.
+    fn is_namespaced_tag_name(&self, e: ExprId) -> bool {
+        let pos = self[e].pos as usize;
+        !matches!(self.text.get(pos), None | Some(b'"' | b'\'' | b'`' | b'#'))
+            && matches!(
+                self.text[..skip_trivia_back(&self.text, pos)].last(),
+                Some(b'<' | b'/')
+            )
+            && self.colon_of_jsx_name(self[e].pos).is_some()
+    }
+
+    /// The `import` of an `import.x` that is neither `import.meta` nor called: the keyword of a `MetaProperty` is no node.
+    fn is_import_keyword(&self, e: ExprId) -> bool {
+        matches!(self[e].kind, ExprKind::Missing)
+            && (self.text.get(self[e].pos as usize..))
+                .is_some_and(|rest| rest.starts_with(b"import"))
+    }
+
+    /// `import.defer("m")`
+    fn is_deferred_import_call(&self, row: Node) -> bool {
+        !self.deferred_import_calls.is_empty()
+            && matches!(self.data(row), NodeData::Expr(e) if matches!(self[e].kind, ExprKind::ImportCall { args, .. }
+                if self.deferred_import_calls.iter().any(|call| call.0 == self.id_at(args, 0))))
     }
 
     fn is_self_closing(&self, j: JsxId) -> bool {
@@ -1456,6 +1562,9 @@ impl File {
                 NodeData::ImportSpec(s) => self[s].local,
                 NodeData::ExportSpec(s) => self[s].exported,
                 NodeData::TupleElem(e) => self[e].name,
+                _ if self.key_of(row).0 == PropKey::None && self.kind(node) == Kind::Identifier => {
+                    known::empty
+                }
                 _ => self.key_of(row).0.name().unwrap_or(Atom::NONE),
             },
             _ => Atom::NONE,
@@ -1469,13 +1578,6 @@ impl File {
                 node.with(Part::Name)
             } else {
                 Node::NONE
-            }
-        };
-        let keyed = |key: PropKey| {
-            if key == PropKey::None {
-                Node::NONE
-            } else {
-                node.with(Part::Name)
             }
         };
         match self.data(node) {
@@ -1498,8 +1600,13 @@ impl File {
                 | StmtKind::ExportAsNamespace(_) => node.with(Part::Name),
                 _ => Node::NONE,
             },
-            NodeData::Member(m) if self[m].kind == MemberKind::Constructor => Node::NONE,
-            NodeData::Member(m) => keyed(self[m].key),
+            NodeData::Member(m) => match self[m].kind {
+                MemberKind::Property
+                | MemberKind::Method
+                | MemberKind::Getter
+                | MemberKind::Setter => node.with(Part::Name),
+                _ => Node::NONE,
+            },
             // The name of `{ a }` and of `{ a = 1 }` is an expression.
             NodeData::Prop(p) if self[p].kind == PropKind::Shorthand => {
                 match self.exprs.get(self[p].value.idx()).map(|e| e.kind) {
@@ -1507,7 +1614,8 @@ impl File {
                     _ => self.node(self[p].value),
                 }
             }
-            NodeData::Prop(p) => keyed(self[p].key),
+            NodeData::Prop(p) if self[p].kind == PropKind::Spread => Node::NONE,
+            NodeData::Prop(_) => node.with(Part::Name),
             NodeData::EnumMember(_)
             | NodeData::TypeParam(_)
             | NodeData::ImportSpec(_)
@@ -1517,6 +1625,7 @@ impl File {
             NodeData::VarDecl(d) => self.node(self[d].pat),
             NodeData::PatProp(p) => self.node(self[p].value),
             NodeData::PatElem(e) => self.node(self[e].pat),
+            NodeData::Part(Part::Qualified, row) => row,
             NodeData::Part(Part::ImportClause, row) => match self.data(row) {
                 NodeData::Stmt(s) => match self[s].kind {
                     StmtKind::Import(i) if self[i].default.is_some() => row.with(Part::Name),
@@ -1541,8 +1650,11 @@ impl File {
         let is_there = match self.data(node) {
             NodeData::ImportSpec(s) => self[s].imported_pos != self[s].pos,
             NodeData::ExportSpec(s) => self[s].local_pos != self[s].pos,
+            // `parseObjectBindingElement`: only an identifier is a name without a property name.
             NodeData::PatProp(p) => {
-                self[p].key != PropKey::None && self[p].key_pos != self[self[p].value].pos
+                let name = &self[self[p].value];
+                self[p].key != PropKey::None
+                    && (self[p].key_pos != name.pos || !matches!(name.kind, PatKind::Ident(_)))
             }
             _ => false,
         };
@@ -1654,6 +1766,12 @@ impl File {
                 match self[p].kind {
                     PropKind::Spread if is_attribute => Kind::JsxSpreadAttribute,
                     _ if is_attribute => Kind::JsxAttribute,
+                    PropKind::Init
+                        if !self.import_attributes.is_empty()
+                            && self.kind(self.parent(node)) == Kind::ImportAttributes =>
+                    {
+                        Kind::ImportAttribute
+                    }
                     PropKind::Init => Kind::PropertyAssignment,
                     PropKind::Shorthand => Kind::ShorthandPropertyAssignment,
                     PropKind::Spread => Kind::SpreadAssignment,
@@ -1676,6 +1794,7 @@ impl File {
                 ModifierKind::Keyword(flag) => kind_of_modifier(flag),
             },
             NodeData::Name(_) => Kind::Identifier,
+            NodeData::Paren(_) => Kind::ParenthesizedExpression,
         }
     }
 
@@ -1687,7 +1806,9 @@ impl File {
         let is_fragment = || self.kind(row) == Kind::JsxFragment;
         match part {
             Part::Name | Part::PropertyName => self.kind_of_name(part, row),
-            Part::Label | Part::BindingsName => Kind::Identifier,
+            Part::Label | Part::BindingsName | Part::Namespace | Part::LocalName => {
+                Kind::Identifier
+            }
             Part::NameLiteral if self.key_of(row).1 == NameKind::ComputedString => {
                 Kind::StringLiteral
             }
@@ -1739,6 +1860,7 @@ impl File {
             Part::JsxExpression => Kind::JsxExpression,
             Part::Specifier => Kind::StringLiteral,
             Part::Keyword => match self.data(row) {
+                NodeData::Expr(_) if self.is_deferred_import_call(row) => Kind::MetaProperty,
                 NodeData::Expr(_) => Kind::ImportKeyword,
                 NodeData::Type(_) => Kind::AssertsKeyword,
                 _ => Kind::AwaitKeyword,
@@ -1769,7 +1891,6 @@ impl File {
                 },
                 _ => Kind::Unknown,
             },
-            Part::Paren => Kind::ParenthesizedExpression,
             // The expression of an `ExpressionWithTypeArguments` is an expression.
             Part::Qualified => {
                 let around =
@@ -1805,7 +1926,7 @@ impl File {
             },
             NodeData::Prop(p)
                 if self[p].name_kind == NameKind::Jsx
-                    && jsx_name(&self.text, self[p].pos).contains(&b':') =>
+                    && self.colon_of_jsx_name(self[p].pos).is_some() =>
             {
                 Kind::JsxNamespacedName
             }
@@ -1824,7 +1945,16 @@ impl File {
                 }
                 (_, NameKind::StringLiteral) => Kind::StringLiteral,
                 (_, NameKind::NumericLiteral) => Kind::NumericLiteral,
-                (_, NameKind::Identifier | NameKind::Jsx) => Kind::Identifier,
+                // What names nothing (`getDeclarationName`) is kept as no name.
+                (_, NameKind::Identifier | NameKind::Jsx) => {
+                    match self.text.get(self.start_of_part(part, row) as usize) {
+                        Some(b'#') => Kind::PrivateIdentifier,
+                        Some(b'0'..=b'9') => Kind::BigIntLiteral,
+                        // Of an `ImportAttribute`.
+                        Some(b'"' | b'\'') => Kind::StringLiteral,
+                        _ => Kind::Identifier,
+                    }
+                }
             },
         }
     }
@@ -1836,6 +1966,10 @@ impl File {
             ExprKind::Missing if is_in(|parent| matches!(parent, ExprKind::Array(_))) => {
                 Kind::OmittedExpression
             }
+            // `parseDecoratedExpression`: decorators before what is no class.
+            ExprKind::Missing if self.text.get(self[e].pos as usize) == Some(&b'@') => {
+                Kind::MissingDeclaration
+            }
             ExprKind::Missing | ExprKind::Ident(_) => Kind::Identifier,
             // `typeof this.a` is an entity name.
             ExprKind::This if self.is_in_type_query(node) => Kind::Identifier,
@@ -1845,6 +1979,8 @@ impl File {
             ExprKind::True => Kind::TrueKeyword,
             ExprKind::False => Kind::FalseKeyword,
             ExprKind::Number(_) => Kind::NumericLiteral,
+            ExprKind::String(_) if is_private_name_at(self, self[e].pos) => Kind::PrivateIdentifier,
+            ExprKind::String(_) if self.is_namespaced_tag_name(e) => Kind::JsxNamespacedName,
             // The name of a tag.
             ExprKind::String(_)
                 if matches!(parent().part(), Some(Part::Opening | Part::Closing)) =>
@@ -1871,10 +2007,14 @@ impl File {
             ExprKind::Template { .. } => Kind::TemplateExpression,
             ExprKind::TaggedTemplate(_) => Kind::TaggedTemplateExpression,
             ExprKind::Array(_) => Kind::ArrayLiteralExpression,
+            ExprKind::Object(_) if self.import_attributes.iter().any(|of| of.1 == e) => {
+                Kind::ImportAttributes
+            }
             ExprKind::Object(_) => Kind::ObjectLiteralExpression,
             ExprKind::Fn(f) if self[f].kind == FnKind::Arrow => Kind::ArrowFunction,
             ExprKind::Fn(_) => Kind::FunctionExpression,
             ExprKind::Class(_) => Kind::ClassExpression,
+            ExprKind::Dot { obj, .. } if self.is_import_keyword(obj) => Kind::MetaProperty,
             ExprKind::Dot { .. } if self.is_in_type_query(self.parent(node)) => Kind::QualifiedName,
             ExprKind::Dot { .. } => Kind::PropertyAccessExpression,
             ExprKind::Index { .. } => Kind::ElementAccessExpression,
@@ -1942,6 +2082,8 @@ impl File {
             StmtKind::Import(_) => Kind::ImportDeclaration,
             StmtKind::ImportEquals(_) => Kind::ImportEqualsDeclaration,
             StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => Kind::ExportDeclaration,
+            // `parseJSONText`
+            StmtKind::ExportAssign(_) if self.kind == FileKind::Json => Kind::ExpressionStatement,
             StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) => Kind::ExportAssignment,
             StmtKind::ExportAsNamespace(_) => Kind::NamespaceExportDeclaration,
         }
@@ -2023,9 +2165,10 @@ impl File {
             NodeData::EnumMember(m) => self[m].pos,
             NodeData::ImportSpec(s) => self[s].start,
             NodeData::ExportSpec(s) => self[s].start,
-            NodeData::TupleElem(e) => self[self[e].ty].pos,
+            NodeData::TupleElem(e) => self[e].start,
             NodeData::Modifier(m) => self[m].pos,
             NodeData::Name(n) => self[n].pos(),
+            NodeData::Paren(p) => self.parens[p.idx()].1,
         }
     }
 
@@ -2035,6 +2178,15 @@ impl File {
         match self.text.is_empty() {
             true => 0,
             false => skip_trivia(&self.text, end as usize) as u32,
+        }
+    }
+
+    /// Where the name of a `MetaProperty` starts whose keyword ends at `end`. 0 if there is no dot.
+    fn token_after_dot(&self, end: u32) -> u32 {
+        let dot = self.token_after(end);
+        match self.text.get(dot as usize) {
+            Some(b'.') => self.token_after(dot + 1),
+            _ => 0,
         }
     }
 
@@ -2063,7 +2215,11 @@ impl File {
             }
             (Part::Head | Part::Keyword, NodeData::Expr(e)) => self[e].pos,
             (Part::Keyword, NodeData::Type(t)) => self[t].pos,
-            (Part::Paren, NodeData::Expr(e)) => open_parenthesis(self, e).unwrap_or(0),
+            (Part::Namespace, _) => self.start(self.parent_of_part(row.with(part))),
+            (Part::LocalName, _) => {
+                let colon = self.colon_of_jsx_name(self.start(row.with(Part::Namespace)));
+                colon.map_or(0, |colon| self.token_after(colon + 1))
+            }
             (Part::Qualified, NodeData::Name(mut first)) => {
                 while self[first].is_qualified() {
                     first = NameId(first.0 - 1);
@@ -2090,8 +2246,25 @@ impl File {
             (Part::NameLiteral, NodeData::PatProp(p)) => self.token_after(self[p].key_pos + 1),
             (Part::NameLiteral, _) => self.token_after(self.start(row.with(Part::Name)) + 1),
             (Part::Operand, NodeData::Type(t)) => self.token_after(self[t].pos + 1),
+            // `<const>x`, `x as const`. 0: it is reparsed from `@type {const}`.
+            (Part::ConstType | Part::Name, NodeData::Expr(e))
+                if matches!(self[e].kind, ExprKind::AsConst(_)) =>
+            {
+                let start = match self[e].kind {
+                    ExprKind::AsConst(operand) if self.is_type_assertion(e, operand) => {
+                        self.token_after(self[e].pos + 1)
+                    }
+                    _ => self[e].end.saturating_sub(b"const".len() as u32),
+                };
+                let rest = self.text.get(start as usize..).unwrap_or_default();
+                if rest.starts_with(b"const") { start } else { 0 }
+            }
             (Part::Name, NodeData::Expr(e)) => match self[e].kind {
                 ExprKind::Dot { name_pos, .. } => name_pos,
+                ExprKind::ImportMeta | ExprKind::ImportCall { .. } => {
+                    self.token_after_dot(self[e].pos + b"import".len() as u32)
+                }
+                ExprKind::NewTarget(_) => self.token_after_dot(self[e].pos + b"new".len() as u32),
                 ExprKind::Fn(f) => self[f].name_pos,
                 ExprKind::Class(c) => self[c].name_pos,
                 _ => 0,
@@ -2105,6 +2278,13 @@ impl File {
                 (Part::Name, StmtKind::Module(m)) => self[m].name_pos,
                 (Part::Name, StmtKind::ImportEquals(i)) => self[i].name_pos,
                 (Part::Name, StmtKind::Import(i)) => self[i].default_pos,
+                // `export as namespace N`
+                (Part::Name, StmtKind::ExportAsNamespace(_)) => (0..self[s].modifiers.len() + 3)
+                    .fold(self[s].start, |at, _| {
+                        let rest = self.text.get(at as usize..).unwrap_or_default();
+                        let word = rest.iter().take_while(|b| b.is_ascii_alphabetic()).count();
+                        self.token_after(at + word as u32)
+                    }),
                 (Part::ImportClause, StmtKind::Import(i)) => self[i].clause_start,
                 (Part::NamedBindings, StmtKind::Import(i)) if self[i].namespace.is_some() => {
                     self[i].namespace_start
@@ -2150,6 +2330,16 @@ impl File {
             (Part::PropertyName, NodeData::PatProp(p)) => self[p].key_pos,
             (Part::Name, NodeData::EnumMember(m)) => self[m].pos,
             (Part::Name, NodeData::TypeParam(p)) => self[p].pos,
+            (Part::Name, NodeData::TupleElem(e)) if self[e].rest => {
+                self.token_after(self[e].start + b"...".len() as u32)
+            }
+            (Part::Name, NodeData::TupleElem(e)) => self[e].start,
+            (Part::Name, NodeData::Type(t)) => match self[t].kind {
+                TypeNodeKind::Predicate { asserts: true, .. } => {
+                    self.token_after(self[t].pos + b"asserts".len() as u32)
+                }
+                _ => self[t].pos,
+            },
             (_, NodeData::ImportSpec(s)) if is_property_name => self[s].imported_pos,
             (_, NodeData::ImportSpec(s)) => self[s].pos,
             (_, NodeData::ExportSpec(s)) if is_property_name => self[s].local_pos,
@@ -2197,6 +2387,9 @@ impl File {
                 | StmtKind::ForIn { expr: e, .. }
                 | StmtKind::ForOf { expr: e, .. }
                 | StmtKind::Switch { expr: e, .. } => self.child(e),
+                StmtKind::Block(statements) if self.is_with_statement(s) => {
+                    self.expression(self.node(self.id_at(statements, 0)))
+                }
                 _ => Node::NONE,
             },
             NodeData::Type(t) => match self[t].kind {
@@ -2209,14 +2402,21 @@ impl File {
                 ModifierKind::Decorator(e) => self.child(e),
                 ModifierKind::Keyword(_) => Node::NONE,
             },
-            NodeData::Part(Part::Paren, row) => row,
+            // What is in them: the next level, or the expression.
+            NodeData::Paren(p) => match (self.parens[p.idx()].0, p.0.checked_sub(1)) {
+                (e, Some(inner)) if self.parens[inner as usize].0 == e => ParenId(inner).row(self),
+                (e, _) => self.node(e),
+            },
             NodeData::Part(Part::Span, row) => match self.data(row) {
                 NodeData::Expr(e) => self.child(e),
                 _ => Node::NONE,
             },
             NodeData::Part(Part::Base, row) => self.child(self[self.class_of(row)].extends),
-            NodeData::Part(Part::Name | Part::PropertyName, row) => match self.key_of(row).0 {
-                PropKey::Computed(e) => self.child(e),
+            NodeData::Part(Part::Name | Part::PropertyName, row) => match self.key_of(row) {
+                (PropKey::Computed(e), _) => self.child(e),
+                (_, NameKind::ComputedString | NameKind::ComputedNumber) => {
+                    row.with(Part::NameLiteral)
+                }
                 _ => Node::NONE,
             },
             _ => Node::NONE,
@@ -2395,6 +2595,188 @@ impl File {
             }
         }
         Node::NONE
+    }
+
+    /// Every `Identifier` whose text is one of `Atom::is_keyword_identifier`, in the order of the file, but for those of which
+    /// `is_identifier_name` says yes, of which it has some.
+    pub fn keyword_identifiers(&self) -> &[Node] {
+        self.keyword_identifiers.get_or_init(|| {
+            let mut found = Vec::new();
+            for &pos in self.keyword_identifier_positions.iter() {
+                // From the file down by the child that starts last of those that do not start after `pos`.
+                let mut node = Node::FILE;
+                while node.is_some() {
+                    let (mut inside, mut starts) = (Node::NONE, 0);
+                    self.for_each_child(node, &mut |child| {
+                        if self.text(child).is_keyword_identifier()
+                            && self.kind(child) == Kind::Identifier
+                        {
+                            found.push(child);
+                        }
+                        let start = self.start(child);
+                        if (starts..=pos).contains(&start) {
+                            (inside, starts) = (child, start);
+                        }
+                        false
+                    });
+                    node = inside;
+                }
+            }
+            found.sort_unstable_by_key(|&node| (self.start(node), node));
+            found.dedup();
+            found.into()
+        })
+    }
+
+    /// `FindUseStrictPrologue`
+    pub fn find_use_strict_prologue(&self, statements: IdList<StmtId>) -> StmtId {
+        for statement in self.ids(statements) {
+            // `IsPrologueDirective`
+            let expression = self.expression(self.node(statement));
+            if self.kind(expression) != Kind::StringLiteral {
+                break;
+            }
+            // `IsUseStrictPrologue`
+            let start = self.start(expression) as usize;
+            if let Some(b"\"use strict\"" | b"'use strict'") = self.text.get(start..start + 12) {
+                return statement;
+            }
+        }
+        StmtId::NONE
+    }
+
+    /// `NodeIsMissing`: an identifier the parser made where it found none.
+    pub fn is_missing(&self, node: Node) -> bool {
+        self.kind(node) == Kind::Identifier
+            && match self.data(node) {
+                NodeData::Expr(e) => {
+                    matches!(
+                        self[e].kind,
+                        ExprKind::Missing | ExprKind::Ident(known::empty)
+                    )
+                }
+                NodeData::Part(Part::LocalName, _) => {
+                    let start = self.start(node) as usize;
+                    jsx_identifier_end(&self.text, start) == start
+                }
+                _ => self.text(node) == known::empty,
+            }
+    }
+
+    /// `IsExpressionNode`
+    #[rustfmt::skip]
+    pub fn is_expression_node(&self, mut node: Node) -> bool {
+        use Kind::*;
+        match self.kind(node) {
+            SuperKeyword | NullKeyword | TrueKeyword | FalseKeyword | RegularExpressionLiteral
+            | ArrayLiteralExpression | ObjectLiteralExpression | PropertyAccessExpression
+            | ElementAccessExpression | CallExpression | NewExpression | TaggedTemplateExpression
+            | AsExpression | TypeAssertionExpression | SatisfiesExpression | NonNullExpression
+            | ParenthesizedExpression | FunctionExpression | ClassExpression | ArrowFunction
+            | VoidExpression | DeleteExpression | TypeOfExpression | PrefixUnaryExpression
+            | PostfixUnaryExpression | BinaryExpression | ConditionalExpression | SpreadElement
+            | TemplateExpression | OmittedExpression | JsxElement | JsxSelfClosingElement | JsxFragment
+            | YieldExpression | AwaitExpression => true,
+            // "`import.defer` in `import.defer(...)` is not an expression"
+            MetaProperty => node.part() != Some(Part::Keyword),
+            ExpressionWithTypeArguments => self.kind(self.parent(node)) != HeritageClause,
+            QualifiedName => {
+                while self.kind(self.parent(node)) == QualifiedName {
+                    node = self.parent(node);
+                }
+                self.kind(self.parent(node)) == TypeQuery || self.is_jsx_tag_name(node)
+            }
+            PrivateIdentifier => matches!(self.data(self.parent(node)), NodeData::Expr(parent)
+                if matches!(self[parent].kind, ExprKind::Binary { op: BinOp::In, left, .. } if self.child(left) == node)),
+            Identifier if self.kind(self.parent(node)) == TypeQuery || self.is_jsx_tag_name(node) => true,
+            Identifier | NumericLiteral | BigIntLiteral | StringLiteral | NoSubstitutionTemplateLiteral
+            | ThisKeyword => self.is_in_expression_context(node),
+            _ => false,
+        }
+    }
+
+    /// `IsJsxTagName`
+    pub fn is_jsx_tag_name(&self, node: Node) -> bool {
+        let parent = self.parent(node);
+        let mut first = Node::NONE;
+        matches!(
+            self.kind(parent),
+            Kind::JsxOpeningElement | Kind::JsxClosingElement | Kind::JsxSelfClosingElement
+        ) && {
+            self.for_each_child(parent, &mut |child| {
+                first = child;
+                true
+            });
+            first == node
+        }
+    }
+
+    /// `IsInExpressionContext`
+    #[rustfmt::skip]
+    pub fn is_in_expression_context(&self, node: Node) -> bool {
+        use Kind::*;
+        let parent = self.parent(node);
+        match self.kind(parent) {
+            VariableDeclaration | Parameter | PropertyDeclaration | PropertySignature | EnumMember
+            | PropertyAssignment | BindingElement => self.initializer(parent) == node,
+            ExpressionStatement | IfStatement | DoStatement | WhileStatement | ReturnStatement
+            | WithStatement | SwitchStatement | CaseClause | DefaultClause | ThrowStatement
+            | TypeAssertionExpression | AsExpression | TemplateSpan | ComputedPropertyName
+            | SatisfiesExpression => self.expression(parent) == node,
+            // All in the head but a `VariableDeclarationList`.
+            ForStatement | ForInStatement | ForOfStatement => {
+                matches!(self.data(node), NodeData::Expr(_) | NodeData::Paren(_))
+            }
+            Decorator | JsxExpression | JsxSpreadAttribute | SpreadAssignment => true,
+            ExpressionWithTypeArguments => {
+                self.expression(parent) == node
+                    && !self.is_part_of_type_expression_with_type_arguments(parent)
+            }
+            ShorthandPropertyAssignment => self.name(parent) != node,
+            _ => self.is_expression_node(parent),
+        }
+    }
+
+    /// `isPartOfTypeExpressionWithTypeArguments`
+    fn is_part_of_type_expression_with_type_arguments(&self, node: Node) -> bool {
+        let parent = self.parent(node);
+        self.kind(parent) == Kind::HeritageClause
+            && (!self.kind(self.parent(parent)).is_class_like()
+                || parent.part() == Some(Part::Implements))
+    }
+
+    /// `IsDeclarationName`
+    pub fn is_declaration_name(&self, name: Node) -> bool {
+        let parent = self.parent(name);
+        !matches!(
+            self.kind(name),
+            Kind::SourceFile | Kind::ObjectBindingPattern | Kind::ArrayBindingPattern
+        ) && self.kind(parent).is_declaration()
+            && self.name(parent) == name
+    }
+
+    /// `IsIdentifierName`
+    pub fn is_identifier_name(&self, node: Node) -> bool {
+        let parent = self.parent(node);
+        match self.kind(parent) {
+            Kind::PropertyDeclaration
+            | Kind::PropertySignature
+            | Kind::MethodDeclaration
+            | Kind::MethodSignature
+            | Kind::GetAccessor
+            | Kind::SetAccessor
+            | Kind::EnumMember
+            | Kind::PropertyAssignment
+            | Kind::PropertyAccessExpression
+            | Kind::QualifiedName => self.name(parent) == node,
+            Kind::BindingElement | Kind::ImportSpecifier => self.property_name(parent) == node,
+            Kind::ExportSpecifier
+            | Kind::JsxAttribute
+            | Kind::JsxSelfClosingElement
+            | Kind::JsxOpeningElement
+            | Kind::JsxClosingElement => true,
+            _ => false,
+        }
     }
 
     /// `GetContainingClass`
@@ -2659,6 +3041,12 @@ impl File {
                 Kind::Unknown | Kind::EnumDeclaration | Kind::ModuleDeclaration => {
                     return Ok(false);
                 }
+                // `parseType` leaves both contexts. What a class implements is parsed as an expression.
+                _ if matches!(self.data(above), NodeData::Type(_))
+                    && kind != Kind::ExpressionWithTypeArguments =>
+                {
+                    return Ok(false);
+                }
                 Kind::ExportAssignment | Kind::ExportDeclaration if is_await => return Ok(true),
                 Kind::ClassStaticBlockDeclaration if below == self.body(above) => {
                     return Ok(is_await);
@@ -2676,6 +3064,12 @@ impl File {
                         && self.flags(above).contains(Flags::EXPORT)
                         && (matches!(self.data(below), NodeData::Member(_))
                             || matches!(below.part(), Some(Part::Extends | Part::Implements))) =>
+                {
+                    return Ok(true);
+                }
+                // `parseFunctionExpression`: its name is read in its own context on top of the outer one.
+                Kind::FunctionExpression
+                    if below == self.name(above) && self.flags(above).contains(modifier) =>
                 {
                     return Ok(true);
                 }
@@ -2829,14 +3223,6 @@ impl File {
             }
         }
     }
-}
-
-/// The name of a JSX attribute that is written at `pos`: `a`, `a-b`, `a:b`.
-fn jsx_name(text: &[u8], pos: u32) -> &[u8] {
-    let rest = text.get(pos as usize..).unwrap_or_default();
-    let is_part =
-        |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'-' | b':') || *b >= 0x80;
-    &rest[..rest.iter().position(|b| !is_part(b)).unwrap_or(rest.len())]
 }
 
 /// The inverse of `ModifierToFlag`.

@@ -1,20 +1,19 @@
 //! Declarations that are out of place or at odds with each other:
-//! 2369 2370 2371 2463, 2372 2373, 2428, 2440, 2374, 2717 2403.
+//! 2369 2370 2371 2463, 2372 2373, 2428, 2440, 2374, 2717 2403 2687.
 //!
 //! Follows `checkParameter`, the end of `onSuccessfullyResolvedSymbol`, `checkTypeParameterListsIdentical`, `checkAliasSymbol`,
 //! `getSymbolFlags`, `getExternalModuleMember`, `checkTypeForDuplicateIndexSignatures` and
 //! `checkVariableLikeDeclaration` of TypeScript 7.0.2's checker.go, and `Resolve` of its nameresolver.go.
 
-use super::sink::held;
 use super::*;
-use crate::bind::{Decl, MemberOwner, SymbolId, flags_of_member};
+use crate::bind::{Decl, PatParent, SymbolId};
 use smallvec::SmallVec;
 
 impl Checker<'_> {
     pub(super) fn check_declarations(&mut self, file: FileId) {
         self.check_parameter_references(file);
         self.check_merged_declarations(file);
-        self.check_subsequent_property_declarations(file);
+        self.check_variable_like_declarations(file);
         self.check_index_signatures(file);
     }
 
@@ -111,7 +110,6 @@ impl Checker<'_> {
                     |d: &&(FileId, Decl)| matches!(d.1, Decl::Class(_) | Decl::Interface(_));
                 if decls.iter().filter(is_one).count() > 1 {
                     self.check_type_parameter_lists_identical(file, sym, &decls);
-                    self.check_merged_index_signatures(file, &decls);
                 }
             }
         }
@@ -177,32 +175,130 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkVariableLikeDeclaration`, of a property that is not the first declaration of its symbol: 2717, and 2403 of a parameter
-    /// property. In every class, interface and type literal of the file.
-    fn check_subsequent_property_declarations(&mut self, file: FileId) {
+    /// What `checkVariableLikeDeclaration` is called for in `file`, where the symbol has other declarations.
+    fn check_variable_like_declarations(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let properties = (0..hir.members.len() as u32)
-            .map(MemberId)
-            .filter(|&m| {
-                hir[m].kind == MemberKind::Property
-                    && bound.member_owner[m.idx()] != MemberOwner::None
-            })
-            .map(Decl::Member);
-        let parameter_properties = (0..hir.params.len() as u32)
-            .map(ParamId)
-            .filter(|&p| hir[p].flags.contains(Flags::PARAMETER_PROPERTY))
-            .map(Decl::ParameterProperty);
-        for declaration in properties.chain(parameter_properties) {
-            let declarations = self.declarations_of_member(file, declaration);
-            if declarations.len() > 1 {
-                self.compare_with_value_declaration(file, declaration, &declarations);
+        // The text of the default library is not kept: there is no name to report with.
+        if hir.text.is_empty() {
+            return;
+        }
+        for (i, symbol) in bound.symbols.iter().enumerate() {
+            if symbol.decls.len() < 2
+                && !symbol.flags.contains(SymFlags::MERGED)
+                && symbol.name != known::computed
+            {
+                continue;
+            }
+            for &node in &symbol.decls {
+                let is_checked = match node {
+                    Decl::Var(_) | Decl::ParameterProperty(_) => true,
+                    // `bindParameter` declares the property last, so that is the symbol of the node.
+                    Decl::Param(pat) => !matches!(bound.pat_parent[pat.idx()], PatParent::Param(p)
+                        if bound.symbol_of_declaration(Decl::ParameterProperty(p)).is_some()),
+                    Decl::Member(m) => hir[m].kind == MemberKind::Property,
+                    _ => false,
+                };
+                // The local symbol of a module or a namespace also lists what is exported under the name.
+                if is_checked && bound.symbol_of_declaration(node).idx() == i {
+                    self.check_variable_like_declaration(file, node);
+                }
             }
         }
     }
 
-    /// `getWidenedTypeForVariableLikeDeclaration`, of one declaration of a property.
-    fn type_of_declared_member(&mut self, (file, declaration): (FileId, Decl)) -> TypeId {
-        match declaration {
+    /// The end of `checkVariableLikeDeclaration`, from `t := c.convertAutoToAny(c.getTypeOfSymbol(symbol))` on, but for the initializer.
+    pub(super) fn check_variable_like_declaration(&mut self, file: FileId, node: Decl) {
+        let (own, hir) = ((file, node), self.hir(file));
+        let declarations = self.declarations_of_member(file, node);
+        if declarations.len() < 2 {
+            return;
+        }
+        let symbol = match node {
+            Decl::Member(m) => self.symbol_of_member(file, m),
+            _ => (self.files()).sym(file, self.bound(file).symbol_of_declaration(node)),
+        };
+        let Some(value_declaration) = self.files().value_declaration(symbol) else {
+            return;
+        };
+        let (start, end) = match node {
+            Decl::Member(m) => (hir[m].name_pos, self.end_of_member_name(file, m)),
+            Decl::ParameterProperty(p) => (hir[hir[p].pat].pos, self.end_of_pat(file, hir[p].pat)),
+            Decl::Var(pat) | Decl::Param(pat) => (hir[pat].pos, self.end_of_pat(file, pat)),
+            _ => return,
+        };
+        // `DeclarationNameToString`
+        let (at, name) = (
+            (file, start, end),
+            Arg::Bytes(&hir.text[start as usize..end as usize]),
+        );
+        let differs = if value_declaration == own {
+            declarations.iter().any(|&d| {
+                d != own
+                    && self.is_variable_like(d)
+                    && !self.are_declaration_flags_identical(d, own)
+            })
+        } else {
+            self.check_type_of_secondary_declaration(symbol, value_declaration, own, at, name);
+            !self.are_declaration_flags_identical(own, value_declaration)
+        };
+        if differs {
+            self.error_at(at, 2687, &[name]);
+        }
+    }
+
+    /// "Node is a secondary declaration, check that type is identical to primary declaration", with
+    /// `errorNextVariableOrPropertyDeclarationMustHaveSameType`.
+    fn check_type_of_secondary_declaration(
+        &mut self,
+        symbol: Sym,
+        value_declaration: (FileId, Decl),
+        node: (FileId, Decl),
+        at: (FileId, u32, u32),
+        name: Arg<'_>,
+    ) {
+        // A second parameter of the name is a name taken twice.
+        if matches!(node.1, Decl::Param(_))
+            || self.files().flags(symbol).contains(SymFlags::ASSIGNMENT)
+        {
+            return;
+        }
+        let t = self.get_widened_type_for_variable_like_declaration(value_declaration);
+        let declaration_type = self.get_widened_type_for_variable_like_declaration(node);
+        if self.is_error_type(t)
+            || self.is_error_type(declaration_type)
+            || self.is_identical(t, declaration_type)
+        {
+            return;
+        }
+        let is_property = matches!(node.1, Decl::Member(_));
+        // Of a property or a parameter property only where the two are not even assignable to each other.
+        if !matches!(node.1, Decl::Var(_))
+            && self.is_any(t) == self.is_any(declaration_type)
+            && (self.is_any(t)
+                || self.is_assignable(t, declaration_type)
+                    && self.is_assignable(declaration_type, t))
+        {
+            return;
+        }
+        let (of, first) = value_declaration;
+        let related = self.error_range_of_declaration(of, first);
+        let related =
+            related.map(|(start, end)| self.new_diagnostic((of, start, end), 6203, &[name]));
+        let code = if is_property { 2717 } else { 2403 };
+        let args = [name, Arg::Type(t), Arg::Type(declaration_type)];
+        self.error_at(at, code, &args)
+            .related_information
+            .extend(related);
+    }
+
+    /// `convertAutoToAny(getWidenedTypeForVariableLikeDeclaration(declaration, false))`. Of `symbol.ValueDeclaration` it is
+    /// `getTypeOfSymbol(symbol)`.
+    fn get_widened_type_for_variable_like_declaration(
+        &mut self,
+        (file, declaration): (FileId, Decl),
+    ) -> TypeId {
+        let ty = match declaration {
+            Decl::Var(pat) | Decl::Param(pat) => self.type_of_pat(file, pat),
             Decl::ParameterProperty(p) => self.type_of_param(file, p),
             Decl::Member(m) => {
                 let ty = self.type_of_member_declaration(file, m);
@@ -216,199 +312,99 @@ impl Checker<'_> {
                 }
             }
             _ => TypeId::UNRESOLVED,
+        };
+        self.convert_auto_to_any(ty)
+    }
+
+    /// `ast.IsVariableLike`
+    fn is_variable_like(&self, (file, decl): (FileId, Decl)) -> bool {
+        match decl {
+            Decl::Member(m) => self.hir(file)[m].kind == MemberKind::Property,
+            Decl::Var(_) | Decl::Param(_) | Decl::ParameterProperty(_) => true,
+            _ => matches!(decl, Decl::EnumMember(_) | Decl::Property(_)),
         }
     }
 
-    /// 2717 2403, of the property or parameter property `declaration` of `file`, one of the `declarations` of its symbol.
-    fn compare_with_value_declaration(
-        &mut self,
-        file: FileId,
-        declaration: Decl,
-        declarations: &[(FileId, Decl)],
-    ) {
-        let hir = self.hir(file);
-        let is_value =
-            |d: &&(FileId, Decl)| matches!(d.1, Decl::Member(_) | Decl::ParameterProperty(_));
-        // The first is `symbol.ValueDeclaration`.
-        let Some(&first) = declarations.iter().find(is_value) else {
-            return;
-        };
-        if first == (file, declaration) {
-            return;
-        }
-        // `getTypeOfSymbol`: what the accessors say if there are any, whatever came first; otherwise what the first says.
-        let accessors: Vec<(FileId, MemberId)> = declarations
-            .iter()
-            .filter_map(|&(of, d)| match d {
-                Decl::Member(m)
-                    if flags_of_member(&self.hir(of)[m])
-                        .is_some_and(|flags| flags.0.intersects(SymFlags::ACCESSOR)) =>
-                {
-                    Some((of, m))
-                }
+    /// `areDeclarationFlagsIdentical`
+    fn are_declaration_flags_identical(&self, left: (FileId, Decl), right: (FileId, Decl)) -> bool {
+        // The parameter a declaration is, as opposed to a binding element in one.
+        let parameter = |(file, decl): (FileId, Decl)| match decl {
+            Decl::ParameterProperty(p) => Some(p),
+            Decl::Param(pat) => match self.bound(file).pat_parent[pat.idx()] {
+                PatParent::Param(p) => Some(p),
                 _ => None,
-            })
-            .collect();
-        let of_symbol = if accessors.is_empty() {
-            self.type_of_declared_member(first)
-        } else {
-            self.type_of_member_declarations(&accessors)
-        };
-        if self.is_error_type(of_symbol) {
-            return;
-        }
-        let again = self.type_of_declared_member((file, declaration));
-        if self.is_error_type(again) || self.is_identical(of_symbol, again) {
-            return;
-        }
-        // As sure as with variables: see 2403.
-        let differs = if self.is_any(of_symbol) || self.is_any(again) {
-            self.is_any(of_symbol) != self.is_any(again)
-        } else {
-            !self.is_assignable(of_symbol, again) || !self.is_assignable(again, of_symbol)
-        };
-        if !differs {
-            return;
-        }
-        let (start, end, code) = match declaration {
-            Decl::ParameterProperty(p) => {
-                let name = hir[p].pat;
-                (hir[name].pos, self.end_of_pat(file, name), 2403)
-            }
-            Decl::Member(m) => (hir[m].name_pos, self.end_of_member_name(file, m), 2717),
-            _ => return,
-        };
-        self.error_at(
-            (file, start, end),
-            code,
-            &[
-                Arg::Text(&self.source_text(file, start, end)),
-                Arg::Type(of_symbol),
-                Arg::Type(again),
-            ],
-        );
-        self.relate(start, code, |c| {
-            // `GetErrorRangeForNode`: all of a parameter, the name of a member.
-            let at = match first {
-                (of, Decl::ParameterProperty(p)) => (of, c.hir(of)[p].pos, c.end_of_param(of, p)),
-                (of, Decl::Member(m)) => {
-                    let from = c.hir(of)[m].name_pos;
-                    // The text of the default library is not kept.
-                    let to = if c.hir(of).text.is_empty() {
-                        from
-                    } else {
-                        c.end_of_member_name(of, m)
-                    };
-                    (of, from, to)
-                }
-                (of, _) => (of, 0, 0),
-            };
-            vec![Reported::new(
-                at,
-                6203,
-                held(vec![c.source_text(file, start, end)]),
-            )]
-        });
-    }
-
-    /// `checkTypeForDuplicateIndexSignatures`: 2374, within each class, interface and type literal of the file.
-    fn check_index_signatures(&mut self, file: FileId) {
-        let hir = self.hir(file);
-        if hir
-            .members
-            .iter()
-            .filter(|m| m.kind == MemberKind::IndexSignature)
-            .nth(1)
-            .is_none()
-        {
-            return;
-        }
-        // The lists of members, and whether they are those of a class.
-        let classes = hir.classes.iter().map(|c| (c.members, true));
-        let interfaces = hir.interfaces.iter().map(|i| (i.members, false));
-        let literals = hir.types.iter().filter_map(|t| match t.kind {
-            TypeNodeKind::Object(members) => Some((members, false)),
+            },
             _ => None,
-        });
-        let lists = classes.chain(interfaces).chain(literals);
-        let mut seen = Vec::new();
-        for (members, is_class) in lists {
-            if members
-                .iter()
-                .filter(|&m| hir[m].kind == MemberKind::IndexSignature)
-                .count()
-                < 2
+        };
+        let is_variable_declaration = |(file, decl): (FileId, Decl)| {
+            matches!(decl, Decl::Var(pat)
+                if matches!(self.bound(file).pat_parent[pat.idx()], PatParent::Var(_)))
+        };
+        // `isOptionalDeclaration`, `getSelectedModifierFlags`
+        let interesting_flags = Flags::OPTIONAL
+            | Flags::PRIVATE
+            | Flags::PROTECTED
+            | Flags::ASYNC
+            | Flags::ABSTRACT
+            | Flags::READONLY
+            | Flags::STATIC;
+        let flags = |declaration: (FileId, Decl)| {
+            let hir = self.hir(declaration.0);
+            interesting_flags
+                & match (declaration.1, parameter(declaration)) {
+                    (Decl::Member(m), _) => hir[m].flags,
+                    (_, Some(p)) => hir[p].flags,
+                    _ => Flags::empty(),
+                }
+        };
+        // "Differences in optionality between parameters and variables are allowed."
+        parameter(left).is_some() && is_variable_declaration(right)
+            || is_variable_declaration(left) && parameter(right).is_some()
+            || flags(left) == flags(right)
+    }
+
+    /// `checkTypeForDuplicateIndexSignatures`: 2374, of each `__index` that a class, an interface or a type literal of `file` has.
+    fn check_index_signatures(&mut self, file: FileId) {
+        let (bound, files) = (self.bound(file), self.files());
+        for (i, symbol) in bound.symbols.iter().enumerate() {
+            if symbol.name != known::index_signature
+                || symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
             {
                 continue;
             }
-            self.collect_index_signatures(file, members, is_class, &mut seen);
-            self.report_duplicate_index_signatures(file, &mut seen);
-        }
-    }
-
-    /// The same over `decls`, the declarations a class or an interface is put together from: they share one `__index`.
-    fn check_merged_index_signatures(&mut self, file: FileId, decls: &[(FileId, Decl)]) {
-        let mut seen = Vec::new();
-        for &(of, decl) in decls {
-            let (members, is_class) = match decl {
-                Decl::Class(c) => (self.hir(of)[c].members, true),
-                Decl::Interface(i) => (self.hir(of)[i].members, false),
-                _ => continue,
-            };
-            self.collect_index_signatures(of, members, is_class, &mut seen);
-        }
-        self.report_duplicate_index_signatures(file, &mut seen);
-    }
-
-    /// `getIndexSymbol`: adds the index signatures among `members` to `seen`, which has where they are by the type of the key. A key
-    /// that is a union counts once for each of its members.
-    fn collect_index_signatures(
-        &mut self,
-        file: FileId,
-        members: Span<MemberId>,
-        is_class: bool,
-        seen: &mut Vec<(TypeId, Vec<(FileId, MemberId)>)>,
-    ) {
-        let hir = self.hir(file);
-        for m in members.iter() {
-            let member = &hir[m];
-            // `declareClassMember`: what is static in a class is among its exports, which are not looked at. Elsewhere `static`
-            // moves nothing.
-            if member.kind != MemberKind::IndexSignature
-                || is_class && member.flags.contains(Flags::STATIC)
+            let index_symbol = files.sym(file, SymbolId(i as u32));
+            // `getIndexSymbol`: among the members. What is static in a class is among its exports, which are not looked at.
+            if files
+                .parent_of_symbol(index_symbol)
+                .and_then(|parent| files.member(parent, known::index_signature))
+                != Some(index_symbol)
             {
                 continue;
             }
-            let params = hir[member.func].params;
-            let Some(p) = params.iter().next() else {
-                continue;
-            };
-            if params.len != 1 || hir[p].ty.is_none() {
-                continue;
-            }
-            let keys = self.type_from_node(file, hir[p].ty);
-            for &key in self.parts(keys) {
-                match seen.iter_mut().find(|s| s.0 == key) {
-                    Some(entry) => entry.1.push((file, m)),
-                    None => seen.push((key, vec![(file, m)])),
+            let mut index_signature_map: Vec<(TypeId, SmallVec<[(FileId, MemberId); 2]>)> =
+                Vec::new();
+            for (of, m) in members_among(&files.decls_of(index_symbol)) {
+                let hir = self.hir(of);
+                let parameters = hir[hir[m].func].params;
+                if parameters.len() != 1 || hir[parameters.at(0)].ty.is_none() {
+                    continue;
+                }
+                let keys = self.type_from_node(of, hir[parameters.at(0)].ty);
+                for &t in self.parts(keys) {
+                    match index_signature_map.iter_mut().find(|it| it.0 == t) {
+                        Some(entry) => entry.1.push((of, m)),
+                        None => index_signature_map.push((t, smallvec::smallvec![(of, m)])),
+                    }
                 }
             }
-        }
-    }
-
-    /// 2374 at each index signature of `file` whose key another of those in `seen` has too. Empties `seen`.
-    fn report_duplicate_index_signatures(
-        &mut self,
-        file: FileId,
-        seen: &mut Vec<(TypeId, Vec<(FileId, MemberId)>)>,
-    ) {
-        let hir = self.hir(file);
-        for (key, places) in seen.drain(..) {
-            if places.len() > 1 {
-                for (_, m) in places.into_iter().filter(|place| place.0 == file) {
-                    let start = hir[m].start;
-                    let end = hir[m].loc.end;
-                    self.error_at((file, start, end), 2374, &[Arg::Type(key)]);
+            for (t, declarations) in index_signature_map {
+                for (of, m) in declarations
+                    .iter()
+                    .copied()
+                    .filter(|_| declarations.len() > 1)
+                {
+                    let member = &self.hir(of)[m];
+                    self.error_at((of, member.start, member.loc.end), 2374, &[Arg::Type(t)]);
                 }
             }
         }

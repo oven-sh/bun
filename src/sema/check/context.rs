@@ -2,7 +2,7 @@
 
 use super::infer::{Inference, Parts};
 use super::*;
-use crate::bind::{FnOwner, Parent, PatParent};
+use crate::bind::{Decl, FnOwner, Parent, PatParent};
 use smallvec::SmallVec;
 
 /// The names of properties that tell the members of a union apart, and what each is given as.
@@ -1298,7 +1298,6 @@ impl<'p> Checker<'p> {
                         | Query::Symbol(_)
                         | Query::Return(..)
                         | Query::ReturnAtFirstLook(..)
-                        | Query::Member(..)
                 )
             })
     }
@@ -1784,14 +1783,12 @@ impl<'p> Checker<'p> {
                 ExprKind::This => {
                     // In JavaScript the assignment may be what declares the property (`binary.Symbol != nil`): nothing is expected of it,
                     // unless the first declaration says what the property is (`binary.Symbol.ValueDeclaration.Type()`).
-                    if let Some((class, is_static, declared)) = bound.this_property(hir, assignment)
-                        && bound
-                            .this_properties_of(class, is_static)
-                            .iter()
-                            .find(|x| x.2 == declared)
-                            .is_none_or(|first| {
-                                hir.jsdoc_type(JsDocTypeOwner::Assign(first.3)).is_none()
-                            })
+                    let symbol = bound.symbol_of_declaration(Decl::ThisProperty(assignment));
+                    if symbol.is_some()
+                        && let Some((of, Decl::ThisProperty(first))) = self
+                            .files()
+                            .value_declaration(self.files().sym(file, symbol))
+                        && (self.hir(of).jsdoc_type(JsDocTypeOwner::Assign(first))).is_none()
                     {
                         return None;
                     }
@@ -1810,8 +1807,8 @@ impl<'p> Checker<'p> {
                     };
                     if let Some(name) = name
                         && let Some((prop, _)) = self.prop_ref(this, name)
-                        && let PropSource::Members(members) = &prop.source
-                        && let Some(&(of, m)) = members.first()
+                        && let PropSource::Symbol(sym) = prop.source
+                        && let Some((of, Decl::Member(m))) = self.files().value_declaration(sym)
                     {
                         let member = &self.hir(of)[m];
                         if member.kind == MemberKind::Property

@@ -9,7 +9,7 @@ use super::errors::is_close;
 use super::explain::Line;
 use super::sink::held;
 use super::*;
-use crate::bind::{FnOwner, MemberOwner, Parent, PatParent};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
 use smallvec::SmallVec;
 
 /// What a type of the standard library got with each version of it: `(lib, properties)`.
@@ -399,7 +399,7 @@ impl Checker<'_> {
 
     /// Whether `name` is a global `let`, `const`, class or enum (`SymbolFlagsBlockScoped`): those are no properties of `globalThis`.
     pub(super) fn is_block_scoped_global(&self, name: Atom) -> bool {
-        self.files().globals.get(&name).is_some_and(|&global| {
+        self.files().globals.get(name).is_some_and(|&global| {
             self.files()
                 .flags(global)
                 .intersects(SymFlags::BLOCK_SCOPED_VARIABLE | SymFlags::CLASS | SymFlags::ENUM)
@@ -515,8 +515,12 @@ impl Checker<'_> {
         }
         let statics = self.type_of_symbol(target);
         // `prototype`, and what a namespace merged with the class exports, are not declared `static`.
-        self.prop_ref(statics, name)
-            .is_some_and(|(prop, _)| matches!(prop.source, PropSource::Members(_)))
+        self.prop_ref(statics, name).is_some_and(|(prop, _)| {
+            matches!(
+                self.value_declaration_of_prop(prop),
+                Some((_, Decl::Member(_)))
+            )
+        })
     }
 
     /// The property that may have been meant. `closest`: the one `GetSpellingSuggestion` settles on, and not the first that will do.
@@ -553,8 +557,8 @@ impl Checker<'_> {
                     None => true,
                     Some((file, e, obj, chain)) => {
                         // `isPropertyAccessible`: a `#x` is within reach in the class that declares it, and not in an optional chain.
-                        let is_private_name = matches!(&prop.source, PropSource::Members(declared)
-                            if declared.first().is_some_and(|&(f, m)| matches!(self.hir(f)[m].key, PropKey::Private(_))));
+                        let is_private_name = matches!(self.value_declaration_of_prop(prop), Some((f, Decl::Member(m)))
+                            if matches!(self.hir(f)[m].key, PropKey::Private(_)));
                         if is_private_name {
                             chain == Chain::No
                                 && self.declaring_class(prop).is_some_and(|class| {
@@ -607,43 +611,16 @@ impl Checker<'_> {
             let Some((prop, _)) = self.prop_ref(member, meant) else {
                 continue;
             };
-            let Some(source) = Self::value_declaration(prop) else {
+            let Some(declaration) = self.value_declaration_of_prop(prop) else {
                 continue;
             };
-            if *declared.get_or_insert(source) != source {
+            if *declared.get_or_insert(declaration) != declaration {
                 return None;
             }
         }
-        match *declared? {
-            PropSource::Members(ref members) => {
-                let &(file, member) = members.first()?;
-                Some(self.place_of_token(file, self.hir(file)[member].name_pos))
-            }
-            // All of the parameter, with its modifiers.
-            PropSource::Parameter(file, param) => Some((
-                file,
-                self.hir(file)[param].pos,
-                self.end_of_param(file, param),
-            )),
-            PropSource::Literal(file, prop) => {
-                Some(self.place_of_token(file, self.hir(file)[prop].pos))
-            }
-            PropSource::Symbol(sym) => self.place_where_value_is_declared(sym),
-            // All of the assignment.
-            PropSource::Assigned(file, ref assignments) => {
-                let &first = assignments.first()?;
-                Some((
-                    file,
-                    self.start_of(file, first),
-                    self.end_of_expr(file, first),
-                ))
-            }
-            PropSource::Type(_)
-            | PropSource::Intersected(..)
-            | PropSource::Mapped(..)
-            | PropSource::Copy(..)
-            | PropSource::ReverseMapped(..) => None,
-        }
+        let (file, decl) = declared?;
+        let (start, end) = self.error_range_of_declaration(file, decl)?;
+        Some((file, start, end))
     }
 
     /// `GetErrorRangeForNode(symbol.ValueDeclaration)`. `None`: nothing declares `sym` as a value.
@@ -662,34 +639,28 @@ impl Checker<'_> {
         written: PropId,
     ) -> u32 {
         let first = self.bound(file).declarations_of_literal_member(written)[0];
-        let hir = self.hir(file);
-        // The nodes of a JSON file have no positions. `json_to_hir` numbers its properties in source order.
-        if hir.kind == FileKind::Json {
-            first.0
-        } else {
-            hir[first].pos
-        }
+        self.hir(file)[first].pos
     }
 
     /// Where `prop` is first declared, as `compareSymbols` orders symbols: what has no declaration comes last.
     pub(super) fn order_of_property(&mut self, prop: &Prop) -> (u8, FileId, u32) {
         let declared = match &prop.source {
-            PropSource::Members(declared) => declared
-                .first()
-                .map(|&(file, member)| (file, self.hir(file)[member].name_pos)),
-            PropSource::Parameter(file, param) => Some((*file, self.hir(*file)[*param].pos)),
             PropSource::Literal(file, literal) => Some((
                 *file,
                 self.first_declaration_pos_of_literal_property(*file, *literal),
             )),
-            PropSource::Assigned(file, assignments) => assignments
-                .first()
-                .map(|&assignment| (*file, self.hir(*file)[assignment].pos)),
-            // Not by the number of the symbol: the binder declares the functions of a block before the rest of it.
-            PropSource::Symbol(symbol) => {
-                super::errors::place_of_first_declaration(self.files(), *symbol)
-                    .map(|(_, file, pos)| (file, pos))
-            }
+            PropSource::Symbol(symbol) => match self.files().value_declaration(*symbol) {
+                Some((file, Decl::Member(first))) => Some((file, self.hir(file)[first].name_pos)),
+                Some((file, Decl::ParameterProperty(first))) => {
+                    Some((file, self.hir(file)[first].pos))
+                }
+                Some((file, Decl::Expando(first) | Decl::ThisProperty(first))) => {
+                    Some((file, self.hir(file)[first].pos))
+                }
+                // Not by the number of the symbol: the binder declares the functions of a block before the rest of it.
+                _ => super::errors::place_of_first_declaration(self.files(), *symbol)
+                    .map(|(_, file, pos)| (file, pos)),
+            },
             PropSource::Intersected(_, parts)
             | PropSource::Copy(_, parts, _)
             | PropSource::ReverseMapped(_, parts)
@@ -1064,10 +1035,7 @@ impl Checker<'_> {
             if as_written(atoms.bytes(prop.name)) != written {
                 continue;
             }
-            let PropSource::Members(declarations) = &prop.source else {
-                continue;
-            };
-            let Some(&(file, m)) = declarations.first() else {
+            let Some((file, Decl::Member(m))) = self.value_declaration_of_prop(prop) else {
                 continue;
             };
             let MemberOwner::Class(c) = self.bound(file).member_owner[m.idx()] else {
@@ -1149,46 +1117,43 @@ impl Checker<'_> {
 
     /// `getDeclarationModifierFlagsFromSymbolEx`, of a property that is declared in one place: what is written on its setter if it is
     /// written to, or else on its getter, or else on the first of its declarations.
-    fn modifiers_of_property(&self, prop: &Prop, writing: bool) -> Flags {
+    fn get_declaration_modifier_flags_from_symbol_ex(
+        &mut self,
+        prop: &Prop,
+        writing: bool,
+    ) -> Flags {
         match &prop.source {
-            PropSource::Members(declared) => {
-                let of_kind = |kind: MemberKind| {
-                    declared
-                        .iter()
-                        .copied()
-                        .find(|&(f, m)| self.hir(f)[m].kind == kind)
+            PropSource::Symbol(sym) => {
+                let (mut f, mut m) = match self.files().value_declaration(*sym) {
+                    Some((f, Decl::ParameterProperty(p))) => return self.hir(f)[p].flags,
+                    Some((f, Decl::Member(m))) => (f, m),
+                    // The modifiers of the first assignment. Only a member of a class is private or protected.
+                    Some((f, Decl::ThisProperty(first))) => {
+                        return self.hir(f).jsdoc_modifiers_of(first);
+                    }
+                    Some((f, Decl::Expando(first))) => {
+                        let modifiers = self.hir(f).jsdoc_modifiers_of(first);
+                        return modifiers
+                            .difference(Flags::PRIVATE | Flags::PROTECTED | Flags::PUBLIC);
+                    }
+                    _ => return Flags::empty(),
                 };
-                let setter = if writing {
-                    of_kind(MemberKind::Setter)
-                } else {
-                    None
-                };
-                let Some((f, m)) = setter
-                    .or_else(|| of_kind(MemberKind::Getter))
-                    .or_else(|| declared.first().copied())
-                else {
-                    return Flags::empty();
-                };
+                // Every `a.b` comes here: `s.Declarations` is asked for only where there is a choice.
+                if self.files().flags(*sym).intersects(SymFlags::ACCESSOR) {
+                    let declared = self.members_of_symbol(*sym);
+                    let of_kind = |kind: MemberKind| {
+                        (declared.iter().copied()).find(|&(f, m)| self.hir(f)[m].kind == kind)
+                    };
+                    let setter = of_kind(MemberKind::Setter).filter(|_| writing);
+                    (f, m) = setter
+                        .or_else(|| of_kind(MemberKind::Getter))
+                        .unwrap_or((f, m));
+                }
                 let flags = self.hir(f)[m].flags;
                 // Only a class keeps things to itself.
                 match self.bound(f).member_owner[m.idx()] {
                     MemberOwner::Class(_) => flags,
                     _ => flags.difference(Flags::PRIVATE | Flags::PROTECTED | Flags::PUBLIC),
-                }
-            }
-            PropSource::Parameter(f, p) => self.hir(*f)[*p].flags,
-            // The modifiers of the first assignment. Only a member of a class is private or protected.
-            PropSource::Assigned(f, declared) => {
-                let Some(&first) = declared.first() else {
-                    return Flags::empty();
-                };
-                let modifiers = self.hir(*f).jsdoc_modifiers_of(first);
-                if modifiers.is_empty()
-                    || self.bound(*f).this_property(self.hir(*f), first).is_some()
-                {
-                    modifiers
-                } else {
-                    modifiers.difference(Flags::PRIVATE | Flags::PROTECTED | Flags::PUBLIC)
                 }
             }
             _ => Flags::empty(),
@@ -1245,16 +1210,21 @@ impl Checker<'_> {
         let Some(&first) = parts.first() else {
             return true;
         };
+        // Every `a.b` comes here. `PropFlags` has the modifiers of the declaration that speaks for a property.
+        if !is_super && !(parts.iter()).any(|p| p.flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH))
+        {
+            return true;
+        }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
         // With one declaration for all of them it goes by that (`createUnionOrIntersectionProperty`). Otherwise it is private if one of
         // them is, else public if one is, else protected, and static if one is.
         let is_declared_once = parts.len() == 1 || parts.iter().all(|p| p.source == first.source);
         let flags = if is_declared_once {
-            self.modifiers_of_property(first, writing)
+            self.get_declaration_modifier_flags_from_symbol_ex(first, writing)
         } else {
             let (mut some, mut is_public) = (Flags::empty(), false);
             for part in &parts {
-                let modifiers = self.modifiers_of_property(part, false);
+                let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(part, false);
                 some |= modifiers;
                 is_public |= !modifiers.intersects(hidden);
             }
@@ -1290,9 +1260,12 @@ impl Checker<'_> {
             };
             if !is_static
                 && parts.iter().any(|p| match &p.source {
-                    PropSource::Members(declared) => declared.iter().any(&is_field),
-                    PropSource::Assigned(f, declared) => {
-                        declared.iter().any(|&e| is_assigned_field(*f, e))
+                    PropSource::Symbol(sym) => {
+                        (self.files().decls_of(*sym).iter()).any(|&(f, decl)| match decl {
+                            Decl::Member(m) => is_field(&(f, m)),
+                            Decl::Expando(e) | Decl::ThisProperty(e) => is_assigned_field(f, e),
+                            _ => false,
+                        })
                     }
                     _ => false,
                 })
@@ -1341,7 +1314,7 @@ impl Checker<'_> {
         let mut declaring: Vec<Sym> = Vec::new();
         for part in &parts {
             if self
-                .modifiers_of_property(part, writing)
+                .get_declaration_modifier_flags_from_symbol_ex(part, writing)
                 .contains(Flags::PROTECTED)
             {
                 let Some(class) = self.declaring_class(part) else {

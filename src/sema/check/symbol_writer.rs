@@ -9,7 +9,6 @@ use super::print::{quoted, to_valid_utf8};
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
-use crate::util::FxHashSet;
 
 /// `typeWriterResult`
 pub struct SymbolAtLocation {
@@ -66,9 +65,7 @@ enum PropertyParent {
 impl Checker<'_> {
     /// `typeWriterWalker.getSymbols`, in no particular order. The file must have been checked, as in the harness.
     pub fn symbols_at_locations(&mut self, file: FileId) -> Vec<SymbolAtLocation> {
-        let mut nodes = self.visited_nodes(file);
-        // A range is written once: a name comes before the expression that is kept at the same place.
-        nodes.sort_by_key(|node| matches!(node.kind, VisitedKind::Expression(_)));
+        let nodes = self.visited_nodes(file);
         let mut writer = SymbolWriter::new(self, file);
         for node in nodes {
             writer.write_symbol_of_visited_node(node);
@@ -81,7 +78,6 @@ struct SymbolWriter<'c, 'p> {
     c: &'c mut Checker<'p>,
     file: FileId,
     results: Vec<SymbolAtLocation>,
-    written: FxHashSet<(u32, u32)>,
     /// `ECMALineMap`, by file.
     line_starts: FxHashMap<FileId, Vec<u32>>,
 }
@@ -93,7 +89,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             c,
             file,
             results: Vec::with_capacity(capacity),
-            written: FxHashSet::default(),
             line_starts: FxHashMap::default(),
         }
     }
@@ -102,9 +97,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     /// `writeTypeOrSymbol`, in the walk for symbols.
     fn write_symbol_of_visited_node(&mut self, node: VisitedNode) {
-        if let Some(found) = self.get_symbol_at_visited_node(node.kind)
-            && (node.start == node.end || self.written.insert((node.start, node.end)))
-        {
+        if let Some(found) = self.get_symbol_at_visited_node(node.kind) {
             let scope = self.c.enclosing_scope_of_visited_node(self.file, node.kind);
             self.write_node(node.start, node.end, scope, &found);
         }
@@ -267,10 +260,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     && hir[parameter].flags.contains(Flags::PARAMETER_PROPERTY)
                     && hir[bound.param_fn[parameter.idx()]].kind == FnKind::Constructor
                 {
+                    let property = bound.symbol_of_declaration(Decl::ParameterProperty(parameter));
                     return Some(Found::Property(Prop {
                         name,
                         flags: PropFlags::empty(),
-                        source: PropSource::Parameter(file, parameter),
+                        source: PropSource::Symbol(files.sym(file, property)),
                         mapper: MapperId::IDENTITY,
                     }));
                 }
@@ -450,7 +444,6 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             | VisitedKind::ImportAttributeName(_)
             | VisitedKind::LiteralType(_)
             | VisitedKind::LiteralTypeOperand(_)
-            | VisitedKind::Directive(_)
             | VisitedKind::Label(_) => None,
         }
     }
@@ -697,7 +690,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         Found::Property(Prop {
             name: name.unwrap_or(Atom::NONE),
             flags: PropFlags::empty(),
-            source: PropSource::Members(vec![(file, member)].into()),
+            source: PropSource::Symbol(self.c.symbol_of_member(file, member)),
             mapper: MapperId::IDENTITY,
         })
     }
@@ -1064,37 +1057,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
 
     fn declarations_of_property(&mut self, prop: &Prop, depth: u32) -> Vec<(FileId, Declaration)> {
         match &prop.source {
-            PropSource::Members(list) => match list.first() {
-                Some(&(file, member)) => self.declarations_of_member(file, Decl::Member(member)),
-                None => Vec::new(),
-            },
-            PropSource::Parameter(file, parameter) => {
-                self.declarations_of_member(*file, Decl::ParameterProperty(*parameter))
-            }
             PropSource::Literal(file, property) => {
                 self.declarations_of_member(*file, Decl::Property(*property))
             }
             PropSource::Symbol(symbol) => self.declarations_of_symbol(*symbol),
-            PropSource::Assigned(file, assignments) => {
-                // `this.name = value` is one symbol with a member `name` that comes after it.
-                let of_this = assignments
-                    .first()
-                    .map(|&first| self.declarations_of_member(*file, Decl::ThisProperty(first)));
-                let is_this = |d: &(FileId, Declaration)| {
-                    matches!(d.1, Declaration::Bound(Decl::ThisProperty(_)))
-                };
-                match of_this {
-                    Some(declarations)
-                        if declarations.len() > 1 && declarations.iter().any(is_this) =>
-                    {
-                        declarations
-                    }
-                    _ => assignments
-                        .iter()
-                        .map(|&assignment| (*file, Declaration::Expression(assignment)))
-                        .collect(),
-                }
-            }
             PropSource::Intersected(_, parts)
             | PropSource::Copy(_, parts, _)
             | PropSource::ReverseMapped(_, parts) => {
@@ -1129,37 +1095,29 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
     /// `symbol.Parent`, of a property. The symbol of a type literal or an object literal is never written.
     fn parent_of_property(&mut self, prop: &Prop) -> Option<PropertyParent> {
         let (file, member) = match &prop.source {
-            PropSource::Members(list) => *list.first()?,
-            PropSource::Copy(_, of, true) => return self.parent_of_property(&of[0]),
-            PropSource::Parameter(..) => {
-                return self.c.declaring_class(prop).map(PropertyParent::Symbol);
-            }
-            PropSource::Assigned(file, assignments) => {
-                if let Some(class) = self.c.declaring_class(prop) {
-                    return Some(PropertyParent::Symbol(class));
-                }
+            PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol)? {
+                (file, Decl::Member(member)) => (file, member),
                 // `bindExpandoPropertyAssignment`
-                let first = *assignments.first()?;
-                let (bound, files) = (self.c.bound(*file), self.c.files());
-                let declared = bound.expr_symbol[first.idx()];
-                if declared.is_none() {
-                    return None;
+                (file, Decl::Expando(first)) => {
+                    let (bound, files) = (self.c.bound(file), self.c.files());
+                    let parent = bound.symbols[bound.expr_symbol[first.idx()].idx()].parent;
+                    let owner = &bound.symbols[parent.idx()];
+                    return match (owner.name, owner.decls[0]) {
+                        (known::anonymous_function, Decl::Fn(function)) => {
+                            let FnOwner::Expr(e) = bound.fns[function.idx()].owner else {
+                                return None;
+                            };
+                            Some(PropertyParent::Named(
+                                self.c.name_of_function_expression(file, e),
+                            ))
+                        }
+                        (known::object_literal, _) => None,
+                        _ => Some(PropertyParent::Symbol(files.sym(file, parent))),
+                    };
                 }
-                let parent = bound.symbols[declared.idx()].parent;
-                let owner = &bound.symbols[parent.idx()];
-                return match (owner.name, owner.decls[0]) {
-                    (known::anonymous_function, Decl::Fn(function)) => {
-                        let FnOwner::Expr(e) = bound.fns[function.idx()].owner else {
-                            return None;
-                        };
-                        Some(PropertyParent::Named(
-                            self.c.name_of_function_expression(*file, e),
-                        ))
-                    }
-                    (known::object_literal, _) => None,
-                    _ => Some(PropertyParent::Symbol(files.sym(*file, parent))),
-                };
-            }
+                _ => return self.c.declaring_class(prop).map(PropertyParent::Symbol),
+            },
+            PropSource::Copy(_, of, true) => return self.parent_of_property(&of[0]),
             _ => return None,
         };
         self.container_of_member(file, member)
@@ -1263,7 +1221,10 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         at: ScopeId,
     ) -> (String, Vec<(FileId, Declaration)>) {
         match &prop.source {
-            PropSource::Symbol(symbol) => return self.describe_symbol(*symbol, at),
+            // A member goes on as a property: `describe_symbol` does not know the way to it.
+            PropSource::Symbol(symbol) if !self.c.is_member_symbol(*symbol) => {
+                return self.describe_symbol(*symbol, at);
+            }
             // The name, the parent and the declarations of what it is a copy of.
             PropSource::Copy(_, of, true) if of.len() == 1 => {
                 return self.describe_property(&of[0], at);
@@ -1297,11 +1258,12 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         }
         // `getNameOfSymbolAsWritten`: as the first declaration writes it.
         let source = match declarations.first() {
-            Some(&(file, Declaration::Bound(Decl::Member(member)))) => {
-                PropSource::Members(vec![(file, member)].into())
-            }
-            Some(&(file, Declaration::Bound(Decl::ParameterProperty(parameter)))) => {
-                PropSource::Parameter(file, parameter)
+            Some(&(
+                file,
+                Declaration::Bound(decl @ (Decl::Member(_) | Decl::ParameterProperty(_))),
+            )) => {
+                let symbol = self.c.bound(file).symbol_of_declaration(decl);
+                PropSource::Symbol(self.c.files().sym(file, symbol))
             }
             Some(&(file, Declaration::Bound(Decl::Property(property)))) => {
                 PropSource::Literal(file, property)

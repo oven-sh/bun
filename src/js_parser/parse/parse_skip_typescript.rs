@@ -7,16 +7,17 @@ use crate::parser::{
     FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
 };
 use crate::sema::keep::{BracketKind, ObjectTypeBuilder, TypeMemberParts};
+use crate::sema::ts_syntax::{
+    Flags, Keyword, Name, Param, PatternElement, PatternId, PatternProperty, PropertyKey,
+    ResolutionMode, SignatureKind, TupleElement, TypeId, TypeParam,
+};
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::StoreStr;
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
-use bun_ast::ts_syntax::{
-    Flags, Name, Param, PatternElement, PatternId, PatternProperty, PropertyKey, ResolutionMode,
-    SignatureKind, TupleElement, TypeData, TypeId, TypeParam,
-};
+use bun_sema::hir::TypeNodeKind;
 
 // Re-export so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
@@ -419,10 +420,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// Returns where the comma before the "]" is, if there is one. Keep mode stores the parameters in `TypeSyntax::last_params`.
+    /// Keep mode stores the parameters in `TypeSyntax::last_params`, and returns what is wrong with them. `member`: where the
+    /// signature starts.
     #[cold]
     #[inline(never)]
-    fn skip_index_signature_parameter_list(&mut self) -> Result<Option<bun_ast::Loc>, Error> {
+    fn skip_index_signature_parameter_list(
+        &mut self,
+        member: u32,
+    ) -> Result<[Option<(u32, u32)>; 2], Error> {
         self.lexer.expect(T::TOpenBracket)?;
         let keeps = self.should_keep_types();
         let mut parameters: Vec<Param> = Vec::new();
@@ -502,10 +507,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.list_contexts = saved_contexts;
 
         self.lexer.expect(T::TCloseBracket)?;
-        if keeps {
-            self.finish_params(is_usable.then_some(&parameters[..]));
+        if !keeps {
+            return Ok([None; 2]);
         }
-        Ok(trailing_comma)
+        self.finish_params(is_usable.then_some(&parameters[..]));
+        Ok(self.type_syntax_mut().b.check_index_signature_parameters(
+            &parameters,
+            trailing_comma,
+            member,
+        ))
     }
 
     /// `parseModifiers` at the start of a parameter. A modifier keyword is a modifier if a parameter can continue after it
@@ -513,7 +523,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn skip_parameter_modifiers(&mut self, parameter: &mut Param) -> Result<(), Error> {
-        let mut modifiers: Vec<bun_ast::ts_syntax::Modifier> = Vec::new();
+        let mut modifiers: Vec<crate::sema::ts_syntax::Modifier> = Vec::new();
         while self.lexer.token == T::TIdentifier
             && let Some(flag) = crate::lexer::PropertyModifierKeyword::find(self.lexer.raw())
                 .and_then(crate::sema::keep::modifier_flag)
@@ -533,7 +543,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             })
         {
             parameter.flags |= flag;
-            modifiers.push(bun_ast::ts_syntax::Modifier {
+            modifiers.push(crate::sema::ts_syntax::Modifier {
                 flag,
                 loc: self.lexer.loc(),
                 decorator: None,
@@ -552,7 +562,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// parser's state is undone right away, except for the lexer's position.
     #[cold]
     #[inline(never)]
-    fn parse_detached<R>(
+    pub(crate) fn parse_detached<R>(
         &mut self,
         parse: impl FnOnce(&mut Self) -> Result<R, Error>,
     ) -> Result<R, Error> {
@@ -709,11 +719,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn is_unambiguously_start_of_function_type(&mut self) -> bool {
         let (here, swallowed) = (self.lexer.snapshot(), self.lexer.swallowed);
+        // `skipParameterStart` reads a whole binding pattern.
+        let noted = self.type_syntax_checkpoint();
         self.lexer.is_log_disabled = true;
         let found = self
             .next_is_unambiguously_start_of_function_type()
             .unwrap_or(false);
         self.lexer.restore(&here);
+        self.rewind_type_syntax(&noted);
         self.lexer.swallowed = swallowed;
         found
     }
@@ -872,11 +885,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.next()?;
         // `parseTypeArgumentsOfTypeReference`
         if !self.lexer.has_newline_before {
-            let reference = if keeps {
-                self.last_type()
-            } else {
-                TypeId::NONE
-            };
+            let reference = if keeps { self.take_reference() } else { None };
             let has_arguments = self.skip_type_script_type_arguments::<false, false>()?;
             if keeps {
                 self.attach_type_args(reference, has_arguments);
@@ -889,13 +898,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn skip_missing_name_after_dot<const KEEP: bool>(&mut self) -> Result<(), Error> {
-        let mut reference = TypeId::NONE;
+        let mut reference = None;
         let mut jsdoc_dot = None;
         match self.lexer.token {
             // "A.<T>": the name ends before the dot, and the type arguments are its own.
             T::TLessThan => {
                 if KEEP {
-                    reference = self.last_type();
+                    reference = self.take_reference();
                 }
                 jsdoc_dot = Some(bun_ast::Loc {
                     start: self.lexer.full_start().start - 1,
@@ -922,6 +931,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .ts_grammar_error(bun_ast::Range { loc, len: 1 }, 8020);
         }
         if KEEP {
+            if jsdoc_dot.is_none() {
+                self.clear_last_type();
+            }
             self.attach_type_args(reference, has_arguments);
         }
         Ok(())
@@ -958,9 +970,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.expect(T::TOpenBrace)?;
         let keeps = self.should_keep_types();
         let keyword_loc = self.lexer.loc();
-        let mut properties = bun_alloc::ArenaVec::<bun_ast::G::Property>::new_in(self.arena);
         let mut assert_keyword_loc = None;
-        let mut attributes = None;
         if self.lexer.token == T::TWith {
             self.lexer.next()?;
         } else if self.lexer.is_contextual_keyword(b"assert") {
@@ -977,98 +987,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.lexer.expect(T::TColon)?;
 
-        // `parseImportAttributes`
-        let mut mode = ResolutionMode::None;
-        let mut count = 0u32;
-        if self.lexer.token != T::TOpenBrace {
-            // Reported, and there are no attributes.
-            self.lexer.expect(T::TOpenBrace)?;
-        } else {
-            let attributes_open_brace = self.lexer.loc();
-            self.lexer.next()?;
-            let saved_contexts = self.enter_list(ListKind::ImportAttributes);
-            while self.lexer.token != T::TCloseBrace {
-                match self.classify_list_token(ListKind::ImportAttributes)? {
-                    ListStep::Element => {}
-                    ListStep::Skipped => continue,
-                    ListStep::Over => break,
-                }
-                // A speculative parse, which classifies nothing, fails here.
-                if !self.lexer.is_identifier_or_keyword()
-                    && !matches!(self.lexer.token, T::TStringLiteral | T::TPrivateIdentifier)
-                {
-                    return Err(crate::Error::Backtrack);
-                }
-
-                // `parseImportAttribute`
-                let element_start = self.lexer.loc();
-                let key = if !keeps {
-                    None
-                } else if self.lexer.token == T::TStringLiteral {
-                    let text = self.lexer.to_e_string()?;
-                    Some(self.new_expr(text, element_start))
-                } else {
-                    let name = bun_ast::E::EString::init(self.lexer.identifier);
-                    Some(self.new_expr(name, element_start))
-                };
-                let is_resolution_mode = self.lexer.token == T::TStringLiteral
-                    && self
-                        .string_token_text()
-                        .is_some_and(|name| &*name == b"resolution-mode");
-                self.lexer.next()?;
-                self.lexer.expect(T::TColon)?;
-                let text = if self.lexer.token == T::TStringLiteral {
-                    self.string_token_text()
-                } else {
-                    None
-                };
-                let value = self.parse_detached(|p| p.parse_expr(Level::Comma))?;
-                if key.is_some() {
-                    properties.push(bun_ast::G::Property {
-                        key,
-                        value: Some(value),
-                        ..Default::default()
-                    });
-                }
-                count += 1;
-                mode = match text {
-                    Some(text)
-                        if count == 1
-                            && is_resolution_mode
-                            && matches!(value.data, bun_ast::ExprData::EString(_)) =>
-                    {
-                        match &*text {
-                            b"import" => ResolutionMode::Import,
-                            b"require" => ResolutionMode::Require,
-                            _ => ResolutionMode::None,
-                        }
-                    }
-                    _ => ResolutionMode::None,
-                };
-
-                if self.lexer.token != T::TComma {
-                    if self.recover_missing_comma(ListKind::ImportAttributes, element_start)? {
-                        continue;
-                    }
-                    break;
-                }
-                self.lexer.next()?;
-            }
-            self.lexer.list_contexts = saved_contexts;
-            self.lexer
-                .expect_close_brace_of_attributes(attributes_open_brace)?;
-            if keeps {
-                let object = bun_ast::E::Object {
-                    properties: bun_collections::VecExt::from_bump_vec(properties),
-                    ..Default::default()
-                };
-                let object = self.new_expr(object, attributes_open_brace);
-                attributes = Some(bun_ast::ts_syntax::ImportAttributes {
-                    keyword_loc,
-                    object,
-                });
-            }
-        }
+        let (object, mode) = self.parse_import_attribute_list(keeps)?;
+        let attributes = object.map(|object| crate::sema::ts_syntax::ImportAttributes {
+            keyword_loc,
+            object,
+        });
 
         if self.lexer.token == T::TComma {
             self.lexer.next()?;
@@ -1111,7 +1034,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if matches!(token, T::TAsterisk | T::TAsteriskEquals) {
             if KEEP {
-                self.emit_type(TypeData::JsDocAll, pos);
+                self.emit_jsdoc_all_type(pos);
             }
             return Ok(());
         }
@@ -1216,15 +1139,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if has_dots {
                 // "label: ...T" is for the checker to object to (5087).
                 if is_named {
-                    let ty = self.last_type();
-                    self.emit_type_if_complete(&[ty], TypeData::Rest(ty), pos);
+                    self.emit_rest_type(pos);
                 } else {
                     element.is_rest = true;
                 }
             } else if let Some(ty) = self.optional_tuple_element_type(type_loc) {
                 // "label: T?" is for the checker to object to (5086).
                 if is_named {
-                    self.emit_type(TypeData::Optional(ty), pos);
+                    self.emit_optional_type(ty, pos);
                 } else {
                     element.is_optional = true;
                     self.type_syntax_mut().last_type = ty;
@@ -1392,6 +1314,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
                         self.lexer.next()?;
                         if KEEP {
+                            self.take_back_single_token_type();
                             self.skip_nested_type::<true>(
                                 Level::Lowest,
                                 SkipTypeOptionsBitset::empty(),
@@ -1535,7 +1458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     // "import('./foo')<T>" (`parseImportType`). Ordinary builds reject this.
                     if self.lexer.tolerant && !self.lexer.has_newline_before {
-                        let reference = if KEEP { self.last_type() } else { TypeId::NONE };
+                        let reference = if KEEP { self.take_reference() } else { None };
                         let has_arguments =
                             self.skip_type_script_type_arguments::<false, false>()?;
                         if KEEP {
@@ -1661,7 +1584,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 self.skip_nested_type::<KEEP>(Level::Prefix, operand_opts)?;
                                 if KEEP {
                                     let ty = self.last_type();
-                                    self.emit_type_if_complete(&[ty], TypeData::Keyof(ty), pos);
+                                    self.emit_type_if_complete(&[ty], TypeNodeKind::Keyof(ty), pos);
                                 }
                             }
 
@@ -1691,7 +1614,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 )?;
                                 if KEEP {
                                     let ty = self.last_type();
-                                    self.emit_type_if_complete(&[ty], TypeData::Readonly(ty), pos);
+                                    self.emit_type_if_complete(
+                                        &[ty],
+                                        TypeNodeKind::Readonly(ty),
+                                        pos,
+                                    );
                                 }
                             }
 
@@ -1746,7 +1673,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if self.lexer.is_contextual_keyword(b"symbol") {
                                 self.lexer.next()?;
                                 if KEEP {
-                                    self.emit_type(TypeData::UniqueSymbol, pos);
+                                    self.emit_type(TypeNodeKind::UniqueSymbol, pos);
                                 }
                                 break;
                             }
@@ -1763,13 +1690,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 self.skip_nested_type::<KEEP>(Level::Prefix, operand_opts)?;
                                 // `checkGrammarTypeOperatorNode`: 'symbol' expected.
                                 self.lexer.ts_grammar_expected(operand, "symbol");
+                                // `getTypeFromTypeOperatorNode`: the error type. The operand is not kept.
                                 if KEEP {
                                     let ty = self.last_type();
-                                    self.emit_type_if_complete(
-                                        &[ty],
-                                        TypeData::UniqueOperator(ty),
-                                        pos,
-                                    );
+                                    let any = TypeNodeKind::Keyword(Keyword::Any);
+                                    self.emit_type_if_complete(&[ty], any, pos);
                                 }
                                 break;
                             }
@@ -1954,6 +1879,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         self.lexer.next()?;
                         if KEEP {
+                            self.take_back_single_token_type();
                             self.skip_nested_type::<true>(
                                 Level::Lowest,
                                 SkipTypeOptionsBitset::empty(),
@@ -1968,7 +1894,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "let foo: any \n <number>foo" must not become a single type
                     if check_type_parameters && !self.lexer.has_newline_before {
                         if KEEP {
-                            let reference = self.last_type();
+                            let reference = self.take_reference();
                             let has_arguments =
                                 self.skip_type_script_type_arguments::<false, false>()?;
                             self.attach_type_args(reference, has_arguments);
@@ -2466,7 +2392,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
                     if !self.lexer.has_newline_before {
                         if KEEP {
-                            let reference = self.last_type();
+                            let reference = self.take_reference();
                             let has_arguments =
                                 self.skip_type_script_type_arguments::<false, false>()?;
                             self.attach_type_args(reference, has_arguments);
@@ -2501,10 +2427,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if KEEP {
                         if skipped {
                             let index = self.last_type();
-                            let access = TypeData::IndexedAccess { object, index };
+                            let access = TypeNodeKind::IndexedAccess { obj: object, index };
                             self.emit_type_if_complete(&[object, index], access, pos);
                         } else {
-                            self.emit_type_if_complete(&[object], TypeData::Array(object), pos);
+                            self.emit_type_if_complete(&[object], TypeNodeKind::Array(object), pos);
                         }
                     }
 
@@ -2568,11 +2494,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             SkipTypeOptionsBitset::empty(),
                         )?;
                         let no = self.last_type();
-                        let conditional = TypeData::Conditional {
+                        let conditional = TypeNodeKind::Cond {
                             check,
                             extends,
-                            when_true: yes,
-                            when_false: no,
+                            yes,
+                            no,
                         };
                         self.emit_type_if_complete(&[check, extends, yes, no], conditional, start);
                         continue;
@@ -3002,7 +2928,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             member.bracket_full_start = self.lexer.token_full_start as u32;
             member.newline_before_bracket = self.lexer.has_newline_before;
         }
-        member.trailing_comma = self.skip_index_signature_parameter_list()?;
+        member.index_signature_errors = self.skip_index_signature_parameter_list(member.start)?;
         if keeps {
             member.bracket_kind = BracketKind::IndexParameters;
             member.parameters = Some(self.type_syntax_mut().last_params.take());
@@ -3187,7 +3113,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 constraint: TypeId::NONE,
                 default: TypeId::NONE,
                 flags: Flags::empty(),
-                modifiers: bun_ast::ts_syntax::Span::EMPTY,
+                modifiers: crate::sema::ts_syntax::Span::EMPTY,
             };
             // Offset of the last "out". It is the parameter's name if no identifier follows.
             let mut out_pos = 0;
@@ -3473,11 +3399,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             constraint: TypeId::NONE,
             default: TypeId::NONE,
             flags: Flags::empty(),
-            modifiers: bun_ast::ts_syntax::Span::EMPTY,
+            modifiers: crate::sema::ts_syntax::Span::EMPTY,
         };
 
         // `parseModifiersEx`: any modifier keyword that the rest of a declaration can follow (`nextTokenCanFollowModifier`).
-        let mut modifiers: Vec<bun_ast::ts_syntax::Modifier> = Vec::new();
+        let mut modifiers: Vec<crate::sema::ts_syntax::Modifier> = Vec::new();
         let mut has_static = false;
         while self.is_modifier_kind() && !matches!(self.lexer.token, T::TExport | T::TDefault) {
             let is_static = self.lexer.is_contextual_keyword(b"static");
@@ -3508,7 +3434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             let flag = self.modifier_flag_here();
             parameter.flags |= flag & (Flags::CONST | Flags::IN | Flags::OUT);
-            modifiers.push(bun_ast::ts_syntax::Modifier {
+            modifiers.push(crate::sema::ts_syntax::Modifier {
                 flag,
                 loc: self.lexer.loc(),
                 decorator: None,
@@ -3674,7 +3600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut other_heritage: Vec<TypeId> = Vec::new();
         let mut heritage_errors = [None; 2];
         // It takes every clause, which leaves nothing for the two blocks below.
-        let has_tolerated_implements_clause = self.lexer.tolerant
+        let _ = self.lexer.tolerant
             && self.skip_interface_heritage_clauses(
                 &mut extends,
                 &mut other_heritage,
@@ -3720,13 +3646,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 text: StoreStr::new(name),
                 loc: name_loc,
             };
-            let has_implements_clause = has_implements_clause || has_tolerated_implements_clause;
             self.emit_interface(
                 name,
                 type_parameters,
                 &extends,
                 &other_heritage,
-                has_implements_clause,
                 heritage_errors,
                 keyword_loc,
             );
@@ -3841,8 +3765,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.discard_scopes_up_to(scope_index);
             let _ = self.skip_type_script_type_arguments::<false, false>()?;
             if keeps {
-                let expression = self.type_syntax_mut().ast.add_expression(expression);
-                self.emit_type(TypeData::HeritageExpression(expression), pos);
+                self.emit_heritage_expression(expression, pos);
                 self.finish_last_type();
             }
             return Ok(());
@@ -3872,11 +3795,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.log()
                 .add_range_error(Some(self.source), expression, b"TC2499");
         }
-        let reference = if keeps {
-            self.last_type()
-        } else {
-            TypeId::NONE
-        };
+        let reference = if keeps { self.take_reference() } else { None };
         let has_arguments = self.skip_type_script_type_arguments::<false, false>()?;
         if keeps {
             self.attach_type_args(reference, has_arguments);
@@ -4036,7 +3955,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if backtrack {
             self.lexer.restore(&old_lexer);
-            self.rewind_type_syntax(noted);
+            self.rewind_type_syntax(&noted);
             // `rewind` drops the errors.
             self.lexer.swallowed = old_swallowed;
         }
@@ -4045,7 +3964,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only changes in tolerant mode.
         if self.lexer.swallowed != old_swallowed && !backtrack && !old_log_disabled {
             // It says everything again.
-            self.rewind_type_syntax(noted);
+            self.rewind_type_syntax(&noted);
             self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
         }
 
@@ -4074,7 +3993,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if backtrack {
             self.lexer.restore(&old_lexer);
-            self.rewind_type_syntax(noted);
+            self.rewind_type_syntax(&noted);
             // `rewind` drops the errors.
             self.lexer.swallowed = old_swallowed;
         }
@@ -4083,7 +4002,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only changes in tolerant mode.
         if self.lexer.swallowed != old_swallowed && !backtrack && !old_log_disabled {
             // It says everything again.
-            self.rewind_type_syntax(noted);
+            self.rewind_type_syntax(&noted);
             self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
         }
 
@@ -4222,11 +4141,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let syntax = self.type_syntax_mut();
         let mut ty = syntax.last_type;
         while ty.is_some() {
-            match syntax.ast[ty].data {
-                TypeData::Reference { name, .. } if syntax.ast[name][0].text.slice().is_empty() => {
+            let file = &syntax.b.file;
+            match file[ty].kind {
+                TypeNodeKind::Ref { name, .. }
+                    if file[name.at(0)].text == bun_sema::atom::known::empty =>
+                {
                     return true;
                 }
-                TypeData::Function(signature) => ty = syntax.ast[signature].return_type,
+                TypeNodeKind::Fn(signature) => ty = file[signature].ret,
                 _ => break,
             }
         }

@@ -36,7 +36,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let tag = JSXTag::parse(p)?;
 
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
-        let mut type_arguments = bun_ast::ts_syntax::IdList::EMPTY;
+        let mut type_arguments = crate::sema::ts_syntax::Types::EMPTY;
         if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
             // `</` is one token for TypeScript. It opens no type arguments. Nor are there any in a JavaScript file

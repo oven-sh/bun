@@ -1,7 +1,7 @@
 //! Small containers shared by the rest of the crate.
 
+use bun_threading::Guarded;
 use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 /// The multiply-rotate hash rustc uses: keys here are small integers and short tuples of them.
@@ -63,7 +63,10 @@ impl Hasher for FxHasher {
 }
 
 pub type FxBuild = BuildHasherDefault<FxHasher>;
+/// The keys are small ids. What `disallowed_types` is after is `RandomState`: the hasher here is Fx, as in `bun_collections::AutoContext`.
+#[allow(clippy::disallowed_types)]
 pub type FxHashMap<K, V> = std::collections::HashMap<K, V, FxBuild>;
+#[allow(clippy::disallowed_types)]
 pub type FxHashSet<K> = std::collections::HashSet<K, FxBuild>;
 
 #[inline]
@@ -71,17 +74,6 @@ pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
     let mut h = FxHasher::default();
     value.hash(&mut h);
     h.finish()
-}
-
-/// Puts the items that have one key next to each other: the keys in the order each first comes in, the items of a key in the order
-/// they come in.
-pub fn group_by_key<T, K: Eq + std::hash::Hash>(items: &mut [T], key: impl Fn(&T) -> K) {
-    let mut groups: FxHashMap<K, usize> = FxHashMap::default();
-    for item in items.iter() {
-        let next = groups.len();
-        groups.entry(key(item)).or_insert(next);
-    }
-    items.sort_by_key(|item| groups[&key(item)]);
 }
 
 /// A number for each key that comes more than once: 0, 1, .. in the order each first comes in.
@@ -410,13 +402,15 @@ impl Places {
 /// one to a bigger table when they fill up, and the old ones stay where they are for whoever is still reading them.
 pub(crate) struct GrowingPlaces {
     current: AtomicPtr<Places>,
-    writer: Mutex<Writer>,
+    writer: Guarded<Writer>,
 }
 
 #[derive(Default)]
 struct Writer {
     count: usize,
-    /// All the tables there have been, the current one last.
+    /// All the tables there have been, the current one last. `GrowingPlaces::current` points into a box, and readers of an older one are
+    /// still at it when the list grows.
+    #[expect(clippy::vec_box)]
     tables: Vec<Box<Places>>,
 }
 
@@ -424,7 +418,7 @@ impl Default for GrowingPlaces {
     fn default() -> Self {
         GrowingPlaces {
             current: AtomicPtr::new(std::ptr::null_mut()),
-            writer: Mutex::default(),
+            writer: Guarded::default(),
         }
     }
 }
@@ -447,7 +441,7 @@ impl GrowingPlaces {
         mut is_it: impl FnMut(u32) -> bool,
         make: impl FnOnce() -> u32,
     ) -> u32 {
-        let mut writer = self.writer.lock().unwrap();
+        let mut writer = self.writer.lock();
         // Somebody may have been faster.
         if let Some(found) = writer
             .tables
@@ -478,7 +472,7 @@ impl GrowingPlaces {
     }
 
     fn len(&self) -> usize {
-        self.writer.lock().unwrap().count
+        self.writer.lock().count
     }
 }
 

@@ -2,7 +2,7 @@
 //! type resolver works from.
 //!
 //! The parser has two modes for type syntax. By default it skips types. When [`TypeSyntax`] is present, the same code also builds
-//! syntax-only `bun_ast::ts_syntax` nodes for them (see [`keep`]). The JavaScript AST is identical in both modes.
+//! syntax-only `crate::sema::ts_syntax` nodes for them (see [`keep`]). The JavaScript AST is identical in both modes.
 //! After the parse pass, where ordinary builds start the visit pass, [`lower`] walks the statements and clones them and the type syntax
 //! ([`clone_types`]) into the type checker's tree.
 //!
@@ -20,8 +20,9 @@ pub(crate) mod lower_modules;
 pub(crate) mod notes;
 pub(crate) mod parse_declarations;
 pub(crate) mod reparse;
+pub(crate) mod ts_syntax;
 
-use bun_ast::ts_syntax as ts;
+use crate::sema::ts_syntax as ts;
 use bun_ast::{Expr, Loc};
 
 /// What the parser says of a node that `bun_ast` has no place for (see [`notes`]). Of which node, and what the payload of the note is.
@@ -195,15 +196,6 @@ pub(crate) fn early_error(text: &[u8], at: &[u8]) -> Option<(u32, i32)> {
             0,
         ));
     }
-    // `await` and `yield` as names: what is wrong with them depends on which it is.
-    if text == b"Cannot use \"yield\" or \"await\" here." {
-        return Some((if at.starts_with(b"await") { 1359 } else { 1212 }, 0));
-    }
-    // Said of the name of a class. `checkContextualIdentifier`: `await` is no reserved word of strict mode, what is wrong with it
-    // depends on where it is. Of a class statement the parser points past the name, which is no place to say anything.
-    if text == b"Cannot use \"await\" as an identifier here" {
-        return Some((if at.starts_with(b"await") { 1359 } else { 0 }, 0));
-    }
     early_error_in_place(text).map(|code| (code, 0))
 }
 
@@ -276,9 +268,6 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         return std::str::from_utf8(&code[..digits]).ok()?.parse().ok();
     }
     let (starts, ends) = (|s: &[u8]| text.starts_with(s), |s: &[u8]| text.ends_with(s));
-    let refused_name = text
-        .strip_prefix(b"Cannot use ")
-        .and_then(|rest| rest.strip_suffix(b" as an identifier here"));
     Some(
         if ends(b" has already been declared")
         || text == b"Cannot use a declaration in a single-statement context"
@@ -287,10 +276,11 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         || ends(b" loops must have a single declaration")
         || ends(b" loop variables cannot have an initializer")
         || (starts(b"Setter ") || starts(b"Getter ")) && (ends(b")") || ends(b" arguments"))
-        // `checkContextualIdentifier`: the checker goes over every name by itself.
+        // `checkContextualIdentifier`, `checkStrictModeEvalOrArguments`: the checker goes over every such name by itself.
         || ends(b" is a reserved word and cannot be used in strict mode")
-        // Said of the names imports are given, which `checkStrictModeEvalOrArguments` is not asked about.
-        || matches!(refused_name, Some(b"eval" | b"\"eval\"" | b"arguments" | b"\"arguments\""))
+        || starts(b"Cannot use ") && ends(b" as an identifier here")
+        || text == b"Cannot use \"yield\" or \"await\" here."
+        || starts(b"An async function cannot be named ")
         // `reportObviousDecoratorErrors`: the decorators are kept, and refused with all that cannot be decorated.
         || text == b"TypeScript does not allow decorators on class constructors"
         // `checkGrammarVariableDeclaration`: 1492 1182 1155.
@@ -316,12 +306,8 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
             1103
         } else if text == b"\"await\" is only allowed in an \"async\" function" {
             1308
-        } else if starts(b"An async function cannot be named ") {
-            1359
         } else if text == b"A return statement cannot be used here" {
             18041
-        } else if refused_name.is_some() {
-            1212
         } else if text == b"Invalid field name \"#constructor\""
             || text == b"Invalid method name \"#constructor\""
         {
@@ -380,6 +366,7 @@ pub fn summarize(
     let is_js = [&b".js"[..], b".jsx", b".mjs", b".cjs"]
         .iter()
         .any(|e| path.ends_with(e));
+    let is_json = path.ends_with(b".json");
     // `getLanguageVariant`: JSX is there in all JavaScript.
     let loader = if is_js || path.ends_with(b".tsx") {
         bun_ast::Loader::Tsx
@@ -401,9 +388,13 @@ pub fn summarize(
         let mut log = bun_ast::Log::init();
         let (file, awaited) = match crate::Parser::init(options, &mut log, &source, &define, arena)
         {
-            Ok(parser) => {
-                parser.parse_for_sema(atoms, is_declaration_file, await_is_a_name, &parsing)
-            }
+            Ok(parser) => parser.parse_for_sema(
+                atoms,
+                is_declaration_file,
+                is_json,
+                await_is_a_name,
+                &parsing,
+            ),
             Err(_) => (
                 bun_sema::hir::File {
                     has_errors: true,
@@ -445,8 +436,15 @@ pub fn summarize(
     });
     file.legacy_decorators = experimental_decorators;
     file.is_js = is_js;
+    if is_json {
+        file.kind = bun_sema::hir::FileKind::Json;
+        file.has_module_syntax = true;
+    }
     file.shrink_to_fit();
     file.finish_nodes();
+    if is_json {
+        bun_sema::json::validate_json(&mut file, text);
+    }
     // One that is very long would leave its room to all that come after.
     if text.len() < 4 << 20 {
         builder::leave_room(&mut file);
@@ -454,7 +452,7 @@ pub fn summarize(
     (file, parsing.get())
 }
 
-pub(crate) struct TypeSyntax {
+pub(crate) struct TypeSyntax<'a> {
     /// What is said of the nodes of the tree.
     pub(crate) notes: notes::Notes,
     /// `hir::File::after_skipped`: where the token after each token is that `abort_list_or_skip` skipped.
@@ -471,8 +469,12 @@ pub(crate) struct TypeSyntax {
     pub(crate) keep_types: bool,
     /// `withJSDoc`: only in JavaScript is anything made of the tags.
     pub(crate) has_jsdoc: bool,
-    /// The TypeScript syntax nodes of the file.
-    pub(crate) ast: ts::Syntax,
+    /// The tree of the file, which has the rows of the TypeScript syntax that was read so far.
+    pub(crate) b: builder::Builder<'a>,
+    /// `CommentTypes::made`, while the comments are read.
+    pub(crate) comment_rows: Vec<(notes::Rows, notes::Rows)>,
+    /// `T?` was just made of `T`: the two, and what rows there were before.
+    pub(crate) last_postfix_nullable: Option<(ts::TypeId, ts::TypeId, notes::Rows)>,
     /// The most recently parsed type. `NONE` if there is no usable type.
     pub(crate) last_type: ts::TypeId,
     /// Where the first token is of the type `parse_and_keep_type` read last.
@@ -482,21 +484,23 @@ pub(crate) struct TypeSyntax {
     /// Shared stack for the names in `typeof a.b.c`.
     pub(crate) name_stack: Vec<ts::Name>,
     /// The most recently parsed type arguments. `None` if unusable.
-    pub(crate) last_type_args: Option<ts::IdList<ts::Type>>,
+    pub(crate) last_type_args: Option<ts::Types>,
     /// The most recently parsed binding pattern. `NONE` if unusable.
     pub(crate) last_binding: ts::PatternId,
     /// The most recently parsed parameter list and the type of its `this` parameter. `None` if unusable.
-    pub(crate) last_params: Option<ts::Span<ts::Param>>,
+    pub(crate) last_params: Option<ts::Params>,
     /// `new`, `abstract new` and type parameters that precede the `(` of the function type about to be parsed.
     pub(crate) pending_fn_type_head: Option<keep::FnTypeHead>,
     /// The most recently parsed type parameters. `None` if unusable.
-    pub(crate) last_type_params: Option<ts::Span<ts::TypeParam>>,
+    pub(crate) last_type_params: Option<ts::TypeParams>,
     /// The `{` about to be parsed opens the body of an interface, which cannot be a mapped type.
     pub(crate) next_braces_are_interface_body: bool,
     /// The body of the most recently parsed object type. `None` if unusable.
     pub(crate) last_object_type: Option<keep::ObjectTypeBody>,
-    /// The index signature `parse_class_index_signature` read last. `NONE` if there is none.
-    pub(crate) last_index_signature: ts::MemberId,
+    /// The index signature `parse_class_index_signature` read last.
+    pub(crate) last_index_signature: Option<ts::Member>,
+    /// The index signatures of classes, which become rows with the other members of their class.
+    pub(crate) class_index_signatures: Vec<bun_sema::hir::Member>,
     /// The TypeScript-only statement emitted while parsing the current statement. `NONE` if there is none.
     pub(crate) last_statement: ts::StatementId,
     /// The modifiers consumed so far, for the current statement and the statements around it.
@@ -507,8 +511,8 @@ pub(crate) struct TypeSyntax {
     pub(crate) module_syntax: Vec<parse_declarations::ModuleSyntax>,
 }
 
-impl TypeSyntax {
-    pub(crate) fn new() -> Self {
+impl<'a> TypeSyntax<'a> {
+    pub(crate) fn new(b: builder::Builder<'a>) -> Self {
         TypeSyntax {
             notes: notes::Notes::with_room(),
             after_skipped: Vec::new(),
@@ -517,7 +521,9 @@ impl TypeSyntax {
             pending_type_arguments: None,
             keep_types: true,
             has_jsdoc: false,
-            ast: ts::Syntax::new(),
+            b,
+            comment_rows: Vec::new(),
+            last_postfix_nullable: None,
             last_type: ts::TypeId::NONE,
             last_type_start: 0,
             type_stack: Vec::new(),
@@ -529,7 +535,8 @@ impl TypeSyntax {
             last_type_params: None,
             next_braces_are_interface_body: false,
             last_object_type: None,
-            last_index_signature: ts::MemberId::NONE,
+            last_index_signature: None,
+            class_index_signatures: Vec::new(),
             last_statement: ts::StatementId::NONE,
             statement_modifiers: Vec::new(),
             statement_modifiers_base: 0,
@@ -552,17 +559,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
         opening_end: bun_ast::Loc,
         closing_start: bun_ast::Loc,
         end: bun_ast::Loc,
-        type_arguments: ts::IdList<ts::Type>,
-    ) -> ts::JsxId {
+        type_arguments: ts::Types,
+    ) -> bun_ast::ts_syntax::JsxId {
         match &mut self.type_syntax {
-            Some(syntax) if TYPESCRIPT => syntax.ast.add_jsx(ts::Jsx {
-                closing_tag,
-                opening_end,
-                closing_start,
-                end,
-                type_arguments,
-            }),
-            _ => ts::JsxId::NONE,
+            Some(syntax) if TYPESCRIPT => {
+                let kept = syntax.b.ts.add_jsx(ts::Jsx {
+                    closing_tag,
+                    opening_end,
+                    closing_start,
+                    end,
+                    type_arguments,
+                });
+                bun_ast::ts_syntax::JsxId(kept.index() as u32)
+            }
+            _ => bun_ast::ts_syntax::JsxId::NONE,
         }
     }
 

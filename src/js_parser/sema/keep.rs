@@ -1,22 +1,20 @@
 //! Keep mode for TypeScript type syntax.
 //!
 //! By default the parser skips types. When `TypeSyntax::keep_types` is set, the same skip functions in
-//! `parse/parse_skip_typescript.rs` also build `bun_ast::ts_syntax` nodes, by calling the helpers in this file under `if KEEP`.
-//!
-//! The nodes only record syntax. Grammar checks and everything semantic happen later, when the nodes are cloned for the type checker
-//! (`clone_types.rs`).
+//! `parse/parse_skip_typescript.rs` also make the rows of the type checker's tree, by calling the helpers in this file under `if KEEP`
+//! (`clone_types.rs` makes them).
 //!
 //! Each function that parses a type stores the result in `TypeSyntax::last_type`, and the caller reads it from there. `NONE` means there
 //! is no usable type, which only happens for invalid code. `NONE` propagates to the enclosing type.
 
-use bun_ast::ts_syntax::{
-    Flags, FunctionBody, IdList, ImportType, Interface, Keyword, MappedModifier, MappedType,
-    Member, MemberKind, Modifier, Name, Param, Pattern, PatternData, PatternElement, PatternId,
-    PatternProperty, PropertyKey, ResolutionMode, Signature, SignatureId, SignatureKind, Span,
-    Statement, StatementData, StatementId, TupleElement, Type, TypeAlias, TypeData, TypeId,
-    TypeParam,
+use crate::sema::ts_syntax::{
+    Flags, FunctionBody, Interface, Keyword, MappedModifier, MappedType, Member, MemberKind,
+    Members, Modifier, Name, Param, Params, PatternElement, PatternId, PatternProperty,
+    PropertyKey, ResolutionMode, Signature, SignatureId, SignatureKind, Span, Statement,
+    StatementData, StatementId, TupleElement, TypeAlias, TypeId, TypeParam, TypeParams, Types,
 };
 use bun_ast::{Expr, Loc, StoreStr};
+use bun_sema::hir::{PatKind, TypeNode, TypeNodeKind};
 
 use super::TypeSyntax;
 use crate::lexer::{PropertyModifierKeyword, T};
@@ -41,7 +39,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub(crate) fn type_syntax_mut(&mut self) -> &mut TypeSyntax {
+    pub(crate) fn type_syntax_mut(&mut self) -> &mut TypeSyntax<'a> {
         self.type_syntax.as_mut().expect("only called in keep mode")
     }
 
@@ -63,32 +61,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub(crate) fn emit_type(&mut self, data: TypeData, pos: u32) {
+    pub(crate) fn emit_type(&mut self, kind: TypeNodeKind, pos: u32) {
         let syntax = self.type_syntax_mut();
-        syntax.last_type = syntax.ast.add_type(data, loc(pos));
+        syntax.last_type = syntax.b.file.ty(kind, pos, 0);
+        syntax.last_postfix_nullable = None;
     }
 
     /// `finishNode`, of the type parsed last, unless it is finished: it ends where the token before the current one does.
     pub(crate) fn finish_last_type(&mut self) {
         let ty = self.last_type();
-        if ty.is_some() && self.type_syntax_mut().ast[ty].end == Loc::EMPTY {
-            self.type_syntax_mut().ast[ty].end = self.lexer.full_start();
+        if ty.is_some() && self.type_syntax_mut().b.file[ty].end == 0 {
+            self.type_syntax_mut().b.file[ty].end = self.lexer.full_start().start as u32;
         }
     }
 
     /// Emits a reference to the type called `name`.
     pub(crate) fn emit_type_ref(&mut self, name: StoreStr, pos: u32) {
-        let name = self.type_syntax_mut().ast.add_names(&[Name {
+        let name = self.type_syntax_mut().b.add_names(&[Name {
             text: name,
             loc: loc(pos),
         }]);
         self.emit_type(
-            TypeData::Reference {
+            TypeNodeKind::Ref {
                 name,
-                args: IdList::EMPTY,
+                args: Types::EMPTY,
             },
             pos,
         );
+    }
+
+    /// The last parsed type, a single token, turns out to be the subject of a type predicate: its row goes, which was made last.
+    pub(crate) fn take_back_single_token_type(&mut self) {
+        let syntax = self.type_syntax_mut();
+        let file = &mut syntax.b.file;
+        if syntax.last_type.is_some() && syntax.last_type.idx() + 1 == file.types.len() {
+            if let Some(TypeNode {
+                kind: TypeNodeKind::Ref { name, .. },
+                ..
+            }) = file.types.pop()
+                && name.range().end == file.names.len()
+            {
+                file.names.truncate(name.start as usize);
+            }
+        }
+        syntax.last_type = TypeId::NONE;
     }
 
     /// Emits `param is T` or `asserts param is T`, where `T` is the last parsed type.
@@ -107,16 +123,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         asserts: bool,
         pos: u32,
     ) {
-        let param = self.type_syntax_mut().ast.add_name(Name {
-            text: param,
-            loc: loc(pos),
-        });
-        self.emit_type(TypeData::Predicate { param, ty, asserts }, pos);
+        let param = self.type_syntax_mut().b.identifier(&param, pos);
+        self.emit_type(TypeNodeKind::Predicate { param, ty, asserts }, pos);
     }
 
     /// Emits `data` unless one of its child types is missing.
     #[inline]
-    pub(crate) fn emit_type_if_complete(&mut self, parts: &[TypeId], data: TypeData, pos: u32) {
+    pub(crate) fn emit_type_if_complete(&mut self, parts: &[TypeId], data: TypeNodeKind, pos: u32) {
         if parts.iter().any(|part| part.is_none()) {
             return self.clear_last_type();
         }
@@ -130,27 +143,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let data = match self.lexer.token {
             T::TNumericLiteral => {
                 let number = self.lexer.number;
-                TypeData::NumberLiteral(self.type_syntax_mut().ast.add_number(number))
+                TypeNodeKind::NumberLit(self.type_syntax_mut().b.file.number(number))
             }
-            T::TBigIntegerLiteral => TypeData::BigIntLiteral {
-                text: StoreStr::new(self.lexer.identifier),
-                negative: false,
-            },
+            T::TBigIntegerLiteral => {
+                let text = self.lexer.identifier;
+                TypeNodeKind::BigIntLit {
+                    text: self.type_syntax_mut().b.atoms.intern(text),
+                    negative: false,
+                }
+            }
             T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => match self.string_token_text()
             {
-                Some(text) => TypeData::StringLiteral(text),
+                Some(text) => TypeNodeKind::StringLit(self.type_syntax_mut().b.atom(&text)),
                 None => return self.clear_last_type(),
             },
-            T::TTrue => TypeData::BooleanLiteral(true),
-            T::TFalse => TypeData::BooleanLiteral(false),
-            T::TNull => TypeData::Keyword(Keyword::Null),
-            T::TVoid => TypeData::Keyword(Keyword::Void),
-            T::TThis => TypeData::Keyword(Keyword::This),
+            T::TTrue => TypeNodeKind::BoolLit(true),
+            T::TFalse => TypeNodeKind::BoolLit(false),
+            T::TNull => TypeNodeKind::Keyword(Keyword::Null),
+            T::TVoid => TypeNodeKind::Keyword(Keyword::Void),
+            T::TThis => TypeNodeKind::Keyword(Keyword::This),
             T::TIdentifier => match (
                 keyword_type(self.lexer.identifier),
                 kind_for_identifier(self.lexer.identifier),
             ) {
-                (Some(keyword), _) => TypeData::Keyword(keyword),
+                (Some(keyword), _) => TypeNodeKind::Keyword(keyword),
                 (None, None | Some(Kind::Normal)) => {
                     return self.emit_type_ref(StoreStr::new(self.lexer.identifier), pos);
                 }
@@ -183,13 +199,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Called after the `-` at `pos`.
     pub(crate) fn emit_negative_literal_type(&mut self, pos: u32) {
         let data = match self.lexer.token {
-            T::TBigIntegerLiteral => TypeData::BigIntLiteral {
-                text: StoreStr::new(self.lexer.identifier),
-                negative: true,
-            },
+            T::TBigIntegerLiteral => {
+                let text = self.lexer.identifier;
+                TypeNodeKind::BigIntLit {
+                    text: self.type_syntax_mut().b.atoms.intern(text),
+                    negative: true,
+                }
+            }
             T::TNumericLiteral => {
                 let number = -self.lexer.number;
-                TypeData::NumberLiteral(self.type_syntax_mut().ast.add_number(number))
+                TypeNodeKind::NumberLit(self.type_syntax_mut().b.file.number(number))
             }
             _ => return self.clear_last_type(),
         };
@@ -213,14 +232,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Pops the list that starts at `from`. `None` if any item is missing.
-    fn finish_type_list(&mut self, from: usize) -> Option<IdList<Type>> {
-        let TypeSyntax {
-            ast, type_stack, ..
-        } = self.type_syntax_mut();
+    fn finish_type_list(&mut self, from: usize) -> Option<Types> {
+        let TypeSyntax { b, type_stack, .. } = self.type_syntax_mut();
         let list = if type_stack[from..].iter().any(|item| item.is_none()) {
             None
         } else {
-            Some(ast.add_id_list(&type_stack[from..]))
+            Some(b.add_id_list(&type_stack[from..]))
         };
         type_stack.truncate(from);
         list
@@ -239,7 +256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if *from != usize::MAX {
             match self.finish_type_list(std::mem::replace(from, usize::MAX)) {
-                Some(members) => self.emit_type(TypeData::Intersection(members), pos),
+                Some(members) => self.emit_type(TypeNodeKind::Intersection(members), pos),
                 None => self.clear_last_type(),
             }
             self.finish_last_type();
@@ -262,7 +279,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if *union_base != usize::MAX {
             match self.finish_type_list(std::mem::replace(union_base, usize::MAX)) {
-                Some(members) => self.emit_type(TypeData::Union(members), pos),
+                Some(members) => self.emit_type(TypeNodeKind::Union(members), pos),
                 None => self.clear_last_type(),
             }
             self.finish_last_type();
@@ -301,12 +318,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if reference.is_none() {
             return true;
         }
-        let ast = &self.type_syntax_mut().ast;
-        match ast[reference].data {
-            TypeData::Reference { args, .. } => args.is_empty(),
-            TypeData::Import(import) => ast[import].args.is_empty(),
-            TypeData::Keyword(Keyword::Void | Keyword::Null | Keyword::This) => false,
-            TypeData::Keyword(_) => true,
+        match self.type_syntax_mut().b.file[reference].kind {
+            // `import(T)` keeps `T` there.
+            TypeNodeKind::Import { spec, .. } if spec.is_none() => true,
+            TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. } => args.is_empty(),
+            TypeNodeKind::Keyword(Keyword::Void | Keyword::Null | Keyword::This) => false,
+            TypeNodeKind::Keyword(_) => true,
             _ => false,
         }
     }
@@ -316,49 +333,83 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if reference.is_none() {
             return;
         }
-        let ast = &mut self.type_syntax_mut().ast;
-        let Type { data, loc, .. } = ast[reference];
-        let mut names: smallvec::SmallVec<[Name; 4]> = match data {
-            TypeData::Reference { name, args } if args.is_empty() => ast[name].into(),
-            TypeData::Import(import) if ast[import].args.is_empty() => ast[ast[import].name].into(),
+        let b = &mut self.type_syntax_mut().b;
+        let TypeNode { kind, pos, .. } = b.file[reference];
+        let (text, place) = (b.atom(&name.text), name.loc.start.max(0) as u32);
+        let before = match kind {
+            TypeNodeKind::Import { spec, name, .. } if spec.is_none() => name,
+            TypeNodeKind::Ref { name, args } | TypeNodeKind::Import { name, args, .. }
+                if args.is_empty() =>
+            {
+                name
+            }
             // `void.x`, `null.x` and `this.x` are not qualified names. Ignore the suffix.
-            TypeData::Keyword(Keyword::Void | Keyword::Null | Keyword::This) => return,
+            TypeNodeKind::Keyword(Keyword::Void | Keyword::Null | Keyword::This) => return,
             // `string.x` is a qualified name whose first part is spelled like a keyword.
-            TypeData::Keyword(keyword) => smallvec::smallvec![Name {
-                text: StoreStr::new(keyword_text(keyword)),
-                loc
-            }],
+            TypeNodeKind::Keyword(keyword) => {
+                let first = b.atoms.intern(keyword.text());
+                b.file.entity_name([(first, pos)].into_iter())
+            }
             _ => return self.clear_last_type(),
         };
-        names.push(name);
-        let name = ast.add_names(&names);
-        ast[reference].end = Loc::EMPTY;
-        match data {
-            TypeData::Import(import) => ast[import].name = name,
-            _ => {
-                ast[reference].data = TypeData::Reference {
-                    name,
-                    args: IdList::EMPTY,
-                }
-            }
+        let name = b.file.append_to_entity_name(before, text, place);
+        b.file[reference].end = 0;
+        b.file[reference].kind = match kind {
+            TypeNodeKind::Import {
+                spec,
+                args,
+                is_typeof,
+                mode,
+                ..
+            } => TypeNodeKind::Import {
+                spec,
+                name,
+                args,
+                is_typeof,
+                mode,
+            },
+            _ => TypeNodeKind::Ref {
+                name,
+                args: Types::EMPTY,
+            },
+        };
+    }
+
+    /// The type parsed last, where type arguments may follow. Its row, which was made last, is taken back until they are read: a
+    /// type is numbered after what is in it. Pass the result to `attach_type_args`.
+    pub(crate) fn take_reference(&mut self) -> Option<TypeNode> {
+        let syntax = self.type_syntax_mut();
+        // `label: ...T[]` and `T!` leave a type that was not made last. It stays, and nothing attaches to it.
+        if syntax.last_type.is_none() || syntax.last_type.idx() + 1 != syntax.b.file.types.len() {
+            return None;
         }
+        syntax.last_type = TypeId::NONE;
+        syntax.b.file.types.pop()
     }
 
     /// Attaches the type arguments that were just parsed, if any, to `reference`.
-    pub(crate) fn attach_type_args(&mut self, reference: TypeId, has_arguments: bool) {
+    pub(crate) fn attach_type_args(&mut self, reference: Option<TypeNode>, has_arguments: bool) {
         let syntax = self.type_syntax_mut();
-        syntax.last_type = reference;
-        if !has_arguments || reference.is_none() {
-            return;
-        }
-        syntax.ast[reference].end = Loc::EMPTY;
-        match (syntax.ast[reference].data, syntax.last_type_args.take()) {
-            (TypeData::Reference { name, .. }, Some(args)) => {
-                syntax.ast[reference].data = TypeData::Reference { name, args }
+        let Some(mut node) = reference else {
+            if has_arguments {
+                syntax.last_type = TypeId::NONE;
             }
-            (TypeData::Import(import), Some(args)) => syntax.ast[import].args = args,
-            _ => syntax.last_type = TypeId::NONE,
+            return;
+        };
+        syntax.last_type = TypeId::NONE;
+        if has_arguments {
+            node.end = 0;
+            match (&mut node.kind, syntax.last_type_args.take()) {
+                // The type arguments of `import(T)` are never looked at.
+                (TypeNodeKind::Import { spec, .. }, Some(_)) if spec.is_none() => {}
+                (
+                    TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. },
+                    Some(given),
+                ) => *args = given,
+                _ => return,
+            }
         }
+        syntax.last_type = syntax.b.file.add_type_node(node);
     }
 
     /// Called on each name in `typeof a.b.c`.
@@ -380,7 +431,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Finishes `typeof a.b.c<Args>`. The names are on the stack starting at `names_base`.
     pub(crate) fn emit_typeof_type(&mut self, names_base: usize, has_arguments: bool, pos: u32) {
         let TypeSyntax {
-            ast,
             name_stack,
             last_type_args,
             ..
@@ -392,21 +442,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .iter()
             .take(required)
             .all(|name| !name.text.is_empty());
-        let name = ast.add_names(&name_stack[names_base..]);
-        name_stack.truncate(names_base);
+        let names: smallvec::SmallVec<[Name; 4]> = name_stack.drain(names_base..).collect();
         if !is_complete {
             return self.clear_last_type();
         }
         let args = match (has_arguments, last_type_args.take()) {
-            (false, _) => IdList::EMPTY,
+            (false, _) => Types::EMPTY,
             (true, Some(args)) => args,
             (true, None) => return self.clear_last_type(),
         };
-        let data = TypeData::Typeof {
-            name,
-            args,
-            has_type_arguments: has_arguments,
-        };
+        let data = self
+            .type_syntax_mut()
+            .b
+            .add_typeof(&names, args, has_arguments);
         self.emit_type(data, pos);
     }
 
@@ -425,14 +473,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// in that form.
     pub(crate) fn import_type_attributes(&mut self) -> Option<ImportTypeAttributes> {
         let syntax = self.type_syntax_mut();
-        let ast = &syntax.ast;
-        let only_property = |members: Span<Member>| {
-            let &[member] = &ast[members] else {
+        let (file, atoms) = (&syntax.b.file, syntax.b.atoms);
+        let only_property = |members: Members| {
+            let &[member] = &file.members[members.range()] else {
                 return None;
             };
             match (member.kind, member.key) {
-                (MemberKind::Property, PropertyKey::Name(name)) => {
-                    Some((name, member.ty, member.loc))
+                (MemberKind::Property, bun_sema::hir::PropKey::Name(name)) => {
+                    Some((atoms.bytes(name), member.ty, loc(member.name_pos)))
                 }
                 _ => None,
             }
@@ -441,19 +489,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         };
         let (keyword, attributes, keyword_loc) = only_property(outer)?;
-        let TypeData::Object(attributes) = ast.types.get(attributes.index())?.data else {
+        let TypeNodeKind::Object(attributes) = file.types.get(attributes.idx())?.kind else {
             return None;
         };
-        if &*keyword != b"with" && &*keyword != b"assert" {
+        if keyword != b"with" && keyword != b"assert" {
             return None;
         }
         let mode = match only_property(attributes) {
-            Some((name, value, _)) if &*name == b"resolution-mode" => {
-                match ast.types.get(value.index()).map(|value| value.data) {
-                    Some(TypeData::StringLiteral(value)) if &*value == b"import" => {
+            Some((b"resolution-mode", value, _)) => {
+                match file.types.get(value.idx()).map(|value| value.kind) {
+                    Some(TypeNodeKind::StringLit(value)) if atoms.bytes(value) == b"import" => {
                         ResolutionMode::Import
                     }
-                    Some(TypeData::StringLiteral(value)) if &*value == b"require" => {
+                    Some(TypeNodeKind::StringLit(value)) if atoms.bytes(value) == b"require" => {
                         ResolutionMode::Require
                     }
                     _ => ResolutionMode::None,
@@ -461,7 +509,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => ResolutionMode::None,
         };
-        Some((mode, (&*keyword == b"assert").then_some(keyword_loc), None))
+        Some((mode, (keyword == b"assert").then_some(keyword_loc), None))
     }
 
     /// Emits `import("specifier")`. A qualified name and type arguments are added later, as for a type reference.
@@ -479,23 +527,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             specifier
         };
-        let (Some((specifier, specifier_pos)), Some((mode, assert_keyword_loc, attributes))) =
-            (specifier, attributes)
-        else {
+        let (Some((specifier, specifier_pos)), Some(attributes)) = (specifier, attributes) else {
             return self.clear_last_type();
         };
-        let import = self.type_syntax_mut().ast.add_import_type(ImportType {
-            specifier,
-            specifier_loc: loc(specifier_pos),
+        let import = self.type_syntax_mut().b.add_import_type(
+            (&specifier, specifier_pos),
             argument,
-            name: Span::EMPTY,
-            args: IdList::EMPTY,
-            is_typeof,
-            mode,
-            assert_keyword_loc,
             attributes,
-        });
-        self.emit_type(TypeData::Import(import), pos);
+            is_typeof,
+        );
+        self.emit_type(import, pos);
     }
 
     /// Emits `infer name`. The constraint, if present, is the last parsed type.
@@ -524,54 +565,88 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags: Flags::empty(),
             modifiers: Span::EMPTY,
         };
-        let param = self.type_syntax_mut().ast.add_type_param(param);
-        self.emit_type(TypeData::Infer(param), pos);
+        let param = self.type_syntax_mut().b.add_type_param(param);
+        self.emit_type(TypeNodeKind::Infer(param), pos);
     }
 
     pub(crate) fn emit_tuple_type(&mut self, elements: &[TupleElement], pos: u32) {
         if elements.iter().any(|element| element.ty.is_none()) {
             return self.clear_last_type();
         }
-        let elements = self.type_syntax_mut().ast.add_tuple_elements(elements);
-        self.emit_type(TypeData::Tuple(elements), pos);
+        let tuple = self.type_syntax_mut().b.add_tuple(elements);
+        self.emit_type(tuple, pos);
     }
 
     /// `parseTupleElementType`: if the last parsed type, which starts at `start`, is `T?` as a whole, returns `T`.
     pub(crate) fn optional_tuple_element_type(&mut self, start: Loc) -> Option<TypeId> {
-        let ty = self.last_type();
-        if ty.is_none() {
+        let syntax = self.type_syntax_mut();
+        let (made, operand, before) = syntax.last_postfix_nullable.take()?;
+        if made != syntax.last_type || syntax.b.file[made].pos != start.start as u32 {
             return None;
         }
-        match self.type_syntax_mut().ast[ty] {
-            Type {
-                data:
-                    TypeData::JsDocNullable {
-                        operand,
-                        is_postfix: true,
-                    },
-                loc,
-                ..
-            } if loc == start => Some(operand),
-            _ => None,
-        }
+        // Nothing was made since.
+        syntax.rewind_rows(before);
+        Some(operand)
     }
 
     /// Wraps the last parsed type in JSDoc's `?` (`is_nullable`) or `!`, written after it (`is_postfix`) or before it. The result
     /// starts at `pos`.
     pub(crate) fn emit_jsdoc_type(&mut self, is_nullable: bool, is_postfix: bool, pos: u32) {
         let operand = self.last_type();
-        let data = if is_nullable {
-            TypeData::JsDocNullable {
-                operand,
-                is_postfix,
+        if operand.is_none() {
+            return;
+        }
+        let syntax = self.type_syntax_mut();
+        let before = syntax.rows();
+        let code = if is_postfix { 17019 } else { 17020 };
+        syntax.b.check_jsdoc_type_is_in_js_file(pos, code);
+        // `T!` is `T`.
+        if is_nullable {
+            let union = syntax.b.union_with_keyword(operand, Keyword::Null, pos);
+            self.emit_type(union, pos);
+            if is_postfix {
+                let made = self.last_type();
+                self.type_syntax_mut().last_postfix_nullable = Some((made, operand, before));
             }
-        } else {
-            TypeData::JsDocNonNullable {
-                operand,
-                is_postfix,
-            }
-        };
-        self.emit_type_if_complete(&[operand], data, pos);
+        }
+    }
+
+    /// `*`
+    pub(crate) fn emit_jsdoc_all_type(&mut self, pos: u32) {
+        // JSDoc types can only be used inside documentation comments.
+        self.type_syntax_mut()
+            .b
+            .check_jsdoc_type_is_in_js_file(pos, 8020);
+        self.emit_type(TypeNodeKind::Keyword(Keyword::Any), pos);
+    }
+
+    /// `label: ...T`, where `T` is the last parsed type.
+    pub(crate) fn emit_rest_type(&mut self, pos: u32) {
+        let end = self.lexer.full_start().start as u32;
+        let syntax = self.type_syntax_mut();
+        if syntax.last_type.is_some() {
+            // `checkNamedTupleMember`. The element is required (`getTupleElementFlags`).
+            syntax.b.file.error(pos, end, 5087);
+            syntax.last_type = syntax.b.rest_element_type(syntax.last_type);
+        }
+    }
+
+    /// `label: T?`
+    pub(crate) fn emit_optional_type(&mut self, operand: TypeId, pos: u32) {
+        let end = self.lexer.full_start().start as u32;
+        let b = &mut self.type_syntax_mut().b;
+        // `checkNamedTupleMember`. The element is required (`getTupleElementFlags`), and `getTypeFromOptionalTypeNode` adds `undefined`.
+        b.file.error(pos, end, 5086);
+        let union = b.union_with_keyword(operand, Keyword::Undefined, pos);
+        self.emit_type(union, pos);
+    }
+
+    /// `interface I extends expression`. The end of `checkInterfaceDeclaration` reports 2499 for it.
+    pub(crate) fn emit_heritage_expression(&mut self, expression: Expr, pos: u32) {
+        self.emit_type(TypeNodeKind::Error, pos);
+        let node = self.last_type();
+        let part = super::clone_types::PendingPart::HeritageExpression(node, expression);
+        self.type_syntax_mut().b.pending.push(part);
     }
 
     pub(crate) fn emit_template_type(
@@ -586,22 +661,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         else {
             return self.clear_last_type();
         };
-        let ast = &mut self.type_syntax_mut().ast;
-        let (types, texts) = (ast.add_id_list(types), ast.add_strings(&texts));
-        self.emit_type(TypeData::TemplateLiteral { types, texts }, pos);
+        let template = self.type_syntax_mut().b.add_template(types, &texts);
+        self.emit_type(template, pos);
     }
 
     // ───────────────────────────── bindings, parameters, function types ─────────────────────────────
 
     /// Called on an identifier binding.
     pub(crate) fn emit_identifier_binding(&mut self) {
-        let pattern = Pattern {
-            data: PatternData::Identifier(self.token_text()),
-            loc: self.lexer.loc(),
-            end: self.lexer.range().end(),
-        };
+        let (name, loc, end) = (
+            self.token_text(),
+            self.lexer.loc(),
+            self.lexer.range().end(),
+        );
         let syntax = self.type_syntax_mut();
-        syntax.last_binding = syntax.ast.add_pattern_node(pattern);
+        let name = syntax.b.identifier(&name, loc.start as u32);
+        syntax.last_binding = syntax.b.add_pattern(PatKind::Ident(name), loc, end);
     }
 
     /// `{ name }`, after the name.
@@ -610,7 +685,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let syntax = self.type_syntax_mut();
         syntax.last_binding = match property.key {
             PropertyKey::Name(name) => {
-                (syntax.ast).add_pattern(PatternData::Identifier(name), property.loc, end)
+                let name = syntax.b.identifier(&name, property.loc.start as u32);
+                syntax
+                    .b
+                    .add_pattern(PatKind::Ident(name), property.loc, end)
             }
             _ => PatternId::NONE,
         };
@@ -619,11 +697,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Called on the comma of an elided array element.
     pub(crate) fn emit_array_hole(&mut self) -> PatternElement {
         let (loc, end) = (self.lexer.loc(), self.lexer.full_start());
+        let pattern = (self.type_syntax_mut().b).add_pattern(PatKind::Missing, loc, end);
         PatternElement {
-            pattern: self
-                .type_syntax_mut()
-                .ast
-                .add_pattern(PatternData::Missing, loc, end),
+            pattern,
             default: None,
             is_rest: false,
             loc,
@@ -636,11 +712,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let syntax = self.type_syntax_mut();
         syntax.last_binding = PatternId::NONE;
         if elements.iter().all(|element| element.pattern.is_some()) {
-            let elements = syntax.ast.add_pattern_elements(elements);
-            syntax.last_binding =
-                syntax
-                    .ast
-                    .add_pattern(PatternData::Array(elements), loc(pos), end);
+            let elements = syntax.b.add_pattern_elements(elements);
+            syntax.last_binding = syntax.b.add_pattern(elements, loc(pos), end);
         }
     }
 
@@ -650,10 +723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => self
                 .string_token_text()
                 .map_or(PropertyKey::None, PropertyKey::Name),
-            T::TNumericLiteral => {
-                let number = self.lexer.number;
-                PropertyKey::Number(self.type_syntax_mut().ast.add_number(number))
-            }
+            T::TNumericLiteral => PropertyKey::Number(self.lexer.number),
             T::TBigIntegerLiteral => PropertyKey::BigInt,
             _ if self.lexer.is_identifier_or_keyword() => PropertyKey::Name(self.token_text()),
             _ => PropertyKey::None,
@@ -668,29 +738,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             property.value.is_some()
                 && (property.is_rest || !matches!(property.key, PropertyKey::None))
         }) {
-            let properties = syntax.ast.add_pattern_properties(properties);
-            syntax.last_binding =
-                syntax
-                    .ast
-                    .add_pattern(PatternData::Object(properties), loc(pos), end);
+            let properties = syntax.b.add_pattern_properties(properties);
+            syntax.last_binding = syntax.b.add_pattern(properties, loc(pos), end);
         }
     }
 
     pub(crate) fn add_param_modifiers(&mut self, modifiers: &[Modifier]) -> Span<Modifier> {
-        self.type_syntax_mut().ast.add_modifiers(modifiers)
+        self.type_syntax_mut().b.ts.add_modifiers(modifiers)
     }
 
     /// Finishes a parameter list. `None` if any parameter is unusable.
     pub(crate) fn finish_params(&mut self, parameters: Option<&[Param]>) {
         let syntax = self.type_syntax_mut();
-        syntax.last_params = parameters.map(|parameters| syntax.ast.add_params(parameters));
+        syntax.last_params = parameters.map(|parameters| syntax.b.add_params(parameters));
     }
 
     /// Finishes `<T, U>`. `None` if any type parameter is unusable.
     pub(crate) fn finish_type_params(&mut self, parameters: Option<&[TypeParam]>) {
         let syntax = self.type_syntax_mut();
-        syntax.last_type_params =
-            parameters.map(|parameters| syntax.ast.add_type_params(parameters));
+        syntax.last_type_params = parameters.map(|parameters| syntax.b.add_type_params(parameters));
     }
 
     /// Saves what precedes the `(` of a function type: `new`, `abstract new` and type parameters. `pos` is the offset after `new`,
@@ -705,7 +771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         let syntax = self.type_syntax_mut();
         let type_params = match type_parameters {
-            SkipTypeParameterResult::DidNotSkipAnything => Some(Span::EMPTY),
+            SkipTypeParameterResult::DidNotSkipAnything => Some(TypeParams::EMPTY),
             _ => syntax.last_type_params.take(),
         };
         syntax.pending_fn_type_head = Some(FnTypeHead {
@@ -722,12 +788,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         head: Option<FnTypeHead>,
         open_paren: u32,
-        parameters: Option<Span<Param>>,
+        parameters: Option<Params>,
     ) {
         let head = head.unwrap_or(FnTypeHead {
             kind: SignatureKind::FunctionType,
             flags: Flags::empty(),
-            type_params: Some(Span::EMPTY),
+            type_params: Some(TypeParams::EMPTY),
             pos: open_paren,
             start: open_paren,
         });
@@ -737,7 +803,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         else {
             return self.clear_last_type();
         };
-        let signature = self.type_syntax_mut().ast.add_signature(Signature {
+        let signature = self.type_syntax_mut().b.add_signature(Signature {
             kind: head.kind,
             flags: head.flags,
             type_params,
@@ -747,7 +813,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             open_paren_loc: loc(open_paren),
             loc: loc(head.pos),
         });
-        self.emit_type(TypeData::Function(signature), head.start);
+        self.type_syntax_mut().b.file[signature].start = head.start;
+        self.emit_type(TypeNodeKind::Fn(signature), head.start);
     }
 
     // ───────────────────────────── object type members ─────────────────────────────
@@ -780,12 +847,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         pos: u32,
     ) -> Option<SignatureId> {
         let params = member.parameters??;
-        let type_params = member.type_parameters.unwrap_or(Some(Span::EMPTY))?;
+        let type_params = member.type_parameters.unwrap_or(Some(TypeParams::EMPTY))?;
         let return_type = member.ty.unwrap_or(TypeId::NONE);
         if member.ty.is_some() && return_type.is_none() {
             return None;
         }
-        Some(self.type_syntax_mut().ast.add_signature(Signature {
+        Some(self.type_syntax_mut().b.add_signature(Signature {
             kind,
             flags,
             type_params,
@@ -881,11 +948,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .filter(|accessor| kept.is_complete && accessor.signature.is_some())
         {
             let end = self.lexer.full_start();
-            self.type_syntax_mut().ast[accessor.signature].body = Some(FunctionBody {
-                loc: body.loc,
-                end,
-                stmts: body.stmts,
-            });
+            self.type_syntax_mut().b.add_signature_body(
+                accessor.signature,
+                FunctionBody {
+                    loc: body.loc,
+                    end,
+                    stmts: body.stmts,
+                },
+            );
         }
     }
 
@@ -915,7 +985,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 decorator: None,
             });
         }
-        Some((flags, self.type_syntax_mut().ast.add_modifiers(&modifiers)))
+        Some((flags, self.type_syntax_mut().b.ts.add_modifiers(&modifiers)))
     }
 
     /// Builds one member. `Err` is the body of a mapped type. `None` means unusable.
@@ -939,7 +1009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             modifiers: Span::EMPTY,
             ty,
             initializer: member.initializer,
-            trailing_comma_loc: member.trailing_comma,
+            index_signature_errors: member.index_signature_errors,
             signature: SignatureId::NONE,
             loc: loc(member.start),
             start: loc(member.start),
@@ -953,10 +1023,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             made.flags |= flags;
             made.modifiers = modifiers;
             made.kind = MemberKind::IndexSignature;
-            made.signature = self.type_syntax_mut().ast.add_signature(Signature {
+            made.signature = self.type_syntax_mut().b.add_signature(Signature {
                 kind: SignatureKind::IndexSignature,
                 flags: made.flags,
-                type_params: Span::EMPTY,
+                type_params: TypeParams::EMPTY,
                 params,
                 return_type: ty,
                 body: None,
@@ -1005,7 +1075,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         flags: Flags::empty(),
                         modifiers: Span::EMPTY,
                     };
-                    let param = self.type_syntax_mut().ast.add_type_param(param);
+                    let param = self.type_syntax_mut().b.add_type_param(param);
                     return Some(Err(MappedType {
                         param,
                         name_type: name_type?,
@@ -1013,7 +1083,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         readonly,
                         optional,
                         extra_member_loc: None,
-                        members: Span::EMPTY,
+                        members: Members::EMPTY,
                     }));
                 }
                 BracketKind::Index(key_type) => {
@@ -1026,12 +1096,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     made.flags |= flags;
                     made.modifiers = modifiers;
-                    let ast = &mut self.type_syntax_mut().ast;
+                    let ast = &mut self.type_syntax_mut().b;
                     let name_end = Loc {
                         start: name_loc.start + name.len() as i32,
                     };
-                    let pattern =
-                        ast.add_pattern(PatternData::Identifier(name), name_loc, name_end);
+                    let name = ast.identifier(&name, name_loc.start as u32);
+                    let pattern = ast.add_pattern(PatKind::Ident(name), name_loc, name_end);
                     let params = ast.add_params(&[Param {
                         pattern,
                         ty: key_type,
@@ -1041,7 +1111,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     made.signature = ast.add_signature(Signature {
                         kind: SignatureKind::IndexSignature,
                         flags: made.flags,
-                        type_params: Span::EMPTY,
+                        type_params: TypeParams::EMPTY,
                         params,
                         return_type: ty,
                         body: None,
@@ -1144,7 +1214,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Finishes an object type.
     pub(crate) fn finish_object_type(&mut self, kept: ObjectTypeBuilder) {
+        let is_in_class = self.allow_private_identifiers;
         let syntax = self.type_syntax_mut();
+        syntax.b.classes_around = u32::from(is_in_class);
         syntax.last_object_type = match kept {
             ObjectTypeBuilder {
                 is_complete: false, ..
@@ -1154,11 +1226,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 members,
                 ..
             } => {
-                mapped.members = syntax.ast.add_members(&members);
-                Some(ObjectTypeBody::Mapped(syntax.ast.add_mapped_type(mapped)))
+                mapped.members = syntax.b.add_members(&members);
+                Some(ObjectTypeBody::Mapped(mapped))
             }
             ObjectTypeBuilder { members, .. } => {
-                Some(ObjectTypeBody::Members(syntax.ast.add_members(&members)))
+                Some(ObjectTypeBody::Members(syntax.b.add_members(&members)))
             }
         };
     }
@@ -1197,6 +1269,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(syntax) => std::mem::replace(&mut syntax.last_statement, StatementId::NONE),
             None => StatementId::NONE,
         };
+        let syntax = bun_ast::ts_syntax::StatementId(syntax.index() as u32);
         self.s(bun_ast::S::TypeScript { syntax }, loc)
     }
 
@@ -1238,7 +1311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `modifiers` are those of the parameter whose name has the `loc` `loc`.
     pub(crate) fn note_parameter_modifiers(&mut self, loc: &mut Loc, modifiers: &[Modifier]) {
         if self.should_keep_types() && !modifiers.is_empty() {
-            let list = self.type_syntax_mut().ast.add_modifiers(modifiers);
+            let list = self.type_syntax_mut().b.ts.add_modifiers(modifiers);
             self.note_modifiers(loc, list);
         }
     }
@@ -1252,7 +1325,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let syntax = self.type_syntax_mut();
         if syntax.statement_modifiers.len() > base {
             let list = syntax
-                .ast
+                .b
+                .ts
                 .add_modifiers(&syntax.statement_modifiers[base..]);
             syntax.statement_modifiers.truncate(base);
             self.note_modifiers(loc, list);
@@ -1279,14 +1353,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(super) fn emit_statement(&mut self, data: StatementData, keyword_loc: Loc) {
         let TypeSyntax {
-            ast,
+            b,
             statement_modifiers,
             statement_modifiers_base,
             last_statement,
             ..
         } = self.type_syntax_mut();
-        let modifiers = ast.add_modifiers(&statement_modifiers[*statement_modifiers_base..]);
-        *last_statement = ast.add_statement(Statement {
+        let modifiers =
+            b.ts.add_modifiers(&statement_modifiers[*statement_modifiers_base..]);
+        *last_statement = b.ts.add_statement(Statement {
             data,
             modifiers,
             loc: keyword_loc,
@@ -1297,10 +1372,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn emit_interface(
         &mut self,
         name: Name,
-        type_params: Option<Span<TypeParam>>,
+        type_params: Option<TypeParams>,
         extends: &[TypeId],
         other_heritage: &[TypeId],
-        has_implements_clause: bool,
         heritage_errors: [Option<(Loc, u32)>; 2],
         keyword_loc: Loc,
     ) {
@@ -1310,20 +1384,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         else {
             return;
         };
-        let ast = &mut self.type_syntax_mut().ast;
-        let extends = ast.add_id_list(extends);
+        let ast = &mut self.type_syntax_mut().b;
         let others: smallvec::SmallVec<[TypeId; 4]> = other_heritage
             .iter()
             .copied()
             .filter(|ty| ty.is_some())
             .collect();
+        for &ty in extends.iter().chain(&others) {
+            ast.heritage_type(ty);
+        }
+        let extends = ast.add_id_list(extends);
         let other_heritage = ast.add_id_list(&others);
-        let interface = ast.add_interface(Interface {
+        let interface = ast.ts.add_interface(Interface {
             name,
             type_params,
             extends,
             other_heritage,
-            has_implements_clause,
             heritage_errors,
             members,
         });
@@ -1334,7 +1410,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn emit_type_alias(
         &mut self,
         name: Name,
-        type_params: Option<Span<TypeParam>>,
+        type_params: Option<TypeParams>,
         type_loc: Loc,
         keyword_loc: Loc,
     ) {
@@ -1343,19 +1419,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         };
         // `parseTypeAliasDeclaration`: `intrinsic` directly after the `=`, and not before a dot, is a keyword.
-        let ast = &mut self.type_syntax_mut().ast;
-        if let Type {
-            data: TypeData::Reference { name, args },
-            loc,
+        let file = &mut self.type_syntax_mut().b.file;
+        if let TypeNode {
+            kind: TypeNodeKind::Ref { name, args },
+            pos,
             ..
-        } = ast[ty]
-            && loc == type_loc
+        } = file[ty]
+            && pos == type_loc.start as u32
             && args.is_empty()
-            && matches!(&ast[name], [name] if &*name.text == b"intrinsic")
+            && file.texts(name).eq([bun_sema::atom::known::intrinsic])
         {
-            ast[ty].data = TypeData::Keyword(Keyword::Intrinsic);
+            file[ty].kind = TypeNodeKind::Keyword(Keyword::Intrinsic);
         }
-        let alias = self.type_syntax_mut().ast.add_type_alias(TypeAlias {
+        let alias = self.type_syntax_mut().b.ts.add_type_alias(TypeAlias {
             name,
             type_params,
             ty,
@@ -1367,9 +1443,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn take_type_params(
         &mut self,
         result: SkipTypeParameterResult,
-    ) -> Option<Span<TypeParam>> {
+    ) -> Option<TypeParams> {
         match result {
-            SkipTypeParameterResult::DidNotSkipAnything => Some(Span::EMPTY),
+            SkipTypeParameterResult::DidNotSkipAnything => Some(TypeParams::EMPTY),
             _ => self.type_syntax_mut().last_type_params.take(),
         }
     }
@@ -1378,9 +1454,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn emit_object_type(&mut self, pos: u32) {
         match self.type_syntax_mut().last_object_type.take() {
             Some(ObjectTypeBody::Members(members)) => {
-                self.emit_type(TypeData::Object(members), pos)
+                self.emit_type(TypeNodeKind::Object(members), pos)
             }
-            Some(ObjectTypeBody::Mapped(mapped)) => self.emit_type(TypeData::Mapped(mapped), pos),
+            Some(ObjectTypeBody::Mapped(mapped)) => {
+                let mapped = self.type_syntax_mut().b.add_mapped_type(mapped);
+                self.emit_type(mapped, pos)
+            }
             None => self.clear_last_type(),
         }
     }
@@ -1390,7 +1469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 pub(crate) type ImportTypeAttributes = (
     ResolutionMode,
     Option<Loc>,
-    Option<bun_ast::ts_syntax::ImportAttributes>,
+    Option<crate::sema::ts_syntax::ImportAttributes>,
 );
 
 /// An identifier, keyword, string, number or private name at the start of an object type member. It is either a modifier or the member's
@@ -1460,11 +1539,11 @@ pub(crate) struct TypeMemberParts {
     pub(crate) initializer: Option<Expr>,
     pub(crate) is_optional: bool,
     /// Outer `None`: no type parameters. Inner `None`: unusable.
-    pub(crate) type_parameters: Option<Option<Span<TypeParam>>>,
+    pub(crate) type_parameters: Option<Option<TypeParams>>,
     pub(crate) open_paren: u32,
-    pub(crate) parameters: Option<Option<Span<Param>>>,
-    /// Where the comma before the `]` of an index signature is.
-    pub(crate) trailing_comma: Option<Loc>,
+    pub(crate) parameters: Option<Option<Params>>,
+    /// `check_index_signature_parameters`
+    pub(crate) index_signature_errors: [Option<(u32, u32)>; 2],
     /// The type after `:`. `Some(NONE)` means unusable.
     pub(crate) ty: Option<TypeId>,
 }
@@ -1490,7 +1569,7 @@ impl Default for TypeMemberParts {
             type_parameters: None,
             open_paren: 0,
             parameters: None,
-            trailing_comma: None,
+            index_signature_errors: [None; 2],
             ty: None,
         }
     }
@@ -1559,8 +1638,8 @@ impl Default for ObjectTypeBuilder {
 
 #[derive(Copy, Clone)]
 pub(crate) enum ObjectTypeBody {
-    Members(Span<Member>),
-    Mapped(bun_ast::ts_syntax::MappedTypeId),
+    Members(Members),
+    Mapped(MappedType),
 }
 
 /// `new <T>`, `abstract new`, `<T>`
@@ -1569,9 +1648,16 @@ pub(crate) struct FnTypeHead {
     kind: SignatureKind,
     flags: Flags,
     /// `None` if unusable.
-    type_params: Option<Span<TypeParam>>,
+    type_params: Option<TypeParams>,
     pos: u32,
     start: u32,
+}
+
+impl FnTypeHead {
+    /// Whether its type parameters are among the first `rows`.
+    pub(super) fn is_within(&self, rows: usize) -> bool {
+        self.type_params.is_none_or(|list| list.range().end <= rows)
+    }
 }
 
 /// `None` for `get` and `set`, which are not modifiers.
@@ -1606,23 +1692,4 @@ pub(crate) fn keyword_type(identifier: &[u8]) -> Option<Keyword> {
         Kind::PrimitiveObject => Keyword::Object,
         _ => return None,
     })
-}
-
-pub(crate) fn keyword_text(keyword: Keyword) -> &'static [u8] {
-    match keyword {
-        Keyword::Any => b"any",
-        Keyword::Unknown => b"unknown",
-        Keyword::Never => b"never",
-        Keyword::Void => b"void",
-        Keyword::Undefined => b"undefined",
-        Keyword::Null => b"null",
-        Keyword::String => b"string",
-        Keyword::Number => b"number",
-        Keyword::Boolean => b"boolean",
-        Keyword::BigInt => b"bigint",
-        Keyword::Symbol => b"symbol",
-        Keyword::Object => b"object",
-        Keyword::This => b"this",
-        Keyword::Intrinsic => b"intrinsic",
-    }
 }

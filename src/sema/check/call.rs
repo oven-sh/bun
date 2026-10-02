@@ -2740,8 +2740,11 @@ impl<'p> Checker<'p> {
             }
         }
         let (index, count) = (index + offset, count + offset);
-        // `resolvingSignature`
-        if self.p.calls.get(&(file, call)).is_none()
+        // `resolvingSignature`, by this checker. FOR SPEED the stack is not gone through for a call that is kept and that this checker
+        // has had resolved: it is not entered again.
+        let is_cached = self.p.calls.get(&(file, call)).is_some()
+            && self.resolved_signatures.contains(&(file, call));
+        if !is_cached
             && !self
                 .resolved_meanwhile
                 .iter()
@@ -2751,6 +2754,9 @@ impl<'p> Checker<'p> {
             return Some(TypeId::ANY);
         }
         let resolved = self.resolved_signature(file, call);
+        if !is_cached {
+            self.resolved_signatures.insert((file, call));
+        }
         // `resolveUntypedCall`, `resolveErrorCall`: what anything comes of has no parameters.
         let Some(sig) = resolved.sig else {
             return (self.has_any_flag(resolved.ret)).then_some(TypeId::ANY);

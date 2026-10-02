@@ -3,6 +3,7 @@
 use super::alias::NewAlias;
 use super::related::Place;
 use super::*;
+use crate::bind::Decl;
 use crate::bind::Parent;
 use smallvec::SmallVec;
 
@@ -317,8 +318,10 @@ impl<'p> Checker<'p> {
         }
         let text = self.files().atoms.bytes(prop.name);
         let (file, key, is_string) = match &prop.source {
-            PropSource::Members(members) => {
-                let (file, member) = members[0];
+            PropSource::Symbol(sym)
+                if let Some((file, Decl::Member(member))) =
+                    self.files().value_declaration(*sym) =>
+            {
                 let member = &self.hir(file)[member];
                 (file, member.key, member.flags.contains(Flags::STRING_NAME))
             }
@@ -364,21 +367,21 @@ impl<'p> Checker<'p> {
     pub(super) fn key_type_of_props(&mut self, owner: TypeId, props: &[Prop]) -> Option<TypeId> {
         let first = &props[0];
         let key = self.key_type_of_prop(owner, first)?;
-        let is_by_declaration = match &first.source {
-            PropSource::Members(members) => {
-                matches!(self.hir(members[0].0)[members[0].1].key, PropKey::Name(_))
-            }
-            PropSource::Literal(file, written) => {
-                matches!(self.hir(*file)[*written].key, PropKey::Name(_))
-            }
+        // A member of a class, an interface, a type literal or an object literal.
+        let member = |prop: &Prop| match prop.source {
+            PropSource::Symbol(sym) => (self.files().value_declaration(sym))
+                .filter(|declaration| matches!(declaration.1, Decl::Member(_))),
+            PropSource::Literal(file, written) => Some((file, Decl::Property(written))),
+            _ => None,
+        };
+        let of_first = member(first);
+        let is_by_declaration = match of_first {
+            Some((file, Decl::Member(m))) => matches!(self.hir(file)[m].key, PropKey::Name(_)),
+            Some((file, Decl::Property(p))) => matches!(self.hir(file)[p].key, PropKey::Name(_)),
             _ => false,
         };
-        let is_declared_elsewhere = |other: &Prop| match (&first.source, &other.source) {
-            (PropSource::Members(a), PropSource::Members(b)) => a[0] != b[0],
-            (PropSource::Literal(f, a), PropSource::Literal(g, b)) => (f, a) != (g, b),
-            (_, PropSource::Members(_) | PropSource::Literal(..)) => true,
-            _ => false,
-        };
+        let is_declared_elsewhere =
+            |other: &Prop| member(other).is_some_and(|it| Some(it) != of_first);
         if is_by_declaration
             && matches!(self.data(key), TypeData::NumberLit { .. })
             && props[1..].iter().any(is_declared_elsewhere)

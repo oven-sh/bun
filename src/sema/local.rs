@@ -538,6 +538,10 @@ pub unsafe fn map_get<K: std::hash::Hash + Eq + 'static, V: Clone + 'static>(
         // SAFETY: the state is the thread's own, and nothing is changing the tables: see `with_table`.
         let tables = unsafe { &*s.tables.get() };
         let map = tables.by_slot.get(slot as usize)?.map.as_deref()?;
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "caller contract: the box was made of this type"
+        )]
         // SAFETY: a slot is one table's, which puts in one type of map.
         let map = unsafe { &*std::ptr::from_ref(map).cast::<crate::util::FxHashMap<K, V>>() };
         map.get(key).cloned()
@@ -558,6 +562,10 @@ pub unsafe fn map_insert<K: std::hash::Hash + Eq + 'static, V: Clone + 'static>(
         let map = &mut **t
             .map
             .get_or_insert_with(|| Box::new(crate::util::FxHashMap::<K, V>::default()));
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "caller contract: the box was made of this type"
+        )]
         // SAFETY: a slot is one table's, which puts in one type of map.
         let map = unsafe { &mut *std::ptr::from_mut(map).cast::<crate::util::FxHashMap<K, V>>() };
         map.entry(key).or_insert(value).clone()

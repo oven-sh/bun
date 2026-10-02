@@ -26,7 +26,7 @@ mod errors_heritage;
 mod errors_implicit;
 mod errors_isolated_declarations;
 mod errors_iteration;
-mod errors_js;
+pub(crate) mod errors_js;
 mod errors_jsx;
 mod errors_misc;
 mod errors_modules;
@@ -87,6 +87,7 @@ pub use errors_x_regexp_scanner::get_spelling_suggestion;
 use errors_x_regexp_scanner::spelling_suggestion;
 use errors_x_typenodes::array_element_type_node;
 use errors_x_typenodes::has_parse_diagnostics;
+use shape::members_among;
 use sink::{Arg, Reported};
 use spans::end_of_brackets;
 use spans::is_identifier_part;
@@ -158,7 +159,6 @@ pub struct Program {
     /// The names, functions and members whose type depends on itself.
     circular_pats: NodeSet<(FileId, PatId)>,
     circular_returns: NodeSet<(FileId, FnId)>,
-    circular_members: NodeSet<(FileId, MemberId)>,
     /// References whose control flow walk reached depth 2000 (2563). `getTypeAtFlowNode`
     flows_too_deep: NodeSet<(FileId, ExprId)>,
     /// `resolvedBaseConstructorType` of each class.
@@ -172,7 +172,7 @@ pub struct Program {
     /// `first_checked_type_node`.
     circular_mapped_props: NodeSet<(FileId, TypeNodeId)>,
     /// `GetGlobalDiagnostics`: what is wrong and is in no file. `Cannot find global type 'Array'.` The code, and what goes into the message.
-    global_errors: std::sync::Mutex<std::collections::BTreeSet<(u32, Vec<String>)>>,
+    global_errors: bun_threading::Guarded<std::collections::BTreeSet<(u32, Vec<String>)>>,
     sink: sink::Sink,
     /// Which property of which mapped type it is, for the message.
     circular_mapped_prop_names: ByNodeKept<(FileId, TypeNodeId), (TypeId, Atom)>,
@@ -219,9 +219,7 @@ pub struct Program {
     said_of_calls_resolved_again: ByNodeKept<(FileId, ExprId), Vec<Reported>>,
     relations: ByKey<(TypeId, TypeId, u8), u8>,
     variances: ByNodeKept<Sym, Arc<[u8]>>,
-    member_types: ByNode<(FileId, MemberId), TypeId>,
     /// `resolvedType` of a property declared by assignment declarations, keyed by the first declaration.
-    assigned_prop_types: ByNode<(FileId, ExprId), TypeId>,
     /// `awaited_no_alias`, asked on its own account, once it holds for good.
     awaited_types: ById<TypeId, Option<TypeId>>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
@@ -286,7 +284,6 @@ impl Program {
         let fns = bases(|m| m.hir.fns.len());
         let pats = bases(|m| m.hir.pats.len());
         let props = bases(|m| m.hir.props.len());
-        let members = bases(|m| m.hir.members.len());
         let params = bases(|m| m.hir.params.len());
         let enum_members = bases(|m| m.hir.enum_members.len());
         let scopes = bases(|m| m.bound.scopes.len());
@@ -305,7 +302,6 @@ impl Program {
             symbol_types: ByNode::new(&symbols),
             circular_pats: NodeSet::new(&pats),
             circular_returns: NodeSet::new(&fns),
-            circular_members: NodeSet::new(&members),
             flows_too_deep: NodeSet::new(&exprs),
             base_constructor_types: ByNode::new(&symbols),
             sink: sink::Sink::new(files.modules.len()),
@@ -342,8 +338,6 @@ impl Program {
             said_of_calls_resolved_again: ByNodeKept::new(&exprs),
             relations: Default::default(),
             variances: ByNodeKept::new(&symbols),
-            member_types: ByNode::new(&members),
-            assigned_prop_types: ByNode::new(&exprs),
             awaited_types: Default::default(),
             mapped_prop_types: Default::default(),
             reverse_mapped_cache: Default::default(),
@@ -390,7 +384,7 @@ impl Program {
         if self.files.options.strict_bind_call_apply {
             needed.extend(["CallableFunction", "NewableFunction"]);
         }
-        let mut all = self.global_errors.lock().unwrap().clone();
+        let mut all = self.global_errors.lock().clone();
         for name in needed {
             let is_there = self
                 .files
@@ -434,6 +428,7 @@ impl Program {
             contextual_binding_patterns: Vec::new(),
             late_bound_members: FxHashMap::default(),
             reporting_nonexistent: Vec::new(),
+            declared_index_infos_under_way: Vec::new(),
             serialization_level: 0,
             discarded: None,
             non_existent_properties: Default::default(),
@@ -586,9 +581,6 @@ enum Query {
     Pat(FileId, PatId),
     LiteralProp(FileId, PropId),
     TypeNode(FileId, TypeNodeId),
-    Member(FileId, MemberId),
-    /// The type of a property declared by assignment declarations, identified by the first declaration (`symbol.ValueDeclaration`).
-    Assigned(FileId, ExprId),
     /// The type of a property of a mapped type: the mapped type and the property name. `getTypeOfMappedSymbol`
     MappedProp(TypeId, Atom),
     Enum(FileId, EnumMemberId),
@@ -698,6 +690,10 @@ pub struct Checker<'p> {
     late_bound_members: FxHashMap<(Sym, bool), late_bound::LateBoundMembers>,
     /// `nonExistentProperties`: property accesses whose 2339 message is being printed, with `stack.len()` when printing started.
     reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
+    /// `resolveDeclaredMembers` is at `getIndexInfosOfSymbol`, with `declaredMembersResolved` set. For each that is under way: how deep
+    /// `stack` was when it got there, with the `Query::Shape` on top, and the first member of the declaration whose computed name is
+    /// some string, number or symbol.
+    declared_index_infos_under_way: Vec<(usize, FileId, MemberId)>,
     /// `c.serializationLevel`: how many `TypeToString` are under way, of those whose resolutions are made at once.
     serialization_level: u32,
     /// Where `add_diagnostic` puts what it discards.
@@ -806,7 +802,8 @@ pub struct Checker<'p> {
     file_at_hand: FileId,
     /// See `Program::exprs_at_hand`.
     exprs_at_hand: Arc<[AtomicU32]>,
-    /// See `shape_for_now`.
+    /// See `shape_for_now`, which hands out a reference to what is in the box and pushes the next.
+    #[expect(clippy::vec_box)]
     shapes_for_now: Vec<Box<shape::Resolved>>,
     /// The types of properties of object literals that only hold for now: see `hold_for_now`.
     held_for_now: FxHashMap<(FileId, PropId), Held>,
@@ -1160,8 +1157,12 @@ impl<'p> Checker<'p> {
         // same way once more, and the first resolution on that way is the one to come back to itself.
         // A call that is asked what it expects of an argument while it is being resolved is another matter
         // (`resolvingSignature`): whoever asks goes without an answer, and nothing is wrong. So are members that are in place.
-        // Nor does it go the same way once more through a printing: the next is a level up, and the last asks nothing.
-        let is_through_printing = self.printing_floors.last().is_some_and(|&floor| floor > i);
+        // Exception: if the first frame above the re-entered expression is a `typeToStringEx` call, with no type resolution in
+        // between, the second pass prints one serialization level higher, and at `maxSerializationLevel` the printer returns "?"
+        // without resolving anything. That recursion terminates without a cycle.
+        let first_printing = self.printing_floors.iter().find(|&&floor| floor > i);
+        let is_through_printing = first_printing
+            .is_some_and(|&floor| !self.stack[i..floor].iter().any(|&q| self.is_resolution(q)));
         let marked = !self.has_members_in_place(q)
             && (self.is_resolution(q) || !is_through_printing)
             && self.mark_circle_from(i);
@@ -1415,8 +1416,6 @@ impl<'p> Checker<'p> {
     fn is_resolution(&self, q: Query) -> bool {
         match q {
             Query::Return(..)
-            | Query::Member(..)
-            | Query::Assigned(..)
             | Query::MappedProp(..)
             | Query::Bases(_)
             | Query::BaseConstructor(_)
@@ -1453,12 +1452,6 @@ impl<'p> Checker<'p> {
                     Query::Pat(file, pat) => self.p.pat_types.get(file, pat.idx()).is_some(),
                     Query::Return(file, func) => {
                         self.p.fn_return_types.get(file, func.idx()).is_some()
-                    }
-                    Query::Member(file, member) => {
-                        self.p.member_types.get(&(file, member)).is_some()
-                    }
-                    Query::Assigned(file, first) => {
-                        self.p.assigned_prop_types.get(&(file, first)).is_some()
                     }
                     Query::MappedProp(mapped, name) => {
                         self.p.mapped_prop_types.get(&(mapped, name)).is_some()
@@ -2038,7 +2031,7 @@ impl<'p> Checker<'p> {
 
     /// An error that is in no file: `c.error(nil, ..)`.
     pub(super) fn report_global_error(&self, code: u32, args: Vec<String>) {
-        self.p.global_errors.lock().unwrap().insert((code, args));
+        self.p.global_errors.lock().insert((code, args));
     }
 
     pub fn global_type_symbol(&self, name: Atom) -> Option<Sym> {
@@ -2054,7 +2047,7 @@ impl<'p> Checker<'p> {
         // What an alias means is a matter of what it stands for, which may be under way.
         if files
             .globals
-            .get(&name)
+            .get(name)
             .is_none_or(|&sym| !files.flags(sym).contains(SymFlags::ALIAS))
         {
             self.p.global_type_symbols.insert(name, found);

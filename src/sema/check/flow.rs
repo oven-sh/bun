@@ -3943,10 +3943,9 @@ impl<'p> Checker<'p> {
     /// `prop.Flags&(SymbolFlagsVariable|SymbolFlagsProperty|SymbolFlagsAccessor) != 0`
     fn is_variable_property_or_accessor(&self, prop: &Prop) -> bool {
         match prop.source {
-            // An export of a module or a namespace, a member of an enum.
             PropSource::Symbol(sym) => {
                 let flags = self.files().flags(sym);
-                flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
+                flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY | SymFlags::ACCESSOR)
             }
             _ => !prop.flags.contains(PropFlags::METHOD),
         }
@@ -3959,14 +3958,20 @@ impl<'p> Checker<'p> {
             return false;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // Every access to a property comes here. `prop.ValueDeclaration` matters for `this.x` and for what an assignment declares.
+        let by_assignment = SymFlags::ASSIGNMENT | SymFlags::FUNCTION_SCOPED_VARIABLE;
+        if !matches!(hir[e].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
+                if matches!(hir[obj].kind, ExprKind::This))
+            && !matches!(Self::value_declaration(prop), Some(&PropSource::Symbol(sym))
+                if self.files().flags(sym).intersects(by_assignment))
+        {
+            return false;
+        }
         let container_of =
             |x: ExprId| self.get_control_flow_container(file, bound.expr_parent[x.idx()]);
         // `prop.ValueDeclaration`, if it is an assignment.
-        let (of, assignment) = match Self::value_declaration(prop) {
-            Some(PropSource::Members(members)) => {
-                let Some(&(of, m)) = members.first() else {
-                    return false;
-                };
+        let (of, assignment) = match self.value_declaration_of_prop(prop) {
+            Some((of, Decl::Member(m))) => {
                 let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[e].kind else {
                     return false;
                 };
@@ -3992,36 +3997,12 @@ impl<'p> Checker<'p> {
                             && matches!(bound.fns[f.idx()].owner, FnOwner::Member(constructor)
                                 if bound.member_owner[constructor.idx()] == MemberOwner::Class(class)));
             }
-            Some(PropSource::Assigned(of, assignments)) => match assignments.first() {
-                Some(&first) => (*of, first),
-                None => return false,
-            },
             // What `exports.name = value` declares is a variable. An alias declaration is no value declaration;
             // `Object.defineProperty(exports, "name", descriptor)` is one.
-            Some(&PropSource::Symbol(sym))
-                if self.files().flags(sym).intersects(SymFlags::VARIABLE) =>
-            {
-                let first = self
-                    .files()
-                    .symbol(sym)
-                    .decls
-                    .iter()
-                    .find_map(|&decl| match decl {
-                        Decl::ExportsProperty(x) => match self.hir(sym.file)[x].kind {
-                            ExprKind::Assign { value, .. }
-                                if expression_is_alias(self.hir(sym.file), value) =>
-                            {
-                                None
-                            }
-                            _ => Some(x),
-                        },
-                        _ => None,
-                    });
-                match first {
-                    Some(first) => (sym.file, first),
-                    None => return false,
-                }
-            }
+            Some((
+                of,
+                Decl::Expando(first) | Decl::ThisProperty(first) | Decl::ExportsProperty(first),
+            )) => (of, first),
             _ => return false,
         };
         of == file
@@ -5923,33 +5904,32 @@ impl<'p> Checker<'p> {
             return None;
         }
         match &prop.source {
-            PropSource::Members(members) => {
-                let (f, m) = members[0];
-                let member = &self.hir(f)[m];
-                if member.kind == MemberKind::Property && member.ty.is_none() {
-                    return None;
-                }
-            }
-            PropSource::Parameter(f, p) => {
-                if self.hir(*f)[*p].ty.is_none() {
-                    return None;
-                }
-            }
             PropSource::Literal(..) => return None,
-            PropSource::Symbol(sym) => {
-                self.explicit_type_of_symbol(*sym)?;
-            }
-            // `isExpandoPropertyFunctionWithReturnTypeAnnotation`
-            PropSource::Assigned(f, assignments) => {
-                let h = self.hir(*f);
-                let says_what_it_returns = assignments.first().is_some_and(|&first| {
-                    matches!(h[first].kind, ExprKind::Assign { value, .. }
-                        if !is_parenthesized(h, value) && matches!(h[value].kind, ExprKind::Fn(func) if h[func].ret.is_some()))
-                });
-                if !says_what_it_returns {
-                    return None;
+            PropSource::Symbol(sym) => match self.files().value_declaration(*sym) {
+                Some((f, Decl::Member(m))) => {
+                    let member = &self.hir(f)[m];
+                    if member.kind == MemberKind::Property && member.ty.is_none() {
+                        return None;
+                    }
                 }
-            }
+                Some((f, Decl::ParameterProperty(p))) => {
+                    if self.hir(f)[p].ty.is_none() {
+                        return None;
+                    }
+                }
+                // `isExpandoPropertyFunctionWithReturnTypeAnnotation`
+                Some((f, Decl::Expando(first) | Decl::ThisProperty(first))) => {
+                    let h = self.hir(f);
+                    let says_what_it_returns = matches!(h[first].kind, ExprKind::Assign { value, .. }
+                        if !is_parenthesized(h, value) && matches!(h[value].kind, ExprKind::Fn(func) if h[func].ret.is_some()));
+                    if !says_what_it_returns {
+                        return None;
+                    }
+                }
+                _ => {
+                    self.explicit_type_of_symbol(*sym)?;
+                }
+            },
             _ => {}
         }
         Some(self.type_of_prop(prop, mapper))

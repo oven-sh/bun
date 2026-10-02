@@ -185,7 +185,7 @@ fn line_comment_start(line: &[u8]) -> Option<usize> {
 }
 
 /// Where the token before `pos` ends: back over blanks and comments. A missing node is there (`createMissingNode`).
-pub(super) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
+pub(crate) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
     let mut at = pos.min(text.len());
     loop {
         let before = at;
@@ -507,7 +507,7 @@ fn regex_end(text: &[u8], start: usize) -> usize {
 }
 
 /// `ScanJsxIdentifier`
-pub(super) fn jsx_identifier_end(text: &[u8], mut at: usize) -> usize {
+pub(crate) fn jsx_identifier_end(text: &[u8], mut at: usize) -> usize {
     loop {
         let end = ident_end(text, at);
         if text.get(end) != Some(&b'-') {
@@ -858,13 +858,13 @@ fn try_close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> Opti
 
 /// The tree of a file and its text. Every function gives `node.End()` of what it is named after, unless it says otherwise.
 #[derive(Copy, Clone)]
-struct Spans<'a> {
-    hir: &'a File,
-    text: &'a [u8],
+pub(crate) struct Spans<'a> {
+    pub(crate) hir: &'a File,
+    pub(crate) text: &'a [u8],
 }
 
 impl<'a> Spans<'a> {
-    fn of(hir: &'a File) -> Self {
+    pub(crate) fn of(hir: &'a File) -> Self {
         Spans {
             hir,
             text: &hir.text,
@@ -931,7 +931,7 @@ impl<'a> Spans<'a> {
     }
 
     /// `e` as it is written, with the parentheses around it.
-    fn expr(self, e: ExprId) -> usize {
+    pub(crate) fn expr(self, e: ExprId) -> usize {
         self.expr_from(e, 0)
     }
 
@@ -950,7 +950,7 @@ impl<'a> Spans<'a> {
     }
 
     /// A property of an object literal.
-    fn prop(self, p: PropId) -> usize {
+    pub(crate) fn prop(self, p: PropId) -> usize {
         self.hir
             .props
             .get(p.idx())
@@ -958,7 +958,7 @@ impl<'a> Spans<'a> {
     }
 
     /// The name of a property of an object literal.
-    fn prop_name(self, p: PropId) -> usize {
+    pub(crate) fn prop_name(self, p: PropId) -> usize {
         let Some(prop) = self.hir.props.get(p.idx()) else {
             return 0;
         };
@@ -1536,20 +1536,6 @@ impl Checker<'_> {
         self.spans(file).skip_trivia(pos as usize) as u32
     }
 
-    /// Where what `import x = a.b.c` or `import x = require("m")` refers to starts. `parseExpected`: an `=` that is left out takes no
-    /// room.
-    pub(super) fn start_of_import_equals_reference(
-        &self,
-        file: FileId,
-        import: crate::hir::ImportEqualsId,
-    ) -> Option<u32> {
-        let spans = self.spans(file);
-        let name_pos = spans.hir.import_equals.get(import.idx())?.name_pos;
-        let name_end = spans.token(name_pos as usize);
-        let equals = spans.eat(name_end, b"=");
-        (!spans.text.is_empty()).then(|| spans.skip_trivia(equals) as u32)
-    }
-
     /// Where the token before `pos` ends: back over blanks and comments. Where a missing node is, and `node.Pos()` of what starts at
     /// `pos`.
     pub(super) fn end_of_token_before(&self, file: FileId, pos: u32) -> u32 {
@@ -1570,9 +1556,14 @@ impl Checker<'_> {
                     _ => 0,
                 }
             }
-            NodeData::Part(Part::Name | Part::PropertyName | Part::BindingsName, _) => {
-                self.end_of_name_at(file, hir.start(node))
-            }
+            NodeData::Part(
+                Part::Name
+                | Part::PropertyName
+                | Part::BindingsName
+                | Part::Label
+                | Part::ConstType,
+                _,
+            ) => self.end_of_name_at(file, hir.start(node)),
             NodeData::Part(Part::Base, row) => {
                 let class = hir.class_of(row);
                 match hir.ids(hir[class].extends_args).next_back() {
@@ -1581,10 +1572,10 @@ impl Checker<'_> {
                 }
             }
             NodeData::Part(Part::Qualified, row) => self.end_of_node(file, row),
-            NodeData::Part(Part::Paren, row) => match hir.data(row) {
-                NodeData::Expr(e) => self.end_of_expr(file, e),
-                _ => 0,
-            },
+            NodeData::Paren(p) => hir.parens[p.idx()].2,
+            NodeData::Part(Part::Namespace | Part::LocalName, _) => {
+                jsx_identifier_end(&hir.text, hir.start(node) as usize) as u32
+            }
             NodeData::Part(Part::ImportClause, row) => match hir.data(row) {
                 NodeData::Stmt(s) => match hir[s].kind {
                     StmtKind::Import(i) => hir[i].clause_end,
@@ -1608,7 +1599,7 @@ impl Checker<'_> {
                 self.end_of_node(file, last)
             }
             NodeData::Part(
-                Part::Label | Part::NameLiteral | Part::Operand | Part::Keyword | Part::Specifier,
+                Part::NameLiteral | Part::Operand | Part::Keyword | Part::Specifier,
                 _,
             ) if hir.start(node) != 0 => self.end_of_token_at(file, hir.start(node)),
             NodeData::Part(Part::ExportClause, row) => {

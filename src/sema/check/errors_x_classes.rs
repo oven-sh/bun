@@ -455,8 +455,8 @@ impl Checker<'_> {
             let object = self.type_of_expr(file, obj);
             let apparent = self.apparent_type(object);
             if let Some((prop, _)) = self.prop_of(apparent, name)
-                && let PropSource::Members(members) = &prop.source
-                && members.iter().any(|&(f, m)| {
+                && let PropSource::Symbol(sym) = prop.source
+                && self.members_of_symbol(sym).iter().any(|&(f, m)| {
                     let member = &self.hir(f)[m];
                     member.ty.is_none() && member.flags.contains(Flags::STATIC | Flags::READONLY)
                 })
@@ -499,7 +499,9 @@ impl Checker<'_> {
         // `getCandidateName`: an internal name is never suggested, and only `SymbolFlagsClassMember` counts, which the exports of a
         // namespace merged with the class are not.
         let get_name = |prop: &Prop| match self.written_name(prop.name) {
-            _ if matches!(prop.source, PropSource::Symbol(_)) => &[][..],
+            _ if matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)) => {
+                &[][..]
+            }
             name if name.starts_with(crate::atom::SYMBOL_NAME_PREFIX) => &[][..],
             name => name,
         };
@@ -511,16 +513,13 @@ impl Checker<'_> {
     /// Whether `prop` has declarations at all, and whether one of them says `abstract`. `None`: where it comes from is not kept.
     fn declarations_of_base_property(&self, prop: &Prop) -> Option<(bool, bool)> {
         match &prop.source {
-            PropSource::Members(members) => Some((
-                !members.is_empty(),
-                members
-                    .iter()
-                    .any(|&(f, m)| self.hir(f)[m].flags.contains(Flags::ABSTRACT)),
-            )),
-            PropSource::Parameter(..)
-            | PropSource::Literal(..)
-            | PropSource::Symbol(_)
-            | PropSource::Assigned(..) => Some((true, false)),
+            PropSource::Symbol(sym) => {
+                let members = members_among(&self.files().decls_of(*sym));
+                let is_abstract =
+                    |&(f, m): &(FileId, MemberId)| self.hir(f)[m].flags.contains(Flags::ABSTRACT);
+                Some((true, members.iter().any(is_abstract)))
+            }
+            PropSource::Literal(..) => Some((true, false)),
             // `addMemberForKeyTypeWorker`: `prop.Declarations = modifiersProp.Declarations`
             PropSource::Intersected(..)
             | PropSource::Copy(..)

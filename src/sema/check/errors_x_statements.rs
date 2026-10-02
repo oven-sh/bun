@@ -6,7 +6,6 @@
 //! * Where `await`, `for await` and `await using` can be written: 1308 1375 1378 2524 18037, 1103 1431 1432 18038,
 //!   2852 2853 2854 18054, and 1309 for all three. `yield` in a parameter initializer: 2523.
 //! * `using` and `await using`: 1493 1494, 1545 1546, 1547 1548, and what they are initialized with: 2850 2851.
-//! * Declarations of one thing with different modifiers: 2687.
 //!
 //! Follows `checkWithStatement`, `checkReturnStatement`, `checkIfStatement`, `checkForInStatement`, `checkForOfStatement`,
 //! `checkReferenceExpression`, `checkCatchClause`, `checkVariableStatement` and `checkVariableLikeDeclaration` of TypeScript
@@ -19,7 +18,7 @@
 //! the walk notes where it turns away, and what the passes said there is taken back when they are through.
 
 use super::*;
-use crate::bind::{Decl, MemberOwner, Parent, PatParent};
+use crate::bind::{Decl, Parent};
 use crate::resolve::{ModuleKind, ScriptTarget};
 use smallvec::SmallVec;
 
@@ -161,18 +160,6 @@ enum AwaitPlace {
 }
 
 // ───────────────────────────── members that share a name ─────────────────────────────
-
-/// What `areDeclarationFlagsIdentical` compares.
-fn compared_modifiers(flags: Flags) -> Flags {
-    flags
-        & (Flags::OPTIONAL
-            | Flags::PRIVATE
-            | Flags::PROTECTED
-            | Flags::ASYNC
-            | Flags::ABSTRACT
-            | Flags::READONLY
-            | Flags::STATIC)
-}
 
 // `nodeLinks.hasReportedStatementInAmbientContext`, next to those of errors_x_collisions.rs
 const HAS_REPORTED_STATEMENT_IN_AMBIENT_CONTEXT: u8 = 4;
@@ -884,113 +871,6 @@ impl Checker<'_> {
         }
         let (start, end) = self.error_range_of_fn(file, hir.function_of(container));
         vec![Reported::bare((file, start, end), 1356)]
-    }
-
-    /// From `checkVariableLikeDeclaration`, with `areDeclarationFlagsIdentical`: 2687. The declarations of a property, wherever
-    /// they are, agree on whether it can be left out and on `private`, `protected`, `readonly`, `abstract` and `static`.
-    pub(super) fn check_modifiers_of_merged_declarations(&mut self, file: FileId) {
-        let said_before = self.reported.len();
-        self.check_modifiers_of_each_merged_declaration(file);
-        // `DeclarationNameToString`: the name as it is written, which may be a string or in brackets.
-        for i in said_before..self.reported.len() {
-            let start = self.reported[i].start;
-            let end = self.end_of_name_at(file, start);
-            let name = self.stringify_args(&[Arg::Bytes(
-                &self.hir(file).text[start as usize..end as usize],
-            )]);
-            (self.reported[i].end, self.reported[i].args) = (end, name);
-        }
-    }
-
-    fn check_modifiers_of_each_merged_declaration(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // What is compared, whether it is `IsVariableLike`, and where its name is.
-        let describe = |c: &Checker<'_>, (of, declaration): (FileId, Decl)| {
-            let hir = c.hir(of);
-            match declaration {
-                Decl::Member(m) => Some((
-                    compared_modifiers(hir[m].flags),
-                    hir[m].kind == MemberKind::Property,
-                    hir[m].name_pos,
-                )),
-                Decl::ParameterProperty(p) => {
-                    Some((compared_modifiers(hir[p].flags), true, hir[hir[p].pat].pos))
-                }
-                _ => None,
-            }
-        };
-        let properties = (0..hir.members.len() as u32)
-            .map(MemberId)
-            .filter(|&m| {
-                hir[m].kind == MemberKind::Property
-                    && bound.member_owner[m.idx()] != MemberOwner::None
-            })
-            .map(Decl::Member);
-        let parameter_properties = (0..hir.params.len() as u32)
-            .map(ParamId)
-            .filter(|&p| hir[p].flags.contains(Flags::PARAMETER_PROPERTY))
-            .map(Decl::ParameterProperty);
-        for declaration in properties.chain(parameter_properties) {
-            let declarations = self.declarations_of_member(file, declaration);
-            if declarations.len() < 2 {
-                continue;
-            }
-            let mut described = declarations
-                .iter()
-                .filter_map(|&other| Some((other, describe(self, other)?)));
-            let (Some((value_declaration, (modifiers, ..))), Some((own, _, start))) =
-                (described.next(), describe(self, (file, declaration)))
-            else {
-                continue;
-            };
-            let differs = if value_declaration == (file, declaration) {
-                described.any(|(_, other)| other.1 && other.0 != own)
-            } else {
-                own != modifiers
-            };
-            if differs {
-                self.error_at((file, start, 0), 2687, &[]);
-            }
-        }
-        // A parameter and a `var` of the same name may differ. What a pattern in a `var` binds is not let off.
-        for symbol in &bound.symbols {
-            if symbol.decls.len() < 2 {
-                continue;
-            }
-            let [Decl::Param(first), rest @ ..] = symbol.decls.as_slice() else {
-                continue;
-            };
-            let PatParent::Param(p) = bound.pat_parent[first.idx()] else {
-                continue;
-            };
-            if rest.is_empty() || compared_modifiers(hir[p].flags).is_empty() {
-                continue;
-            }
-            let mut differs = false;
-            for &decl in rest {
-                let Decl::Var(pat) = decl else { continue };
-                let mut root = pat;
-                let of_var = loop {
-                    match bound.pat_parent[root.idx()] {
-                        PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
-                        PatParent::Var(d) => break hir[d].kind == VarKind::Var,
-                        _ => break false,
-                    }
-                };
-                if of_var && root != pat {
-                    differs = true;
-                    self.error_at((file, hir[pat].pos, 0), 2687, &[]);
-                }
-            }
-            // A parameter property is looked at as the property it is.
-            let f = bound.param_fn[p.idx()];
-            let is_property = hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
-                && f.is_some()
-                && hir[f].kind == FnKind::Constructor;
-            if differs && !is_property {
-                self.error_at((file, hir[*first].pos, 0), 2687, &[]);
-            }
-        }
     }
 
     // ───────────────────────────── what is not looked at ─────────────────────────────

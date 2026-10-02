@@ -260,7 +260,6 @@ impl Disk {
         }
     }
 
-    /// Whether what is in `path` is asked of the system each time: the roots, which on Windows are no directories.
     /// An idle reader that read from `directory` last, or else a new one, or the least recently used once enough are kept.
     fn take_reader(&self, directory: &[u8]) -> Reader {
         let mut idle = self.idle_readers.lock();
@@ -279,6 +278,7 @@ impl Disk {
         idle.push(reader);
     }
 
+    /// Whether the system is asked each time about what is in `path`: the roots, which on Windows are no directories.
     fn is_above_listings(path: &[u8]) -> bool {
         path.is_empty() || path == b"/" && cfg!(windows)
     }

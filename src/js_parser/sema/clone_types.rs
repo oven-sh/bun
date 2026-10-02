@@ -1,21 +1,24 @@
-//! Clones the TypeScript syntax nodes of the parse pass (`bun_ast::ts_syntax`) into the type checker's tree (`bun_sema::hir`).
+//! Makes the rows of the type checker's tree (`bun_sema::hir`) of the TypeScript syntax the parser reads, as soon as it has read it:
+//! what `NewTypeReferenceNode` and its like are to TypeScript's parser. What is handed over is in `ts_syntax.rs`.
 //!
-//! Only nodes that are reachable from what is asked for get cloned, so whatever an abandoned speculative parse left behind is ignored.
-//! Names are interned here, and the grammar checks that TypeScript makes on type syntax after parsing are made here.
+//! What an attempt at parsing made is taken back with the attempt (`P::rewind_type_syntax`). Names are interned here, and the grammar
+//! checks that TypeScript makes on type syntax after parsing are made here.
 
+use crate::sema::ts_syntax as ts;
 use bun_ast::Expr;
-use bun_ast::ts_syntax as ts;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
     Alias, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, Func, IdList, Interface, Keyword,
-    Mapped, MappedModifier, Member, MemberId, MemberKind, Param, ParamId, PatElem, PatElemId,
-    PatId, PatKind, PatProp, PatPropId, PropKey, ResolutionMode, Span, SpecifierKind, SpecifierUse,
-    StmtId, StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind, TypeParam, TypeParamId,
+    Mapped, Member, MemberId, MemberKind, Param, ParamId, PatElem, PatElemId, PatId, PatKind,
+    PatProp, PatPropId, PropKey, ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtId,
+    StmtKind, TextRange, TupleElem, TypeNodeId, TypeNodeKind, TypeParam, TypeParamId,
 };
 
 use super::builder::Builder;
+use super::notes::Rows;
 
-/// A part of a cloned node that is written as a JavaScript expression or function body. The lowering converts it and fills it in.
+/// A part of a row that is written as a JavaScript expression or function body. The lowering converts it and fills it in.
+#[derive(Copy, Clone)]
 pub(crate) enum PendingPart {
     /// `[expression]: T`
     MemberKey(MemberId, Expr),
@@ -37,408 +40,200 @@ pub(crate) enum PendingPart {
     ImportAttributes(ts::ImportAttributes),
 }
 
-macro_rules! assert_same_flags {
-    ($($flag:ident),*) => {
-        $(const _: () = assert!(ts::Flags::$flag.bits() == Flags::$flag.bits());)*
-    };
-}
-assert_same_flags!(
-    EXPORT,
-    DEFAULT,
-    AMBIENT,
-    ABSTRACT,
-    ASYNC,
-    GENERATOR,
-    STATIC,
-    READONLY,
-    OPTIONAL,
-    PRIVATE,
-    PROTECTED,
-    PUBLIC,
-    OVERRIDE,
-    ACCESSOR,
-    CONST,
-    REST,
-    DEFINITE,
-    TYPE_ONLY,
-    IN,
-    OUT,
-    STRING_NAME
-);
-
-#[inline]
-fn flags(flags: ts::Flags) -> Flags {
-    Flags::from_bits_retain(flags.bits())
-}
-
 #[inline]
 fn pos(loc: bun_ast::Loc) -> u32 {
-    // Nothing is noted of a node of `ts_syntax`.
+    // Nothing is noted of what is handed over.
     debug_assert!(!loc.is_index());
     loc.start.max(0) as u32
 }
 
-fn keyword(keyword: ts::Keyword) -> Keyword {
-    match keyword {
-        ts::Keyword::Any => Keyword::Any,
-        ts::Keyword::Unknown => Keyword::Unknown,
-        ts::Keyword::Never => Keyword::Never,
-        ts::Keyword::Void => Keyword::Void,
-        ts::Keyword::Undefined => Keyword::Undefined,
-        ts::Keyword::Null => Keyword::Null,
-        ts::Keyword::String => Keyword::String,
-        ts::Keyword::Number => Keyword::Number,
-        ts::Keyword::Boolean => Keyword::Boolean,
-        ts::Keyword::BigInt => Keyword::BigInt,
-        ts::Keyword::Symbol => Keyword::Symbol,
-        ts::Keyword::Object => Keyword::Object,
-        ts::Keyword::This => Keyword::This,
-        ts::Keyword::Intrinsic => Keyword::Intrinsic,
-    }
-}
-
-fn mapped_modifier(modifier: ts::MappedModifier) -> MappedModifier {
-    match modifier {
-        ts::MappedModifier::None => MappedModifier::None,
-        ts::MappedModifier::Add => MappedModifier::Add,
-        ts::MappedModifier::Remove => MappedModifier::Remove,
-    }
-}
-
 impl Builder<'_> {
-    pub(crate) fn clone_type(&mut self, id: ts::TypeId) -> TypeNodeId {
-        if id.is_none() {
-            return TypeNodeId::NONE;
+    #[inline]
+    pub(crate) fn add_type(&mut self, kind: TypeNodeKind, loc: bun_ast::Loc) -> TypeNodeId {
+        self.file.ty(kind, pos(loc), 0)
+    }
+
+    #[inline]
+    pub(crate) fn add_id_list(&mut self, types: &[TypeNodeId]) -> IdList<TypeNodeId> {
+        match types.is_empty() {
+            true => IdList::EMPTY,
+            false => self.file.list(types),
         }
-        let ts::Type { data, loc, end } = self.ts[id];
-        let kind = match data {
-            ts::TypeData::Keyword(k) => TypeNodeKind::Keyword(keyword(k)),
-            ts::TypeData::Reference { name, args } => TypeNodeKind::Ref {
-                name: self.clone_names(name),
-                args: self.clone_type_list(args),
-            },
-            ts::TypeData::StringLiteral(text) => TypeNodeKind::StringLit(self.atom(&text)),
-            ts::TypeData::NumberLiteral(number) => {
-                TypeNodeKind::NumberLit(self.file.number(self.ts.numbers[number as usize]))
-            }
-            ts::TypeData::BigIntLiteral { text, negative } => TypeNodeKind::BigIntLit {
-                text: self.atoms.intern(&text),
-                negative,
-            },
-            ts::TypeData::BooleanLiteral(value) => TypeNodeKind::BoolLit(value),
-            ts::TypeData::TemplateLiteral { types, texts } => {
-                let types = self.clone_type_list(types);
-                let texts: smallvec::SmallVec<[Atom; 4]> = self.ts[texts]
-                    .iter()
-                    .map(|text| self.atoms.intern(text))
-                    .collect();
-                TypeNodeKind::Template {
-                    types,
-                    texts: self.file.list(&texts),
+    }
+
+    pub(crate) fn add_tuple(&mut self, elements: &[ts::TupleElement]) -> TypeNodeKind {
+        let elements: smallvec::SmallVec<[TupleElem; 8]> = elements
+            .iter()
+            .map(|element| {
+                let ts::TupleElement {
+                    mut ty,
+                    label,
+                    is_optional,
+                    mut is_rest,
+                    loc,
+                    end,
+                } = *element;
+                let name = label.map_or(Atom::NONE, |label| self.identifier(&label, pos(loc)));
+                if is_rest && is_optional && label.is_some() {
+                    // `checkNamedTupleMember`: A tuple member cannot be both optional and rest.
+                    self.file.error(pos(loc), pos(end), 5085);
+                    // `getTupleElementFlags`, `getTypeFromNamedTupleTypeNode`: it is optional.
+                    is_rest = false;
+                    ty = self.rest_element_type(ty);
                 }
-            }
-            ts::TypeData::Array(element) => TypeNodeKind::Array(self.clone_type(element)),
-            ts::TypeData::Tuple(elements) => {
-                let elements: Vec<TupleElem> = elements
-                    .iter()
-                    .map(|element| {
-                        let ts::TupleElement {
-                            mut ty,
-                            label,
-                            is_optional,
-                            mut is_rest,
-                            loc,
-                            end,
-                        } = self.ts[element];
-                        let name = label.map_or(Atom::NONE, |label| self.atoms.intern(&label));
-                        if is_rest && is_optional && label.is_some() {
-                            // `checkNamedTupleMember`: A tuple member cannot be both optional and rest.
-                            self.file.error(pos(loc), pos(end), 5085);
-                            // `getTupleElementFlags`, `getTypeFromNamedTupleTypeNode`: it is optional.
-                            is_rest = false;
-                            ty = self.rest_element_type(ty);
-                        }
-                        TupleElem {
-                            ty: self.clone_type(ty),
-                            name,
-                            optional: is_optional,
-                            rest: is_rest,
-                            start: pos(loc),
-                            end: pos(end),
-                        }
-                    })
-                    .collect();
-                TypeNodeKind::Tuple(self.file.add_tuple_elems(&elements))
-            }
-            ts::TypeData::Union(members) => TypeNodeKind::Union(self.clone_type_list(members)),
-            ts::TypeData::Intersection(members) => {
-                TypeNodeKind::Intersection(self.clone_type_list(members))
-            }
-            ts::TypeData::Function(signature) => {
-                TypeNodeKind::Fn(self.clone_signature(signature, Atom::NONE, Some(pos(loc))))
-            }
-            ts::TypeData::Object(members) => TypeNodeKind::Object(self.clone_members(members)),
-            ts::TypeData::Conditional {
-                check,
-                extends,
-                when_true,
-                when_false,
-            } => TypeNodeKind::Cond {
-                check: self.clone_type(check),
-                extends: self.clone_type(extends),
-                yes: self.clone_type(when_true),
-                no: self.clone_type(when_false),
-            },
-            ts::TypeData::Infer(param) => {
-                let param = self.clone_type_param(param);
-                TypeNodeKind::Infer(self.file.add_type_param(param))
-            }
-            ts::TypeData::Mapped(mapped) => {
-                let ts::MappedType {
-                    param,
-                    name_type,
+                TupleElem {
                     ty,
-                    readonly,
-                    optional,
-                    extra_member_loc,
-                    members,
-                } = self.ts[mapped];
-                let param = self.clone_type_param(param);
-                let mapped = Mapped {
-                    param: self.file.add_type_param(param),
-                    name_ty: self.clone_type(name_type),
-                    ty: self.clone_type(ty),
-                    readonly: mapped_modifier(readonly),
-                    optional: mapped_modifier(optional),
-                    members: self.clone_members(members),
-                };
-                if let Some(loc) = extra_member_loc {
-                    // `checkGrammarMappedType`: A mapped type may not declare properties or methods. `GetErrorRangeForNode`: the name of
-                    // a property, the whole of a signature.
-                    match mapped.members.iter().next().map(|first| self.file[first]) {
-                        Some(first) if first.kind != MemberKind::Property => {
-                            self.file.error(pos(loc), first.loc.end, 7061);
-                        }
-                        _ => self.file.early_errors.push((pos(loc), 7061)),
-                    }
-                }
-                TypeNodeKind::Mapped(self.file.add_mapped(mapped))
-            }
-            ts::TypeData::IndexedAccess { object, index } => TypeNodeKind::IndexedAccess {
-                obj: self.clone_type(object),
-                index: self.clone_type(index),
-            },
-            ts::TypeData::Keyof(operand) => TypeNodeKind::Keyof(self.clone_type(operand)),
-            ts::TypeData::Readonly(operand) => TypeNodeKind::Readonly(self.clone_type(operand)),
-            ts::TypeData::UniqueSymbol => TypeNodeKind::UniqueSymbol,
-            // `getTypeFromTypeOperatorNode`: the error type. The parser has reported it (1005). The operand is not kept.
-            ts::TypeData::UniqueOperator(_) => TypeNodeKind::Keyword(Keyword::Any),
-            ts::TypeData::Typeof {
-                name,
-                args,
-                has_type_arguments,
-            } => {
-                let expr = self.clone_entity_name_expression(name);
-                TypeNodeKind::Typeof {
-                    name: self.clone_names(name),
-                    args: self.clone_type_list(args),
-                    has_type_arguments,
-                    expr,
-                }
-            }
-            ts::TypeData::Import(import) => {
-                let ts::ImportType {
-                    specifier,
-                    specifier_loc,
-                    argument,
                     name,
-                    args,
-                    is_typeof,
-                    mode,
-                    assert_keyword_loc,
-                    attributes,
-                } = self.ts[import];
-                if let Some(attributes) = attributes {
-                    self.pending.push(PendingPart::ImportAttributes(attributes));
+                    optional: is_optional,
+                    rest: is_rest,
+                    start: pos(loc),
+                    end: pos(end),
                 }
-                if argument.is_some() {
-                    return self.clone_import_type_without_specifier(
-                        argument,
-                        name,
-                        is_typeof,
-                        pos(loc),
-                        pos(end),
-                    );
-                }
-                let spec = self.atoms.intern(&specifier);
-                let mode = match mode {
-                    ts::ResolutionMode::None => ResolutionMode::None,
-                    ts::ResolutionMode::Import => ResolutionMode::Import,
-                    ts::ResolutionMode::Require => ResolutionMode::Require,
-                };
-                self.file.specifier_uses.push(SpecifierUse {
-                    spec,
-                    pos: pos(specifier_loc),
-                    kind: SpecifierKind::ImportType,
-                    mode,
-                });
-                if let Some(loc) = assert_keyword_loc {
-                    // Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
-                    self.file.early_errors.push((pos(loc), 2880));
-                }
-                TypeNodeKind::Import {
-                    spec,
-                    name: self.clone_names(name),
-                    args: self.clone_type_list(args),
-                    is_typeof,
-                    mode,
-                }
-            }
-            ts::TypeData::Predicate { param, ty, asserts } => TypeNodeKind::Predicate {
-                param: self.atoms.intern(&self.ts[param].text),
-                ty: self.clone_type(ty),
-                asserts,
-            },
-            ts::TypeData::JsDocNullable {
-                operand,
-                is_postfix,
-            } => {
-                let code = if is_postfix { 17019 } else { 17020 };
-                self.check_jsdoc_type_is_in_js_file(pos(loc), code);
-                self.clone_union_with_keyword(operand, Keyword::Null, pos(loc))
-            }
-            ts::TypeData::JsDocNonNullable {
-                operand,
-                is_postfix,
-            } => {
-                let code = if is_postfix { 17019 } else { 17020 };
-                self.check_jsdoc_type_is_in_js_file(pos(loc), code);
-                return self.clone_type(operand);
-            }
-            ts::TypeData::JsDocAll => {
-                // JSDoc types can only be used inside documentation comments.
-                self.check_jsdoc_type_is_in_js_file(pos(loc), 8020);
-                TypeNodeKind::Keyword(Keyword::Any)
-            }
-            ts::TypeData::Optional(operand) => {
-                // `checkNamedTupleMember`. The element is required (`getTupleElementFlags`), and `getTypeFromOptionalTypeNode` adds `undefined`.
-                self.file.error(pos(loc), pos(end), 5086);
-                self.clone_union_with_keyword(operand, Keyword::Undefined, pos(loc))
-            }
-            ts::TypeData::Rest(operand) => {
-                // `checkNamedTupleMember`. The element is required (`getTupleElementFlags`).
-                self.file.error(pos(loc), pos(end), 5087);
-                let element = self.rest_element_type(operand);
-                return self.clone_type(element);
-            }
-            // The end of `checkInterfaceDeclaration` reports 2499 for it.
-            ts::TypeData::HeritageExpression(_) => TypeNodeKind::Error,
-            ts::TypeData::Error {
-                is_syntax_error: true,
-            } => return self.error_type(pos(loc)),
-            ts::TypeData::Error {
-                is_syntax_error: false,
-            } => TypeNodeKind::Error,
-        };
-        let node = self.file.ty(kind, pos(loc), pos(end));
-        if let ts::TypeData::HeritageExpression(expression) = data {
-            let expression = self.ts[expression];
-            self.pending
-                .push(PendingPart::HeritageExpression(node, expression));
+            })
+            .collect();
+        TypeNodeKind::Tuple(self.file.add_tuple_elems(&elements))
+    }
+
+    pub(crate) fn add_template(
+        &mut self,
+        types: &[TypeNodeId],
+        texts: &[bun_ast::StoreStr],
+    ) -> TypeNodeKind {
+        let texts: smallvec::SmallVec<[Atom; 4]> =
+            texts.iter().map(|text| self.atoms.intern(text)).collect();
+        TypeNodeKind::Template {
+            types: self.file.list(types),
+            texts: self.file.list(&texts),
         }
-        node
+    }
+
+    pub(crate) fn add_mapped_type(&mut self, mapped: ts::MappedType) -> TypeNodeKind {
+        let ts::MappedType {
+            param,
+            name_type,
+            ty,
+            readonly,
+            optional,
+            extra_member_loc,
+            members,
+        } = mapped;
+        if let Some(loc) = extra_member_loc {
+            // `checkGrammarMappedType`: A mapped type may not declare properties or methods. `GetErrorRangeForNode`: the name of
+            // a property, the whole of a signature.
+            match members.iter().next().map(|first| self.file[first]) {
+                Some(first) if first.kind != MemberKind::Property => {
+                    self.file.error(pos(loc), first.loc.end, 7061);
+                }
+                _ => self.file.early_errors.push((pos(loc), 7061)),
+            }
+        }
+        TypeNodeKind::Mapped(self.file.add_mapped(Mapped {
+            param,
+            name_ty: name_type,
+            ty,
+            readonly,
+            optional,
+            members,
+        }))
+    }
+
+    pub(crate) fn add_typeof(
+        &mut self,
+        names: &[ts::Name],
+        args: IdList<TypeNodeId>,
+        has_type_arguments: bool,
+    ) -> TypeNodeKind {
+        TypeNodeKind::Typeof {
+            expr: self.entity_name_expression(names),
+            name: self.add_names(names),
+            args,
+            has_type_arguments,
+        }
+    }
+
+    /// `import("specifier")`. `argument`: what is written instead of a string.
+    pub(crate) fn add_import_type(
+        &mut self,
+        specifier: (&[u8], u32),
+        argument: TypeNodeId,
+        (mode, assert_keyword_loc, attributes): super::keep::ImportTypeAttributes,
+        is_typeof: bool,
+    ) -> TypeNodeKind {
+        if let Some(attributes) = attributes {
+            self.pending.push(PendingPart::ImportAttributes(attributes));
+        }
+        // `getTypeFromImportTypeNode`: 1141 for `import(T)`, whose type is the error type. `checkImportType` still checks `T`, which is
+        // kept in `args` of a node without a specifier. The type arguments are never looked at.
+        if argument.is_some() {
+            let bun_sema::hir::TypeNode { pos, end, .. } = self.file[argument];
+            self.file.error(pos, end, 1141);
+            return TypeNodeKind::Import {
+                spec: Atom::NONE,
+                name: Span::EMPTY,
+                args: self.file.list(&[argument]),
+                is_typeof,
+                mode: ResolutionMode::None,
+            };
+        }
+        let spec = self.atoms.intern(specifier.0);
+        self.file.specifier_uses.push(SpecifierUse {
+            spec,
+            pos: specifier.1,
+            kind: SpecifierKind::ImportType,
+            mode,
+        });
+        if let Some(loc) = assert_keyword_loc {
+            // Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+            self.file.early_errors.push((pos(loc), 2880));
+        }
+        TypeNodeKind::Import {
+            spec,
+            name: Span::EMPTY,
+            args: IdList::EMPTY,
+            is_typeof,
+            mode,
+        }
     }
 
     /// `checkJSDocTypeIsInJsFile`
-    fn check_jsdoc_type_is_in_js_file(&mut self, at: u32, code: u32) {
+    pub(crate) fn check_jsdoc_type_is_in_js_file(&mut self, at: u32, code: u32) {
         if !self.is_js {
             self.file.early_errors.push((at, code));
         }
     }
 
     /// `operand | keyword`
-    fn clone_union_with_keyword(
+    pub(crate) fn union_with_keyword(
         &mut self,
-        operand: ts::TypeId,
+        operand: TypeNodeId,
         keyword: Keyword,
         at: u32,
     ) -> TypeNodeKind {
-        let operand = self.clone_type(operand);
         let keyword = self.file.ty(TypeNodeKind::Keyword(keyword), at, at);
         TypeNodeKind::Union(self.file.list(&[operand, keyword]))
     }
 
     /// `getTypeFromRestTypeNode`: the element type if `ty` is written as an array type, otherwise `ty`.
-    fn rest_element_type(&self, ty: ts::TypeId) -> ts::TypeId {
-        match self.ts[ty].data {
-            ts::TypeData::Array(element) => element,
+    pub(crate) fn rest_element_type(&self, ty: TypeNodeId) -> TypeNodeId {
+        match self.file[ty].kind {
+            TypeNodeKind::Array(element) => element,
             _ => ty,
         }
     }
 
-    /// `getTypeFromImportTypeNode`: 1141 for `import(T)`, whose type is the error type. `checkImportType` still checks `T`, which is kept
-    /// in `args` of a node without a specifier. The type arguments are never looked at.
-    #[cold]
-    fn clone_import_type_without_specifier(
-        &mut self,
-        argument: ts::TypeId,
-        name: ts::Span<ts::Name>,
-        is_typeof: bool,
-        at: u32,
-        end: u32,
-    ) -> TypeNodeId {
-        let ts::Type { loc, end: to, .. } = self.ts[argument];
-        self.file.error(pos(loc), pos(to), 1141);
-        let argument = self.clone_type(argument);
-        let args = self.file.list(&[argument]);
-        let name = self.clone_names(name);
-        self.file.ty(
-            TypeNodeKind::Import {
-                spec: Atom::NONE,
-                name,
-                args,
-                is_typeof,
-                mode: ResolutionMode::None,
-            },
-            at,
-            end,
-        )
-    }
-
-    /// The keyword type that `name` spells. It must spell one.
-    pub(crate) fn clone_keyword_type(&mut self, name: &[u8], loc: bun_ast::Loc) -> TypeNodeId {
-        let keyword_type = super::keep::keyword_type(name).expect("the caller checked");
-        let kind = TypeNodeKind::Keyword(keyword(keyword_type));
-        self.file.ty(kind, pos(loc), pos(loc) + name.len() as u32)
-    }
-
-    pub(crate) fn clone_type_list(&mut self, list: ts::IdList<ts::Type>) -> IdList<TypeNodeId> {
-        if list.is_empty() {
-            return IdList::EMPTY;
-        }
-        let ids: smallvec::SmallVec<[ts::TypeId; 8]> = self.ts.id_list(list).collect();
-        let types: smallvec::SmallVec<[TypeNodeId; 8]> =
-            ids.into_iter().map(|id| self.clone_type(id)).collect();
-        self.file.list(&types)
-    }
-
-    fn clone_names(&mut self, names: ts::Span<ts::Name>) -> Span<bun_sema::hir::NameId> {
-        let names: smallvec::SmallVec<[(Atom, u32); 4]> = self.ts[names]
+    pub(crate) fn add_names(&mut self, names: &[ts::Name]) -> Span<bun_sema::hir::NameId> {
+        let names: smallvec::SmallVec<[(Atom, u32); 4]> = names
             .iter()
-            .map(|name| (self.atom(&name.text), pos(name.loc)))
+            .map(|name| (self.identifier(&name.text, pos(name.loc)), pos(name.loc)))
             .collect();
         self.file.entity_name(names.into_iter())
     }
 
     /// `a.b.c` as an expression.
-    fn clone_entity_name_expression(&mut self, names: ts::Span<ts::Name>) -> ExprId {
+    fn entity_name_expression(&mut self, names: &[ts::Name]) -> ExprId {
         let mut expr = ExprId::NONE;
-        let start = names
-            .iter()
-            .next()
-            .map_or(0, |first| pos(self.ts[first].loc));
-        for name in names.iter() {
-            let ts::Name { text, loc } = self.ts[name];
+        let start = names.first().map_or(0, |first| pos(first.loc));
+        for &ts::Name { text, loc } in names {
             let name = self.atoms.intern(&text);
             let kind = match expr.is_none() {
                 true if name == known::this => ExprKind::This,
@@ -455,254 +250,200 @@ impl Builder<'_> {
         expr
     }
 
-    fn clone_type_param(&mut self, id: ts::TypeParamId) -> TypeParam {
-        let ts::TypeParam {
-            name,
-            loc,
-            start,
-            end,
-            constraint,
-            default,
-            flags: param_flags,
-            modifiers,
-        } = self.ts[id];
-        let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[modifiers]
+    fn modifier_list(
+        &mut self,
+        written: ts::Span<ts::Modifier>,
+    ) -> Span<bun_sema::hir::ModifierId> {
+        if written.is_empty() {
+            return Span::EMPTY;
+        }
+        let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[written]
             .iter()
-            .map(|modifier| (flags(modifier.flag), pos(modifier.loc)))
+            .map(|modifier| (modifier.flag, pos(modifier.loc)))
             .collect();
+        self.add_modifier_list(&modifiers)
+    }
+
+    fn type_param(&mut self, param: &ts::TypeParam) -> TypeParam {
         TypeParam {
-            name: self.atom(&name),
-            pos: pos(loc),
-            start: pos(start),
-            end: pos(end),
-            constraint: self.clone_type(constraint),
-            default: self.clone_type(default),
-            flags: flags(param_flags),
-            modifiers: self.add_modifier_list(&modifiers),
+            name: self.identifier(&param.name, pos(param.loc)),
+            pos: pos(param.loc),
+            start: pos(param.start),
+            end: pos(param.end),
+            constraint: param.constraint,
+            default: param.default,
+            flags: param.flags,
+            modifiers: self.modifier_list(param.modifiers),
         }
     }
 
-    pub(crate) fn clone_type_params(
-        &mut self,
-        params: ts::Span<ts::TypeParam>,
-    ) -> Span<TypeParamId> {
+    pub(crate) fn add_type_param(&mut self, param: ts::TypeParam) -> TypeParamId {
+        let param = self.type_param(&param);
+        self.file.add_type_param(param)
+    }
+
+    pub(crate) fn add_type_params(&mut self, params: &[ts::TypeParam]) -> Span<TypeParamId> {
         if params.is_empty() {
             return Span::EMPTY;
         }
-        let params: smallvec::SmallVec<[TypeParam; 4]> = params
-            .iter()
-            .map(|param| self.clone_type_param(param))
-            .collect();
+        let params: smallvec::SmallVec<[TypeParam; 4]> =
+            params.iter().map(|param| self.type_param(param)).collect();
         self.file.add_type_params(&params)
     }
 
-    /// The `this` parameter of a function that `bun_ast` has a node for (`keep_this_parameter`).
-    pub(crate) fn clone_param(&mut self, param: ts::Id<ts::Param>) -> ParamId {
-        let only = ts::Span::from_parts([param.index() as u32, 1]);
-        self.clone_params(only).at(0)
-    }
-
-    pub(crate) fn clone_params(&mut self, params: ts::Span<ts::Param>) -> Span<ParamId> {
+    pub(crate) fn add_params(&mut self, params: &[ts::Param]) -> Span<ParamId> {
         if params.is_empty() {
             return Span::EMPTY;
         }
-        let cloned: smallvec::SmallVec<[Param; 4]> = params
+        let made: smallvec::SmallVec<[Param; 4]> = params
             .iter()
             .map(|param| {
-                let ts::Param {
-                    pattern,
-                    ty,
-                    flags: param_flags,
-                    loc,
-                    full_start,
-                    end,
-                    ..
-                } = self.ts[param];
-                let mut param_flags = flags(param_flags);
-                if param_flags.intersects(
+                let mut flags = param.flags;
+                if flags.intersects(
                     Flags::PUBLIC
                         | Flags::PRIVATE
                         | Flags::PROTECTED
                         | Flags::READONLY
                         | Flags::OVERRIDE,
                 ) {
-                    param_flags |= Flags::PARAMETER_PROPERTY;
+                    flags |= Flags::PARAMETER_PROPERTY;
                 }
                 Param {
-                    pat: self.clone_pattern(pattern),
-                    ty: self.clone_type(ty),
+                    pat: param.pattern,
+                    ty: param.ty,
                     default: ExprId::NONE,
-                    flags: param_flags,
-                    pos: pos(loc),
+                    flags,
+                    pos: pos(param.loc),
                     loc: TextRange {
-                        pos: pos(full_start),
-                        end: pos(end),
+                        pos: pos(param.full_start),
+                        end: pos(param.end),
                     },
                 }
             })
             .collect();
-        let cloned = self.file.add_params(&cloned);
-        for (param, id) in params.iter().zip(cloned.iter()) {
-            if let Some(default) = self.ts[param].default {
+        let made = self.file.add_params(&made);
+        for (param, id) in params.iter().zip(made.iter()) {
+            if let Some(default) = param.default {
                 self.pending.push(PendingPart::ParamDefault(id, default));
             }
-            let written = self.ts[param].modifiers;
-            let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[written]
-                .iter()
-                .map(|modifier| (flags(modifier.flag), pos(modifier.loc)))
-                .collect();
-            if !modifiers.is_empty() {
-                let list = self.add_modifier_list(&modifiers);
-                self.file.set_param_modifiers(id, list);
-            }
+            let list = self.modifier_list(param.modifiers);
+            self.file.set_param_modifiers(id, list);
         }
-        cloned
+        made
     }
 
-    fn clone_pattern(&mut self, id: ts::PatternId) -> PatId {
-        if id.is_none() {
-            return PatId::NONE;
-        }
-        let ts::Pattern { data, loc, end } = self.ts[id];
-        let kind = match data {
-            ts::PatternData::Missing => PatKind::Missing,
-            ts::PatternData::Identifier(name) => PatKind::Ident(self.atom(&name)),
-            ts::PatternData::Array(elements) => {
-                let cloned: smallvec::SmallVec<[PatElem; 4]> = elements
-                    .iter()
-                    .map(|element| {
-                        let ts::PatternElement {
-                            pattern,
-                            is_rest,
-                            loc,
-                            end,
-                            ..
-                        } = self.ts[element];
-                        PatElem {
-                            pat: self.clone_pattern(pattern),
-                            default: ExprId::NONE,
-                            is_rest,
-                            start: pos(loc),
-                            end: pos(end),
-                        }
-                    })
-                    .collect();
-                let cloned = self.file.add_pat_elems(&cloned);
-                for (element, id) in elements.iter().zip(cloned.iter()) {
-                    if let Some(default) = self.ts[element].default {
-                        self.pending
-                            .push(PendingPart::PatternElementDefault(id, default));
-                    }
-                }
-                PatKind::Array(cloned)
-            }
-            ts::PatternData::Object(properties) => {
-                let cloned: smallvec::SmallVec<[PatProp; 4]> = properties
-                    .iter()
-                    .map(|property| {
-                        let ts::PatternProperty {
-                            key,
-                            value,
-                            is_rest,
-                            loc,
-                            end,
-                            ..
-                        } = self.ts[property];
-                        PatProp {
-                            key: self.clone_key(key),
-                            name_kind: match key {
-                                ts::PropertyKey::Number(_) => {
-                                    bun_sema::hir::NameKind::NumericLiteral
-                                }
-                                _ => bun_sema::hir::NameKind::Identifier,
-                            },
-                            value: self.clone_pattern(value),
-                            default: ExprId::NONE,
-                            is_rest,
-                            pos: pos(loc),
-                            key_pos: pos(loc),
-                            end: pos(end),
-                        }
-                    })
-                    .collect();
-                let cloned = self.file.add_pat_props(&cloned);
-                for (property, id) in properties.iter().zip(cloned.iter()) {
-                    let ts::PatternProperty { key, default, .. } = self.ts[property];
-                    if let ts::PropertyKey::Computed(expr) = key {
-                        self.pending.push(PendingPart::PatternKey(id, expr));
-                    }
-                    if let Some(default) = default {
-                        self.pending
-                            .push(PendingPart::PatternPropertyDefault(id, default));
-                    }
-                }
-                PatKind::Object(cloned)
-            }
-        };
+    #[inline]
+    pub(crate) fn add_pattern(
+        &mut self,
+        kind: PatKind,
+        loc: bun_ast::Loc,
+        end: bun_ast::Loc,
+    ) -> PatId {
         self.file.pat(kind, pos(loc), pos(end))
     }
 
+    pub(crate) fn add_pattern_elements(&mut self, elements: &[ts::PatternElement]) -> PatKind {
+        let made: smallvec::SmallVec<[PatElem; 4]> = elements
+            .iter()
+            .map(|element| PatElem {
+                pat: element.pattern,
+                default: ExprId::NONE,
+                is_rest: element.is_rest,
+                start: pos(element.loc),
+                end: pos(element.end),
+            })
+            .collect();
+        let made = self.file.add_pat_elems(&made);
+        for (element, id) in elements.iter().zip(made.iter()) {
+            if let Some(default) = element.default {
+                self.pending
+                    .push(PendingPart::PatternElementDefault(id, default));
+            }
+        }
+        PatKind::Array(made)
+    }
+
+    pub(crate) fn add_pattern_properties(&mut self, properties: &[ts::PatternProperty]) -> PatKind {
+        let made: smallvec::SmallVec<[PatProp; 4]> = properties
+            .iter()
+            .map(|property| PatProp {
+                key: self.key(property.key),
+                name_kind: match property.key {
+                    ts::PropertyKey::Number(_) => bun_sema::hir::NameKind::NumericLiteral,
+                    _ => bun_sema::hir::NameKind::Identifier,
+                },
+                value: property.value,
+                default: ExprId::NONE,
+                is_rest: property.is_rest,
+                pos: pos(property.loc),
+                key_pos: pos(property.loc),
+                end: pos(property.end),
+            })
+            .collect();
+        let made = self.file.add_pat_props(&made);
+        for (property, id) in properties.iter().zip(made.iter()) {
+            if let ts::PropertyKey::Computed(expr) = property.key {
+                self.pending.push(PendingPart::PatternKey(id, expr));
+            }
+            if let Some(default) = property.default {
+                self.pending
+                    .push(PendingPart::PatternPropertyDefault(id, default));
+            }
+        }
+        PatKind::Object(made)
+    }
+
     /// A computed key is left empty. The caller adds a `PendingPart` for it.
-    fn clone_key(&mut self, key: ts::PropertyKey) -> PropKey {
+    fn key(&mut self, key: ts::PropertyKey) -> PropKey {
         match key {
             ts::PropertyKey::None | ts::PropertyKey::BigInt | ts::PropertyKey::Computed(_) => {
                 PropKey::None
             }
             ts::PropertyKey::Name(name) => PropKey::Name(self.atom(&name)),
-            ts::PropertyKey::Number(number) => {
-                PropKey::Name(self.number_name(self.ts.numbers[number as usize]))
-            }
+            ts::PropertyKey::Number(number) => PropKey::Name(self.number_name(number)),
             ts::PropertyKey::Private(name) => PropKey::Private(self.atoms.intern(&name)),
         }
     }
 
-    /// `name` and `start` are those of the member the signature belongs to. A function type has neither.
-    fn clone_signature(&mut self, id: ts::SignatureId, name: Atom, start: Option<u32>) -> FnId {
+    /// The member it belongs to gives it its name and its start (`member`).
+    pub(crate) fn add_signature(&mut self, signature: ts::Signature) -> FnId {
         let ts::Signature {
             kind,
-            flags: signature_flags,
+            flags,
             type_params,
             params,
             return_type,
             body,
             open_paren_loc,
             loc,
-        } = self.ts[id];
-        let type_params = self.clone_type_params(type_params);
-        let params = self.clone_params(params);
+        } = signature;
         let (this_param, params) = match kind {
-            ts::SignatureKind::IndexSignature => (ParamId::NONE, params),
+            FnKind::IndexSignature => (ParamId::NONE, params),
             _ => self.file.split_this_parameter(params),
         };
-        let func = Func {
-            kind: match kind {
-                ts::SignatureKind::Method => FnKind::Method,
-                ts::SignatureKind::Getter => FnKind::Getter,
-                ts::SignatureKind::Setter => FnKind::Setter,
-                ts::SignatureKind::CallSignature => FnKind::CallSignature,
-                ts::SignatureKind::ConstructSignature => FnKind::ConstructSignature,
-                ts::SignatureKind::FunctionType => FnKind::FunctionType,
-                ts::SignatureKind::ConstructorType => FnKind::ConstructorType,
-                ts::SignatureKind::IndexSignature => FnKind::IndexSignature,
-            },
-            flags: flags(signature_flags),
-            name,
+        let func = self.file.add_fn(Func {
+            kind,
+            flags,
+            name: Atom::NONE,
             name_pos: pos(loc),
             type_params,
             params,
             this_param,
-            ret: self.clone_type(return_type),
+            ret: return_type,
             body: FnBody::None,
             anchor: pos(open_paren_loc),
-            start: start.unwrap_or_else(|| pos(loc)),
-        };
-        let func = self.file.add_fn(func);
+            start: pos(loc),
+        });
         if let Some(body) = body {
-            // `checkGrammarAccessor`: An implementation cannot be declared in ambient contexts.
-            self.file.error(pos(body.loc), pos(body.end), 1183);
-            self.pending.push(PendingPart::FunctionBody(func, body));
+            self.add_signature_body(func, body);
         }
         func
+    }
+
+    pub(crate) fn add_signature_body(&mut self, func: FnId, body: ts::FunctionBody) {
+        // `checkGrammarAccessor`: An implementation cannot be declared in ambient contexts.
+        self.file.error(pos(body.loc), pos(body.end), 1183);
+        self.pending.push(PendingPart::FunctionBody(func, body));
     }
 
     /// The flags that `export`, `default` and `declare` stand for, and where `export` is.
@@ -713,10 +454,10 @@ impl Builder<'_> {
         let (mut all, mut export_pos) = (Flags::empty(), None);
         for modifier in modifiers.iter() {
             let ts::Modifier { flag, loc, .. } = self.ts[modifier];
-            if flag == ts::Flags::EXPORT {
+            if flag == Flags::EXPORT {
                 export_pos.get_or_insert_with(|| pos(loc));
             }
-            all |= flags(flag);
+            all |= flag;
         }
         (all, export_pos)
     }
@@ -735,7 +476,6 @@ impl Builder<'_> {
             other_heritage,
             heritage_errors,
             members,
-            ..
         } = self.ts[id];
         for (loc, code) in heritage_errors.into_iter().flatten() {
             match code {
@@ -746,47 +486,33 @@ impl Builder<'_> {
                 _ => self.file.early_errors.push((self::pos(loc), code)),
             }
         }
-        let type_params = self.clone_type_params(type_params);
-        let heritage: smallvec::SmallVec<[ts::TypeId; 4]> = self.ts.id_list(extends).collect();
-        let heritage: smallvec::SmallVec<[TypeNodeId; 4]> = heritage
-            .into_iter()
-            .map(|ty| self.clone_heritage_type(ty))
-            .collect();
-        let others: smallvec::SmallVec<[ts::TypeId; 4]> = self.ts.id_list(other_heritage).collect();
-        let others: smallvec::SmallVec<[TypeNodeId; 4]> = others
-            .into_iter()
-            .map(|ty| self.clone_heritage_type(ty))
-            .collect();
-        let interface = Interface {
-            name: self.atoms.intern(&name.text),
+        let interface = self.file.add_interface(Interface {
+            name: self.identifier(&name.text, self::pos(name.loc)),
             name_pos: self::pos(name.loc),
             flags,
             type_params,
-            extends: self.file.list(&heritage),
-            other_heritage: self.file.list(&others),
-            members: self.clone_members(members),
+            extends,
+            other_heritage,
+            members,
             stmt: StmtId::NONE,
-        };
-        let interface = self.file.add_interface(interface);
+        });
         Some(self.file.stmt(StmtKind::Interface(interface), pos))
     }
 
     /// In a heritage clause `string` is an entity name, not the keyword type.
-    pub(crate) fn clone_heritage_type(&mut self, id: ts::TypeId) -> TypeNodeId {
-        let ts::Type { data, loc, end } = self.ts[id];
-        let ts::TypeData::Keyword(keyword) = data else {
-            return self.clone_type(id);
-        };
-        let name = self.atoms.intern(super::keep::keyword_text(keyword));
-        let name = self.file.entity_name([(name, pos(loc))].into_iter());
-        self.file.ty(
-            TypeNodeKind::Ref {
+    pub(crate) fn heritage_type(&mut self, ty: TypeNodeId) {
+        if ty.is_some()
+            && let TypeNodeKind::Keyword(keyword) = self.file[ty].kind
+        {
+            let name = self.atoms.intern(keyword.text());
+            let name = self
+                .file
+                .entity_name([(name, self.file[ty].pos)].into_iter());
+            self.file[ty].kind = TypeNodeKind::Ref {
                 name,
                 args: IdList::EMPTY,
-            },
-            pos(loc),
-            pos(end),
-        )
+            };
+        }
     }
 
     pub(crate) fn clone_type_alias(
@@ -800,124 +526,88 @@ impl Builder<'_> {
             type_params,
             ty,
         } = self.ts[id];
-        let type_params = self.clone_type_params(type_params);
-        let ty = self.clone_type(ty);
-        let alias = Alias {
-            name: self.atoms.intern(&name.text),
+        let alias = self.file.add_alias(Alias {
+            name: self.identifier(&name.text, self::pos(name.loc)),
             name_pos: self::pos(name.loc),
             flags,
             type_params,
             ty,
             stmt: StmtId::NONE,
-        };
-        let alias = self.file.add_alias(alias);
+        });
         self.file.stmt(StmtKind::TypeAlias(alias), pos)
     }
 
-    pub(crate) fn clone_members(&mut self, members: ts::Span<ts::Member>) -> Span<MemberId> {
+    pub(crate) fn add_members(&mut self, members: &[ts::Member]) -> Span<MemberId> {
         if members.is_empty() {
             return Span::EMPTY;
         }
-        let cloned: Vec<Member> = members
-            .iter()
-            .map(|member| self.clone_member(member))
-            .collect();
-        let cloned = self.file.add_members(&cloned);
-        for (member, id) in members.iter().zip(cloned.iter()) {
-            let ts::Member {
-                key, initializer, ..
-            } = self.ts[member];
-            if let ts::PropertyKey::Computed(expr) = key {
+        let made: smallvec::SmallVec<[Member; 8]> =
+            members.iter().map(|member| self.member(member)).collect();
+        let made = self.file.add_members(&made);
+        for (member, id) in members.iter().zip(made.iter()) {
+            if let ts::PropertyKey::Computed(expr) = member.key {
                 self.pending.push(PendingPart::MemberKey(id, expr));
             }
-            if let Some(initializer) = initializer {
+            if let Some(initializer) = member.initializer {
                 self.pending
                     .push(PendingPart::MemberInitializer(id, initializer));
             }
         }
-        cloned
+        made
     }
 
-    /// An index signature that is a member of a class. `is_ambient`: of an ambient one.
-    pub(crate) fn clone_class_index_signature(
-        &mut self,
-        id: ts::MemberId,
-        is_ambient: bool,
-    ) -> Member {
-        let mut member = self.clone_member(id);
-        if is_ambient {
-            member.flags |= Flags::AMBIENT;
-            self.file[member.func].flags |= Flags::AMBIENT;
-        }
-        member
-    }
-
-    fn clone_member(&mut self, id: ts::MemberId) -> Member {
+    /// Not a row yet: the members of a class are made together.
+    pub(crate) fn member(&mut self, member: &ts::Member) -> Member {
         let ts::Member {
             kind,
             key,
-            flags: member_flags,
+            flags,
             modifiers,
             ty,
-            signature,
+            signature: func,
+            index_signature_errors,
             loc,
             start,
             full_start,
             end,
             ..
-        } = self.ts[id];
-        let mut modifier_list = Span::EMPTY;
-        if !modifiers.is_empty() {
-            let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[modifiers]
-                .iter()
-                .map(|modifier| (flags(modifier.flag), pos(modifier.loc)))
-                .collect();
-            modifier_list = self.add_modifier_list(&modifiers);
-        }
-        if kind == ts::MemberKind::IndexSignature {
-            self.check_kept_index_signature(id);
+        } = *member;
+        let modifiers = self.modifier_list(modifiers);
+        for (at, code) in index_signature_errors.into_iter().flatten() {
+            match code {
+                // Without a parameter it is said of the signature.
+                1096 if at == pos(start) => self.file.error(at, pos(end), code),
+                _ => self.file.early_errors.push((at, code)),
+            }
         }
         // `checkVariableLikeDeclaration`: said whatever else is wrong with the file.
-        if kind == ts::MemberKind::Property && matches!(key, ts::PropertyKey::BigInt) {
+        if kind == MemberKind::Property && matches!(key, ts::PropertyKey::BigInt) {
             self.file.checker_errors.push((pos(loc), 1539));
         }
         let is_number = matches!(key, ts::PropertyKey::Number(_));
-        let mut key = self.clone_key(key);
+        let mut key = self.key(key);
         // `getDeclarationName`: a private name with no class around it names nothing.
         if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
             key = PropKey::None;
         }
-        let func = if signature.is_some() {
-            self.clone_signature(
-                signature,
-                key.name().unwrap_or(Atom::NONE),
-                Some(pos(start)),
-            )
-        } else {
-            FnId::NONE
-        };
+        if func.is_some() {
+            self.file[func].name = key.name().unwrap_or(Atom::NONE);
+            self.file[func].start = pos(start);
+        }
         Member {
-            kind: match kind {
-                ts::MemberKind::Property => MemberKind::Property,
-                ts::MemberKind::Method => MemberKind::Method,
-                ts::MemberKind::Getter => MemberKind::Getter,
-                ts::MemberKind::Setter => MemberKind::Setter,
-                ts::MemberKind::CallSignature => MemberKind::CallSignature,
-                ts::MemberKind::ConstructSignature => MemberKind::ConstructSignature,
-                ts::MemberKind::IndexSignature => MemberKind::IndexSignature,
-            },
+            kind,
             key,
             flags: if is_number {
-                flags(member_flags) | Flags::LITERAL_NAME
+                flags | Flags::LITERAL_NAME
             } else {
-                flags(member_flags)
+                flags
             },
-            modifiers: modifier_list,
+            modifiers,
             // The type of an index signature is the return type of its signature: one node, not two.
-            ty: if kind == ts::MemberKind::IndexSignature {
+            ty: if kind == MemberKind::IndexSignature {
                 self.file[func].ret
             } else {
-                self.clone_type(ty)
+                ty
             },
             init: ExprId::NONE,
             func,
@@ -931,51 +621,248 @@ impl Builder<'_> {
     }
 
     /// `checkGrammarIndexSignatureParameters`, up to where the type of the parameter is looked at. The checker does the rest.
-    fn check_kept_index_signature(&mut self, id: ts::MemberId) {
-        let ts::Member {
-            signature,
-            trailing_comma_loc,
-            loc,
-            end,
-            ..
-        } = self.ts[id];
-        let params = self.ts[signature].params;
-        let Some(first) = params.get(0) else {
-            // Said of the signature.
-            self.file.error(pos(loc), pos(end), 1096);
-            return;
+    /// `at`: where the member starts.
+    pub(crate) fn check_index_signature_parameters(
+        &self,
+        params: &[ts::Param],
+        trailing_comma: Option<bun_ast::Loc>,
+        at: u32,
+    ) -> [Option<(u32, u32)>; 2] {
+        let Some(first) = params.first() else {
+            return [Some((at, 1096)), None];
         };
-        let ts::Param {
-            pattern,
-            ty,
-            default,
-            flags: param_flags,
-            modifiers,
-            rest_loc,
-            question_loc,
-            ..
-        } = self.ts[first];
-        let name = pos(self.ts[pattern].loc);
+        let name = self.file[first.pattern].pos;
         if params.len() != 1 {
-            self.file.early_errors.push((name, 1096));
-            return;
+            return [Some((name, 1096)), None];
         }
-        if let Some(comma) = trailing_comma_loc {
-            self.file.early_errors.push((pos(comma), 1025));
-        }
-        let error = if param_flags.contains(ts::Flags::REST) {
-            (pos(rest_loc), 1017)
-        } else if !modifiers.is_empty() {
-            (name, 1018)
-        } else if param_flags.contains(ts::Flags::OPTIONAL) {
-            (pos(question_loc), 1019)
-        } else if default.is_some() {
-            (name, 1020)
-        } else if ty.is_none() {
-            (name, 1022)
+        let error = if first.flags.contains(Flags::REST) {
+            Some((pos(first.rest_loc), 1017))
+        } else if !first.modifiers.is_empty() {
+            Some((name, 1018))
+        } else if first.flags.contains(Flags::OPTIONAL) {
+            Some((pos(first.question_loc), 1019))
+        } else if first.default.is_some() {
+            Some((name, 1020))
+        } else if first.ty.is_none() {
+            Some((name, 1022))
         } else {
-            return;
+            None
         };
-        self.file.early_errors.push(error);
+        [trailing_comma.map(|comma| (pos(comma), 1025)), error]
+    }
+}
+
+/// The types that are written in the JSDoc comments of a file, as rows of a tree of their own.
+#[derive(Default)]
+pub(crate) struct CommentTypes {
+    pub(crate) file: bun_sema::hir::File,
+    pub(crate) pending: Vec<PendingPart>,
+    /// What rows there were before and after each type, and each list of type arguments, was read. In order.
+    pub(crate) made: Vec<(Rows, Rows)>,
+}
+
+/// `DeepCloneReparse`: a type in a comment is made anew for each node it is the type of. The rows it made are next to each other in
+/// each vector, so they are appended as they are, and what refers to one of them moves with it.
+impl Builder<'_> {
+    pub(crate) fn clone_type(&mut self, from: &CommentTypes, id: TypeNodeId) -> TypeNodeId {
+        if id.is_none() {
+            return TypeNodeId::NONE;
+        }
+        let read = from.made.partition_point(|made| made.1.types <= id.0);
+        let moved = self.clone_rows(from, from.made[read]);
+        TypeNodeId(id.0.wrapping_add(moved.types))
+    }
+
+    pub(crate) fn clone_type_list(
+        &mut self,
+        from: &CommentTypes,
+        list: IdList<TypeNodeId>,
+    ) -> IdList<TypeNodeId> {
+        if list.is_empty() {
+            return IdList::EMPTY;
+        }
+        let read = from.made.partition_point(|made| made.1.ids <= list.start);
+        let moved = self.clone_rows(from, from.made[read]);
+        let list = IdList::new(list.start.wrapping_add(moved.ids), list.len);
+        // No row has this list: `clone_rows` has moved what the rows refer to.
+        for ty in &mut self.file.ids[list.range()] {
+            *ty = ty.wrapping_add(moved.types);
+        }
+        list
+    }
+
+    /// Returns by how much the rows of each vector have moved.
+    fn clone_rows(&mut self, from: &CommentTypes, (first, end): (Rows, Rows)) -> Rows {
+        let file = &mut self.file;
+        let moved = first.copy(&end, &from.file, file);
+        macro_rules! id {
+            ($id:expr, $rows:ident) => {
+                if $id.is_some() {
+                    $id.0 = $id.0.wrapping_add(moved.$rows);
+                }
+            };
+        }
+        macro_rules! run {
+            ($run:expr, $rows:ident) => {
+                if !$run.is_empty() {
+                    $run.start = $run.start.wrapping_add(moved.$rows);
+                }
+            };
+        }
+        // The copies. A list most files have nothing in is not touched for nothing.
+        macro_rules! copies {
+            ($rows:ident) => {{
+                let copies = first.$rows.wrapping_add(moved.$rows) as usize
+                    ..end.$rows.wrapping_add(moved.$rows) as usize;
+                match copies.is_empty() {
+                    true => &mut [][..],
+                    false => &mut file.$rows[copies],
+                }
+            }};
+        }
+        let mut lists: smallvec::SmallVec<[IdList<TypeNodeId>; 8]> = smallvec::SmallVec::new();
+        for node in copies!(types) {
+            match &mut node.kind {
+                TypeNodeKind::Error
+                | TypeNodeKind::Keyword(_)
+                | TypeNodeKind::StringLit(_)
+                | TypeNodeKind::BigIntLit { .. }
+                | TypeNodeKind::BoolLit(_)
+                | TypeNodeKind::UniqueSymbol => {}
+                TypeNodeKind::Heritage(e) => id!(e, exprs),
+                TypeNodeKind::NumberLit(number) => *number = number.wrapping_add(moved.numbers),
+                TypeNodeKind::Ref { name, args } | TypeNodeKind::Import { name, args, .. } => {
+                    run!(name, names);
+                    run!(args, ids);
+                    lists.push(*args);
+                }
+                TypeNodeKind::Typeof {
+                    name, args, expr, ..
+                } => {
+                    run!(name, names);
+                    run!(args, ids);
+                    lists.push(*args);
+                    id!(expr, exprs);
+                }
+                TypeNodeKind::Template { types, texts } => {
+                    run!(types, ids);
+                    lists.push(*types);
+                    run!(texts, ids);
+                }
+                TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
+                    run!(types, ids);
+                    lists.push(*types);
+                }
+                TypeNodeKind::Array(ty)
+                | TypeNodeKind::Keyof(ty)
+                | TypeNodeKind::Readonly(ty)
+                | TypeNodeKind::Predicate { ty, .. } => id!(ty, types),
+                TypeNodeKind::Tuple(elements) => run!(elements, tuple_elems),
+                TypeNodeKind::Fn(signature) => id!(signature, fns),
+                TypeNodeKind::Object(members) => run!(members, members),
+                TypeNodeKind::Cond {
+                    check,
+                    extends,
+                    yes,
+                    no,
+                } => {
+                    id!(check, types);
+                    id!(extends, types);
+                    id!(yes, types);
+                    id!(no, types);
+                }
+                TypeNodeKind::Infer(param) => id!(param, type_params),
+                TypeNodeKind::Mapped(mapped) => id!(mapped, mapped),
+                TypeNodeKind::IndexedAccess { obj, index } => {
+                    id!(obj, types);
+                    id!(index, types);
+                }
+            }
+        }
+        for list in lists {
+            for ty in &mut file.ids[list.range()] {
+                *ty = ty.wrapping_add(moved.types);
+            }
+        }
+        for member in copies!(members) {
+            id!(member.ty, types);
+            id!(member.func, fns);
+            run!(member.modifiers, modifiers);
+        }
+        for signature in copies!(fns) {
+            run!(signature.type_params, type_params);
+            run!(signature.params, params);
+            id!(signature.this_param, params);
+            id!(signature.ret, types);
+        }
+        for param in copies!(params) {
+            id!(param.pat, pats);
+            id!(param.ty, types);
+        }
+        for pattern in copies!(pats) {
+            match &mut pattern.kind {
+                PatKind::Missing | PatKind::Ident(_) => {}
+                PatKind::Object(properties) => run!(properties, pat_props),
+                PatKind::Array(elements) => run!(elements, pat_elems),
+            }
+        }
+        for property in copies!(pat_props) {
+            id!(property.value, pats);
+        }
+        for element in copies!(pat_elems) {
+            id!(element.pat, pats);
+        }
+        for param in copies!(type_params) {
+            id!(param.constraint, types);
+            id!(param.default, types);
+            run!(param.modifiers, modifiers);
+        }
+        for mapped in copies!(mapped) {
+            id!(mapped.param, type_params);
+            id!(mapped.name_ty, types);
+            id!(mapped.ty, types);
+            run!(mapped.members, members);
+        }
+        for element in copies!(tuple_elems) {
+            id!(element.ty, types);
+        }
+        for expr in copies!(exprs) {
+            if let ExprKind::Dot { obj, .. } = &mut expr.kind {
+                id!(obj, exprs);
+            }
+        }
+        for param in first.params..end.params {
+            let mut modifiers = from.file.param_modifiers(ParamId(param));
+            run!(modifiers, modifiers);
+            file.set_param_modifiers(ParamId(param.wrapping_add(moved.params)), modifiers);
+        }
+        // The parser gave up on these.
+        if moved.syntax_errors > 0 {
+            let mut gave_up = copies!(types)
+                .iter()
+                .filter(|node| matches!(node.kind, TypeNodeKind::Error));
+            let at = gave_up.next().map_or(0, |node| node.pos);
+            if file.syntax_errors == 0 {
+                file.error_pos = at;
+            }
+            file.syntax_errors += moved.syntax_errors;
+        }
+        for &part in &from.pending[first.pending as usize..end.pending as usize] {
+            let mut part = part;
+            match &mut part {
+                PendingPart::MemberKey(member, _) | PendingPart::MemberInitializer(member, _) => {
+                    id!(member, members)
+                }
+                PendingPart::FunctionBody(signature, _) => id!(signature, fns),
+                PendingPart::PatternKey(property, _)
+                | PendingPart::PatternPropertyDefault(property, _) => id!(property, pat_props),
+                PendingPart::ParamDefault(param, _) => id!(param, params),
+                PendingPart::PatternElementDefault(element, _) => id!(element, pat_elems),
+                PendingPart::HeritageExpression(node, _) => id!(node, types),
+                PendingPart::ImportAttributes(_) => {}
+            }
+            self.pending.push(part);
+        }
+        moved
     }
 }

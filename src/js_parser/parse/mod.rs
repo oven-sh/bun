@@ -464,14 +464,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let expression = if p.parse_optional_chain_of_implemented(implemented)? {
                             p.lexer.range_from(start.loc)
                         } else {
-                            implemented = bun_ast::ts_syntax::TypeId::NONE;
+                            implemented = crate::sema::ts_syntax::TypeId::NONE;
                             p.parse_rest_of_implemented(start.loc)?
                         };
                         p.ts_checker_error(expression, 2500);
                     } else if !p.is_kept_entity_name(implemented) {
                         // What reads as a type and is no `isEntityNameExpression`: `(I)`, `string[]`.
                         p.ts_checker_error(p.lexer.range_from(start.loc), 2500);
-                        implemented = bun_ast::ts_syntax::TypeId::NONE;
+                        implemented = crate::sema::ts_syntax::TypeId::NONE;
                     }
                     p.note_implemented(class_keyword, clause, implemented, start.loc);
                 }
@@ -846,7 +846,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Likewise.
         let mut item_starts: Vec<(bun_ast::Loc, bun_ast::Loc)> = Vec::new();
         // Whether each item has a "?" after it, and its type. Likewise.
-        let mut item_types: Vec<bun_ast::ts_syntax::TypeId> = Vec::new();
+        let mut item_types: Vec<crate::sema::ts_syntax::TypeId> = Vec::new();
         // Where the dots before each item are. Likewise.
         let mut item_dots: Vec<bun_ast::Loc> = Vec::new();
         let mut first_modifier: Option<(bun_ast::Loc, bun_ast::Loc)> = None;
@@ -858,7 +858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // One bit for each item that had a modifier before it: "(public x) => 0". Only set when parsing for the type checker.
         let mut with_modifiers: u32 = 0;
         // Those words: which item each is a modifier of.
-        let mut parameter_modifiers: Vec<(usize, bun_ast::ts_syntax::Modifier)> = Vec::new();
+        let mut parameter_modifiers: Vec<(usize, crate::sema::ts_syntax::Modifier)> = Vec::new();
         // "(a, )". Only set in tolerant mode.
         let mut has_trailing_comma = false;
 
@@ -936,7 +936,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut item = Expr::EMPTY;
             let mut has_type = false;
-            let mut item_type = bun_ast::ts_syntax::TypeId::NONE;
+            let mut item_type = crate::sema::ts_syntax::TypeId::NONE;
             let question_before = errors.invalid_expr_after_question;
             // "(...": for TypeScript an arrow function whatever follows (`nextIsParenthesizedArrowFunctionExpression`). Not
             // where one is only tried for: type parameters came first then, and after them nothing is sure.
@@ -1078,7 +1078,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         )
                         .and_then(crate::sema::keep::modifier_flag)
                     {
-                        let modifier = bun_ast::ts_syntax::Modifier {
+                        let modifier = crate::sema::ts_syntax::Modifier {
                             flag,
                             loc: p.real_loc(item.loc),
                             decorator: None,
@@ -1161,7 +1161,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut invalid_log = LocList::new_in(p.arena);
             let mut args = BumpVec::<G::Arg>::new_in(p.arena);
             let mut this_parameter = bun_ast::Loc::EMPTY;
-            let mut return_type = bun_ast::ts_syntax::TypeId::NONE;
+            let mut return_type = crate::sema::ts_syntax::TypeId::NONE;
 
             if opts.is_async {
                 // markl,oweredsyntaxpoksdpokasd
@@ -1214,7 +1214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut binding = binding;
                 let is_typescript_ctor_field = with_modifiers & (1u32 << i.min(31)) != 0;
                 if is_typescript_ctor_field {
-                    let modifiers: Vec<bun_ast::ts_syntax::Modifier> = parameter_modifiers
+                    let modifiers: Vec<crate::sema::ts_syntax::Modifier> = parameter_modifiers
                         .iter()
                         .filter(|modifier| modifier.0 == i)
                         .map(|modifier| modifier.1)
@@ -1466,7 +1466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         args: &mut [G::Arg],
         starts: &[(bun_ast::Loc, bun_ast::Loc)],
         ends: &[bun_ast::Loc],
-        types: &[bun_ast::ts_syntax::TypeId],
+        types: &[crate::sema::ts_syntax::TypeId],
         dots: &[bun_ast::Loc],
     ) {
         for (i, arg) in args.iter_mut().enumerate() {
@@ -2712,7 +2712,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.type_syntax.as_ref().is_some_and(|syntax| {
             syntax.statement_modifiers[syntax.statement_modifiers_base..]
                 .iter()
-                .any(|modifier| modifier.flag.contains(bun_ast::ts_syntax::Flags::EXPORT))
+                .any(|modifier| {
+                    modifier
+                        .flag
+                        .contains(crate::sema::ts_syntax::Flags::EXPORT)
+                })
         })
     }
 
@@ -2724,74 +2728,96 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let keyword_loc = p.lexer.loc();
         p.lexer.next()?;
         let open_brace_loc = p.lexer.loc();
-        let mut properties = BumpVec::<G::Property>::new_in(p.arena);
-        // `getResolutionModeOverride`: what the first attribute says. It counts if it is the only one.
-        let mut mode = bun_ast::ts_syntax::ResolutionMode::None;
+        let (object, mode) = p.parse_import_attribute_list(true)?;
+        p.keep_resolution_mode(mode);
+        let object = object.unwrap_or_else(|| p.new_expr(E::Object::default(), open_brace_loc));
+        p.keep_import_attributes(keyword_loc, object);
+        Ok(())
+    }
 
+    /// `parseImportAttributes`, after its keyword. Returns the attributes as an object literal, if there is a "{" and `keeps`, and the
+    /// resolution mode (`getResolutionModeOverride`): what the attribute says if it is the only one.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_import_attribute_list(
+        &mut self,
+        keeps: bool,
+    ) -> Result<(Option<Expr>, crate::sema::ts_syntax::ResolutionMode), Error> {
+        let p = self;
+        let open_brace_loc = p.lexer.loc();
+        let mut mode = crate::sema::ts_syntax::ResolutionMode::None;
         if p.lexer.token != T::TOpenBrace {
             // Reported, and there are no attributes.
             p.lexer.expect(T::TOpenBrace)?;
-        } else {
-            p.lexer.next()?;
-            let saved_contexts = p.enter_list(ListKind::ImportAttributes);
-            while p.lexer.token != T::TCloseBrace {
-                match p.classify_list_token(ListKind::ImportAttributes)? {
-                    ListStep::Element => {}
-                    ListStep::Skipped => continue,
-                    ListStep::Over => break,
-                }
+            return Ok((None, mode));
+        }
+        p.lexer.next()?;
+        let mut properties = BumpVec::<G::Property>::new_in(p.arena);
+        let mut count = 0u32;
+        let saved_contexts = p.enter_list(ListKind::ImportAttributes);
+        while p.lexer.token != T::TCloseBrace {
+            match p.classify_list_token(ListKind::ImportAttributes)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
+            }
+            // A speculative parse, which classifies nothing, fails here.
+            if !p.lexer.is_identifier_or_keyword()
+                && !matches!(p.lexer.token, T::TStringLiteral | T::TPrivateIdentifier)
+            {
+                return Err(crate::Error::Backtrack);
+            }
 
-                // `parseImportAttribute`
-                let element_start = p.lexer.loc();
-                let is_string_key = p.lexer.token == T::TStringLiteral;
-                let key = if is_string_key {
-                    let text = p.lexer.to_e_string()?;
-                    p.new_expr(text, element_start)
-                } else {
-                    let name = p.lexer.identifier;
-                    p.new_expr(E::EString::init(name), element_start)
-                };
-                p.lexer.next()?;
-                p.lexer.expect(T::TColon)?;
-                let literal_end = matches!(
-                    p.lexer.token,
-                    T::TStringLiteral | T::TNoSubstitutionTemplateLiteral
-                )
-                .then(|| p.lexer.range().end());
-                let value = p.parse_expr(Level::Comma)?;
-                if properties.is_empty() {
-                    mode = p.resolution_mode_of_attribute(&key, is_string_key, &value, literal_end);
+            // `parseImportAttribute`
+            let element_start = p.lexer.loc();
+            let is_string_key = p.lexer.token == T::TStringLiteral;
+            let key = if !keeps {
+                None
+            } else if is_string_key {
+                let text = p.lexer.to_e_string()?;
+                Some(p.new_expr(text, element_start))
+            } else {
+                let name = p.lexer.identifier;
+                Some(p.new_expr(E::EString::init(name), element_start))
+            };
+            p.lexer.next()?;
+            p.lexer.expect(T::TColon)?;
+            let literal_end = matches!(
+                p.lexer.token,
+                T::TStringLiteral | T::TNoSubstitutionTemplateLiteral
+            )
+            .then(|| p.lexer.range().end());
+            let value = p.parse_detached(|p| p.parse_expr(Level::Comma))?;
+            count += 1;
+            mode = match &key {
+                Some(key) if count == 1 => {
+                    p.resolution_mode_of_attribute(key, is_string_key, &value, literal_end)
                 }
+                _ => crate::sema::ts_syntax::ResolutionMode::None,
+            };
+            if key.is_some() {
                 properties.push(G::Property {
-                    key: Some(key),
+                    key,
                     value: Some(value),
                     ..Default::default()
                 });
-
-                if p.lexer.token != T::TComma {
-                    if p.recover_missing_comma(ListKind::ImportAttributes, element_start)? {
-                        continue;
-                    }
-                    break;
-                }
-                p.lexer.next()?;
             }
-            p.lexer.list_contexts = saved_contexts;
-            p.lexer.expect_close_brace_of_attributes(open_brace_loc)?;
-        }
-        if properties.len() == 1 {
-            p.keep_resolution_mode(mode);
-        }
 
-        let object = p.new_expr(
-            E::Object {
-                properties: G::PropertyList::from_bump_vec(properties),
-                ..Default::default()
-            },
-            open_brace_loc,
-        );
-        p.keep_import_attributes(keyword_loc, object);
-        Ok(())
+            if p.lexer.token != T::TComma {
+                if p.recover_missing_comma(ListKind::ImportAttributes, element_start)? {
+                    continue;
+                }
+                break;
+            }
+            p.lexer.next()?;
+        }
+        p.lexer.list_contexts = saved_contexts;
+        p.lexer.expect_close_brace_of_attributes(open_brace_loc)?;
+        let object = E::Object {
+            properties: G::PropertyList::from_bump_vec(properties),
+            ..Default::default()
+        };
+        Ok((keeps.then(|| p.new_expr(object, open_brace_loc)), mode))
     }
 
     pub(crate) fn parse_stmts_up_to(
@@ -2884,21 +2910,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use strict") {
-                                // The type checker is told of every directive.
+                                // To the type checker a directive is a statement like any other.
                                 skip = !p.keeps_type_syntax();
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = p.real_loc(stmt.loc);
-                                }
-                                if !skip {
-                                    stmt = Stmt::alloc(
-                                        S::Directive {
-                                            value: bun_ast::StoreStr::new(b"use strict"),
-                                        },
-                                        stmt.loc,
-                                    );
                                 }
                             } else if str_.eql_comptime(b"use asm")
                                 && !p.options.repl_mode
@@ -2909,7 +2927,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // like node ('use asm' prints 'use asm').
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
-                            } else {
+                            } else if !p.keeps_type_syntax() {
                                 let bytes = str_.string(p.arena).expect("OOM");
                                 stmt = Stmt::alloc(
                                     S::Directive {

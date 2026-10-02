@@ -7,11 +7,11 @@ use super::notes::Notes;
 use super::reparse::Host;
 use super::{Mark, TypeSyntax};
 use crate::p::P;
+use crate::sema::ts_syntax as ts;
 use bun_ast::expr::Data;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::ts_syntax as ts;
 use bun_ast::{self as ast, B, Expr, G, OpCode, S, Stmt, StmtOrExpr};
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::Atom;
 use bun_sema::hir::{self, *};
 use smallvec::SmallVec;
 
@@ -20,6 +20,8 @@ pub(crate) struct Lower<'p, 'a> {
     pub(super) p: &'p P<'a, true, false>,
     /// What the parser said of the nodes of the tree.
     noted: Notes,
+    /// `TypeSyntax::class_index_signatures`
+    class_index_signatures: Vec<Member>,
     /// What the lists being lowered have so far, the innermost list last: ids, variables, parameters, properties.
     list_ids: Vec<u32>,
     list_decls: Vec<VarDecl>,
@@ -55,27 +57,25 @@ pub(crate) struct Lower<'p, 'a> {
 impl<'p, 'a> Lower<'p, 'a> {
     pub(crate) fn run(
         p: &'p mut P<'a, true, false>,
-        syntax: TypeSyntax,
+        syntax: TypeSyntax<'a>,
         stmts: &[Stmt],
-        atoms: &'a Interner,
         is_declaration_file: bool,
     ) -> hir::File {
         let end_of_file_full_start = p.lexer.token_full_start as u32;
         // `withJSDoc`: only in JavaScript is anything made of the tags.
-        let (syntax, jsdoc) = if syntax.has_jsdoc {
+        let (mut syntax, jsdoc) = if syntax.has_jsdoc {
             super::jsdoc::read_comments(p, syntax)
         } else {
             (syntax, Comments::default())
         };
         let p: &'p P<'a, true, false> = p;
         let source_len = p.source.contents().len();
-        let mut b = Builder::new(p.lexer.is_javascript_file(), atoms);
-
-        b.ts = syntax.ast;
+        syntax.b.classes_around = 0;
         let mut this = Lower {
-            b,
+            b: syntax.b,
             p,
             noted: syntax.notes,
+            class_index_signatures: syntax.class_index_signatures,
             list_ids: Vec::new(),
             list_decls: Vec::new(),
             list_params: Vec::new(),
@@ -146,6 +146,10 @@ impl<'p, 'a> Lower<'p, 'a> {
             .sort_unstable_by_key(|braces| braces.0.0);
         this.finish_jsdoc();
         std::mem::take(&mut this.noted).leave_room();
+        let positions = this.b.keyword_identifier_positions.take();
+        if !positions.is_empty() {
+            this.b.file.keyword_identifier_positions.extend(positions);
+        }
         std::mem::take(&mut this.b.file)
     }
 
@@ -250,62 +254,52 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     /// The type that is the payload `kept` of a note.
+    #[inline]
     fn type_at(&mut self, kept: u32) -> TypeNodeId {
-        self.b.clone_type(ts::TypeId::from_index(kept))
+        TypeNodeId(kept)
     }
 
     /// `T` was read as a type parameter and turned out to be a type.
-    fn type_from_type_param(&mut self, param: ts::TypeParam) -> TypeNodeId {
-        let kind = match super::keep::keyword_type(&param.name) {
-            Some(_) => return self.b.clone_keyword_type(&param.name, param.loc),
-            None => {
-                let name = self.b.atoms.intern(&param.name);
-                TypeNodeKind::Ref {
-                    name: self
-                        .b
-                        .file
-                        .entity_name([(name, self.pos_of(param.loc))].into_iter()),
-                    args: IdList::EMPTY,
-                }
-            }
+    fn type_from_type_param(&mut self, param: TypeParamId) -> TypeNodeId {
+        let TypeParam { name, pos, .. } = self.b.file[param];
+        let kind = match super::keep::keyword_type(self.b.atoms.bytes(name)) {
+            Some(keyword) => TypeNodeKind::Keyword(keyword),
+            None => TypeNodeKind::Ref {
+                name: self.b.file.entity_name([(name, pos)].into_iter()),
+                args: IdList::EMPTY,
+            },
         };
-        let pos = self.pos_of(param.loc);
-        self.b.file.ty(kind, pos, pos + param.name.len() as u32)
+        let end = pos + self.b.atoms.bytes(name).len() as u32;
+        self.b.file.ty(kind, pos, end)
     }
 
     /// `<T>(x)` was first parsed as the type parameters of an arrow function and turned out to be a cast. Builds the cast's type from
     /// the single type parameter. `kept` is the payload of the note.
     fn cast_type_from_type_params(&mut self, kept: u32) -> Option<TypeNodeId> {
-        let params = ts::Span::<ts::TypeParam>::from_parts(self.noted.range(kept));
-        let &[param] = &self.b.ts[params] else {
-            return None;
-        };
-        Some(self.type_from_type_param(param))
+        let params = self.type_params_at(kept);
+        (params.len() == 1).then(|| self.type_from_type_param(params.at(0)))
     }
 
     /// `async<T, U>(x)` likewise, and turned out to be a call.
     fn type_args_from_type_params(&mut self, kept: u32) -> IdList<TypeNodeId> {
-        let params = ts::Span::<ts::TypeParam>::from_parts(self.noted.range(kept));
-        let types: SmallVec<[TypeNodeId; 4]> = params
+        let types: SmallVec<[TypeNodeId; 4]> = self
+            .type_params_at(kept)
             .iter()
-            .map(|param| {
-                let param = self.b.ts[param];
-                self.type_from_type_param(param)
-            })
+            .map(|param| self.type_from_type_param(param))
             .collect();
         self.b.file.list(&types)
     }
 
     /// The type arguments that are the payload `kept` of a note.
     fn type_args_at(&mut self, kept: u32) -> IdList<TypeNodeId> {
-        let arguments = ts::IdList::from_parts(self.noted.range(kept));
-        self.b.clone_type_list(arguments)
+        let [start, len] = self.noted.range(kept);
+        IdList::new(start, len)
     }
 
     /// The type parameters that are the payload `kept` of a note.
     fn type_params_at(&mut self, kept: u32) -> Span<TypeParamId> {
-        let parameters = ts::Span::from_parts(self.noted.range(kept));
-        let list = self.b.clone_type_params(parameters);
+        let [start, len] = self.noted.range(kept);
+        let list: Span<TypeParamId> = Span::new(start, len);
         // `jsErrorAtRange(list.Loc, ..)`
         if let Some(last) = list.iter().next_back() {
             let at = (self.b.file[list.at(0)].start, self.b.file[last].end);
@@ -399,6 +393,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             _ => return,
         };
         self.b.js_error_at_range(at, code, what);
+    }
+
+    /// `Builder::identifier`
+    fn identifier(&self, r: ast::Ref, pos: u32) -> Atom {
+        self.b.identifier(self.p.load_name_from_ref(r), pos)
     }
 
     fn name(&self, r: ast::Ref) -> Atom {
@@ -767,8 +766,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         let start = self.declaration_start(stmt.loc);
         self.b.statement_start = start;
         let kind = match &stmt.data {
-            StmtData::STypeScript(placeholder) if placeholder.syntax.is_some() => {
-                return self.ts_statement(placeholder.syntax);
+            StmtData::STypeScript(placeholder)
+                if placeholder.syntax != ast::ts_syntax::StatementId::NONE =>
+            {
+                return self.ts_statement(ts::Id::from_index(placeholder.syntax.0));
             }
             // Nothing is left of it.
             StmtData::STypeScript(_) => return None,
@@ -777,14 +778,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             | StmtData::SExportClause(_)
             | StmtData::SExportFrom(_)
             | StmtData::SExportStar(_) => return None,
-            StmtData::SDirective(directive) => {
-                let text = self.b.atom(directive.value.slice());
-                self.b.file.directives.push((pos, text));
-                return None;
-            }
             StmtData::SEmpty(_) => StmtKind::Empty,
             StmtData::SDebugger(_) => StmtKind::Debugger,
-            StmtData::SComment(_) | StmtData::SLazyExport(_) => return None,
+            StmtData::SComment(_) | StmtData::SLazyExport(_) | StmtData::SDirective(_) => {
+                return None;
+            }
             StmtData::SBlock(s) => StmtKind::Block(self.stmts(s.stmts.slice(), false)),
             StmtData::SExpr(s) => StmtKind::Expr(self.expr(&s.value)),
             StmtData::SLocal(s) => self.local(s),
@@ -899,7 +897,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }
             }
             StmtData::SLabel(s) => {
-                let label = self.name(s.name.ref_);
+                let label = self.identifier(s.name.ref_, pos);
                 let body = self.required_stmt(&s.stmt);
                 StmtKind::Labeled { label, body }
             }
@@ -915,12 +913,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.b.file.with_bodies.push((start, end));
                 StmtKind::Block(self.b.file.list(&[value, body]))
             }
-            StmtData::SBreak(s) => {
-                StmtKind::Break(s.label.as_ref().map_or(Atom::NONE, |l| self.name(l.ref_)))
-            }
-            StmtData::SContinue(s) => {
-                StmtKind::Continue(s.label.as_ref().map_or(Atom::NONE, |l| self.name(l.ref_)))
-            }
+            StmtData::SBreak(s) => StmtKind::Break(
+                s.label
+                    .as_ref()
+                    .map_or(Atom::NONE, |l| self.identifier(l.ref_, pos)),
+            ),
+            StmtData::SContinue(s) => StmtKind::Continue(
+                s.label
+                    .as_ref()
+                    .map_or(Atom::NONE, |l| self.identifier(l.ref_, pos)),
+            ),
             StmtData::SFunction(s) => {
                 let mut flags = self.ambient();
                 if s.func.flags.contains(ast::flags::Function::IsExport) {
@@ -992,7 +994,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     flags |= Flags::EXPORT;
                 }
                 StmtKind::Enum(self.b.file.add_enum(Enum {
-                    name: self.name(s.name.ref_),
+                    name: self.identifier(s.name.ref_, self.pos_of(s.name.loc)),
                     name_pos: self.pos_of(s.name.loc),
                     flags,
                     members,
@@ -1005,7 +1007,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 } else if self.note(s.name.loc, Mark::StringName).is_some() {
                     ModuleName::String(self.name(s.name.ref_))
                 } else {
-                    ModuleName::Ident(self.name(s.name.ref_))
+                    ModuleName::Ident(self.identifier(s.name.ref_, self.pos_of(s.name.loc)))
                 };
                 let mut flags = self.ambient();
                 // `parseAmbientExternalModuleDeclaration`: what is in it is ambient, with or without `declare`.
@@ -1085,7 +1087,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         if let B::B::BIdentifier(id) = &binding.data
             && id.r#ref.is_source_contents_slice()
         {
-            let kind = PatKind::Ident(self.name(id.r#ref));
+            let kind = PatKind::Ident(self.identifier(id.r#ref, pos));
             return self.b.file.pat(kind, pos, pos + id.r#ref.inner_index());
         }
         let mut end = self.note(binding.loc, Mark::PatternEnd).unwrap_or(pos);
@@ -1097,7 +1099,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if end == pos {
                     end += self.p.load_name_from_ref(id.r#ref).len() as u32;
                 }
-                PatKind::Ident(self.name(id.r#ref))
+                PatKind::Ident(self.identifier(id.r#ref, pos))
             }
             B::B::BArray(array) => {
                 let items = array.items();
@@ -1355,7 +1357,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         };
         let this_param = match self.note(open, Mark::ThisParameter) {
             Some(kept) => {
-                let this = self.b.clone_param(ts::Id::from_index(kept));
+                let this = ParamId(kept);
                 let ty = self.b.file[this].ty;
                 self.js_error_at_types(ty, ty, 8010);
                 this
@@ -1396,7 +1398,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         let made = self.b.file.add_fn(Func {
             kind,
             flags,
-            name: func.name.as_ref().map_or(Atom::NONE, |n| self.name(n.ref_)),
+            name: func
+                .name
+                .as_ref()
+                .map_or(Atom::NONE, |n| self.identifier(n.ref_, self.pos_of(n.loc))),
             name_pos: func.name.as_ref().map_or(pos, |n| self.pos_of(n.loc)),
             type_params,
             params,
@@ -1560,9 +1565,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
         }
         for member in self.notes(keyword, Mark::IndexSignature) {
-            let is_ambient = self.is_ambient;
-            let member = ts::MemberId::from_index(member);
-            let member = self.b.clone_class_index_signature(member, is_ambient);
+            let mut member = self.class_index_signatures[member as usize];
+            if self.is_ambient {
+                member.flags |= Flags::AMBIENT;
+                self.b.file[member.func].flags |= Flags::AMBIENT;
+            }
             self.check_js_syntax_of_member(&member, None);
             members.push(member);
         }
@@ -1582,7 +1589,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             name: class
                 .class_name
                 .as_ref()
-                .map_or(Atom::NONE, |n| self.name(n.ref_)),
+                .map_or(Atom::NONE, |n| self.identifier(n.ref_, self.pos_of(n.loc))),
             name_pos: class
                 .class_name
                 .as_ref()
@@ -2026,11 +2033,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if e.ref_.is_source_contents_slice() {
                     end = pos + e.ref_.inner_index();
                 }
-                ExprKind::Ident(self.name(e.ref_))
+                ExprKind::Ident(self.identifier(e.ref_, pos))
             }
-            Data::EImportIdentifier(e) => ExprKind::Ident(self.name(e.ref_)),
-            Data::ECommonjsExportIdentifier(e) => ExprKind::Ident(self.name(e.ref_)),
-            Data::ENameOfSymbol(e) => ExprKind::Ident(self.name(e.ref_)),
+            Data::EImportIdentifier(e) => ExprKind::Ident(self.identifier(e.ref_, pos)),
+            Data::ECommonjsExportIdentifier(e) => ExprKind::Ident(self.identifier(e.ref_, pos)),
+            Data::ENameOfSymbol(e) => ExprKind::Ident(self.identifier(e.ref_, pos)),
             Data::EPrivateIdentifier(e) => ExprKind::String(self.name(e.ref_)),
             Data::EThis(_) => {
                 end = pos + b"this".len() as u32;
@@ -2135,7 +2142,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 ExprKind::Array(self.exprs(e.items.iter()))
             }
             Data::EObject(e) => {
-                if end == 0 {
+                // A synthesized object (`parse_json_text` for an empty file) has no closing brace and is zero-width.
+                if end == 0 && !e.close_brace_loc.is_empty() {
                     end = self.pos_of(e.close_brace_loc) + 1;
                 }
                 ExprKind::Object(self.props(e.properties.as_slice(), true))
@@ -2305,9 +2313,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     closing_start,
                     end: element_end,
                     type_arguments,
-                } = self.b.ts[e.syntax];
+                } = self.b.ts[ts::JsxId::from_index(e.syntax.0)];
                 end = self.pos_of(element_end);
-                let type_args = self.b.clone_type_list(type_arguments);
+                let type_args = type_arguments;
                 let close_pos = if closing_start == ast::Loc::EMPTY {
                     u32::MAX
                 } else {

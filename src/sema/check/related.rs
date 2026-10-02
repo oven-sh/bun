@@ -36,22 +36,15 @@ impl Checker<'_> {
     /// `prop.ValueDeclaration`: the name where the property is declared. `None`: it is made up.
     pub(super) fn place_of_prop(&self, prop: &Prop) -> Option<Place> {
         match Self::value_declaration(prop)? {
-            PropSource::Members(members) => {
-                let &(file, member) = members.first()?;
-                Some(self.place_of_token(file, self.hir(file)[member].name_pos))
-            }
-            &PropSource::Parameter(file, param) => {
-                let hir = self.hir(file);
-                Some(self.place_of_token(file, hir[hir[param].pat].pos))
-            }
             &PropSource::Literal(file, prop) => {
                 Some(self.place_of_token(file, self.hir(file)[prop].pos))
             }
-            &PropSource::Symbol(sym) => self.place_of_symbol(sym),
-            PropSource::Assigned(file, assignments) => {
-                let &first = assignments.first()?;
-                Some(self.place_of_token(*file, self.hir(*file)[first].pos))
-            }
+            &PropSource::Symbol(sym) => match self.files().value_declaration(sym) {
+                Some((file, Decl::Expando(first) | Decl::ThisProperty(first))) => {
+                    Some(self.place_of_token(file, self.hir(file)[first].pos))
+                }
+                _ => self.place_of_symbol(sym),
+            },
             PropSource::Type(_)
             | PropSource::Intersected(..)
             | PropSource::Mapped(..)
@@ -66,50 +59,21 @@ impl Checker<'_> {
     }
 
     fn place_of_first_prop_declaration_within(&mut self, prop: &Prop, depth: u32) -> Option<Place> {
-        use crate::hir::PropKind;
         if depth > 8 {
             return None;
         }
-        // The text of the default library and of JSON is not kept: there is nothing to tell an end by.
-        let has_text = |c: &Self, file: FileId| !c.hir(file).text.is_empty();
+        let of_declaration =
+            |c: &Self, file: FileId, decl: Decl| match c.error_range_of_declaration(file, decl) {
+                Some((start, end)) => Some((file, start, end)),
+                None => c.place_of_declaration(file, decl),
+            };
         match &prop.source {
-            PropSource::Members(members) => {
-                let &(file, member) = members.first()?;
-                if !has_text(self, file) {
-                    return Some(self.place_of_token(file, self.hir(file)[member].name_pos));
-                }
-                let (start, end) = self.error_range_of_member(file, member);
-                Some((file, start, end))
-            }
-            &PropSource::Parameter(file, param) => Some((
-                file,
-                self.hir(file)[param].pos,
-                self.end_of_param(file, param),
-            )),
             &PropSource::Literal(file, written) => {
-                let start = self.hir(file)[written].pos;
-                if !has_text(self, file) {
-                    return Some(self.place_of_token(file, start));
-                }
-                let end = match self.hir(file)[written].kind {
-                    PropKind::Method | PropKind::Getter | PropKind::Setter => {
-                        self.end_of_prop_name(file, written)
-                    }
-                    _ => self.end_of_prop(file, written),
-                };
-                Some((file, start, end))
+                of_declaration(self, file, Decl::Property(written))
             }
             &PropSource::Symbol(sym) => {
                 let (file, decl) = self.files().decls_of(sym).first().copied()?;
-                self.place_of_declaration(file, decl)
-            }
-            PropSource::Assigned(file, assignments) => {
-                let &first = assignments.first()?;
-                Some((
-                    *file,
-                    self.start_inside_parentheses(*file, first),
-                    self.end_inside_parentheses(*file, first),
-                ))
+                of_declaration(self, file, decl)
             }
             // `createUnionOrIntersectionProperty`: the declarations of all of them, one after the other.
             PropSource::Intersected(_, parts)

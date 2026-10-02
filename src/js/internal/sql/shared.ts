@@ -1696,6 +1696,12 @@ function hasProtocol(url: string | URL): boolean {
   return url.includes("://");
 }
 
+/** `hostname`, `host` and `path` name a Postgres or MySQL server. */
+function namesServer(options: Bun.SQL.Options): boolean {
+  const { hostname, host, path } = options as Bun.SQL.PostgresOrMySQLOptions;
+  return !!(hostname || host || path);
+}
+
 /**
  * @returns A tuple containing the parsed adapter (this is always correct) and a
  * url string, that you should continue to use for further options. In some
@@ -1752,9 +1758,15 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   }
 
   if (!options.adapter && resolvedUrl !== null) {
-    const parsedPath = parseDefinitelySqliteUrl(resolvedUrl);
-
-    if (parsedPath !== null) {
+    if (
+      parseDefinitelySqliteUrl(resolvedUrl) !== null ||
+      // A path with no `://` is a SQLite file name when it comes from `filename`,
+      // a SQLite-only option, or from SQLITE_URL itself, the only variable the
+      // environment lookup answers with "sqlite". Step 3 would prefix it with
+      // `postgres://`. A value with a URL scheme, and options that also name a
+      // server, resolve below.
+      ((optionsFilename || (adapter === "sqlite" && !optionsUrl)) && !hasProtocol(resolvedUrl) && !namesServer(options))
+    ) {
       // Return the original URL (with query params) for SQLite parsing
       return [resolvedUrl, null, { ...options, adapter: "sqlite" }];
     }

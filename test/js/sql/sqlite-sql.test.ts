@@ -1,8 +1,8 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { existsSync, readdirSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import path from "path";
@@ -619,6 +619,158 @@ describe("Connection & Initialization", () => {
       expect(sql.options.adapter).toBe("sqlite");
       expect(sql.options.filename).toBe(":memory:");
       sql.close();
+    });
+  });
+
+  describe.concurrent("filename without an adapter", () => {
+    test("opens the SQLite file that filename names", async () => {
+      using dir = tempDir("sql-filename-no-adapter", {});
+      const filename = join(String(dir), "dev.db");
+
+      {
+        await using sql = new SQL({ filename });
+        expect(sql.options).toEqual<SQL.Options>({ adapter: "sqlite", filename });
+        // SQLite opens the file in the constructor. The Postgres and MySQL pools connect on the first query.
+        expect(existsSync(filename)).toBe(true);
+
+        await sql`CREATE TABLE t (x INTEGER)`;
+        await sql`INSERT INTO t VALUES (42)`;
+        expect(await sql`SELECT x FROM t`).toEqual([{ x: 42 }]);
+      }
+
+      using db = new Database(filename, { readonly: true });
+      expect(db.query("SELECT x FROM t").all()).toEqual([{ x: 42 }]);
+    });
+
+    test("resolves the same options as with adapter: sqlite", async () => {
+      using dir = tempDir("sql-filename-same-options", {});
+      const file = join(String(dir), "same.db");
+      const fileUrl = Bun.pathToFileURL(file);
+
+      const inputs: Bun.SQL.SQLiteOptions[] = [
+        { filename: file },
+        { filename: file, create: true, strict: true, safeIntegers: true },
+        { filename: ":memory:" },
+        { filename: "sqlite://:memory:" },
+        { filename: `sqlite://${file}` },
+        { filename: fileUrl.href },
+        { filename: fileUrl },
+        { filename: `sqlite://${file}?mode=ro` },
+      ];
+
+      for (const input of inputs) {
+        await using implicit = new SQL(input);
+        await using explicit = new SQL({ ...input, adapter: "sqlite" });
+        expect({ input, options: implicit.options }).toEqual({ input, options: explicit.options });
+      }
+    });
+
+    test("wins over a connection string, an empty first argument and url", async () => {
+      using dir = tempDir("sql-filename-precedence", {});
+      const filename = join(String(dir), "wins.db");
+      // The type of the second argument omits `filename`. The runtime accepts it.
+      const second = { filename } as SQL.Options;
+
+      const forms: Record<string, () => SQL> = {
+        "new SQL(string, { filename })": () => new SQL("postgres://user@db.example/app", second),
+        "new SQL(URL, { filename })": () => new SQL(new URL("postgres://user@db.example/app"), second),
+        "new SQL(undefined, { filename })": () => new SQL(undefined as never, second),
+        "new SQL({}, { filename })": () => new SQL({} as never, second),
+        "new SQL({ filename, url })": () => new SQL({ filename, url: "postgres://user@db.example/app" }),
+      };
+
+      const resolved: Record<string, unknown> = {};
+      for (const [form, construct] of Object.entries(forms)) {
+        await using sql = construct();
+        resolved[form] = { adapter: sql.options.adapter, filename: sql.options.filename };
+      }
+
+      expect(resolved).toEqual({
+        "new SQL(string, { filename })": { adapter: "sqlite", filename },
+        "new SQL(URL, { filename })": { adapter: "sqlite", filename },
+        "new SQL(undefined, { filename })": { adapter: "sqlite", filename },
+        "new SQL({}, { filename })": { adapter: "sqlite", filename },
+        "new SQL({ filename, url })": { adapter: "sqlite", filename },
+      });
+    });
+
+    test("plain path spellings open files relative to the working directory", async () => {
+      using dir = tempDir("sql-filename-spellings", { "app/placeholder": "" });
+      const cwd = join(String(dir), "app");
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            const resolved = [];
+            for (const filename of ["./dot.db", "bare.db", "../up.db", "with space.db"]) {
+              const sql = new Bun.SQL({ filename });
+              resolved.push([filename, sql.options.adapter, sql.options.filename]);
+              await sql.close();
+            }
+            console.log(JSON.stringify(resolved));
+          `,
+        ],
+        env: bunEnv,
+        cwd,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        ["./dot.db", "sqlite", "./dot.db"],
+        ["bare.db", "sqlite", "bare.db"],
+        ["../up.db", "sqlite", "../up.db"],
+        ["with space.db", "sqlite", "with space.db"],
+      ]);
+      expect(readdirSync(cwd).sort()).toEqual(["bare.db", "dot.db", "placeholder", "with space.db"]);
+      expect(existsSync(join(String(dir), "up.db"))).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+
+    test("a relative SQLITE_URL opens a file in the working directory", async () => {
+      using dir = tempDir("sql-sqlite-url-relative", {});
+      // SQLITE_URL is the last connection variable that Bun reads, so remove the others.
+      const env = Object.fromEntries(Object.entries(bunEnv).filter(([name]) => !name.endsWith("URL")));
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            const sql = new Bun.SQL();
+            const { adapter, filename } = sql.options;
+            await sql\`CREATE TABLE t (x INTEGER)\`;
+            await sql.close();
+            console.log(JSON.stringify({ adapter, filename }));
+          `,
+        ],
+        env: { ...env, SQLITE_URL: "env.db" },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ adapter: "sqlite", filename: "env.db" });
+      expect(readdirSync(String(dir))).toEqual(["env.db"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("an explicit postgres, mysql or mariadb adapter ignores filename", async () => {
+      using dir = tempDir("sql-filename-other-adapter", {});
+      const filename = join(String(dir), "ignored.db");
+
+      for (const adapter of ["postgres", "mysql", "mariadb"] as const) {
+        await using sql = new SQL({ adapter, filename } as Bun.SQL.PostgresOrMySQLOptions);
+        expect({ adapter: sql.options.adapter, filename: sql.options.filename }).toEqual({
+          adapter,
+          filename: undefined,
+        });
+      }
+      expect(existsSync(filename)).toBe(false);
     });
   });
 

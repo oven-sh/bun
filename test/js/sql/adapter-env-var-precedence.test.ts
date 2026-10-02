@@ -2,6 +2,8 @@ import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { unlinkSync } from "js/node/fs/export-star-from";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 declare module "bun" {
   namespace SQL {
@@ -291,6 +293,70 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.hostname).toBe("host");
     expect(options.options.port).toBe(3306);
     expect(options.options.sslMode).toBe(2); // SSLMode.require
+  });
+
+  describe("filename without an adapter", () => {
+    test.each([
+      ["DATABASE_URL", "postgres://envuser:envpass@envhost:5433/envdb"],
+      ["TLS_DATABASE_URL", "postgres://envuser@envhost/envdb"],
+      ["POSTGRES_URL", "postgres://envuser@envhost/envdb"],
+      ["MYSQL_URL", "mysql://envuser@envhost/envdb"],
+      ["MARIADB_URL", "mariadb://envuser@envhost/envdb"],
+      ["SQLITE_URL", "sqlite://envfile.db"],
+    ])("selects SQLite and the named file when %s is set", async (name, value) => {
+      process.env[name] = value;
+      using dir = tempDir("sql-filename-env", {});
+      const filename = join(String(dir), "dev.db");
+
+      await using sql = new SQL({ filename });
+      expect(sql.options).toEqual<SQL.Options>({ adapter: "sqlite", filename });
+      expect(existsSync(filename)).toBe(true);
+    });
+
+    test("an empty filename does not select SQLite", async () => {
+      process.env.DATABASE_URL = "postgres://envuser@envhost:5433/envdb";
+
+      await using sql = new SQL({ filename: "" });
+      expect(sql.options).toMatchObject({ adapter: "postgres", hostname: "envhost", port: 5433, database: "envdb" });
+    });
+
+    test("a filename that is a URL for another database still selects that database", async () => {
+      await using sql = new SQL({ filename: "postgres://user@db.example:5433/app" });
+      expect(sql.options).toMatchObject({ adapter: "postgres", hostname: "db.example", port: 5433, database: "app" });
+    });
+
+    test("hostname, host or path next to filename still selects Postgres", async () => {
+      await using byHostname = new SQL({ filename: "dev.db", hostname: "db.example" });
+      await using byHost = new SQL({ filename: "dev.db", host: "db.example" });
+      await using byPath = new SQL({ filename: "dev.db", path: "/run/postgresql" });
+
+      expect(byHostname.options).toMatchObject({ adapter: "postgres", hostname: "db.example" });
+      expect(byHost.options).toMatchObject({ adapter: "postgres", hostname: "db.example" });
+      expect(byPath.options.adapter).toBe("postgres");
+    });
+  });
+
+  describe("SQLITE_URL without a protocol", () => {
+    test.each(["SQLITE_URL", "SQLITEURL"])("%s with a plain path opens that path", async name => {
+      using dir = tempDir("sql-sqlite-url-plain-path", {});
+      const filename = join(String(dir), "env.db");
+      process.env[name] = filename;
+
+      await using fromNoArguments = new SQL();
+      await using fromEmptyOptions = new SQL({});
+      expect([fromNoArguments.options, fromEmptyOptions.options]).toEqual<SQL.Options[]>([
+        { adapter: "sqlite", filename },
+        { adapter: "sqlite", filename },
+      ]);
+      expect(existsSync(filename)).toBe(true);
+    });
+
+    test("DATABASE_URL with a plain path still selects Postgres", async () => {
+      process.env.DATABASE_URL = "plain.db";
+
+      await using sql = new SQL();
+      expect(sql.options).toMatchObject({ adapter: "postgres", hostname: "plain.db" });
+    });
   });
 
   describe("PGSSLMODE", () => {

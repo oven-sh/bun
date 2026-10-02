@@ -181,8 +181,11 @@ const sql2 = new SQL({
   filename: "./data/app.db",
 });
 
-// For simple filenames, specify adapter explicitly
-const sql3 = new SQL("myapp.db", { adapter: "sqlite" });
+// `filename` selects SQLite, so `adapter` is optional in an options object
+const sql3 = new SQL({ filename: "myapp.db" });
+
+// A connection string that is a plain path needs `adapter: "sqlite"`
+const sql4 = new SQL("myapp.db", { adapter: "sqlite" });
 ```
 
 <Accordion title="SQLite Connection String Formats">
@@ -215,7 +218,7 @@ new SQL("sqlite://data.db?mode=rwc"); // Read-write-create mode (default)
 ```
 
     <Note>
-    Simple filenames without a protocol (like `"myapp.db"`) require explicitly specifying `{ adapter: "sqlite" }` to avoid ambiguity with PostgreSQL.
+    Without an adapter, Bun reads a connection string that is a plain path as a PostgreSQL host. To open `"myapp.db"` as a SQLite file, use `new SQL("myapp.db", { adapter: "sqlite" })` or `new SQL({ filename: "myapp.db" })`.
     </Note>
 
 </Accordion>
@@ -514,11 +517,14 @@ Bun selects SQLite when the connection string matches these patterns:
 - `file://...` - File protocol URLs
 - `file:...` - File protocol without slashes
 
+Bun also selects SQLite when the options object has a `filename` and no `adapter`. The `filename` can be a plain path such as `./database.db`. A `filename` takes priority over `DATABASE_URL` and the other connection URL variables. The `hostname`, `host` and `path` options take priority over a `filename`.
+
 ```ts
 // These all use SQLite automatically (no adapter needed)
 const sql1 = new SQL(":memory:");
 const sql2 = new SQL("sqlite://app.db");
 const sql3 = new SQL("file://./database.db");
+const sql4 = new SQL({ filename: "./database.db" });
 
 // Works with DATABASE_URL environment variable
 DATABASE_URL=":memory:" bun run app.js
@@ -602,6 +608,14 @@ DATABASE_URL=":memory:"
 DATABASE_URL="sqlite://./app.db"
 DATABASE_URL="file:///absolute/path/to/db.sqlite"
 ```
+
+Bun reads `SQLITE_URL` when no other connection URL variable is set. A value from `SQLITE_URL` selects SQLite, so it can be a plain path:
+
+```bash
+SQLITE_URL="./app.db"
+```
+
+A plain path in `DATABASE_URL` selects PostgreSQL.
 
 **Note:** Bun ignores PostgreSQL-specific environment variables such as `POSTGRES_URL` and `PGHOST` when you use SQLite.
 
@@ -729,7 +743,7 @@ const sql = new SQL({
 import { SQL } from "bun";
 
 const sql = new SQL({
-  // Required for SQLite
+  // Selects SQLite. Optional when `filename` is set
   adapter: "sqlite",
   filename: "./data/app.db", // or ":memory:" for in-memory database
 
@@ -1472,8 +1486,9 @@ try {
 		The plan was to add more database drivers. The unified API now supports PostgreSQL, MySQL, and SQLite.
 	</Accordion>
 	<Accordion title="How do I know which database adapter is being used?">
-		Bun detects the adapter automatically from the connection string:
+		Bun detects the adapter automatically from the connection string or the options object:
 
+    	- An options object with a `filename` and no `adapter` uses SQLite
     	- URLs starting with `mysql://` or `mysql2://` use MySQL
     	- URLs matching SQLite patterns (`:memory:`, `sqlite://`, `file://`) use SQLite
     	- Everything else defaults to PostgreSQL

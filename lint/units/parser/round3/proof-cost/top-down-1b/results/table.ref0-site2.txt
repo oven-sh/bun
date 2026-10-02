@@ -1,0 +1,28 @@
+head against ref, /bun_js_parser/                    bun-types  typescript-lib          src-js             tsx      js-control
+input bytes per pass                                 1,076,221       3,784,758       3,268,179           7,003       1,506,667
+passes                                                      20              20              20           2,000              20
+-- default VEX (cgbench.sh)
+Ir a                                               315,071,123   1,107,612,911   4,491,457,051   1,187,357,481   2,925,450,940
+Ir b - a                                              +102,060        +172,900        +155,680        +186,000              +0
+Ir b - a, percent                                     +0.0324%        +0.0156%        +0.0035%        +0.0157%        +0.0000%
+Bc a                                                44,614,807     160,945,871     518,361,154     138,540,314     314,112,515
+Bc b - a                                               +58,800        +101,400         +81,480        +104,000              +0
+Bc b - a, percent                                     +0.1318%        +0.0630%        +0.0157%        +0.0751%        +0.0000%
+Bi b - a                                                    +0              +0              +0              +0              +0
+functions that differ                                        3               3               4               3               0
+program Ir b - a (has run-to-run noise)               +109,253        +339,122         +41,648        -874,418        -211,394
+-- --vex-guest-chase=no (cgbench-raw.sh)
+Ir a                                               308,391,663   1,074,661,311   4,437,406,051   1,174,511,301   2,911,879,740
+Ir b - a                                              +102,060        +172,900        +155,680        +186,000              +0
+Ir b - a, percent                                     +0.0331%        +0.0161%        +0.0035%        +0.0158%        +0.0000%
+Bc a                                                46,510,578     167,611,062     532,034,684     143,057,464     321,498,325
+Bc b - a                                               +58,800        +101,400         +76,100         +92,000              +0
+Bc b - a, percent                                     +0.1264%        +0.0605%        +0.0143%        +0.0643%        +0.0000%
+Bi b - a                                                    +0              +0              +0              +0              +0
+functions that differ                                        3               3               4               3               0
+program Ir b - a (has run-to-run noise)                +99,770      +1,553,722      -1,167,508        +251,605        -526,704
+tests = Bc of b on the lines of the sites               58,800         101,400          76,100          92,000               0
+excess = (Bc b - a) - tests                                 +0              +0              +0              +0              +0
+tests per pass (tsx: per 100 parses)                   2,940.0         5,070.0         3,805.0         4,600.0             0.0
+tests per KB of source                                    2.73            1.34            1.16            6.57            0.00
+Ir per test                                               1.74            1.71            2.05            2.02             n/a

@@ -1,12 +1,14 @@
-# Console output of r3report.sh on stand-ins (2026-10-02): BASE = main, REF = ref0 (main + sink form + boxed tables, on the crates of main),
-# HEAD = site1 (ref0 + six sites; the tree and binaries of the bottom-up pass). The audit fails here on purpose: the stub lint_probe is a new function in p.rs.
+# Console output of r3report.sh, a fresh run with every count from one path (2026-10-02, 21 minutes at a load of 700 to 900):
+# BASE = main (bc7a813b10), REF = ref0 (main + sink form + boxed tables, in the crates of main), HEAD = site2 (ref0 + six sites,
+# each directly before the skip call that main makes; trees and binaries of the bottom-up pass). The audit fails on purpose:
+# the stub lint_probe of that experiment is a new function in p.rs.
 == sizes by address (symbols, bytes): base | ref | head; then the stripped binaries
-bun_js_parser text                   863  1,400,688 |   863  1,400,475 |   864  1,400,706
+bun_js_parser text                   863  1,400,688 |   863  1,400,475 |   864  1,400,701
   lint-only                            0          0 |     0          0 |     1         29
-  without lint-only                  863  1,400,688 |   863  1,400,475 |   863  1,400,677
+  without lint-only                  863  1,400,688 |   863  1,400,475 |   863  1,400,672
 P<false, false>                      281    412,477 |   281    412,456 |   281    412,456
   P<false, false> lint-only            0          0 |     0          0 |     0          0
-P<true, false>                       319    475,578 |   319    475,518 |   319    475,720
+P<true, false>                       319    475,578 |   319    475,518 |   319    475,715
   P<true, false> lint-only             0          0 |     0          0 |     1         29
 P<false, true>                        91    133,717 |    91    133,696 |    91    133,696
   P<false, true> lint-only             0          0 |     0          0 |     0          0
@@ -16,8 +18,8 @@ skipper, Discard                       2      3,608 |     2      3,608 |     2  
 skipper, DecoratorMetadata             4     14,962 |     4     14,716 |     4     14,716
 skipper, no sink argument             15      8,831 |    15      8,831 |    15      8,831
 80868936 /workspace/base/bun.bc7a813b1
-80868936 /tmp/cpr3-1b/report/ref.stripped
-80868936 /tmp/cpr3-1b/report/head.stripped
+80868936 /tmp/cpr3-1b/report2/ref.stripped
+80868936 /tmp/cpr3-1b/report2/head.stripped
 == machine code
 strict  ref-head  IDENT 822  OFFSETS 0  CONSTS 0  DIFF 0  ONLY-A 0  ONLY-B 0  LINT-ONLY 0 | PASS
 skipper ref-head  IDENT 32  OFFSETS 0  CONSTS 0  DIFF 0  ONLY-A 0  ONLY-B 0  LINT-ONLY 0 | PASS
@@ -34,29 +36,29 @@ input bytes per pass                                 1,076,221       3,784,758  
 passes                                                      20              20              20           2,000              20
 -- default VEX (cgbench.sh)
 Ir a                                               315,071,123   1,107,612,911   4,491,457,051   1,187,357,481   2,925,450,940
-Ir b - a                                              +128,700        +322,060        +957,860        +298,000              +0
-Ir b - a, percent                                     +0.0408%        +0.0291%        +0.0213%        +0.0251%        +0.0000%
+Ir b - a                                              +102,060        +172,900        +155,680        +186,000              +0
+Ir b - a, percent                                     +0.0324%        +0.0156%        +0.0035%        +0.0157%        +0.0000%
 Bc a                                                44,614,807     160,945,871     518,361,154     138,540,314     314,112,515
-Bc b - a                                               +63,240        +126,260         +93,480        +104,000              +0
-Bc b - a, percent                                     +0.1417%        +0.0784%        +0.0180%        +0.0751%        +0.0000%
+Bc b - a                                               +58,800        +101,400         +81,480        +104,000              +0
+Bc b - a, percent                                     +0.1318%        +0.0630%        +0.0157%        +0.0751%        +0.0000%
 Bi b - a                                                    +0              +0              +0              +0              +0
-functions that differ                                        3               3               4               4               0
-program Ir b - a (has run-to-run noise)               +127,323         +21,621      +1,495,611        +770,124        +323,201
+functions that differ                                        3               3               4               3               0
+program Ir b - a (has run-to-run noise)               +109,253        +339,122         +41,648        -874,418        -211,394
 -- --vex-guest-chase=no (cgbench-raw.sh)
 Ir a                                               308,391,663   1,074,661,311   4,437,406,051   1,174,511,301   2,911,879,740
-Ir b - a                                              +128,700        +322,060        +957,860        +298,000              +0
-Ir b - a, percent                                     +0.0417%        +0.0300%        +0.0216%        +0.0254%        +0.0000%
+Ir b - a                                              +102,060        +172,900        +155,680        +186,000              +0
+Ir b - a, percent                                     +0.0331%        +0.0161%        +0.0035%        +0.0158%        +0.0000%
 Bc a                                                46,510,578     167,611,062     532,034,684     143,057,464     321,498,325
-Bc b - a                                               +63,240        +126,260         +88,100         +92,000              +0
-Bc b - a, percent                                     +0.1360%        +0.0753%        +0.0166%        +0.0643%        +0.0000%
+Bc b - a                                               +58,800        +101,400         +76,100         +92,000              +0
+Bc b - a, percent                                     +0.1264%        +0.0605%        +0.0143%        +0.0643%        +0.0000%
 Bi b - a                                                    +0              +0              +0              +0              +0
-functions that differ                                        3               3               4               4               0
-program Ir b - a (has run-to-run noise)               +139,877        +278,136      -2,970,908        +184,554        +865,962
+functions that differ                                        3               3               4               3               0
+program Ir b - a (has run-to-run noise)                +99,770      +1,553,722      -1,167,508        +251,605        -526,704
 tests = Bc of b on the lines of the sites               58,800         101,400          76,100          92,000               0
-excess = (Bc b - a) - tests                             +4,440         +24,860         +12,000              +0              +0
+excess = (Bc b - a) - tests                                 +0              +0              +0              +0              +0
 tests per pass (tsx: per 100 parses)                   2,940.0         5,070.0         3,805.0         4,600.0             0.0
 tests per KB of source                                    2.73            1.34            1.16            6.57            0.00
-Ir per test                                               2.19            3.18           12.59            3.24             n/a
+Ir per test                                               1.74            1.71            2.05            2.02             n/a
 ref against base, /bun_js_parser/                    bun-types  typescript-lib          src-js             tsx      js-control
 input bytes per pass                                 1,076,221       3,784,758       3,268,179           7,003       1,506,667
 passes                                                      20              20              20           2,000              20
@@ -69,7 +71,7 @@ Bc b - a                                                    +0              +0  
 Bc b - a, percent                                     +0.0000%        +0.0000%        +0.0000%        +0.0000%        +0.0000%
 Bi b - a                                                    +0              +0              +0              +0              +0
 functions that differ                                        4               4               6               5               3
-program Ir b - a (has run-to-run noise)                   +868        -903,396        +635,563        -685,004        -665,586
+program Ir b - a (has run-to-run noise)                 -1,289          +5,819      +3,080,137      +1,059,156        +781,244
 -- --vex-guest-chase=no (cgbench-raw.sh)
 Ir a                                               308,381,361   1,074,678,489   4,437,301,629   1,174,459,299   2,911,879,798
 Ir b - a                                               +10,302         -17,178        +104,422         +52,002             -58
@@ -79,38 +81,33 @@ Bc b - a                                                    +0              +0  
 Bc b - a, percent                                     +0.0000%        +0.0000%        +0.0000%        +0.0000%        +0.0000%
 Bi b - a                                                    +0              +0              +0              +0              +0
 functions that differ                                        4               4               6               5               3
-program Ir b - a (has run-to-run noise)                +12,655        -550,588      +3,059,632        +173,251      -1,692,049
+program Ir b - a (has run-to-run noise)                -10,632        +598,078      +2,189,490         -48,626      -1,153,281
 head against ref, /bun_js_parser|bun_ast|bun_        bun-types  typescript-lib          src-js             tsx      js-control
 input bytes per pass                                 1,076,221       3,784,758       3,268,179           7,003       1,506,667
 passes                                                      20              20              20           2,000              20
 -- --vex-guest-chase=no (cgbench-raw.sh)
 Ir a                                               325,854,362   1,115,055,139   5,840,098,658   1,540,381,531   3,939,301,421
-Ir b - a                                              +128,700        +322,060        +957,860        +298,000              +0
-Ir b - a, percent                                     +0.0395%        +0.0289%        +0.0164%        +0.0193%        +0.0000%
+Ir b - a                                              +102,060        +172,900        +155,680        +186,000              +0
+Ir b - a, percent                                     +0.0313%        +0.0155%        +0.0027%        +0.0121%        +0.0000%
 Bc a                                                48,639,952     174,052,378     688,418,341     185,828,819     438,319,077
-Bc b - a                                               +63,240        +126,260         +88,100         +92,000              +0
-Bc b - a, percent                                     +0.1300%        +0.0725%        +0.0128%        +0.0495%        +0.0000%
+Bc b - a                                               +58,800        +101,400         +76,100         +92,000              +0
+Bc b - a, percent                                     +0.1209%        +0.0583%        +0.0111%        +0.0495%        +0.0000%
 Bi b - a                                                    +0              +0              +0              +0              +0
-functions that differ                                        3               3               4               4               0
-program Ir b - a (has run-to-run noise)               +139,877        +278,136      -2,970,908        +184,554        +865,962
-bun-types       tests 58800 (Bc of b on the lines of the sites); Bc b - a of the parser +63240; functions: BC 1, ok 2
-typescript-lib  tests 101400 (Bc of b on the lines of the sites); Bc b - a of the parser +126260; functions: BC 1, ok 2
-src-js          tests 76100 (Bc of b on the lines of the sites); Bc b - a of the parser +88100; functions: BC 1, IR 1, ok 2
-tsx             tests 92000 (Bc of b on the lines of the sites); Bc b - a of the parser +92000; functions: IR 1, NO-SITE 1, ok 2
+functions that differ                                        3               3               4               3               0
+program Ir b - a (has run-to-run noise)                +99,770      +1,553,722      -1,167,508        +251,605        -526,704
+bun-types       tests 58800 (Bc of b on the lines of the sites); Bc b - a of the parser +58800; functions: ok 3
+typescript-lib  tests 101400 (Bc of b on the lines of the sites); Bc b - a of the parser +101400; functions: ok 3
+src-js          tests 76100 (Bc of b on the lines of the sites); Bc b - a of the parser +76100; functions: IR 1, ok 3
+tsx             tests 92000 (Bc of b on the lines of the sites); Bc b - a of the parser +92000; functions: IR 1, ok 2
 js-control      tests 0 (Bc of b on the lines of the sites); Bc b - a of the parser +0; functions: none differ
 js-classes      ref-head  classes of the parser      Ir     197,314,285 ->     197,314,285 (+0)  Bc     21,588,652 ->     21,588,652 (+0)  Bi    1,861,565 ->    1,861,565 (+0)
 js-classes      base-ref  classes of the parser      Ir     197,293,331 ->     197,314,285 (+20954)  Bc     21,588,652 ->     21,588,652 (+0)  Bi    1,861,565 ->    1,861,565 (+0)
-deco            ref-head  classes of the parser      Ir     512,680,967 ->     512,737,302 (+56335)  Bc     53,821,776 ->     53,849,926 (+28150)  Bi    3,757,978 ->    3,757,978 (+0)
+deco            ref-head  classes of the parser      Ir     512,680,967 ->     512,737,172 (+56205)  Bc     53,821,776 ->     53,849,921 (+28145)  Bi    3,757,978 ->    3,757,978 (+0)
 deco            base-ref  classes of the parser      Ir     512,729,754 ->     512,680,967 (-48787)  Bc     53,821,876 ->     53,821,776 (-100)  Bi    3,757,978 ->    3,757,978 (+0)
 group              Bc default       Bc raw           Ir  function
 src-js                 +15060        +9680       +29140  <bun_js_parser::p::P<true, false>>::parse_suffix
 tsx                    +34000       +22000       +72000  <bun_js_parser::p::P<true, false>>::parse_suffix
 2 rows
-       0        0      484     1100        0  parse/parse_suffix.rs:29 [-] as, satisfies
-    2940     5070     3805     4600        0  executed tests per pass (tsx: 100 parses)
-    2.73     1.34     1.16     6.57     0.00  per KB of source
-       0        0        0        0        0  in the parse of the bench script (JavaScript, 5,471 bytes)
-6 of 6 sites ran
 == text
 6 sites, 1 violations
 FAIL

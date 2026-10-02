@@ -475,8 +475,8 @@ names (`c02_program_checker.rs`, `c21_resolved_symbols_diagnostics.rs`, `c22_sym
   nil diagnostic is not added, where upstream dereferences nil; there is no mutex (a collection belongs to one checker);
   `get_diagnostics` walks the files in the order of their first diagnostic, where upstream ranges over a map; the
   recursion over chains and related information stops past depth 200 (there `equal` answers false and a comparison
-  descends no further), where upstream has no bound; `slices.Compare` of two argument lists answers the difference of the lengths, where upstream answers -1 or +1
-  (every caller reads the sign).
+  descends no further), where upstream has no bound; `slices.Compare` of two argument lists answers the difference of
+  the lengths, where upstream answers -1 or +1 (every caller reads the sign).
 - The repopulate info is not in the contract. It is `Option<Box<RepopulateDiagnosticInfo>>` in the diagnostic (upstream's
   pointer); `clone_diagnostic` copies it, where upstream's `Clone` shares the pointer; `set_repopulate_info` takes the
   info by value, so it cannot set nil again (no caller does).

@@ -1,0 +1,43 @@
+== bun-types
+program                    Ir     489,165,018 ->     489,264,788 (+99770)  Bc     97,109,456 ->     97,168,898 (+59442)  Bi    5,514,680 ->    5,514,730 (+50)
+names that match           Ir     308,230,410 ->     308,332,470 (+102060)  Bc     46,501,115 ->     46,559,915 (+58800)  Bi    4,503,843 ->    4,503,843 (+0)
+classes of the parser      Ir     308,391,663 ->     308,493,723 (+102060)  Bc     46,510,578 ->     46,569,378 (+58800)  Bi    4,503,843 ->    4,503,843 (+0)
+3 classes of the parser differ
+  Ir       +84800  Bc      +42400  Bi        +0  tests     42400  Ir/test  2.00  ok       (a Ir 6,795,860)  <bun_js_parser::p::P<true, false>>::parse_fn
+  Ir        +8880  Bc       +4440  Bi        +0  tests      4440  Ir/test  2.00  ok       (a Ir 750,360)  <bun_js_parser::p::P<true, false>>::parse_and_declare_decls
+  Ir        +8380  Bc      +11960  Bi        +0  tests     11960  Ir/test  0.70  ok       (a Ir 978,880)  <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough_ts_keyword
+tests 58800 (Bc of b on the lines of the sites); Bc b - a of the parser +58800; functions: ok 3
+== typescript-lib
+program                    Ir   1,615,750,909 ->   1,617,304,631 (+1553722)  Bc    337,533,877 ->    337,845,356 (+311479)  Bi   16,604,747 ->   16,607,809 (+3062)
+names that match           Ir   1,074,155,810 ->   1,074,328,710 (+172900)  Bc    167,572,135 ->    167,673,535 (+101400)  Bi   14,325,783 ->   14,325,783 (+0)
+classes of the parser      Ir   1,074,661,311 ->   1,074,834,211 (+172900)  Bc    167,611,062 ->    167,712,462 (+101400)  Bi   14,325,783 ->   14,325,783 (+0)
+3 classes of the parser differ
+  Ir      +104820  Bc      +67360  Bi        +0  tests     67360  Ir/test  1.56  ok       (a Ir 6,128,780)  <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough_ts_keyword
+  Ir       +49720  Bc      +24860  Bi        +0  tests     24860  Ir/test  2.00  ok       (a Ir 4,075,080)  <bun_js_parser::p::P<true, false>>::parse_and_declare_decls
+  Ir       +18360  Bc       +9180  Bi        +0  tests      9180  Ir/test  2.00  ok       (a Ir 1,409,880)  <bun_js_parser::p::P<true, false>>::parse_fn
+tests 101400 (Bc of b on the lines of the sites); Bc b - a of the parser +101400; functions: ok 3
+== src-js
+program                    Ir   7,432,622,513 ->   7,431,455,005 (-1167508)  Bc  1,147,976,714 ->  1,147,889,039 (-87675)  Bi   73,810,667 ->   73,809,266 (-1401)
+names that match           Ir   4,397,435,921 ->   4,397,591,601 (+155680)  Bc    528,731,635 ->    528,807,735 (+76100)  Bi   47,409,482 ->   47,409,482 (+0)
+classes of the parser      Ir   4,437,406,051 ->   4,437,561,731 (+155680)  Bc    532,034,684 ->    532,110,784 (+76100)  Bi   47,409,482 ->   47,409,482 (+0)
+4 classes of the parser differ
+  Ir       +95160  Bc      +47580  Bi        +0  tests     47580  Ir/test  2.00  ok       (a Ir 35,198,860)  <bun_js_parser::p::P<true, false>>::parse_fn
+  Ir       +29140  Bc       +9680  Bi        +0  tests      9680  Ir/test  3.01  IR       (a Ir 280,080,200)  <bun_js_parser::p::P<true, false>>::parse_suffix
+  Ir       +24040  Bc      +12020  Bi        +0  tests     12020  Ir/test  2.00  ok       (a Ir 36,797,120)  <bun_js_parser::p::P<true, false>>::parse_and_declare_decls
+  Ir        +7340  Bc       +6820  Bi        +0  tests      6820  Ir/test  1.08  ok       (a Ir 822,960)  <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough_ts_keyword
+tests 76100 (Bc of b on the lines of the sites); Bc b - a of the parser +76100; functions: IR 1, ok 3
+== tsx
+program                    Ir   2,080,707,581 ->   2,080,959,186 (+251605)  Bc    342,018,007 ->    342,122,156 (+104149)  Bi   19,585,600 ->   19,586,696 (+1096)
+names that match           Ir   1,166,813,852 ->   1,166,999,852 (+186000)  Bc    142,450,868 ->    142,542,868 (+92000)  Bi   12,927,642 ->   12,927,642 (+0)
+classes of the parser      Ir   1,174,511,301 ->   1,174,697,301 (+186000)  Bc    143,057,464 ->    143,149,464 (+92000)  Bi   12,927,642 ->   12,927,642 (+0)
+3 classes of the parser differ
+  Ir      +104000  Bc      +52000  Bi        +0  tests     52000  Ir/test  2.00  ok       (a Ir 9,174,000)  <bun_js_parser::p::P<true, false>>::parse_fn
+  Ir       +72000  Bc      +22000  Bi        +0  tests     22000  Ir/test  3.27  IR       (a Ir 53,008,000)  <bun_js_parser::p::P<true, false>>::parse_suffix
+  Ir       +10000  Bc      +18000  Bi        +0  tests     18000  Ir/test  0.56  ok       (a Ir 1,130,000)  <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough_ts_keyword
+tests 92000 (Bc of b on the lines of the sites); Bc b - a of the parser +92000; functions: IR 1, ok 2
+== js-control
+program                    Ir   5,095,929,003 ->   5,095,402,299 (-526704)  Bc    720,474,705 ->    720,419,067 (-55638)  Bi   53,863,719 ->   53,863,231 (-488)
+names that match           Ir   2,891,194,271 ->   2,891,194,271 (+0)  Bc    319,771,089 ->    319,771,089 (+0)  Bi   35,878,822 ->   35,878,822 (+0)
+classes of the parser      Ir   2,911,879,740 ->   2,911,879,740 (+0)  Bc    321,498,325 ->    321,498,325 (+0)  Bi   35,878,822 ->   35,878,822 (+0)
+0 classes of the parser differ
+tests 0 (Bc of b on the lines of the sites); Bc b - a of the parser +0; functions: none differ

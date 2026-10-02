@@ -850,8 +850,6 @@ pub mod store {
                     .unwrap_or(0)
         }
 
-        /// `bucket/key` for an `s3://bucket/key` URL, otherwise the path as
-        /// given. S3 object keys are opaque byte strings, so nothing is trimmed.
         pub fn path(&self) -> &[u8] {
             bun_url::URL::parse(self.pathlike.slice()).s3_path()
         }

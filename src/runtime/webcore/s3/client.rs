@@ -315,7 +315,7 @@ pub(crate) fn list_objects(
     // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
     // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
     // until `task` is dropped in `on_response`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let url = unsafe { s3_simple_request::signed_url(&task.sign_result).erase_lifetime() };
     // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
     // heap-owned by `*task` and outlives the AsyncHTTP request.
     let headers_buf: &'static [u8] =
@@ -1245,7 +1245,7 @@ fn download_stream(
 
     // SAFETY: lifetime extension — `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
     // fields of `*task` which the task outlives. See `execute_simple_s3_request`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let url = unsafe { s3_simple_request::signed_url(&task.sign_result).erase_lifetime() };
     // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
     // heap-owned by `*task` and outlives the AsyncHTTP request.
     let headers_buf: &'static [u8] =

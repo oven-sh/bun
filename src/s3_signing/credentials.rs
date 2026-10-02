@@ -334,27 +334,14 @@ impl S3Credentials {
         let mut bucket: &[u8] = &self.bucket;
 
         if !self.virtual_hosted_style && bucket.is_empty() {
-            // No bucket configured, so the path carries it: `[/]bucket/key`.
-            // Only this form has a leading separator to drop; everywhere else
-            // the path is the object key, which is an opaque byte string.
-            let mut full_path = request_path;
-            if strings::starts_with(full_path, b"/") || strings::starts_with(full_path, b"\\") {
-                full_path = &full_path[1..];
-            }
-            if let Some(end) = strings::index_of(full_path, b"/") {
-                bucket = &full_path[..end];
-                path = &full_path[end + 1..];
-            } else if let Some(backslash_index) = strings::index_of(full_path, b"\\") {
-                bucket = &full_path[..backslash_index];
-                path = &full_path[backslash_index + 1..];
-            } else {
-                return Err(SignError::InvalidPath);
-            }
+            (bucket, path) = split_bucket_from_path(request_path).ok_or(SignError::InvalidPath)?;
         }
 
-        // A bucket name cannot contain a path separator, so trimming one is
-        // always safe; the object key is passed through untouched.
         let bucket = strings::trim(bucket, b"/\\");
+        // In path style the bucket is a path segment: an empty one signs a path without a bucket.
+        if !self.virtual_hosted_style && bucket.is_empty() {
+            return Err(SignError::InvalidPath);
+        }
 
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if !ALLOW_EMPTY_PATH && path.is_empty() {
@@ -1127,6 +1114,13 @@ pub fn guess_region(endpoint: &[u8]) -> &[u8] {
 
     // no endpoint so we default to us-east-1 because s3.us-east-1.amazonaws.com is the default endpoint
     b"us-east-1"
+}
+
+/// Splits `bucket/key`, the path when no bucket is configured. The bucket is never empty.
+pub fn split_bucket_from_path(path: &[u8]) -> Option<(&[u8], &[u8])> {
+    let path = strings::trim_left(path, b"/\\");
+    let end = strings::index_of(path, b"/").or_else(|| strings::index_of(path, b"\\"))?;
+    Some((&path[..end], &path[end + 1..]))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

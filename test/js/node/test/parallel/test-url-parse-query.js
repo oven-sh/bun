@@ -12,18 +12,11 @@ function createWithNoPrototype(properties = []) {
 }
 
 function check(actual, expected) {
-  // NOTE: Node creates a new object with no prototype when parsing queries.
-  // Their query parsing logic is written in JS. We re-use URLSearchParams
-  // from WebCore, which is spec-compliant with newer standards.
-  // assert.notStrictEqual(Object.getPrototypeOf(actual), Object.prototype);
+  assert.notStrictEqual(Object.getPrototypeOf(actual), Object.prototype);
   assert.deepStrictEqual(Object.keys(actual).sort(),
                          Object.keys(expected).sort());
   Object.keys(expected).forEach(function(key) {
-    assert.deepStrictEqual(
-      actual[key],
-      expected[key],
-      `actual[${key}] !== expected[${key}]: ${actual[key]} !== ${expected[key]}`
-    );
+    assert.deepStrictEqual(actual[key], expected[key]);
   });
 }
 
@@ -91,11 +84,7 @@ for (const u in parseTestsWithQueryString) {
     if (property === 'query') {
       check(actual[property], expected[property]);
     } else {
-      assert.deepStrictEqual(
-        actual[property],
-        expected[property],
-        `${u}\n\nactual['${property}'] !== expected['${property}']: ${actual[property]} !== ${expected[property]}`
-      );
+      assert.deepStrictEqual(actual[property], expected[property]);
     }
   });
 }

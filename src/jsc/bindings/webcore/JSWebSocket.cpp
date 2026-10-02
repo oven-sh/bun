@@ -850,6 +850,8 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pingOverloadDispa
         RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_ping1Body(lexicalGlobalObject, callFrame, castedThis)));
     } else if (argsCount == 1) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(0);
+        if (distinguishingArg.isUndefined())
+            RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_ping1Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBuffer>())
             RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_ping2Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBufferView>())
@@ -929,6 +931,8 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pongOverloadDispa
         RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_pong1Body(lexicalGlobalObject, callFrame, castedThis)));
     } else if (argsCount == 1) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(0);
+        if (distinguishingArg.isUndefined())
+            RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_pong1Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBuffer>())
             RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_pong2Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBufferView>())

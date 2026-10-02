@@ -153,6 +153,27 @@ describe("WebSocket", () => {
       });
       ws.addEventListener("ping", ({ data }) => {
         expect(data).toBeInstanceOf(Buffer);
+        expect(data).toEqual(Buffer.alloc(0));
+        done();
+      });
+    });
+    // The payload is optional, so an explicit undefined means "no payload" (unlike
+    // send(), whose required argument stringifies undefined to "undefined").
+    test("(explicit undefined)", (ws, done) => {
+      ws.addEventListener("open", () => {
+        ws.ping(undefined);
+      });
+      ws.addEventListener("ping", ({ data }) => {
+        expect(data).toEqual(Buffer.alloc(0));
+        done();
+      });
+    });
+    test('(the string "undefined")', (ws, done) => {
+      ws.addEventListener("open", () => {
+        ws.ping("undefined");
+      });
+      ws.addEventListener("ping", ({ data }) => {
+        expect(data).toEqual(Buffer.from("undefined"));
         done();
       });
     });
@@ -175,6 +196,25 @@ describe("WebSocket", () => {
       });
       ws.addEventListener("pong", ({ data }) => {
         expect(data).toBeInstanceOf(Buffer);
+        expect(data).toEqual(Buffer.alloc(0));
+        done();
+      });
+    });
+    test("(explicit undefined)", (ws, done) => {
+      ws.addEventListener("open", () => {
+        ws.pong(undefined);
+      });
+      ws.addEventListener("pong", ({ data }) => {
+        expect(data).toEqual(Buffer.alloc(0));
+        done();
+      });
+    });
+    test('(the string "undefined")', (ws, done) => {
+      ws.addEventListener("open", () => {
+        ws.pong("undefined");
+      });
+      ws.addEventListener("pong", ({ data }) => {
+        expect(data).toEqual(Buffer.from("undefined"));
         done();
       });
     });

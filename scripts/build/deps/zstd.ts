@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const ZSTD_COMMIT = "f8745da6ff1ad1e7bab384bd1f9d742439278e99";
+export const ZSTD_COMMIT = "f8745da6ff1ad1e7bab384bd1f9d742439278e99";
 
 // prettier-ignore
 const SOURCES = [

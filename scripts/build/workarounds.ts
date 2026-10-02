@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { ZSTD_COMMIT } from "./deps/zstd.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
@@ -115,6 +116,27 @@ export const workarounds: Workaround[] = [
       `In src/spawn_sys/posix_spawn.rs (Attr::set) and src/spawn_sys/spawn_process.rs ` +
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
+  },
+  {
+    id: "zstd-free-workers-before-dictionaries",
+    issue: "https://github.com/oven-sh/bun/issues/44201 (no facebook/zstd issue yet)",
+    description:
+      "ZSTD_freeCCtx() frees the dictionaries of a context before it joins the worker threads, " +
+      "and a job that still runs reads them. patches/zstd/free-workers-before-dictionaries.patch " +
+      "joins first.",
+    applies: () => true,
+    expectedToBeFixed: () => {
+      // No fixed release is known: zstd's dev branch had the same order at
+      // 01b7154f11 (2026-10-01). So every bump of the pin asks for a look.
+      const PATCH_WRITTEN_FOR = "f8745da6ff1ad1e7bab384bd1f9d742439278e99";
+      return ZSTD_COMMIT !== PATCH_WRITTEN_FOR;
+    },
+    cleanup:
+      `Read ZSTD_freeCCtxContent() in lib/compress/zstd_compress.c at the new ZSTD_COMMIT. If it ` +
+      `calls ZSTDMT_freeCCtx() before ZSTD_clearAllDicts(), delete ` +
+      `patches/zstd/free-workers-before-dictionaries.patch, its line in ` +
+      `scripts/build/deps/zstd.ts and this entry. If it does not, set PATCH_WRITTEN_FOR ` +
+      `in this entry to the new commit.`,
   },
 ];
 

@@ -38,10 +38,11 @@ impl crate::table::Packed for ResolvedCall {
 #[derive(Copy, Clone)]
 pub(super) enum Arg {
     Expr(ExprId),
-    /// An element of a tuple that was spread.
-    Type(TypeId),
-    /// `...list`: any number of the first. The second is the list that is spread.
-    Spread(TypeId, TypeId),
+    /// An element of a tuple that was spread, and its label (`tupleNameSource`) or `NONE`.
+    Type(TypeId, Atom),
+    /// `...list`: any number of the first. The second is the list that is spread. The third is the label of the element of a
+    /// spread tuple that it stands for (`tupleNameSource`), or `NONE`.
+    Spread(TypeId, TypeId, Atom),
 }
 
 pub(super) type Args = SmallVec<[Arg; 8]>;
@@ -399,12 +400,12 @@ impl<'p> Checker<'p> {
                 for (&e, f) in elems.iter().zip(flags.iter()) {
                     if f.contains(ElemFlags::VARIADIC) {
                         let element = self.indexed_access(e, TypeId::NUMBER);
-                        push(Arg::Spread(element, e));
+                        push(Arg::Spread(element, e, f.label()));
                     } else if f.contains(ElemFlags::REST) {
                         let list = self.array_of(e);
-                        push(Arg::Spread(e, list));
+                        push(Arg::Spread(e, list, f.label()));
                     } else {
-                        push(Arg::Type(e));
+                        push(Arg::Type(e, f.label()));
                     }
                 }
             }
@@ -416,7 +417,7 @@ impl<'p> Checker<'p> {
                     None if self.is_known(ty) && !self.is_uncertain(file, inner) => TypeId::ANY,
                     None => TypeId::UNRESOLVED,
                 };
-                push(Arg::Spread(element, ty));
+                push(Arg::Spread(element, ty, Atom::NONE));
             }
         }
     }
@@ -507,7 +508,7 @@ impl<'p> Checker<'p> {
                 let ty = self.type_of_expr(file, a);
                 Some(self.widen_literal(ty))
             }
-            Some(&(Arg::Type(ty) | Arg::Spread(ty, _))) => Some(ty),
+            Some(&(Arg::Type(ty, _) | Arg::Spread(ty, ..))) => Some(ty),
             None if own.default.is_some() => None,
             // `undefinedWideningType`
             None => Some(TypeId::UNDEFINED),
@@ -619,7 +620,10 @@ impl<'p> Checker<'p> {
             }
             let type_args = self.types_from_nodes(file, type_args);
             let mut args = Args::new();
-            args.push(Arg::Type(self.global_ref(known::TemplateStringsArray, &[])));
+            args.push(Arg::Type(
+                self.global_ref(known::TemplateStringsArray, &[]),
+                Atom::NONE,
+            ));
             args.extend(hir.ids(exprs).map(Arg::Expr));
             let this_arg = self.this_argument_of_call(file, tag).map(|(obj, _)| obj);
             let is_sure = !self.is_uncertain(file, tag);
@@ -1321,7 +1325,7 @@ impl<'p> Checker<'p> {
         for (i, &arg) in args.iter().enumerate() {
             let e = match arg {
                 Arg::Expr(e) => e,
-                Arg::Type(_) => continue,
+                Arg::Type(..) => continue,
                 Arg::Spread(..) => return,
             };
             if !self.is_context_sensitive(file, e) {
@@ -1567,7 +1571,7 @@ impl<'p> Checker<'p> {
         let mut args: SmallVec<[(Arg, ExprId); 8]> = SmallVec::new();
         if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
             let strings = self.global_ref(known::TemplateStringsArray, &[]);
-            args.push((Arg::Type(strings), call));
+            args.push((Arg::Type(strings, Atom::NONE), call));
         }
         for a in hir.ids(hir[id].args) {
             self.each_effective_arg(file, a, |arg| args.push((arg, a)));
@@ -2208,7 +2212,7 @@ impl<'p> Checker<'p> {
     pub(super) fn arg_type(&mut self, file: FileId, arg: Arg) -> TypeId {
         match arg {
             Arg::Expr(e) => self.type_of_expr(file, e),
-            Arg::Type(t) | Arg::Spread(t, _) => t,
+            Arg::Type(t, _) | Arg::Spread(t, ..) => t,
         }
     }
 
@@ -2241,7 +2245,7 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         let is_const = self.is_const_type_variable(rest, 0);
         // `...x` for `...rest`
-        if let Some(&Arg::Spread(element, list)) = args.last()
+        if let Some(&Arg::Spread(element, list, _)) = args.last()
             && index + 1 >= args.len()
         {
             if self.is_array_like(list) {
@@ -2258,7 +2262,7 @@ impl<'p> Checker<'p> {
         let mut flags: SmallVec<[ElemFlags; 8]> = SmallVec::with_capacity(length);
         for i in index..args.len() {
             let (ty, flag) = match args[i] {
-                Arg::Spread(element, list) => {
+                Arg::Spread(element, list, _) => {
                     if self.is_array_like(list) {
                         (list, ElemFlags::VARIADIC)
                     } else {
@@ -2291,7 +2295,11 @@ impl<'p> Checker<'p> {
                 },
             };
             elems.push(ty);
-            flags.push(flag);
+            // `tupleNameSource`
+            flags.push(match args[i] {
+                Arg::Type(_, label) | Arg::Spread(_, _, label) => flag.with_label(label),
+                _ => flag,
+            });
         }
         // For a `const` type variable it is not to be written to, unless `rest` may be a list that is (`isMutableArrayLikeType`).
         let mut readonly = is_const;
@@ -2485,7 +2493,7 @@ impl<'p> Checker<'p> {
                                 )
                                 && !self.is_deferred_in_first_round(file, e))
                 }
-                Arg::Type(_) => true,
+                Arg::Type(..) => true,
                 Arg::Spread(..) => false,
             };
             if is_plain {
@@ -2678,7 +2686,7 @@ impl<'p> Checker<'p> {
                         || self.has_context_sensitive_right_operand(file, x)
                 }
                 Arg::Spread(..) => true,
-                Arg::Type(_) => false,
+                Arg::Type(..) => false,
             };
             if waits || !self.has_type_variables(param) {
                 continue;
@@ -3396,6 +3404,9 @@ impl<'p> Checker<'p> {
                 && !is_sensitive.contains(&true)
                 && !self.sig_type_params(candidate).is_empty();
             let mut is_generic_function_deferred = false;
+            // A context sensitive function is no type guard where `candidate` asks for one, and what it is expected to be there.
+            let mut is_guard_rejected = false;
+            let mut rejected_guard: Option<(ExprId, TypeId)> = None;
             for (i, &arg) in args.iter().enumerate() {
                 // `isSignatureApplicable` checks the arguments from left to right, without an inference context.
                 if let Arg::Expr(e) = arg
@@ -3406,19 +3417,34 @@ impl<'p> Checker<'p> {
                 if let Arg::Expr(e) = arg
                     && is_sensitive[i]
                 {
-                    // Where a type guard is asked for, only a type guard will do.
-                    if let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
-                        && (!self.has_room_for_literal(file, e, param)
+                    if let Some(param) = self.context_of_arg_at(&params, i, Some(args.len())) {
+                        if !self.has_room_for_literal(file, e, param)
                             || !self.is_any_function_type_related_to(file, e, param, by_subtype)
                             || self.literal_lacks_target_signatures(file, e, param)
-                            || !self.is_guard_if_expected(file, e, param)
-                            // `params` lack what the deferred calls contribute.
-                            || !is_deferred.contains(&true)
-                                && !self.do_annotated_parameters_fit(file, e, param, by_subtype)
-                            || !self.do_plain_members_fit(file, e, param, by_subtype))
-                    {
-                        applicable = false;
-                        break;
+                        {
+                            applicable = false;
+                            break;
+                        }
+                        // Where a type guard is asked for, only a type guard will do. That comes out in the second round: to the
+                        // first the function is `anyFunctionType`.
+                        let is_guard =
+                            is_guard_rejected || self.is_guard_if_expected(file, e, param);
+                        // `params` lack what the deferred calls contribute.
+                        if !is_deferred.contains(&true)
+                            && !self.do_annotated_parameters_fit(file, e, param, by_subtype)
+                            || !self.do_plain_members_fit(file, e, param, by_subtype)
+                        {
+                            applicable = false;
+                            break;
+                        }
+                        if !is_guard {
+                            is_guard_rejected = true;
+                            // The second round goes from left to right, and may not get past another function.
+                            if !is_sensitive[..i].contains(&true) && !self.has_type_variables(param)
+                            {
+                                rejected_guard = Some((e, param));
+                            }
+                        }
                     }
                     continue;
                 }
@@ -3500,6 +3526,14 @@ impl<'p> Checker<'p> {
                 };
             }
             self.resolving.pop();
+            // The second round checks the function with what `candidate` expects of it, which stays its contextual type
+            // (`NodeCheckFlagsContextChecked`), and then finds that it is no type guard.
+            if is_guard_rejected {
+                if applicable && let Some((e, param)) = rejected_guard {
+                    self.set_context(file, e, param);
+                }
+                applicable = false;
+            }
             // The second round of `chooseOverload`: inference and `isSignatureApplicable` under `CheckModeNormal`.
             if applicable && is_generic_function_deferred {
                 let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
@@ -3545,7 +3579,7 @@ impl<'p> Checker<'p> {
         for (i, &arg) in args.iter().enumerate() {
             let e = match arg {
                 Arg::Expr(e) => e,
-                Arg::Type(_) => continue,
+                Arg::Type(..) => continue,
                 Arg::Spread(..) => return 0,
             };
             if self.is_context_sensitive(file, e) || !self.depends_on_context(file, e) {
@@ -4622,8 +4656,8 @@ impl<'p> Checker<'p> {
         // The names in a pattern can be anything, and nothing is inferred from that: only from the shape of it.
         if is_from_pattern {
             for c in &mut from_result.candidates {
-                c.covariant.retain(|t| !t.is_any());
-                c.contravariant.retain(|t| !t.is_any());
+                c.covariant.retain(|t| !self.has_any_flag(*t));
+                c.contravariant.retain(|t| !self.has_any_flag(*t));
             }
         }
         self.mapper_of_result_inference(type_params, &from_result)
@@ -4854,7 +4888,7 @@ impl<'p> Checker<'p> {
             self.bound(file).expr_parent[call.idx()],
             Parent::Decorator(..)
         ) && !args.is_empty()
-            && args.iter().all(|a| matches!(a, Arg::Type(_)));
+            && args.iter().all(|a| matches!(a, Arg::Type(..)));
         // `inferTypeArguments` reads the contextual type of the call first, and the return type of `sig` only if there is one. The order
         // is observable only while that return type is being resolved, when reading it is a circularity. `None`: not read yet.
         let has_no_contextual_type = self.is_resolving_return_type(sig)
@@ -5529,6 +5563,20 @@ impl<'p> Checker<'p> {
             for (i, &arg) in args.iter().enumerate().skip(arg_count) {
                 let Arg::Expr(e) = arg else { continue };
                 if !is_sensitive[i] {
+                    // `getSpreadArgumentType`: `checkExpressionWithContextualType(arg, contextualType, ..)`. Recorded like the
+                    // contextual type of any other argument: the members of an object literal are read after the inference.
+                    if self.is_literal_that_depends_on_context(file, e) {
+                        let element = self.rest_argument_context(
+                            rest,
+                            i - arg_count,
+                            Some(args.len() - arg_count),
+                        );
+                        if self.has_type_variables(element) {
+                            let context =
+                                self.instantiate_with_expected_result(element, return_mapper);
+                            self.set_context(file, e, context);
+                        }
+                    }
                     continue;
                 }
                 if pass == 0 {
@@ -7184,16 +7232,18 @@ impl<'p> Checker<'p> {
     /// `getUniqueTypeParameters`: `own`, with a renamed clone for each type parameter whose name occurs in `inferred` or earlier in
     /// `own`. The mapper of a renamed clone (`cloneTypeParameter`) maps the fresh string literal type of the declared name to the string
     /// literal type of the new name. Instantiation only looks up type parameters, so that entry never reaches a type.
-    /// `clone_mapper` resolves the siblings of a clone with the mapper of the clone, so if one of `own` is renamed, all of them are
-    /// cloned with the same mapper, and those that keep their name only change identity.
+    /// `clone_mapper` resolves the siblings of a clone with the mapper of the clone, so if a type parameter is renamed, its siblings
+    /// (those of the same function with the same mapper) are cloned with the same mapper, and those that keep their name only
+    /// change identity.
     /// `None`: the renamed clones cannot be represented.
     fn unique_type_params(&self, inferred: &[TypeId], own: &[TypeId]) -> Option<Vec<TypeId>> {
         let mut names: Vec<Atom> = inferred
             .iter()
             .filter_map(|&param| self.type_param_name(param))
             .collect();
-        let mut renames: Vec<(TypeId, TypeId)> = Vec::new();
-        for &param in own {
+        // The position in `own`, the declared name, the new name.
+        let mut renames: Vec<(usize, TypeId, TypeId)> = Vec::new();
+        for (position, &param) in own.iter().enumerate() {
             let name = self.type_param_name(param)?;
             if !names.contains(&name) {
                 names.push(name);
@@ -7218,6 +7268,7 @@ impl<'p> Checker<'p> {
             names.push(unique);
             let (_, declaration) = self.type_param_decl(param)?;
             renames.push((
+                position,
                 self.string_literal(declaration.name, true),
                 self.string_literal(unique, false),
             ));
@@ -7225,17 +7276,16 @@ impl<'p> Checker<'p> {
         if renames.is_empty() {
             return Some(own.to_vec());
         }
-        let mut unique = Vec::with_capacity(own.len());
-        for (i, &param) in own.iter().enumerate() {
+        // The entries are keyed by declared name, so only siblings share them. Only the type parameters of a function know their
+        // siblings (`clone_mapper`).
+        let mut sibling_sets: Vec<(FileId, crate::bind::ScopeId, MapperId)> =
+            Vec::with_capacity(own.len());
+        for &param in own {
             let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
                 return None;
             };
-            // The entries are keyed by declared name, so two clones of one declaration would collapse into one type parameter. Only
-            // the type parameters of a function know their siblings (`clone_mapper`).
-            let is_declared_twice = own[..i].iter().any(|&other| matches!(*self.data(other), TypeData::TypeParam(f, t, _) if (f, t) == (file, tp)));
             let scope = self.bound(file).type_param_scope[tp.idx()];
-            if is_declared_twice
-                || scope.is_none()
+            if scope.is_none()
                 || !matches!(
                     self.bound(file).scopes[scope.idx()].kind,
                     crate::bind::ScopeKind::Fn(_)
@@ -7243,9 +7293,25 @@ impl<'p> Checker<'p> {
             {
                 return None;
             }
+            sibling_sets.push((file, scope, around));
+        }
+        let mut unique = Vec::with_capacity(own.len());
+        for (i, &param) in own.iter().enumerate() {
+            let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+                return None;
+            };
+            let renames_of_siblings: SmallVec<[(TypeId, TypeId); 4]> = renames
+                .iter()
+                .filter(|rename| sibling_sets[rename.0] == sibling_sets[i])
+                .map(|rename| (rename.1, rename.2))
+                .collect();
+            if renames_of_siblings.is_empty() {
+                unique.push(param);
+                continue;
+            }
             let mut pairs = self.p.types.mapping(around).to_vec();
-            pairs.retain(|pair| !renames.iter().any(|rename| rename.0 == pair.0));
-            pairs.extend(renames.iter().copied());
+            pairs.retain(|pair| !renames_of_siblings.iter().any(|rename| rename.0 == pair.0));
+            pairs.extend(renames_of_siblings.iter().copied());
             unique.push(self.cloned_type_param(file, tp, self.p.types.mapper(pairs)));
         }
         Some(unique)
@@ -9298,6 +9364,14 @@ impl<'p> Checker<'p> {
                 self.has_effective_rest_parameter(&params) || self.parameter_count(&params) >= asked
             });
         }
+        // `getIntersectedSignatures`
+        if function.is_some()
+            && sigs.len() > 1
+            && !self.p.files.options.no_implicit_any
+            && !self.is_union(non_null)
+        {
+            sigs.clear();
+        }
         // What the signatures nothing is settled for take.
         let mut open: Vec<TypeId> = Vec::new();
         if sigs.is_empty() {
@@ -9550,7 +9624,7 @@ impl<'p> Checker<'p> {
         }
         // `resolveUntypedCall`, `resolveErrorCall`: what anything comes of has no parameters.
         let Some(sig) = resolved.sig else {
-            return (resolved.ret.is_any()).then_some(TypeId::ANY);
+            return (self.has_any_flag(resolved.ret)).then_some(TypeId::ANY);
         };
         let params = self.sig_params(sig);
         // `getTypeAtPosition`: where there is no parameter anything is expected.

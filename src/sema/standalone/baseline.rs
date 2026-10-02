@@ -967,6 +967,8 @@ pub struct Setup<'a> {
     pub out: Option<&'a str>,
     /// Where to write the type at every expression and name of every test, if anywhere: to compare with `.types` baselines.
     pub types_out: Option<&'a str>,
+    /// The same for the symbol at every name: to compare with `.symbols` baselines. Needs `types_out`.
+    pub symbols_out: Option<&'a str>,
     pub threads: usize,
 }
 
@@ -1016,6 +1018,7 @@ fn run_one(
     settings: &BTreeMap<String, String>,
     has_baselines: bool,
     types: Option<&Mutex<String>>,
+    symbols: Option<&Mutex<String>>,
 ) -> Option<(Report, Vec<(String, Vec<u8>)>)> {
     let Parsed { mut units, links } = units_of(code, path);
     let cwd = absolute(
@@ -1204,6 +1207,21 @@ fn run_one(
             ));
         }
         types.lock().unwrap().push_str(&lines);
+        let Some(symbols) = symbols else { return };
+        let mut lines = String::new();
+        for found in checker.symbols_at_locations(file) {
+            let (start, end) = (found.start as usize, (found.end as usize).min(text.len()));
+            if start >= end {
+                continue;
+            }
+            let line = starts.partition_point(|&s| s <= start) - 1;
+            let source = String::from_utf8_lossy(&text[start..end]).replace(['\r', '\n'], "");
+            lines.push_str(&format!(
+                "{unit}\t{line}\t{start}\t{source}\t{}\tsymbol\n",
+                found.symbol_text
+            ));
+        }
+        symbols.lock().unwrap().push_str(&lines);
     };
     let request = Request {
         compiler_options: &[],
@@ -1317,18 +1335,40 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                         };
                         let name = format!("{}/{configured}", suite.name);
                         let types = setup.types_out.map(|_| Mutex::new(String::new()));
+                        let symbols = setup.symbols_out.map(|_| Mutex::new(String::new()));
                         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            run_one(setup, path, &code, &settings, has_baselines, types.as_ref())
+                            run_one(
+                                setup,
+                                path,
+                                &code,
+                                &settings,
+                                has_baselines,
+                                types.as_ref(),
+                                symbols.as_ref(),
+                            )
                         }));
-                        if let (Some(out), Some(types), Ok(Some(_))) =
-                            (setup.types_out, types, &ran)
+                        if let (Some(out), Some(symbols), Ok(Some(_))) =
+                            (setup.symbols_out, symbols, &ran)
                         {
                             let dir = format!("{out}/{}", suite.name);
                             let _ = std::fs::create_dir_all(&dir);
                             let _ = std::fs::write(
                                 format!("{dir}/{configured}.tsv"),
-                                types.into_inner().unwrap(),
+                                symbols.into_inner().unwrap(),
                             );
+                        }
+                        if let (Some(out), Some(types), Ok(Some((report, _)))) =
+                            (setup.types_out, types, &ran)
+                        {
+                            let mut lines = types.into_inner().unwrap();
+                            // `typeWriterWalker.hadErrorBaseline`: the error type goes by its intrinsic name only in a test without errors.
+                            if !report.diagnostics.is_empty() {
+                                lines =
+                                    lines.replace("\terror\terror-type\n", "\tany\terror-type\n");
+                            }
+                            let dir = format!("{out}/{}", suite.name);
+                            let _ = std::fs::create_dir_all(&dir);
+                            let _ = std::fs::write(format!("{dir}/{configured}.tsv"), lines);
                         }
                         let outcome = match ran {
                             Err(_) => Outcome {

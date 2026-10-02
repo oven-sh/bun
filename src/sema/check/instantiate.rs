@@ -398,7 +398,11 @@ impl<'p> Checker<'p> {
                 // here, and a tuple type argument instantiates to `any` only as the error type.
                 if self.p.types.mapping(*own).iter().any(|before| {
                     self.is_tuple(before.1)
-                        && self.p.types.map(new, before.0).is_some_and(TypeId::is_any)
+                        && self
+                            .p
+                            .types
+                            .map(new, before.0)
+                            .is_some_and(|ty| self.has_any_flag(ty))
                 }) {
                     return TypeId::ANY;
                 }

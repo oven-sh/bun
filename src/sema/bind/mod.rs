@@ -6,6 +6,7 @@ mod binder;
 use crate::atom::{Atom, Interner, known};
 use crate::hir::*;
 use crate::util::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 
 macro_rules! define_id {
     ($($name:ident),*) => {$(
@@ -607,6 +608,9 @@ pub struct Bound {
     pub pat_parent: Vec<PatParent>,
     pub pat_symbol: Vec<SymbolId>,
     pub prop_owner: Vec<ExprId>,
+    /// `symbol.Declarations` of the members of object literals and the JSX attributes whose symbol has more than one declaration, by
+    /// each of them. See `declarations_of_literal_member`.
+    pub literal_member_declarations: FxHashMap<PropId, SmallVec<[PropId; 2]>>,
     pub member_owner: Vec<MemberOwner>,
     pub param_fn: Vec<FnId>,
     pub type_param_symbol: Vec<SymbolId>,
@@ -692,6 +696,14 @@ pub struct Bound {
 pub const UNREACHABLE: FlowId = FlowId(0);
 
 impl Bound {
+    /// `symbol.Declarations` of the symbol of `p`, a member of an object literal or a JSX attribute.
+    pub fn declarations_of_literal_member(&self, p: PropId) -> SmallVec<[PropId; 2]> {
+        match self.literal_member_declarations.get(&p) {
+            Some(declarations) => declarations.clone(),
+            None => smallvec::smallvec![p],
+        }
+    }
+
     /// `IsInTypeQuery`: it is asked what `e` is, but `e` is not read.
     pub fn is_in_type_query(&self, e: ExprId) -> bool {
         self.type_query_operands.binary_search(&e).is_ok()

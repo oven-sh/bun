@@ -921,7 +921,7 @@ impl Checker<'_> {
             }
             // What is refused is `any`.
             let whole = self.type_of_expr(file, ExprId(i as u32));
-            if !self.is_tuple(whole) && !whole.is_any() {
+            if !self.is_tuple(whole) && !self.has_any_flag(whole) {
                 continue;
             }
             let mut count = 0;
@@ -965,7 +965,10 @@ impl Checker<'_> {
             // `getUnionTypeWorker` returns the error type for a union that `removeSubtypes` refuses, so the literal is `any[]`.
             // This call also caches the types of the elements.
             let ty = self.type_of_expr(file, e);
-            if !self.array_element(ty).is_some_and(TypeId::is_any) {
+            if !self
+                .array_element(ty)
+                .is_some_and(|ty| self.has_any_flag(ty))
+            {
                 continue;
             }
             // The cached type does not record the refusal. Build the union again to observe it.
@@ -2716,7 +2719,7 @@ impl Checker<'_> {
             }
             // `checkIndexedAccessIndexType` is given the flow type of every element access, generic key or not, before the optional
             // chain adds `undefined`. It returns the error type for an index it refuses, so `checked` is `any` then.
-            let whole = if chain == Chain::No && !checked.is_any() {
+            let whole = if chain == Chain::No && !self.has_any_flag(checked) {
                 checked
             } else {
                 self.type_of_element_access_unchecked(file, e).0

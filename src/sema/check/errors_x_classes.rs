@@ -292,10 +292,13 @@ impl Checker<'_> {
             return ClassBase::Unknown;
         }
         // `isConstructorType`
-        if !constructor.is_any() && self.signatures(apparent, true).is_empty() {
+        if !self.has_any_flag(constructor) && self.signatures(apparent, true).is_empty() {
             return nothing;
         }
-        if !(self.is_object_type(apparent) || self.is_intersection(apparent) || apparent.is_any()) {
+        if !(self.is_object_type(apparent)
+            || self.is_intersection(apparent)
+            || self.has_any_flag(apparent))
+        {
             return nothing;
         }
         let args = self.types_from_nodes(file, class.extends_args);
@@ -327,7 +330,7 @@ impl Checker<'_> {
                     self.type_reference(target, &args)
                 }
             }
-            _ if apparent.is_any() => TypeId::ANY,
+            _ if self.has_any_flag(apparent) => TypeId::ANY,
             _ => {
                 let Some(list) = self.base_constructor_returns(apparent, &args) else {
                     return ClassBase::Unknown;
@@ -365,7 +368,7 @@ impl Checker<'_> {
         }
         // What is like a class without being one has to make the same thing whichever way it is called. An `any` that comes first
         // may stand for what is in error, and then nothing is extended.
-        if base_class.is_none() && !self.is_type_variable(constructor) && !base.is_any() {
+        if base_class.is_none() && !self.is_type_variable(constructor) && !self.has_any_flag(base) {
             let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
             let mut all_the_same = true;
             for &returned in &returns {
@@ -385,28 +388,6 @@ impl Checker<'_> {
             }
         }
         ClassBase::Is { constructor, base }
-    }
-
-    /// Whether `e` starts with a name that stands for nothing, no value going by it or the module it is imported from not being
-    /// there. What is in error stays so through `.`, `[]` and calls.
-    fn is_rooted_in_error(&self, file: FileId, mut e: ExprId) -> bool {
-        let hir = self.hir(file);
-        loop {
-            e = match hir[e].kind {
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                ExprKind::Call(call) => hir[call].callee,
-                ExprKind::NonNull(inner) => inner,
-                ExprKind::Ident(name) => {
-                    return !matches!(
-                        name,
-                        known::undefined | known::arguments | known::globalThis
-                    ) && self
-                        .symbol_of_identifier(file, e, name)
-                        .is_none_or(|named| self.is_alias_in_error(named));
-                }
-                _ => return false,
-            };
-        }
     }
 
     /// Whether `class` is declared inside something that has type parameters: `getOuterTypeParametersOfClassOrInterface`.
@@ -550,7 +531,12 @@ impl Checker<'_> {
         if !self.is_known(param.ty) {
             return None;
         }
-        Some(param.ty.is_any() || self.array_element(param.ty).is_some_and(TypeId::is_any))
+        Some(
+            self.has_any_flag(param.ty)
+                || self
+                    .array_element(param.ty)
+                    .is_some_and(|ty| self.has_any_flag(ty)),
+        )
     }
 
     /// 2545 2797: a class that extends a value whose type is a type variable. Its static side is `typeof C & T`, whose construct
@@ -707,7 +693,7 @@ impl Checker<'_> {
                 parts.iter().all(|&part| self.is_valid_base_type(part))
             }
             _ => {
-                (self.is_object_type(ty) || ty == TypeId::OBJECT || ty.is_any())
+                (self.is_object_type(ty) || ty == TypeId::OBJECT || self.has_any_flag(ty))
                     && !self.is_generic_mapped_base(ty)
             }
         }
@@ -923,7 +909,7 @@ impl Checker<'_> {
         };
         // What a constructor that is not `any` itself makes, and in JavaScript every `any`, may be the error type, and then nothing
         // is extended: 4112, not 4113.
-        if base.is_any() && (is_js || !constructor.is_any()) {
+        if self.has_any_flag(base) && (is_js || !self.has_any_flag(constructor)) {
             return;
         }
         // A name that is only known when the program runs is the name of no property that could be looked up.
@@ -1208,7 +1194,7 @@ impl Checker<'_> {
                                 // a reference to the class does not keep. `base_types` knows nothing of mixin constructors.
                                 ClassBase::Is { constructor, base } => {
                                     if self.has_type_variables_except_this(f, c, constructor)
-                                        || !base.is_any() && !bases.contains(&base)
+                                        || !self.has_any_flag(base) && !bases.contains(&base)
                                     {
                                         return false;
                                     }

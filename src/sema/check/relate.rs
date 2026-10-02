@@ -1035,7 +1035,7 @@ impl<'p> Checker<'p> {
         {
             return true;
         }
-        if t == TypeId::UNKNOWN && !(relation == Relation::StrictSubtype && s.is_any()) {
+        if t == TypeId::UNKNOWN && !(relation == Relation::StrictSubtype && self.has_any_flag(s)) {
             return true;
         }
         if t == TypeId::NEVER {
@@ -1151,7 +1151,7 @@ impl<'p> Checker<'p> {
             return true;
         }
         if relation.is_lenient() {
-            if s.is_any() {
+            if self.has_any_flag(s) {
                 return true;
             }
             // So that enums can be used as bit flags.
@@ -1614,17 +1614,17 @@ impl<'p> Checker<'p> {
         let (check, extends) = (self.cond_check(t), self.cond_extends(t));
         let (yes, no) = (self.cond_true(t), self.cond_false(t));
         if no == TypeId::NEVER && yes == check {
-            if check.is_any() || self.related(check, extends, Relation::Restrictive) {
+            if self.has_any_flag(check) || self.related(check, extends, Relation::Restrictive) {
                 return self.simplified(yes, writing);
             }
             if self.intersection(&[check, extends]) == TypeId::NEVER {
                 return TypeId::NEVER;
             }
         } else if yes == TypeId::NEVER && no == check {
-            if !check.is_any() && self.related(check, extends, Relation::Restrictive) {
+            if !self.has_any_flag(check) && self.related(check, extends, Relation::Restrictive) {
                 return TypeId::NEVER;
             }
-            if check.is_any() || self.intersection(&[check, extends]) == TypeId::NEVER {
+            if self.has_any_flag(check) || self.intersection(&[check, extends]) == TypeId::NEVER {
                 return self.simplified(no, writing);
             }
         }
@@ -5416,7 +5416,7 @@ impl<'p> Checker<'p> {
             return Some(object);
         }
         // `any` and `never` are assignable to the key type of every index signature. Where there is none they index to themselves.
-        let fits_every_key = key.is_any() || key == TypeId::NEVER;
+        let fits_every_key = self.has_any_flag(key) || key == TypeId::NEVER;
         let members = match objects {
             [one] => {
                 let apparent = self.apparent_type(*one);
@@ -5488,7 +5488,7 @@ impl<'p> Checker<'p> {
         if value.is_none() && self.is_symbol_like(key) {
             value = self.applicable_index_info(&members, TypeId::STRING, None);
         }
-        value.or_else(|| (key == TypeId::NEVER || key.is_any()).then_some(key))
+        value.or_else(|| (key == TypeId::NEVER || self.has_any_flag(key)).then_some(key))
     }
 
     /// `typeArgumentsRelatedTo`
@@ -5977,7 +5977,7 @@ impl<'p> Checker<'p> {
         }
         // `isPropertySymbolTypeRelated`
         let wanted = self.type_of_prop_as_read(target_prop, target_mapper);
-        let related = if wanted.is_any()
+        let related = if self.has_any_flag(wanted)
             || wanted == TypeId::UNRESOLVED
             || wanted == TypeId::UNKNOWN && r.relation != Relation::StrictSubtype
         {
@@ -6445,11 +6445,11 @@ impl<'p> Checker<'p> {
             return false;
         }
         let rest = self.array_element(only.ty).unwrap_or(only.ty);
-        if !rest.is_any() && rest != TypeId::NEVER {
+        if !self.has_any_flag(rest) && rest != TypeId::NEVER {
             return false;
         }
         let ret = self.sig_return(sig);
-        ret.is_any() || ret == TypeId::UNKNOWN
+        self.has_any_flag(ret) || ret == TypeId::UNKNOWN
     }
 
     /// `isInstantiatedGenericParameter`

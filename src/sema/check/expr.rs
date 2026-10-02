@@ -34,7 +34,7 @@ impl<'p> Checker<'p> {
         self.prepare_enclosing(file, e);
         let ty = self.type_of_expr(file, e);
         // `getTypeOfExpression`: the quick type comes first. It says something else only of a `new` that is refused.
-        if ty.is_any() {
+        if self.has_any_flag(ty) {
             self.quick_type_of_expr(file, e).unwrap_or(ty)
         } else {
             ty
@@ -1421,54 +1421,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getESSymbolLikeTypeForNode(WalkUpParenthesizedExpressions(e.Parent))`: the `unique symbol` of the declaration that `e`
-    /// initializes, or `symbol` if that is not one that has its own (`isValidESSymbolDeclaration`).
-    fn get_es_symbol_like_type_for_initializer(&mut self, file: FileId, e: ExprId) -> TypeId {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let says_unique_symbol =
-            |ty: TypeNodeId| ty.is_some() && matches!(hir[ty].kind, TypeNodeKind::UniqueSymbol);
-        match bound.expr_parent[e.idx()] {
-            Parent::VarInit(d) => {
-                let decl = &hir[d];
-                let stmt = bound.var_stmt[d.idx()];
-                if let PatKind::Ident(name) = hir[decl.pat].kind
-                    && decl.kind == VarKind::Const
-                    && stmt.is_some()
-                    && matches!(hir[stmt].kind, StmtKind::Var(_))
-                    && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent)
-                        if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt))
-                {
-                    let id = if says_unique_symbol(decl.ty) {
-                        decl.ty.0
-                    } else {
-                        e.0 | 1 << 31
-                    };
-                    return self.intern(TypeData::UniqueSymbol { file, id, name });
-                }
-                TypeId::SYMBOL
-            }
-            Parent::MemberInit(m) => {
-                let member = &hir[m];
-                if let Some(name) = member.key.name()
-                    && member.kind == MemberKind::Property
-                    && member.flags.contains(Flags::STATIC | Flags::READONLY)
-                    && matches!(bound.member_owner[m.idx()], MemberOwner::Class(_))
-                {
-                    if says_unique_symbol(member.ty) {
-                        return self.type_of_member_declarations(&[(file, m)]);
-                    }
-                    return self.intern(TypeData::UniqueSymbol {
-                        file,
-                        id: e.0 | 1 << 31,
-                        name,
-                    });
-                }
-                TypeId::SYMBOL
-            }
-            _ => TypeId::SYMBOL,
-        }
-    }
-
     /// The type of `a.b`, `a[b]` or `a()` when it is got to, and whether an optional chain it is part of may stop before.
     fn type_of_link(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let hir = self.hir(file);
@@ -1509,15 +1461,7 @@ impl<'p> Checker<'p> {
                 if self.is_symbol_like(resolved.ret) && self.is_symbol_or_symbol_for_call(file, e) {
                     return (self.get_es_symbol_like_type_for_node(file, e), stops);
                 }
-                // `checkCallExpression`: a call of the global `Symbol` has the `unique symbol` of the declaration it initializes.
-                let ret = if resolved.ret == TypeId::SYMBOL
-                    && self.is_symbol_or_symbol_for_call(file, e)
-                {
-                    self.get_es_symbol_like_type_for_initializer(file, e)
-                } else {
-                    resolved.ret
-                };
-                (ret, stops)
+                (resolved.ret, stops)
             }
             // `checkNonNullChain`: what the link before can be by itself goes, that the chain may have stopped stays.
             ExprKind::NonNull(x) if self.is_in_optional_chain(file, x) => {
@@ -1813,20 +1757,6 @@ impl<'p> Checker<'p> {
     }
 
     // ───────────────────────────── names ─────────────────────────────
-
-    /// `isErrorType`, of the expression `e`: a name that is nowhere to be found, or what the parser made up where nothing is written.
-    pub(super) fn is_in_error(&self, file: FileId, e: ExprId) -> bool {
-        match self.hir(file)[e].kind {
-            ExprKind::Missing => true,
-            ExprKind::Ident(name) => {
-                !matches!(
-                    name,
-                    known::undefined | known::arguments | known::globalThis
-                ) && self.symbol_of_identifier(file, e, name).is_none()
-            }
-            _ => false,
-        }
-    }
 
     /// `isCommonJSRequire`: `require("m")` in JavaScript, where `require` is nothing the program defines itself.
     pub(super) fn is_commonjs_require(&self, file: FileId, e: ExprId) -> bool {
@@ -2711,7 +2641,11 @@ impl<'p> Checker<'p> {
             let Some(expected) = self.contextual_type(file, e) else {
                 continue;
             };
-            let resolved = self.settled_by_enclosing_call(file, e, expected);
+            // `getContextualTypeForArgumentAtIndex` starts from the resolved signature, not from what was pushed.
+            let resolved = match self.contextual_type_from_resolved_signature(file, e) {
+                Some(resolved) => resolved,
+                None => self.settled_by_enclosing_call(file, e, expected),
+            };
             if resolved != expected {
                 self.check_literal_in_resolved_context(
                     file,
@@ -3054,7 +2988,7 @@ impl<'p> Checker<'p> {
                     Some(&sig) => self.sig_return(sig),
                     None => TypeId::NEVER,
                 };
-                let is_left_out = instance.is_any()
+                let is_left_out = self.has_any_flag(instance)
                     || instance == TypeId::OBJECT
                     || matches!(self.data(instance), TypeData::TypeParam(..));
                 if is_left_out && self.is_valid_base_type(instance) {
@@ -3393,7 +3327,7 @@ impl<'p> Checker<'p> {
             let (source, flags) = match prop.kind {
                 PropKind::Getter => (p, PropFlags::empty()),
                 PropKind::Setter => {
-                    match self.accessor_of_literal(file, props, name, PropKind::Getter) {
+                    match self.accessor_of_literal(file, props, p, name, PropKind::Getter) {
                         Some(getter) => (getter, PropFlags::empty()),
                         None => (p, PropFlags::WRITE_ONLY),
                     }
@@ -3545,10 +3479,18 @@ impl<'p> Checker<'p> {
         &mut self,
         file: FileId,
         props: Span<PropId>,
+        p: PropId,
         name: Atom,
         kind: PropKind,
     ) -> Option<PropId> {
         let hir = self.hir(file);
+        if matches!(hir[p].key, PropKey::Name(_)) {
+            return self
+                .bound(file)
+                .declarations_of_literal_member(p)
+                .into_iter()
+                .find(|&q| hir[q].kind == kind);
+        }
         props
             .iter()
             .find(|&q| hir[q].kind == kind && self.member_name(file, hir[q].key) == Some(name))
@@ -3641,7 +3583,7 @@ impl<'p> Checker<'p> {
                     // A getter and a setter are one property, and the getter says what it is.
                     if prop.kind == PropKind::Setter
                         && let Some(getter) =
-                            self.accessor_of_literal(file, props, name, PropKind::Getter)
+                            self.accessor_of_literal(file, props, p, name, PropKind::Getter)
                     {
                         source = getter;
                     }
@@ -3736,7 +3678,7 @@ impl<'p> Checker<'p> {
                     flags |= PropFlags::ACCESSOR;
                     // `isReadonlySymbol`: an accessor nothing sets.
                     if self
-                        .accessor_of_literal(file, props, name, PropKind::Setter)
+                        .accessor_of_literal(file, props, p, name, PropKind::Setter)
                         .is_none()
                     {
                         flags |= PropFlags::READONLY;
@@ -3746,7 +3688,7 @@ impl<'p> Checker<'p> {
                     flags |= PropFlags::ACCESSOR;
                     // `getSpreadSymbol`: one nothing gets, of which a copy holds `undefined`.
                     if self
-                        .accessor_of_literal(file, props, name, PropKind::Getter)
+                        .accessor_of_literal(file, props, p, name, PropKind::Getter)
                         .is_none()
                     {
                         flags |= PropFlags::WRITE_ONLY;
@@ -3793,7 +3735,7 @@ impl<'p> Checker<'p> {
                     }
                     // `declareSymbolEx` refuses a method next to an accessor: the last member of the name is the property.
                     if let Some(getter) =
-                        self.accessor_of_literal(file, props, name, PropKind::Getter)
+                        self.accessor_of_literal(file, props, p, name, PropKind::Getter)
                     {
                         source = getter;
                     }

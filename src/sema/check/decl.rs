@@ -893,7 +893,7 @@ impl<'p> Checker<'p> {
         }
         let mut constraint = self.type_from_node(of, node);
         // To extend `any` is to extend nothing in particular. What a mapped type ranges over are keys all the same.
-        if constraint.is_any() && !self.may_be_error_type(of, node, 0) {
+        if self.has_any_flag(constraint) && !self.may_be_error_type(of, node, 0) {
             constraint = if self.hir(of).mapped.iter().any(|m| m.param == written) {
                 self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL])
             } else {
@@ -1094,7 +1094,10 @@ impl<'p> Checker<'p> {
                     .type_flags_of_symbol(sym)
                     .contains(SymFlags::TYPE_ALIAS)
                 {
-                    return self.type_from_node(file, node).is_any();
+                    return {
+                        let ty = self.type_from_node(file, node);
+                        self.has_any_flag(ty)
+                    };
                 }
                 let (least, most) = self.type_argument_arity(sym);
                 if args.len() < least || args.len() > most {
@@ -1134,7 +1137,10 @@ impl<'p> Checker<'p> {
     /// The same of what is made of `nodes`: those that come to `any` themselves are where it has it from.
     fn any_may_be_error_type(&mut self, file: FileId, nodes: &[TypeNodeId], depth: u32) -> bool {
         nodes.iter().any(|&t| {
-            self.type_from_node(file, t).is_any() && self.may_be_error_type(file, t, depth)
+            ({
+                let ty = self.type_from_node(file, t);
+                self.has_any_flag(ty)
+            }) && self.may_be_error_type(file, t, depth)
         })
     }
 
@@ -1188,7 +1194,10 @@ impl<'p> Checker<'p> {
                     .type_flags_of_symbol(sym)
                     .contains(SymFlags::TYPE_ALIAS)
                 {
-                    return self.type_from_node(file, node).is_any();
+                    return {
+                        let ty = self.type_from_node(file, node);
+                        self.has_any_flag(ty)
+                    };
                 }
                 let (least, most) = self.type_argument_arity(sym);
                 if args.len() < least || args.len() > most {
@@ -1226,7 +1235,10 @@ impl<'p> Checker<'p> {
         depth: u32,
     ) -> bool {
         nodes.iter().any(|&t| {
-            self.type_from_node(file, t).is_any() && self.is_error_type_as_written(file, t, depth)
+            ({
+                let ty = self.type_from_node(file, t);
+                self.has_any_flag(ty)
+            }) && self.is_error_type_as_written(file, t, depth)
         })
     }
 
@@ -1251,8 +1263,10 @@ impl<'p> Checker<'p> {
             | TypeNodeKind::Typeof { .. } => self.is_error_type_as_written(file, node, depth),
             // `getIndexedAccessTypeOrUndefined`: whatever is looked up in `any` is that `any`.
             TypeNodeKind::IndexedAccess { obj, .. } => {
-                self.type_from_node(file, obj).is_any()
-                    && self.is_error_type_itself_as_written(file, obj, depth + 1)
+                ({
+                    let ty = self.type_from_node(file, obj);
+                    self.has_any_flag(ty)
+                }) && self.is_error_type_itself_as_written(file, obj, depth + 1)
             }
             TypeNodeKind::Ref { name, args } => {
                 if self.intended_type_of_jsdoc_reference(file, node).is_some() {
@@ -1309,16 +1323,18 @@ impl<'p> Checker<'p> {
                 };
                 let is_itself = |c: &mut Self, n: TypeNodeId| {
                     let (f, n) = written_for(c, n);
-                    c.type_from_node(f, n).is_any()
-                        && c.is_error_type_itself_as_written(f, n, depth + 1)
+                    let ty = c.type_from_node(f, n);
+                    c.has_any_flag(ty) && c.is_error_type_itself_as_written(f, n, depth + 1)
                 };
                 match self.hir(of)[alias.ty].kind {
                     TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
                         let types: Vec<TypeNodeId> = self.hir(of).ids(types).collect();
                         types.into_iter().any(|t| {
                             let (f, n) = written_for(self, t);
-                            self.type_from_node(f, n).is_any()
-                                && self.is_error_type_as_written(f, n, depth + 1)
+                            ({
+                                let ty = self.type_from_node(f, n);
+                                self.has_any_flag(ty)
+                            }) && self.is_error_type_as_written(f, n, depth + 1)
                         })
                     }
                     // `getConditionalType`
@@ -1368,7 +1384,7 @@ impl<'p> Checker<'p> {
             return false;
         };
         i < args.len()
-            && given.get(i).is_some_and(|given| given.is_any())
+            && given.get(i).is_some_and(|&given| self.has_any_flag(given))
             && self.is_error_type_as_written(file, hir.id_at(args, i), 0)
     }
 
@@ -2290,6 +2306,13 @@ impl<'p> Checker<'p> {
                 {
                     return inner;
                 }
+                // `isReadonlyTypeOperator(node.Parent)`: not through parentheses or the `!` of a JSDoc type, of which no node is kept.
+                if !hir.text.is_empty()
+                    && self.skip_trivia_from(file, hir[node].pos + b"readonly".len() as u32)
+                        != hir[operand].pos
+                {
+                    return inner;
+                }
                 let made_before = self.p.types.len();
                 let ty = match self.data(inner) {
                     TypeData::Tuple { elems, flags, .. } => self.tuple(elems, flags, true),
@@ -2653,12 +2676,13 @@ impl<'p> Checker<'p> {
                     return intended;
                 }
                 let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
-                // A name nothing goes by is an error, and what is in error can be anything.
+                // `resolveTypeReferenceName`: `getUnresolvedSymbolForEntityName`
                 let Some(found) = self
                     .files()
                     .resolve_entity(file, scope, &names, SymFlags::TYPE)
                 else {
-                    return TypeId::ANY;
+                    let args = self.types_from_nodes(file, args);
+                    return self.unresolved_name_type(&names, &args);
                 };
                 // `getIntendedTypeFromJSDocTypeReference`
                 if self.is_jsdoc_object_with_arguments(file, node) {
@@ -2675,7 +2699,8 @@ impl<'p> Checker<'p> {
                             file, node, scope, found,
                         ))
                 {
-                    return TypeId::ANY;
+                    let args = self.types_from_nodes(file, args);
+                    return self.unresolved_name_type(&names, &args);
                 }
                 // `resolveEntityName`: an alias is followed as far as the first symbol that is a type.
                 let target = self.files().resolve_alias_as(found, SymFlags::TYPE);
@@ -2689,29 +2714,31 @@ impl<'p> Checker<'p> {
                         let Some(outer) =
                             self.resolve_type_name_beyond(file, scope, names[0], found)
                         else {
-                            return TypeId::ANY;
+                            let args = self.types_from_nodes(file, args);
+                            return self.unresolved_name_type(&names, &args);
                         };
                         let Some(sym) = self.files().resolve_alias_as(outer, SymFlags::TYPE) else {
-                            return if self.is_alias_in_error(outer) {
-                                TypeId::ANY
-                            } else {
-                                TypeId::UNRESOLVED
-                            };
+                            if !self.is_alias_in_error(outer) {
+                                return TypeId::UNRESOLVED;
+                            }
+                            let args = self.types_from_nodes(file, args);
+                            return self.unresolved_name_type(&names, &args);
                         };
                         sym
                     }
                     None => {
-                        return if self.is_alias_in_error(found) {
-                            TypeId::ANY
-                        } else {
-                            TypeId::UNRESOLVED
-                        };
+                        if !self.is_alias_in_error(found) {
+                            return TypeId::UNRESOLVED;
+                        }
+                        let args = self.types_from_nodes(file, args);
+                        return self.unresolved_name_type(&names, &args);
                     }
                 };
                 // `getSymbol`: what is no type is not found where one is looked for.
                 let flags = self.type_flags_of_symbol(sym);
                 if !flags.intersects(SymFlags::TYPE) {
-                    return TypeId::ANY;
+                    let args = self.types_from_nodes(file, args);
+                    return self.unresolved_name_type(&names, &args);
                 }
                 let is_class_or_interface = flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
                 let (least, most) = self.type_argument_arity(sym);
@@ -2719,7 +2746,7 @@ impl<'p> Checker<'p> {
                 // arguments. Everywhere else the wrong number gives the error type.
                 let is_js_reference = hir.is_js && is_class_or_interface && most != 0;
                 if !is_js_reference && (args.len() < least || args.len() > most) {
-                    return TypeId::ANY;
+                    return TypeId::ERROR;
                 }
                 let is_deferred = is_class_or_interface
                     && most != 0
@@ -2764,16 +2791,16 @@ impl<'p> Checker<'p> {
                 }
                 if !is_class_or_interface
                     && flags.contains(SymFlags::TYPE_ALIAS)
-                    && args.iter().any(|arg| arg.is_any())
+                    && args.iter().any(|&arg| self.has_any_flag(arg))
                     && self.is_mapped_over_error_type(file, node, sym, flags, &args)
                 {
                     return TypeId::ANY;
                 }
                 // `getConditionalType`: `errorType` if the check type or the extends type is `errorType` itself.
                 if !is_class_or_interface
-                    && !ty.is_any()
+                    && !self.has_any_flag(ty)
                     && flags.contains(SymFlags::TYPE_ALIAS)
-                    && args.iter().any(|arg| arg.is_any())
+                    && args.iter().any(|&arg| self.has_any_flag(arg))
                     && self.is_error_type_itself_as_written(file, node, 0)
                 {
                     return TypeId::ANY;

@@ -21,7 +21,7 @@ use crate::util::FxHashSet;
 
 /// A node of the tree, as far as an error is reported on it or the way up from it is gone.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Node {
+pub(super) enum Node {
     /// An expression itself, whatever parentheses it is in.
     Expr(ExprId),
     /// An expression with the parentheses around it, which it has.
@@ -48,7 +48,7 @@ enum Node {
 }
 
 /// `PseudoType`
-enum Pseudo {
+pub(super) enum Pseudo {
     Direct(TypeNodeId),
     Inferred {
         of: Node,
@@ -81,19 +81,19 @@ enum Pseudo {
 }
 
 /// `PseudoParameter`. A leading `this` is none: its type is written, and is gone over where the others are written.
-struct PseudoParam {
-    param: ParamId,
-    is_optional: bool,
-    ty: Pseudo,
+pub(super) struct PseudoParam {
+    pub(super) param: ParamId,
+    pub(super) is_optional: bool,
+    pub(super) ty: Pseudo,
 }
 
 /// `PseudoObjectElement`
-struct PseudoElement {
-    prop: PropId,
-    kind: PseudoElementKind,
+pub(super) struct PseudoElement {
+    pub(super) prop: PropId,
+    pub(super) kind: PseudoElementKind,
 }
 
-enum PseudoElementKind {
+pub(super) enum PseudoElementKind {
     Method {
         func: FnId,
         params: Vec<PseudoParam>,
@@ -141,7 +141,7 @@ struct Around {
 }
 
 /// `DeclarationTransformer`, `SymbolTrackerSharedState` and `NodeBuilderContext`, for one file.
-struct Emit {
+pub(super) struct Emit {
     file: FileId,
     said: Vec<Said>,
     /// `DeclarationLinks.isVisible`
@@ -171,6 +171,34 @@ struct Emit {
 }
 
 impl Emit {
+    /// For the node builder outside of declaration emit, which asks the pseudochecker about `file` and has nothing reported. The way up
+    /// from a node ends at an interface, an enum or a namespace.
+    pub(super) fn without_reports(file: FileId) -> Emit {
+        Emit {
+            file,
+            said: Vec::new(),
+            visible: FxHashMap::default(),
+            late: Vec::new(),
+            hosts: FxHashSet::default(),
+            around: Around {
+                scope: ScopeId(0),
+                variable: VarDeclId::NONE,
+                is_function: false,
+            },
+            is_quiet: true,
+            depth: 0,
+            written: FxHashSet::default(),
+            external: FxHashMap::default(),
+            interfaces: Vec::new(),
+            aliases: Vec::new(),
+            enums: Vec::new(),
+            modules: Vec::new(),
+            imports: Vec::new(),
+            import_equals: Vec::new(),
+            module_scopes: Vec::new(),
+        }
+    }
+
     /// `NewNodeBuilder`: every question of the transformer is answered from scratch.
     fn begin(&mut self) {
         self.is_quiet = false;
@@ -327,7 +355,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The function-like `node` is.
-    fn iso_fn_of_node(&self, file: FileId, node: Node) -> Option<FnId> {
+    pub(super) fn iso_fn_of_node(&self, file: FileId, node: Node) -> Option<FnId> {
         let hir = self.hir(file);
         match node {
             Node::Expr(e) => match hir[e].kind {
@@ -1292,7 +1320,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `CouldAlreadyReferToUndefinedType`
-    fn iso_could_be_undefined(hir: &hir::File, pt: &Pseudo) -> bool {
+    pub(super) fn iso_could_be_undefined(hir: &hir::File, pt: &Pseudo) -> bool {
         match pt {
             Pseudo::NoResult(_) | Pseudo::Inferred { .. } | Pseudo::Undefined => true,
             Pseudo::MaybeConst {
@@ -1521,7 +1549,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `typeFromAccessor`
-    fn iso_pseudo_of_accessor(&mut self, tx: &Emit, func: FnId) -> Pseudo {
+    pub(super) fn iso_pseudo_of_accessor(&mut self, tx: &Emit, func: FnId) -> Pseudo {
         let file = tx.file;
         let hir = self.hir(file);
         let (getter, setter) = self.iso_accessors(file, func);
@@ -1573,7 +1601,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `GetReturnTypeOfSignature`
-    fn iso_pseudo_of_return(&mut self, tx: &Emit, func: FnId) -> Pseudo {
+    pub(super) fn iso_pseudo_of_return(&mut self, tx: &Emit, func: FnId) -> Pseudo {
         if self.hir(tx.file)[func].kind == FnKind::Getter {
             self.iso_pseudo_of_accessor(tx, func)
         } else {
@@ -1720,7 +1748,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `GetTypeOfDeclaration`
-    fn iso_pseudo_of_declaration(&mut self, tx: &Emit, node: Node) -> Pseudo {
+    pub(super) fn iso_pseudo_of_declaration(&mut self, tx: &Emit, node: Node) -> Pseudo {
         let file = tx.file;
         let (hir, bound) = (self.hir(file), self.bound(file));
         match node {
@@ -1883,7 +1911,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `requiresAddingImplicitUndefinedWorker`. `in_function`: the enclosing declaration is function-like.
-    fn iso_requires_implicit_undefined(
+    pub(super) fn iso_requires_implicit_undefined(
         &mut self,
         file: FileId,
         p: ParamId,
@@ -1917,7 +1945,7 @@ impl<'p> Checker<'p> {
     // ───────────────────────────── held against the checker (`pseudotypenodebuilder.go`) ─────────────────────────────
 
     /// `pseudoTypeToType`. `None`: it is made of parts that are held against the type one by one.
-    fn iso_type_of_pseudo(&mut self, file: FileId, pt: &Pseudo) -> Option<TypeId> {
+    pub(super) fn iso_type_of_pseudo(&mut self, file: FileId, pt: &Pseudo) -> Option<TypeId> {
         Some(match pt {
             Pseudo::Direct(t) => self.type_from_node(file, *t),
             Pseudo::Inferred {
@@ -2015,7 +2043,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `pseudoTypeEquivalentToType`
-    fn iso_is_equivalent(
+    pub(super) fn iso_is_equivalent(
         &mut self,
         tx: &mut Emit,
         pt: &Pseudo,
@@ -2024,8 +2052,7 @@ impl<'p> Checker<'p> {
         reports: bool,
     ) -> bool {
         let file = tx.file;
-        // What is in error is taken to be the same.
-        if !self.is_known(ty) {
+        if !self.is_known(ty) || self.is_error_type(ty) {
             return true;
         }
         let from = self.iso_type_of_pseudo(file, pt);
@@ -2263,7 +2290,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `pseudoReturnTypeMatchesPredicate`. `sig`: what `predicate` is the predicate of.
-    fn iso_matches_predicate(
+    pub(super) fn iso_matches_predicate(
         &mut self,
         file: FileId,
         returns: &Pseudo,
@@ -2537,7 +2564,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `HasInferredType`
-    fn iso_has_inferred_type(&self, file: FileId, node: Node) -> bool {
+    pub(super) fn iso_has_inferred_type(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
         match node {
             Node::Param(_) | Node::Var(_) | Node::PatProp(_) | Node::PatElem(_) => true,

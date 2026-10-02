@@ -1120,7 +1120,7 @@ impl Checker<'_> {
         let mut is_missing = false;
         for &part in self.parts(key) {
             // `getPropertyTypeForIndexType`. Any index signature takes `any`; without one it is no index type.
-            let found = if part.is_any()
+            let found = if self.has_any_flag(part)
                 && !self.is_union(object)
                 && self
                     .members(object)

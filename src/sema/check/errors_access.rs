@@ -1534,6 +1534,22 @@ impl Checker<'_> {
         Some(self.place_of_token(file, start))
     }
 
+    /// The position of `Declarations[0]` of the symbol of the member `written` of an object literal.
+    pub(super) fn first_declaration_pos_of_literal_property(
+        &self,
+        file: FileId,
+        written: PropId,
+    ) -> u32 {
+        let first = self.bound(file).declarations_of_literal_member(written)[0];
+        let hir = self.hir(file);
+        // The nodes of a JSON file have no positions. `json_to_hir` numbers its properties in source order.
+        if hir.kind == FileKind::Json {
+            first.0
+        } else {
+            hir[first].pos
+        }
+    }
+
     /// Where `prop` is first declared, as `compareSymbols` orders symbols: what has no declaration comes last.
     pub(super) fn order_of_property(&self, prop: &Prop) -> (u8, FileId, u32) {
         let declared = match &prop.source {
@@ -1541,7 +1557,10 @@ impl Checker<'_> {
                 .first()
                 .map(|&(file, member)| (file, self.hir(file)[member].pos)),
             PropSource::Parameter(file, param) => Some((*file, self.hir(*file)[*param].pos)),
-            PropSource::Literal(file, literal) => Some((*file, self.hir(*file)[*literal].pos)),
+            PropSource::Literal(file, literal) => Some((
+                *file,
+                self.first_declaration_pos_of_literal_property(*file, *literal),
+            )),
             PropSource::Assigned(file, assignments) => assignments
                 .first()
                 .map(|&assignment| (*file, self.hir(*file)[assignment].pos)),

@@ -1388,7 +1388,9 @@ impl Checker<'_> {
             PatParent::Var(d) if hir[d].ty.is_some() => hir[d].ty,
             PatParent::Var(d) if hir[d].init.is_some() => match hir[hir[d].init].kind {
                 ExprKind::As { ty, .. } => ty,
-                _ => return ty.is_any() && self.is_expression_in_error(file, hir[d].init),
+                _ => {
+                    return self.has_any_flag(ty) && self.is_expression_in_error(file, hir[d].init);
+                }
             },
             PatParent::Prop(parent, prop) => {
                 let given = self.type_of_pat(file, parent);
@@ -1405,7 +1407,9 @@ impl Checker<'_> {
                     return self.is_rest_of_invalid_type(given);
                 }
                 // 2339. `AccessFlagsAllowMissing`: with a default, what an object literal leaves out is `undefined`.
-                if !ty.is_any() || prop.default.is_some() && self.is_object_literal_type(given) {
+                if !self.has_any_flag(ty)
+                    || prop.default.is_some() && self.is_object_literal_type(given)
+                {
                     return false;
                 }
                 let Some(name) = self.member_name(file, prop.key) else {
@@ -1436,7 +1440,7 @@ impl Checker<'_> {
             }
             _ => return false,
         };
-        if !ty.is_any() || node.is_none() {
+        if !self.has_any_flag(ty) || node.is_none() {
             return false;
         }
         let (sym, args) = match hir[node].kind {
@@ -1491,7 +1495,12 @@ impl Checker<'_> {
     /// `any` from a declared one. Forms that are not recognized answer `false`.
     pub(super) fn is_expression_in_error(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        if e.is_none() || !self.type_of_expr(file, e).is_any() {
+        if e.is_none()
+            || !{
+                let ty = self.type_of_expr(file, e);
+                self.has_any_flag(ty)
+            }
+        {
             return false;
         }
         match hir[e].kind {
@@ -2107,7 +2116,7 @@ impl Checker<'_> {
         }
         // `getSubstitutionType`
         for (this, constraint) in implied_for_this {
-            if !constraint.is_any()
+            if !self.has_any_flag(constraint)
                 && constraint != TypeId::UNKNOWN
                 && constraint != this
                 && !pairs.iter().any(|pair| pair.0 == this)

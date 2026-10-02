@@ -920,7 +920,14 @@ impl<'p> Checker<'p> {
             };
         }
         // `appendContextualPropertyTypeConstituent`: `any` says nothing, and is not to drown what the others say.
-        let said = |t: TypeId| if t.is_any() { TypeId::UNKNOWN } else { t };
+        let program = self.p;
+        let said = move |t: TypeId| {
+            if program.has_any_flag(t) {
+                TypeId::UNKNOWN
+            } else {
+                t
+            }
+        };
         let (mut found, mut candidates) = (Parts::new(), Parts::new());
         let mut ignore_index_infos = false;
         for &m in &apparent {
@@ -1934,7 +1941,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             // What anything yields when it is gone through is anything.
-            if part.is_any() {
+            if self.has_any_flag(part) {
                 types.push(part);
                 continue;
             }
@@ -2001,7 +2008,7 @@ impl<'p> Checker<'p> {
                 && !method.flags.contains(PropFlags::OPTIONAL)
             {
                 let method = self.type_of_prop(method, mapper);
-                if method.is_any() {
+                if self.has_any_flag(method) {
                     types.push(method);
                 } else if !self.signatures(method, false).is_empty() {
                     let element = self.iterated_type(part, false);

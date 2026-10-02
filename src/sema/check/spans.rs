@@ -2155,6 +2155,15 @@ impl Checker<'_> {
 
     // ───────────────────────────── JSX ─────────────────────────────
 
+    /// Where the template of the tagged template `c` starts. `None` if it is missing.
+    pub(super) fn start_of_tagged_template_literal(&self, file: FileId, c: CallId) -> Option<u32> {
+        let spans = self.spans(file);
+        let call = spans.hir.calls.get(c.idx())?;
+        let tag_end = spans.type_args(call.type_args, spans.expr(call.callee));
+        let open = spans.skip_trivia(spans.eat(tag_end, b"?."));
+        (spans.byte(open) == b'`').then_some(open as u32)
+    }
+
     /// `node.End()` of `<tag attrs>`, of `<>`, or of the whole of `<tag attrs />`. `e` is the element, `jsx` what it holds.
     pub(super) fn end_of_jsx_opening(&self, file: FileId, e: ExprId, jsx: JsxId) -> u32 {
         let spans = self.spans(file);
@@ -2191,6 +2200,17 @@ impl Checker<'_> {
     /// `node.End()` of the node for `node` that starts at `start`: closes the parentheses around `node` that open at `start` or later.
     pub(super) fn end_of_type_node_from(&self, file: FileId, node: TypeNodeId, start: u32) -> u32 {
         self.spans(file).ty_in(node, start as usize) as u32
+    }
+
+    /// How many `ParenthesizedType` nodes are around `node`, of those that open at `floor` or later. 0 where the text is not kept.
+    pub(super) fn parenthesized_type_depth(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+        floor: u32,
+    ) -> usize {
+        let spans = self.spans(file);
+        spans.parens_before(floor as usize, spans.type_start(node))
     }
 
     /// Where the last of the types `args` ends, parentheses included: the end of the list, before its `>`. 0 for an empty list.

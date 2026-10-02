@@ -2501,7 +2501,7 @@ impl<'p> Checker<'p> {
         if self.is_any(candidate) || candidate == object || candidate == function {
             return ty;
         }
-        if ty.is_any() {
+        if self.has_any_flag(ty) {
             return candidate;
         }
         self.filter(ty, |c, m| c.is_constructed_by(m, candidate))
@@ -2771,7 +2771,7 @@ impl<'p> Checker<'p> {
             known::symbol => self.narrow_type_by_type_facts(ty, TypeId::SYMBOL, TYPEOF_EQ_SYMBOL),
             known::undefined => self.narrow_type_by_type_facts(ty, TypeId::UNDEFINED, EQ_UNDEFINED),
             known::object => {
-                if ty.is_any() {
+                if self.has_any_flag(ty) {
                     return ty;
                 }
                 let object = self.narrow_type_by_type_facts(ty, TypeId::OBJECT, TYPEOF_EQ_OBJECT);
@@ -2779,7 +2779,7 @@ impl<'p> Checker<'p> {
                 self.union(&[object, null])
             }
             known::function => {
-                if ty.is_any() {
+                if self.has_any_flag(ty) {
                     return ty;
                 }
                 let function = self.global_ref(known::Function, &[]);
@@ -3285,8 +3285,8 @@ impl<'p> Checker<'p> {
         }
         // `getNarrowedTypeWorker`: `any` is not the error type, so it is neither `t == candidate` nor a subset of it.
         if !sense
-            && ty.is_any()
-            && predicate.ty.is_some_and(TypeId::is_any)
+            && self.has_any_flag(ty)
+            && predicate.ty.is_some_and(|ty| self.has_any_flag(ty))
             && self.is_predicate_type_in_error(sig)
         {
             return Some(ty);
@@ -6412,7 +6412,7 @@ impl<'p> Checker<'p> {
             }
             let not_equal = not_equal_facts_from_typeof_switch(&witnesses, 0, 0);
             // What can be anything is covered by all that `typeof` can give.
-            if ty.is_any() || ty == TypeId::UNKNOWN {
+            if self.has_any_flag(ty) || ty == TypeId::UNKNOWN {
                 return facts::ALL_TYPEOF_NE & not_equal == facts::ALL_TYPEOF_NE;
             }
             // `someType` asks `never` itself, which has no facts: it has all of none.

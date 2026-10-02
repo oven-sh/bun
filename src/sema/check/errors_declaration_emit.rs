@@ -39,6 +39,8 @@ const MAXIMUM_DEPTH: u32 = 150;
 /// What a name is wanted as.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Meaning {
+    /// `SymbolFlagsNone`
+    None,
     Value,
     /// `SymbolFlagsValue | SymbolFlagsExportValue`, which `getQualifiedLeftMeaning` does not take for `SymbolFlagsValue`.
     ValueOfName,
@@ -49,6 +51,7 @@ enum Meaning {
 impl Meaning {
     fn flags(self) -> SymFlags {
         match self {
+            Meaning::None => SymFlags::empty(),
             Meaning::Value | Meaning::ValueOfName => SymFlags::VALUE,
             Meaning::Type => SymFlags::TYPE,
             Meaning::Namespace => SymFlags::NAMESPACE,
@@ -524,6 +527,58 @@ impl<'p> Checker<'p> {
         (starts_with_global_this, chain)
     }
 
+    /// `IsTypeSymbolAccessible`
+    pub(super) fn is_type_symbol_accessible_at(
+        &mut self,
+        symbol: Sym,
+        file: FileId,
+        scope: ScopeId,
+    ) -> bool {
+        self.with_enclosing_declaration(file, scope, |emit| {
+            let at = emit.b.enclosing;
+            emit.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false, 0)
+                .is_some_and(|access| access.is_accessible())
+        })
+    }
+
+    /// `lookupSymbolChain` as `symbolToExpression` asks it for `symbolToStringEx(symbol, enclosingDeclaration, SymbolFlagsNone, ..)`,
+    /// without `yieldModuleSymbol`: whether the chain starts with `globalThis`, and the rest of it. `is_parent`: `symbol` is the
+    /// parent of a symbol that is in no table, so `endOfChain` is false and the meaning is `SymbolFlagsNamespace`. The chain is
+    /// empty then if nothing is written for `symbol`.
+    pub(super) fn lookup_symbol_chain_for_symbol_to_string(
+        &mut self,
+        symbol: Sym,
+        is_parent: bool,
+        file: FileId,
+        scope: ScopeId,
+    ) -> (bool, Vec<Sym>) {
+        let (meaning, depth) = if is_parent {
+            (Meaning::Namespace, 1)
+        } else {
+            (Meaning::None, 0)
+        };
+        let mut chain = self.with_enclosing_declaration(file, scope, |emit| {
+            emit.symbol_chain_ex(symbol, meaning, false, depth)
+        });
+        let starts_with_global_this = chain.len() > 1 && chain[0] == GLOBAL_THIS;
+        if starts_with_global_this {
+            chain.remove(0);
+        }
+        (starts_with_global_this, chain)
+    }
+
+    /// `getSpecifierForModuleSymbol`
+    pub(super) fn specifier_for_module_symbol_at(
+        &mut self,
+        module: Sym,
+        file: FileId,
+        scope: ScopeId,
+    ) -> String {
+        self.with_enclosing_declaration(file, scope, |emit| {
+            emit.specifier_for_module_symbol(module, ResolutionMode::None)
+        })
+    }
+
     /// The specifier of the import type `symbolToTypeNode` writes for `module`, and its `resolution-mode` attribute.
     pub(super) fn import_type_specifier_at(
         &mut self,
@@ -570,6 +625,34 @@ impl<'p> Checker<'p> {
 }
 
 // ───────────────────────────── symbols ─────────────────────────────
+
+impl<'p> Checker<'p> {
+    /// `IsSymbolAccessible(symbol, enclosingDeclaration, meaning, false)` with `scope` of `file` for `enclosingDeclaration`. `meaning` is
+    /// `SymFlags::TYPE`, `NAMESPACE` or `VALUE`. `with_export_value`: `SymbolFlagsValue | SymbolFlagsExportValue`.
+    pub(super) fn is_symbol_accessible_at(
+        &mut self,
+        symbol: Sym,
+        meaning: SymFlags,
+        with_export_value: bool,
+        file: FileId,
+        scope: ScopeId,
+    ) -> bool {
+        let meaning = if meaning == SymFlags::TYPE {
+            Meaning::Type
+        } else if meaning == SymFlags::NAMESPACE {
+            Meaning::Namespace
+        } else if with_export_value {
+            Meaning::ValueOfName
+        } else {
+            Meaning::Value
+        };
+        self.with_enclosing_declaration(file, scope, |emit| {
+            let at = emit.b.enclosing;
+            emit.is_symbol_accessible(symbol, at, meaning, false)
+                .is_accessible()
+        })
+    }
+}
 
 impl<'p> DeclarationEmit<'_, 'p> {
     fn flags_of(&self, symbol: Sym) -> SymFlags {
@@ -6138,6 +6221,17 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     /// `getSymbolChain`, which may start with a module (`yieldModuleSymbol`).
     fn symbol_chain(&mut self, symbol: Sym, meaning: Meaning, depth: u32) -> Vec<Sym> {
+        self.symbol_chain_ex(symbol, meaning, true, depth)
+    }
+
+    /// `getSymbolChain`. `endOfChain`: `depth` is 0.
+    fn symbol_chain_ex(
+        &mut self,
+        symbol: Sym,
+        meaning: Meaning,
+        yields_module: bool,
+        depth: u32,
+    ) -> Vec<Sym> {
         let at = self.b.enclosing;
         let mut chain = self.accessible_symbol_chain(symbol, at, meaning).to_vec();
         let qualifier_meaning = if chain.len() > 1 {
@@ -6161,7 +6255,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             }
             parents.sort_by(|a, b| self.sort_by_best_name(a, b));
             for (parent, _) in parents {
-                let mut parent_chain = self.symbol_chain(parent, meaning.left(), depth + 1);
+                let mut parent_chain =
+                    self.symbol_chain_ex(parent, meaning.left(), yields_module, depth + 1);
                 if parent_chain.is_empty() {
                     continue;
                 }
@@ -6185,7 +6280,10 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 break;
             }
         }
-        if chain.is_empty() {
+        // A parent that is an external module is not written, unless the chain may start with it.
+        if chain.is_empty()
+            && (depth == 0 || yields_module || !self.is_external_module_symbol(symbol))
+        {
             chain.push(symbol);
         }
         chain

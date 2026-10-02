@@ -1592,34 +1592,6 @@ impl<'p> Checker<'p> {
             })
     }
 
-    /// Whether the `any` that `e` (`a`, `a.b`, `a[b]`, `f()`) comes to is the error type, from which nothing is inherited
-    /// (`isErrorType`): it starts with a name that stands for nothing, or asks for a property that is not there.
-    fn is_expr_in_error(&mut self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Ident(name) => {
-                !matches!(
-                    name,
-                    known::undefined | known::arguments | known::globalThis
-                ) && self
-                    .symbol_of_identifier(file, e, name)
-                    .is_none_or(|named| self.is_alias_in_error(named))
-            }
-            ExprKind::Dot { obj, name, .. } => {
-                if self.is_expr_in_error(file, obj) {
-                    return true;
-                }
-                let receiver = self.type_of_expr(file, obj);
-                !self.is_any(receiver) && self.type_of_property(receiver, name).is_none()
-            }
-            ExprKind::Index { obj, .. } | ExprKind::NonNull(obj) => {
-                self.is_expr_in_error(file, obj)
-            }
-            ExprKind::Call(call) => self.is_expr_in_error(file, hir[call].callee),
-            _ => false,
-        }
-    }
-
     /// Whether what class `sym` extends is `any` itself (`resolveAnonymousTypeMembers`); for the instances, also whether what it
     /// extends makes `any` (`resolveBaseTypesOfClass`).
     fn extends_any(&mut self, sym: Sym, static_side: bool) -> bool {
@@ -1628,7 +1600,7 @@ impl<'p> Checker<'p> {
         };
         let extends = self.hir(file)[c].extends;
         let constructor = self.type_of_expr(file, extends);
-        if constructor.is_any() {
+        if self.has_any_flag(constructor) {
             return constructor != TypeId::ERROR && !self.is_uncertain(file, extends);
         }
         // A class makes its instances, or is in error.
@@ -1643,7 +1615,10 @@ impl<'p> Checker<'p> {
         {
             return false;
         }
-        self.base_instance_type(file, c).is_any()
+        {
+            let ty = self.base_instance_type(file, c);
+            self.has_any_flag(ty)
+        }
     }
 
     fn sigs_of_function_declarations(&mut self, sym: Sym) -> Vec<SigId> {
@@ -2563,7 +2538,10 @@ impl<'p> Checker<'p> {
         let params = self.sig_params(sig);
         let [param] = &params[..] else { return false };
         param.rest
-            && (self.is_any(param.ty) || self.array_element(param.ty).is_some_and(TypeId::is_any))
+            && (self.is_any(param.ty)
+                || self
+                    .array_element(param.ty)
+                    .is_some_and(|ty| self.has_any_flag(ty)))
     }
 
     /// `findMixins`: the construct signatures of each member of an intersection, and which members are mixin constructors that

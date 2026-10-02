@@ -1000,7 +1000,7 @@ impl Checker<'_> {
             if caught.ty.is_some() {
                 let ty = self.type_from_node(file, caught.ty);
                 let ty = self.force(ty);
-                if self.is_known(ty) && !ty.is_any() && ty != TypeId::UNKNOWN {
+                if self.is_known(ty) && !self.has_any_flag(ty) && ty != TypeId::UNKNOWN {
                     out.push(Diagnostic {
                         start: hir[caught.ty].pos,
                         code: 1196,

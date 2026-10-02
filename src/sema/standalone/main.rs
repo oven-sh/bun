@@ -1000,12 +1000,14 @@ fn main() {
             };
             let (lib_dir, test_lib) = (flag("lib").unwrap(), flag("testlib").unwrap());
             let (only, out, types_out) = (flag("only"), flag("out"), flag("types-out"));
+            let symbols_out = flag("symbols-out");
             let setup = Setup {
                 lib_dir: &lib_dir,
                 test_lib: &test_lib,
                 only: only.as_deref(),
                 out: out.as_deref(),
                 types_out: types_out.as_deref(),
+                symbols_out: symbols_out.as_deref(),
                 threads: flag("threads").and_then(|t| t.parse().ok()).unwrap_or(8),
             };
             let mut all = Vec::new();

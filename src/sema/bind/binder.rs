@@ -4091,7 +4091,72 @@ impl<'f> Binder<'f> {
         }
     }
 
+    /// `bindPropertyOrMethodOrAccessor`, `declareSymbolEx`: the symbols of the members of an object literal, or of the attributes of a
+    /// JSX element. A member that the symbol in the table excludes gets a symbol of its own, which is in no table.
+    fn declare_literal_members(&mut self, props: Span<PropId>) {
+        const PROPERTY: u8 = 1;
+        const METHOD: u8 = 2;
+        const GET_ACCESSOR: u8 = 4;
+        const SET_ACCESSOR: u8 = 8;
+        const ACCESSOR: u8 = GET_ACCESSOR | SET_ACCESSOR;
+        const VALUE: u8 = PROPERTY | METHOD | ACCESSOR;
+        // `HasDynamicName`: a computed name is in no table (`bindAnonymousDeclaration`).
+        let name_of = |prop: &Prop| match (prop.kind, prop.key) {
+            (PropKind::Spread, _) => None,
+            (_, PropKey::Name(name)) => Some(name),
+            _ => None,
+        };
+        // Nearly always every name is written once.
+        let mut names: SmallVec<[Atom; 16]> =
+            props.iter().filter_map(|p| name_of(&self.f[p])).collect();
+        names.sort_unstable();
+        let mut repeated: SmallVec<[Atom; 4]> = names
+            .windows(2)
+            .filter(|pair| pair[0] == pair[1])
+            .map(|pair| pair[0])
+            .collect();
+        if repeated.is_empty() {
+            return;
+        }
+        repeated.dedup();
+        // The symbol table, for the names that are repeated: `symbol.Flags` and `symbol.Declarations`.
+        let mut table: SmallVec<[(u8, SmallVec<[PropId; 2]>); 4]> =
+            smallvec::smallvec![(0, SmallVec::new()); repeated.len()];
+        for p in props.iter() {
+            let prop = &self.f[p];
+            let Some(symbol) = name_of(prop).and_then(|name| repeated.binary_search(&name).ok())
+            else {
+                continue;
+            };
+            let (includes, excludes) = match prop.kind {
+                PropKind::Init | PropKind::Shorthand => (PROPERTY, VALUE & !(PROPERTY | ACCESSOR)),
+                // `IsObjectLiteralMethod`
+                PropKind::Method => (METHOD, VALUE),
+                PropKind::Getter => (GET_ACCESSOR, VALUE & !(SET_ACCESSOR | PROPERTY)),
+                PropKind::Setter => (SET_ACCESSOR, VALUE & !(GET_ACCESSOR | PROPERTY)),
+                PropKind::Spread => continue,
+            };
+            let (flags, declarations) = &mut table[symbol];
+            if *flags & excludes == 0 {
+                *flags |= includes;
+                declarations.push(p);
+            } else if *flags & ACCESSOR != 0 && *flags & ACCESSOR != includes & ACCESSOR {
+                *flags |= ACCESSOR;
+            }
+        }
+        for (_, declarations) in table {
+            if declarations.len() > 1 {
+                for &p in &declarations {
+                    self.b
+                        .literal_member_declarations
+                        .insert(p, declarations.clone());
+                }
+            }
+        }
+    }
+
     fn props(&mut self, props: Span<PropId>, owner: ExprId) {
+        self.declare_literal_members(props);
         let in_pattern = self.in_assignment_pattern;
         let is_literal = matches!(self.f[owner].kind, ExprKind::Object(_));
         for p in props.iter() {

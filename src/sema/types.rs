@@ -127,6 +127,13 @@ pub enum Origin {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TypeData {
     Intrinsic(Intrinsic),
+    /// What a reference to a type name that does not resolve has (`getUnresolvedSymbolForEntityName`, `getTypeFromTypeAliasReference`):
+    /// an intrinsic type with `TypeFlagsAny` and an alias. `isErrorType` holds for it, it is not `errorType`, and it is printed as
+    /// it is written. `name` is the whole entity name, `A.B.C`.
+    UnresolvedName {
+        name: Atom,
+        args: Box<[TypeId]>,
+    },
     StringLit {
         value: Atom,
         fresh: bool,
@@ -613,6 +620,7 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
         | TypeData::BigIntLit { .. }
         | TypeData::BoolLit { .. }
         | TypeData::Marker(_) => false,
+        TypeData::UnresolvedName { args, .. } => any(args),
         TypeData::EnumLit { member: sym, .. }
         | TypeData::Enum { symbol: sym, .. }
         | TypeData::ThisParam(sym) => sym.file == file,
@@ -1106,6 +1114,8 @@ impl TypeStore {
             }
             TypeData::ThisParam(_) => TypeFlags::HAS_TYPE_VARIABLES,
             TypeData::Marker(_) => TypeFlags::HAS_TYPE_VARIABLES | TypeFlags::HAS_MARKER,
+            // `instantiateType` leaves what has `TypeFlagsAny` as it is, whatever its alias type arguments are.
+            TypeData::UnresolvedName { .. } => TypeFlags::empty(),
             TypeData::Union(t) | TypeData::Intersection(t) => all(t),
             TypeData::Ref { args, .. } | TypeData::LazyAlias { args, .. } => all(args),
             TypeData::Tuple { elems, .. } => all(elems),

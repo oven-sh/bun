@@ -860,7 +860,7 @@ impl<'p> Checker<'p> {
             return;
         }
         // `getEffectiveDecoratorArguments`
-        let args: Vec<Arg> = given.iter().map(|p| Arg::Type(p.ty)).collect();
+        let args: Vec<Arg> = given.iter().map(|p| Arg::Type(p.ty, Atom::NONE)).collect();
         let this_arg = self.this_argument_of_decorator(file, e);
         let this_expr = this_arg.map(|(obj, _)| obj);
         // `chooseOverload`: the first whose parameters the arguments are subtypes of, else the first they can be assigned to.

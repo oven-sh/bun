@@ -2842,7 +2842,7 @@ impl<'p> Checker<'p> {
         }
         // `isPropertySymbolTypeRelated`
         let wanted = self.type_of_prop_as_read(target_prop, target_mapper);
-        let related = if wanted.is_any()
+        let related = if self.has_any_flag(wanted)
             || wanted == TypeId::UNRESOLVED
             || wanted == TypeId::UNKNOWN && x.r.relation != Relation::StrictSubtype
         {

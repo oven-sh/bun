@@ -127,6 +127,7 @@ impl<'p> Checker<'p> {
     /// alias that is still being worked out stands for is not known: no flags.
     fn type_flags(&self, ty: TypeId) -> u32 {
         match self.data(ty) {
+            TypeData::UnresolvedName { .. } => tf::ANY,
             TypeData::Intrinsic(intrinsic) => match intrinsic {
                 Intrinsic::Unresolved | Intrinsic::Any | Intrinsic::Error => tf::ANY,
                 Intrinsic::Unknown => tf::UNKNOWN,
@@ -249,7 +250,9 @@ impl<'p> Checker<'p> {
         members.sort_unstable();
         members.dedup();
         // `TypeFlagsIncludesError`: `any` and `unknown` give way to the error type.
-        if members.first() != Some(&TypeId::UNRESOLVED) && members.contains(&TypeId::ERROR) {
+        if members.first() != Some(&TypeId::UNRESOLVED)
+            && members.iter().any(|&member| self.is_error_type(member))
+        {
             return (TypeId::ERROR, true);
         }
         match members[..] {
@@ -911,7 +914,7 @@ impl<'p> Checker<'p> {
                 if ty == TypeId::UNRESOLVED {
                     includes |= tf::INCLUDES_UNRESOLVED;
                 }
-                if ty == TypeId::ERROR {
+                if self.is_error_type(ty) {
                     includes |= tf::INCLUDES_ERROR;
                 }
             } else if self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0 {

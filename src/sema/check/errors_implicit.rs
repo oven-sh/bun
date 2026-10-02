@@ -224,8 +224,10 @@ impl Checker<'_> {
                     }
                     // What a constructor or a static block assigns says what it is, be that `any`.
                     let id = MemberId(m as u32);
-                    if !self.type_of_member_declaration(file, id).is_any()
-                        || self.is_found_to_be_any(file, c, id)
+                    if !{
+                        let ty = self.type_of_member_declaration(file, id);
+                        self.has_any_flag(ty)
+                    } || self.is_found_to_be_any(file, c, id)
                     {
                         continue;
                     }
@@ -862,9 +864,16 @@ impl Checker<'_> {
                 let resolved = self.type_of_param(file, p);
                 let is_any = match hir[param.pat].kind {
                     PatKind::Ident(_) if param.flags.contains(Flags::REST) => {
-                        self.array_element(resolved).is_some_and(TypeId::is_any)
+                        // `assignParameterType` adds the `?` after `widenTypeForVariableLikeDeclaration` has reported.
+                        let widened = if param.flags.contains(Flags::OPTIONAL) {
+                            self.without_undefined(resolved)
+                        } else {
+                            resolved
+                        };
+                        self.array_element(widened)
+                            .is_some_and(|ty| self.has_any_flag(ty))
                     }
-                    PatKind::Ident(_) => resolved.is_any(),
+                    PatKind::Ident(_) => self.has_any_flag(resolved),
                     _ => true,
                 };
                 if !is_any {

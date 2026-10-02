@@ -123,6 +123,7 @@ impl<'c, 'p> Describer<'c, 'p> {
     fn primitive(&self, ty: TypeId) -> Option<&'static str> {
         let c = &*self.c;
         Some(match c.data(ty) {
+            TypeData::UnresolvedName { .. } => "any",
             TypeData::Intrinsic(i) => match i {
                 Intrinsic::Unresolved => "?",
                 Intrinsic::Any => "any",

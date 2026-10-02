@@ -64,6 +64,7 @@ mod related;
 mod related_expected;
 mod shape;
 mod spans;
+pub mod symbol_writer;
 mod symbols;
 pub mod type_writer;
 mod unions;
@@ -136,6 +137,8 @@ impl Slots {
 }
 
 pub struct Program {
+    /// Whether a `TypeData::UnresolvedName` has been made.
+    pub has_unresolved_names: std::sync::atomic::AtomicBool,
     pub files: Files,
     pub types: TypeStore,
 
@@ -291,6 +294,21 @@ pub struct Program {
 }
 
 impl Program {
+    /// `TypeData::UnresolvedName`
+    #[inline]
+    pub fn is_unresolved_name(&self, ty: TypeId) -> bool {
+        // Most programs have none.
+        self.has_unresolved_names
+            .load(std::sync::atomic::Ordering::Relaxed)
+            && matches!(self.types.get(ty), TypeData::UnresolvedName { .. })
+    }
+
+    /// `TypeFlagsAny`
+    #[inline]
+    pub fn has_any_flag(&self, ty: TypeId) -> bool {
+        ty.is_any() || self.is_unresolved_name(ty)
+    }
+
     /// Where the memory of what has been worked out is: what, how many, how many bytes.
     pub fn sizes(&self) -> Vec<(String, usize, usize)> {
         let mut out = self.types.sizes();
@@ -390,6 +408,7 @@ impl Program {
         let type_params = bases(|m| m.hir.type_params.len());
         let symbols = bases(|m| m.bound.symbols.len());
         Program {
+            has_unresolved_names: Default::default(),
             types: TypeStore::new(),
             expr_types: Slots::new(&exprs),
             exprs_at_hand: Default::default(),
@@ -1866,7 +1885,43 @@ impl<'p> Checker<'p> {
 
     #[inline]
     pub fn is_any(&self, ty: TypeId) -> bool {
-        ty.is_any() || ty == TypeId::UNRESOLVED
+        ty == TypeId::UNRESOLVED || self.has_any_flag(ty)
+    }
+
+    /// `TypeFlagsAny`: `anyType`, `errorType`, or the type of a type name that does not resolve.
+    #[inline]
+    pub fn has_any_flag(&self, ty: TypeId) -> bool {
+        ty.is_any() || self.is_unresolved_name(ty)
+    }
+
+    /// `isErrorType`
+    #[inline]
+    pub fn is_error_type(&self, ty: TypeId) -> bool {
+        ty == TypeId::ERROR || self.is_unresolved_name(ty)
+    }
+
+    #[inline]
+    fn is_unresolved_name(&self, ty: TypeId) -> bool {
+        self.p.is_unresolved_name(ty)
+    }
+
+    /// `getUnresolvedSymbolForEntityName`, `getTypeFromTypeAliasReference`
+    pub(super) fn unresolved_name_type(&mut self, names: &[Atom], args: &[TypeId]) -> TypeId {
+        let mut path: Vec<u8> = Vec::new();
+        for (i, &name) in names.iter().enumerate() {
+            if i > 0 {
+                path.push(b'.');
+            }
+            path.extend_from_slice(self.files().atoms.bytes(name));
+        }
+        let name = self.files().atoms.intern(&path);
+        self.p
+            .has_unresolved_names
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.intern(TypeData::UnresolvedName {
+            name,
+            args: args.into(),
+        })
     }
 
     #[inline]

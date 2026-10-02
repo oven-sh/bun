@@ -44,13 +44,52 @@ impl Checker<'_> {
                 .flat_map(|jsx| [jsx.tag, jsx.close_tag])
                 .filter(|&tag| tag.is_some() && matches!(hir[tag].kind, ExprKind::String(_))),
         );
+        // `IsInExpressionContext` does not hold right under an `ExportAssignment`.
+        extended.extend(hir.stmts.iter().filter_map(|stmt| match stmt.kind {
+            StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)
+                if e.is_some()
+                    && hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_err()
+                    && match hir[e].kind {
+                        ExprKind::String(_)
+                        | ExprKind::Number(_)
+                        | ExprKind::BigInt(_)
+                        | ExprKind::This => true,
+                        ExprKind::Template { exprs, .. } => exprs.is_empty(),
+                        _ => false,
+                    } =>
+            {
+                Some(e)
+            }
+            _ => None,
+        }));
         let (literal_types, literal_prop_types) = self.literal_types_in_resolved_context(file);
+        extended.extend(self.jsx_text_and_attribute_strings(file));
+        extended.extend(self.unwritten_import_attribute_exprs(file));
         for index in 0..hir.exprs.len() {
             let e = ExprId(index as u32);
             let expr = hir[e];
-            // `checkSpreadExpression` gives a spread element the type of what is iterated over, which `type_of_expr` does not.
-            if matches!(expr.kind, ExprKind::Missing | ExprKind::Spread(_)) || extended.contains(&e)
+            // `checkPrivateIdentifierExpression`: `#x` is `any`, and an expression node only as the left operand of `in`.
+            if matches!(expr.kind, ExprKind::String(_))
+                && hir.text.get(expr.pos as usize) == Some(&b'#')
             {
+                let is_left_of_in = hir
+                    .parens
+                    .binary_search_by_key(&e.0, |paren| paren.0.0)
+                    .is_err()
+                    && matches!(self.bound(file).expr_parent[e.idx()], crate::bind::Parent::Expr(parent)
+                        if matches!(hir[parent].kind, ExprKind::Binary { op: BinOp::In, left, .. } if left == e));
+                if is_left_of_in {
+                    results.push(TypeAtLocation {
+                        start: self.start_inside_parentheses(file, e),
+                        end: self.end_inside_parentheses(file, e),
+                        type_text: "any".to_owned(),
+                        kind: "expression",
+                    });
+                }
+                text_of_expr[index] = Some("any".to_owned());
+                continue;
+            }
+            if matches!(expr.kind, ExprKind::Missing) || extended.contains(&e) {
                 continue;
             }
             let ty = match self.type_of_export_assignment_name(file, e) {
@@ -59,7 +98,18 @@ impl Checker<'_> {
                     // `getRegularTypeOfExpression`
                     let ty = match literal_types.get(&e) {
                         Some(&ty) => ty,
-                        None => self.type_of_expr(file, e),
+                        None => match expr.kind {
+                            // `checkSpreadExpression`
+                            ExprKind::Spread(operand) => {
+                                let iterable = match literal_types.get(&operand) {
+                                    Some(&ty) => ty,
+                                    None => self.type_of_expr(file, operand),
+                                };
+                                self.iterated_type_if_any(iterable, false)
+                                    .unwrap_or(TypeId::ANY)
+                            }
+                            _ => self.type_of_expr(file, e),
+                        },
                     };
                     self.regular(ty)
                 }
@@ -73,7 +123,11 @@ impl Checker<'_> {
             {
                 results.push(TypeAtLocation {
                     start: name_pos,
-                    end: name_pos + self.atom_text(name).len() as u32,
+                    end: if name == known::empty {
+                        name_pos
+                    } else {
+                        self.end_of_token_at(file, name_pos)
+                    },
                     type_text: type_text.clone(),
                     kind: "access-name",
                 });
@@ -136,7 +190,11 @@ impl Checker<'_> {
             };
             results.push(TypeAtLocation {
                 start: hir[pat].pos,
-                end: hir[pat].pos + self.atom_text(name).len() as u32,
+                end: if name == known::empty {
+                    hir[pat].pos
+                } else {
+                    self.end_of_token_at(file, hir[pat].pos)
+                },
                 type_text: self.type_to_string_for_baseline_at(
                     ty,
                     file,
@@ -147,6 +205,14 @@ impl Checker<'_> {
         }
         self.types_at_intrinsic_jsx_tag_names(file, &mut results);
         self.types_at_declaration_names(file, &mut results);
+        self.types_at_meta_property_names(file, &mut results);
+        self.types_at_namespace_export_names(file, &mut results);
+        self.types_at_literal_type_expressions(file, &mut results);
+        self.types_at_this_parameters(file, &mut results);
+        self.types_at_dynamic_member_names(file, &mut results);
+        self.types_at_literals_in_computed_names(file, &mut results);
+        self.types_at_tagged_template_literals(file, &mut results);
+        self.types_at_import_equals_names(file, &mut results);
         self.types_at_ambient_module_names(file, &mut results);
         self.types_at_expression_declaration_names(file, &mut results);
         self.types_at_labels_and_binding_property_names(file, &mut results);
@@ -154,10 +220,13 @@ impl Checker<'_> {
         self.types_at_class_extends(file, &mut results);
         self.types_at_member_names(file, &mut results);
         self.types_at_property_names(file, &mut results);
+        self.extend_jsx_attribute_names(file, &mut results);
+        self.rewrite_import_attribute_names(file, &mut results);
         // `getTypeOfSymbol` of the property first checks its initializer when the writer asks, under the same contextual type.
         for (&p, &ty) in &literal_prop_types {
             let ty = self.widened(ty);
-            let type_text = self.type_to_string_for_baseline(ty);
+            let scope = self.enclosing_scope_of_property(file, p);
+            let type_text = self.type_to_string_for_baseline_at(ty, file, scope);
             for result in results
                 .iter_mut()
                 .filter(|result| result.kind == "property-name" && result.start == hir[p].pos)
@@ -169,6 +238,428 @@ impl Checker<'_> {
         results.retain(|found| !hir.is_in_jsdoc(found.start));
         self.remove_uninstantiated_namespace_names(file, &mut results);
         results
+    }
+
+    /// `parseJsxAttributeName`: the name of an attribute goes on over `-` and `:name`. The two identifiers of `a:b` get a line too,
+    /// with the error type.
+    fn extend_jsx_attribute_names(&self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let hir = self.hir(file);
+        let mut identifiers = Vec::new();
+        for jsx in hir.jsx.iter() {
+            for p in jsx.attrs.iter() {
+                if matches!(hir[p].kind, PropKind::Spread) {
+                    continue;
+                }
+                let start = hir[p].pos;
+                let end = self.end_of_jsx_attr_name(file, p);
+                for found in results.iter_mut() {
+                    if found.kind == "property-name" && found.start == start {
+                        found.end = end;
+                    }
+                }
+                let written = hir
+                    .text
+                    .get(start as usize..end as usize)
+                    .unwrap_or_default();
+                let Some(colon) = written.iter().position(|&b| b == b':') else {
+                    continue;
+                };
+                let colon = start + colon as u32;
+                identifiers.push((start, self.end_of_token_before(file, colon)));
+                identifiers.push((self.skip_trivia_from(file, colon + 1), end));
+            }
+        }
+        for (start, end) in identifiers {
+            results.push(TypeAtLocation {
+                start,
+                end,
+                type_text: "error".to_owned(),
+                kind: "error-type",
+            });
+        }
+    }
+
+    /// `IsRightSideOfQualifiedNameOrPropertyAccess`: the name of a `MetaProperty` has the type of the whole.
+    fn types_at_meta_property_names(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let hir = self.hir(file);
+        for index in 0..hir.exprs.len() {
+            let e = ExprId(index as u32);
+            if !matches!(hir[e].kind, ExprKind::ImportMeta | ExprKind::NewTarget) {
+                continue;
+            }
+            let keyword_end = self.end_of_token_at(file, hir[e].pos);
+            let dot = self.skip_trivia_from(file, keyword_end);
+            if hir.text.get(dot as usize) != Some(&b'.') {
+                continue;
+            }
+            let start = self.skip_trivia_from(file, dot + 1);
+            let ty = self.type_of_expr(file, e);
+            let ty = self.regular(ty);
+            results.push(TypeAtLocation {
+                start,
+                end: self.end_of_token_at(file, start),
+                type_text: self.type_to_string_for_baseline_at(
+                    ty,
+                    file,
+                    self.enclosing_scope_of_expr(file, e),
+                ),
+                kind: "access-name",
+            });
+        }
+    }
+
+    /// The name in `export as namespace N`.
+    fn types_at_namespace_export_names(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let bound = self.bound(file);
+        for &(_, id) in bound.umd_globals.iter() {
+            for &decl in bound.symbols[id.idx()].decls.as_slice() {
+                if !matches!(decl, Decl::UmdGlobal(_)) {
+                    continue;
+                }
+                let Some(start) = self.declaration_name_start(file, decl) else {
+                    continue;
+                };
+                let sym = self.files().sym(file, id);
+                let ty = self.type_of_symbol(sym);
+                results.push(TypeAtLocation {
+                    start,
+                    end: self.end_of_token_at(file, start),
+                    type_text: self.type_to_string_for_baseline_at(
+                        ty,
+                        file,
+                        self.enclosing_scope_of_declaration(file, decl),
+                    ),
+                    kind: "declaration-name",
+                });
+            }
+        }
+    }
+
+    /// `IsExpressionNode` goes by the kind alone for `true`, `false` and a `PrefixUnaryExpression`: under a `LiteralType` they get a
+    /// line, and so does the operand of the `-`.
+    fn types_at_literal_type_expressions(
+        &mut self,
+        file: FileId,
+        results: &mut Vec<TypeAtLocation>,
+    ) {
+        let hir = self.hir(file);
+        for index in 0..hir.types.len() {
+            let node = TypeNodeId(index as u32);
+            let start = hir[node].pos;
+            if hir.is_in_jsdoc(start) {
+                continue;
+            }
+            match hir[node].kind {
+                TypeNodeKind::BoolLit(value) => results.push(TypeAtLocation {
+                    start,
+                    end: self.end_of_token_at(file, start),
+                    type_text: if value { "true" } else { "false" }.to_owned(),
+                    kind: "expression",
+                }),
+                TypeNodeKind::NumberLit(_) | TypeNodeKind::BigIntLit { .. }
+                    if hir.text.get(start as usize) == Some(&b'-') =>
+                {
+                    let ty = self.type_from_node(file, node);
+                    let type_text = self.type_to_string_for_baseline(ty);
+                    let end = self.end_of_type_node(file, node);
+                    results.push(TypeAtLocation {
+                        start: self.skip_trivia_from(file, start + 1),
+                        end,
+                        type_text: type_text.trim_start_matches('-').to_owned(),
+                        kind: "expression",
+                    });
+                    results.push(TypeAtLocation {
+                        start,
+                        end,
+                        type_text,
+                        kind: "expression",
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The name of a `this` parameter, which is the first token after the `(`.
+    fn types_at_this_parameters(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let hir = self.hir(file);
+        for (index, func) in hir.fns.iter().enumerate() {
+            if func.this_ty.is_none() || hir.text.get(func.anchor as usize) != Some(&b'(') {
+                continue;
+            }
+            let start = self.skip_trivia_from(file, func.anchor + 1);
+            let end = self.end_of_token_at(file, start);
+            if hir.text.get(start as usize..end as usize) != Some(&b"this"[..]) {
+                continue;
+            }
+            let ty = self.type_from_node(file, func.this_ty);
+            results.push(TypeAtLocation {
+                start,
+                end,
+                type_text: self.type_to_string_for_baseline_at(
+                    ty,
+                    file,
+                    self.enclosing_scope_of_declaration(file, Decl::Fn(FnId(index as u32))),
+                ),
+                kind: "variable",
+            });
+        }
+    }
+
+    /// The `[e]` of a member whose `e` has no type that names a property: the type its declaration gives it.
+    fn types_at_dynamic_member_names(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let hir = self.hir(file);
+        for index in 0..hir.members.len() {
+            let m = MemberId(index as u32);
+            let member = hir[m];
+            if !matches!(
+                member.kind,
+                MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+            ) || !matches!(member.key, PropKey::Computed(_))
+                || self.member_name(file, member.key).is_some()
+            {
+                continue;
+            }
+            let start = super::errors_x_properties_jsx::start_of_member_name(hir, m);
+            if hir.text.get(start as usize) != Some(&b'[') {
+                continue;
+            }
+            let ty = self.type_of_member_declaration(file, m);
+            results.push(TypeAtLocation {
+                start,
+                end: self.end_of_bracket_at(file, start),
+                type_text: self.type_to_string_for_baseline_at(
+                    ty,
+                    file,
+                    self.enclosing_scope_of_member(file, m),
+                ),
+                kind: "member-name",
+            });
+        }
+    }
+
+    /// The string or number of `["a"]` and `[0]`, which the lowered tree keeps as the name alone. `IsInExpressionContext`: it is
+    /// the expression of a `ComputedPropertyName`.
+    fn types_at_literals_in_computed_names(
+        &mut self,
+        file: FileId,
+        results: &mut Vec<TypeAtLocation>,
+    ) {
+        let hir = self.hir(file);
+        let mut names = Vec::new();
+        for (index, member) in hir.members.iter().enumerate() {
+            if let PropKey::Name(name) = member.key {
+                let m = MemberId(index as u32);
+                let start = super::errors_x_properties_jsx::start_of_member_name(hir, m);
+                names.push((name, start));
+            }
+        }
+        for prop in &hir.props {
+            if let PropKey::Name(name) = prop.key {
+                names.push((name, prop.pos));
+            }
+        }
+        for prop in &hir.pat_props {
+            if let PropKey::Name(name) = prop.key {
+                names.push((name, prop.pos));
+            }
+        }
+        for (name, bracket) in names {
+            if hir.text.get(bracket as usize) != Some(&b'[') || hir.is_in_jsdoc(bracket) {
+                continue;
+            }
+            let start = self.skip_trivia_from(file, bracket + 1);
+            let ty = match hir.text.get(start as usize) {
+                Some(b'"' | b'\'' | b'`') => self.string_literal(name, false),
+                Some(b'0'..=b'9' | b'.') => match self.atom_text(name).parse::<f64>() {
+                    Ok(value) => self.number_literal(value, false),
+                    Err(_) => continue,
+                },
+                _ => continue,
+            };
+            results.push(TypeAtLocation {
+                start,
+                end: self.end_of_token_at(file, start),
+                type_text: self.type_to_string_for_baseline(ty),
+                kind: "expression",
+            });
+        }
+    }
+
+    /// The template of a tagged template, of which the lowered tree keeps the substitutions. `checkTemplateExpression` does not
+    /// evaluate it: with substitutions it is a `string`. Without, it is a string literal.
+    fn types_at_tagged_template_literals(
+        &mut self,
+        file: FileId,
+        results: &mut Vec<TypeAtLocation>,
+    ) {
+        let hir = self.hir(file);
+        for index in 0..hir.exprs.len() {
+            let e = ExprId(index as u32);
+            let ExprKind::TaggedTemplate(c) = hir[e].kind else {
+                continue;
+            };
+            let Some(start) = self.start_of_tagged_template_literal(file, c) else {
+                continue;
+            };
+            let end = self.end_inside_parentheses(file, e);
+            let type_text = if hir[c].args.is_empty() {
+                // The cooked text is not kept. It is the raw text if nothing in that is escaped.
+                let Some(raw) = hir
+                    .text
+                    .get(start as usize + 1..(end as usize).saturating_sub(1))
+                else {
+                    continue;
+                };
+                if hir.text.get(end as usize - 1) != Some(&b'`')
+                    || raw.iter().any(|b| matches!(b, b'\\' | b'\r'))
+                {
+                    continue;
+                }
+                let ty = self.string_literal(self.files().atoms.intern(raw), false);
+                self.type_to_string_for_baseline(ty)
+            } else {
+                "string".to_owned()
+            };
+            results.push(TypeAtLocation {
+                start,
+                end,
+                type_text,
+                kind: "expression",
+            });
+        }
+    }
+
+    /// `getSymbolOfPartOfRightHandSideOfImportEquals`: of `import x = a.b.c`, `a` and `a.b` mean namespaces, and so does the `a` of
+    /// `import x = a`. `getTypeOfNode`: the declared type of what a name means, or else its type.
+    fn types_at_import_equals_names(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for index in 0..hir.import_equals.len() {
+            let import = hir.import_equals[index];
+            let ImportEqualsTarget::Entity(entity) = import.target else {
+                continue;
+            };
+            let name_end = self.end_of_token_at(file, import.name_pos);
+            let equals = self.skip_trivia_from(file, name_end);
+            if hir.text.get(equals as usize) != Some(&b'=') {
+                continue;
+            }
+            let entity_start = self.skip_trivia_from(file, equals + 1);
+            let ranges = self.entity_name_ranges(file, entity_start, entity);
+            let names: Vec<Atom> = hir.ids(entity).collect();
+            let scope = bound.import_equals_scope[index];
+            for (position, &(start, end)) in ranges.iter().enumerate() {
+                let meaning = if names.len() == 1 || position + 1 < names.len() {
+                    SymFlags::NAMESPACE
+                } else {
+                    SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE
+                };
+                let symbol = self
+                    .files()
+                    .resolve_entity(file, scope, &names[..=position], meaning)
+                    .and_then(|found| self.files().resolve_alias_if_needed(found));
+                let ty = match symbol {
+                    Some(symbol) if self.files().means(symbol, SymFlags::TYPE) => {
+                        self.declared_type(symbol)
+                    }
+                    Some(symbol) => self.type_of_symbol(symbol),
+                    None => TypeId::ANY,
+                };
+                results.push(TypeAtLocation {
+                    start,
+                    end,
+                    type_text: self.type_to_string_for_baseline_at(
+                        ty,
+                        file,
+                        self.enclosing_scope_of_declaration(
+                            file,
+                            Decl::ImportEquals(ImportEqualsId(index as u32)),
+                        ),
+                    ),
+                    kind: "entity-name",
+                });
+            }
+        }
+    }
+
+    /// `ImportAttributes` is no expression node, and a literal that is the value of an `ImportAttribute` is in no expression context.
+    fn unwritten_import_attribute_exprs(&self, file: FileId) -> Vec<ExprId> {
+        let hir = self.hir(file);
+        let mut unwritten = Vec::new();
+        for &(_, attributes) in hir.import_attributes.iter() {
+            unwritten.push(attributes);
+            let ExprKind::Object(props) = hir[attributes].kind else {
+                continue;
+            };
+            for p in props.iter() {
+                let value = hir[p].value;
+                if value.is_none() {
+                    continue;
+                }
+                let is_literal = match hir[value].kind {
+                    ExprKind::String(_)
+                    | ExprKind::Number(_)
+                    | ExprKind::BigInt(_)
+                    | ExprKind::This => true,
+                    ExprKind::Template { exprs, .. } => exprs.is_empty(),
+                    _ => false,
+                };
+                if is_literal {
+                    unwritten.push(value);
+                }
+            }
+        }
+        unwritten
+    }
+
+    /// The name of an `ImportAttribute` is no declaration name: an identifier has the error type, a string gets no line.
+    fn rewrite_import_attribute_names(&self, file: FileId, results: &mut Vec<TypeAtLocation>) {
+        let hir = self.hir(file);
+        let mut names = Vec::new();
+        for &(_, attributes) in hir.import_attributes.iter() {
+            if let ExprKind::Object(props) = hir[attributes].kind {
+                names.extend(props.iter().map(|p| hir[p].pos));
+            }
+        }
+        results.retain_mut(|found| {
+            if found.kind != "property-name" || !names.contains(&found.start) {
+                return true;
+            }
+            found.type_text = "any".to_owned();
+            !matches!(hir.text.get(found.start as usize), Some(b'"' | b'\''))
+        });
+    }
+
+    /// What stands for `JsxText` and for the string of `name="value"`, which are no expression nodes, and for the `{...children}` of
+    /// an element, which is no `SpreadElement`.
+    fn jsx_text_and_attribute_strings(&self, file: FileId) -> Vec<ExprId> {
+        let hir = self.hir(file);
+        let mut unwritten = Vec::new();
+        for jsx in hir.jsx.iter() {
+            for child in hir.ids(jsx.children) {
+                let is_unwritten = match hir[child].kind {
+                    // Text is put where its element starts. The string of `{"text"}` starts with its quote.
+                    ExprKind::String(_) => hir.text.get(hir[child].pos as usize) == Some(&b'<'),
+                    ExprKind::Spread(_) => true,
+                    _ => false,
+                };
+                if is_unwritten {
+                    unwritten.push(child);
+                }
+            }
+            for p in jsx.attrs.iter() {
+                let value = hir[p].value;
+                if value.is_none() || !matches!(hir[value].kind, ExprKind::String(_)) {
+                    continue;
+                }
+                // `name="value"`, not `name={"value"}`
+                let before = self.end_of_token_before(file, hir[value].pos) as usize;
+                if before > 0 && hir.text.get(before - 1) == Some(&b'=') {
+                    unwritten.push(value);
+                }
+            }
+        }
+        unwritten
     }
 
     /// `GetMeaningFromDeclaration`: the name of a namespace has a value meaning only if the declaration is
@@ -205,7 +696,11 @@ impl Checker<'_> {
             results.push(TypeAtLocation {
                 start: module.name_pos,
                 end: self.end_of_token_at(file, module.name_pos),
-                type_text: self.type_to_string_for_baseline(ty),
+                type_text: self.type_to_string_for_baseline_at(
+                    ty,
+                    file,
+                    self.enclosing_scope_of_declaration(file, Decl::Module(ModuleId(index as u32))),
+                ),
                 kind: "declaration-name",
             });
         }
@@ -220,9 +715,11 @@ impl Checker<'_> {
         let hir = self.hir(file);
         for index in 0..hir.exprs.len() {
             let e = ExprId(index as u32);
-            let (name, start) = match hir[e].kind {
-                ExprKind::Fn(f) if hir[f].kind == FnKind::Expr => (hir[f].name, hir[f].name_pos),
-                ExprKind::Class(c) => (hir[c].name, hir[c].name_pos),
+            let (name, start, decl) = match hir[e].kind {
+                ExprKind::Fn(f) if hir[f].kind == FnKind::Expr => {
+                    (hir[f].name, hir[f].name_pos, Decl::Fn(f))
+                }
+                ExprKind::Class(c) => (hir[c].name, hir[c].name_pos, Decl::Class(c)),
                 _ => continue,
             };
             if name.is_none() || name == known::empty {
@@ -232,7 +729,11 @@ impl Checker<'_> {
             results.push(TypeAtLocation {
                 start,
                 end: self.end_of_token_at(file, start),
-                type_text: self.type_to_string_for_baseline(ty),
+                type_text: self.type_to_string_for_baseline_at(
+                    ty,
+                    file,
+                    self.enclosing_scope_of_declaration(file, decl),
+                ),
                 kind: "declaration-name",
             });
         }
@@ -365,13 +866,13 @@ impl Checker<'_> {
             }
             let ty = self.type_of_expr(file, e);
             let ty = self.regular(ty);
-            let ty = self
-                .type_of_export_assignment_identifier(file, e)
-                .unwrap_or(ty);
-            let expression_text = self.type_to_string_for_baseline(ty);
+            let scope = self.enclosing_scope_of_expr(file, e);
+            let expression_text = self.type_to_string_for_baseline_at(ty, file, scope);
             let class = self.files().sym(file, bound.class_symbol[index]);
             let base_text = match self.base_types(class).first() {
-                Some(&base) if base != TypeId::ANY => self.type_to_string_for_baseline(base),
+                Some(&base) if base != TypeId::ANY => {
+                    self.type_to_string_for_baseline_at(base, file, scope)
+                }
                 _ => expression_text.clone(),
             };
             // The node right under the clause comes first.
@@ -437,9 +938,8 @@ impl Checker<'_> {
             .get(&e)
             .and_then(|&scope| files.resolve_name(file, scope, name, meaning))
             .and_then(|found| files.resolve_alias(found));
-        let Some(symbol) = symbol else {
-            return Some(TypeId::ANY);
-        };
+        // `undefined` and `globalThis` have no symbol here, and the expression has the error type if the name does not resolve.
+        let symbol = symbol?;
         Some(
             if self.type_flags_of_symbol(symbol).intersects(SymFlags::TYPE) {
                 self.declared_type(symbol)
@@ -447,40 +947,6 @@ impl Checker<'_> {
                 self.type_of_symbol(symbol)
             },
         )
-    }
-
-    /// `getTypeOfNode` of the identifier `e` in `export default e` or `export = e`, which is no expression node
-    /// (`IsInExpressionContext`): `isInRightSideOfImportOrExportAssignment`. `None` for anything else, and for a name that does not resolve.
-    fn type_of_export_assignment_identifier(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let ExprKind::Ident(name) = hir[e].kind else {
-            return None;
-        };
-        let crate::bind::Parent::Stmt(stmt) = bound.expr_parent[e.idx()] else {
-            return None;
-        };
-        if stmt.is_none()
-            || !matches!(hir[stmt].kind, StmtKind::ExportDefault(x) | StmtKind::ExportAssign(x) if x == e)
-            || hir.parens.binary_search_by_key(&e.0, |p| p.0.0).is_ok()
-        {
-            return None;
-        }
-        // `getSymbolOfNameOrPropertyAccessExpression`
-        let files = self.files();
-        let all_meanings = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE | SymFlags::ALIAS;
-        let sym = files.resolve_name(file, *bound.expr_scope.get(&e)?, name, all_meanings)?;
-        // `tryGetDeclaredTypeOfSymbol`, `getDeclaredTypeOfAlias`
-        let target = if files.flags(sym).intersects(SymFlags::TYPE) {
-            Some(sym)
-        } else {
-            files.resolve_alias(sym)
-        };
-        match target {
-            Some(target) if files.flags(target).intersects(SymFlags::TYPE) => {
-                Some(self.declared_type(target))
-            }
-            _ => Some(self.type_of_symbol(sym)),
-        }
     }
 
     /// `getTypeOfNode` of the names of the declarations that have a symbol of their own.
@@ -618,6 +1084,35 @@ impl Checker<'_> {
             let Some((prop, _)) = self.prop_of(container, name) else {
                 continue;
             };
+            let has_own_symbol = match &prop.source {
+                PropSource::Members(declarations) => {
+                    self.is_excluded_by_earlier_members(declarations, (file, m))
+                }
+                // `bindClassLikeDeclaration` declares the property `prototype` before the members.
+                _ => {
+                    name == known::prototype
+                        && member.kind == MemberKind::Method
+                        && member.flags.contains(Flags::STATIC)
+                        && matches!(bound.member_owner[index], MemberOwner::Class(_))
+                }
+            };
+            let prop = if has_own_symbol {
+                let mut flags = PropFlags::empty();
+                if member.flags.contains(Flags::OPTIONAL) {
+                    flags |= PropFlags::OPTIONAL;
+                }
+                if member.kind == MemberKind::Method {
+                    flags |= PropFlags::METHOD;
+                }
+                Prop {
+                    name,
+                    flags,
+                    source: PropSource::Members(MemberList::One((file, m))),
+                    mapper: prop.mapper,
+                }
+            } else {
+                prop
+            };
             // `getTypeOfSymbol` of the symbol the member declares, which is not instantiated: `this` is the type parameter.
             let ty = self.type_of_prop(&prop, MapperId::IDENTITY);
             let start = super::errors_x_properties_jsx::start_of_member_name(hir, m);
@@ -634,6 +1129,42 @@ impl Checker<'_> {
         }
     }
 
+    /// `declareSymbolEx`: whether the flags of the earlier ones of `declarations`, the members of one name in one symbol table,
+    /// exclude `member`. It is the only declaration of a symbol that is not in the table then.
+    fn is_excluded_by_earlier_members(
+        &self,
+        declarations: &[(FileId, MemberId)],
+        member: (FileId, MemberId),
+    ) -> bool {
+        const PROPERTY: u8 = 1;
+        const METHOD: u8 = 2;
+        const GET_ACCESSOR: u8 = 4;
+        const SET_ACCESSOR: u8 = 8;
+        let mut flags = 0;
+        for &(file, m) in declarations {
+            let declaration = &self.hir(file)[m];
+            // `SymbolFlags..Excludes`
+            let (includes, excludes) = match declaration.kind {
+                MemberKind::Method => (METHOD, PROPERTY | GET_ACCESSOR | SET_ACCESSOR),
+                MemberKind::Getter => (GET_ACCESSOR, GET_ACCESSOR | METHOD),
+                MemberKind::Setter => (SET_ACCESSOR, SET_ACCESSOR | METHOD),
+                _ if declaration.flags.contains(Flags::ACCESSOR) => (
+                    GET_ACCESSOR | SET_ACCESSOR,
+                    GET_ACCESSOR | SET_ACCESSOR | METHOD,
+                ),
+                _ => (PROPERTY, METHOD),
+            };
+            let is_excluded = flags & excludes != 0;
+            if (file, m) == member {
+                return is_excluded;
+            }
+            if !is_excluded {
+                flags |= includes;
+            }
+        }
+        false
+    }
+
     /// The names of the properties of object literals and of JSX attributes.
     fn types_at_property_names(&mut self, file: FileId, results: &mut Vec<TypeAtLocation>) {
         let hir = self.hir(file);
@@ -643,9 +1174,26 @@ impl Checker<'_> {
             if matches!(prop.kind, PropKind::Spread) || matches!(prop.key, PropKey::None) {
                 continue;
             }
-            // `getWidenedTypeForVariableLikeDeclaration`
-            let ty = self.type_of_literal_prop(file, p);
-            let ty = self.widened(ty);
+            // `with { type: "json" }`: the name of an import attribute is no declaration name, and `getTypeOfNode` ends in the error
+            // type. It is written `any` if the test has errors (`hadErrorBaseline`), which whoever has the report knows.
+            if hir.import_attributes.iter().any(|&(_, attributes)| {
+                matches!(hir[attributes].kind, ExprKind::Object(props) if props.range().contains(&index))
+            }) {
+                // `typeWriterWalker.visitNode`: a string literal there is not visited.
+                if !matches!(hir.text.get(prop.pos as usize), Some(b'"' | b'\'')) {
+                    results.push(TypeAtLocation {
+                        start: prop.pos,
+                        end: end_of_name(&hir.text, prop.pos),
+                        type_text: "error".to_owned(),
+                        kind: "error-type",
+                    });
+                }
+                continue;
+            }
+            // `getTypeOfVariableOrParameterOrPropertyWorker`: `checkPropertyAssignment`, `checkJsxAttribute` and the like of
+            // `symbol.ValueDeclaration`. None of them widens.
+            let declaration = self.value_declaration_of_literal_prop(file, p);
+            let ty = self.type_of_literal_prop(file, declaration);
             results.push(TypeAtLocation {
                 start: prop.pos,
                 end: end_of_name(&hir.text, prop.pos),
@@ -750,7 +1298,7 @@ impl Checker<'_> {
         results.push(TypeAtLocation {
             start,
             end,
-            type_text: self.type_to_string_for_baseline(ty),
+            type_text: self.type_to_string_for_baseline_at(ty, file, scope),
             kind: "expression",
         });
     }
@@ -770,6 +1318,13 @@ fn start_of_jsx_closing_tag_name(text: &[u8], close_pos: u32, name: &[u8]) -> Op
     }
     let start = skip_white_space(slash + 1);
     text.get(start..)?.starts_with(name).then_some(start as u32)
+}
+
+impl Checker<'_> {
+    /// `symbol.ValueDeclaration` of the symbol of the member `p` of an object literal (`SetValueDeclaration`: the first declaration).
+    fn value_declaration_of_literal_prop(&self, file: FileId, p: PropId) -> PropId {
+        self.bound(file).declarations_of_literal_member(p)[0]
+    }
 }
 
 /// The end of the property name, identifier or string that starts at `start`.

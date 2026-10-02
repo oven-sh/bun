@@ -1962,6 +1962,8 @@ static int ssl_renegotiate(struct us_socket_t *s) {
   us_reneg_policy(s_ssl(s), &limit, &window);
   struct us_ssl_rare_t *st = us_ssl_rare_ensure(s_ssl(s));
   s->ssl_handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
+  /* The check of the handshake before is not the check of this one. */
+  s->ssl_peer_chain_checked = 0;
   /* Wall-clock time can step backwards (NTP, manual adjustment); the
    * unsigned subtraction below would underflow and reset the window every
    * time. Only treat the window as elapsed when time has moved forward. */

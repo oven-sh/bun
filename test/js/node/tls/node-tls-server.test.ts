@@ -1254,7 +1254,7 @@ it("a socket that end()s while an asynchronous SNICallback is pending reports tl
   const events: string[] = [];
   const sniCalled = Promise.withResolvers<void>();
   const sawServerFin = Promise.withResolvers<void>();
-  const closed = Promise.withResolvers<void>();
+  const refused = Promise.withResolvers<void>();
   let answerSni: (() => void) | undefined;
   let serverSocket: net.Socket | undefined;
   const server: Server = createServer({
@@ -1267,14 +1267,14 @@ it("a socket that end()s while an asynchronous SNICallback is pending reports tl
     },
   });
   server.on("secureConnection", () => events.push("secureConnection"));
-  server.on("tlsClientError", err => events.push(`tlsClientError ${(err as NodeJS.ErrnoException).code}`));
+  server.on("tlsClientError", err => {
+    events.push(`tlsClientError ${(err as NodeJS.ErrnoException).code}`);
+    refused.resolve();
+  });
   server.on("connection", socket => {
     serverSocket = socket;
     socket.on("error", () => {});
-    socket.on("close", hadError => {
-      events.push(`close hadError=${hadError}`);
-      closed.resolve();
-    });
+    socket.on("close", hadError => events.push(`close hadError=${hadError}`));
   });
   server.listen(0);
   await once(server, "listening");
@@ -1308,7 +1308,9 @@ it("a socket that end()s while an asynchronous SNICallback is pending reports tl
     await sawServerFin.promise;
     // The handshake fails inside this call: the socket is shut down.
     answerSni!();
-    await closed.promise;
+    await refused.promise;
+    // 'close' follows in the check phase of the loop.
+    for (let turn = 0; turn < 10 && events.length < 2; turn++) await new Promise(resolve => setImmediate(resolve));
     expect(events).toEqual(["tlsClientError ECONNRESET", "close hadError=true"]);
   } finally {
     client.destroy();

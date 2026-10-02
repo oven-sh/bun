@@ -1263,9 +1263,15 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     arrowGivenTwice = (x: number) => x + 2;
     out.push(callsArrowGivenTwice(4));
 
+    function narrowsOptional(a: number, b?: number) { let s = 0; for (let i = 0; i < 3; i++) s += b !== undefined ? a * b : a; if (s > 1e9) s = 0; if (s < -1e9) s = 1; if (s === 77) s = 2; if (s === 78) s = 3; return s; }
+    function testsUnknown(a: number, b?: unknown) { let s = 0; for (let i = 0; i < 3; i++) s += b !== undefined ? a * (b as number) : a; if (s > 1e9) s = 0; if (s < -1e9) s = 1; if (s === 77) s = 2; if (s === 78) s = 3; return s; }
+    function comparesWithUndefined(x: unknown) { return x === undefined; }
+    kept.push(testsUnknown);
+    out.push(narrowsOptional(2), narrowsOptional(2, 3), testsUnknown(2), testsUnknown(2, 3), comparesWithUndefined(kept[0]), comparesWithUndefined(kept[1000]));
+
     console.log(out.join());
   `;
-  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14\n";
+  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000,12,18,12,30,4,3,7,7,12,10,10,14,6,18,6,18,false,true\n";
   const loopOptions = "useAOTLoopSplitting=1,useAOTInlineFastPathsInLoops=1";
 
   const builds = new Map<string, Promise<Map<string, string[]>>>();
@@ -1324,6 +1330,10 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     ["folded-comparison-of-argument", ["omitsOptional", "passesOptional"], ["forwardsOptional"]],
     ["takes-argument-list", ["countsArguments", "takesRest"], ["scaledBy", "keepsOptional", "small", "large"]],
     ["scalar-replaced-object", [], ["passesLiteralToOptionalThatEscapes"]],
+    ["narrowed-tested-value", ["narrowsOptional"], ["testsUnknown", "comparesWithUndefined"]],
+    ["calls:Mul", ["testsUnknown"], ["narrowsOptional"]],
+    ["calls:GetGlobal", [], ["comparesWithUndefined", "narrowsOptional", "testsUnknown"]],
+    ["calls:StrictEqual", [], ["comparesWithUndefined", "narrowsOptional"]],
     ["lowered-builtin:Math.floor", ["floors"], ["floorsShadowed"]],
     ["lowered-builtin:Array.isArray", ["isArray"], []],
     ["profitable-loop", ["sumsNumbers", "sumsFields"], ["callsInLoop", "hasNoLoop"], loopOptions],
@@ -1406,6 +1416,10 @@ describe.skipIf(!supported)("--compile-aot with a type table", () => {
     ["inlined-call", [], ["scalesLeakedInLoop"]],
     ["direct-call", [], ["scalesLeakedInLoop"]],
     ["direct-construct:Leaked", ["twiceLeaked"], []],
+    ["typed-field-read:b", ["coalescesOptional", "testsOptional"], ["coalescesParsed"]],
+    ["narrowed-tested-value", ["coalescesOptional"], ["coalescesParsed"]],
+    ["calls:Add", [], ["coalescesOptional"]],
+    ["calls:operationAOTValueAdd", [], ["coalescesOptional"]],
   ];
 
   for (const [label, options, env] of [

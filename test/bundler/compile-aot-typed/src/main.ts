@@ -65,4 +65,14 @@ out.push(scalesInLoop(3), scalesLeakedInLoop(3), (leaked[0] as any).twiceLeaked(
 (leaked[0] as any).constructor.prototype.twiceLeaked = function () { return { v: 100 }; };
 out.push(scalesLeakedInLoop(3));
 
+interface Optional { a: number; b?: number }
+function coalescesOptional(p: Optional) { return p.a + (p.b ?? 7); }
+function testsOptional(p: Optional) { if (p.b !== undefined) return p.a * p.b; return p.a; }
+function makesOptional(i: number): Optional { return i & 1 ? { a: i, b: i + 1 } : { a: i }; }
+out.push(coalescesOptional(makesOptional(1)), coalescesOptional(makesOptional(2)), testsOptional(makesOptional(3)), testsOptional(makesOptional(4)));
+out.push(coalescesOptional({ a: 1, b: undefined }), testsOptional({ a: 2, b: 0 }), coalescesOptional({ a: 1, b: 2.5 }));
+interface ParsedOptional { a: number; b?: number }
+function coalescesParsed(p: ParsedOptional) { return p.a + (p.b ?? 7); }
+out.push(coalescesParsed(JSON.parse('{"a":1,"b":2.5}')), coalescesParsed(JSON.parse('{"a":1}')), coalescesParsed(JSON.parse('{"a":1,"b":null}')), coalescesParsed(JSON.parse('{"a":1,"b":"x"}')));
+
 console.log(out.join());

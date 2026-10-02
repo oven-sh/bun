@@ -8007,6 +8007,7 @@ pub mod posix {
         STACK = libc::RLIMIT_STACK as _,
         CORE = libc::RLIMIT_CORE as _,
         AS = libc::RLIMIT_AS as _,
+        DATA = libc::RLIMIT_DATA as _,
     }
     #[cfg(unix)]
     pub fn getrlimit(res: RlimitResource) -> core::result::Result<Rlimit, super::Error> {

@@ -126,6 +126,47 @@ describe("heapStats() mimalloc integration", () => {
     expect(exitCode).toBe(0);
   });
 
+  // JSC tries 8 sizes for the structure heap, each half of the one before. When the OS refused them all, or mimalloc
+  // refused the one that fit, an assertion in JSC aborted and bun printed a crash report. JSC now hands the sizes to
+  // bun, which prints an error and exits. Not ASAN: malloc is not mimalloc there, and an ASAN build does not start
+  // under these limits.
+  describe.skipIf(isASAN)("a structure heap that cannot be reserved", () => {
+    // A build without the fix aborts in these tests. It must not upload a crash report.
+    const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+
+    // From 2048 GB the smallest size is 16 GB, which an 8 GB limit refuses on every architecture. Linux only: the
+    // kernel charges a reservation to both limits there, and macOS to neither.
+    for (const flag of ["v", "d"]) {
+      test.concurrent.skipIf(!isLinux)(`under ulimit -${flag}, is an error that names the limit`, async () => {
+        await using proc = Bun.spawn({
+          cmd: ["/bin/sh", "-c", `ulimit -c 0 && ulimit -${flag} 8388608 && exec "$@"`, "--", bunExe(), "-e", "1"],
+          env: { ...env, BUN_JSC_structureHeapSizeInKB: "2147483648" },
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe(
+          "error: could not reserve 16 GB of address space for the JavaScript heap (tried 2048 GB down to 16 GB)\n" +
+            `note: 'ulimit -${flag}' is 8388608 KB, run 'ulimit -${flag} unlimited' to remove the limit\n`,
+        );
+        expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+      });
+    }
+
+    // 32 MB fits with no limit, and mimalloc takes no range that small.
+    test.concurrent("that mimalloc refuses, is an error", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "1"],
+        env: { ...env, BUN_JSC_structureHeapSizeInKB: "32768" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("error: could not use the 32 MB of address space reserved for the JavaScript heap\n");
+      expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+    });
+  });
+
   // The allocator's purge thread takes back what was freed 100 ms after the free. What a thread freed while the purge thread
   // was in the middle of a pass was left out for good: it stayed resident until the event loop went idle or something forced
   // a collection. A script that keeps its thread busy does neither. It took a pass in which each of the allocator's arenas

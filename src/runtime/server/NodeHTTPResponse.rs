@@ -1184,8 +1184,7 @@ impl NodeHTTPResponse {
         })
     }
 
-    /// `end_args` picks the arguments of `write_or_end` out of those of the call. It gives an
-    /// array, not a slice: a slice puts its length into the state of the cork callback.
+    /// `end_args` returns an array and not a slice: a slice puts its length into the state of the cork callback.
     #[inline(always)]
     fn write_head_and_end_impl<const WITH_TRAILERS: bool, const END_ARGS: usize>(
         &self,

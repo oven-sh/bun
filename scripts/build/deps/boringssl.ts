@@ -36,6 +36,13 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // Path building matches candidate issuers without the keyCertSign check
+  // (OpenSSL 3 semantics), so a self-signed server certificate pinned via
+  // NODE_EXTRA_CA_CERTS or `tls.ca` anchors its own chain even when its
+  // keyUsage lacks keyCertSign. The check moves to each issuer edge in
+  // internal_verify.
+  patches: ["patches/boringssl/self-signed-anchor-without-keycertsign.patch"],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

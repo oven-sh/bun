@@ -20,12 +20,13 @@ use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
-use bun_core::{EncodedSlice, ZStr, strings};
+use bun_core::{EncodedSlice, ZStr};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue,
     JsCell, JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
 };
+use bun_resolver::data_url::DataURL;
 use bun_sys as sys;
 
 use super::codecs;
@@ -363,26 +364,21 @@ fn source_from_js(
         // anyway) and decode base64 here. Non-base64 data URLs aren't useful
         // for image bytes.
         if s.starts_with(b"data:") {
-            let Some(comma) = strings::index_of_char(s, b',') else {
+            let Ok(data_url) = DataURL::parse_without_check(s) else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image(): malformed data: URL (no comma)"
                 )));
             };
-            let meta = &s[5..comma as usize];
-            let payload = &s[comma as usize + 1..];
-            if strings::index_of(meta, b";base64").is_none() {
+            if !data_url.is_base64() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image(): only base64 data: URLs are supported",
                 )));
             }
-            let mut out = vec![0u8; bun_base64::decode_len(payload)];
-            let r = base64::decode(&mut out, payload);
-            if r.fail {
+            let Ok(out) = data_url.decode_data() else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image(): invalid base64 in data: URL"
                 )));
-            }
-            out.truncate(r.written);
+            };
             return Ok(Source::Owned(out));
         }
         return Ok(Source::Path(ZBox::from_bytes(s)));

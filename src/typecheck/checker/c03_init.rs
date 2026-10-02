@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 static NEXT_CHECKER_ID: AtomicU32 = AtomicU32::new(0);
 
 // The field of the checker that keeps the answer of a memoized getter of upstream: it has the name of the getter.
-pub type MemoField<'a, T> = fn(&mut Checker<'a>) -> &mut Memo<T>;
+pub type MemoField<'a, T> = for<'r> fn(&'r mut Checker<'a>) -> &'r mut Memo<T>;
 
 // The tree context and the arena of the lists are arguments, where upstream makes symbolArena and factory itself. The tracer and the mutex are not ported: one checker on one thread.
 pub fn new_checker<'a>(

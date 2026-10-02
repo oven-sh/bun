@@ -461,6 +461,52 @@ describe("HTTP/2 upgrade — server TLS options", () => {
   });
 });
 
+describe("HTTP/2 upgrade — failed handshake", () => {
+  type Outcome = { event: string; code?: string; library?: string; message?: string };
+
+  async function handshakeOutcome(onConnect: (client: net.Socket) => void): Promise<Outcome> {
+    const { promise, resolve } = Promise.withResolvers<Outcome>();
+    const h2Server = http2.createSecureServer(TLS);
+    h2Server.on("error", () => {});
+    h2Server.on("tlsClientError", (err: NodeJS.ErrnoException & { library?: string }) =>
+      resolve({ event: "tlsClientError", code: err.code, library: err.library, message: err.message }),
+    );
+    h2Server.on("secureConnection", () => resolve({ event: "secureConnection" }));
+
+    const netServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      h2Server.emit("connection", socket);
+    });
+    await once(netServer.listen(0, "127.0.0.1"), "listening");
+
+    const client = net.connect((netServer.address() as net.AddressInfo).port, "127.0.0.1", () => onConnect(client));
+    client.on("error", () => {});
+    client.on("close", () => resolve({ event: "close" }));
+    try {
+      return await promise;
+    } finally {
+      client.destroy();
+      netServer.close();
+    }
+  }
+
+  test("a first record that is not TLS is reported as ERR_SSL_*", async () => {
+    const { event, code, library } = await handshakeOutcome(client => client.write("not a TLS record\r\n\r\n"));
+    assert.deepStrictEqual(
+      { event, code, library },
+      { event: "tlsClientError", code: "ERR_SSL_WRONG_VERSION_NUMBER", library: "SSL routines" },
+    );
+  });
+
+  test("a client that hangs up before the handshake is reported as ECONNRESET", async () => {
+    const { event, code, message } = await handshakeOutcome(client => client.end());
+    assert.deepStrictEqual(
+      { event, code, message },
+      { event: "tlsClientError", code: "ECONNRESET", message: "socket hang up" },
+    );
+  });
+});
+
 if (typeof Bun !== "undefined") {
   describe("Node.js compatibility", () => {
     test("tests should run on node.js", async () => {

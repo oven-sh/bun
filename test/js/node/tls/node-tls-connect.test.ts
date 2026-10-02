@@ -1,5 +1,5 @@
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import { once } from "events";
 import { writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
@@ -237,6 +237,73 @@ for (const { name, connect } of tests) {
       }
     });
     const COMMON_CERT = { ...COMMON_CERT_ };
+
+    it("surfaces the fatal TLS alert when ALPN has no overlap", async () => {
+      await using server = tls.createServer({
+        key: COMMON_CERT.key,
+        cert: COMMON_CERT.cert,
+        ALPNProtocols: ["h2"],
+      });
+      server.on("tlsClientError", () => {});
+      server.on("secureConnection", s => {
+        s.on("error", () => {});
+        s.end();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      const identityCheck = jest.fn(tls.checkServerIdentity);
+      const result = await new Promise<{ kind: string; code?: string; library?: string }>(resolve => {
+        const socket = connect({
+          host: "127.0.0.1",
+          port,
+          servername: "localhost",
+          ca: COMMON_CERT.cert,
+          ALPNProtocols: ["xyz"],
+          checkServerIdentity: identityCheck,
+        });
+        socket.on("secureConnect", () => {
+          resolve({ kind: "secureConnect" });
+          socket.destroy();
+        });
+        socket.on("error", (err: NodeJS.ErrnoException & { library?: string }) => {
+          resolve({ kind: "error", code: err.code, library: err.library });
+        });
+      });
+
+      expect(result).toEqual({
+        kind: "error",
+        code: "ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL",
+        library: "SSL routines",
+      });
+      expect(identityCheck).not.toHaveBeenCalled();
+    });
+
+    it("emits error (not secureConnect) on a handshake_failure alert with rejectUnauthorized: false", async () => {
+      await using server = net.createServer(s => {
+        s.resume();
+        // TLS alert record: level fatal (2), description handshake_failure (40).
+        s.end(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]));
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      const result = await new Promise<{ kind: string; code?: string }>(resolve => {
+        const socket = connect({ host: "127.0.0.1", port, servername: "localhost", rejectUnauthorized: false });
+        socket.on("secureConnect", () => {
+          resolve({ kind: "secureConnect" });
+          socket.destroy();
+        });
+        socket.on("error", (err: NodeJS.ErrnoException) => {
+          resolve({ kind: "error", code: err.code });
+        });
+      });
+
+      expect(result).toEqual({
+        kind: "error",
+        code: "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
+      });
+    });
 
     it("Bun.serve() should work with tls and Bun.file()", async () => {
       using server = Bun.serve({
@@ -842,6 +909,31 @@ it("a client and a server TLSSocket connected through a synchronous in-memory du
   expect({ secure, exchange }).toEqual({
     secure: { client: true, server: true },
     exchange: ["server got one", "client got pong one", "server got two", "client got pong two"],
+  });
+});
+
+it("a server TLSSocket over a duplex reports a first record that is not TLS as ERR_SSL_WRONG_VERSION_NUMBER", async () => {
+  const transport = new Duplex({
+    read() {},
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const server = new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+  const { promise, resolve } = Promise.withResolvers<{ event: string; code?: string; library?: string }>();
+  server.on("error", (err: NodeJS.ErrnoException & { library?: string }) =>
+    resolve({ event: "error", code: err.code, library: err.library }),
+  );
+  server.on("secure", () => resolve({ event: "secure" }));
+  server.on("close", () => resolve({ event: "close" }));
+  transport.push("not a TLS record\r\n\r\n");
+
+  const outcome = await promise;
+  transport.destroy();
+  expect(outcome).toEqual({
+    event: "error",
+    code: "ERR_SSL_WRONG_VERSION_NUMBER",
+    library: "SSL routines",
   });
 });
 

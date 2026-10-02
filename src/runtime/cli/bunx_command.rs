@@ -734,7 +734,9 @@ impl BunxCommand {
         match bun_sys::lstat(ZStr::from_buf(&buf[..], root.len())) {
             Ok(st) if Self::is_private_dir(&st, uid) => CacheRootState::Private,
             Ok(_) => CacheRootState::Foreign,
-            Err(_) => CacheRootState::Missing,
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => CacheRootState::Missing,
+            // A parent bunx cannot enter (EACCES) or that is a file (ENOTDIR).
+            Err(_) => CacheRootState::Foreign,
         }
     }
 
@@ -760,12 +762,6 @@ impl BunxCommand {
             // Another bunx of this user won the race.
             Err(err) => err.get_errno() == bun_sys::E::EEXIST,
         }
-    }
-
-    #[cfg(not(unix))]
-    #[inline(always)]
-    fn create_cache_root(_root: &[u8]) -> bool {
-        true
     }
 
     #[cfg(unix)]
@@ -803,23 +799,44 @@ impl BunxCommand {
         uid: libc::uid_t,
     ) -> CacheRoot {
         let cache_dir = bun_install::package_manager::fetch_cache_directory_path(env, None);
-        if !cache_dir.is_cwd_fallback {
-            let mut root = Self::join_cache_root(&cache_dir.path, &cache_root_name());
-            // A root that exists but belongs to somebody else, or that a
-            // filesystem reports as world-writable (drvfs, ntfs-3g, CIFS
-            // without `uid=`), would fail the check in `exec` on every run, so
-            // use the temp directory rather than refuse to run at all.
-            if Self::cache_root_state(&root.path, uid) != CacheRootState::Foreign {
-                root.from_install_cache = true;
-                return root;
-            }
-            bun_output::scoped_log!(
-                bunx,
-                "install cache root is not private: {}",
-                BStr::new(&root.path[..])
-            );
+        if cache_dir.is_cwd_fallback {
+            return Self::temp_cache_root(temp_dir);
         }
-        Self::temp_cache_root(temp_dir)
+        let mut root = Self::join_cache_root(&cache_dir.path, &cache_root_name());
+        match Self::cache_root_state(&root.path, uid) {
+            CacheRootState::Private => {
+                root.from_install_cache = true;
+                root
+            }
+            // A run that installs creates it, or takes the temp directory if
+            // it cannot. Take the temp directory here too when a run already
+            // did, so this one finds what that one installed.
+            CacheRootState::Missing => {
+                let temp = Self::temp_cache_root(temp_dir);
+                if Self::cache_root_state(&temp.path, uid) == CacheRootState::Private {
+                    temp
+                } else {
+                    root.from_install_cache = true;
+                    root
+                }
+            }
+            // Somebody else's, reported world-writable by the filesystem
+            // (drvfs, ntfs-3g, CIFS without `uid=`), or not statable. Each
+            // would refuse every run.
+            CacheRootState::Foreign => {
+                Self::warn_weaker_root(&root.path);
+                Self::temp_cache_root(temp_dir)
+            }
+        }
+    }
+
+    /// The temp directory is shared, so say so when bunx is pushed into it.
+    #[cfg(unix)]
+    fn warn_weaker_root(unusable: &[u8]) {
+        bun_core::warn!(
+            "bunx cannot use <b>{}<r> as its cache and is using the shared temp directory instead. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory only you can write.",
+            BStr::new(unusable),
+        );
     }
 
     /// `GetTempPath` is per-user, so the layout stays as it was.
@@ -1135,6 +1152,8 @@ impl BunxCommand {
         #[cfg(windows)]
         let uid = bun_sys::windows::user_unique_id();
 
+        // Only the unix fallback below reassigns these three.
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut cache_root = Self::user_cache_root(env_loader, temp_dir, uid);
         let package_dir_of = |root: &CacheRoot| -> Result<Vec<u8>, crate::Error> {
             let mut v = Vec::with_capacity(root.path.len() + package_fmt.len() + 1);
@@ -1146,25 +1165,31 @@ impl BunxCommand {
             v.extend_from_slice(&package_fmt);
             Ok(v)
         };
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut bunx_cache_dir_buf: Vec<u8> = package_dir_of(&cache_root)?;
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut bunx_cache_dir: &[u8] = &bunx_cache_dir_buf;
 
-        path = {
+        let cache_bin_of = |cache_dir: &[u8], tail: &[u8]| -> Result<Vec<u8>, crate::Error> {
             let mut v = Vec::new();
-            let path_is_nonzero = !path.is_empty();
             write!(
                 &mut v,
                 "{cache}{sep}node_modules{sep}.bin",
-                cache = BStr::new(bunx_cache_dir),
+                cache = BStr::new(cache_dir),
                 sep = bun_paths::SEP as char,
             )
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-            if path_is_nonzero {
+            if !tail.is_empty() {
                 v.push(DELIMITER);
-                v.extend_from_slice(&path);
+                v.extend_from_slice(tail);
             }
-            v
+            Ok(v)
         };
+        // Where the part of PATH that is not the cache starts: the node shim
+        // and every local `node_modules/.bin`, which a fallback root keeps.
+        #[cfg(unix)]
+        let path_tail_at = bunx_cache_dir.len() + b"/node_modules/.bin".len() + 1;
+        path = cache_bin_of(bunx_cache_dir, &path)?;
 
         env_loader.map.put(b"PATH", &path)?;
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
@@ -1485,34 +1510,30 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        // Nothing above needed the root to exist. The install does.
-        if !Self::create_cache_root(&cache_root.path) && cache_root.from_install_cache {
-            bun_output::scoped_log!(
-                bunx,
-                "cannot create {}, using the temp directory",
-                BStr::new(&cache_root.path[..])
-            );
+        // Nothing above needed the root to exist. The install does. A root
+        // the filesystem reports as writable by others right after it was
+        // created 0700 is as unusable as one somebody else owns.
+        #[cfg(unix)]
+        if !Self::create_cache_root(&cache_root.path)
+            || Self::cache_root_state(&cache_root.path, uid) != CacheRootState::Private
+        {
+            if !cache_root.from_install_cache {
+                Self::refuse_cache_root(&cache_root.path, true);
+            }
+            Self::warn_weaker_root(&cache_root.path);
+            let tail = if path.len() > path_tail_at {
+                path[path_tail_at..].to_vec()
+            } else {
+                Vec::new()
+            };
             cache_root = Self::temp_cache_root(temp_dir);
-            Self::create_cache_root(&cache_root.path);
             bunx_cache_dir_buf = package_dir_of(&cache_root)?;
             bunx_cache_dir = &bunx_cache_dir_buf;
-            path = {
-                let mut v = Vec::new();
-                write!(
-                    &mut v,
-                    "{cache}{sep}node_modules{sep}.bin",
-                    cache = BStr::new(bunx_cache_dir),
-                    sep = bun_paths::SEP as char,
-                )
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-                if !original_path.is_empty() {
-                    v.push(DELIMITER);
-                    v.extend_from_slice(&original_path);
-                }
-                v
-            };
+            path = cache_bin_of(bunx_cache_dir, &tail)?;
             env_loader.map.put(b"PATH", &path)?;
-            if !Self::is_trusted_cache_root(bunx_cache_dir, cache_root.parent_len, uid) {
+            if !Self::create_cache_root(&cache_root.path)
+                || !Self::is_trusted_cache_root(bunx_cache_dir, cache_root.parent_len, uid)
+            {
                 Self::refuse_cache_root(bunx_cache_dir, true);
             }
         }
@@ -1630,6 +1651,8 @@ impl BunxCommand {
                 bun_sys::Result::Ok(result) => result,
             },
         };
+
+        env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
 
         match &spawn_result.status {
             SpawnStatus::Exited(exited) => {

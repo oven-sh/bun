@@ -4,8 +4,6 @@ pub enum Error {
     WriteFailed,
     #[error("StackOverflow")]
     StackOverflow,
-    #[error("PartialWrite")]
-    PartialWrite,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
@@ -18,7 +16,6 @@ impl Error {
         match self {
             Self::WriteFailed => "WriteFailed",
             Self::StackOverflow => "StackOverflow",
-            Self::PartialWrite => "PartialWrite",
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
         }

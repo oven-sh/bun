@@ -2439,8 +2439,9 @@ NOT compiled by cargo when this was written: it does not reach the file while a 
 ### Verified
 
 - `sh round2-layer7-checker/c52-probe.sh` on the trees of `a582ea9efb` and `f5d129e53c`: exit 0, "probe ok". It runs
-  `rustc` and `clippy-driver` alone, no cargo. (1) One crate holds the real `c52_symbol_at_location.rs`, `checker/types.rs` and
-  `checker/c01_data.rs`, the leaf files they stand on, and a stand-in for every other name. `c52-probe-gen.py` reads
+  `rustc` and `clippy-driver` alone, no cargo. (1) One crate holds the real `c52_symbol_at_location.rs`,
+  `checker/types.rs` and `checker/c01_data.rs`, the leaf files they stand on, and a stand-in for every other name.
+  `c52-probe-gen.py` reads
   the signature of a stand-in from the file of the tree that defines it: 23 methods of `Ast`, 54 free functions of
   `ast/`, 50 methods of the checker, the 8 free functions of `utilities.rs`, `append_if_unique` and `first_or_nil` of
   `core/core.rs`, and the types of the 10 fields of the checker that the file names beside `ast`, `types` and

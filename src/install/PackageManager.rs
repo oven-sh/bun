@@ -1656,7 +1656,12 @@ pub fn init(
                 break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
             }
             // Bootstrap the global package.json (#30658) only for commands that create or read it; update/remove/patch must refuse rather than wipe bun.lock against an empty manifest.
-            if cli.global && matches!(subcommand, Subcommand::Install | Subcommand::Add | Subcommand::Pm) {
+            if cli.global
+                && matches!(
+                    subcommand,
+                    Subcommand::Install | Subcommand::Add | Subcommand::Pm
+                )
+            {
                 this_cwd = original_cwd;
                 created_package_json = true;
                 break 'child attempt_to_create_package_json_and_open()?;

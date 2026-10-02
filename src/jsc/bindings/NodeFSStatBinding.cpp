@@ -212,13 +212,16 @@ static const Identifier& identifier(JSC::VM& vm, DateFieldType dateField)
 }
 
 // A cached transition that adds `name` proves an ordinary, extensible object has no own `name`: putDirect() then equals [[DefineOwnProperty]].
-static ALWAYS_INLINE bool canDefineWithPutDirect(JSC::JSObject* object, JSC::PropertyName name)
+static ALWAYS_INLINE bool canDefineWithPutDirect(JSC::VM& vm, JSC::JSObject* object, JSC::PropertyName name)
 {
     JSC::Structure* structure = object->structure();
     if (object->type() != JSC::FinalObjectType || !structure->isStructureExtensible() || structure->isDictionary())
         return false;
     JSC::PropertyOffset offset;
-    return JSC::Structure::addPropertyTransitionToExistingStructure(structure, name, 0, offset);
+    if (!JSC::Structure::addPropertyTransitionToExistingStructure(structure, name, 0, offset))
+        return false;
+    ASSERT_UNUSED(vm, structure->get(vm, name) == invalidOffset);
+    return true;
 }
 
 template<DateFieldType field, bool isBigInt>
@@ -251,7 +254,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     if (thisObject->structureID() != classStructureID) {
         if (thisObject->structure()->mayBePrototype())
             return result;
-        if (!canDefineWithPutDirect(thisObject, propertyName)) {
+        if (!canDefineWithPutDirect(vm, thisObject, propertyName)) {
             thisObject->createDataProperty(globalObject, propertyName, result, true);
             RETURN_IF_EXCEPTION(scope, {});
             return result;
@@ -306,7 +309,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * 
         return false;
 
     JSValue value = JSValue::decode(encodedValue);
-    if (canDefineWithPutDirect(thisObject, propertyName)) {
+    if (canDefineWithPutDirect(vm, thisObject, propertyName)) {
         thisObject->putDirect(vm, propertyName, value, 0);
         return true;
     }

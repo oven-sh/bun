@@ -32,7 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
-import { ZSTD_COMMIT } from "./deps/zstd.ts";
+import { zstd } from "./deps/zstd.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
@@ -125,14 +125,15 @@ export const workarounds: Workaround[] = [
       "and a job that still runs reads them. patches/zstd/free-workers-before-dictionaries.patch " +
       "joins first.",
     applies: () => true,
-    expectedToBeFixed: () => {
+    expectedToBeFixed: cfg => {
       // No fixed release is known: zstd's dev branch had the same order at
       // 01b7154f11 (2026-10-01). So every bump of the pin asks for a look.
       const PATCH_WRITTEN_FOR = "f8745da6ff1ad1e7bab384bd1f9d742439278e99";
-      return ZSTD_COMMIT !== PATCH_WRITTEN_FOR;
+      const source = zstd.source(cfg);
+      return source.kind === "github-archive" && source.commit !== PATCH_WRITTEN_FOR;
     },
     cleanup:
-      `Read ZSTD_freeCCtxContent() in lib/compress/zstd_compress.c at the new ZSTD_COMMIT. If it ` +
+      `Read ZSTD_freeCCtxContent() in lib/compress/zstd_compress.c at the new zstd commit. If it ` +
       `calls ZSTDMT_freeCCtx() before ZSTD_clearAllDicts(), delete ` +
       `patches/zstd/free-workers-before-dictionaries.patch, its line in ` +
       `scripts/build/deps/zstd.ts and this entry. If it does not, set PATCH_WRITTEN_FOR ` +

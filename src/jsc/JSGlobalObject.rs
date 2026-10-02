@@ -559,6 +559,7 @@ impl JSGlobalObject {
     }
 
     /// "The {argname} argument must be of type {typename}. Received {value}"
+    /// (a dotted `argname` is a "property", see `InvalidArgTypeName`).
     ///
     /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename`.
     pub fn throw_invalid_argument_type_value(
@@ -574,8 +575,8 @@ impl JSGlobalObject {
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be of type {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
+                "The {} must be of type {}. Received {}",
+                InvalidArgTypeName(argname.as_ref()),
                 bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
@@ -583,6 +584,8 @@ impl JSGlobalObject {
         .throw()
     }
 
+    /// Like [`Self::throw_invalid_argument_type_value`], but `typename` is the whole
+    /// phrase after "must be" (e.g. `"an instance of Array"`).
     pub fn throw_invalid_argument_type_value2(
         &self,
         argname: impl AsRef<[u8]>,
@@ -596,8 +599,8 @@ impl JSGlobalObject {
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
+                "The {} must be {}. Received {}",
+                InvalidArgTypeName(argname.as_ref()),
                 bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
@@ -641,8 +644,8 @@ impl JSGlobalObject {
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be one of type {}. Received {}",
-                bstr::BStr::new(argname.as_ref()),
+                "The {} must be one of type {}. Received {}",
+                InvalidArgTypeName(argname.as_ref()),
                 bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
@@ -1384,6 +1387,26 @@ pub struct SysErrOptions {
     pub code: NodeErrorCode,
     pub errno: Option<i32>,
     pub name: Option<&'static [u8]>,
+}
+
+/// The subject of Node's `ERR_INVALID_ARG_TYPE` message: `"name" argument`,
+/// `"options.name" property` for a dotted name, or the name verbatim when it
+/// already ends in ` argument` ("first argument"). Same rule as
+/// `Bun::Message::addParameter` in ErrorCode.cpp.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1407-L1414
+struct InvalidArgTypeName<'a>(&'a [u8]);
+
+impl core::fmt::Display for InvalidArgTypeName<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let name = bstr::BStr::new(self.0);
+        if self.0.ends_with(b" argument") {
+            write!(f, "{name}")
+        } else if strings::contains_char(self.0, b'.') {
+            write!(f, "\"{name}\" property")
+        } else {
+            write!(f, "\"{name}\" argument")
+        }
+    }
 }
 
 // Unified with the crate-root definitions (lib.rs) — re-exported here so

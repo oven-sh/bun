@@ -3155,6 +3155,89 @@ describe("writeFile/appendFile data argument", () => {
   });
 });
 
+describe("writeFile/appendFile flush option", () => {
+  // Node validates it as `options.flush`, so ERR_INVALID_ARG_TYPE calls it a
+  // property, not an argument. Every string/Buffer entry point shares one
+  // native options parser, so they all have to agree.
+  const invalidArgType = (received: string) =>
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "options.flush" property must be of type boolean. Received ${received}`,
+    });
+  const cases: [flush: unknown, received: string][] = [
+    ["yes", "type string ('yes')"],
+    [1, "type number (1)"],
+    [{}, "an instance of Object"],
+  ];
+
+  it.each(cases)("sync and callback forms throw for { flush: %p }", (flush, received) => {
+    using dir = tempDir("fs-flush-option", { "f.txt": "keep" });
+    const file = join(String(dir), "f.txt");
+    const options = { flush } as any;
+
+    expect(() => writeFileSync(file, "x", options)).toThrow(invalidArgType(received));
+    expect(() => writeFileSync(file, Buffer.from("x"), options)).toThrow(invalidArgType(received));
+    expect(() => fs.appendFileSync(file, "x", options)).toThrow(invalidArgType(received));
+    expect(() => fs.writeFile(file, "x", options, () => {})).toThrow(invalidArgType(received));
+    expect(() => fs.appendFile(file, "x", options, () => {})).toThrow(invalidArgType(received));
+    const fd = openSync(file, "r+");
+    try {
+      expect(() => writeFileSync(fd, "x", options)).toThrow(invalidArgType(received));
+    } finally {
+      closeSync(fd);
+    }
+
+    expect(readFileSync(file, "utf8")).toBe("keep");
+  });
+
+  it.each(cases)("promise forms reject for { flush: %p }", async (flush, received) => {
+    using dir = tempDir("fs-flush-option", { "f.txt": "keep" });
+    const file = join(String(dir), "f.txt");
+    const options = { flush } as any;
+
+    await expect(promises.writeFile(file, "x", options)).rejects.toThrow(invalidArgType(received));
+    await expect(promises.writeFile(file, Buffer.from("x"), options)).rejects.toThrow(invalidArgType(received));
+    await expect(promises.appendFile(file, "x", options)).rejects.toThrow(invalidArgType(received));
+    await using handle = await promises.open(file, "r+");
+    await expect(handle.appendFile("x", options)).rejects.toThrow(invalidArgType(received));
+
+    expect(readFileSync(file, "utf8")).toBe("keep");
+  });
+
+  it("accepts the values node accepts", () => {
+    using dir = tempDir("fs-flush-option", {});
+    const file = join(String(dir), "f.txt");
+    for (const flush of [undefined, null, false, true]) {
+      writeFileSync(file, "a", { flush } as any);
+      fs.appendFileSync(file, "b", { flush } as any);
+      expect(readFileSync(file, "utf8")).toBe("ab");
+    }
+  });
+});
+
+describe("ERR_INVALID_ARG_TYPE names an option as a property and a parameter as an argument", () => {
+  // Same renderer as the flush errors above; these pin the naming rule for a
+  // dotted name reached through the validators and for a plain name.
+  it("dotted option name", () => {
+    using dir = tempDir("fs-arg-type-name", { "f.txt": "" });
+    expect(() => rmSync(join(String(dir), "f.txt"), { maxRetries: "a" } as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "options.maxRetries" property must be of type number. Received type string ('a')`,
+      }),
+    );
+  });
+
+  it("plain parameter name", () => {
+    expect(() => fs.fsyncSync("x" as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "fd" argument must be of type number. Received type string ('x')`,
+      }),
+    );
+  });
+});
+
 function triggerDOMJIT(target: fs.Stats, fn: (..._: any[]) => any, result: any) {
   for (let i = 0; i < 9999; i++) {
     if (fn.apply(target) !== result) {

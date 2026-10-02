@@ -8,7 +8,7 @@ mode: center
 
 ## Get your connection details
 
-Open **Connect** for your instance in the ClickHouse Cloud console. Turn **via PgBouncer** off to use a direct connection in this example. Copy the connection URL and download the instance's CA certificate bundle from **Settings**.
+In the ClickHouse Cloud console, open the **Connect** menu for your instance and select **Directly**. Copy the connection URL and download the instance's CA certificate bundle from **Settings**.
 
 Create a project directory and add your connection details to a `.env` file:
 
@@ -17,7 +17,7 @@ DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/postgres"
 PGSSLROOTCERT="/absolute/path/to/ca-certificate.pem"
 ```
 
-For this example, use the hostname from the connection modal and remove the query string (the part starting with `?`) from the URL, including parameters such as `sslmode` and `channel_binding`. The client below configures TLS and verifies the server's certificate using the downloaded CA bundle. Keep `.env` out of version control. See the [connection documentation](https://clickhouse.com/docs/products/managed-postgres/connection) for details.
+For this example, use the hostname from the **Connect** menu and remove the query string (the part starting with `?`) from the URL, including parameters such as `sslmode` and `channel_binding`. The client below configures TLS and verifies the server's certificate using the downloaded CA bundle. Keep `.env` out of version control. See the [connection documentation](https://clickhouse.com/docs/products/managed-postgres/connection) for details.
 
 ## Query the database
 

@@ -1,0 +1,1355 @@
+VIOLATION  p.rs:193  [deref_mut]  inserted code that is not a site
+             + sidecar: Option<SidecarMark>,
+VIOLATION  p.rs:224  [deref_mut]  new function in a shared file: for_lint mark rewind
+             + /// What a lint parse keeps of the statements and class members that leave no node.
+             + pub erased: crate::parse::erased::ErasedTables,
+VIOLATION  p.rs:5556  [mark_expr_as_parenthesized]  new function in a shared file: is_lint_parse
+             + /// Whether `Parser::parse_for_lint` runs this parse.
+             + #[inline]
+VIOLATION  p.rs:8390  [pop_and_flatten_scope]  new function in a shared file: sidecar_mark rewind_sidecar
+             + /// Where the lists of the side table end now, for `rewind_sidecar`. `None`: the parse has no side table.
+             + #[inline]
+VIOLATION  p.rs:8447  [parser_snapshot]  inserted code that is not a site
+             + sidecar: self.sidecar_mark(),
+VIOLATION  p.rs:8505  [restore_parser_snapshot]  inserted code that is not a site
+             + if let Some(mark) = snapshot.sidecar {
+             + self.rewind_sidecar(mark);
+VIOLATION  parse/mod.rs:74  [parse_expr_with_flags]  new function in a shared file: parse_expr_flagged arrow_body_flags
+             + /// `parse_expr`, read with `flags`.
+             + #[inline]
+VIOLATION  parse/mod.rs:175  [parse_class]  inserted code that is not a site
+             + let mut auto_accessor_loc = bun_ast::Loc::EMPTY;
+VIOLATION  parse/mod.rs:177  [parse_class]  reference text removed or changed (1 lines out, 6 in)
+             - if p.lexer.token == T::TExtends {
+             + if p.lexer.token == T::TExtends
+             + && Self::IS_TYPESCRIPT_ENABLED
+VIOLATION  parse/mod.rs:200  [parse_class]  reference text removed or changed (1 lines out, 4 in)
+             - p.lexer.next()?;
+             + if p.starts_for_parse_only.is_some() {
+             + p.lint_class_implements(class_keyword.loc)?;
+VIOLATION  parse/mod.rs:205  [parse_class]  reference text removed or changed (4 lines out, 6 in)
+             - loop {
+             - p.skip_type_script_type(Level::Lowest)?;
+             + loop {
+             + p.skip_class_implements_entry()?;
+VIOLATION  parse/mod.rs:211  [parse_class]  reference text removed or changed (1 lines out, 0 in)
+             - p.lexer.next()?;
+VIOLATION  parse/mod.rs:226  [parse_class]  inserted code that is not a site
+             + // The signatures of an ambient class read this: they may end with a rest argument and a comma.
+             + let old_is_typescript_declare = p.fn_or_arrow_data_parse.is_typescript_declare;
+VIOLATION  parse/mod.rs:282  [parse_class]  reference text removed or changed (2 lines out, 4 in)
+             - has_auto_accessor =
+             - has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
+             + if prop_kind == js_ast::g::PropertyKind::AutoAccessor && !has_auto_accessor {
+             + has_auto_accessor = true;
+VIOLATION  parse/mod.rs:309  [parse_class]  inserted code that is not a site
+             + if Self::IS_TYPESCRIPT_ENABLED {
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+VIOLATION  parse/mod.rs:331  [parse_class]  inserted code that is not a site
+             + p.fn_or_arrow_data_parse.is_typescript_declare = old_is_typescript_declare;
+VIOLATION  parse/mod.rs:336  [parse_class]  inserted code that is not a site
+             + let standard_decorators = p.options.features.standard_decorators;
+             + // Only the standard lowering knows an auto-accessor, and it calls no experimental decorator.
+VIOLATION  parse/mod.rs:362  [parse_class]  reference text removed or changed (2 lines out, 5 in)
+             - should_lower_standard_decorators: p.options.features.standard_decorators
+             - && (has_any_decorators || has_auto_accessor),
+             + should_lower_standard_decorators: if standard_decorators {
+             + has_any_decorators || has_auto_accessor
+VIOLATION  parse/mod.rs:370  [parse_class]  new function in a shared file: skip_class_implements_entry reread_class_implements_entry rewind_class_implements_entry parse_and_drop_in_class
+             + /// parseTypeHeritageClauseElement of a class: a type as before, else an expression with type arguments.
+             + fn skip_class_implements_entry(&mut self) -> Result<(), Error> {
+VIOLATION  parse/mod.rs:714  [parse_paren_expr]  reference text removed or changed (1 lines out, 3 in)
+             - || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+             + || (Self::IS_TYPESCRIPT_ENABLED
+             + && p.lexer.token == T::TColon
+VIOLATION  parse/mod.rs:801  [parse_paren_expr]  reference text removed or changed (1 lines out, 17 in)
+             - let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+             + // "a ? (b) => (c) : d => e": after parameters that could be an expression, the body is before the ":" too
+             + let is_body_before_colon = Self::IS_TYPESCRIPT_ENABLED
+VIOLATION  parse/mod.rs:877  [parse_paren_expr]  new function in a shared file: arrow_parameters_could_be_expr paren_expr_has_type_parameters parse_paren_expr_for_lint parse_paren_expr_for_lint_cold lint_arrow_return_type lint_try_arrow_return_type lint_arrow_return_type_then_arrow lint_is_arrow_return_type_after_question lint_arrow_return_type_then_body
+             + /// Whether isParenthesizedArrowFunctionExpression of the reference is not certain of the arrow function whose parameter
+             + #[cold]
+VIOLATION  parse/mod.rs:1318  [parse_class_stmt]  inserted code that is not a site
+             + } else if Self::IS_TYPESCRIPT_ENABLED && p.starts_for_parse_only.is_some() {
+             + // The record of a declared class keeps its name, which no symbol holds.
+VIOLATION  parse/mod.rs:1329  [parse_class_stmt]  reference text removed or changed (5 lines out, 10 in)
+             - if Self::IS_TYPESCRIPT_ENABLED {
+             - let _ = p.skip_type_script_type_parameters(
+             + if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+             + if p.starts_for_parse_only.is_some() {
+VIOLATION  parse/mod.rs:1361  [parse_class_stmt]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + let mut flags = erased::ErasedFlags::AMBIENT;
+VIOLATION  parse/mod.rs:1945  [parse_and_declare_decls]  reference text removed or changed (1 lines out, 5 in)
+             - p.skip_type_script_type(Level::Lowest)?;
+             + if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             + p.lint_type_annotation(local.loc)?;
+VIOLATION  parse/mod.rs:1990  [parse_path]  reference text removed or changed (1 lines out, 7 in)
+             - if !p.lexer.has_newline_before
+             + // tryParseImportAttributes: "with" starts the attributes on the next line too. Without lint only before "{", so that "w
+             + let is_with_on_next_line = p.lexer.has_newline_before
+VIOLATION  parse/mod.rs:2136  [parse_stmts_up_to]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.dropped(
+VIOLATION  parse/mod.rs:2279  [parse_async_prefix_expr]  reference text removed or changed (1 lines out, 3 in)
+             - let arrow_body = p.parse_arrow_body(args, &mut data)?;
+             + let body_flags = Self::arrow_body_flags(flags);
+             + let arrow_body =
+VIOLATION  parse/mod.rs:2318  [parse_async_prefix_expr]  inserted code that is not a site
+             + let body_flags = Self::arrow_body_flags(flags);
+             + let parsed = p.parse_arrow_body_with_flags(args, &mut data, body_flags);
+VIOLATION  parse/mod.rs:2321  [parse_async_prefix_expr]  reference text removed or changed (1 lines out, 1 in)
+             - let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+             + let mut arrow_body = match parsed {
+VIOLATION  parse/mod.rs:2339  [parse_async_prefix_expr]  reference text removed or changed (10 lines out, 13 in)
+             - return p.parse_paren_expr(
+             - async_range.loc,
+             + let opts = ParenExprOpts {
+             + is_async: true,
+VIOLATION  parse/mod.rs:2360  [parse_async_prefix_expr]  reference text removed or changed (3 lines out, 7 in)
+             - match p
+             - .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
+             + let mut lint_type_lists = None;
+             + let skipped = if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+VIOLATION  parse/mod.rs:2370  [parse_async_prefix_expr]  reference text removed or changed (10 lines out, 21 in)
+             - return p.parse_paren_expr(
+             - async_range.loc,
+             + // In a JSX file these type parameters prove an arrow function, as in the reference
+             + let is_before_colon = flags == EFlags::AfterQuestionAndBeforeColon
+VIOLATION  parse/mod.rs:2410  [parse_async_prefix_expr]  new function in a shared file: arrow_parameter_loc log_arrow_arg_errors_for_lint pop_and_flatten_scope_for_lint
+             + }
+             + }
+VIOLATION  parse/parse_entry.rs:19  [-]  reference text removed or changed (2 lines out, 2 in)
+             - Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
+             - WrapMode,
+             + Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, ScopeOrder,
+             + StatementScope, WrapMode,
+VIOLATION  parse/parse_entry.rs:97  [import_path]  new function in a shared file: name_of is_declaration_file_name
+             + /// What `Parser::parse_for_lint` parsed: the tree as written, and what the parse pass keeps beside it.
+             + pub struct ParsedForLint<'p, 'a> {
+VIOLATION  parse/parse_entry.rs:523  [parse_only]  new function in a shared file: parse_for_lint parse_for_lint_with_codes _parse_for_lint
+             + /// Parses for a lint run and visits nothing: no `// @bun` shortcut, no transpiler cache, a declaration file is ambient.
+             + #[cold]
+VIOLATION  parse/parse_entry.rs:2783  [has_bun_pragma]  new function in a shared file: lint_parse statement_count declaration_file_names_are_those_of_tsc parses_javascript_typescript_and_jsx a_declaration_file_is_ambient takes_no_shortcut_for_a_bundled_file an_unvisited_identifier_is_its_spelling
+             + 
+             + #[cfg(test)]
+VIOLATION  parse/parse_fn.rs:70  [parse_fn_stmt]  reference text removed or changed (2 lines out, 7 in)
+             - if Self::IS_TYPESCRIPT_ENABLED {
+             - let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+             + if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+             + if p.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_fn.rs:132  [parse_fn_stmt]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + let mut flags = erased::ErasedFlags::ambient(opts.is_typescript_declare);
+VIOLATION  parse/parse_fn.rs:239  [parse_fn]  inserted code that is not a site
+             + let mut rest_comma = bun_ast::Range::NONE;
+VIOLATION  parse/parse_fn.rs:245  [parse_fn]  reference text removed or changed (2 lines out, 3 in)
+             - p.lexer.next()?;
+             - if p.lexer.token == T::TColon {
+             + if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             + p.lint_this_parameter(Owner::function(func.open_parens_loc), args.len())?;
+VIOLATION  parse/parse_fn.rs:249  [parse_fn]  reference text removed or changed (1 lines out, 4 in)
+             - p.skip_type_script_type(Level::Lowest)?;
+             + if p.lexer.token == T::TColon {
+             + p.lexer.next()?;
+VIOLATION  parse/parse_fn.rs:284  [parse_fn]  reference text removed or changed (1 lines out, 1 in)
+             - if is_identifier && opts.is_constructor {
+             + if is_identifier && (opts.is_constructor || !rest_arg) {
+VIOLATION  parse/parse_fn.rs:295  [parse_fn]  reference text removed or changed (1 lines out, 9 in)
+             - is_typescript_ctor_field = true;
+             + // Outside a constructor a modifier stands before a name on its line and is dropped.
+             + if !opts.is_constructor
+VIOLATION  parse/parse_fn.rs:336  [parse_fn]  reference text removed or changed (1 lines out, 9 in)
+             - ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
+             + if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             + ts_metadata = p.lint_type_metadata(false)?;
+VIOLATION  parse/parse_fn.rs:348  [parse_fn]  inserted code that is not a site
+             + } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             + p.lint_type_annotation(arg.loc)?;
+VIOLATION  parse/parse_fn.rs:387  [parse_fn]  inserted code that is not a site
+             + } else if opts.allow_missing_body_for_type_script && p.next_token_is_close_paren() {
+             + // A member of a "declare class" or an overload: the comma is an error once a body follows
+VIOLATION  parse/parse_fn.rs:434  [parse_fn]  reference text removed or changed (1 lines out, 8 in)
+             - func.return_ts_metadata = p.skip_typescript_return_type_with_metadata()?;
+             + if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             + func.return_ts_metadata = p.lint_type_metadata(true)?;
+VIOLATION  parse/parse_fn.rs:463  [parse_fn]  inserted code that is not a site
+             + if rest_comma.len > 0 {
+             + p.log().add_range_error(
+VIOLATION  parse/parse_fn.rs:484  [parse_fn]  new function in a shared file: next_token_is_close_paren lint_type_metadata
+             + /// Whether ")" is the token after the current one.
+             + fn next_token_is_close_paren(&mut self) -> bool {
+VIOLATION  parse/parse_fn.rs:569  [parse_fn_expr]  reference text removed or changed (2 lines out, 7 in)
+             - if Self::IS_TYPESCRIPT_ENABLED {
+             - let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+             + if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+             + if p.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_fn.rs:643  [parse_arrow_body]  new function in a shared file: parse_arrow_body_with_flags
+             + self.parse_arrow_body_with_flags(args, data, EFlags::None)
+             + }
+VIOLATION  parse/parse_fn.rs:707  [parse_arrow_body_with_flags]  reference text removed or changed (1 lines out, 1 in)
+             - let expr = match p.parse_expr(Level::Comma) {
+             + let expr = match p.parse_expr_flagged(Level::Comma, flags) {
+VIOLATION  parse/parse_jsx.rs:26  [parse_jsx_element]  reference text removed or changed (3 lines out, 7 in)
+             - if TYPESCRIPT {
+             - // Pass a flag to the type argument skipper because we need to call
+             + if TYPESCRIPT && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan) {
+             + if p.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_prefix.rs:50  [pfx_t_open_paren]  inserted code that is not a site
+             + if !SCAN_ONLY && p.is_lint_parse() {
+             + return Self::pfx_t_open_paren_for_lint(p, loc, level, flags);
+VIOLATION  parse/parse_prefix.rs:78  [pfx_t_open_paren]  new function in a shared file: pfx_t_open_paren_for_lint
+             + /// `(` of a lint parse, after it: what the parentheses hold is recorded, the parameters of an arrow function are not.
+             + #[cold]
+VIOLATION  parse/parse_prefix.rs:325  [pfx_t_identifier]  reference text removed or changed (1 lines out, 3 in)
+             - let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+             + let body_flags = Self::arrow_body_flags(flags);
+             + let arrow_result =
+VIOLATION  parse/parse_prefix.rs:625  [pfx_t_class]  reference text removed or changed (5 lines out, 10 in)
+             - if Self::IS_TYPESCRIPT_ENABLED {
+             - let _ = p.skip_type_script_type_parameters(
+             + if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+             + if p.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_prefix.rs:693  [pfx_t_at]  reference text removed or changed (5 lines out, 10 in)
+             - if Self::IS_TYPESCRIPT_ENABLED {
+             - let _ = p.skip_type_script_type_parameters(
+             + if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+             + if p.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_prefix.rs:756  [pfx_t_new]  reference text removed or changed (1 lines out, 5 in)
+             - let _ = p.try_skip_type_script_type_arguments_with_backtracking();
+             + if p.starts_for_parse_only.is_some() {
+             + let _ = p.lint_type_arguments_in_expression(target);
+VIOLATION  parse/parse_prefix.rs:997  [pfx_t_less_than]  reference text removed or changed (2 lines out, 8 in)
+             - let _ =
+             - p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+             + if p.starts_for_parse_only.is_some() {
+             + let owner = crate::parse::attached::Owner::arrow(loc);
+VIOLATION  parse/parse_prefix.rs:1006  [pfx_t_less_than]  reference text removed or changed (8 lines out, 8 in)
+             - return p.parse_paren_expr(
+             - loc,
+             + let opts = ParenExprOpts {
+             + force_arrow_fn: true,
+VIOLATION  parse/parse_prefix.rs:1031  [pfx_t_less_than]  inserted code that is not a site
+             + if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             + return Self::pfx_t_less_than_for_lint(p, loc, level, errors, flags);
+VIOLATION  parse/parse_prefix.rs:1049  [pfx_t_less_than]  inserted code that is not a site
+             + is_after_question_and_before_colon: flags
+             + == EFlags::AfterQuestionAndBeforeColon,
+VIOLATION  parse/parse_prefix.rs:1068  [pfx_t_less_than]  new function in a shared file: pfx_t_less_than_for_lint pfx_type_before_paren_for_lint
+             + /// `<T>x`, `<T>(x)` and `<T>(x) => {}` of a lint parse, at the `<`: an assertion is recorded around its whole operand.
+             + #[cold]
+VIOLATION  parse/parse_prefix.rs:1257  [parse_prefix]  reference text removed or changed (1 lines out, 1 in)
+             - p.lexer.unexpected()?;
+             + p.unexpected_as(crate::parse::syntax_errors::EXPRESSION_EXPECTED)?;
+VIOLATION  parse/parse_property.rs:109  [parse_method_expression]  inserted code that is not a site
+             + // A signature of an ambient class may end its arguments with a rest argument and a comma.
+             + is_typescript_declare: p.fn_or_arrow_data_parse.is_typescript_declare,
+VIOLATION  parse/parse_property.rs:128  [parse_method_expression]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + let mut prop_flags = flags::PropertySet::empty();
+VIOLATION  parse/parse_property.rs:267  [parse_method_expression]  new function in a shared file: is_class_index_signature scan_class_index_signature is_class_index_signature_name skip_class_index_signature
+             + /// isIndexSignature of a class element, after "[". No modifier is read: "[async x => x]" is a computed name.
+             + fn is_class_index_signature(&mut self) -> bool {
+VIOLATION  parse/parse_property.rs:421  [parse_property]  inserted code that is not a site
+             + 
+             + if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
+VIOLATION  parse/parse_property.rs:567  [parse_property]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.member_property(
+VIOLATION  parse/parse_property.rs:576  [parse_property]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts
+VIOLATION  parse/parse_property.rs:605  [parse_property]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.member_property(
+VIOLATION  parse/parse_property.rs:623  [parse_property]  reference text removed or changed (1 lines out, 1 in)
+             - // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
+             + // "accessor" keyword for auto-accessor fields, with either kind of decorators
+VIOLATION  parse/parse_property.rs:625  [parse_property]  reference text removed or changed (1 lines out, 0 in)
+             - && p.options.features.standard_decorators
+VIOLATION  parse/parse_property.rs:782  [parse_property]  reference text removed or changed (4 lines out, 7 in)
+             - if !has_definite_assignment_assertion_operator {
+             - has_type_parameters = p.skip_type_script_type_parameters(
+             + if !has_definite_assignment_assertion_operator && p.lexer.token == T::TLessThan {
+             + has_type_parameters = if p.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_property.rs:831  [parse_property]  reference text removed or changed (1 lines out, 9 in)
+             - ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
+             + if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             + ts_metadata = p.lint_type_metadata(false)?;
+VIOLATION  parse/parse_skip_typescript.rs:5  [-]  reference text removed or changed (1 lines out, 1 in)
+             - use crate::p::P;
+             + use crate::p::{P, SidecarMark};
+VIOLATION  parse/parse_skip_typescript.rs:7  [-]  reference text removed or changed (1 lines out, 2 in)
+             - DecoratorMetadata, Discard, Operand, TypeKeyword, TypeLiteral, TypeSink,
+             + ConstDefault, DecoratorMetadata, Discard, KK, Operand, Tag, TypeKeyword, TypeLiteral, TypeSink,
+             + b,
+VIOLATION  parse/parse_skip_typescript.rs:24  [-]  inserted code that is not a site
+             + bun_core::comptime_string_map! {
+             + static MEMBER_KEYWORD_MAP: MemberKeyword = {
+VIOLATION  parse/parse_skip_typescript.rs:121  [skip_typescript_return_type]  inserted code that is not a site
+             + // "function f(keyof: any): keyof is string"
+             + if self.lexer.token == T::TIdentifier
+VIOLATION  parse/parse_skip_typescript.rs:137  [skip_typescript_return_type_with_metadata]  reference text removed or changed (1 lines out, 8 in)
+             - let mut result = Metadata::DEFAULT;
+             + // tsc serializes a predicate without "asserts" as Boolean
+             + if self.lexer.token == T::TIdentifier
+VIOLATION  parse/parse_skip_typescript.rs:150  [skip_typescript_return_type_with_metadata]  reference text removed or changed (1 lines out, 1 in)
+             - Ok(result)
+             + Ok(result.metadata)
+VIOLATION  parse/parse_skip_typescript.rs:169  [skip_type_script_type_with_metadata]  reference text removed or changed (1 lines out, 1 in)
+             - let mut result = Metadata::DEFAULT;
+             + let mut result = Tag::default();
+VIOLATION  parse/parse_skip_typescript.rs:175  [skip_type_script_type_with_metadata]  reference text removed or changed (1 lines out, 90 in)
+             - Ok(result)
+             + Ok(result.metadata)
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:294  [skip_type_script_binding]  inserted code that is not a site
+             + // "[a = 1]"
+             + if self.lexer.token == T::TEquals {
+VIOLATION  parse/parse_skip_typescript.rs:303  [skip_type_script_binding]  inserted code that is not a site
+             + 
+             + // "[a, , b]": inside an attempt the second comma ends the attempt, as before
+VIOLATION  parse/parse_skip_typescript.rs:346  [skip_type_script_binding]  reference text removed or changed (1 lines out, 1 in)
+             - } else {
+             + } else if !self.skip_type_script_signature_property_name()? {
+VIOLATION  parse/parse_skip_typescript.rs:357  [skip_type_script_binding]  inserted code that is not a site
+             + // "{a = 1}"
+             + if self.lexer.token == T::TEquals {
+VIOLATION  parse/parse_skip_typescript.rs:390  [skip_typescript_fn_args]  inserted code that is not a site
+             + let is_identifier = self.lexer.token == T::TIdentifier;
+             + let name = self.lexer.identifier;
+VIOLATION  parse/parse_skip_typescript.rs:394  [skip_typescript_fn_args]  inserted code that is not a site
+             + // "(public a)"
+             + if is_identifier && self.lexer.token == T::TIdentifier {
+VIOLATION  parse/parse_skip_typescript.rs:410  [skip_typescript_fn_args]  inserted code that is not a site
+             + // "(a = 1)"
+             + if self.lexer.token == T::TEquals {
+VIOLATION  parse/parse_skip_typescript.rs:427  [skip_typescript_fn_args]  new function in a shared file: skip_type_script_parameter_modifiers skip_type_script_signature_property_name type_script_memo_at set_type_script_memo_at
+             + /// After a name that a second name follows. Where the first is a modifier of a parameter property, reads on to the name
+             + #[cold]
+VIOLATION  parse/parse_skip_typescript.rs:536  [skip_type_script_paren_or_fn_type]  reference text removed or changed (11 lines out, 30 in)
+             - } else {
+             - self.lexer.expect(T::TOpenParen)?;
+             + return Ok(());
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:567  [skip_type_script_paren_or_fn_type]  new function in a shared file: skip_type_script_paren_type
+             + result
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:586  [skip_type_script_paren_type]  new function in a shared file: reread_type_script_fn_type skip_known_type_script_fn_type skip_type_script_fn_type_signature
+             + /// The type in parentheses at `mark` was read with an error, or "=>" follows it. True where `(parameters) => type` is r
+             + #[cold]
+VIOLATION  parse/parse_skip_typescript.rs:638  [skip_type_script_type_with_opts]  new function in a shared file: parse_type
+             + debug_assert_eq!(level, Level::Lowest);
+             + self.parse_type::<S>(opts, out)
+VIOLATION  parse/parse_skip_typescript.rs:649  [parse_type]  reference text removed or changed (3 lines out, 0 in)
+             - // Deeply nested types ("[[[[...", "A<A<A<...", ...) recurse through this
+             - // function, so bound it the same way `parse_expr_common` bounds expression
+VIOLATION  parse/parse_skip_typescript.rs:651  [parse_type]  reference text removed or changed (1 lines out, 11 in)
+             - return Err(crate::Error::StackOverflow);
+             + return Err(Error::StackOverflow);
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:664  [parse_type]  new function in a shared file: parse_conditional_type_rest parse_union_type_or_higher parse_intersection_type_or_higher parse_union_or_intersection_type parse_union_or_intersection_type_rest parse_constituent_type parse_function_or_constructor_type_to_error parse_type_operator_or_higher parse_type_after_leading_operators parse_type_operator is_type_operator_a_name parse_infer_type parse_postfix_type_or_higher parse_postfix_type_rest
+             + if self.lexer.token == T::TExtends
+             + && !self.lexer.has_newline_before
+VIOLATION  parse/parse_skip_typescript.rs:1072  [parse_postfix_type_rest]  reference text removed or changed (1 lines out, 9 in)
+             - T::TNumericLiteral => {
+             + T::TExclamation => {
+             + // The "!" of a JSDoc type must be read for "as" casts to go on after it.
+VIOLATION  parse/parse_skip_typescript.rs:1081  [parse_postfix_type_rest]  reference text removed or changed (1 lines out, 0 in)
+             - S::literal(out, TypeLiteral::Number);
+VIOLATION  parse/parse_skip_typescript.rs:1083  [parse_postfix_type_rest]  reference text removed or changed (1 lines out, 5 in)
+             - T::TBigIntegerLiteral => {
+             + T::TOpenBracket => {
+             + // "{ ['x']: string \n ['y']: string }" must not become a single type
+VIOLATION  parse/parse_skip_typescript.rs:1089  [parse_postfix_type_rest]  reference text removed or changed (1 lines out, 19 in)
+             - S::literal(out, TypeLiteral::Bigint);
+             + let has_index_type = self.lexer.token != T::TCloseBracket;
+             + let mut index = <S::Sub as TypeSink>::NONE;
+VIOLATION  parse/parse_skip_typescript.rs:1109  [parse_postfix_type_rest]  reference text removed or changed (1 lines out, 2 in)
+             - T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => {
+             + T::TDot => {
+             + // ".name" is read after every type, as before.
+VIOLATION  parse/parse_skip_typescript.rs:1112  [parse_postfix_type_rest]  reference text removed or changed (1 lines out, 4 in)
+             - S::literal(out, TypeLiteral::String);
+             + self.parse_right_side_of_dot::<S>(out)?;
+             + 
+VIOLATION  parse/parse_skip_typescript.rs:1117  [parse_postfix_type_rest]  reference text removed or changed (3 lines out, 41 in)
+             - T::TTrue | T::TFalse => {
+             - self.lexer.next()?;
+             + _ => return Ok(()),
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:1159  [parse_non_array_type]  reference text removed or changed (3 lines out, 7 in)
+             - T::TNull => {
+             - self.lexer.next()?;
+             + self.lexer.next()?;
+             + S::keyword(out, TypeKeyword::Null);
+VIOLATION  parse/parse_skip_typescript.rs:1167  [parse_non_array_type]  reference text removed or changed (3 lines out, 9 in)
+             - T::TVoid => {
+             - self.lexer.next()?;
+             + self.lexer.next()?;
+             + S::keyword(out, TypeKeyword::Void);
+VIOLATION  parse/parse_skip_typescript.rs:1177  [parse_non_array_type]  reference text removed or changed (11 lines out, 3 in)
+             - T::TConst => {
+             - let r = self.lexer.range();
+             + self.lexer.next()?;
+             + if S::BUILDS {
+VIOLATION  parse/parse_skip_typescript.rs:1182  [parse_non_array_type]  reference text removed or changed (1 lines out, 1 in)
+             - T::TThis => {
+             + if self.lexer.token == T::TBigIntegerLiteral {
+VIOLATION  parse/parse_skip_typescript.rs:1184  [parse_non_array_type]  inserted code that is not a site
+             + S::literal(out, TypeLiteral::Bigint);
+             + } else {
+VIOLATION  parse/parse_skip_typescript.rs:1197  [parse_non_array_type]  reference text removed or changed (7 lines out, 2 in)
+             - // "function check(): this is boolean"
+             - if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
+             + // "function check(): this is boolean"
+             + if !self.parse_type_predicate_after_name::<S>(out)? {
+VIOLATION  parse/parse_skip_typescript.rs:1201  [parse_non_array_type]  reference text removed or changed (4 lines out, 36 in)
+             - T::TMinus => {
+             - // "-123"
+             + Ok(())
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:1238  [parse_non_array_type]  reference text removed or changed (16 lines out, 14 in)
+             - if self.lexer.token == T::TBigIntegerLiteral {
+             - self.lexer.next()?;
+             + /// `parseLiteralTypeNode`
+             + #[inline]
+VIOLATION  parse/parse_skip_typescript.rs:1253  [parse_literal_type_node]  reference text removed or changed (7 lines out, 28 in)
+             - // "[import: number]"
+             - // "[import?: number]"
+             + /// `parseKeywordTypeNode`. A "." after the keyword is read by `parse_postfix_type_rest`.
+             + fn parse_keyword_type_node<S: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:1282  [parse_keyword_type_node]  reference text removed or changed (2 lines out, 17 in)
+             - self.lexer.expect(T::TOpenParen)?;
+             - self.lexer.expect(T::TStringLiteral)?;
+             + /// "is T" after the first name of a type. Only a lint parse wants a return type around it.
+             + fn parse_type_predicate_after_name<S: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:1300  [parse_type_predicate_after_name]  reference text removed or changed (5 lines out, 15 in)
+             - // "import('./foo.json', { assert: { type: 'json' } })"
+             - // "import('./foo.json', { with: { type: 'json' } })"
+             + /// `parseTypeArgumentsOfTypeReference`
+             + fn parse_type_arguments_of_type_reference<S: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:1316  [parse_type_arguments_of_type_reference]  reference text removed or changed (6 lines out, 13 in)
+             - // "import('./foo.json', { assert: { type: 'json' } }, )"
+             - // "import('./foo.json', { with: { type: 'json' } }, )"
+             + /// `parseAssertsTypePredicate` in a return type, as before. Elsewhere "asserts" is a name.
+             + fn parse_asserts_type_predicate<S: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:1330  [parse_asserts_type_predicate]  reference text removed or changed (1 lines out, 10 in)
+             - self.lexer.expect(T::TCloseParen)?;
+             + // "function assert(x: boolean): asserts x" and "asserts x is boolean"
+             + if opts.contains(SkipTypeOptions::IsReturnType)
+VIOLATION  parse/parse_skip_typescript.rs:1341  [parse_asserts_type_predicate]  reference text removed or changed (4 lines out, 6 in)
+             - T::TNew => {
+             - // "new () => Foo"
+             + let subject_only = <S::Sub as TypeSink>::NONE;
+             + S::b_predicate(&mut self.lexer, out, asserts, subject_only)?;
+VIOLATION  parse/parse_skip_typescript.rs:1348  [parse_asserts_type_predicate]  reference text removed or changed (7 lines out, 8 in)
+             - // "[new: number]"
+             - // "[new?: number]"
+             + // "asserts x is boolean", where "is" may stand on the next line
+             + if S::BUILDS && self.lexer.is_contextual_keyword(b"is") {
+VIOLATION  parse/parse_skip_typescript.rs:1357  [parse_asserts_type_predicate]  reference text removed or changed (19 lines out, 8 in)
+             - let _ = self.skip_type_script_type_parameters(
+             - TypeParameterFlag::ALLOW_CONST_MODIFIER,
+             + // "asserts x \n is boolean"
+             + if self.lexer.has_newline_before
+VIOLATION  parse/parse_skip_typescript.rs:1366  [parse_asserts_type_predicate]  reference text removed or changed (1 lines out, 10 in)
+             - let mut check_type_parameters = true;
+             + if self.parse_type_predicate_after_name::<S>(out)? {
+             + // "asserts x is T" is an assertion, as "asserts x" is
+VIOLATION  parse/parse_skip_typescript.rs:1377  [parse_asserts_type_predicate]  reference text removed or changed (3 lines out, 18 in)
+             - match kind {
+             - TsIdentKind::PrefixKeyof => {
+             + /// `parseTypeReference`. `kind` is the kind of the identifier that the lexer is on.
+             + fn parse_type_reference<S: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:1396  [parse_type_reference]  reference text removed or changed (17 lines out, 11 in)
+             - // Valid:
+             - //   "[keyof: string]"
+             + // "function assert(x: any): x is boolean"
+             + if self.parse_type_predicate_after_name::<S>(out)? {
+VIOLATION  parse/parse_skip_typescript.rs:1408  [parse_type_reference]  reference text removed or changed (1 lines out, 15 in)
+             - S::keyof_type(out);
+             + // "[const: number]"
+             + if opts.contains(SkipTypeOptions::AllowTupleLabels) && self.lexer.token == T::TColon {
+VIOLATION  parse/parse_skip_typescript.rs:1424  [parse_type_reference]  reference text removed or changed (4 lines out, 15 in)
+             - break;
+             - }
+             + // "implements class {}": before "{" the word starts an expression, as before, but in a return type
+             + if !S::STRICT
+VIOLATION  parse/parse_skip_typescript.rs:1440  [parse_type_reference]  reference text removed or changed (8 lines out, 3 in)
+             - if (self.lexer.token != T::TColon
+             - && self.lexer.token != T::TQuestion
+             + self.parse_entity_name_rest::<S>(out)?;
+             + self.parse_type_arguments_of_type_reference::<S>(out)
+VIOLATION  parse/parse_skip_typescript.rs:1444  [parse_type_reference]  reference text removed or changed (1 lines out, 28 in)
+             - S::readonly_type(out);
+             + /// Whether the reserved word or the private name that the lexer is on is the first name of a type reference.
+             + fn is_reserved_type_name<S: TypeSink>(&mut self, opts: SkipTypeOptionsBitset) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:1473  [is_reserved_type_name]  reference text removed or changed (4 lines out, 8 in)
+             - break;
+             - }
+             + /// isListElement for a type: whether the lexer is on a reserved word or a private name that starts no type. "const" and
+             + fn is_word_that_starts_no_type(&mut self) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:1482  [is_word_that_starts_no_type]  reference text removed or changed (19 lines out, 10 in)
+             - // "type Foo = Bar extends [infer T] ? T : null"
+             - // "type Foo = Bar extends [infer T extends string] ? T : null"
+             + /// Whether "extends" or "in" follows a missing type, as before, rather than names a type.
+             + fn is_keyword_of_enclosing_type(&mut self, opts: SkipTypeOptionsBitset) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:1493  [is_keyword_of_enclosing_type]  reference text removed or changed (4 lines out, 12 in)
+             - break;
+             - }
+             + /// The loop of `parseEntityName`: the names after the first one.
+             + fn parse_entity_name_rest<S: TypeSink>(&mut self, out: &mut S::Out) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:1506  [parse_entity_name_rest]  reference text removed or changed (8 lines out, 5 in)
+             - // "let foo: unique symbol"
+             - if self.lexer.is_contextual_keyword(b"symbol") {
+             + /// `parseRightSideOfDot` for the name of a type, after the ".".
+             + fn parse_right_side_of_dot<S: TypeSink>(&mut self, out: &mut S::Out) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:1512  [parse_right_side_of_dot]  reference text removed or changed (7 lines out, 9 in)
+             - // "let foo: abstract new () => {}" added in TypeScript 4.2
+             - if self.lexer.token == T::TNew {
+             + let is_name = self.lexer.is_identifier_or_keyword();
+             + let arena = self.arena;
+VIOLATION  parse/parse_skip_typescript.rs:1522  [parse_right_side_of_dot]  reference text removed or changed (65 lines out, 3 in)
+             - // "function assert(x: boolean): asserts x"
+             - // "function assert(x: boolean): asserts x is boolean"
+             + self.lexer.next()?;
+             + Ok(())
+VIOLATION  parse/parse_skip_typescript.rs:1526  [parse_right_side_of_dot]  reference text removed or changed (3 lines out, 6 in)
+             - self.lexer.next()?;
+             - }
+             + /// Whether "import", "new" or "typeof" was the label of a tuple element, as before.
+             + #[inline]
+VIOLATION  parse/parse_skip_typescript.rs:1533  [is_tuple_label]  reference text removed or changed (6 lines out, 7 in)
+             - // "function assert(x: any): x is boolean"
+             - if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
+             + /// `parseImportType`, after "typeof". A string and an object type are its arguments, as before.
+             + fn parse_import_type<S: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:1541  [parse_import_type]  reference text removed or changed (7 lines out, 5 in)
+             - // "let foo: any \n <number>foo" must not become a single type
+             - if check_type_parameters && !self.lexer.has_newline_before {
+             + // "[import: number]" and "[import?: number]"
+             + if self.is_tuple_label(opts) {
+VIOLATION  parse/parse_skip_typescript.rs:1547  [parse_import_type]  reference text removed or changed (7 lines out, 2 in)
+             - // "[typeof: number]"
+             - // "[typeof?: number]"
+             + self.lexer.expect(T::TOpenParen)?;
+             + self.lexer.expect(T::TStringLiteral)?;
+VIOLATION  parse/parse_skip_typescript.rs:1550  [parse_import_type]  reference text removed or changed (1 lines out, 4 in)
+             - S::typeof_query(out);
+             + // "import('./foo.json', { with: { type: 'json' } })"
+             + if self.lexer.token == T::TComma {
+VIOLATION  parse/parse_skip_typescript.rs:1555  [parse_import_type]  reference text removed or changed (9 lines out, 5 in)
+             - if self.lexer.token == T::TImport {
+             - // "typeof import('fs')"
+             + // "import('./foo.json', { with: { type: 'json' } }, )"
+             + if self.lexer.token == T::TComma {
+VIOLATION  parse/parse_skip_typescript.rs:1561  [parse_import_type]  reference text removed or changed (4 lines out, 1 in)
+             - // "typeof x.#y"
+             - // "typeof x.y"
+             + self.lexer.expect(T::TCloseParen)?;
+VIOLATION  parse/parse_skip_typescript.rs:1563  [parse_import_type]  reference text removed or changed (7 lines out, 12 in)
+             - if !self.lexer.is_identifier_or_keyword()
+             - && self.lexer.token != T::TPrivateIdentifier
+             + // "import('fs').promises.FileHandle"
+             + if self.lexer.token == T::TDot {
+VIOLATION  parse/parse_skip_typescript.rs:1576  [parse_import_type]  reference text removed or changed (9 lines out, 3 in)
+             - if !self.lexer.has_newline_before {
+             - let _ = self.skip_type_script_type_arguments::<false, false>()?;
+             + // "import('fs')<T>"
+             + self.parse_type_arguments_of_import_type::<S>(out)
+VIOLATION  parse/parse_skip_typescript.rs:1580  [parse_import_type]  reference text removed or changed (1 lines out, 34 in)
+             - S::tuple_type(out);
+             + /// The type arguments of an import type without a qualifier. They are read where the expression that the type may end g
+             + fn parse_type_arguments_of_import_type<S: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:1615  [parse_type_arguments_of_import_type]  reference text removed or changed (33 lines out, 10 in)
+             - while self.lexer.token != T::TCloseBracket {
+             - if self.lexer.token == T::TDotDotDot {
+             + /// The second argument of an import type: an object type, as before, or else what parseImportType reads.
+             + fn parse_import_type_attributes(&mut self) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:1626  [parse_import_type_attributes]  reference text removed or changed (7 lines out, 21 in)
+             - if self.lexer.token == T::TTemplateTail {
+             - self.lexer.next()?;
+             + #[cold]
+             + #[inline(never)]
+VIOLATION  parse/parse_skip_typescript.rs:1648  [reread_import_type_attributes]  reference text removed or changed (9 lines out, 9 in)
+             - _ => {
+             - // "[function: number]"
+             + /// `{ with: { name: value } }` of parseImportType, where parseImportAttribute reads an expression as the value.
+             + fn parse_import_attributes_of_import_type(&mut self) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:1658  [parse_import_attributes_of_import_type]  reference text removed or changed (3 lines out, 12 in)
+             - if self.lexer.token != T::TColon && self.lexer.token != T::TQuestion {
+             - self.lexer.expect(T::TColon)?;
+             + // parseImportAttributes
+             + self.lexer.expect(T::TOpenBrace)?;
+VIOLATION  parse/parse_skip_typescript.rs:1671  [parse_import_attributes_of_import_type]  reference text removed or changed (2 lines out, 6 in)
+             - return Ok(());
+             - }
+             + if self.lexer.token == T::TComma {
+             + self.lexer.next()?;
+VIOLATION  parse/parse_skip_typescript.rs:1678  [parse_import_attributes_of_import_type]  reference text removed or changed (2 lines out, 99 in)
+             - self.lexer.unexpected()?;
+             - }
+             + /// `parseTypeQuery`
+             + fn parse_type_query<S: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:1778  [parse_tuple_element_name_or_tuple_element_type]  reference text removed or changed (1 lines out, 63 in)
+             - break;
+             + self.lexer.expect(T::TColon)?;
+             + return self.parse_tuple_element_type(SkipTypeOptionsBitset::empty());
+VIOLATION  parse/parse_skip_typescript.rs:1842  [parse_tuple_element_type]  inserted code that is not a site
+             + self.parse_type::<Discard>(opts, &mut ())?;
+             + if self.lexer.token == T::TQuestion {
+VIOLATION  parse/parse_skip_typescript.rs:1849  [parse_tuple_element_type]  new function in a shared file: parse_template_type
+             + /// `parseTemplateType`
+             + fn parse_template_type<S: TypeSink>(&mut self, out: &mut S::Out) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:1858  [parse_template_type]  reference text removed or changed (5 lines out, 8 in)
+             - match self.lexer.token {
+             - T::TBar => {
+             + self.lexer.next()?;
+             + let mut type_node = <S::Sub as TypeSink>::NONE;
+VIOLATION  parse/parse_skip_typescript.rs:1867  [parse_template_type]  reference text removed or changed (1 lines out, 11 in)
+             - self.lexer.next()?;
+             + if self.lexer.token == T::TTemplateTail {
+             + self.lexer.next()?;
+VIOLATION  parse/parse_skip_typescript.rs:1879  [parse_template_type]  reference text removed or changed (11 lines out, 32 in)
+             - match S::union_left(out, |r| self.load_name_from_ref(r)) {
+             - Operand::Decided => self.skip_type_script_type_with_opts::<Discard>(
+             + /// `isStartOfFunctionTypeOrConstructorType`. "(" is left to `skip_type_script_paren_or_fn_type`.
+             + fn is_start_of_function_type_or_constructor_type(&mut self) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:1912  [parse_function_or_constructor_type]  reference text removed or changed (4 lines out, 67 in)
+             - T::TAmpersand => {
+             - if level.gte(Level::BitwiseAnd) {
+             + }
+             + 
+VIOLATION  parse/parse_skip_typescript.rs:1980  [is_start_of_type]  new function in a shared file: next_is_start_of_type next_token_is_numeric_or_big_int_literal next_is_parenthesized_or_function_type is_start_of_parameter skip_type_script_object_type next_is_start_of_mapped_type scan_start_of_mapped_type parse_mapped_type parse_mapped_type_parameter parse_type_literal parse_object_type_members parse_type_member_list parse_type_member
+             + /// `nextIsStartOfType`
+             + fn next_is_start_of_type(&mut self) -> Result<bool, Error> {
+VIOLATION  parse/parse_skip_typescript.rs:2163  [parse_type_member]  inserted code that is not a site
+             + return self.parse_property_or_method_signature_of_reference(false, false);
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:2170  [parse_type_member]  reference text removed or changed (13 lines out, 28 in)
+             - match S::intersection_left(out, |r| self.load_name_from_ref(r)) {
+             - Operand::Decided => self.skip_type_script_type_with_opts::<Discard>(
+             + /// parseModifiers for a member, and the test for "get" and "set" that parseTypeMember makes after it.
+             + fn parse_modifiers_of_type_member(&mut self) -> Result<AfterModifiers, Error> {
+VIOLATION  parse/parse_skip_typescript.rs:2201  [parse_modifiers_of_type_member]  reference text removed or changed (10 lines out, 1 in)
+             - T::TExclamation => {
+             - // A postfix "!" is allowed in JSDoc types in TypeScript, which are only
+             + T::TIn => {
+VIOLATION  parse/parse_skip_typescript.rs:2203  [parse_modifiers_of_type_member]  inserted code that is not a site
+             + !self.lexer.has_newline_before && self.can_follow_modifier()
+VIOLATION  parse/parse_skip_typescript.rs:2205  [parse_modifiers_of_type_member]  reference text removed or changed (1 lines out, 1 in)
+             - T::TDot => {
+             + T::TConst => {
+VIOLATION  parse/parse_skip_typescript.rs:2207  [parse_modifiers_of_type_member]  reference text removed or changed (11 lines out, 3 in)
+             - if !self.lexer.is_identifier_or_keyword() {
+             - self.lexer.expect(T::TIdentifier)?;
+             + self.lexer.token == T::TEnum
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:2211  [parse_modifiers_of_type_member]  reference text removed or changed (5 lines out, 1 in)
+             - 
+             - // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
+             + self.can_follow_default_keyword()
+VIOLATION  parse/parse_skip_typescript.rs:2213  [parse_modifiers_of_type_member]  reference text removed or changed (5 lines out, 1 in)
+             - T::TOpenBracket => {
+             - // "{ ['x']: string \n ['y']: string }" must not become a single type
+             + T::TExport => {
+VIOLATION  parse/parse_skip_typescript.rs:2215  [parse_modifiers_of_type_member]  reference text removed or changed (8 lines out, 1 in)
+             - let mut skipped = false;
+             - if self.lexer.token != T::TCloseBracket {
+             + self.can_follow_export_keyword()
+VIOLATION  parse/parse_skip_typescript.rs:2217  [parse_modifiers_of_type_member]  reference text removed or changed (7 lines out, 7 in)
+             - T::TExtends => {
+             - // "{ x: number \n extends: boolean }" must not become a single type
+             + _ => return Ok(AfterModifiers::Member),
+             + };
+VIOLATION  parse/parse_skip_typescript.rs:2225  [parse_modifiers_of_type_member]  reference text removed or changed (1 lines out, 11 in)
+             - self.lexer.next()?;
+             + /// IsModifierKind for the token the lexer is on.
+             + fn is_modifier_kind(&self) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:2237  [is_modifier_kind]  reference text removed or changed (9 lines out, 26 in)
+             - // The type following "extends" is not permitted to be another conditional type
+             - {
+             + /// canFollowModifier
+             + fn can_follow_modifier(&self) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:2264  [is_property_name_of_one_loop]  reference text removed or changed (20 lines out, 8 in)
+             - self.lexer.expect(T::TQuestion)?;
+             - let mut when_true = S::Out::default();
+             + /// nextTokenCanFollowDefaultKeyword, after "default".
+             + fn can_follow_default_keyword(&mut self) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:2273  [can_follow_default_keyword]  reference text removed or changed (2 lines out, 2 in)
+             - _ => {
+             - return Ok(());
+             + if word == b"async" {
+             + return self.next_token_is_on_same_line(T::TFunction);
+VIOLATION  parse/parse_skip_typescript.rs:2276  [can_follow_default_keyword]  inserted code that is not a site
+             + word == b"interface"
+VIOLATION  parse/parse_skip_typescript.rs:2278  [can_follow_default_keyword]  inserted code that is not a site
+             + _ => false,
+VIOLATION  parse/parse_skip_typescript.rs:2282  [can_follow_default_keyword]  reference text removed or changed (2 lines out, 26 in)
+             - pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
+             - self.mark_type_script_only();
+             + /// nextTokenCanFollowModifier for "export", after "export".
+             + fn can_follow_export_keyword(&mut self) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:2309  [can_follow_export_modifier]  reference text removed or changed (1 lines out, 10 in)
+             - self.lexer.expect(T::TOpenBrace)?;
+             + /// Whether `token` is the token after the current one, on the same line.
+             + fn next_token_is_on_same_line(&mut self, token: T) -> bool {
+VIOLATION  parse/parse_skip_typescript.rs:2320  [next_token_is_on_same_line]  reference text removed or changed (4 lines out, 50 in)
+             - while self.lexer.token != T::TCloseBrace {
+             - // "{ -readonly [K in keyof T]: T[K] }"
+             + /// parseSignatureMember. "new" of a construct signature was read.
+             + fn parse_signature_member(&mut self, is_construct: bool) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:2371  [parse_property_or_method_signature_of_reference]  inserted code that is not a site
+             + self.skip_typescript_return_type()?;
+VIOLATION  parse/parse_skip_typescript.rs:2373  [parse_property_or_method_signature_of_reference]  reference text removed or changed (6 lines out, 4 in)
+             - 
+             - // Skip over modifiers and the property identifier
+             + // parseFunctionBlockOrSemicolon
+             + if is_accessor
+VIOLATION  parse/parse_skip_typescript.rs:2378  [parse_property_or_method_signature_of_reference]  inserted code that is not a site
+             + return Ok(());
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:2385  [parse_property_or_method_signature_of_reference]  reference text removed or changed (1 lines out, 7 in)
+             - found_key = true;
+             + self.skip_type_script_type(Level::Lowest)?;
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:2393  [parse_property_or_method_signature_of_reference]  inserted code that is not a site
+             + }
+             + self.parse_type_member_semicolon()
+VIOLATION  parse/parse_skip_typescript.rs:2397  [parse_property_or_method_signature_of_reference]  reference text removed or changed (8 lines out, 8 in)
+             - if self.lexer.token == T::TOpenBracket {
+             - // Index signature or computed property
+             + /// The type annotation and the separator of parseIndexSignatureDeclaration.
+             + fn parse_type_of_index_signature(&mut self) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:2406  [parse_type_of_index_signature]  reference text removed or changed (17 lines out, 22 in)
+             - // "{ [key: string]: number }"
+             - // "{ readonly [K in keyof T]: T[K] }"
+             + /// parsePropertyOrMethodSignature after the name, and the signature of parseSignatureMember and parseAccessorDeclaratio
+             + fn parse_property_or_method_signature(
+VIOLATION  parse/parse_skip_typescript.rs:2429  [parse_property_or_method_signature]  inserted code that is not a site
+             + } else if self.lexer.token == T::TExclamation {
+             + // "a!: b" is accepted
+VIOLATION  parse/parse_skip_typescript.rs:2436  [parse_property_or_method_signature]  reference text removed or changed (1 lines out, 5 in)
+             - self.lexer.expect(T::TCloseBracket)?;
+             + // parseTypeParameters
+             + let has_type_parameters = self.lexer.token == T::TLessThan;
+VIOLATION  parse/parse_skip_typescript.rs:2442  [parse_property_or_method_signature]  reference text removed or changed (7 lines out, 15 in)
+             - // "{ [K in keyof T]+?: T[K] }"
+             - // "{ [K in keyof T]-?: T[K] }"
+             + match self.lexer.token {
+             + T::TOpenParen => {
+VIOLATION  parse/parse_skip_typescript.rs:2457  [parse_property_or_method_signature]  reference text removed or changed (2 lines out, 0 in)
+             - 
+             - found_key = true;
+VIOLATION  parse/parse_skip_typescript.rs:2459  [parse_property_or_method_signature]  inserted code that is not a site
+             + T::TColon => {
+             + if name == MemberName::None {
+VIOLATION  parse/parse_skip_typescript.rs:2485  [parse_property_or_method_signature]  reference text removed or changed (5 lines out, 8 in)
+             - // "?" indicates an optional property
+             - // "!" indicates an initialization assertion
+             + self.parse_type_member_semicolon()
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:2495  [parse_type_member_semicolon]  inserted code that is not a site
+             + _ => {
+             + if !self.lexer.has_newline_before {
+VIOLATION  parse/parse_skip_typescript.rs:2505  [parse_type_member_semicolon]  reference text removed or changed (3 lines out, 10 in)
+             - // Type parameters come right after the optional mark
+             - let _ =
+             + /// "[" to "]" where a member or the name of an accessor starts: read as a type first, then as the reference reads it.
+             + fn parse_bracketed_name(&mut self, is_member_start: bool) -> Result<Bracketed, Error> {
+VIOLATION  parse/parse_skip_typescript.rs:2516  [parse_bracketed_name]  reference text removed or changed (6 lines out, 38 in)
+             - match self.lexer.token {
+             - T::TColon => {
+             + #[cold]
+             + #[inline(never)]
+VIOLATION  parse/parse_skip_typescript.rs:2555  [skip_type_script_bracketed_name]  inserted code that is not a site
+             + let mut bracketed = Bracketed::Type;
+             + match self.lexer.token {
+VIOLATION  parse/parse_skip_typescript.rs:2572  [skip_type_script_bracketed_name]  reference text removed or changed (3 lines out, 3 in)
+             - T::TOpenParen => {
+             - // Method signature
+             + }
+             + _ => {}
+VIOLATION  parse/parse_skip_typescript.rs:2576  [skip_type_script_bracketed_name]  reference text removed or changed (11 lines out, 34 in)
+             - if self.lexer.token == T::TColon {
+             - self.lexer.next()?;
+             + self.lexer.expect(T::TCloseBracket)?;
+             + 
+VIOLATION  parse/parse_skip_typescript.rs:2611  [next_is_unambiguously_index_signature]  reference text removed or changed (11 lines out, 31 in)
+             - match self.lexer.token {
+             - T::TCloseBrace => {}
+             + } else if self.lexer.token != T::TIdentifier {
+             + return Ok(false);
+VIOLATION  parse/parse_skip_typescript.rs:2643  [parse_index_signature_declaration]  inserted code that is not a site
+             + if self.lexer.token == T::TColon {
+             + self.lexer.next()?;
+VIOLATION  parse/parse_skip_typescript.rs:2656  [parse_index_signature_declaration]  reference text removed or changed (1 lines out, 1 in)
+             - self.lexer.expect(T::TCloseBrace)?;
+             + self.lexer.expect(T::TCloseBracket)?;
+VIOLATION  parse/parse_skip_typescript.rs:2660  [parse_index_signature_declaration]  new function in a shared file: parse_computed_property_name parse_initializer_in_type parse_function_block_in_type read_mark rewind_to_read_mark set_aside_failed_read restore_failed_read parse_and_drop_in_type parse_function_block_of_accessor
+             + /// parseComputedPropertyName
+             + fn parse_computed_property_name(&mut self) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:2860  [skip_type_script_type_parameters]  inserted code that is not a site
+             + let mut is_named_out = false;
+VIOLATION  parse/parse_skip_typescript.rs:2906  [skip_type_script_type_parameters]  inserted code that is not a site
+             + let had_invalid_modifier = invalid_modifier_range.len > 0;
+VIOLATION  parse/parse_skip_typescript.rs:2919  [skip_type_script_type_parameters]  inserted code that is not a site
+             + // "function foo<out>() {}": what follows names no parameter, so "out" does
+             + if !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
+VIOLATION  parse/parse_skip_typescript.rs:2966  [skip_type_script_type_parameters]  reference text removed or changed (1 lines out, 1 in)
+             - if expect_identifier || self.lexer.token == T::TIdentifier {
+             + if !is_named_out && (expect_identifier || self.lexer.token == T::TIdentifier) {
+VIOLATION  parse/parse_skip_typescript.rs:3009  [skip_type_script_type_stmt]  reference text removed or changed (1 lines out, 2 in)
+             - let _ = self.parse_export_clause()?;
+             + let clause = self.parse_export_clause()?;
+             + let mut path = None;
+VIOLATION  parse/parse_skip_typescript.rs:3013  [skip_type_script_type_stmt]  reference text removed or changed (1 lines out, 1 in)
+             - let _ = self.parse_path()?;
+             + path = Some(self.parse_path()?);
+VIOLATION  parse/parse_skip_typescript.rs:3016  [skip_type_script_type_stmt]  inserted code that is not a site
+             + if let Some(starts) = &mut self.starts_for_parse_only {
+             + starts.erased.hold(crate::parse::erased::ErasedData::export(
+VIOLATION  parse/parse_skip_typescript.rs:3033  [skip_type_script_type_stmt]  inserted code that is not a site
+             + let mut clause = crate::parse::erased::ExportClause::Star;
+VIOLATION  parse/parse_skip_typescript.rs:3037  [skip_type_script_type_stmt]  reference text removed or changed (1 lines out, 6 in)
+             - let _ = self.parse_clause_alias(b"export")?;
+             + let alias = self.parse_clause_alias(b"export")?;
+             + if self.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_skip_typescript.rs:3046  [skip_type_script_type_stmt]  reference text removed or changed (1 lines out, 1 in)
+             - let _ = self.parse_path()?;
+             + let path = self.parse_path()?;
+VIOLATION  parse/parse_skip_typescript.rs:3048  [skip_type_script_type_stmt]  inserted code that is not a site
+             + if let Some(starts) = &mut self.starts_for_parse_only {
+             + starts.erased.hold(crate::parse::erased::ErasedData::export(
+VIOLATION  parse/parse_skip_typescript.rs:3069  [skip_type_script_type_stmt]  reference text removed or changed (4 lines out, 10 in)
+             - let _ = self.skip_type_script_type_parameters(
+             - TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+             + if self.lexer.token == T::TLessThan {
+             + if self.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_skip_typescript.rs:3098  [skip_type_script_interface_stmt]  reference text removed or changed (4 lines out, 10 in)
+             - let _ = self.skip_type_script_type_parameters(
+             - TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+             + if self.lexer.token == T::TLessThan {
+             + if self.starts_for_parse_only.is_some() {
+VIOLATION  parse/parse_skip_typescript.rs:3109  [skip_type_script_interface_stmt]  reference text removed or changed (2 lines out, 3 in)
+             - if self.lexer.token == T::TExtends {
+             - self.lexer.next()?;
+             + self.parse_heritage_clauses()?;
+             + self.parse_object_type_members()
+VIOLATION  parse/parse_skip_typescript.rs:3113  [skip_type_script_interface_stmt]  reference text removed or changed (7 lines out, 4 in)
+             - loop {
+             - self.skip_type_script_type(Level::Lowest)?;
+             + /// parseHeritageClauses of an interface
+             + fn parse_heritage_clauses(&mut self) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:3118  [parse_heritage_clauses]  inserted code that is not a site
+             + Ok(())
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:3121  [parse_heritage_clauses]  reference text removed or changed (1 lines out, 13 in)
+             - if self.lexer.is_contextual_keyword(b"implements") {
+             + /// parseHeritageClause, at "extends" or "implements".
+             + fn parse_heritage_clause(&mut self) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:3135  [parse_heritage_clause]  reference text removed or changed (6 lines out, 73 in)
+             - loop {
+             - self.skip_type_script_type(Level::Lowest)?;
+             + }
+             + Ok(())
+VIOLATION  parse/parse_skip_typescript.rs:3210  [reread_heritage_clause_element]  inserted code that is not a site
+             + }
+VIOLATION  parse/parse_skip_typescript.rs:3212  [reread_heritage_clause_element]  reference text removed or changed (1 lines out, 4 in)
+             - self.skip_type_script_object_type()?;
+             + /// parseExpressionWithTypeArguments
+             + fn parse_expression_with_type_arguments(&mut self) -> Result<(), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:3226  [skip_type_script_type_arguments]  new function in a shared file: skip_type_script_type_arguments_in
+             + let (has_type_arguments, ()) = self.skip_type_script_type_arguments_in::<
+             + Discard,
+VIOLATION  parse/parse_skip_typescript.rs:3245  [skip_type_script_type_arguments_in]  reference text removed or changed (4 lines out, 1 in)
+             - T::TLessThan
+             - | T::TLessThanEquals
+             + T::TLessThan | T::TLessThanLessThan => {}
+VIOLATION  parse/parse_skip_typescript.rs:3247  [skip_type_script_type_arguments_in]  reference text removed or changed (1 lines out, 1 in)
+             - return Ok(false);
+             + return Ok((false, ConstDefault::DEFAULT));
+VIOLATION  parse/parse_skip_typescript.rs:3251  [skip_type_script_type_arguments_in]  inserted code that is not a site
+             + let mut list: KK<N, b::List<ts::Type>> = ConstDefault::DEFAULT;
+             + let mut arguments: KK<N, Option<b::Closed>> = ConstDefault::DEFAULT;
+VIOLATION  parse/parse_skip_typescript.rs:3259  [skip_type_script_type_arguments_in]  reference text removed or changed (1 lines out, 17 in)
+             - self.skip_type_script_type(Level::Lowest)?;
+             + let mut argument = N::NONE;
+             + // isListElement: a reserved word that starts no type is no type argument, as before
+VIOLATION  parse/parse_skip_typescript.rs:3279  [skip_type_script_type_arguments_in]  inserted code that is not a site
+             + if N::BUILDS {
+             + N::b_separator(&self.lexer, &mut list);
+VIOLATION  parse/parse_skip_typescript.rs:3283  [skip_type_script_type_arguments_in]  inserted code that is not a site
+             + // "A<B, >"
+             + if N::BUILDS && self.build_is_greater_than() {
+VIOLATION  parse/parse_skip_typescript.rs:3311  [skip_type_script_type_arguments_in]  reference text removed or changed (1 lines out, 1 in)
+             - Ok(true)
+             + Ok((true, arguments))
+VIOLATION  parse/parse_skip_typescript.rs:3329  [lexer_backtracker_bool]  inserted code that is not a site
+             + let log = self.log();
+             + let (old_msgs_len, old_errors, old_warnings) = (log.msgs.len(), log.errors, log.warnings);
+VIOLATION  parse/parse_skip_typescript.rs:3343  [lexer_backtracker_bool]  inserted code that is not a site
+             + // What the attempt logged without asking the lexer goes with it.
+             + let log = self.log();
+VIOLATION  parse/parse_skip_typescript.rs:3365  [lexer_backtracker_result]  inserted code that is not a site
+             + let log = self.log();
+             + let (old_msgs_len, old_errors, old_warnings) = (log.msgs.len(), log.errors, log.warnings);
+VIOLATION  parse/parse_skip_typescript.rs:3380  [lexer_backtracker_result]  inserted code that is not a site
+             + // `<out T>x`: the modifier that no type parameter of a function has is logged past the lexer
+             + let log = self.log();
+VIOLATION  parse/parse_skip_typescript.rs:3394  [lexer_backtracker_result]  new function in a shared file: lexer_backtracker_kept rewind_lint_attempt
+             + /// As `lexer_backtracker_bool`, and what `func` returned where nothing went back.
+             + #[inline]
+VIOLATION  parse/parse_skip_typescript.rs:3442  [skip_type_script_constraint_of_infer_type_with_backtracking]  reference text removed or changed (1 lines out, 1 in)
+             - pub(crate) fn skip_type_script_constraint_of_infer_type_with_backtracking(
+             + pub(crate) fn skip_type_script_constraint_of_infer_type_with_backtracking<N: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:3445  [skip_type_script_constraint_of_infer_type_with_backtracking]  reference text removed or changed (1 lines out, 3 in)
+             - ) -> Result<bool, Error> {
+             + union_lead: &mut KK<N, b::Lead>,
+             + intersection_lead: &mut KK<N, b::Lead>,
+VIOLATION  parse/parse_skip_typescript.rs:3449  [skip_type_script_constraint_of_infer_type_with_backtracking]  reference text removed or changed (5 lines out, 23 in)
+             - self.skip_type_script_type_with_opts::<Discard>(
+             - Level::Prefix,
+             + let mut constraint = N::NONE;
+             + 
+VIOLATION  parse/parse_skip_typescript.rs:3479  [skip_type_script_constraint_of_infer_type_with_backtracking]  reference text removed or changed (1 lines out, 1 in)
+             - Ok(true)
+             + Ok(constraint)
+VIOLATION  parse/parse_skip_typescript.rs:3550  [is_type_script_arrow_return_type_after_question_and_before_colon]  inserted code that is not a site
+             + let mut arrow_start = 0usize;
+VIOLATION  parse/parse_skip_typescript.rs:3554  [is_type_script_arrow_return_type_after_question_and_before_colon]  inserted code that is not a site
+             + arrow_start = self.lexer.start;
+VIOLATION  parse/parse_skip_typescript.rs:3578  [is_type_script_arrow_return_type_after_question_and_before_colon]  inserted code that is not a site
+             + if is_arrow_fn {
+             + // The caller reads the return type again: a type in parentheses that ends it has this "=>" after it.
+VIOLATION  parse/parse_skip_typescript.rs:3599  [try_skip_type_script_type_arguments_with_backtracking]  new function in a shared file: try_build_type_script_type_arguments_with_backtracking
+             + /// `try_skip_type_script_type_arguments_with_backtracking` of a lint parse: the list that is built and the offset after
+             + #[cold]
+VIOLATION  parse/parse_skip_typescript.rs:3625  [try_skip_type_script_constraint_of_infer_type_with_backtracking]  reference text removed or changed (1 lines out, 1 in)
+             - pub(crate) fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
+             + pub(crate) fn try_skip_type_script_constraint_of_infer_type_with_backtracking<N: TypeSink>(
+VIOLATION  parse/parse_skip_typescript.rs:3628  [try_skip_type_script_constraint_of_infer_type_with_backtracking]  reference text removed or changed (1 lines out, 1 in)
+             - ) -> bool {
+             + ) -> Result<(bool, N::Out), Error> {
+VIOLATION  parse/parse_skip_typescript.rs:3647  [try_skip_type_script_constraint_of_infer_type_with_backtracking]  reference text removed or changed (1 lines out, 1 in)
+             - return false;
+             + return Ok((false, N::NONE));
+VIOLATION  parse/parse_skip_typescript.rs:3650  [try_skip_type_script_constraint_of_infer_type_with_backtracking]  reference text removed or changed (2 lines out, 9 in)
+             - let skipped = self.lexer_backtracker_bool(|p| {
+             - p.skip_type_script_constraint_of_infer_type_with_backtracking(flags)
+             + let mark = self.read_mark();
+             + let mut union_lead: KK<N, b::Lead> = ConstDefault::DEFAULT;
+VIOLATION  parse/parse_skip_typescript.rs:3660  [try_skip_type_script_constraint_of_infer_type_with_backtracking]  inserted code that is not a site
+             + if let Some(constraint_type) = &mut constraint {
+             + // tryParseConstraintOfInferType reads a whole type: here the other constituents.
+VIOLATION  parse/parse_skip_typescript.rs:3692  [try_skip_type_script_constraint_of_infer_type_with_backtracking]  reference text removed or changed (1 lines out, 293 in)
+             - skipped
+             + Ok((skipped, constraint.unwrap_or(N::NONE)))
+             + }
+VIOLATION  parse/parse_stmt.rs:435  [t_try]  reference text removed or changed (1 lines out, 5 in)
+             - p.skip_type_script_type(Level::Lowest)?;
+             + if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             + p.lint_type_annotation(value.loc)?;
+VIOLATION  parse/parse_stmt.rs:900  [t_export]  inserted code that is not a site
+             + let name = p
+             + .starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:907  [t_export]  inserted code that is not a site
+             + if let Some(name) = name
+             + && let Some(starts) = &mut p.starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:963  [t_export]  inserted code that is not a site
+             + let name = p
+             + .starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:968  [t_export]  inserted code that is not a site
+             + if let Some(name) = name
+             + && let Some(starts) = &mut p.starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:1038  [t_export]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.exported_by_default(loc, stmt.loc);
+VIOLATION  parse/parse_stmt.rs:1099  [t_export]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.exported_by_default(loc, stmt.loc);
+VIOLATION  parse/parse_stmt.rs:1179  [t_export]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.exported_by_default(loc, stmt.loc);
+VIOLATION  parse/parse_stmt.rs:1342  [t_export]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.export(
+VIOLATION  parse/parse_stmt.rs:1412  [t_export]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.export(
+VIOLATION  parse/parse_stmt.rs:1474  [t_import]  inserted code that is not a site
+             + && (opts.is_export || !matches!(p.lexer.token, T::TOpenParen | T::TDot))
+VIOLATION  parse/parse_stmt.rs:1531  [t_import]  reference text removed or changed (1 lines out, 1 in)
+             - let _ = p.parse_path()?;
+             + let path = p.parse_path()?;
+VIOLATION  parse/parse_stmt.rs:1533  [t_import]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.import(
+VIOLATION  parse/parse_stmt.rs:1650  [t_import]  inserted code that is not a site
+             + let is_ambient = opts.is_typescript_declare;
+VIOLATION  parse/parse_stmt.rs:1652  [t_import]  reference text removed or changed (1 lines out, 1 in)
+             - return p.parse_type_script_import_equals_stmt(
+             + let equals = p.parse_type_script_import_equals_stmt(
+VIOLATION  parse/parse_stmt.rs:1654  [t_import]  reference text removed or changed (1 lines out, 7 in)
+             - );
+             + )?;
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+VIOLATION  parse/parse_stmt.rs:1664  [t_import]  reference text removed or changed (1 lines out, 1 in)
+             - let _ = p.parse_path()?;
+             + let path = p.parse_path()?;
+VIOLATION  parse/parse_stmt.rs:1666  [t_import]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.import(
+VIOLATION  parse/parse_stmt.rs:1688  [t_import]  inserted code that is not a site
+             + let namespace = p
+             + .starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:1694  [t_import]  reference text removed or changed (1 lines out, 1 in)
+             - let _ = p.parse_path()?;
+             + let path = p.parse_path()?;
+VIOLATION  parse/parse_stmt.rs:1696  [t_import]  inserted code that is not a site
+             + if let Some(namespace) = namespace
+             + && let Some(starts) = &mut p.starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:1714  [t_import]  reference text removed or changed (1 lines out, 1 in)
+             - let _ = p.parse_import_clause()?;
+             + let clause = p.parse_import_clause()?;
+VIOLATION  parse/parse_stmt.rs:1716  [t_import]  reference text removed or changed (1 lines out, 1 in)
+             - let _ = p.parse_path()?;
+             + let path = p.parse_path()?;
+VIOLATION  parse/parse_stmt.rs:1718  [t_import]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.import(
+VIOLATION  parse/parse_stmt.rs:1743  [t_import]  inserted code that is not a site
+             + let name_loc = match stmt.default_name {
+             + // Only the record of a statement that leaves no binding reads where the name is.
+VIOLATION  parse/parse_stmt.rs:1756  [t_import]  reference text removed or changed (1 lines out, 1 in)
+             - bun_ast::Loc::EMPTY,
+             + name_loc,
+VIOLATION  parse/parse_stmt.rs:1848  [parse_stmt_fallthrough]  inserted code that is not a site
+             + if Self::IS_TYPESCRIPT_ENABLED
+             + && is_identifier
+VIOLATION  parse/parse_stmt.rs:1870  [parse_stmt_fallthrough]  reference text removed or changed (1 lines out, 8 in)
+             - let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
+             + let expr_or_let = match p.parse_expr_or_let_stmt(opts) {
+             + Ok(expr_or_let) => expr_or_let,
+VIOLATION  parse/parse_stmt.rs:1919  [parse_stmt_fallthrough]  new function in a shared file: parse_stmt_named_like_cast is_declaration_named_like_cast read_declaration_named_like_cast is_declaration_before_what_follows_braces
+             + /// At "type", "interface", "namespace" or "module" before "as" or "satisfies" on its line: the declaration of that name
+             + #[cold]
+VIOLATION  parse/parse_stmt.rs:2136  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + let name = p
+             + .starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:2141  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + if let Some(name) = name
+             + && let Some(starts) = &mut p.starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:2179  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + let name = p
+             + .starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:2184  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + if let Some(name) = name
+             + && let Some(starts) = &mut p.starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:2207  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + // "abstract declare class Foo {}"
+             + if !p.lexer.has_newline_before
+VIOLATION  parse/parse_stmt.rs:2257  [parse_stmt_fallthrough_ts_keyword]  reference text removed or changed (1 lines out, 1 in)
+             - let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+             + let stmts = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+VIOLATION  parse/parse_stmt.rs:2259  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.global(
+VIOLATION  parse/parse_stmt.rs:2302  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + let global = p
+             + .starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:2309  [parse_stmt_fallthrough_ts_keyword]  reference text removed or changed (1 lines out, 1 in)
+             - let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+             + let stmts = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+VIOLATION  parse/parse_stmt.rs:2314  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + if let Some(global) = global
+             + && let Some(starts) = &mut p.starts_for_parse_only
+VIOLATION  parse/parse_stmt.rs:2367  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.declared(
+VIOLATION  parse/parse_stmt.rs:2417  [parse_stmt_fallthrough_ts_keyword]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.stands_in(loc);
+VIOLATION  parse/parse_stmt.rs:2472  [parse_stmt]  new function in a shared file: lint_parse a_lint_parse_reads_the_declaration_that_as_or_satisfies_names a_lint_parse_reads_no_cast_where_the_reference_reads_a_declaration
+             + }
+             + }
+VIOLATION  parse/parse_suffix.rs:23  [sfx_handle_typescript_as]  reference text removed or changed (1 lines out, 1 in)
+             - fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
+             + fn sfx_handle_typescript_as(p: &mut Self, level: Level, left: &Expr) -> CResult {
+VIOLATION  parse/parse_suffix.rs:29  [sfx_handle_typescript_as]  reference text removed or changed (2 lines out, 6 in)
+             - p.lexer.next()?;
+             - p.skip_type_script_type(Level::Lowest)?;
+             + if p.starts_for_parse_only.is_some() {
+             + Self::sfx_typescript_as_for_lint(p, *left)?;
+VIOLATION  parse/parse_suffix.rs:66  [sfx_handle_typescript_as]  new function in a shared file: sfx_typescript_as_for_lint
+             + /// `as T` or `satisfies T` of a lint parse, at the word: the type is built and recorded around `operand`.
+             + #[cold]
+VIOLATION  parse/parse_suffix.rs:214  [sfx_t_question_dot]  reference text removed or changed (1 lines out, 6 in)
+             - let _ = p.skip_type_script_type_arguments::<false, false>()?;
+             + if p.starts_for_parse_only.is_some() {
+             + let of = crate::parse::generics::TypeArgumentsOf::OptionalCall;
+VIOLATION  parse/parse_suffix.rs:514  [sfx_t_exclamation]  inserted code that is not a site
+             + left: &Expr,
+VIOLATION  parse/parse_suffix.rs:526  [sfx_t_exclamation]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.wrappers.non_null(*left, p.lexer.loc());
+VIOLATION  parse/parse_suffix.rs:900  [sfx_t_exclamation_equals_equals]  new function in a shared file: sfx_type_arguments
+             + /// Whether type arguments stand at the `<` after `left`: a parse without lint skips them, a lint parse builds and recor
+             + #[inline]
+VIOLATION  parse/parse_suffix.rs:919  [sfx_t_less_than]  reference text removed or changed (2 lines out, 1 in)
+             - if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+             - {
+             + if Self::IS_TYPESCRIPT_ENABLED && Self::sfx_type_arguments(p, left) {
+VIOLATION  parse/parse_suffix.rs:1009  [sfx_t_less_than_less_than]  reference text removed or changed (2 lines out, 1 in)
+             - if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
+             - {
+             + if Self::IS_TYPESCRIPT_ENABLED && Self::sfx_type_arguments(p, left) {
+VIOLATION  parse/parse_suffix.rs:1594  [parse_suffix]  reference text removed or changed (1 lines out, 1 in)
+             - Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain)
+             + Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain, left)
+VIOLATION  parse/parse_suffix.rs:1635  [parse_suffix]  reference text removed or changed (1 lines out, 1 in)
+             - _ => Self::sfx_handle_typescript_as(p, level),
+             + _ => Self::sfx_handle_typescript_as(p, level, left),
+VIOLATION  parse/parse_typescript.rs:83  [parse_standard_decorator]  inserted code that is not a site
+             + let open = p.lexer.loc();
+VIOLATION  parse/parse_typescript.rs:86  [parse_standard_decorator]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only
+             + && starts.is_lint
+VIOLATION  parse/parse_typescript.rs:124  [parse_standard_decorator]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.wrappers.non_null(expr, p.lexer.loc());
+VIOLATION  parse/parse_typescript.rs:203  [parse_standard_decorator]  reference text removed or changed (1 lines out, 1 in)
+             - && p.skip_type_script_type_arguments::<false, false>()?
+             + && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan)
+VIOLATION  parse/parse_typescript.rs:205  [parse_standard_decorator]  reference text removed or changed (1 lines out, 9 in)
+             - continue;
+             + let has_type_arguments = if p.starts_for_parse_only.is_some() {
+             + let of = crate::parse::generics::TypeArgumentsOf::Expression;
+VIOLATION  parse/parse_typescript.rs:232  [parse_type_script_namespace_stmt]  inserted code that is not a site
+             + let erased_name = if Self::IS_TYPESCRIPT_ENABLED && p.starts_for_parse_only.is_some() {
+             + Some(if p.lexer.token == T::TStringLiteral {
+VIOLATION  parse/parse_typescript.rs:433  [parse_type_script_namespace_stmt]  inserted code that is not a site
+             + if let Some(name) = erased_name
+             + && let Some(starts) = &mut p.starts_for_parse_only
+VIOLATION  parse/parse_typescript.rs:567  [parse_type_script_import_equals_stmt]  inserted code that is not a site
+             + } else if p.starts_for_parse_only.is_some() {
+             + // The record of the statement keeps the string as its module reference.
+VIOLATION  parse/parse_typescript.rs:598  [parse_type_script_import_equals_stmt]  inserted code that is not a site
+             + if let Some(starts) = &mut p.starts_for_parse_only {
+             + starts.erased.import_equals(
+VIOLATION  parse/parse_typescript.rs:630  [parse_type_script_import_equals_stmt]  new function in a shared file: is_enum_member_name_in_brackets
+             + /// At "[" where the name of an enum member starts: whether a string, or a template without substitutions, and "]" follo
+             + fn is_enum_member_name_in_brackets(&mut self) -> bool {
+VIOLATION  parse/parse_typescript.rs:702  [parse_typescript_enum_stmt]  inserted code that is not a site
+             + // "['a']" and "[`a`]": a string in brackets names the member as the string alone does.
+             + let is_in_brackets =
+VIOLATION  parse/parse_typescript.rs:709  [parse_typescript_enum_stmt]  reference text removed or changed (1 lines out, 1 in)
+             - let needs_symbol: bool = if p.lexer.token == T::TStringLiteral {
+             + let needs_symbol: bool = if p.lexer.token == T::TStringLiteral || is_in_brackets {
+VIOLATION  parse/parse_typescript.rs:725  [parse_typescript_enum_stmt]  inserted code that is not a site
+             + if is_in_brackets {
+             + p.lexer.expect(T::TCloseBracket)?;
+VIOLATION  parse/parse_typescript.rs:820  [parse_typescript_enum_stmt]  inserted code that is not a site
+             + if p.starts_for_parse_only.is_some() {
+             + // The record of a declared enum keeps its name, which no symbol holds.
+VIOLATION  parse/type_sink.rs:6  [-]  reference text removed or changed (2 lines out, 0 in)
+             - use bun_ast::Ref;
+             - use bun_ast::StoreSlice;
+VIOLATION  parse/type_sink.rs:8  [-]  reference text removed or changed (1 lines out, 3 in)
+             - use bun_ast::ts::Metadata;
+             + use bun_ast::ts;
+             + use bun_ast::ts::{IntoTypeData as _, Metadata};
+VIOLATION  parse/type_sink.rs:17  [-]  reference text removed or changed (2 lines out, 10 in)
+             - /// Binding level of the type after the ":" of a conditional type.
+             - const CONDITIONAL_FALSE_LEVEL: Level;
+             + /// No type read yet.
+             + const NONE: Self::Out;
+VIOLATION  parse/type_sink.rs:72  [conditional_false]  new function in a shared file: import_type unique_type type_predicate nested branch node b_take b_node b_built b_start b_tok b_ident b_token b_negative b_reference b_member b_type_arguments b_query b_index b_non_null b_operator b_infer b_conditional b_predicate b_template_piece b_template_span b_template b_list b_push_type b_separator b_close b_leading b_operand b_operand_end b_finish
+             + 
+             + /// `import("module")`, before its arguments are read.
+VIOLATION  parse/type_sink.rs:308  [b_finish]  reference text removed or changed (1 lines out, 5 in)
+             - const CONDITIONAL_FALSE_LEVEL: Level = Level::Lowest;
+             + const NONE: () = ();
+             + const STRICT: bool = false;
+VIOLATION  parse/type_sink.rs:378  [conditional_false]  new function in a shared file: start set close operand
+             + /// Whether a tag is the one of a single type or what the operands of "|" or "&" merged to so far.
+             + #[derive(Clone, Copy, Default, PartialEq, Eq)]
+VIOLATION  parse/type_sink.rs:436  [operand]  reference text removed or changed (1 lines out, 1 in)
+             - type Out = Metadata;
+             + type Out = Tag;
+VIOLATION  parse/type_sink.rs:438  [operand]  reference text removed or changed (1 lines out, 5 in)
+             - const CONDITIONAL_FALSE_LEVEL: Level = Level::BitwiseAnd;
+             + const NONE: Tag = Tag::NONE;
+             + const STRICT: bool = false;
+VIOLATION  parse/type_sink.rs:445  [literal]  reference text removed or changed (2 lines out, 2 in)
+             - fn literal(out: &mut Metadata, literal: TypeLiteral) {
+             - *out = match literal {
+             + fn literal(out: &mut Tag, literal: TypeLiteral) {
+             + out.set(match literal {
+VIOLATION  parse/type_sink.rs:451  [literal]  reference text removed or changed (1 lines out, 1 in)
+             - };
+             + });
+VIOLATION  parse/type_sink.rs:455  [keyword]  reference text removed or changed (2 lines out, 2 in)
+             - fn keyword(out: &mut Metadata, keyword: TypeKeyword) {
+             - *out = match keyword {
+             + fn keyword(out: &mut Tag, keyword: TypeKeyword) {
+             + out.set(match keyword {
+VIOLATION  parse/type_sink.rs:469  [keyword]  reference text removed or changed (1 lines out, 1 in)
+             - };
+             + });
+VIOLATION  parse/type_sink.rs:473  [function_type]  reference text removed or changed (2 lines out, 2 in)
+             - fn function_type(out: &mut Metadata) {
+             - *out = Metadata::MFunction;
+             + fn function_type(out: &mut Tag) {
+             + out.set(Metadata::MFunction);
+VIOLATION  parse/type_sink.rs:478  [parenthesized]  reference text removed or changed (2 lines out, 6 in)
+             - fn parenthesized(out: &mut Metadata, inner: Metadata) {
+             - *out = inner;
+             + fn parenthesized(out: &mut Tag, mut inner: Tag) {
+             + // tsc looks through parentheses at a keyword, and at no other type
+VIOLATION  parse/type_sink.rs:487  [keyof_type]  reference text removed or changed (2 lines out, 2 in)
+             - fn keyof_type(out: &mut Metadata) {
+             - *out = Metadata::MObject;
+             + fn keyof_type(out: &mut Tag) {
+             + out.set(Metadata::MObject);
+VIOLATION  parse/type_sink.rs:492  [readonly_type]  reference text removed or changed (1 lines out, 1 in)
+             - fn readonly_type(out: &mut Metadata) {
+             + fn readonly_type(out: &mut Tag) {
+VIOLATION  parse/type_sink.rs:494  [readonly_type]  reference text removed or changed (1 lines out, 1 in)
+             - *out = Metadata::MArray;
+             + out.set(Metadata::MArray);
+VIOLATION  parse/type_sink.rs:498  [typeof_query]  reference text removed or changed (1 lines out, 1 in)
+             - fn typeof_query(out: &mut Metadata) {
+             + fn typeof_query(out: &mut Tag) {
+VIOLATION  parse/type_sink.rs:500  [typeof_query]  reference text removed or changed (1 lines out, 1 in)
+             - *out = Metadata::MObject;
+             + out.set(Metadata::MObject);
+VIOLATION  parse/type_sink.rs:504  [tuple_type]  reference text removed or changed (2 lines out, 2 in)
+             - fn tuple_type(out: &mut Metadata) {
+             - *out = Metadata::MArray;
+             + fn tuple_type(out: &mut Tag) {
+             + out.set(Metadata::MArray);
+VIOLATION  parse/type_sink.rs:509  [object_type]  reference text removed or changed (2 lines out, 2 in)
+             - fn object_type(out: &mut Metadata) {
+             - *out = Metadata::MObject;
+             + fn object_type(out: &mut Tag) {
+             + out.set(Metadata::MObject);
+VIOLATION  parse/type_sink.rs:514  [template_literal_type]  reference text removed or changed (2 lines out, 2 in)
+             - fn template_literal_type(out: &mut Metadata) {
+             - *out = Metadata::MString;
+             + fn template_literal_type(out: &mut Tag) {
+             + out.set(Metadata::MString);
+VIOLATION  parse/type_sink.rs:520  [reference]  reference text removed or changed (1 lines out, 1 in)
+             - out: &mut Metadata,
+             + out: &mut Tag,
+VIOLATION  parse/type_sink.rs:524  [reference]  reference text removed or changed (1 lines out, 1 in)
+             - *out = Metadata::MIdentifier(find(name)?);
+             + out.set(Metadata::MIdentifier(find(name)?));
+VIOLATION  parse/type_sink.rs:530  [member]  reference text removed or changed (1 lines out, 1 in)
+             - out: &mut Metadata,
+             + out: &mut Tag,
+VIOLATION  parse/type_sink.rs:536  [member]  reference text removed or changed (1 lines out, 2 in)
+             - match out {
+             + let metadata = &mut out.metadata;
+             + match metadata {
+VIOLATION  parse/type_sink.rs:541  [member]  reference text removed or changed (1 lines out, 1 in)
+             - *out = Metadata::MDot(StoreSlice::new(arena.alloc_slice_copy(&[id, member])));
+             + *metadata = Metadata::MDot(StoreSlice::new(arena.alloc_slice_copy(&[id, member])));
+VIOLATION  parse/type_sink.rs:559  [index_or_array]  reference text removed or changed (11 lines out, 8 in)
+             - fn index_or_array(out: &mut Metadata, has_index: bool) {
+             - if matches!(*out, Metadata::MNone) {
+             + fn index_or_array(out: &mut Tag, has_index: bool) {
+             + // if something was skipped, it is object type
+VIOLATION  parse/type_sink.rs:570  [union_left]  reference text removed or changed (4 lines out, 6 in)
+             - fn union_left<'n>(
+             - out: &mut Metadata,
+             + fn union_left<'n>(out: &mut Tag, load_name: impl Fn(Ref) -> &'n [u8]) -> Operand<Tag> {
+             + // "A & B | C": the intersection is an operand of "|"
+VIOLATION  parse/type_sink.rs:577  [union_left]  reference text removed or changed (1 lines out, 1 in)
+             - match left.finish_union(load_name) {
+             + match left.metadata.finish_union(load_name) {
+VIOLATION  parse/type_sink.rs:579  [union_left]  reference text removed or changed (1 lines out, 2 in)
+             - *out = done;
+             + out.metadata = done;
+             + out.shape = Shape::Union;
+VIOLATION  parse/type_sink.rs:588  [union_right]  reference text removed or changed (2 lines out, 8 in)
+             - fn union_right(out: &mut Metadata, left: Metadata) {
+             - out.merge_union(left);
+             + fn union_right(out: &mut Tag, left: Tag) {
+             + // "A | B & C": the intersection is an operand of "|"
+VIOLATION  parse/type_sink.rs:599  [intersection_left]  reference text removed or changed (4 lines out, 2 in)
+             - fn intersection_left<'n>(
+             - out: &mut Metadata,
+             + fn intersection_left<'n>(out: &mut Tag, load_name: impl Fn(Ref) -> &'n [u8]) -> Operand<Tag> {
+             + out.operand();
+VIOLATION  parse/type_sink.rs:602  [intersection_left]  reference text removed or changed (1 lines out, 1 in)
+             - match left.finish_intersection(load_name) {
+             + match left.metadata.finish_intersection(load_name) {
+VIOLATION  parse/type_sink.rs:604  [intersection_left]  reference text removed or changed (1 lines out, 2 in)
+             - *out = done;
+             + out.metadata = done;
+             + out.shape = Shape::Intersection;
+VIOLATION  parse/type_sink.rs:613  [intersection_right]  reference text removed or changed (2 lines out, 4 in)
+             - fn intersection_right(out: &mut Metadata, left: Metadata) {
+             - out.merge_intersection(left);
+             + fn intersection_right(out: &mut Tag, left: Tag) {
+             + out.operand();
+VIOLATION  parse/type_sink.rs:621  [conditional_true]  reference text removed or changed (2 lines out, 2 in)
+             - out: &mut Metadata,
+             - when_true: Metadata,
+             + out: &mut Tag,
+             + when_true: Tag,
+VIOLATION  parse/type_sink.rs:624  [conditional_true]  reference text removed or changed (1 lines out, 2 in)
+             - ) -> Operand<Metadata> {
+             + ) -> Operand<Tag> {
+             + // tsc serializes the two branches as it serializes the operands of "|"
+VIOLATION  parse/type_sink.rs:627  [conditional_true]  reference text removed or changed (1 lines out, 5 in)
+             - match left.finish_intersection(load_name) {
+             + if left.shape != Shape::Leaf {
+             + left.close();
+VIOLATION  parse/type_sink.rs:633  [conditional_true]  reference text removed or changed (1 lines out, 1 in)
+             - *out = done;
+             + out.set(done);
+VIOLATION  parse/type_sink.rs:636  [conditional_true]  reference text removed or changed (1 lines out, 6 in)
+             - None => Operand::Open(left),
+             + None => {
+             + // The type after ":" is read into `out`: `left` keeps where the conditional type stands
+VIOLATION  parse/type_sink.rs:646  [conditional_false]  reference text removed or changed (2 lines out, 1858 in)
+             - fn conditional_false(out: &mut Metadata, left: Metadata) {
+             - out.merge_intersection(left);
+             + fn conditional_false(out: &mut Tag, left: Tag) {
+             + if out.shape != Shape::Leaf {
+VIOLATION  typescript.rs:316  [kind_for_identifier]  inserted code that is not a site
+             + /// The type is an element of a list of type arguments, which a token that starts no type ends.
+             + IsTypeArgument,
+
+shared file                           sites   decl  tests  exception  VIOLATION reads of starts_for_parse_only that the reference lacks
+lib.rs                                    0      1      0          0          0 0
+p.rs                                      0      0      0          0          6 3
+parse/mod.rs                              0      4      0          0         29 15
+parse/parse_entry.rs                      0      1      0          0          4 2
+parse/parse_fn.rs                         0      2      0          0         16 9
+parse/parse_jsx.rs                        0      0      0          0          1 1
+parse/parse_prefix.rs                     0      0      0          0         12 10
+parse/parse_property.rs                   0      1      0          0         11 8
+parse/parse_skip_typescript.rs            0      5      0          0        172 5
+parse/parse_stmt.rs                       0      1      0          0         42 27
+parse/parse_suffix.rs                     0      0      0          0         11 5
+parse/parse_typescript.rs                 0      1      0          0         14 9
+parse/type_sink.rs                        0      1      0          0         42 0
+typescript.rs                             0      0      0          0          1 0
+22 shared files equal the reference
+
+NEW        native_test_shims.rs                       1012 lines  reached by a mod line
+NEW        parse/annotation_tests.rs                   412 lines  reached by a mod line
+NEW        parse/attached.rs                          1020 lines  reached by a mod line
+NEW        parse/erased.rs                            1396 lines  reached by a mod line
+NEW        parse/erased_tests.rs                       813 lines  reached by a mod line
+NEW        parse/generics.rs                           931 lines  reached by a mod line
+NEW        parse/syntax_errors.rs                      954 lines  reached by a mod line
+NEW        parse/wrappers.rs                           553 lines  reached by a mod line
+NEW        type_sink_tests.rs                          452 lines  reached by a mod line
+
+0 sites, 361 violations
+FAIL

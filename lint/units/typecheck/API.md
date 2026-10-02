@@ -2918,3 +2918,104 @@ of the tree write them:
   `get_contextual_type_for_object_literal_method(node, context_flags) -> TypeId` (30087), the nil type for none.
 - `crate::core::Map` as the contract has it (`get` and `set` with its `bool`), for `string_literal_types` and
   `discriminated_contextual_types`, and `crate::core::LiveList` (`iter`), for the inferences of a context.
+
+## Checker: function expressions, contextual signatures and name collisions (`checker/c16_function_expressions_collisions.rs`)
+
+Commit `f0097bcc09` (written by the job that commits the worktree). The file holds `checker.go` 10133-10705 in upstream
+order (layers E-CORE, E-FUNC and E-COLLIDE): 28 of the 29 methods of the range, from `checkParenthesizedExpression` to
+`checkClassNameCollisionWithObject`. The 29th, `checkClassExpressionExternalHelpers` (10171), is in
+`c46_mark_references.rs` since round 1: `check_class_expression` calls it there, and a second definition would not
+compile. No function is a stand-in. PORT_STATUS.md has the row.
+
+NOT compiled: cargo does not reach the checker while a module of `checker/mod.rs` has no file, and no other compiler
+has seen the file. "Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- `check_parenthesized_expression(node, check_mode)`, `check_class_expression(node)` and
+  `check_function_expression_or_object_literal_method(node, check_mode)` answer a `TypeId`.
+  `check_function_expression_or_object_literal_method_deferred(node)` and `check_class_expression_deferred(node)` are
+  what `check_deferred_node` calls.
+- `get_contextual_signature(node) -> SignatureId` and `get_contextual_call_signature(t, node) -> SignatureId`: nil for
+  none. `create_union_signature(sig, union_signatures: List<'a, SignatureId>) -> SignatureId`: the list becomes the
+  composite of the new signature. `get_intersected_signatures(signatures: &[SignatureId]) -> SignatureId`.
+- `get_first_transformable_static_class_element(node) -> NodeId`, nil for none.
+- `check_collisions_for_declaration_name(node, name: NodeId)`: a nil name returns at once.
+  `need_collision_check_for_identifier(node, identifier: NodeId, name: &[u8]) -> bool`.
+  `set_node_links_for_private_identifier_scope(node)`.
+- `infer_from_annotated_parameters_and_return(sig, context, inference_context: InferenceContextId)`,
+  `assign_contextual_parameter_types(sig, context)`, `assign_non_contextual_parameter_types(signature)`,
+  `assign_parameter_type(parameter: SymbolId, contextual_type)` (`TypeId::NIL` is upstream's nil type) and
+  `assign_binding_element_types(pattern, parent_type)`.
+- These only read and take `&self`: `get_first_transformable_static_class_element` and
+  `need_collision_check_for_identifier`. Every other method takes `&mut self`.
+
+### Differences from upstream
+
+- Stack test, the first statement of `assign_binding_element_types` (the one entry of the range in
+  `checker-expressions-calls-flow/top-down/data/tested_entries.tsv`): `StackLimit` and a return.
+- `getFirstTransformableStaticClassElement`: the `else if` of 10160 is a second `if` after the return of 10159. Both
+  arms return the member, and clippy's `if_same_then_else` (denied in the workspace) rejects two arms with one body.
+- `getContextualCallSignature`: `core.Filter` is `core::filter` over the slice with a closure that borrows the checker,
+  so nothing is allocated in the arena for a list that is counted and passed on, as `c15` 2214 does.
+- `getContextualSignature`: `signatureList` is a `Vec` that is copied into the arena once, when the union signature is
+  made. `c.compareTypesIdentical` is `&mut Checker::compare_types_identical`, as `c35` 984 passes it. The `switch` over
+  the length (10375) is a `match`, and the `switch` of `getIntersectedSignatures` (10410) an `if` chain in upstream's
+  order.
+- `createUnionSignature`: `&CompositeSignature{...}` is a record of `composite_signatures`.
+- `c.contextFreeTypes[node]` with its ok (10215) is `get_ok`, and the write of 10222 is `set` with `map_set`.
+- The operands of `&&` that need the checker mutably are blocks (10214, 10689), in upstream's order of evaluation.
+- The two deferred diagnostics (10632, 10666) are boxed closures that get the checker, as `add_deferred_diagnostic`
+  takes them.
+- `sig.typeParameters` and `sig.thisParameter` are written into the signature of the function expression (10445,
+  10451), and `context.thisParameter` is read again at each place where upstream reads it.
+- Reads that upstream dies of and that read as zero here: the inferences and the non-fixing mapper of a nil inference
+  context (10261, 10264, 10282) are those of the zero record of the store, which counts the read; a parameter symbol
+  without a value declaration (10332, 10459) reads the nil node, which has no type node (where 10462 then asks for its
+  initializer, `Ast::initializer` records the fault); `node.FunctionLikeData()` of a node without it (10233) is no
+  full signature, as `c07` 56 reads it;
+  the last parameter of a signature that is flagged as having a rest parameter and has no parameter (10476) is the nil
+  symbol.
+- Comments: a comment of several lines is one line.
+
+### Verified
+
+No compiler has seen the file, and nothing ran a function of it. What was checked, on the tree of `f0097bcc09`:
+
+- `rustfmt --check --edition 2024`: exit 0 (the file parses and is formatted; rustfmt leaves the statements alone
+  whose message name is longer than the line).
+- `python3 round2-layer7-checker/ranges.py c16_function_expressions_collisions`: 28 of the 29 functions of the range
+  have a `fn` of their name in the file, one only elsewhere (`c46`), none nowhere.
+- Scripts over the file: the 28 functions are in upstream's order; each of the 66 imported names is used and no free
+  function is called without an import; no two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`,
+  `unimplemented`, `unreachable`, `unsafe` or `allow(`, and every `[...]` indexes a store of records or a link store of
+  the checker; the 8 messages are constants of `diagnostics/diagnostics_generated.rs`. `c04-callseq.py` with the range
+  and the file of `c16`: each function calls the same methods of the checker as upstream's body, the same number of
+  times (`list_of`, `map_set`, `type_types` and `value_symbol_links_get` stand for a slice, a map write, `t.Types()`
+  and `valueSymbolLinks.Get`).
+- Read at their definitions in the tree, name, receiver, parameter order and types, and result: the 55 methods of
+  the checker that the file calls and the tree defines (`c05`, `c06`, `c07`, `c08`, `c09`, `c13`, `c14`, `c21`, `c22`,
+  `c28`, `c31`, `c33`, `c34`, `c35`, `c36`, `c37`, `c38`, `c41`, `c46`, `c50`, `grammarchecks.rs`, `inference.rs`,
+  `links.rs`, `relater.rs`, `types.rs`, `c02_program_checker.rs`), the 37 free functions of `ast/`, `checker/`,
+  `core/core.rs` and `scanner/utilities.rs`, the 18 accessors of `Ast`, `Program::get_emit_module_format_of_file`,
+  `CompilerOptions::get_use_define_for_class_fields`, `ModuleKind::string`, and the fields, records, flags and stores
+  of the data model (`c01_data.rs`, `c02_program_checker.rs`, `types.rs`, `core/linkstore.rs`, `core/golang.rs`).
+  `Map` and `LiveList` are used as the contract has them.
+- The 20 calls that 10 other files make into these functions (`c05` 309 and 315, `c06` 135, 303 and 541, `c07` 23 and
+  62, `c09` 69, `c10` 36, 139 and 469, `c11` 318 and 470, `c14` 725-728, `c20` 1099 and 1198, `c35` 642, `c46` 60) match
+  the signatures by name, number and kind of arguments, and by what they do with the result.
+- Not checked: types, borrows and lints by a compiler (no rustc, no clippy), and any result against upstream's
+  baselines.
+
+### What this file expects and the tree does not have
+
+At `f0097bcc09`, two callees, each called by its upstream name with upstream's parameter order, as `c07`, `c31` and
+`c34` call them:
+
+- `c34` (its range holds them, its file does not): `get_return_type_from_body(node, check_mode) -> TypeId` (20240) and
+  `unwrap_return_type(return_type, function_flags: FunctionFlags) -> TypeId` (20502), the nil type for upstream's nil.
+- `crate::core::Map` as the contract has it (`get_ok`, and `set` with its `bool`), for `context_free_types`, and
+  `crate::core::LiveList`, for the inferences of a context.
+
+What waits in another file: `c46_mark_references.rs` 31 says that `check_class_expression_external_helpers` is kept
+there until the file of its upstream range exists. That file exists now, and the function is still in `c46`.

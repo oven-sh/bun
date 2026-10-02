@@ -1,0 +1,14 @@
+IDENT 20  OFFSETS 8  CONSTS 0  DIFF 4  ONLY-A 0  ONLY-B 0
+DIFF    bytes    436    349 (  -87)  insns   126   102 (  -24)  jcc   15   15 (  +0)  <P<true, false>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+DIFF    bytes    436    349 (  -87)  insns   126   102 (  -24)  jcc   15   15 (  +0)  <P<true, true>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+DIFF    bytes   7045   7017 (  -28)  insns  1601  1605 (   +4)  jcc  269  265 (  -4)  <P<true, false>>::skip_type_script_type_with_opts::<SINK metadata>
+DIFF    bytes   7045   7001 (  -44)  insns  1599  1603 (   +4)  jcc  269  265 (  -4)  <P<true, true>>::skip_type_script_type_with_opts::<SINK metadata>
+OFFSETS bytes    609    609 (   +0)  insns   167   167 (   +0)  jcc   34   34 (  +0)  <P<true, false>>::skip_type_script_binding
+OFFSETS bytes   1674   1674 (   +0)  insns   415   415 (   +0)  jcc   63   63 (  +0)  <P<true, false>>::skip_type_script_type_parameters
+OFFSETS bytes    569    569 (   +0)  insns   150   150 (   +0)  jcc   25   25 (  +0)  <P<true, false>>::skip_type_script_type_stmt
+OFFSETS bytes   3446   3446 (   +0)  insns   816   816 (   +0)  jcc  162  162 (  +0)  <P<true, false>>::skip_type_script_type_with_opts::<SINK discard>
+OFFSETS bytes    609    609 (   +0)  insns   167   167 (   +0)  jcc   34   34 (  +0)  <P<true, true>>::skip_type_script_binding
+OFFSETS bytes   1674   1674 (   +0)  insns   415   415 (   +0)  jcc   63   63 (  +0)  <P<true, true>>::skip_type_script_type_parameters
+OFFSETS bytes    569    569 (   +0)  insns   150   150 (   +0)  jcc   25   25 (  +0)  <P<true, true>>::skip_type_script_type_stmt
+OFFSETS bytes   3446   3446 (   +0)  insns   816   816 (   +0)  jcc  162  162 (  +0)  <P<true, true>>::skip_type_script_type_with_opts::<SINK discard>
+FAIL: 4 DIFF, 0 only in base, 0 only in head

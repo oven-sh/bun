@@ -1,0 +1,11 @@
+bun-type typescri   src-js      tsx js-contr  site
+    1405      272     1679     1500        0  parse/parse_fn.rs:287 [-] annotation of a parameter
+     386     2708      202      300        0  parse/parse_stmt.rs:1821 [-] interface statement
+     715      187      700     1100        0  parse/parse_fn.rs:376 [-] return type
+     222     1243      601        0        0  parse/mod.rs:1315 [-] annotation of a declaration
+     212      660      139      600        0  parse/parse_stmt.rs:1790 [-] type alias statement
+       0        0      484     1100        0  parse/parse_suffix.rs:29 [-] as, satisfies
+    2940     5070     3805     4600        0  executed tests per pass (tsx: 100 parses)
+    2.73     1.34     1.16     6.57     0.00  per KB of source
+       0        0        0        0        0  in the parse of the bench script (JavaScript, 5,471 bytes)
+6 of 6 sites ran

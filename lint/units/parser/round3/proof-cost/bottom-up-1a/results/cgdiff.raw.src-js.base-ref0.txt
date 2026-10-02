@@ -1,0 +1,13 @@
+program  Ir 7,425,631,551 -> 7,428,691,183 (+3,059,632)  Bc 1,146,958,676 -> 1,147,458,023 (+499,347)  Bi 73,781,720 -> 73,792,548 (+10,828)
+matched /bun_js_parser/ 315 symbols  Ir 4,397,331,499 -> 4,397,435,921 (+104,422)  Bc 528,731,635 -> 528,731,635 (+0)  Bi 47,409,482 -> 47,409,482 (+0)
+10 matched symbols differ
+  Ir  -19,996,480  Bc  -2,083,580  Bi  -597,400  (a Ir 19,996,480) GONE <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts::<false>
+  Ir  +19,996,480  Bc  +2,083,580  Bi  +597,400  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+  Ir     +187,920  Bc     +16,280  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+  Ir     -187,920  Bc     -16,280  Bi        +0  (a Ir 187,920) GONE <bun_js_parser::p::P<true, true>>::skip_type_script_paren_or_fn_type::<false>
+  Ir     +125,340  Bc          +0  Bi        +0  (a Ir 7,607,380) <bun_js_parser::p::P<true, false>>::parse_class
+  Ir      -42,471  Bc      -3,861  Bi        +0  (a Ir 42,471) GONE core::ptr::drop_glue::<core::option::Option<bun_js_parser::p::StartsForParseOnly>>
+  Ir      +11,583  Bc      +3,861  Bi        +0  (a Ir 0) NEW core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+  Ir       +7,340  Bc          +0  Bi        +0  (a Ir 2,577,240) <bun_js_parser::p::P<true, false>>::parse_arrow_body
+  Ir       +2,620  Bc          +0  Bi        +0  (a Ir 60,480) <bun_js_parser::p::P<true, false>>::parse_async_prefix_expr
+  Ir          +10  Bc          +0  Bi        +0  (a Ir 1,793) <bun_js_parser::p::P<false, false>>::parse_arrow_body

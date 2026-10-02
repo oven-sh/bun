@@ -1,0 +1,35 @@
+start 14:50:55 load 746.70
+base rc 0 seconds 17 ['libbun_js_parser-185fe25973f3a1f8.rlib', 'libbun_js_parser-185fe25973f3a1f8.rmeta', 'rustc.log']
+compile base 18 s
+ref0 rc 0 seconds 14 ['libbun_js_parser-185fe25973f3a1f8.rlib', 'libbun_js_parser-185fe25973f3a1f8.rmeta', 'rustc.log']
+compile ref0 14 s
+site1 rc 0 seconds 14 ['libbun_js_parser-185fe25973f3a1f8.rlib', 'libbun_js_parser-185fe25973f3a1f8.rmeta', 'rustc.log']
+compile site1 15 s
+site1count rc 0 seconds 15 ['libbun_js_parser-185fe25973f3a1f8.rlib', 'libbun_js_parser-185fe25973f3a1f8.rmeta', 'rustc.log']
+compile site1count 16 s
+base bitcode identical to the release rlib
+ref0 full rc 0 seconds 240 load 411.97
+link ref0 241 s  14:55:59
+site1 full rc 0 seconds 174 load 405.75
+link site1 174 s  14:58:53
+site1count full rc 0 seconds 155 load 348.30
+link site1count 155 s  15:01:29
+-rwxr-xr-x 1 root root 170035576 Oct  2 14:55 /tmp/costproof/link/ref0/bun-profile
+-rwxr-xr-x 1 root root 170036920 Oct  2 14:58 /tmp/costproof/link/site1/bun-profile
+-rwxr-xr-x 1 root root 170047256 Oct  2 15:01 /tmp/costproof/link/site1count/bun-profile
+all      base-ref0  IDENT 588  OFFSETS 542  CONSTS 19  DIFF 26  ONLY-A 1  ONLY-B 1 | FAIL: 26 DIFF, 1 only in base, 1 only in head
+all      ref0-site1 IDENT 1172  OFFSETS 0  CONSTS 0  DIFF 4  ONLY-A 0  ONLY-B 1 | FAIL: 4 DIFF, 0 only in base, 1 only in head
+js       base-ref0  IDENT 126  OFFSETS 232  CONSTS 6  DIFF 9  ONLY-A 0  ONLY-B 0 | FAIL: 9 DIFF, 0 only in base, 0 only in head
+js       ref0-site1 IDENT 373  OFFSETS 0  CONSTS 0  DIFF 0  ONLY-A 0  ONLY-B 0 | PASS
+ts-scan  base-ref0  IDENT 59  OFFSETS 65  CONSTS 1  DIFF 6  ONLY-A 0  ONLY-B 0 | FAIL: 6 DIFF, 0 only in base, 0 only in head
+ts-scan  ref0-site1 IDENT 131  OFFSETS 0  CONSTS 0  DIFF 0  ONLY-A 0  ONLY-B 0 | PASS
+skipper  base-ref0  IDENT 20  OFFSETS 8  CONSTS 0  DIFF 4  ONLY-A 0  ONLY-B 0 | FAIL: 4 DIFF, 0 only in base, 0 only in head
+skipper  ref0-site1 IDENT 32  OFFSETS 0  CONSTS 0  DIFF 0  ONLY-A 0  ONLY-B 0 | PASS
+ts       base-ref0  IDENT 110  OFFSETS 197  CONSTS 6  DIFF 6  ONLY-A 0  ONLY-B 0 | FAIL: 6 DIFF, 0 only in base, 0 only in head
+ts       ref0-site1 IDENT 315  OFFSETS 0  CONSTS 0  DIFF 4  ONLY-A 0  ONLY-B 1 | FAIL: 4 DIFF, 0 only in base, 1 only in head
+cg rawref0 66 s  15:03:51
+cg rawsite1 63 s  15:04:54
+cg rawbase 67 s  15:06:01
+cg ref0 98 s  15:07:39
+cg site1 78 s  15:08:58
+done 15:09:00

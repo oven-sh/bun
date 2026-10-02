@@ -1,0 +1,22 @@
+VIOLATION  p.rs:5495  [pop_scope]  new function in a shared file: lint lint_probe
+             + /// Whether this parse fills the side table of a lint parse.
+             + #[inline(always)]
+
+shared file                           sites   decl  tests  exception  VIOLATION reads of starts_for_parse_only that the reference lacks
+p.rs                                      0      0      0          0          1 1
+parse/mod.rs                              1      0      0          0          0 0
+parse/parse_fn.rs                         2      0      0          0          0 0
+parse/parse_stmt.rs                       2      0      0          0          0 0
+parse/parse_suffix.rs                     1      0      0          0          0 0
+31 shared files equal the reference
+
+
+SITE  parse/mod.rs:1315  [parse_and_declare_decls]  3 lines  if p.lint() {
+SITE  parse/parse_fn.rs:287  [parse_fn]  3 lines  if p.lint() {
+SITE  parse/parse_fn.rs:376  [parse_fn]  3 lines  if p.lint() {
+SITE  parse/parse_stmt.rs:1790  [parse_stmt_fallthrough_ts_keyword]  3 lines  if p.lint() {
+SITE  parse/parse_stmt.rs:1821  [parse_stmt_fallthrough_ts_keyword]  3 lines  if p.lint() {
+SITE  parse/parse_suffix.rs:29  [sfx_handle_typescript_as]  3 lines  if p.lint() {
+
+6 sites, 1 violations
+FAIL

@@ -1,0 +1,6 @@
+program  Ir 5,096,316,106 -> 5,094,624,057 (-1,692,049)  Bc 720,507,867 -> 720,214,057 (-293,810)  Bi 53,860,653 -> 53,855,154 (-5,499)
+matched /bun_js_parser/ 184 symbols  Ir 2,891,194,329 -> 2,891,194,271 (-58)  Bc 319,771,089 -> 319,771,089 (+0)  Bi 35,878,822 -> 35,878,822 (+0)
+3 matched symbols differ
+  Ir         -231  Bc         -21  Bi        +0  (a Ir 231) GONE core::ptr::drop_glue::<core::option::Option<bun_js_parser::p::StartsForParseOnly>>
+  Ir         +110  Bc          +0  Bi        +0  (a Ir 52,253) <bun_js_parser::p::P<false, false>>::parse_arrow_body
+  Ir          +63  Bc         +21  Bi        +0  (a Ir 0) NEW core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>

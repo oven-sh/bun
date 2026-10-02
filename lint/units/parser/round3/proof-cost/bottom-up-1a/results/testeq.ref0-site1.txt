@@ -1,0 +1,28 @@
+bun-types       parser dBc      63,240   tests on the site lines      58,800   dIr      128,700   counting build x passes 58,800   DIFFER
+      dBc      8,880  tests      4,440  dIr      35,520  <P<true, false>>::parse_and_declare_decls   <-- dBc != tests
+      dBc     42,400  tests     42,400  dIr      84,800  <P<true, false>>::parse_fn
+      dBc     11,960  tests     11,960  dIr       8,380  <P<true, false>>::parse_stmt_fallthrough_ts_keyword
+typescript-lib  parser dBc     126,260   tests on the site lines     101,400   dIr      322,060   counting build x passes 101,400   DIFFER
+      dBc     49,720  tests     24,860  dIr     198,880  <P<true, false>>::parse_and_declare_decls   <-- dBc != tests
+      dBc      9,180  tests      9,180  dIr      18,360  <P<true, false>>::parse_fn
+      dBc     67,360  tests     67,360  dIr     104,820  <P<true, false>>::parse_stmt_fallthrough_ts_keyword
+src-js          parser dBc      88,100   tests on the site lines      76,100   dIr      957,860   counting build x passes 76,100   DIFFER
+      dBc     24,020  tests     12,020  dIr     826,220  <P<true, false>>::parse_and_declare_decls   <-- dBc != tests
+      dBc     47,580  tests     47,580  dIr      95,160  <P<true, false>>::parse_fn
+      dBc      6,820  tests      6,820  dIr       7,340  <P<true, false>>::parse_stmt_fallthrough_ts_keyword
+      dBc      9,680  tests      9,680  dIr      29,140  <P<true, false>>::parse_suffix
+tsx             parser dBc      92,000   tests on the site lines      92,000   dIr      298,000   counting build x passes 92,000   EQUAL
+      dBc          0  tests          0  dIr     112,000  <P<true, false>>::parse_and_declare_decls
+      dBc     52,000  tests     52,000  dIr     104,000  <P<true, false>>::parse_fn
+      dBc     18,000  tests     18,000  dIr      10,000  <P<true, false>>::parse_stmt_fallthrough_ts_keyword
+      dBc     22,000  tests     22,000  dIr      72,000  <P<true, false>>::parse_suffix
+js-control      parser dBc           0   tests on the site lines           0   dIr            0   counting build x passes 0   EQUAL
+executed tests by site line (Bc of the whole run):
+        28,100      5,440     33,580     30,000          0  parse/parse_fn.rs:287
+         7,720     54,160      4,040      6,000          0  parse/parse_stmt.rs:1821
+        14,300      3,740     14,000     22,000          0  parse/parse_fn.rs:376
+         4,440     24,860     12,020          0          0  parse/mod.rs:1315
+         4,240     13,200      2,780     12,000          0  parse/parse_stmt.rs:1790
+             0          0      9,680     22,000          0  parse/parse_suffix.rs:29
+FAIL: 3 groups
+testeq exit 1

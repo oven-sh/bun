@@ -1,0 +1,7 @@
+IDENT 1172  OFFSETS 0  CONSTS 0  DIFF 4  ONLY-A 0  ONLY-B 1
+DIFF    bytes   1361   1411 (  +50)  insns   316   331 (  +15)  jcc   37   39 (  +2)  <P<true, false>>::parse_and_declare_decls
+DIFF    bytes   3786   3855 (  +69)  insns   809   824 (  +15)  jcc   92   96 (  +4)  <P<true, false>>::parse_fn
+DIFF    bytes  17763  17811 (  +48)  insns  4087  4096 (   +9)  jcc  431  434 (  +3)  <P<true, false>>::parse_suffix
+DIFF    bytes   2319   2354 (  +35)  insns   551   552 (   +1)  jcc   73   77 (  +4)  <P<true, false>>::parse_stmt_fallthrough_ts_keyword
+ONLY-B  bytes      0     29 (  +29)  insns     0    11 (  +11)  jcc    0    0 (  +0)  <P<true, false>>::lint_probe
+FAIL: 4 DIFF, 0 only in base, 1 only in head

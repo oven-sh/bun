@@ -1,0 +1,8 @@
+offset of the option in P<true, false>: 0xce0
+SITES 1      <P<true, false>>::parse_and_declare_decls   option reads +1, jcc +2, lint calls +1, insns +15, bytes +50
+SITES 1      <P<true, false>>::parse_suffix   option reads +1, jcc +3, lint calls +1, insns +9, bytes +48
+SITES 2      <P<true, false>>::parse_fn   option reads +2, jcc +4, lint calls +2, insns +15, bytes +69
+SITES 2      <P<true, false>>::parse_stmt_fallthrough_ts_keyword   option reads +2, jcc +4, lint calls +2, insns +1, bytes +35
+4 names differ, 1 lint-only names are new, 0 rows fail
+PASS
+tsdiff exit 0

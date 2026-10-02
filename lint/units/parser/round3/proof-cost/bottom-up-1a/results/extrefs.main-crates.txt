@@ -1,0 +1,52 @@
+<&bun_js_parser::error::Error as core::fmt::Debug>::fmt
+<&bun_js_parser::lexer::Error as core::fmt::Debug>::fmt
+<alloc::raw_vec::RawVec<&[bun_js_parser::parser::ScopeOrder]> as core::ops::drop::Drop>::drop
+<alloc::raw_vec::RawVec<bun_js_parser::defines::DotDefine>>::grow_one
+<alloc::raw_vec::RawVec<bun_js_parser::function_identities::FunctionIdentity> as core::ops::drop::Drop>::drop
+<alloc::raw_vec::RawVec<bun_js_parser::parser::MacroRefData> as core::ops::drop::Drop>::drop
+<alloc::raw_vec::RawVec<core::option::Option<bun_js_parser::function_identities::FunctionIdentities>> as core::ops::drop::Drop>::drop
+<alloc::vec::Vec<&[bun_js_parser::parser::ScopeOrder]> as core::ops::drop::Drop>::drop
+<alloc::vec::Vec<bun_js_parser::function_identities::FunctionIdentity> as core::ops::drop::Drop>::drop
+<alloc::vec::Vec<bun_js_parser::parser::MacroRefData> as core::ops::drop::Drop>::drop
+<alloc::vec::Vec<core::option::Option<bun_js_parser::function_identities::FunctionIdentities>> as core::ops::drop::Drop>::drop
+<bun_collections::array_hash_map::StringHashMap<alloc::vec::Vec<bun_js_parser::defines::DotDefine>>>::put
+<bun_collections::array_hash_map::StringHashMap<bun_js_parser::defines::DefineData>>::put
+<bun_js_parser::defines::Define as bun_bundler::defines::DefineExt>::init
+<bun_js_parser::defines::Define>::insert
+<bun_js_parser::defines::DefineData as bun_bundler::defines::DefineDataExt>::from_input
+<bun_js_parser::defines::DefineData as bun_bundler::defines::DefineDataExt>::parse
+<bun_js_parser::defines::DefineData>::init
+<bun_js_parser::error::Error as core::error::Error>::source
+<bun_js_parser::error::Error as core::fmt::Display>::fmt
+<bun_js_parser::function_identities::FunctionIdentities>::find
+<bun_js_parser::function_identities::FunctionIdentities>::of_text
+<bun_js_parser::lexer::Lexer>::expected
+<bun_js_parser::lexer::Lexer>::next
+<bun_js_parser::p::P<true, false> as core::ops::drop::Drop>::drop
+<bun_js_parser::p::P<true, false>>::init
+<bun_js_parser::p::P<true, false>>::parse_expr_common
+<bun_js_parser::parse::parse_entry::Options>::clone_for_lazy_export
+<bun_js_parser::parse::parse_entry::Options>::hash_for_runtime_transpiler
+<bun_js_parser::parse::parse_entry::Options>::init
+<bun_js_parser::parse::parse_entry::Parser>::init
+<bun_js_parser::parse::parse_entry::Parser>::parse
+<bun_js_parser::parse::parse_entry::Parser>::scan_imports
+<bun_js_parser::parser::Runtime::Features as core::default::Default>::default
+<bun_js_parser::parser::Runtime::Features>::init_bundler_feature_flags
+<bun_js_parser::parser::ScanPassResult>::init
+<bun_js_parser::parser::ScanPassResult>::reset
+<bun_js_parser::parser::options::AllowUnresolved>::from_strings
+<core::slice::iter::Iter<core::option::Option<bun_js_parser::function_identities::FunctionIdentities>> as core::iter::adapters::zip::TrustedRandomAccessNoCoerce>::size
+<hashbrown::raw::RawTable<(bun_collections::array_hash_map::StringHashMapKey, alloc::vec::Vec<bun_js_parser::defines::DotDefine>), bun_alloc::DefaultAlloc>>::reserve_rehash::<hashbrown::map::make_hasher<bun_collections::array_hash_map::StringHashMapKey, alloc::vec::Vec<bun_js_parser::defines::DotDefine>, core::hash::BuildHasherDefault<bun_wyhash::OneShotHasher>>::{closure#0}>
+<hashbrown::raw::RawTable<(bun_collections::array_hash_map::StringHashMapKey, bun_js_parser::defines::DefineData), bun_alloc::DefaultAlloc>>::reserve_rehash::<hashbrown::map::make_hasher<bun_collections::array_hash_map::StringHashMapKey, bun_js_parser::defines::DefineData, core::hash::BuildHasherDefault<bun_wyhash::OneShotHasher>>::{closure#0}>
+<hashbrown::raw::RawTableInner>::drop_inner_table::<(bun_collections::array_hash_map::StringHashMapKey, alloc::vec::Vec<bun_js_parser::defines::DotDefine>), bun_alloc::DefaultAlloc>
+<hashbrown::raw::RawTableInner>::drop_inner_table::<(bun_collections::array_hash_map::StringHashMapKey, bun_js_parser::defines::DefineData), bun_alloc::DefaultAlloc>
+bun_js_parser::defines_table::GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING
+bun_js_parser::defines_table::GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES
+bun_js_parser::lexer::range_of_identifier
+bun_js_parser::parser::new_lazy_export_ast
+bun_js_parser::parser::new_lazy_export_ast_impl
+bun_js_parser_jsc-32affc74b7024e88.bun_js_parser_jsc.170b66dc8f3b03b6-cgu.0.rcgu.o:
+bun_js_parser_jsc::expr_jsc::expr_to_js
+bun_js_parser_jsc::expr_jsc::to_js_error
+bun_js_parser_jsc::expr_jsc::value_string_to_js

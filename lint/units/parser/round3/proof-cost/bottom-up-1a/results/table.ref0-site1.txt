@@ -1,0 +1,23 @@
+site1 against ref0                                 bun-types  typescript-lib          src-js             tsx      js-control
+input bytes per pass                               1,076,221       3,784,758       3,268,179           7,003       1,506,667
+passes                                                    20              20              20           2,000              20
+-- default VEX
+parser Ir base                                   314,909,870   1,107,107,410   4,451,486,921   1,179,660,032   2,904,765,471
+parser Ir head - base                               +128,700        +322,060        +957,860        +298,000              +0
+parser Ir head - base, percent                       +0.041%         +0.029%         +0.022%         +0.025%         +0.000%
+parser Bc base                                    44,605,344     160,906,944     515,058,105     137,933,718     312,385,279
+parser Bc head - base                                +63,240        +126,260         +93,480        +104,000              +0
+parser Bc head - base, percent                       +0.142%         +0.078%         +0.018%         +0.075%         +0.000%
+parser Bi head - base                                     +0              +0              +0              +0              +0
+program Ir head - base                              +127,323         +21,621      +1,495,611        +770,124        +323,201
+program Bc head - base                               +63,072         +80,465        +166,932        +153,906         +23,567
+-- --vex-guest-chase=no
+parser Ir base                                   308,230,410   1,074,155,810   4,397,435,921   1,166,813,852   2,891,194,271
+parser Ir head - base                               +128,700        +322,060        +957,860        +298,000              +0
+parser Ir head - base, percent                       +0.042%         +0.030%         +0.022%         +0.026%         +0.000%
+parser Bc base                                    46,501,115     167,572,135     528,731,635     142,450,868     319,771,089
+parser Bc head - base                                +63,240        +126,260         +88,100         +92,000              +0
+parser Bc head - base, percent                       +0.136%         +0.075%         +0.017%         +0.065%         +0.000%
+parser Bi head - base                                     +0              +0              +0              +0              +0
+program Ir head - base                              +139,877        +278,136      -2,970,908        +184,554        +865,962
+program Bc head - base                               +64,762        +120,566        -589,529         +72,860        +209,543

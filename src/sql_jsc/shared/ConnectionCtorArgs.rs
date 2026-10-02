@@ -60,11 +60,15 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
         let password_str = arguments[3].to_bun_string(global_object)?;
         let database_str = arguments[4].to_bun_string(global_object)?;
         let modes = M::MODES;
-        let ssl_mode = usize::try_from(arguments[5].to_int32())
-            .ok()
-            .and_then(|i| modes.get(i))
-            .copied()
-            .unwrap_or(modes[0]);
+        let Some(ssl_mode) = Some(arguments[5])
+            .filter(|v| v.is_any_int())
+            .and_then(|v| usize::try_from(v.to_int32()).ok())
+            .and_then(|i| modes.get(i).copied())
+        else {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "sslMode must be an integer from 0 (disable) to 4 (verify-full)"
+            )));
+        };
 
         let tls_object = arguments[6];
         let mut tls_config = SSLConfig::default();
@@ -117,4 +121,11 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             secure,
         }))
     }
+}
+
+/// Reads a millisecond timeout argument. Zero disables the timer.
+pub(crate) fn timeout_ms_from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
+    let ms = value.to_number(global_object)?;
+    // The cast maps NaN to zero.
+    Ok(ms.clamp(0.0, f64::from(i32::MAX)) as u32)
 }

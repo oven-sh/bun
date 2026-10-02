@@ -52,19 +52,20 @@ provisioned, so it sticks to `Bun.spawn` with argv arrays and stays off
 
 macOS does not free every TCP socket that the test suite closes. A leaked
 socket stays in the kernel with no owning process until the host reboots.
-`sysctl net.inet.tcp.pcbcount` counts them. `netstat` and `lsof` do not show
-them.
+`sysctl net.inet.tcp.pcbcount` counts every TCP socket in the kernel, the
+leaked ones included. `netstat` and `lsof` do not show the leaked ones.
 
 A `bare` host keeps one kernel between jobs, so its count grows by about 1,000
 per test job until the nightly reboot (`com.buildkite.cleanup`). A `tart`
-guest is fresh for every job. Every macOS job prints `uptime` and the count in
-its log header, under "Uptime and TCP sockets".
+guest is fresh for every job. Every macOS test job prints `uptime` and the
+count in its log header, under "Uptime and TCP sockets".
 
-macOS 26 caps TCP memory at 1/32 of RAM (`tcp_init` in xnu). On an 8 GB host
-the cap is at a count of about 81,300. From 80% of the cap the kernel drops
-received TCP data, so connections stall. At the cap `socket()` fails with
-`ENOBUFS`, which Bun reports as `Failed to start server. Is port 0 in use?`.
-A 16 GB host has twice the room. macOS 14 and 15 do not have this cap.
+macOS 26 caps TCP memory at 1/32 of RAM (`tcp_init` in xnu). From 80% of the
+cap the kernel drops received TCP data, so connections stall. At the cap
+`socket()` fails with `ENOBUFS`, which Bun reports as `Failed to start server.
+Is port 0 in use?`. The cap is on memory, so no fixed count reaches it. In one
+measurement on an 8 GB host, `socket()` began to fail at a count of about
+81,300. A 16 GB host has twice the room. macOS 14 and 15 do not have this cap.
 
 ## Bringing up a host
 

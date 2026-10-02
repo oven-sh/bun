@@ -2004,14 +2004,10 @@ pub(crate) mod __gated_printer {
             if !IS_BUN_PLATFORM {
                 unreachable!();
             }
-            self.print_internal_bun_import(import, Some(b"globalThis.Bun"));
+            self.print_internal_bun_import(import, b"globalThis.Bun");
         }
 
-        fn print_internal_bun_import(
-            &mut self,
-            import: &S::Import,
-            statement: Option<&'static [u8]>,
-        ) {
+        fn print_internal_bun_import(&mut self, import: &S::Import, statement: &'static [u8]) {
             if !IS_BUN_PLATFORM {
                 unreachable!();
             }
@@ -2022,17 +2018,7 @@ pub(crate) mod __gated_printer {
                 self.print_space();
                 self.print(b"=");
                 self.print_space_before_identifier();
-                match statement {
-                    None => self.print_require_or_import_expr(
-                        import.import_record_index,
-                        false,
-                        &[],
-                        Expr::EMPTY,
-                        Level::Lowest,
-                        ExprFlag::none(),
-                    ),
-                    Some(s) => self.print(s),
-                }
+                self.print(statement);
                 self.print_semicolon_after_statement();
                 self.print_indent();
             }
@@ -2041,23 +2027,8 @@ pub(crate) mod __gated_printer {
                 self.print_semicolon_if_needed();
                 self.print(b"var ");
                 self.print_symbol(default.ref_);
-                match statement {
-                    None => {
-                        self.print_equals();
-                        self.print_require_or_import_expr(
-                            import.import_record_index,
-                            false,
-                            &[],
-                            Expr::EMPTY,
-                            Level::Lowest,
-                            ExprFlag::none(),
-                        );
-                    }
-                    Some(s) => {
-                        self.print_equals();
-                        self.print(s);
-                    }
-                }
+                self.print_equals();
+                self.print(statement);
                 self.print_semicolon_after_statement();
             }
 
@@ -2093,17 +2064,7 @@ pub(crate) mod __gated_printer {
                 self.print_whitespacer(ws!(b"} = "));
 
                 if import.star_name_loc.is_empty() && import.default_name.is_none() {
-                    match statement {
-                        None => self.print_require_or_import_expr(
-                            import.import_record_index,
-                            false,
-                            &[],
-                            Expr::EMPTY,
-                            Level::Lowest,
-                            ExprFlag::none(),
-                        ),
-                        Some(s) => self.print(s),
-                    }
+                    self.print(statement);
                 } else if let Some(name) = &import.default_name {
                     self.print_symbol(name.ref_);
                 } else {

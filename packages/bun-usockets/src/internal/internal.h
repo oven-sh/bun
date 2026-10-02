@@ -431,8 +431,10 @@ struct us_udp_socket_t {
     void (*on_drain)(struct us_udp_socket_t *);
     void (*on_close)(struct us_udp_socket_t *);
     /* Called for a receive-path error. is_errqueue == 1 when the errno came
-     * from Linux's MSG_ERRQUEUE (an ICMP report about an earlier send), 0 when
-     * recvmmsg itself failed. The socket is NOT closed — caller decides. */
+     * from Linux's MSG_ERRQUEUE (an ICMP report about an earlier send), 0 for
+     * the pending error of the socket: a recvmmsg that failed with it or, on
+     * Linux, the SO_ERROR read after the error handlers of one event. The
+     * socket is NOT closed: the caller decides. */
     void (*on_recv_error)(struct us_udp_socket_t *, int err, int is_errqueue);
     void *user;
     struct us_loop_t *loop;

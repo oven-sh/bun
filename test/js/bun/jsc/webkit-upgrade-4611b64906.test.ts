@@ -192,7 +192,11 @@ describe("WebKit 4611b64906 upgrade", () => {
       expect(seenWhileShrinking).toEqual([1, 2]);
       // prettier-ignore
       const holey = [1, , 3];
-      expect([...(function* () { for (const value of holey) yield value; })()]).toEqual([1, undefined, 3]);
+      expect([
+        ...(function* () {
+          for (const value of holey) yield value;
+        })(),
+      ]).toEqual([1, undefined, 3]);
 
       // A loop that is suspended in a generator resumes at the right element.
       function* pairs(array: number[]) {
@@ -294,7 +298,7 @@ describe("WebKit 4611b64906 upgrade", () => {
         value: i,
         ratio: i / 8,
         aKeyThatIsLongerThanSixteenCharacters: i % 3 === 0,
-        "escaped\n\"key\"": null,
+        'escaped\n"key"': null,
         url: longValue,
         blob: i % 50 === 0 ? veryLongValue : longValue + i,
         nested: { ints: [i, i + 1, i + 2], doubles: [i + 0.5, -2.25, 1e300], mixed: [i, "s", null, [true], {}] },
@@ -315,7 +319,7 @@ describe("WebKit 4611b64906 upgrade", () => {
       expect(Object.keys(JSON.parse('{"b":1,"a":2,"b":3}'))).toEqual(["b", "a"]);
       expect(JSON.parse('{"b":1,"a":2,"b":3}')).toEqual({ b: 3, a: 2 });
       expect(Object.getOwnPropertyNames(JSON.parse('{"__proto__":1,"length":2}'))).toEqual(["__proto__", "length"]);
-      expect(JSON.parse("[1,2.5,-0,1e21,[],[[]],\"\\u0041\"]")).toEqual([1, 2.5, -0, 1e21, [], [[]], "A"]);
+      expect(JSON.parse('[1,2.5,-0,1e21,[],[[]],"\\u0041"]')).toEqual([1, 2.5, -0, 1e21, [], [[]], "A"]);
       for (const bad of ['{"a":1,}', "[1,]", '{"a" 1}', '["\u0001"]', "[01]", '{"a":1', "nul"]) {
         expect(() => JSON.parse(bad)).toThrow(SyntaxError);
       }

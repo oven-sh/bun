@@ -2364,13 +2364,18 @@ impl BlobExt for Blob {
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {
+        // The callers scanned the bytes after a stripped UTF-8 BOM, which is itself non-ASCII.
+        let is_all_ascii =
+            is_all_ascii && !self.shared_view().starts_with(&strings::BOM::UTF8_BYTES);
         self.charset
             .set(strings::AsciiStatus::from_bool(Some(is_all_ascii)));
         // if this Blob represents the entire binary data
         // we can update the store's is_all_ascii flag
         if self.size.get() > 0 && self.offset.get() == 0 {
             if let Some(store) = self.store() {
-                if matches!(store.data, store::Data::Bytes(_)) {
+                if let store::Data::Bytes(bytes) = &store.data
+                    && self.size.get() >= bytes.len()
+                {
                     store.is_all_ascii.set(is_all_ascii);
                 }
             }

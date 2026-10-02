@@ -1,0 +1,10 @@
+10-02_12:52:35 anon=1616MB pids=217 load=328.50 top=rustc:1200MB
+10-02_12:53:06 anon=287MB pids=216 load=329.38 top=rustc:146MB
+10-02_12:53:37 anon=165MB pids=81 load=336.02 top=bun:115MB
+10-02_12:54:07 anon=169MB pids=61 load=353.11 top=bun:115MB
+10-02_12:54:38 anon=1280MB pids=225 load=341.15 top=clang++:895MB
+10-02_12:55:12 anon=1420MB pids=101 load=415.31 top=rustc:884MB
+10-02_12:55:44 anon=1447MB pids=100 load=401.48 top=rustc:985MB
+10-02_12:56:14 anon=3268MB pids=72 load=382.34 top=rustc:3406MB
+10-02_12:56:45 anon=2915MB pids=71 load=409.42 top=rustc:2910MB
+10-02_12:57:18 anon=383MB pids=76 load=496.53 top=ld.lld:604MB

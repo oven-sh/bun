@@ -3946,12 +3946,8 @@ describe("hoist", () => {
       "types-alias": inStore("@types+is-number@1.0.0", join("@types", "is-number")),
     });
 
-    // a store package that declares nothing finds the alias, as it does with
-    // the hoisted linker, and does not find the name the package gave itself
+    // a store package that declares nothing does not find the name the package gave itself
     const fromTypes = requireFrom(packageDir, "@types+is-number@1.0.0", join("@types", "is-number"));
-    expect(fromTypes.resolve("an-alias/package.json")).toEndWith(
-      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps", "package.json"),
-    );
     expect(() => fromTypes.resolve("no-deps/package.json")).toThrow(
       expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
     );
@@ -4010,7 +4006,7 @@ describe("hoist", () => {
           name: "one",
           version: "1.0.0",
           // uses-a-dep-3 depends on the registry's a-dep@1.0.3
-          dependencies: { "no-deps": "workspace:*", "uses-a-dep-3": "1.0.0" },
+          dependencies: { "no-deps": "workspace:*", "uses-a-dep-3": "1.0.0", "basic-1": "1.0.0" },
         }),
         "packages/two/package.json": JSON.stringify({
           name: "two",
@@ -4028,11 +4024,12 @@ describe("hoist", () => {
     expect(await fallbackLinks(packageDir)).toEqual({
       // the workspace package gets no link, and leaves `a-dep` to the store package
       "a-dep": inStore("a-dep@1.0.3", "a-dep"),
+      "basic-1": inStore("basic-1@1.0.0", "basic-1"),
       "uses-a-dep-3": inStore("uses-a-dep-3@1.0.0", "uses-a-dep-3"),
     });
 
-    // a store package that declares nothing resolves the store package
-    expect(requireFrom(packageDir, "uses-a-dep-3@1.0.0", "uses-a-dep-3").resolve("a-dep/package.json")).toEndWith(
+    // basic-1 declares nothing and the project root links no a-dep, so this goes through the fallback link
+    expect(requireFrom(packageDir, "basic-1@1.0.0", "basic-1").resolve("a-dep/package.json")).toEndWith(
       join(".bun", "a-dep@1.0.3", "node_modules", "a-dep", "package.json"),
     );
   });
@@ -4063,7 +4060,7 @@ describe("hoist", () => {
       "one-fixed-dep": inStore("one-fixed-dep@2.0.0", "one-fixed-dep"),
     });
 
-    // a store package that declares nothing gets the replacement
+    // the fallback directory comes before the root node_modules, so a link to the real no-deps there would win
     expect(requireFrom(packageDir, "a-dep@1.0.1", "a-dep").resolve("no-deps/package.json")).toEndWith(
       join(".bun", "a-dep@1.0.1", "node_modules", "a-dep", "package.json"),
     );

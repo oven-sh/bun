@@ -651,6 +651,13 @@ impl<'a> Coordinator<'a> {
             if is_panic_status(status) {
                 self.abort_on_worker_startup_panic(status);
             }
+        } else {
+            // Sent `.ready` and has no file in flight: between files, or
+            // shutting down after its last one.
+            let corrupt_frame = w.ipc.corrupt_frame.get();
+            if corrupt_frame || is_abnormal_exit(status) {
+                self.account_exit_outside_file(worker_idx, corrupt_frame, status);
+            }
         }
 
         // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
@@ -739,6 +746,51 @@ impl<'a> Coordinator<'a> {
         self.files_done += 1;
     }
 
+    /// Fail the run for a worker exit that no file takes the blame for. The
+    /// summary counts it as an error and the run exits 1.
+    fn record_worker_failure(&mut self) {
+        self.reporter.jest.unhandled_errors_between_tests += 1;
+    }
+
+    /// A worker with no file in flight was killed, exited non-zero, or
+    /// corrupted its IPC stream. Its test results are in, but what it sends
+    /// while it shuts down (coverage, the failure recap) and its last snapshot
+    /// writes can be missing. A crash signal does not abort the run here:
+    /// after a worker's last file nothing is queued, so an abort would only
+    /// kill the siblings that are still finishing theirs.
+    #[cold]
+    fn account_exit_outside_file(
+        &mut self,
+        worker_idx: u32,
+        corrupt_frame: bool,
+        status: &SpawnStatus,
+    ) {
+        let panicked = is_panic_status(status);
+        // Terminated by `terminate_workers_after_panic`; that panic is already reported.
+        if self.stop_reason == Some(StopReason::WorkerPanicked) && !panicked {
+            return;
+        }
+        self.break_dots();
+        self.end_group();
+        if corrupt_frame && !panicked {
+            // The kill was ours (`Worker::on_channel_done`), or was skipped
+            // because the worker had already exited: name the cause.
+            bun_core::pretty_error!(
+                "<r><red>error<r>: test worker {} killed outside a test file (corrupt IPC frame, something wrote to fd 3)\n",
+                worker_idx + 1,
+            );
+        } else {
+            let mut buf = [0u8; 32];
+            bun_core::pretty_error!(
+                "<r><red>error<r>: test worker {} exited outside a test file ({})\n",
+                worker_idx + 1,
+                bstr::BStr::new(describe_status(&mut buf, status)),
+            );
+        }
+        Output::flush();
+        self.record_worker_failure();
+    }
+
     fn mark_crashed(&mut self, file_idx: u32, elapsed_ms: i64) {
         self.crashed_files.push(file_idx);
         if let Some(file) = self.test_records.get_mut(file_idx as usize) {
@@ -789,7 +841,8 @@ impl<'a> Coordinator<'a> {
     }
 
     /// `abort_on_worker_panic` for the pre-`.ready` case: no file was
-    /// dispatched yet, so there is none to name.
+    /// dispatched yet, so there is none to name. The crash is recorded by
+    /// itself: the sweep fails nothing when no file is queued or in flight.
     fn abort_on_worker_startup_panic(&mut self, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
@@ -801,6 +854,7 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(describe_status(&mut buf, status)),
         );
         Output::flush();
+        self.record_worker_failure();
         self.terminate_workers_after_panic(b"aborted: worker panicked during startup");
     }
 
@@ -963,6 +1017,22 @@ fn is_panic_status(status: &SpawnStatus) -> bool {
         return is_fatal_windows_exit_code(e.raw);
     }
     false
+}
+
+/// The OS reported that the worker was killed or exited non-zero. `Err` is
+/// not an abnormal exit but an unknown one: when SIGCHLD is inherited as
+/// SIG_IGN the kernel reaps every child and each wait fails with ECHILD, so
+/// counting it would fail every run there.
+fn is_abnormal_exit(status: &SpawnStatus) -> bool {
+    match status {
+        SpawnStatus::Signaled(_) => true,
+        // `code` is the low byte of the exit code; 0x100 is not a clean exit.
+        #[cfg(windows)]
+        SpawnStatus::Exited(e) => e.raw != 0,
+        #[cfg(not(windows))]
+        SpawnStatus::Exited(e) => e.code != 0,
+        SpawnStatus::Err(_) | SpawnStatus::Running => false,
+    }
 }
 
 /// Fatal NTSTATUS exit codes — the Windows mirror of the signal list

@@ -1,0 +1,23 @@
+{
+  "_id": "bundled-shipped-sibling",
+  "name": "bundled-shipped-sibling",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shipped-sibling",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "no-deps": "1.0.0"
+      },
+      "_id": "bundled-shipped-sibling@1.0.0",
+      "dist": {
+        "integrity": "sha512-JLbUweRrXPg31SczQhYgm1QggX91uEAUYu6+lRP3jTARct0jLzcdboqxkvs0R4yQN6+lDpKTfMClDeIsNkx/kA==",
+        "shasum": "101c80b5aa54e2919d6e639e872b5b71af01624e",
+        "tarball": "http://localhost:4873/bundled-shipped-sibling/-/bundled-shipped-sibling-1.0.0.tgz"
+      }
+    }
+  }
+}

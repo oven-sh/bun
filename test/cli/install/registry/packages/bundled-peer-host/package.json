@@ -1,0 +1,27 @@
+{
+  "_id": "bundled-peer-host",
+  "name": "bundled-peer-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-peer-host",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "no-deps": "1.0.0",
+        "bundled-peer-plugin": "1.0.0"
+      },
+      "bundleDependencies": [
+        "no-deps"
+      ],
+      "_id": "bundled-peer-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-FspAGjQFOnaE/Nv4jToM+womMV7TS9kKS/ByhBxhgfiSGiJUIDxWAWdDWubLoV1KcFx4YorXrEE4AKvgRt+y4w==",
+        "shasum": "8ab9a20b140cb17756cb43260181f069c4aa8fbf",
+        "tarball": "http://localhost:4873/bundled-peer-host/-/bundled-peer-host-1.0.0.tgz"
+      }
+    }
+  }
+}

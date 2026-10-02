@@ -1381,10 +1381,14 @@ impl<'a> Cloner<'a> {
 impl Lockfile {
     /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        while self
+            .hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)?
+            .late_bound_optional_peer
+        {}
         Ok(())
     }
 
+    /// Builds the install tree. Returns the rows a tarball ships, which the installer skips.
     pub(crate) fn filter(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1392,18 +1396,18 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(), tree::SubtreeError> {
-        self.hoist::<{ tree::BuilderMethod::Filter }>(
+    ) -> Result<tree::ShippedRows, tree::SubtreeError> {
+        let result = self.hoist::<{ tree::BuilderMethod::Filter }>(
             log,
             Some(manager),
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
         )?;
-        Ok(())
+        Ok(result.shipped_rows)
     }
 
-    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
+    /// Sets `buffers.trees`/`hoisted_dependencies`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1413,7 +1417,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<bool, tree::SubtreeError> {
+    ) -> Result<tree::HoistResult, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // Only the install applies the barrier, so the saved tree does not depend on it.
@@ -1446,9 +1450,15 @@ impl Lockfile {
             late_bound_optional_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
+            shipped_rows: Default::default(),
         };
 
-        Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
+        Tree::default().process_subtree(
+            tree::ROOT_DEP_ID,
+            tree::INVALID_ID,
+            false,
+            &mut builder,
+        )?;
 
         // This goes breadth-first
         while let Some(item) = builder.queue.read_item() {
@@ -1458,14 +1468,22 @@ impl Lockfile {
             // (before appending to `builder.list`, which may reallocate), so the
             // copy is equivalent — and avoids the dangling-element hazard.
             let tree = builder.list.items_tree()[item.tree_id as usize];
-            tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;
+            tree.process_subtree(
+                item.dependency_id,
+                item.hoist_root_id,
+                item.shipped,
+                &mut builder,
+            )?;
         }
 
         let cleaned = builder.clean()?;
         let late_bound_optional_peer = builder.late_bound_optional_peer;
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(late_bound_optional_peer)
+        Ok(tree::HoistResult {
+            late_bound_optional_peer,
+            shipped_rows: cleaned.shipped_rows,
+        })
     }
 }
 

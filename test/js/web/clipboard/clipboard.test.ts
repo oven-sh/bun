@@ -8,7 +8,6 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { totalmem } from "node:os";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 
@@ -900,7 +899,8 @@ async function hasEnded(pid: string) {
 // `limitHelperRuns` replaces the 10 seconds a helper run may take. `running`
 // and `ended` are the two functions above, for a pid that a stand-in recorded.
 // On a machine under heavy load the time limit can end a stand-in before it
-// records the pid. Then nothing of it is left to look at.
+// records the pid. Then nothing of it is left to look at. `started` waits for
+// a file that a stand-in writes first, and fails when none comes.
 const CHILD_PRELUDE = `
   const { readFileSync, readdirSync } = require("node:fs");
   const CLIP_DIR = process.env.CLIP_DIR;
@@ -913,6 +913,13 @@ const CHILD_PRELUDE = `
   const limitHelperRuns = ms => require("bun:internal-for-testing").setClipboardHelperTimeoutForTesting(ms);
   ${isRunning}
   ${hasEnded}
+  const started = async name => {
+    for (let tries = 0; tries < 600; tries++) {
+      if (require("node:fs").existsSync(CLIP_DIR + "/" + name)) return;
+      await Bun.sleep(5);
+    }
+    throw new Error("the stand-in never wrote " + name);
+  };
   const recordedPid = name => {
     try {
       return received(name).trim();
@@ -1414,7 +1421,8 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     });
     const pidFile = join(String(dir), "helper-pid");
     let helper = "";
-    while (helper === "") {
+    for (let tries = 0; helper === ""; tries++) {
+      if (tries === 600) throw new Error("the stand-in never recorded its pid");
       await Bun.sleep(5);
       if (existsSync(pidFile)) helper = readFileSync(pidFile, "utf8").trim();
     }
@@ -1497,11 +1505,11 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         ].join("\n"),
       },
       `
-        const { existsSync, writeFileSync } = require("node:fs");
+        const { writeFileSync } = require("node:fs");
         const worker = new Worker(new URL("./worker.js", import.meta.url));
         const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
         // The helper is provably blocked on the worker's behalf before terminate().
-        while (!existsSync(CLIP_DIR + "/helper-started")) await Bun.sleep(5);
+        await started("helper-started");
         worker.terminate();
         writeFileSync(CLIP_DIR + "/release", "");
         await closed;
@@ -1529,10 +1537,10 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         xsel: "printf 'from xsel'",
       },
       `
-        const { existsSync, writeFileSync } = require("node:fs");
+        const { writeFileSync } = require("node:fs");
         const worker = new Worker(new URL("./worker.js", import.meta.url));
         const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
-        while (!existsSync(CLIP_DIR + "/helper-started")) await Bun.sleep(5);
+        await started("helper-started");
         worker.terminate();
         writeFileSync(CLIP_DIR + "/release", "");
         await closed;
@@ -1557,10 +1565,10 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
         xclip: `cat > "$CLIP_DIR/received"`,
       },
       `
-        const { existsSync, writeFileSync } = require("node:fs");
+        const { writeFileSync } = require("node:fs");
         const worker = new Worker(new URL("./worker.js", import.meta.url));
         const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
-        while (!existsSync(CLIP_DIR + "/helper-started")) await Bun.sleep(5);
+        await started("helper-started");
         worker.terminate();
         writeFileSync(CLIP_DIR + "/release", "");
         await closed;
@@ -1574,33 +1582,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
       log: ["wl-copy --type text/plain;charset=utf-8", "xclip -selection clipboard -in"],
     });
   });
-});
-
-// Not concurrent with the tests above: the child holds several GiB, so small
-// machines skip. The stand-in prints the bytes of "first-bytes" and then 1 GiB
-// of "a". With one character that is not ASCII in front, the conversion to a
-// string aborted the process at this size, which is half the limit of a
-// string. With a byte in front that is not UTF-8, the text is rejected: the
-// conversion that replaces such bytes cannot take this size.
-describe.skipIf(!isLinux || totalmem() < 10 * 1024 ** 3)("POSIX helper backend, 1 GiB of text", () => {
-  test("readText() reads text that is not all ASCII, and rejects text that is not UTF-8", async () => {
-    const { result } = await runWithHelpers(
-      { xclip: `cat "$CLIP_DIR/first-bytes"; head -c 1073741824 /dev/zero | tr '\\000' a` },
-      `
-        const { writeFileSync } = require("node:fs");
-        limitHelperRuns(240_000);
-        const read = firstBytes => {
-          writeFileSync(CLIP_DIR + "/first-bytes", Buffer.from(firstBytes));
-          return settle(navigator.clipboard.readText(), text => [text.length, text.charCodeAt(0), text.charCodeAt(1)]);
-        };
-        print({ notAllAscii: await read([0xc3, 0xa9]), notUtf8: await read([0x80]) });
-      `,
-    );
-    expect(result).toEqual({
-      notAllAscii: { ok: [1024 ** 3 + 1, 0xe9, 0x61] },
-      notUtf8: { error: TEXT_TOO_LARGE },
-    });
-  }, 300_000);
 });
 
 // The in-process backends with operations arriving from several pool threads

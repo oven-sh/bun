@@ -791,14 +791,21 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
   using dir = tempDir("plugin-onresolve-file-namespace", {
     "real.js": `export const value = "redirected";`,
     "entry.js": `
+      import { writeFileSync } from "node:fs";
       import { join } from "node:path";
 
       const target = join(import.meta.dir, "real.js");
+      const createdTarget = join(import.meta.dir, "created.js");
 
       Bun.plugin({
         name: "redirect-to-file",
         setup(build) {
           build.onResolve({ filter: /^implicit\\.mod$/ }, () => ({ path: target }));
+          build.onResolve({ filter: /^extensionless-package$/ }, () => ({ path: target }));
+          build.onResolve({ filter: /^created-package$/ }, () => {
+            writeFileSync(createdTarget, 'export const value = "created";');
+            return { path: createdTarget };
+          });
           build.onResolve({ filter: /^explicit\\.mod$/ }, () => ({ path: target, namespace: "file" }));
           build.onResolve({ filter: /^empty-namespace\\.mod$/ }, () => ({ path: target, namespace: "" }));
           build.onResolve({ filter: /^custom\\.mod$/ }, () => ({ path: "inner", namespace: "custom" }));
@@ -820,6 +827,8 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
       console.log(
         JSON.stringify({
           dynamicImport: await attempt(async () => (await import("implicit.mod")).value),
+          extensionlessPackage: await attempt(async () => (await import("extensionless-package")).value),
+          createdPackage: await attempt(async () => (await import("created-package")).value),
           explicitFileNamespace: await attempt(async () => (await import("explicit.mod")).value),
           emptyNamespace: await attempt(async () => (await import("empty-namespace.mod")).value),
           customNamespace: await attempt(async () => (await import("custom.mod")).value),
@@ -844,6 +853,8 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
   // The fixture catches its own failures, so empty stdout means it crashed.
   expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
     dynamicImport: "redirected",
+    extensionlessPackage: "redirected",
+    createdPackage: "created",
     explicitFileNamespace: "redirected",
     emptyNamespace: "redirected",
     // A non-file namespace still round-trips through onLoad as "namespace:path".

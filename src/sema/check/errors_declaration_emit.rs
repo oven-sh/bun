@@ -12,7 +12,7 @@ use super::errors_isolated_declarations::{Emit, Node as SyntaxNode};
 use super::explain::Related;
 use super::print::{
     DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker,
-    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL,
+    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, to_valid_utf8,
 };
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
@@ -2219,13 +2219,14 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
                 self.add_diagnostic(location, 2527, vec![name, "unique symbol".to_owned()]);
             }
             Report::LikelyUnsafeImportRequired(specifier, symbol) => {
+                let (specifier, symbol) = (to_valid_utf8(specifier), to_valid_utf8(symbol));
                 self.add_diagnostic(location, 2883, vec![name, specifier, symbol]);
             }
             Report::NonSerializableProperty(property) => {
-                self.add_diagnostic(location, 4118, vec![property]);
+                self.add_diagnostic(location, 4118, vec![to_valid_utf8(property)]);
             }
             Report::PrivateInBaseOfClassExpression(property) => {
-                self.add_diagnostic(location, 4094, vec![property]);
+                self.add_diagnostic(location, 4094, vec![to_valid_utf8(property)]);
                 if self.error_name_node.is_some_and(|name| name.of_variable)
                     && let Some(found) = self.diagnostics.last_mut()
                 {

@@ -6,6 +6,7 @@
 
 use super::enclosing_declaration::Enclosing;
 use super::errors_misc::QueriedThisContainer;
+use super::print::{quoted, to_valid_utf8};
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
@@ -1482,7 +1483,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     .specifier_for_module_symbol(symbol, self.file, ResolutionMode::None);
             // `getSpecifierForModuleSymbol`: without a file, `StripQuotes(symbol.Name)` (`isAmbientModuleSymbolName`).
             if !specifier.is_empty() {
-                return super::print::quoted(&specifier, '"', true);
+                return to_valid_utf8(quoted(specifier.as_bytes(), b'"', true));
             }
         }
         name
@@ -1512,7 +1513,8 @@ fn push_access(text: &mut String, name: &str, is_enum_member: bool) {
     match inner.chars().next() {
         // A string literal of what is between the first and the last character, whatever that is.
         Some(quote @ ('"' | '\'')) if !is_enum_member => {
-            text.push_str(&super::print::quoted(&unquote_string(inner), quote, true));
+            let literal = quoted(unquote_string(inner).as_bytes(), quote as u8, true);
+            text.push_str(&to_valid_utf8(literal));
         }
         _ => text.push_str(inner),
     }

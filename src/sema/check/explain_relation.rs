@@ -596,7 +596,10 @@ impl<'p> Checker<'p> {
     /// `valueToString` of the value of an enum member.
     pub(super) fn enum_value_text(&self, value: EnumValue) -> String {
         match value {
-            EnumValue::String(text) => super::print::quoted(&self.atom_text(text), '"', false),
+            EnumValue::String(text) => {
+                let text = self.files().atoms.bytes(text);
+                super::print::to_valid_utf8(super::print::quoted(text, b'"', false))
+            }
             EnumValue::Number(bits) => crate::atom::number_to_string(f64::from_bits(bits)),
         }
     }

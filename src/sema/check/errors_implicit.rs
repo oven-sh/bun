@@ -224,9 +224,11 @@ impl Checker<'_> {
                         op: BinOp::Or | BinOp::And | BinOp::Nullish | BinOp::Comma,
                         ..
                     } => e = parent,
-                    ExprKind::Assign { target, .. } => {
-                        let ty = self.type_of_expr(file, target);
-                        return self.is_known(ty);
+                    // `getContextualTypeForAssignmentExpression`: nothing, where the assignment declares its target.
+                    ExprKind::Assign { .. } => {
+                        return self
+                            .contextual_type(file, e)
+                            .is_none_or(|ty| self.is_known(ty));
                     }
                     ExprKind::Jsx(j) => {
                         // `getContextualTypeForChildJsxExpression`: nothing is expected of a child of a fragment, nor where children go

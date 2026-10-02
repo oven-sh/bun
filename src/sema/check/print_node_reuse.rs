@@ -124,7 +124,7 @@ impl<'p> Printer<'_, 'p> {
         &mut self,
         signature: SigId,
         returned: TypeId,
-    ) -> Option<String> {
+    ) -> Option<Vec<u8>> {
         let (file, func, _) = self.c.sig_decl(signature)?;
         if !self.reuses_nodes_of(file) {
             return None;
@@ -446,7 +446,7 @@ impl<'p> Printer<'_, 'p> {
                 ..
             } => match self.c.iso_fn_of_node(file, *of) {
                 Some(func) => self.inferred_return_type_to_node(file, func),
-                None => Node::simple("any"),
+                None => Node::simple(b"any"),
             },
             Pseudo::Inferred { of, .. } => self.inferred_pseudo_type_to_node(file, *of),
             // Only an error type is equivalent to it. What is written is the type of the declaration's own symbol.
@@ -482,11 +482,11 @@ impl<'p> Printer<'_, 'p> {
                     let nodes = if node.types.is_empty() {
                         vec![node]
                     } else {
-                        let emitted = |text: String| Node::new(text, TYPE_OPERATOR);
+                        let emitted = |text: Vec<u8>| Node::new(text, TYPE_OPERATOR);
                         node.types.into_iter().map(emitted).collect()
                     };
                     for node in nodes {
-                        if node.text == "undefined" {
+                        if node.text == b"undefined" {
                             if has_undefined {
                                 continue;
                             }
@@ -501,18 +501,22 @@ impl<'p> Printer<'_, 'p> {
                     return only;
                 }
                 if parts.is_empty() {
-                    return Node::simple(if has_elided_type { "any" } else { "never" });
+                    return Node::simple(if has_elided_type {
+                        &b"any"[..]
+                    } else {
+                        b"never"
+                    });
                 }
                 Node::union(parts)
             }
-            Pseudo::Undefined => Node::simple(if is_strict { "undefined" } else { "any" }),
-            Pseudo::Null => Node::simple(if is_strict { "null" } else { "any" }),
-            Pseudo::String => Node::simple("string"),
-            Pseudo::Number => Node::simple("number"),
-            Pseudo::BigInt => Node::simple("bigint"),
-            Pseudo::Boolean => Node::simple("boolean"),
-            Pseudo::False => Node::simple("false"),
-            Pseudo::True => Node::simple("true"),
+            Pseudo::Undefined => Node::simple(if is_strict { &b"undefined"[..] } else { b"any" }),
+            Pseudo::Null => Node::simple(if is_strict { &b"null"[..] } else { b"any" }),
+            Pseudo::String => Node::simple(b"string"),
+            Pseudo::Number => Node::simple(b"number"),
+            Pseudo::BigInt => Node::simple(b"bigint"),
+            Pseudo::Boolean => Node::simple(b"boolean"),
+            Pseudo::False => Node::simple(b"false"),
+            Pseudo::True => Node::simple(b"true"),
             Pseudo::Signature {
                 func,
                 params,
@@ -522,14 +526,17 @@ impl<'p> Printer<'_, 'p> {
                 let head = self.pseudo_signature_head(file, *func, params);
                 let returns = self.pseudo_type_to_node(file, returns);
                 self.leave_scope(outer_scope);
-                Node::new(format!("{head} => {}", returns.text), FUNCTION)
+                Node::new(cat!(head, b" => ", returns.text), FUNCTION)
             }
             Pseudo::Tuple(elements) => {
                 let mut parts = Vec::with_capacity(elements.len());
                 for element in elements {
                     parts.push(self.pseudo_type_to_node(file, element).text);
                 }
-                Node::new(format!("readonly [{}]", parts.join(", ")), TYPE_OPERATOR)
+                Node::new(
+                    cat!(b"readonly [", parts.join(&b", "[..]), b"]"),
+                    TYPE_OPERATOR,
+                )
             }
             Pseudo::Object(elements) => self.pseudo_object_literal_to_node(file, elements),
             Pseudo::Literal(e) => {
@@ -537,17 +544,14 @@ impl<'p> Printer<'_, 'p> {
                 match hir[*e].kind {
                     ExprKind::String(value) => {
                         let quote = match hir.text.get(hir[*e].pos as usize) {
-                            Some(b'\'') => '\'',
-                            Some(b'`') => '`',
-                            _ => '"',
+                            Some(b'\'') => b'\'',
+                            Some(b'`') => b'`',
+                            _ => b'"',
                         };
-                        self.string_literal_to_node(value, quote)
+                        Node::simple(quoted(self.c.files().atoms.bytes(value), quote, false))
                     }
                     ExprKind::Template { texts, .. } if texts.len() == 1 => {
-                        let mut text = String::from("`");
-                        escape_string(&self.text(hir.id_at(texts, 0)), '`', false, &mut text);
-                        text.push('`');
-                        Node::simple(text)
+                        Node::simple(quoted(&self.text(hir.id_at(texts, 0)), b'`', false))
                     }
                     // A number is written in its canonical form, as its type is.
                     _ => self.type_of_pseudo_type_to_node(file, pt),
@@ -573,7 +577,7 @@ impl<'p> Printer<'_, 'p> {
         declaration: SyntaxNode,
     ) -> Node {
         let Some(ty) = self.c.iso_type_of_declared(file, declaration) else {
-            return Node::simple("any");
+            return Node::simple(b"any");
         };
         let ty = self.c.widen_literal(ty);
         let ty = self.c.instantiate(ty, self.mapper);
@@ -584,7 +588,7 @@ impl<'p> Printer<'_, 'p> {
     /// the declaration the expression is in, which is widened as that is and not as what is around it.
     fn inferred_pseudo_type_to_node(&mut self, file: FileId, of: SyntaxNode) -> Node {
         let (SyntaxNode::Expr(e) | SyntaxNode::Written(e)) = of else {
-            return Node::simple("any");
+            return Node::simple(b"any");
         };
         let tx = Emit::new(file);
         let (parent, declaration) = self.c.iso_parent_of_inferred(&tx, of);
@@ -623,17 +627,8 @@ impl<'p> Printer<'_, 'p> {
                 let ty = self.c.instantiate(ty, self.mapper);
                 self.type_to_node(ty)
             }
-            None => Node::simple("any"),
+            None => Node::simple(b"any"),
         }
-    }
-
-    /// A string literal that is cloned: it keeps its quotes, and its text is escaped anew.
-    fn string_literal_to_node(&self, value: Atom, quote: char) -> Node {
-        let bytes = self.c.files().atoms.bytes(value);
-        if std::str::from_utf8(bytes).is_err() {
-            return Node::simple(quoted_with_lone_surrogates(bytes, quote));
-        }
-        Node::simple(quoted(&self.text(value), quote, false))
     }
 
     /// The type parameters and `pseudoParametersToNodeList` of the function `func`.
@@ -642,7 +637,7 @@ impl<'p> Printer<'_, 'p> {
         file: FileId,
         func: FnId,
         params: &[PseudoParam],
-    ) -> String {
+    ) -> Vec<u8> {
         let hir = self.c.hir(file);
         let function = hir[func];
         let mut type_parameters = Vec::with_capacity(function.type_params.len());
@@ -662,38 +657,32 @@ impl<'p> Printer<'_, 'p> {
         let mut parameters = Vec::with_capacity(params.len() + 1);
         if function.this_ty(self.c.hir(file)).is_some() {
             let this = self.reuse_type_node(file, function.this_ty(self.c.hir(file)));
-            parameters.push(format!("this: {}", this.text));
+            parameters.push(cat!(b"this: ", this.text));
         }
         for param in params {
             parameters.push(self.pseudo_parameter_to_text(file, param));
         }
         let type_parameters = if type_parameters.is_empty() {
-            String::new()
+            Vec::new()
         } else {
-            format!("<{}>", type_parameters.join(", "))
+            cat!(b"<", type_parameters.join(&b", "[..]), b">")
         };
-        format!("{type_parameters}({})", parameters.join(", "))
+        cat!(type_parameters, b"(", parameters.join(&b", "[..]), b")")
     }
 
     /// `pseudoParameterToNode`
-    fn pseudo_parameter_to_text(&mut self, file: FileId, param: &PseudoParam) -> String {
+    fn pseudo_parameter_to_text(&mut self, file: FileId, param: &PseudoParam) -> Vec<u8> {
         let declaration = self.c.hir(file)[param.param];
         let ty = self.pseudo_type_to_node(file, &param.ty);
-        format!(
-            "{}{}{}: {}",
-            if declaration.flags.contains(Flags::REST) {
-                "..."
-            } else {
-                ""
-            },
+        cat! {
+            if declaration.flags.contains(Flags::REST) { &b"..."[..] } else { b"" },
             self.binding_name_text(file, declaration.pat),
-            if param.is_optional { "?" } else { "" },
-            ty.text
-        )
+            if param.is_optional { &b"?"[..] } else { b"" }, b": ", ty.text
+        }
     }
 
     /// `reuseName`, of the name of the property `p` of an object literal.
-    fn pseudo_property_name(&self, file: FileId, p: PropId, is_method: bool) -> String {
+    fn pseudo_property_name(&self, file: FileId, p: PropId, is_method: bool) -> Vec<u8> {
         let hir = self.c.hir(file);
         let prop = hir[p];
         let PropKey::Name(name) = prop.key else {
@@ -703,25 +692,29 @@ impl<'p> Printer<'_, 'p> {
         let is_numeric = self.c.is_numeric_name(name);
         let name = self.text(name);
         // `classifyPropertyName`
-        let is_new_method = is_method && name == "new";
-        if !is_new_method && is_identifier_text(&name) {
+        let is_new_method = is_method && name == b"new";
+        if !is_new_method && is_identifier(&name) {
             return name;
         }
         let is_string_literal = matches!(first, Some(b'"' | b'\''));
-        if !is_new_method && !is_string_literal && is_numeric && !name.starts_with('-') {
+        if !is_new_method && !is_string_literal && is_numeric && !name.starts_with(b"-") {
             return if first == Some(b'[') {
-                format!("[{name}]")
+                cat!(b"[", name, b"]")
             } else {
                 name
             };
         }
-        quoted(&name, if first == Some(b'\'') { '\'' } else { '"' }, false)
+        quoted(
+            &name,
+            if first == Some(b'\'') { b'\'' } else { b'"' },
+            false,
+        )
     }
 
     /// `pseudoTypeToNode`, of `PseudoTypeKindObjectLiteral`
     fn pseudo_object_literal_to_node(&mut self, file: FileId, elements: &[PseudoElement]) -> Node {
         let Some(first) = elements.first() else {
-            return Node::simple("{}");
+            return Node::simple(b"{}");
         };
         let hir = self.c.hir(file);
         let literal = self.c.bound(file).prop_owner[first.prop.idx()];
@@ -730,7 +723,7 @@ impl<'p> Printer<'_, 'p> {
         self.flags |= IN_OBJECT_TYPE_LITERAL;
         let mut members = Vec::with_capacity(elements.len());
         for element in elements {
-            let readonly = if is_const { "readonly " } else { "" };
+            let readonly: &[u8] = if is_const { b"readonly " } else { b"" };
             members.push(match &element.kind {
                 PseudoElementKind::Method {
                     func,
@@ -743,9 +736,9 @@ impl<'p> Printer<'_, 'p> {
                     let returns = self.pseudo_type_to_node(file, returns);
                     self.leave_scope(outer_scope);
                     if is_const {
-                        format!("readonly {name}: {head} => {};", returns.text)
+                        cat!(b"readonly ", name, b": ", head, b" => ", returns.text, b";")
                     } else {
-                        format!("{name}{head}: {};", returns.text)
+                        cat!(name, head, b": ", returns.text, b";")
                     }
                 }
                 PseudoElementKind::Property(ty) => {
@@ -758,28 +751,28 @@ impl<'p> Printer<'_, 'p> {
                         _ => false,
                     };
                     let readonly = if is_getter_only {
-                        "readonly "
+                        b"readonly "
                     } else {
                         readonly
                     };
                     let name = self.pseudo_property_name(file, element.prop, false);
                     let ty = self.pseudo_type_to_node(file, ty);
-                    format!("{readonly}{name}: {};", ty.text)
+                    cat!(readonly, name, b": ", ty.text, b";")
                 }
                 PseudoElementKind::Setter { param, .. } => {
                     let name = self.pseudo_property_name(file, element.prop, false);
                     let parameter = self.pseudo_parameter_to_text(file, param);
-                    format!("set {name}({parameter});")
+                    cat!(b"set ", name, b"(", parameter, b");")
                 }
                 PseudoElementKind::Getter { ty, .. } => {
                     let name = self.pseudo_property_name(file, element.prop, false);
                     let ty = self.pseudo_type_to_node(file, ty);
-                    format!("get {name}(): {};", ty.text)
+                    cat!(b"get ", name, b"(): ", ty.text, b";")
                 }
             });
         }
         self.flags = saved_flags;
-        Node::simple(format!("{{ {} }}", members.join(" ")))
+        Node::simple(cat!(b"{ ", members.join(&b" "[..]), b" }"))
     }
 }
 
@@ -787,8 +780,8 @@ impl<'p> Printer<'_, 'p> {
 
 /// `emitPostfixTypeOperand`, of the operand of a postfix type that is a parse tree node, as a reused one is (`updateNode` keeps the
 /// flags): a type query gets no parentheses.
-fn emit_postfix_type_operand(operand: Node) -> String {
-    if operand.precedence == TYPE_OPERATOR && operand.text.starts_with("typeof ") {
+fn emit_postfix_type_operand(operand: Node) -> Vec<u8> {
+    if operand.precedence == TYPE_OPERATOR && operand.text.starts_with(b"typeof ") {
         operand.text
     } else {
         operand.emit(POSTFIX)
@@ -813,7 +806,7 @@ impl<'p> Printer<'_, 'p> {
     /// `reuseTypeNode`
     pub(super) fn reuse_type_node(&mut self, file: FileId, node: TypeNodeId) -> Node {
         if node.is_none() {
-            return Node::simple("any");
+            return Node::simple(b"any");
         }
         // `finalizeBoundary`, `tryReuseExistingNodeHelper`: what counts is how long the node is in the source, with the space before
         // it. The text of the default library is not kept.
@@ -853,7 +846,7 @@ impl<'p> Printer<'_, 'p> {
             return None;
         }
         if node.is_none() {
-            return Some(Node::simple("any"));
+            return Some(Node::simple(b"any"));
         }
         if self.depth >= MAXIMUM_DEPTH || self.c.is_stack_low() {
             return Some(self.elided_information_placeholder());
@@ -880,13 +873,13 @@ impl<'p> Printer<'_, 'p> {
             }
         };
         for _ in 0..self.c.parenthesized_type_depth(file, node, floor) {
-            visited = Node::simple(format!("({})", visited.text));
+            visited = Node::simple(cat!(b"(", visited.text, b")"));
         }
         Some(visited)
     }
 
     /// `getModuleSpecifierOverride`, of the import type `node` of `file`. `None`: the literal stays.
-    fn get_module_specifier_override(&mut self, file: FileId, node: TypeNodeId) -> Option<String> {
+    fn get_module_specifier_override(&mut self, file: FileId, node: TypeNodeId) -> Option<Vec<u8>> {
         let at = self
             .enclosing_declaration
             .filter(|enclosing| enclosing.file != file)?;
@@ -931,13 +924,11 @@ impl<'p> Printer<'_, 'p> {
             .unwrap_or(target);
         let name = self
             .c
-            .specifier_for_module_symbol(module, at.file, ResolutionMode::None);
-        if name.contains("/node_modules/") {
+            .specifier_for_module_symbol(module, at.file, ResolutionMode::None)
+            .into_bytes();
+        if bun_core::strings::contains(&name, b"/node_modules/") {
             self.encountered_error = true;
-            self.report(Report::LikelyUnsafeImportRequired(
-                name.clone(),
-                String::new(),
-            ));
+            self.report(Report::LikelyUnsafeImportRequired(name.clone(), Vec::new()));
         }
         (!name.is_empty() && name != self.text(spec)).then_some(name)
     }
@@ -949,20 +940,20 @@ impl<'p> Printer<'_, 'p> {
         Some(match hir[node].kind {
             TypeNodeKind::Error | TypeNodeKind::Heritage(_) => return None,
             TypeNodeKind::Keyword(keyword) => Node::simple(match keyword {
-                Keyword::Any => "any",
-                Keyword::Unknown => "unknown",
-                Keyword::Never => "never",
-                Keyword::Void => "void",
-                Keyword::Undefined => "undefined",
-                Keyword::Null => "null",
-                Keyword::String => "string",
-                Keyword::Number => "number",
-                Keyword::Boolean => "boolean",
-                Keyword::BigInt => "bigint",
-                Keyword::Symbol => "symbol",
-                Keyword::Object => "object",
-                Keyword::This => "this",
-                Keyword::Intrinsic => "intrinsic",
+                Keyword::Any => &b"any"[..],
+                Keyword::Unknown => b"unknown",
+                Keyword::Never => b"never",
+                Keyword::Void => b"void",
+                Keyword::Undefined => b"undefined",
+                Keyword::Null => b"null",
+                Keyword::String => b"string",
+                Keyword::Number => b"number",
+                Keyword::Boolean => b"boolean",
+                Keyword::BigInt => b"bigint",
+                Keyword::Symbol => b"symbol",
+                Keyword::Object => b"object",
+                Keyword::This => b"this",
+                Keyword::Intrinsic => b"intrinsic",
             }),
             TypeNodeKind::Ref { .. } => return self.try_visit_type_reference(file, node),
             TypeNodeKind::Typeof { .. } => return self.try_visit_type_query(file, node),
@@ -975,16 +966,16 @@ impl<'p> Printer<'_, 'p> {
                 is_typeof,
                 mode,
             } => {
-                let query = if is_typeof { "typeof " } else { "" };
+                let query: &[u8] = if is_typeof { b"typeof " } else { b"" };
                 // Not `IsLiteralImportTypeNode`: `VisitEachChild`. The argument is the one type in `args`.
                 if spec.is_none() {
                     let argument = hir.ids(args).next()?;
                     let argument =
                         self.visit_existing_type_node(file, argument, hir[argument].pos)?;
-                    let mut text = format!("{query}import({})", argument.text);
+                    let mut text = cat!(query, b"import(", argument.text, b")");
                     for part in hir.ids(name) {
-                        text.push('.');
-                        text.push_str(&self.text(part));
+                        text.push(b'.');
+                        text.extend_from_slice(&self.text(part));
                     }
                     return Some(Node::simple(text));
                 }
@@ -996,82 +987,87 @@ impl<'p> Printer<'_, 'p> {
                 }
                 // `rewriteModuleSpecifier`
                 let specifier = match self.get_module_specifier_override(file, node) {
-                    Some(name) => quoted(&name, '"', true),
+                    Some(name) => quoted(&name, b'"', true),
                     None => {
                         let is_quote = |&&byte: &&u8| byte == b'\'' || byte == b'"';
                         let quote = match hir.text.get(pos as usize..) {
-                            Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => '\'',
-                            _ => '"',
+                            Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => b'\'',
+                            _ => b'"',
                         };
-                        self.string_literal_to_node(spec, quote).text
+                        quoted(self.c.files().atoms.bytes(spec), quote, false)
                     }
                 };
-                let mut text = format!("{query}import({specifier})");
+                let mut text = cat!(query, b"import(", specifier, b")");
                 for part in hir.ids(name) {
-                    text.push('.');
-                    text.push_str(&self.text(part));
+                    text.push(b'.');
+                    text.extend_from_slice(&self.text(part));
                 }
                 let arguments = self.visit_existing_type_nodes(file, args, 0)?;
-                text.push_str(&type_arguments_text(arguments));
+                text.extend_from_slice(&type_arguments_text(arguments));
                 Node::simple(text)
             }
             // Out of the scope it is written in it is written from its type, which reads the same.
-            TypeNodeKind::UniqueSymbol => Node::new("unique symbol", TYPE_OPERATOR),
+            TypeNodeKind::UniqueSymbol => Node::new(b"unique symbol", TYPE_OPERATOR),
             TypeNodeKind::StringLit(value) => {
                 let quote = match hir.text.get(pos as usize) {
-                    Some(b'\'') => '\'',
-                    _ => '"',
+                    Some(b'\'') => b'\'',
+                    _ => b'"',
                 };
-                self.string_literal_to_node(value, quote)
+                Node::simple(quoted(self.c.files().atoms.bytes(value), quote, false))
             }
-            TypeNodeKind::NumberLit(index) => Node::simple(crate::atom::number_to_string(
-                hir.numbers.get(index as usize).copied().unwrap_or(0.0),
-            )),
+            TypeNodeKind::NumberLit(index) => Node::simple(
+                crate::atom::number_to_string(
+                    hir.numbers.get(index as usize).copied().unwrap_or(0.0),
+                )
+                .into_bytes(),
+            ),
             TypeNodeKind::BigIntLit { text, negative } => {
                 let digits = self.text(text);
-                let digits = digits.strip_suffix('n').unwrap_or(&digits);
-                let sign = if negative { "-" } else { "" };
-                Node::simple(format!("{sign}{digits}n"))
+                let digits = digits.strip_suffix(b"n").unwrap_or(&digits);
+                let sign: &[u8] = if negative { b"-" } else { b"" };
+                Node::simple(cat!(sign, digits, b"n"))
             }
-            TypeNodeKind::BoolLit(value) => Node::simple(if value { "true" } else { "false" }),
+            TypeNodeKind::BoolLit(value) => {
+                Node::simple(if value { &b"true"[..] } else { b"false" })
+            }
             TypeNodeKind::Template { types, texts } => {
-                let mut text = String::from("`");
+                let mut text = b"`".to_vec();
                 for (i, piece) in hir.ids(texts).enumerate() {
-                    escape_string(&self.text(piece), '`', false, &mut text);
+                    escape_string(&self.text(piece), b'`', false, &mut text);
                     if i < types.len() {
                         let ty = self.visit_existing_type_node(file, hir.id_at(types, i), 0)?;
-                        text.push_str("${");
-                        text.push_str(&ty.text);
-                        text.push('}');
+                        text.extend_from_slice(b"${");
+                        text.extend_from_slice(&ty.text);
+                        text.push(b'}');
                     }
                 }
-                text.push('`');
+                text.push(b'`');
                 Node::simple(text)
             }
             TypeNodeKind::Array(element) => {
                 let element = self.visit_existing_type_node(file, element, pos)?;
-                Node::new(format!("{}[]", emit_postfix_type_operand(element)), POSTFIX)
+                Node::new(cat!(emit_postfix_type_operand(element), b"[]"), POSTFIX)
             }
             TypeNodeKind::Readonly(of) => {
                 let of = self.visit_existing_type_node(file, of, 0)?;
-                Node::new(format!("readonly {}", of.emit(POSTFIX)), TYPE_OPERATOR)
+                Node::new(cat!(b"readonly ", of.emit(POSTFIX)), TYPE_OPERATOR)
             }
             TypeNodeKind::Tuple(elems) => {
                 let mut parts = Vec::with_capacity(elems.len());
                 for e in elems.iter() {
                     let elem = hir[e];
                     let ty = self.visit_existing_type_node(file, elem.ty, 0)?;
-                    let dots = if elem.rest { "..." } else { "" };
+                    let dots: &[u8] = if elem.rest { b"..." } else { b"" };
                     parts.push(if elem.name.is_some() {
-                        let question = if elem.optional { "?" } else { "" };
-                        format!("{dots}{}{question}: {}", self.text(elem.name), ty.text)
+                        let question: &[u8] = if elem.optional { b"?" } else { b"" };
+                        cat!(dots, self.text(elem.name), question, b": ", ty.text)
                     } else if elem.optional {
-                        format!("{}?", emit_postfix_type_operand(ty))
+                        cat!(emit_postfix_type_operand(ty), b"?")
                     } else {
-                        format!("{dots}{}", ty.text)
+                        cat!(dots, ty.text)
                     });
                 }
-                Node::simple(format!("[{}]", parts.join(", ")))
+                Node::simple(cat!(b"[", parts.join(&b", "[..]), b"]"))
             }
             TypeNodeKind::Union(list) => {
                 let nodes = self.visit_existing_type_nodes(file, list, pos)?;
@@ -1079,7 +1075,7 @@ impl<'p> Printer<'_, 'p> {
             }
             TypeNodeKind::Intersection(list) => {
                 let nodes = self.visit_existing_type_nodes(file, list, pos)?;
-                Node::new(join_nodes(nodes, " & ", TYPE_OPERATOR), INTERSECTION)
+                Node::new(join_nodes(nodes, b" & ", TYPE_OPERATOR), INTERSECTION)
             }
             TypeNodeKind::Fn(f) => {
                 let outer_scope = self.enter_scope_of_function(file, f);
@@ -1087,14 +1083,14 @@ impl<'p> Printer<'_, 'p> {
                 let returned = self.visit_existing_type_node(file, hir[f].ret, 0);
                 self.leave_scope(outer_scope);
                 let (head, returned) = (head?, returned?);
-                let keywords = match hir[f].kind {
+                let keywords: &[u8] = match hir[f].kind {
                     FnKind::ConstructorType if hir[f].flags.contains(Flags::ABSTRACT) => {
-                        "abstract new "
+                        b"abstract new "
                     }
-                    FnKind::ConstructorType => "new ",
-                    _ => "",
+                    FnKind::ConstructorType => b"new ",
+                    _ => b"",
                 };
-                Node::new(format!("{keywords}{head} => {}", returned.text), FUNCTION)
+                Node::new(cat!(keywords, head, b" => ", returned.text), FUNCTION)
             }
             TypeNodeKind::Object(members) => {
                 let scope = self.c.bound(file).type_scope[node.idx()];
@@ -1111,9 +1107,9 @@ impl<'p> Printer<'_, 'p> {
                     elements.push(element?);
                 }
                 if elements.is_empty() {
-                    Node::simple("{}")
+                    Node::simple(b"{}")
                 } else {
-                    Node::simple(format!("{{ {} }}", elements.join(" ")))
+                    Node::simple(cat!(b"{ ", elements.join(&b" "[..]), b" }"))
                 }
             }
             TypeNodeKind::Cond {
@@ -1136,13 +1132,10 @@ impl<'p> Printer<'_, 'p> {
                 let (extends, yes) = (extends?, yes?);
                 let no = self.visit_existing_type_node(file, no, 0)?;
                 Node::new(
-                    format!(
-                        "{} extends {} ? {} : {}",
-                        check.emit(UNION),
-                        extends.emit(FUNCTION),
-                        yes.text,
-                        no.text
-                    ),
+                    cat! {
+                        check.emit(UNION), b" extends ", extends.emit(FUNCTION), b" ? ", yes.text,
+                        b" : ", no.text
+                    },
                     CONDITIONAL,
                 )
             }
@@ -1150,11 +1143,11 @@ impl<'p> Printer<'_, 'p> {
                 let parameter = self.c.declared_type_of_type_parameter(file, tp);
                 let name = self.type_parameter_to_name(parameter);
                 if hir[tp].constraint.is_none() {
-                    Node::new(format!("infer {name}"), TYPE_OPERATOR)
+                    Node::new(cat!(b"infer ", name), TYPE_OPERATOR)
                 } else {
                     let constraint = self.visit_existing_type_node(file, hir[tp].constraint, 0)?;
                     Node::new(
-                        format!("infer {name} extends {}", constraint.emit(FUNCTION)),
+                        cat!(b"infer ", name, b" extends ", constraint.emit(FUNCTION)),
                         FUNCTION,
                     )
                 }
@@ -1171,35 +1164,35 @@ impl<'p> Printer<'_, 'p> {
                 self.leave_scope(outer_scope);
                 let (constraint, name_type, template) = (constraint?, name_type?, template?);
                 let renamed = if mapped.name_ty.is_some() {
-                    format!(" as {}", name_type.text)
+                    cat!(b" as ", name_type.text)
                 } else {
-                    String::new()
+                    Vec::new()
                 };
-                let readonly = match mapped.readonly {
-                    MappedModifier::None => "",
-                    MappedModifier::Add => "readonly ",
-                    MappedModifier::Remove => "-readonly ",
+                let readonly: &[u8] = match mapped.readonly {
+                    MappedModifier::None => b"",
+                    MappedModifier::Add => b"readonly ",
+                    MappedModifier::Remove => b"-readonly ",
                 };
-                let question = match mapped.optional {
-                    MappedModifier::None => "",
-                    MappedModifier::Add => "?",
-                    MappedModifier::Remove => "-?",
+                let question: &[u8] = match mapped.optional {
+                    MappedModifier::None => b"",
+                    MappedModifier::Add => b"?",
+                    MappedModifier::Remove => b"-?",
                 };
-                Node::simple(format!(
-                    "{{ {readonly}[{name} in {}{renamed}]{question}: {}; }}",
-                    constraint.text, template.text
-                ))
+                Node::simple(cat! {
+                    b"{ ", readonly, b"[", name, b" in ", constraint.text, renamed, b"]", question,
+                    b": ", template.text, b"; }"
+                })
             }
             TypeNodeKind::Predicate { param, ty, asserts } => {
-                let mut text = String::new();
+                let mut text = Vec::new();
                 if asserts {
-                    text.push_str("asserts ");
+                    text.extend_from_slice(b"asserts ");
                 }
-                text.push_str(&self.text(param));
+                text.extend_from_slice(&self.text(param));
                 if ty.is_some() {
                     let ty = self.visit_existing_type_node(file, ty, 0)?;
-                    text.push_str(" is ");
-                    text.push_str(&ty.text);
+                    text.extend_from_slice(b" is ");
+                    text.extend_from_slice(&ty.text);
                 }
                 Node::simple(text)
             }
@@ -1238,70 +1231,60 @@ impl<'p> Printer<'_, 'p> {
         &mut self,
         file: FileId,
         tp: TypeParamId,
-    ) -> Option<String> {
+    ) -> Option<Vec<u8>> {
         let declaration = self.c.hir(file)[tp];
-        let mut text = String::new();
+        let mut text = Vec::new();
         for (flag, modifier) in [
-            (Flags::CONST, "const "),
-            (Flags::IN, "in "),
-            (Flags::OUT, "out "),
+            (Flags::CONST, &b"const "[..]),
+            (Flags::IN, &b"in "[..]),
+            (Flags::OUT, &b"out "[..]),
         ] {
             if declaration.flags.contains(flag) {
-                text.push_str(modifier);
+                text.extend_from_slice(modifier);
             }
         }
         let parameter = self.c.declared_type_of_type_parameter(file, tp);
-        text.push_str(&self.type_parameter_to_name(parameter));
+        text.extend_from_slice(&self.type_parameter_to_name(parameter));
         if declaration.constraint.is_some() {
             let constraint = self.visit_existing_type_node(file, declaration.constraint, 0)?;
-            text.push_str(" extends ");
-            text.push_str(&constraint.text);
+            text.extend_from_slice(b" extends ");
+            text.extend_from_slice(&constraint.text);
         }
         if declaration.default.is_some() {
             let default = self.visit_existing_type_node(file, declaration.default, 0)?;
-            text.push_str(" = ");
-            text.push_str(&default.text);
+            text.extend_from_slice(b" = ");
+            text.extend_from_slice(&default.text);
         }
         Some(text)
     }
 
     /// A `ParameterDeclaration`. Without a type it is `any`.
-    fn visit_parameter_declaration(&mut self, file: FileId, p: ParamId) -> Option<String> {
+    fn visit_parameter_declaration(&mut self, file: FileId, p: ParamId) -> Option<Vec<u8>> {
         let parameter = self.c.hir(file)[p];
         let ty = self.visit_existing_type_node(file, parameter.ty, 0)?;
-        Some(format!(
-            "{}{}{}: {}",
-            if parameter.flags.contains(Flags::REST) {
-                "..."
-            } else {
-                ""
-            },
+        Some(cat! {
+            if parameter.flags.contains(Flags::REST) { &b"..."[..] } else { b"" },
             self.binding_name_text(file, parameter.pat),
-            if parameter.flags.contains(Flags::OPTIONAL) {
-                "?"
-            } else {
-                ""
-            },
-            ty.text
-        ))
+            if parameter.flags.contains(Flags::OPTIONAL) { &b"?"[..] } else { b"" }, b": ", ty.text
+        })
     }
 
-    fn visit_parameter_declarations(&mut self, file: FileId, f: FnId) -> Option<String> {
+    fn visit_parameter_declarations(&mut self, file: FileId, f: FnId) -> Option<Vec<u8>> {
         let function = self.c.hir(file)[f];
         let mut parameters = Vec::with_capacity(function.params.len() + 1);
         if function.this_ty(self.c.hir(file)).is_some() {
             let this =
                 self.visit_existing_type_node(file, function.this_ty(self.c.hir(file)), 0)?;
-            parameters.push(format!("this: {}", this.text));
+            parameters.push(cat!(b"this: ", this.text));
         }
         for p in function.params.iter() {
             parameters.push(self.visit_parameter_declaration(file, p)?);
         }
-        Some(parameters.join(", "))
+        Some(parameters.join(&b", "[..]))
     }
 
     /// The type parameters and the parameters of the function-like `f`.
-    fn visit_signature_head(&mut self, file: FileId, f: FnId) -> Option<String> {
+    fn visit_signature_head(&mut self, file: FileId, f: FnId) -> Option<Vec<u8>> {
         let type_params = self.c.hir(file)[f].type_params;
         let mut type_parameters = Vec::with_capacity(type_params.len());
         for tp in type_params.iter() {
@@ -1309,36 +1292,36 @@ impl<'p> Printer<'_, 'p> {
         }
         let parameters = self.visit_parameter_declarations(file, f)?;
         Some(if type_parameters.is_empty() {
-            format!("({parameters})")
+            cat!(b"(", parameters, b")")
         } else {
-            format!("<{}>({parameters})", type_parameters.join(", "))
+            cat! { b"<", type_parameters.join(&b", "[..]), b">(", parameters, b")" }
         })
     }
 
     /// A member of a type literal. `None`: the type literal is written from its type.
-    fn visit_type_element(&mut self, file: FileId, m: MemberId, scope: ScopeId) -> Option<String> {
+    fn visit_type_element(&mut self, file: FileId, m: MemberId, scope: ScopeId) -> Option<Vec<u8>> {
         let hir = self.c.hir(file);
         let member = hir[m];
-        let readonly = if member.flags.contains(Flags::READONLY) {
-            "readonly "
+        let readonly: &[u8] = if member.flags.contains(Flags::READONLY) {
+            b"readonly "
         } else {
-            ""
+            b""
         };
-        let question = if member.flags.contains(Flags::OPTIONAL) {
-            "?"
+        let question: &[u8] = if member.flags.contains(Flags::OPTIONAL) {
+            b"?"
         } else {
-            ""
+            b""
         };
         let name = match member.key {
             // A string keeps its quotes and is escaped anew, a number is written in its canonical form.
             PropKey::Name(name) => {
                 let start = hir[m].name_pos;
                 match hir.text.get(start as usize) {
-                    Some(b'\'') => quoted(&self.text(name), '\'', false),
-                    Some(b'"') => quoted(&self.text(name), '"', false),
+                    Some(b'\'') => quoted(&self.text(name), b'\'', false),
+                    Some(b'"') => quoted(&self.text(name), b'"', false),
                     Some(b'[') => self.property_key_text(file, member.key, start),
                     _ if member.flags.contains(Flags::STRING_NAME) => {
-                        quoted(&self.text(name), '"', false)
+                        quoted(&self.text(name), b'"', false)
                     }
                     _ => self.text(name),
                 }
@@ -1347,7 +1330,7 @@ impl<'p> Printer<'_, 'p> {
             PropKey::None if is_private_name_at(hir, hir[m].name_pos) => {
                 self.property_key_text(file, member.key, hir[m].name_pos)
             }
-            PropKey::None => String::new(),
+            PropKey::None => Vec::new(),
             PropKey::Computed(e) => {
                 let name = self.entity_name_text(file, e)?;
                 let first = first_identifier(hir, e);
@@ -1358,7 +1341,7 @@ impl<'p> Printer<'_, 'p> {
                 if self.track_existing_entity_name(file, node, scope, first, SymFlags::VALUE) {
                     return None;
                 }
-                format!("[{name}]")
+                cat!(b"[", name, b"]")
             }
             PropKey::Private(_) => self.property_key_text(file, member.key, hir[m].name_pos),
         };
@@ -1369,41 +1352,41 @@ impl<'p> Printer<'_, 'p> {
         Some(match member.kind {
             MemberKind::Property if is_named => {
                 let ty = self.visit_existing_type_node(file, member.ty, 0)?;
-                format!("{readonly}{name}{question}: {};", ty.text)
+                cat!(readonly, name, question, b": ", ty.text, b";")
             }
             MemberKind::Method if is_named => {
                 let head = self.visit_signature_head(file, member.func)?;
                 let returned = self.visit_existing_type_node(file, hir[member.func].ret, 0)?;
-                format!("{name}{question}{head}: {};", returned.text)
+                cat!(name, question, head, b": ", returned.text, b";")
             }
             MemberKind::CallSignature => {
                 let head = self.visit_signature_head(file, member.func)?;
                 let returned = self.visit_existing_type_node(file, hir[member.func].ret, 0)?;
-                format!("{head}: {};", returned.text)
+                cat!(head, b": ", returned.text, b";")
             }
             MemberKind::ConstructSignature => {
                 let head = self.visit_signature_head(file, member.func)?;
                 let returned = self.visit_existing_type_node(file, hir[member.func].ret, 0)?;
-                format!("new {head}: {};", returned.text)
+                cat!(b"new ", head, b": ", returned.text, b";")
             }
             MemberKind::IndexSignature => {
                 let parameters = self.visit_parameter_declarations(file, member.func)?;
                 let value = self.visit_existing_type_node(file, hir[member.func].ret, 0)?;
-                format!("{readonly}[{parameters}]: {};", value.text)
+                cat!(readonly, b"[", parameters, b"]: ", value.text, b";")
             }
             // An accessor is left without the type it does not say.
             MemberKind::Getter if is_named => {
                 let returned = hir[member.func].ret;
                 if returned.is_none() {
-                    format!("get {name}();")
+                    cat!(b"get ", name, b"();")
                 } else {
                     let returned = self.visit_existing_type_node(file, returned, 0)?;
-                    format!("get {name}(): {};", returned.text)
+                    cat!(b"get ", name, b"(): ", returned.text, b";")
                 }
             }
             MemberKind::Setter if is_named => {
                 let parameters = self.visit_parameter_declarations(file, member.func)?;
-                format!("set {name}({parameters});")
+                cat!(b"set ", name, b"(", parameters, b");")
             }
             _ => return None,
         })
@@ -1438,7 +1421,7 @@ impl<'p> Printer<'_, 'p> {
         let object = self.try_visit_simple_type_node(file, obj, hir[node].pos)?;
         let index = self.visit_existing_type_node(file, index, 0)?;
         Some(Node::new(
-            format!("{}[{}]", emit_postfix_type_operand(object), index.text),
+            cat!(emit_postfix_type_operand(object), b"[", index.text, b"]"),
             POSTFIX,
         ))
     }
@@ -1450,7 +1433,7 @@ impl<'p> Printer<'_, 'p> {
         };
         let of = self.try_visit_simple_type_node(file, of, 0)?;
         Some(Node::new(
-            format!("keyof {}", of.emit(TYPE_OPERATOR)),
+            cat!(b"keyof ", of.emit(TYPE_OPERATOR)),
             TYPE_OPERATOR,
         ))
     }
@@ -1483,13 +1466,9 @@ impl<'p> Printer<'_, 'p> {
         if introduces_error {
             return self.serialize_type_name(file, scope, &names, true, arguments);
         }
-        let path: Vec<String> = names.iter().map(|&name| self.text(name)).collect();
+        let path: Vec<Vec<u8>> = names.iter().map(|&name| self.text(name)).collect();
         Some(Node::new(
-            format!(
-                "typeof {}{}",
-                path.join("."),
-                type_arguments_text(arguments)
-            ),
+            cat! { b"typeof ", path.join(&b"."[..]), type_arguments_text(arguments) },
             TYPE_OPERATOR,
         ))
     }
@@ -1545,7 +1524,7 @@ impl<'p> Printer<'_, 'p> {
         let names: Vec<Atom> = hir.ids(name).collect();
         let &first = names.first()?;
         if names.contains(&known::empty) {
-            return Some(Node::simple("any"));
+            return Some(Node::simple(b"any"));
         }
         let scope = self.c.bound(file).type_scope[node.idx()];
         let declared = self.c.type_from_node(file, node);
@@ -1586,9 +1565,9 @@ impl<'p> Printer<'_, 'p> {
         if introduces_error {
             return self.serialize_type_name(file, scope, &names, false, arguments);
         }
-        let path: Vec<String> = names.iter().map(|&name| self.text(name)).collect();
+        let path: Vec<Vec<u8>> = names.iter().map(|&name| self.text(name)).collect();
         Some(Node {
-            text: format!("{}{}", path.join("."), type_arguments_text(arguments)),
+            text: cat!(path.join(&b"."[..]), type_arguments_text(arguments)),
             precedence: NON_ARRAY,
             reference: match &path[..] {
                 [only] => Some(only.clone()),
@@ -1604,7 +1583,7 @@ impl<'p> Printer<'_, 'p> {
         &mut self,
         file: FileId,
         name: ExprId,
-    ) -> Option<String> {
+    ) -> Option<Vec<u8>> {
         let hir = self.c.hir(file);
         let first = first_identifier(hir, name);
         let ExprKind::Ident(first) = hir[first].kind else {
@@ -1617,7 +1596,7 @@ impl<'p> Printer<'_, 'p> {
                 printer.track_existing_entity_name(file, node, scope, first, SymFlags::VALUE);
             (!introduces_error).then_some(())
         })?;
-        let text = format!("[{}]", self.entity_name_text(file, name)?);
+        let text = cat!(b"[", self.entity_name_text(file, name)?, b"]");
         self.approximate_length += text.len();
         Some(text)
     }

@@ -5014,15 +5014,17 @@ impl<'p> Checker<'p> {
         is_never
     }
 
+    /// An intersection, or `ObjectFlagsContainsIntersections`.
+    #[inline]
+    pub(super) fn may_be_reduced(&self, ty: TypeId) -> bool {
+        let flags = self.p.types.object_flags(ty);
+        flags.contains(ObjectFlags::MAY_BE_REDUCED)
+    }
+
     /// `ty` without the intersections nothing can be.
     #[inline]
     pub fn reduced(&mut self, ty: TypeId) -> TypeId {
-        if self
-            .p
-            .types
-            .object_flags(ty)
-            .contains(ObjectFlags::MAY_BE_REDUCED)
-        {
+        if self.may_be_reduced(ty) {
             self.reduced_members(ty)
         } else {
             ty

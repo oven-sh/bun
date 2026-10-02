@@ -522,9 +522,7 @@ impl<'p> Checker<'p> {
         if is_normalized_kind(data) {
             return (ty, data);
         }
-        if let TypeData::Union(parts) = data
-            && self.has_no_intersection(ty, parts)
-        {
+        if matches!(data, TypeData::Union(_)) && !self.may_be_reduced(ty) {
             return (ty, data);
         }
         let normalized = self.normalized(ty, writing);
@@ -535,7 +533,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The enum a member belongs to; an enum is its own.
-    pub(super) fn enum_of(&self, symbol: Sym) -> Sym {
+    fn enum_of(&self, symbol: Sym) -> Sym {
         if self.files().flags(symbol).contains(SymFlags::ENUM_MEMBER) {
             self.files()
                 .sym(symbol.file, self.files().symbol(symbol).parent)
@@ -559,49 +557,6 @@ impl<'p> Checker<'p> {
         (self.has_primitive_flag_as(ty, data) && !self.is_nullish(ty))
             || is_object_kind(data)
             || ty == TypeId::OBJECT
-    }
-
-    /// `TypeFlagsSingleton`
-    fn is_singleton(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Intrinsic(_) | TypeData::UnresolvedName { .. }
-        ) || self.is_boolean(ty)
-    }
-
-    /// What has to be the same for two types to be identical, before anything is looked into. The kinds of `undefined` have the
-    /// same flags, and so have those of `null`.
-    fn flags_for_identity(&self, ty: TypeId) -> u32 {
-        match self.data(ty.plain()) {
-            // `TypeFlagsAny`
-            TypeData::Intrinsic(
-                Intrinsic::Error | Intrinsic::Auto | Intrinsic::IntrinsicMarker,
-            )
-            | TypeData::UnresolvedName { .. } => Intrinsic::Any as u32,
-            // `TypeFlagsNever`
-            TypeData::Intrinsic(Intrinsic::SilentNever | Intrinsic::UnreachableNever) => {
-                Intrinsic::Never as u32
-            }
-            TypeData::Intrinsic(i) => *i as u32,
-            TypeData::StringLit { .. } => 32,
-            TypeData::NumberLit { .. } => 33,
-            TypeData::BigIntLit { .. } => 34,
-            TypeData::BoolLit { .. } => 35,
-            TypeData::EnumLit { .. } => 36,
-            TypeData::Enum { .. } => 37,
-            TypeData::UniqueSymbol { .. } => 38,
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => 39,
-            // `TypeFlagsBoolean | TypeFlagsUnion`
-            TypeData::Union(_) if self.is_boolean(ty) => 48,
-            TypeData::Union(_) => 40,
-            TypeData::Intersection(_) => 41,
-            TypeData::Cond { .. } => 42,
-            TypeData::IndexedAccess { .. } => 43,
-            TypeData::Keyof(_) => 44,
-            TypeData::Template { .. } => 45,
-            TypeData::StringMapping { .. } => 46,
-            _ => 47,
-        }
     }
 
     pub(super) fn is_generic_mapped_type(&mut self, ty: TypeId) -> bool {
@@ -717,8 +672,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `isUnknownLikeUnionType`: `undefined | null | {}`. `parts`: the members of the union.
-    fn is_unknown_like_union(&mut self, parts: &[TypeId]) -> bool {
+    /// `isUnknownLikeUnionType`: `undefined | null | {}`
+    fn is_unknown_like_union_type(&mut self, ty: TypeId) -> bool {
+        let parts = self.parts(ty);
         if !self.p.files.options.strict_null_checks || parts.len() < 3 {
             return false;
         }
@@ -908,11 +864,15 @@ impl<'p> Checker<'p> {
             {
                 return true;
             }
-        } else if !(self.may_simplify(source) || self.may_simplify(target)) {
-            if self.flags_for_identity(source) != self.flags_for_identity(target) {
+        } else if (self.flags(source) | self.flags(target))
+            & (tf::UNION_OR_INTERSECTION | tf::INDEXED_ACCESS | tf::CONDITIONAL | tf::SUBSTITUTION)
+            == 0
+        {
+            // What may simplify to another form is left out, so the flags are the same.
+            if self.flags(source) != self.flags(target) {
                 return false;
             }
-            if self.is_singleton(source) {
+            if self.flags(source) & tf::SINGLETON != 0 {
                 return true;
             }
         }
@@ -954,17 +914,6 @@ impl<'p> Checker<'p> {
         let is_sure = !self.relation_gave_up && !self.timed_out();
         self.relation_gave_up |= gave_up_before;
         is_sure.then_some(answer)
-    }
-
-    fn may_simplify(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Union(_)
-                | TypeData::Intersection(_)
-                | TypeData::IndexedAccess { .. }
-                | TypeData::Cond { .. }
-                | TypeData::Substitution { .. }
-        )
     }
 
     /// `checkTypeRelatedToEx`, without the errors. `relation_too_complex` tells the caller to report 2859.
@@ -1050,174 +999,104 @@ impl<'p> Checker<'p> {
         if is_object_kind(sd) && is_object_kind(td) && relation != Relation::Permissive {
             return false;
         }
-        self.is_simple_type_related_to_by_rule(s, sd, t, td, relation, error_reporter)
+        self.is_simple_type_related_to_by_rule(s, t, relation, error_reporter)
     }
 
-    /// The rules of `is_simple_type_related_to`.
+    /// The rules of `is_simple_type_related_to`: `isSimpleTypeRelatedTo`, over `s` and `t` as there.
     fn is_simple_type_related_to_by_rule(
         &mut self,
-        s: TypeId,
-        sd: &'p TypeData,
-        t: TypeId,
-        td: &'p TypeData,
+        source: TypeId,
+        target: TypeId,
         relation: Relation,
         mut error_reporter: Option<&mut Relater>,
     ) -> bool {
-        // It goes by the flags, which the kinds of `undefined` and of `null` share.
-        let ((s, sd), (t, td)) = (self.plain_as(s, sd), self.plain_as(t, td));
-        if self.is_any(t) || s.is_never() || s == TypeId::UNRESOLVED {
+        let (s, t) = (self.flags(source), self.flags(target));
+        if t & tf::ANY != 0 || s & tf::NEVER != 0 || source == TypeId::UNRESOLVED {
             return true;
         }
         // The wildcard the permissive instantiation puts for type parameters, and for what is worked out from one.
         if relation == Relation::Permissive
-            && (self.is_permissive_wildcard(s, 0) || self.is_permissive_wildcard(t, 0))
+            && (self.is_permissive_wildcard(source, 0) || self.is_permissive_wildcard(target, 0))
         {
             return true;
         }
-        if t == TypeId::UNKNOWN && !(relation == Relation::StrictSubtype && self.has_any_flag(s)) {
+        if t & tf::UNKNOWN != 0 && !(relation == Relation::StrictSubtype && s & tf::ANY != 0) {
             return true;
         }
-        if t.is_never() {
+        if t & tf::NEVER != 0 {
             return false;
         }
-        // `TypeFlagsStringLike` and so on.
-        let is_like = match t {
-            TypeId::STRING => matches!(
-                sd,
-                TypeData::Intrinsic(Intrinsic::String)
-                    | TypeData::StringLit { .. }
-                    | TypeData::Template { .. }
-                    | TypeData::StringMapping { .. }
-                    | TypeData::EnumLit {
-                        value: EnumValue::String(_),
-                        ..
-                    }
-            ),
-            TypeId::NUMBER => matches!(
-                sd,
-                TypeData::Intrinsic(Intrinsic::Number)
-                    | TypeData::NumberLit { .. }
-                    | TypeData::EnumLit {
-                        value: EnumValue::Number(_),
-                        ..
-                    }
-                    | TypeData::Enum { .. }
-            ),
-            TypeId::BIGINT => matches!(
-                sd,
-                TypeData::Intrinsic(Intrinsic::BigInt) | TypeData::BigIntLit { .. }
-            ),
-            _ if self.is_boolean(t) => matches!(sd, TypeData::BoolLit { .. }),
-            TypeId::SYMBOL => matches!(
-                sd,
-                TypeData::Intrinsic(Intrinsic::Symbol) | TypeData::UniqueSymbol { .. }
-            ),
-            _ => false,
-        };
-        if is_like {
-            return true;
-        }
-        match (sd, td) {
-            (
-                TypeData::EnumLit {
-                    value: EnumValue::String(a),
-                    ..
-                },
-                TypeData::StringLit { value: b, .. },
-            ) if a == b => return true,
-            (
-                TypeData::EnumLit {
-                    value: EnumValue::Number(a),
-                    ..
-                },
-                TypeData::NumberLit { bits: b, .. },
-            ) if a == b => return true,
-            // Two computed members, or two enums without members, go by the same name. A literal member is no computed one.
-            (TypeData::Enum { symbol: a, .. }, TypeData::Enum { symbol: b, .. })
-                if self.files().symbol(*a).name == self.files().symbol(*b).name =>
-            {
-                let (a, b) = (self.enum_of(*a), self.enum_of(*b));
-                if self.is_enum_type_related_to(a, b, error_reporter.as_deref_mut()) {
-                    return true;
-                }
-            }
-            (
-                TypeData::EnumLit {
-                    member: a,
-                    value: av,
-                    ..
-                },
-                TypeData::EnumLit {
-                    member: b,
-                    value: bv,
-                    ..
-                },
-            ) if av == bv => {
-                let (a, b) = (self.enum_of(*a), self.enum_of(*b));
-                if self.is_enum_type_related_to(a, b, error_reporter.as_deref_mut()) {
-                    return true;
-                }
-            }
-            (TypeData::Union(_), TypeData::Union(_)) => {
-                if let (Some(a), Some(b)) = (self.union_enum_symbol(s), self.union_enum_symbol(t))
-                    && self.is_enum_type_related_to(a, b, error_reporter.as_deref_mut())
-                {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-        let strict = self.p.files.options.strict_null_checks;
-        if s == TypeId::UNDEFINED
-            && (!strict && !is_union_or_intersection_kind(td)
-                || t == TypeId::UNDEFINED
-                || t == TypeId::VOID)
+        if s & tf::STRING_LIKE != 0 && t & tf::STRING != 0
+            || s & tf::NUMBER_LIKE != 0 && t & tf::NUMBER != 0
+            || s & tf::BIGINT_LIKE != 0 && t & tf::BIGINT != 0
+            || s & tf::BOOLEAN_LIKE != 0 && t & tf::BOOLEAN != 0
+            || s & tf::ES_SYMBOL_LIKE != 0 && t & tf::ES_SYMBOL != 0
         {
             return true;
         }
-        if s == TypeId::NULL && (!strict && !is_union_or_intersection_kind(td) || t == TypeId::NULL)
+        // `source.AsLiteralType().value == target.AsLiteralType().value`, of two strings or two numbers.
+        let is_same_value = s & t & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0
+            && self.literal_value(source) == self.literal_value(target);
+        if is_same_value && s & tf::ENUM_LITERAL != 0 && t & tf::ENUM_LITERAL == 0 {
+            return true;
+        }
+        if s & t & tf::ENUM_LIKE != 0
+            && let (Some(a), Some(b)) = (
+                self.symbol_of_enum_like(source),
+                self.symbol_of_enum_like(target),
+            )
+            && (s & t & tf::ENUM != 0 && self.files().symbol(a).name == self.files().symbol(b).name
+                || s & t & tf::ENUM_LITERAL != 0 && (s & t & tf::UNION != 0 || is_same_value))
+            && self.is_enum_type_related_to(a, b, error_reporter.as_deref_mut())
         {
             return true;
         }
-        if t == TypeId::OBJECT
-            && is_object_kind(sd)
+        // Without strictNullChecks they go into anything but `never`, which a union or an intersection may come to.
+        let is_lax = !self.p.files.options.strict_null_checks && t & tf::UNION_OR_INTERSECTION == 0;
+        if s & tf::UNDEFINED != 0 && (is_lax || t & (tf::UNDEFINED | tf::VOID) != 0)
+            || s & tf::NULL != 0 && (is_lax || t & tf::NULL != 0)
+        {
+            return true;
+        }
+        if s & tf::OBJECT != 0
+            && t & tf::NON_PRIMITIVE != 0
             && !(relation == Relation::StrictSubtype
-                && !self.is_fresh_object_literal_type(s)
-                && self.is_empty_anonymous_object_type(s))
+                && !self.is_fresh_object_literal_type(source)
+                && self.is_empty_anonymous_object_type(source))
         {
             return true;
         }
-        if relation.is_lenient() {
-            if self.has_any_flag(s) {
-                return true;
-            }
-            // So that enums can be used as bit flags.
-            match (sd, td) {
-                (
-                    TypeData::Intrinsic(Intrinsic::Number),
-                    TypeData::Enum { .. }
-                    | TypeData::EnumLit {
-                        value: EnumValue::Number(_),
-                        ..
-                    },
-                ) => return true,
-                (TypeData::NumberLit { .. }, TypeData::Enum { .. }) => return true,
-                (
-                    TypeData::NumberLit { bits, .. },
-                    TypeData::EnumLit {
-                        value: EnumValue::Number(v),
-                        ..
-                    },
-                ) if bits == v => return true,
-                _ => {}
-            }
-            if let TypeData::Union(parts) = td
-                && self.is_unknown_like_union(parts)
-            {
-                return true;
-            }
+        if !relation.is_lenient() {
+            return false;
         }
-        false
+        // So that enums can be used as bit flags.
+        let is_numeric_member = t & tf::NUMBER_LITERAL != 0 && t & tf::ENUM_LITERAL != 0;
+        s & tf::ANY != 0
+            || s & tf::NUMBER != 0 && (t & tf::ENUM != 0 || is_numeric_member)
+            || s & tf::NUMBER_LITERAL != 0
+                && s & tf::ENUM_LITERAL == 0
+                && (t & tf::ENUM != 0 || is_numeric_member && is_same_value)
+            || t & tf::UNION != 0 && self.is_unknown_like_union_type(target)
+    }
+
+    /// `t.AsLiteralType().value`, of a string or a number.
+    fn literal_value(&self, ty: TypeId) -> Option<EnumValue> {
+        match *self.data(ty) {
+            TypeData::StringLit { value, .. } => Some(EnumValue::String(value)),
+            TypeData::NumberLit { bits, .. } => Some(EnumValue::Number(bits)),
+            TypeData::EnumLit { value, .. } => Some(value),
+            _ => None,
+        }
+    }
+
+    /// `t.symbol`, of a type with `TypeFlagsEnumLike`.
+    fn symbol_of_enum_like(&self, ty: TypeId) -> Option<Sym> {
+        match *self.data(ty) {
+            TypeData::Enum { symbol, .. } | TypeData::EnumLit { member: symbol, .. } => {
+                Some(symbol)
+            }
+            _ => self.union_enum_symbol(ty),
+        }
     }
 
     /// What `getPermissiveInstantiation` makes the wildcard of: a type parameter, and what is worked out from one. `T[K]`,
@@ -1354,6 +1233,7 @@ impl<'p> Checker<'p> {
         target: Sym,
         error_reporter: Option<&mut Relater>,
     ) -> bool {
+        let (source, target) = (self.enum_of(source), self.enum_of(target));
         if source == target {
             return true;
         }
@@ -1425,7 +1305,7 @@ impl<'p> Checker<'p> {
         loop {
             let n = match self.data(t) {
                 // Only an intersection among its members makes another type of a union.
-                TypeData::Union(parts) if self.has_no_intersection(t, parts) => return t,
+                TypeData::Union(_) if !self.may_be_reduced(t) => return t,
                 TypeData::Union(_) | TypeData::Intersection(_) => {
                     self.normalized_union_or_intersection(t, writing)
                 }
@@ -1460,22 +1340,6 @@ impl<'p> Checker<'p> {
             }
             t = n;
         }
-    }
-
-    /// Whether none of `parts`, the members of the union `t`, is an intersection.
-    fn has_no_intersection(&self, t: TypeId, parts: &[TypeId]) -> bool {
-        let is_intersection = |p: &TypeId| matches!(self.data(*p), TypeData::Intersection(_));
-        if parts.len() < 4 {
-            return !parts.iter().any(is_intersection);
-        }
-        if self.p.unions_without_intersections.get(&t).is_some() {
-            return true;
-        }
-        if parts.iter().any(is_intersection) {
-            return false;
-        }
-        self.p.unions_without_intersections.insert(t, ());
-        true
     }
 
     /// `getNormalizedUnionOrIntersectionType`
@@ -2707,10 +2571,10 @@ impl<'p> Checker<'p> {
             return Ternary::TRUE;
         }
         if relation == Relation::Identity {
-            if self.flags_for_identity(source) != self.flags_for_identity(target) {
+            if self.flags(source) != self.flags(target) {
                 return Ternary::FALSE;
             }
-            if self.is_singleton(source) {
+            if self.flags(source) & tf::SINGLETON != 0 {
                 return Ternary::TRUE;
             }
             return self.recursive_type_related_to::<false>(

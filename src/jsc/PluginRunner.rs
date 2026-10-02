@@ -66,6 +66,7 @@ impl PluginResolver for PluginRunner {
                     0
                 }),
                 &BunString::from_bytes(importer),
+                bun_ast::ImportKind::Stmt,
                 target,
             )
             .map_err(js_err)?

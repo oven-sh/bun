@@ -448,25 +448,38 @@ const IS_UV_FS_COPYFILE_DISABLED =
     it("to a user-provided fd does not truncate", async () => {
       using dir = tempDir("bun-write-empty-fd", { "out.txt": "" });
       const p = path.join(String(dir), "out.txt");
+      // Each entry point reaches the write through a different destination shape.
+      const doors = {
+        "Bun.write(Bun.file(fd), src)": (fd, src) => Bun.write(Bun.file(fd), src),
+        "Bun.write(fd, src)": (fd, src) => Bun.write(fd, src),
+        "Bun.file(fd).write(src)": (fd, src) => Bun.file(fd).write(src),
+      };
       const results = [];
       for (const flags of ["r+", "a"]) {
-        for (const src of emptySources()) {
-          fs.writeFileSync(p, "EXISTING");
-          const fd = fs.openSync(p, flags);
-          try {
-            results.push({
-              flags,
-              ret: await Bun.write(Bun.file(fd), src),
-              size: fs.fstatSync(fd).size,
-              contents: fs.readFileSync(p, "utf8"),
-            });
-          } finally {
-            fs.closeSync(fd);
+        for (const [door, write] of Object.entries(doors)) {
+          for (const src of emptySources()) {
+            fs.writeFileSync(p, "EXISTING");
+            const fd = fs.openSync(p, flags);
+            try {
+              results.push({
+                flags,
+                door,
+                ret: await write(fd, src),
+                size: fs.fstatSync(fd).size,
+                contents: fs.readFileSync(p, "utf8"),
+              });
+            } finally {
+              fs.closeSync(fd);
+            }
           }
         }
       }
       expect(results).toEqual(
-        ["r+", "a"].flatMap(flags => emptySourceExprs.map(() => ({ flags, ret: 0, size: 8, contents: "EXISTING" }))),
+        ["r+", "a"].flatMap(flags =>
+          Object.keys(doors).flatMap(door =>
+            emptySourceExprs.map(() => ({ flags, door, ret: 0, size: 8, contents: "EXISTING" })),
+          ),
+        ),
       );
     });
 
@@ -522,21 +535,36 @@ const IS_UV_FS_COPYFILE_DISABLED =
     it("to a regular-file path still empties the file", async () => {
       using dir = tempDir("bun-write-empty-truncate", { "out.txt": "EXISTING" });
       const p = path.join(String(dir), "out.txt");
-      for (const src of emptySources()) {
-        fs.writeFileSync(p, "EXISTING");
-        expect(await Bun.write(p, src)).toBe(0);
-        expect(fs.readFileSync(p, "utf8")).toBe("");
+      for (const dest of [() => p, () => Bun.file(p)]) {
+        for (const src of emptySources()) {
+          fs.writeFileSync(p, "EXISTING");
+          expect(await Bun.write(dest(), src)).toBe(0);
+          expect(fs.readFileSync(p, "utf8")).toBe("");
+        }
       }
     });
 
-    it("to a new path still creates an empty file", async () => {
+    it("to a new path still creates an empty file, and its directory", async () => {
       using dir = tempDir("bun-write-empty-create", {});
       let n = 0;
-      for (const src of emptySources()) {
-        const p = path.join(String(dir), `out-${n++}.txt`);
-        expect(await Bun.write(p, src)).toBe(0);
-        expect(fs.readFileSync(p, "utf8")).toBe("");
+      for (const parent of [[], ["missing"]]) {
+        for (const src of emptySources()) {
+          const p = path.join(String(dir), ...parent.map(name => `${name}-${n}`), `out-${n++}.txt`);
+          expect(await Bun.write(p, src)).toBe(0);
+          expect(fs.readFileSync(p, "utf8")).toBe("");
+        }
       }
+    });
+
+    it("a shorter write to a path still trims the file", async () => {
+      using dir = tempDir("bun-write-shorter", { "out.txt": "" });
+      const p = path.join(String(dir), "out.txt");
+      const results = [];
+      for (const src of ["ab", new Uint8Array([97, 98]), new Blob(["ab"])]) {
+        fs.writeFileSync(p, "EXISTING");
+        results.push({ ret: await Bun.write(p, src), contents: fs.readFileSync(p, "utf8") });
+      }
+      expect(results).toEqual(Array(3).fill({ ret: 2, contents: "ab" }));
     });
   });
 
@@ -1635,18 +1663,15 @@ it("Bun.write(Bun.stdout, <empty source>) does not truncate the destination", as
   }
 });
 
-// XNU's dofilewrite updates the shared fg_offset with a non-atomic `+= bytecnt` RMW, so
-// concurrent write(2) on a shared fd without O_APPEND can double-count the increment and
-// leave a NUL sparse hole independently of this PR's fix. Linux f_pos_lock serializes the
-// offset update, so nulBytes === 0 is a real invariant there.
+// XNU updates the shared file offset with a non-atomic `+= bytecnt`, so concurrent write(2)
+// calls on one fd without O_APPEND can lose bytes there whatever the empty write does.
+// Linux serializes the offset update (f_pos_lock), so every byte must be in the file.
 it.skipIf(isMacOS)(
   "Bun.write(Bun.stdout, '') does not drop concurrent in-flight writes when stdout is a file",
   async () => {
-    // Many fire-and-forget Bun.write(Bun.stdout, chunk) calls are dispatched to the thread
-    // pool. An empty-string write used to synchronously ftruncate(fd, 0) on the main thread,
-    // which discarded already-written bytes without resetting the kernel file offset, so the
-    // remaining thread-pool writes landed past a NUL-filled sparse hole while every promise
-    // still resolved with its full byte count.
+    // The thread pool runs the queued writes. An ftruncate(fd, 0) from the empty write drops
+    // what they wrote so far and leaves the fd offset where it was: the later writes land past
+    // a hole of NUL bytes, or the file stays empty when they had all finished.
     const N = 2000;
     const script = `
     const fs = require("fs");
@@ -1674,10 +1699,12 @@ it.skipIf(isMacOS)(
     const buf = fs.readFileSync(out);
     expect({
       stderr,
+      size: buf.length,
       nulBytes: buf.indexOf(0) === -1 ? 0 : Array.prototype.reduce.call(buf, (a, b) => a + (b === 0 ? 1 : 0), 0),
       exitCode,
     }).toEqual({
       stderr: `fulfilled=${N} bytes=${expectedBytes}\n`,
+      size: expectedBytes + "SYNC_WRITE\n".length,
       nulBytes: 0,
       exitCode: 0,
     });

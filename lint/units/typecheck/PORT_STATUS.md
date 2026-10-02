@@ -627,10 +627,10 @@ are of the file before that commit. What was checked when the 18 were written:
   `Diagnostics` and `DiagnosticsCollection`, the signatures of the contract. It also holds the shapes of the callers
   (the `error` hook of the name resolver as a function pointer, the closure of `c06` 582, the deferred closure of
   `c12` 496, `compare_diagnostics` of `c22` 13). `rustc` alone with `#![deny(warnings)]` and `unused_imports`,
-  `unused_variables`, `unused_mut`, `unreachable_pub` denied: exit 0, no warning. `clippy-driver` alone with the
-  clippy table of the workspace on the command line and `CLIPPY_CONF_DIR` at the worktree: exit 0 (run before the
-  test below was added, which it does not compile). The stand-ins are the assumptions: the probe says nothing about
-  the modules they replace.
+  `unused_variables`, `unused_mut`, `unreachable_pub` denied: exit 0, no warning.
+  `sh round2-layer7-checker/c21-sink-probe-clippy.sh` (`clippy-driver` alone with the clippy table of the workspace
+  on the command line and `CLIPPY_CONF_DIR` at the worktree): exit 0, and with `--test` as its argument too. The
+  stand-ins are the assumptions: the probe says nothing about the modules they replace.
 - The test at the end of the probe (`rustc --test`, the command is in its head) enters the 18 functions and
   `ProgramFiles` of the file of the tree over those stand-ins: the two deferred callbacks run once and in order and
   the one that a callback adds does not, a diagnostic at the serialization limit is not added,

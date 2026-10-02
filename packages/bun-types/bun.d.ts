@@ -2139,7 +2139,9 @@ declare module "bun" {
    *
    * @category File System
    *
-   * @param destination The file or file path to write to
+   * @param destination The file or file path to write to. A
+   * {@link BunFile.slice} that starts past byte 0 is written in place: the
+   * rest of the file stays as it is.
    * @param input The data to copy into `destination`
    * @param options Options for the write
    *
@@ -2170,7 +2172,8 @@ declare module "bun" {
    *
    * @param destination The file to write to. If the file doesn't exist, it is
    * created; if it does, it is overwritten. If `input` is smaller than
-   * `destination`, `destination` is truncated.
+   * `destination`, `destination` is truncated. A {@link BunFile.slice} that
+   * starts past byte 0 is written in place and is not truncated.
    * @param input The `Response` or `Request` whose body is written
    * @param options Options for the write
    *
@@ -2229,7 +2232,8 @@ declare module "bun" {
    *
    * @param destination The file to write to. If the file doesn't exist, it is
    * created; if it does, it is overwritten. If `input` is smaller than
-   * `destination`, `destination` is truncated.
+   * `destination`, `destination` is truncated. A {@link BunFile.slice} that
+   * starts past byte 0 is written in place and is not truncated.
    * @param input The file to copy from
    * @returns A promise that resolves with the number of bytes written.
    */
@@ -2682,7 +2686,22 @@ declare module "bun" {
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
      *
+     * As the destination of {@link Bun.write}, a slice with `begin` > 0 is
+     * written in place: at most `end - begin` bytes of the input go to byte
+     * `begin` of the file, and every other byte of the file stays as it is.
+     * The file is not truncated. If the file is shorter than `begin`, the
+     * bytes in between are zero. A slice with `begin` at 0 replaces the file.
+     * {@link BunFile.writer} of a slice with `begin` > 0 starts at byte
+     * `begin` and does not stop at `end`.
+     *
      * If `begin` > 0, {@link Bun.write()} is slower on macOS
+     *
+     * @example
+     * ```ts
+     * // data.txt holds "0123456789"
+     * await Bun.write(Bun.file("data.txt").slice(5, 8), "abcdef"); // 3
+     * await Bun.file("data.txt").text(); // "01234abc89"
+     * ```
      *
      * @param begin - start offset in bytes
      * @param end - absolute offset in bytes (relative to 0)
@@ -2694,6 +2713,11 @@ declare module "bun" {
      * Offset any operation on the file starting at `begin`
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
+     *
+     * As the destination of {@link Bun.write}, or through {@link BunFile.writer},
+     * a slice with `begin` > 0 is written in place: the input goes to byte
+     * `begin` of the file, and every other byte of the file stays as it is.
+     * The file is not truncated.
      *
      * If `begin` > 0, {@link Bun.write}() is slower on macOS
      *

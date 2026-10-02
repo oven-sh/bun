@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -747,6 +748,384 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       },
     );
   }
+
+  // slice(begin, end) with begin > 0 on the destination of a write. Releases up to 1.4.3 opened
+  // the file with O_TRUNC and wrote at byte 0, or copied nothing when the source was a file.
+  describe("a destination that slice() moved past byte 0", () => {
+    const SRC = "abcdefghijklmnopqrstuvwxyz";
+    const DST = "0123456789ABCDEFGHIJ";
+    const encode = text => new TextEncoder().encode(text);
+    const streamOf = (...chunks) =>
+      new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+    const files = prefix => {
+      const dir = tempDir(prefix, { "src.txt": SRC, "dst.txt": DST });
+      return { dir, src: join(String(dir), "src.txt"), dst: join(String(dir), "dst.txt") };
+    };
+
+    // Every source holds the 26 bytes of SRC.
+    const buffered = {
+      "Bun.file": src => Bun.file(src),
+      "a string": () => SRC,
+      "a Uint8Array": () => encode(SRC),
+      "a Blob": () => new Blob([SRC]),
+      "a Response": () => new Response(SRC),
+    };
+    const streamed = {
+      "a ReadableStream": () => streamOf(encode(SRC.slice(0, 3)), encode(SRC.slice(3))),
+      "a ReadableStream of strings": () => streamOf(SRC.slice(0, 3), SRC.slice(3)),
+      "a Response around a ReadableStream": () => new Response(streamOf(encode(SRC.slice(0, 3)), encode(SRC.slice(3)))),
+      "the stream of a file": src => Bun.file(src).stream(),
+    };
+
+    it.each(Object.entries({ ...buffered, ...streamed }))(
+      "%s into a path: the window changes and the rest of the file stays",
+      async (_, source) => {
+        const { dir, src, dst } = files("bun-write-window-path");
+        using _dir = dir;
+        const created = join(String(dir), "created", "dst.txt");
+
+        expect({
+          bounded: await Bun.write(Bun.file(dst).slice(5, 10), source(src)),
+          afterBounded: fs.readFileSync(dst, "utf8"),
+          // A window that ends past the end of the file makes the file longer.
+          longer: await Bun.write(Bun.file(dst).slice(18, 24), source(src)),
+          afterLonger: fs.readFileSync(dst, "utf8"),
+          // slice(begin) has no end.
+          open: await Bun.write(Bun.file(dst).slice(2), source(src)),
+          afterOpen: fs.readFileSync(dst, "utf8"),
+          // The bytes before the window of a new file are NUL.
+          created: await Bun.write(Bun.file(created).slice(5, 10), source(src)),
+          afterCreated: fs.readFileSync(created, "utf8"),
+        }).toEqual({
+          bounded: 5,
+          afterBounded: "01234abcdeABCDEFGHIJ",
+          longer: 6,
+          afterLonger: "01234abcdeABCDEFGHabcdef",
+          open: 26,
+          afterOpen: "01" + SRC,
+          created: 5,
+          afterCreated: "\0\0\0\0\0abcde",
+        });
+      },
+    );
+
+    it.each(Object.entries(buffered))(
+      "%s into an fd: the window changes and the fd keeps its position",
+      async (_, source) => {
+        const { dir, src, dst } = files("bun-write-window-fd");
+        using _dir = dir;
+        const fd = fs.openSync(dst, "r+");
+        try {
+          const written = await Bun.write(Bun.file(fd).slice(5, 10), source(src));
+          // The fd is still at byte 0, so this read returns the whole file.
+          const rest = Buffer.alloc(64);
+          const fromPosition = rest.subarray(0, fs.readSync(fd, rest, 0, rest.length, null)).toString();
+          expect({ written, fromPosition }).toEqual({ written: 5, fromPosition: "01234abcdeABCDEFGHIJ" });
+        } finally {
+          fs.closeSync(fd);
+        }
+      },
+    );
+
+    it("a pipe has no position: it takes the bytes of the window in order", async () => {
+      const { dir, src } = files("bun-write-window-pipe");
+      using _dir = dir;
+      const script = `
+        const SRC = ${JSON.stringify(SRC)};
+        const sources = [Bun.file(${JSON.stringify(src)}), SRC, new TextEncoder().encode(SRC), new Blob([SRC]), new Response(SRC)];
+        const written = [];
+        for (const source of sources) written.push(await Bun.write(Bun.stdout.slice(5, 10), source));
+        process.stderr.write(JSON.stringify(written));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, written: stderr }).toEqual({ stdout: "abcdeabcdeabcdeabcdeabcde", written: "[5,5,5,5,5]" });
+      expect(exitCode).toBe(0);
+    });
+
+    // The copy loops move 64 KiB at a time. `chunked` runs here and, as source text, in a child.
+    const chunkedSize = 3 * 64 * 1024 + 17;
+    const chunked = async (fs, src, dst, size) => {
+      const filled = (length, fill) => Buffer.alloc(length, fill);
+      fs.writeFileSync(src, filled(size, "S"));
+      fs.writeFileSync(dst, filled(size, "D"));
+      const open = await Bun.write(Bun.file(dst).slice(5), Bun.file(src));
+      const afterOpen = fs.readFileSync(dst);
+      fs.writeFileSync(dst, filled(size, "D"));
+      // This window ends inside the second chunk.
+      const bounded = await Bun.write(Bun.file(dst).slice(5, 100_005), Bun.file(src));
+      const afterBounded = fs.readFileSync(dst);
+      return {
+        open,
+        openLanded: afterOpen.equals(Buffer.concat([filled(5, "D"), filled(size, "S")])),
+        bounded,
+        boundedLanded: afterBounded.equals(
+          Buffer.concat([filled(5, "D"), filled(100_000, "S"), filled(size - 100_005, "D")]),
+        ),
+      };
+    };
+    const chunkedResult = { open: chunkedSize, openLanded: true, bounded: 100_000, boundedLanded: true };
+
+    it("a file longer than one chunk of the copy loop lands at the offset and stops at the end of the window", async () => {
+      using dir = tempDir("bun-write-window-chunked", {});
+      const result = await chunked(fs, join(String(dir), "src.bin"), join(String(dir), "dst.bin"), chunkedSize);
+      expect(result).toEqual(chunkedResult);
+    });
+
+    it.skipIf(!isLinux)(
+      "Bun.file on the read/write fallback of Linux: a path, an fd, a pipe and a long file",
+      async () => {
+        const { dir, src, dst } = files("bun-write-window-fallback");
+        using _dir = dir;
+        const viaFd = join(String(dir), "fd.txt");
+        fs.writeFileSync(viaFd, DST);
+        const script = `
+        const fs = require("fs");
+        const source = Bun.file(${JSON.stringify(src)});
+        const path = await Bun.write(Bun.file(${JSON.stringify(dst)}).slice(5, 10), source);
+        const fd = fs.openSync(${JSON.stringify(viaFd)}, "r+");
+        const viaFd = await Bun.write(Bun.file(fd).slice(5, 10), source);
+        fs.closeSync(fd);
+        const pipe = await Bun.write(Bun.stdout.slice(5, 10), source);
+        const chunked = ${chunked.toString()};
+        const long = await chunked(fs, ${JSON.stringify(join(String(dir), "src.bin"))}, ${JSON.stringify(join(String(dir), "dst.bin"))}, ${chunkedSize});
+        process.stderr.write(JSON.stringify({ path, viaFd, pipe, long }));
+      `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({
+          stdout,
+          stderr,
+          path: fs.readFileSync(dst, "utf8"),
+          viaFd: fs.readFileSync(viaFd, "utf8"),
+        }).toEqual({
+          stdout: "abcde",
+          stderr: JSON.stringify({ path: 5, viaFd: 5, pipe: 5, long: chunkedResult }),
+          path: "01234abcdeABCDEFGHIJ",
+          viaFd: "01234abcdeABCDEFGHIJ",
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    it("file.slice(begin, end).write() and a structuredClone of the slice write the same window", async () => {
+      const { dir, src, dst } = files("bun-write-window-entry-points");
+      using _dir = dir;
+
+      expect({
+        method: await Bun.file(dst).slice(5, 10).write(Bun.file(src)),
+        afterMethod: fs.readFileSync(dst, "utf8"),
+        clone: await Bun.write(structuredClone(Bun.file(dst).slice(12, 14)), SRC),
+        afterClone: fs.readFileSync(dst, "utf8"),
+        // A slice of a slice starts at the sum of both offsets.
+        nested: await Bun.write(Bun.file(dst).slice(14, 20).slice(2, 4), SRC),
+        afterNested: fs.readFileSync(dst, "utf8"),
+      }).toEqual({
+        method: 5,
+        afterMethod: "01234abcdeABCDEFGHIJ",
+        clone: 2,
+        afterClone: "01234abcdeABabEFGHIJ",
+        nested: 2,
+        afterNested: "01234abcdeABabEFabIJ",
+      });
+    });
+
+    it("writer() starts at the offset and keeps the rest of the file", async () => {
+      const { dir, dst } = files("bun-write-window-writer");
+      using _dir = dir;
+
+      const writer = Bun.file(dst).slice(5, 10).writer();
+      writer.write("abc");
+      expect({ written: await writer.end(), after: fs.readFileSync(dst, "utf8") }).toEqual({
+        written: 3,
+        after: "01234abc89ABCDEFGHIJ",
+      });
+    });
+
+    it("an empty source or an empty window writes nothing and truncates nothing", async () => {
+      const { dir, src, dst } = files("bun-write-window-empty");
+      using _dir = dir;
+
+      expect({
+        written: [
+          await Bun.write(Bun.file(dst).slice(5, 10), ""),
+          await Bun.write(Bun.file(dst).slice(5, 10), new Blob([])),
+          await Bun.write(Bun.file(dst).slice(5, 5), SRC),
+          await Bun.write(Bun.file(dst).slice(5, 5), Bun.file(src)),
+          await Bun.write(Bun.file(dst).slice(5, 5), streamOf(encode(SRC))),
+        ],
+        after: fs.readFileSync(dst, "utf8"),
+      }).toEqual({ written: [0, 0, 0, 0, 0], after: DST });
+    });
+
+    it("a string is cut at the end of the window by its UTF-8 bytes, also as the chunk of a stream", async () => {
+      const { dir, dst } = files("bun-write-window-utf8");
+      using _dir = dir;
+      // "é" is 2 bytes, "☃" is 3 bytes. The strings are Latin-1 and UTF-16 inside JavaScriptCore.
+      const cut = async source => {
+        fs.writeFileSync(dst, DST);
+        const written = await Bun.write(Bun.file(dst).slice(5, 10), source);
+        return [written, fs.readFileSync(dst).subarray(4, 11).toString("hex")];
+      };
+      const latin1 = [
+        5,
+        Buffer.concat([Buffer.from("4"), Buffer.from("ééé").subarray(0, 5), Buffer.from("A")]).toString("hex"),
+      ];
+      const utf16 = [
+        5,
+        Buffer.concat([Buffer.from("4"), Buffer.from("☃☃").subarray(0, 5), Buffer.from("A")]).toString("hex"),
+      ];
+
+      expect({
+        latin1String: await cut("éééé"),
+        latin1Chunks: await cut(streamOf("é", "ééé")),
+        utf16String: await cut("☃☃☃"),
+        utf16Chunks: await cut(streamOf("☃", "☃☃")),
+      }).toEqual({ latin1String: latin1, latin1Chunks: latin1, utf16String: utf16, utf16Chunks: utf16 });
+    });
+
+    it("the body of a fetch() Response stops at the end of the window", async () => {
+      const { dir, dst } = files("bun-write-window-fetch");
+      using _dir = dir;
+      const chunk = Buffer.alloc(64 * 1024, "S");
+      let sent = 0;
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.enqueue(chunk);
+                if (++sent === 8) controller.close();
+              },
+            }),
+          ),
+      });
+
+      expect({
+        written: await Bun.write(Bun.file(dst).slice(5, 10), await fetch(server.url)),
+        after: fs.readFileSync(dst, "utf8"),
+      }).toEqual({ written: 5, after: "01234SSSSSABCDEFGHIJ" });
+    });
+
+    it("an S3 source is read only as far as the window goes", async () => {
+      const { dir, dst } = files("bun-write-window-s3");
+      using _dir = dir;
+      const requests = [];
+      await using server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const range = request.headers.get("range");
+          requests.push(`${request.method} ${range}`);
+          const [, first, last] = /^bytes=(\d+)-(\d+)$/.exec(range ?? "") ?? [];
+          return first === undefined
+            ? new Response(SRC)
+            : new Response(SRC.slice(Number(first), Number(last) + 1), {
+                status: 206,
+                headers: { "Content-Range": `bytes ${first}-${last}/${SRC.length}` },
+              });
+        },
+      });
+      const object = Bun.S3Client.file("key", {
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "bucket",
+        endpoint: server.url.href,
+      });
+
+      expect({
+        written: await Bun.write(Bun.file(dst).slice(5, 10), object),
+        after: fs.readFileSync(dst, "utf8"),
+        requests,
+      }).toEqual({ written: 5, after: "01234abcdeABCDEFGHIJ", requests: ["GET bytes=0-4"] });
+    });
+
+    it("two writes to two windows of one file, started together, both land", async () => {
+      const { dir, src, dst } = files("bun-write-window-concurrent");
+      using _dir = dir;
+      const viaFd = join(String(dir), "fd.txt");
+      fs.writeFileSync(viaFd, DST);
+      const fd = fs.openSync(viaFd, "r+");
+      try {
+        expect({
+          path: await Promise.all([
+            Bun.write(Bun.file(dst).slice(2, 5), SRC),
+            Bun.write(Bun.file(dst).slice(10, 13), Bun.file(src)),
+          ]),
+          afterPath: fs.readFileSync(dst, "utf8"),
+          fd: await Promise.all([
+            Bun.write(Bun.file(fd).slice(2, 5), SRC),
+            Bun.write(Bun.file(fd).slice(10, 13), Bun.file(src)),
+          ]),
+          afterFd: fs.readFileSync(viaFd, "utf8"),
+        }).toEqual({
+          path: [3, 3],
+          afterPath: "01abc56789abcDEFGHIJ",
+          fd: [3, 3],
+          afterFd: "01abc56789abcDEFGHIJ",
+        });
+      } finally {
+        fs.closeSync(fd);
+      }
+    });
+
+    it("a source file that does not exist rejects and leaves the destination as it was", async () => {
+      const { dir, dst } = files("bun-write-window-missing-source");
+      using _dir = dir;
+      const missing = join(String(dir), "missing.txt");
+
+      const error = await Bun.write(Bun.file(dst).slice(5, 10), Bun.file(missing)).then(
+        () => undefined,
+        error => error,
+      );
+      expect({ code: error?.code, after: fs.readFileSync(dst, "utf8") }).toEqual({ code: "ENOENT", after: DST });
+    });
+
+    it("slice(-n) of a file whose size is not known is refused, and works once the size is known", async () => {
+      const { dir, src, dst } = files("bun-write-window-negative");
+      using _dir = dir;
+      // The offset of this slice is MAX_SIZE - 5: no file is that long.
+      const refused = promise =>
+        promise.then(
+          () => "resolved",
+          error => `${error.name} ${error.code}`,
+        );
+
+      expect({
+        string: await refused(Bun.write(Bun.file(dst).slice(-5), SRC)),
+        file: await refused(Bun.write(Bun.file(dst).slice(-5), Bun.file(src))),
+        stream: await refused(Bun.write(Bun.file(dst).slice(-5), streamOf(encode(SRC)))),
+        writer: await refused(Promise.try(() => Bun.file(dst).slice(-5).writer())),
+        after: fs.readFileSync(dst, "utf8"),
+      }).toEqual({
+        string: "RangeError ERR_OUT_OF_RANGE",
+        file: "RangeError ERR_OUT_OF_RANGE",
+        stream: "RangeError ERR_OUT_OF_RANGE",
+        writer: "RangeError ERR_OUT_OF_RANGE",
+        after: DST,
+      });
+
+      const file = Bun.file(dst);
+      expect({
+        size: file.size,
+        written: await Bun.write(file.slice(-5), SRC),
+        after: fs.readFileSync(dst, "utf8"),
+      }).toEqual({ size: 20, written: 5, after: "0123456789ABCDEabcde" });
+    });
+  });
 
   describe("ENOENT", () => {
     const creates = (...opts) => {

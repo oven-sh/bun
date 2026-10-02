@@ -1429,6 +1429,11 @@ impl BlobExt for Blob {
             .to_js());
         }
 
+        let window = match sink_window(self, cx.global()) {
+            Ok(window) => window,
+            Err(err) => return Ok(JSPromise::rejected_promise(cx.global(), err).to_js()),
+        };
+
         let file_sink: RefPtr<webcore::FileSink> = 'brk_sink: {
             #[cfg(windows)]
             {
@@ -1438,10 +1443,10 @@ impl BlobExt for Blob {
                 } else {
                     let mut file_path = bun_paths::path_buffer_pool::get();
                     let path = pathlike.path().slice_z(&mut file_path);
-                    let flags = bun_sys::O::WRONLY
-                        | bun_sys::O::CREAT
-                        | bun_sys::O::TRUNC
-                        | bun_sys::O::NONBLOCK;
+                    let mut flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
+                    if window.is_none() {
+                        flags |= bun_sys::O::TRUNC;
+                    }
                     let mode = options.mode.unwrap_or(WRITE_PERMISSIONS);
                     let mut result = bun_sys::open(path, flags, mode);
                     if let bun_sys::Result::Err(err) = &result {
@@ -1454,7 +1459,7 @@ impl BlobExt for Blob {
                             };
                         }
                     }
-                    match result {
+                    match result.and_then(|fd| seek_to_window(fd, window)) {
                         bun_sys::Result::Ok(result) => result,
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::rejected_promise(
@@ -1543,11 +1548,12 @@ impl BlobExt for Blob {
                 };
 
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
-                    truncate: matches!(input_path, webcore::PathOrFileDescriptor::Path(_)),
+                    truncate: window.is_none()
+                        && matches!(input_path, webcore::PathOrFileDescriptor::Path(_)),
+                    position: window.map_or(0, |window| window.offset.get()),
                     mkdirp: options.mkdirp_if_not_exists.unwrap_or(true),
                     mode: options.mode.unwrap_or(WRITE_PERMISSIONS),
                     input_path,
-                    ..Default::default()
                 });
 
                 if let bun_sys::Result::Err(err) = sink.start(&stream_start, cx.context()) {
@@ -1559,11 +1565,15 @@ impl BlobExt for Blob {
             }
         };
 
+        let limit = match window {
+            Some(window) if window.len != MAX_SIZE => window.len,
+            _ => u64::MAX,
+        };
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
         // SAFETY: sole owner so far; `&mut` scoped to the call.
         let result =
-            unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, cx.global()) };
+            unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, limit, cx.global()) };
         if let Some(err) = result.to_error() {
             return Ok(JSPromise::rejected_promise(cx.global(), err).to_js());
         }
@@ -1583,6 +1593,7 @@ impl BlobExt for Blob {
         validate_writable_blob(global_this, self)?;
 
         let store = self.store().expect("infallible: store present").clone();
+        let window = sink_window(self, global_this).map_err(|err| global_this.throw_value(err))?;
         if self.is_s3() {
             // Borrow `s3` through the
             // cloned `store: RefPtr<Store>` (independent of `self`) so the
@@ -1668,7 +1679,9 @@ impl BlobExt for Blob {
                         p.slice_z(&mut file_path),
                         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
                         WRITE_PERMISSIONS,
-                    ) {
+                    )
+                    .and_then(|fd| seek_to_window(fd, window))
+                    {
                         bun_sys::Result::Ok(result) => result,
                         bun_sys::Result::Err(err) => {
                             return Err(global_this
@@ -1766,6 +1779,7 @@ impl BlobExt for Blob {
             };
             if let streams::Start::FileSink(ref mut opts) = stream_start {
                 opts.input_path = input_path;
+                opts.position = window.map_or(0, |window| window.offset.get());
             }
 
             if let bun_sys::Result::Err(err) = sink.start(&stream_start, context) {
@@ -4121,6 +4135,111 @@ pub(crate) struct WriteFileOptions {
     pub(crate) mode: Option<bun_sys::Mode>,
 }
 
+/// The bytes of a local file that a write to `Bun.file(path).slice(begin, end)` with `begin > 0`
+/// may change. The write starts at `offset`, stops after `len` bytes and never truncates the file.
+#[derive(Clone, Copy)]
+pub(crate) struct WriteWindow {
+    pub(crate) offset: core::num::NonZero<SizeType>,
+    /// `MAX_SIZE` for a slice that has no end.
+    pub(crate) len: SizeType,
+}
+
+impl WriteWindow {
+    /// `slice(-n)` of a file whose size is not known starts `n` bytes before `MAX_SIZE`.
+    const MAX_OFFSET: SizeType = MAX_SIZE / 2;
+
+    /// The window `slice()` left on a destination, `None` for one that starts at byte 0.
+    /// `Err` is the `RangeError` for a window that starts past `MAX_OFFSET`.
+    #[inline]
+    pub(crate) fn of(destination: &Blob, global: &JSGlobalObject) -> Result<Option<Self>, JSValue> {
+        match core::num::NonZero::new(destination.offset.get()) {
+            None => Ok(None),
+            Some(offset) => Self::at(destination, offset, global),
+        }
+    }
+
+    #[cold]
+    fn at(
+        destination: &Blob,
+        offset: core::num::NonZero<SizeType>,
+        global: &JSGlobalObject,
+    ) -> Result<Option<Self>, JSValue> {
+        if !destination
+            .store
+            .get()
+            .as_ref()
+            .is_some_and(|store| matches!(store.data, store::Data::File(_)))
+        {
+            return Ok(None);
+        }
+        if offset.get() > Self::MAX_OFFSET {
+            return Err(global
+                .err(
+                    jsc::ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "Cannot write to a Bun.file() slice that starts at byte {}. The largest supported offset is {}. A negative slice() index needs the size of the file: read .size before slice().",
+                        offset,
+                        Self::MAX_OFFSET
+                    ),
+                )
+                .to_js());
+        }
+        let size = destination.size.get();
+        Ok(Some(Self {
+            offset,
+            len: if offset.get().saturating_add(size) < MAX_SIZE {
+                size
+            } else {
+                MAX_SIZE
+            },
+        }))
+    }
+}
+
+/// The window of a destination that a `FileSink` writes: a stream source, or `writer()`. The sink
+/// opens a path itself and starts there. An fd keeps its position, which belongs to its owner.
+fn sink_window(
+    destination: &Blob,
+    global: &JSGlobalObject,
+) -> Result<Option<WriteWindow>, JSValue> {
+    match destination.store.get().as_ref().map(|store| &store.data) {
+        Some(store::Data::File(file)) if matches!(file.pathlike, PathOrFileDescriptor::Path(_)) => {
+            WriteWindow::of(destination, global)
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Moves the file pointer of `fd`, which Bun opened, to the start of `window`. Only a regular
+/// file has a position: a pipe takes the bytes in order.
+#[cfg(windows)]
+fn seek_to_window(fd: Fd, window: Option<WriteWindow>) -> bun_sys::Result<Fd> {
+    use bun_sys::FdExt as _;
+    let Some(window) = window else {
+        return bun_sys::Result::Ok(fd);
+    };
+    if !matches!(
+        bun_sys::File::borrow(&fd).kind(),
+        bun_sys::Result::Ok(bun_sys::FileKind::File)
+    ) {
+        return bun_sys::Result::Ok(fd);
+    }
+    if let bun_sys::Result::Err(err) = bun_sys::set_file_offset(fd, window.offset.get()) {
+        fd.close();
+        return bun_sys::Result::Err(err);
+    }
+    bun_sys::Result::Ok(fd)
+}
+
+/// `pwrite(2)` failed because the destination has no position: a pipe, a FIFO or a socket. The
+/// bytes of a window then go out in order with `write(2)`. macOS reports a terminal with ENXIO
+/// (`valid_for_random_access` in xnu's bsd/kern/sys_generic.c).
+#[cfg(not(windows))]
+pub(crate) fn has_no_position(err: &bun_sys::Error) -> bool {
+    let errno = err.get_errno();
+    errno == bun_sys::E::ESPIPE || (cfg!(target_os = "macos") && errno == bun_sys::E::ENXIO)
+}
+
 /// Write an empty string to a file by truncating it.
 ///
 /// This behavior matches what we do with the fast path.
@@ -4336,10 +4455,30 @@ pub(crate) fn write_file_with_source_destination(
         "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
     );
 
+    let window = match WriteWindow::of(destination_blob, cx.global()) {
+        Ok(window) => window,
+        Err(err) => return Ok(JSPromise::rejected_promise(cx.global(), err).to_js()),
+    };
+    let nothing_to_write =
+        || JSPromise::resolved_promise_value(cx.global(), JSValue::js_number(0.0));
+
     let Some(source_store) = source_blob.store.get().clone() else {
+        if window.is_some() {
+            return Ok(nothing_to_write());
+        }
         return write_file_with_empty_source_to_destination(cx, destination_blob, options);
     };
     let source_type = source_store.data.tag();
+
+    if let Some(window) = window {
+        if window.len == 0 {
+            return Ok(nothing_to_write());
+        }
+        // The write stops at the end of the window: a shorter view of the bytes, or a ranged
+        // read of an S3 object.
+        source_blob.size.set(source_blob.size.get().min(window.len));
+    }
+    let write_offset = window.map(|window| window.offset);
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
         let write_file_promise = bun_core::heap::into_raw(Box::new(WriteFilePromise {
@@ -4365,6 +4504,7 @@ pub(crate) fn write_file_with_source_destination(
                 cx.context(),
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
+                write_offset,
                 write_file_promise,
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
@@ -4381,6 +4521,7 @@ pub(crate) fn write_file_with_source_destination(
             let file_copier = write_file_mod::WriteFile::create(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
+                write_offset,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
@@ -4396,6 +4537,10 @@ pub(crate) fn write_file_with_source_destination(
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
+        let (offset, max_length) = match window {
+            Some(window) => (window.offset.get(), window.len),
+            None => (0, destination_blob.size.get()),
+        };
         #[cfg(windows)]
         {
             return Ok(copy_file::CopyFileWindows::init(
@@ -4404,7 +4549,8 @@ pub(crate) fn write_file_with_source_destination(
                 cx.vm().event_loop_shared(),
                 cx.context(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
+                offset,
+                max_length,
                 options.mode,
             ));
         }
@@ -4413,8 +4559,8 @@ pub(crate) fn write_file_with_source_destination(
             return Ok(copy_file::CopyFile::create(
                 destination_store,
                 source_store,
-                destination_blob.offset.get(),
-                destination_blob.size.get(),
+                offset,
+                max_length,
                 cx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,
@@ -6438,6 +6584,12 @@ pub(crate) trait FileOpener: Sized {
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
     const OPENER_FLAGS: i32 = bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
 
+    /// `OPEN_FLAGS`, for an implementor whose flags depend on what it writes.
+    #[inline]
+    fn open_flags(&self) -> i32 {
+        Self::OPEN_FLAGS
+    }
+
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
     fn set_errno(&mut self, e: crate::Error);
@@ -6515,6 +6667,7 @@ pub(crate) trait FileOpener: Sized {
 
             self.set_open_callback(callback);
             let loop_ = self.loop_();
+            let open_flags = self.open_flags() | Self::OPENER_FLAGS;
             let self_ptr: *mut Self = core::ptr::from_mut(self);
             // Derive `req` THROUGH `self_ptr` rather than via a fresh `self.req()`
             // reborrow. Under Stacked Borrows, a direct `self.req()` here would
@@ -6536,7 +6689,7 @@ pub(crate) trait FileOpener: Sized {
                     loop_,
                     req,
                     path.as_ptr(),
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
+                    open_flags,
                     node::fs::DEFAULT_PERMISSION as i32,
                     Some(wrapped_callback::<Self>),
                 )
@@ -6563,7 +6716,7 @@ pub(crate) trait FileOpener: Sized {
             loop {
                 match bun_sys::open(
                     path,
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
+                    self.open_flags() | Self::OPENER_FLAGS,
                     crate::node::fs::DEFAULT_PERMISSION,
                 ) {
                     bun_sys::Result::Ok(fd) => {

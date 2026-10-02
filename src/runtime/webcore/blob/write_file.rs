@@ -112,6 +112,10 @@ pub(crate) struct WriteFile {
     pub(crate) state: AtomicU8, // ClosingState
 
     pub(crate) total_written: usize,
+    /// Where a destination that `slice()` moved past byte 0 takes the first byte. `None` writes at
+    /// the position of the fd: an unsliced destination, or one that has no position (a pipe).
+    #[cfg(not(windows))]
+    pub(crate) write_offset: Option<core::num::NonZero<SizeType>>,
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
@@ -130,6 +134,15 @@ bun_io::intrusive_io_request!(WriteFile, io_request);
 impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
+
+    #[cfg(not(windows))]
+    fn open_flags(&self) -> i32 {
+        if self.write_offset.is_some() {
+            Self::OPEN_FLAGS & !bun_sys::O::TRUNC
+        } else {
+            Self::OPEN_FLAGS
+        }
+    }
 
     fn opened_fd(&self) -> Fd {
         self.opened_fd
@@ -288,11 +301,13 @@ impl WriteFile {
     pub(crate) fn create(
         file_blob: Blob,
         bytes_blob: Blob,
+        write_offset: Option<core::num::NonZero<SizeType>>,
         mkdirp_if_not_exists: bool,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
             file_blob,
             bytes_blob,
+            write_offset,
             opened_fd: Fd::INVALID,
             system_error: None,
             errno: None,
@@ -320,16 +335,24 @@ impl WriteFile {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
-        // We do not use pwrite() because the file may not be
-        // seekable (such as stdout)
-        //
-        // On macOS, it is an error to use pwrite() on a
-        // non-seekable file.
         loop {
-            match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+            let bytes = &self.bytes_blob.shared_view()[off..off + len];
+            // pwrite() is only for a destination that starts past byte 0. It fails on a
+            // destination that has no position (such as stdout when it is a pipe).
+            let result = match self.write_offset {
+                Some(offset) => {
+                    let position = offset.get().saturating_add(self.total_written as SizeType);
+                    sys::pwrite(fd, bytes, i64::try_from(position).expect("int cast"))
+                }
+                None => sys::write(fd, bytes),
+            };
+            match result {
                 Ok(wrote) => {
                     self.total_written += wrote;
                     return WriteStep::Wrote(wrote);
+                }
+                Err(err) if self.write_offset.is_some() && blob::has_no_position(&err) => {
+                    self.write_offset = None;
                 }
                 // regular files cannot use epoll.
                 // this is fine on kqueue, but not on epoll.
@@ -440,10 +463,6 @@ impl WriteFile {
             false
         };
 
-        // We have never supported offset in Bun.write().
-        // and properly adding support means we need to also support it
-        // with splice, sendfile, and the other cases.
-
         if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
             self.wait_for_writable();
             return;
@@ -457,7 +476,10 @@ impl WriteFile {
             // We only do this on Linux because the equivalent on macOS
             // seemed to have zero performance impact in
             // microbenchmarks.
-            if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
+            if !self.could_block
+                && self.write_offset.is_none()
+                && self.bytes_blob.shared_view().len() > 1024
+            {
                 let _ = sys::preallocate_file(
                     fd.native(),
                     0,
@@ -573,6 +595,9 @@ mod windows_impl {
         pub(crate) fd: uv::uv_file,
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
+        /// Where a destination that `slice()` moved past byte 0 takes the first byte. `None`
+        /// writes at the file pointer: an unsliced destination, or an fd that is not a file.
+        pub(crate) write_offset: Option<core::num::NonZero<SizeType>>,
         pub(crate) event_loop: *mut EventLoop,
         pub poll_ref: KeepAlive,
 
@@ -625,6 +650,7 @@ mod windows_impl {
         pub(crate) fn create_with_ctx(
             file_blob: Blob,
             bytes_blob: Blob,
+            write_offset: Option<core::num::NonZero<SizeType>>,
             event_loop: *mut EventLoop,
             script_context: &bun_jsc::ScriptExecutionContext,
             on_write_file_context: *mut c_void,
@@ -657,6 +683,7 @@ mod windows_impl {
                 fd: -1,
                 err: None,
                 total_written: 0,
+                write_offset,
                 poll_ref: KeepAlive::default(),
                 owned_fd: false,
             });
@@ -714,6 +741,7 @@ mod windows_impl {
                             // The file stored descriptor is not stdin, stdout, or stderr.
                             fd.uv()
                         };
+                        (*write_file).keep_write_offset_for_file_only(*fd);
 
                         Self::do_write_loop(write_file, (*write_file).loop_())?;
                     }
@@ -735,6 +763,18 @@ mod windows_impl {
         pub(crate) fn loop_(&self) -> *mut uv::Loop {
             // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
             unsafe { (*self.event_loop).uv_loop() }
+        }
+
+        /// Only a regular file has a position to write at. A pipe takes the bytes in order.
+        fn keep_write_offset_for_file_only(&mut self, fd: Fd) {
+            if self.write_offset.is_some()
+                && !matches!(
+                    sys::File::borrow(&fd).kind(),
+                    sys::Result::Ok(sys::FileKind::File)
+                )
+            {
+                self.write_offset = None;
+            }
         }
 
         /// # Safety
@@ -772,6 +812,12 @@ mod windows_impl {
                     });
                 }
             };
+            let mut flags =
+                uv::O::CREAT | uv::O::WRONLY | uv::O::NOCTTY | uv::O::NONBLOCK | uv::O::SEQUENTIAL;
+            // SAFETY: caller contract — `this` is live.
+            if unsafe { (*this).write_offset.is_none() } {
+                flags |= uv::O::TRUNC;
+            }
             // SAFETY: (*this).io_request is a valid uv_fs_t embedded in a Box-allocated WriteFileWindows;
             // (*this).loop_() is the VM's libuv loop which outlives this request; posix_path is NUL-terminated.
             let rc = unsafe {
@@ -779,12 +825,7 @@ mod windows_impl {
                     (*this).loop_(),
                     &mut (*this).io_request,
                     posix_path.as_ptr(),
-                    uv::O::CREAT
-                        | uv::O::WRONLY
-                        | uv::O::NOCTTY
-                        | uv::O::NONBLOCK
-                        | uv::O::SEQUENTIAL
-                        | uv::O::TRUNC,
+                    flags,
                     0o644,
                     Some(Self::on_open),
                 )
@@ -880,7 +921,10 @@ mod windows_impl {
             }
 
             // SAFETY: `this` is live.
-            unsafe { (*this).fd = i32::try_from(rc.int()).expect("int cast") };
+            unsafe {
+                (*this).fd = i32::try_from(rc.int()).expect("int cast");
+                (*this).keep_write_offset_for_file_only(Fd::from_uv((*this).fd));
+            }
 
             // the loop must be copied
             // SAFETY: `this` is live; on `Err`, `*this` has been freed and is not accessed again.
@@ -1112,6 +1156,15 @@ mod windows_impl {
                 (*this).uv_bufs[0].len = remain.len() as u32;
             }
 
+            // `-1` writes at the file pointer.
+            // SAFETY: caller contract — `this` is live.
+            let position: i64 = match unsafe { (*this).write_offset } {
+                Some(offset) => {
+                    i64::try_from(offset.get().saturating_add(off as SizeType)).expect("int cast")
+                }
+                None => -1,
+            };
+
             // SAFETY: (*this).io_request is a valid uv_fs_t embedded in this Box-allocated struct;
             // cleanup is safe to call between uses of the same req.
             unsafe { uv::uv_fs_req_cleanup(&mut (*this).io_request) };
@@ -1124,7 +1177,7 @@ mod windows_impl {
                     (*this).fd,
                     (*this).uv_bufs.as_mut_ptr(),
                     1,
-                    -1,
+                    position,
                     Some(Self::on_write_complete),
                 )
             };
@@ -1183,6 +1236,7 @@ mod windows_impl {
             script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
             bytes_blob: Blob,
+            write_offset: Option<core::num::NonZero<SizeType>>,
             context: *mut C,
             callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
@@ -1192,6 +1246,7 @@ mod windows_impl {
             WriteFileWindows::create_with_ctx(
                 file_blob,
                 bytes_blob,
+                write_offset,
                 event_loop,
                 script_context,
                 context.cast::<c_void>(),

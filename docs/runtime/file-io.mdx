@@ -130,6 +130,14 @@ const output = Bun.file("output.txt"); // doesn't exist yet!
 await Bun.write(output, input);
 ```
 
+To write into part of a file, slice the destination. When the slice starts past byte 0, Bun writes at the start of the slice, stops at its end, and keeps every other byte of the file.
+
+```ts
+const file = Bun.file("data.txt"); // contains "0123456789"
+await Bun.write(file.slice(5, 8), "abcdef"); // => 3
+await file.text(); // => "01234abc89"
+```
+
 To write a byte array to disk:
 
 ```ts

@@ -43,7 +43,10 @@ pub(crate) struct CopyFile {
     // while this task is on the work pool.
     pub(crate) store: Option<RefPtr<Store>>,
     pub(crate) source_store: Option<RefPtr<Store>>,
+    /// Where the copy lands in a destination that `slice()` moved past byte 0. Such a copy keeps
+    /// the rest of the file. 0 replaces a path destination and writes at the position of an fd.
     pub offset: SizeType,
+    /// The most bytes to copy: the length of the destination's `slice()`.
     pub(crate) max_length: SizeType,
     pub(crate) destination_fd: Fd,
     pub(crate) source_fd: Fd,
@@ -167,6 +170,15 @@ impl CopyFile {
         )
     }
 
+    /// Bun opened the destination with `O_TRUNC`: the copy is the whole file.
+    fn replaces_destination(&self) -> bool {
+        self.offset == 0
+            && matches!(
+                self.destination_file_store.pathlike,
+                PathOrFileDescriptor::Path(_)
+            )
+    }
+
     pub(crate) fn do_close(&mut self) {
         let close_input = !matches!(
             self.destination_file_store.pathlike,
@@ -260,7 +272,12 @@ impl CopyFile {
                 // SAFETY: path_buf1[dest_len] == 0 written above.
                 let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf1[..], dest_len);
                 let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
-                match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
+                let flags = if self.offset == 0 {
+                    OPEN_DESTINATION_FLAGS
+                } else {
+                    OPEN_DESTINATION_FLAGS & !bun_sys::O::TRUNC
+                };
+                match bun_sys::open(dest, flags, mode) {
                     bun_sys::Result::Ok(result) => {
                         match result.make_lib_uv_owned_for_syscall(
                             bun_sys::Tag::open,
@@ -315,10 +332,6 @@ impl CopyFile {
         unknown_size: bool,
         total_written: &mut u64,
     ) -> Result<(), crate::Error> {
-        let bun_opened_dest = matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Path(_)
-        );
         let cap = if unknown_size {
             MAX_SIZE
         } else {
@@ -327,8 +340,9 @@ impl CopyFile {
         match read_write_fallback(
             self.source_fd,
             self.destination_fd,
-            bun_opened_dest,
+            self.replaces_destination(),
             cap,
+            self.offset,
             total_written,
         ) {
             bun_sys::Result::Err(err) => {
@@ -358,6 +372,13 @@ impl CopyFile {
         let mut total_written: u64 = 0;
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
+        // The kernel advances `*off_out` and leaves the position of the fd alone.
+        let mut destination_position = i64::try_from(self.offset).expect("int cast");
+        let off_out: *mut i64 = if self.offset == 0 {
+            core::ptr::null_mut()
+        } else {
+            &raw mut destination_position
+        };
 
         let read_len_slot: *mut SizeType = &raw mut self.read_len;
         let total_written_slot: *const u64 = core::ptr::addr_of!(total_written);
@@ -379,13 +400,14 @@ impl CopyFile {
             // TODO: this should use non-blocking I/O.
             let written: isize = match USE {
                 TryWith::CopyFileRange => {
-                    // SAFETY: raw copy_file_range(2); both fds owned by caller, null offsets.
+                    // SAFETY: raw copy_file_range(2); both fds owned by caller, `off_out` is
+                    // null or points at `destination_position`, which outlives the loop.
                     unsafe {
                         linux::copy_file_range(
                             src_fd.native(),
                             core::ptr::null_mut(),
                             dest_fd.native(),
-                            core::ptr::null_mut(),
+                            off_out,
                             remain,
                             0,
                         )
@@ -506,7 +528,13 @@ impl CopyFile {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn do_read_write_loop_capped(&mut self, cap: SizeType) -> Result<(), crate::Error> {
         let mut total: u64 = 0;
-        match read_write_loop_capped(self.source_fd, self.destination_fd, cap, &mut total) {
+        match read_write_loop_capped(
+            self.source_fd,
+            self.destination_fd,
+            cap,
+            self.offset,
+            &mut total,
+        ) {
             bun_sys::Result::Ok(()) => {
                 self.read_len = total as SizeType;
                 Ok(())
@@ -782,21 +810,16 @@ impl CopyFile {
         // BSD fstat on a pipe reports bytes currently buffered in st_size;
         // only a regular-file st_size is a length.
         if stat.st_size != 0 && bun_sys::S::ISREG(stat.st_mode as _) {
-            self.max_length = (SizeType::try_from(stat.st_size)
+            self.max_length = SizeType::try_from(stat.st_size)
                 .expect("int cast")
-                .min(self.max_length))
-            .max(self.offset)
-                - self.offset;
+                .min(self.max_length);
             if self.max_length == 0 {
                 self.do_close();
                 return;
             }
 
             if PREALLOCATE_SUPPORTED
-                && matches!(
-                    self.destination_file_store.pathlike,
-                    PathOrFileDescriptor::Path(_)
-                )
+                && self.replaces_destination()
                 && self.max_length > PREALLOCATE_LENGTH
                 && self.max_length != MAX_SIZE
             {
@@ -843,7 +866,11 @@ impl CopyFile {
                 || bun_sys::S::ISCHR(stat.st_mode as _)
                 || bun_sys::S::ISSOCK(stat.st_mode as _)
             {
-                if self.destination_file_store.is_atty.unwrap_or(false) {
+                if self.offset != 0 {
+                    // sendfile(2) writes at the position of the destination fd. copy_file_range(2)
+                    // takes the offset, or refuses these files and leaves the copy to pwrite(2).
+                    let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, false>();
+                } else if self.destination_file_store.is_atty.unwrap_or(false) {
                     let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, true>();
                 } else {
                     let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, false>();
@@ -862,10 +889,7 @@ impl CopyFile {
         {
             // fcopyfile rewrites dest from offset 0 and the slice trim is
             // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
-            if matches!(
-                self.destination_file_store.pathlike,
-                PathOrFileDescriptor::Path(_)
-            ) {
+            if self.replaces_destination() {
                 let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
                     u64::try_from(stat.st_size).expect("int cast"),
                 ) {
@@ -897,10 +921,7 @@ impl CopyFile {
 
         #[cfg(target_os = "freebsd")]
         {
-            if matches!(
-                self.destination_file_store.pathlike,
-                PathOrFileDescriptor::Path(_)
-            ) {
+            if self.replaces_destination() {
                 let mut total_written: u64 = 0;
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
                     bun_core::ZStr::EMPTY,
@@ -952,11 +973,12 @@ impl CopyFile {
 fn read_write_fallback(
     src_fd: Fd,
     dest_fd: Fd,
-    bun_opened_dest: bool,
+    replaces_destination: bool,
     cap: SizeType,
+    destination_offset: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
-    if bun_opened_dest {
+    if replaces_destination {
         let stat_size = if cap == MAX_SIZE { 0 } else { cap as usize };
         node_fs::NodeFS::copy_file_using_read_write_loop(
             bun_core::ZStr::EMPTY,
@@ -969,22 +991,26 @@ fn read_write_fallback(
         let _ = bun_sys::ftruncate(dest_fd, i64::try_from(*total).expect("int cast"));
         Ok(())
     } else {
-        read_write_loop_capped(src_fd, dest_fd, cap, total)
+        read_write_loop_capped(src_fd, dest_fd, cap, destination_offset, total)
     }
 }
 
+/// Copies up to `cap` bytes. A `destination_offset` past 0 puts byte `*total` of the copy at
+/// `destination_offset + *total` and leaves the position of `dest_fd` alone.
 #[inline(never)] // 64 KB stack buffer
 #[cfg(not(windows))]
 fn read_write_loop_capped(
     src_fd: Fd,
     dest_fd: Fd,
     cap: SizeType,
+    destination_offset: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
     let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
     // SAFETY: `read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut remaining = cap;
+    let mut positioned = destination_offset != 0;
     while remaining > 0 {
         let want = (buf.len() as SizeType).min(remaining) as usize;
         let amt = bun_sys::read(src_fd, &mut buf[..want])?;
@@ -994,7 +1020,19 @@ fn read_write_loop_capped(
         remaining -= amt as SizeType;
         let mut slice = &buf[..amt];
         while !slice.is_empty() {
-            match bun_sys::write(dest_fd, slice)? {
+            let wrote = if positioned {
+                let position = destination_offset.saturating_add(*total);
+                match bun_sys::pwrite(dest_fd, slice, i64::try_from(position).expect("int cast")) {
+                    bun_sys::Result::Err(err) if blob::has_no_position(&err) => {
+                        positioned = false;
+                        continue;
+                    }
+                    result => result?,
+                }
+            } else {
+                bun_sys::write(dest_fd, slice)?
+            };
+            match wrote {
                 0 => return Ok(()),
                 n => {
                     *total += n as u64;
@@ -1066,6 +1104,9 @@ pub(crate) struct CopyFileWindows<'a> {
     /// The context of the script that asked for the copy.
     pub(crate) context: jsc::ContextId,
 
+    /// Where the copy lands in a destination that `slice()` moved past byte 0. Such a copy takes
+    /// the read-write loop and keeps the rest of the file. 0 replaces the destination.
+    pub(crate) offset: SizeType,
     pub(crate) size: SizeType,
 
     /// Bytes written, stored for use after async chmod completes
@@ -1084,6 +1125,8 @@ pub(crate) struct ReadWriteLoop {
     pub(crate) must_close_source_fd: bool,
     pub(crate) destination_fd: Fd,
     pub(crate) must_close_destination_fd: bool,
+    /// The destination is a regular file and the copy goes to an offset in it.
+    pub(crate) positioned: bool,
     pub(crate) written: usize,
     pub(crate) read_buf: Vec<u8>,
     pub(crate) uv_buf: libuv::uv_buf_t,
@@ -1097,6 +1140,7 @@ impl Default for ReadWriteLoop {
             must_close_source_fd: false,
             destination_fd: Fd::INVALID,
             must_close_destination_fd: false,
+            positioned: false,
             written: 0,
             read_buf: Vec::new(),
             uv_buf: libuv::uv_buf_t {
@@ -1119,10 +1163,37 @@ impl<'a> CopyFileWindows<'a> {
         self.read_write_loop_read()
     }
 
+    /// What the destination's window has left. No limit for a destination that starts at byte 0:
+    /// `on_complete` truncates that one.
+    fn window_remaining(&self) -> usize {
+        if self.offset == 0 || self.size == MAX_SIZE {
+            return usize::MAX;
+        }
+        usize::try_from(self.size)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(self.read_write_loop.written)
+    }
+
+    /// `-1` writes at the file pointer of the destination.
+    fn write_position(&self) -> i64 {
+        if !self.read_write_loop.positioned {
+            return -1;
+        }
+        i64::try_from(
+            self.offset
+                .saturating_add(self.read_write_loop.written as SizeType),
+        )
+        .expect("int cast")
+    }
+
     fn read_write_loop_read(&mut self) -> bun_sys::Result<()> {
         self.read_write_loop.read_buf.clear();
         // reshaped for borrowck — use the full capacity slice.
-        let cap = self.read_write_loop.read_buf.capacity();
+        let cap = self
+            .read_write_loop
+            .read_buf
+            .capacity()
+            .min(self.window_remaining());
         self.read_write_loop.uv_buf = libuv::uv_buf_t {
             len: cap as libuv::ULONG,
             base: self.read_write_loop.read_buf.as_mut_ptr(),
@@ -1238,6 +1309,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 
     // Re-use the fs request.
     this.io_request.deinit();
+    let position = this.write_position();
     // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` points into
     // `read_buf` (len set above), and `on_write` is a valid `uv_fs_cb`.
     let rc2 = unsafe {
@@ -1247,7 +1319,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
             destination_fd.uv(),
             core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
             1,
-            -1,
+            position,
             Some(on_write),
         )
     };
@@ -1302,6 +1374,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
         let prev = this.read_write_loop.uv_buf.slice();
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
+        let position = this.write_position();
         // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` is a tail
         // slice of the previous write buffer (still backed by `read_buf`), and
         // `on_write` is a valid `uv_fs_cb`.
@@ -1312,7 +1385,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
                 destination_fd.uv(),
                 core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
                 1,
-                -1,
+                position,
                 Some(on_write),
             )
         };
@@ -1327,6 +1400,10 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
     }
 
     this.io_request.deinit();
+    if this.window_remaining() == 0 {
+        this.on_read_write_loop_complete();
+        return;
+    }
     match this.read_write_loop_read() {
         bun_sys::Result::Err(err) => {
             this.err = Some(err);
@@ -1360,6 +1437,7 @@ impl<'a> CopyFileWindows<'a> {
         event_loop: &'a jsc::event_loop::EventLoop,
         context: &jsc::ScriptExecutionContext,
         mkdirp_if_not_exists: bool,
+        offset: SizeType,
         size_: SizeType,
         destination_mode: Option<Mode>,
     ) -> JSValue {
@@ -1375,6 +1453,7 @@ impl<'a> CopyFileWindows<'a> {
             context: context.id(),
             mkdirp_if_not_exists,
             destination_mode,
+            offset,
             size: size_,
             written_bytes: 0,
             err: None,
@@ -1394,19 +1473,10 @@ impl<'a> CopyFileWindows<'a> {
     fn prepare_pathlike(
         pathlike: &mut PathOrFileDescriptor,
         must_close: &mut bool,
-        is_reading: bool,
+        open_flags: i32,
     ) -> bun_sys::Result<Fd> {
         if let PathOrFileDescriptor::Path(path) = pathlike {
-            let fd = match bun_sys::openat_windows_a(
-                Fd::INVALID,
-                path.slice(),
-                if is_reading {
-                    bun_sys::O::RDONLY
-                } else {
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC
-                },
-                0,
-            ) {
+            let fd = match bun_sys::openat_windows_a(Fd::INVALID, path.slice(), open_flags, 0) {
                 bun_sys::Result::Ok(result) => match result.make_libuv_owned() {
                     Ok(fd) => fd,
                     Err(_) => {
@@ -1440,7 +1510,11 @@ impl<'a> CopyFileWindows<'a> {
                 .as_file_mut()
                 .pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
-            false,
+            if self.offset == 0 {
+                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC
+            } else {
+                bun_sys::O::WRONLY | bun_sys::O::CREAT
+            },
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
@@ -1459,7 +1533,7 @@ impl<'a> CopyFileWindows<'a> {
                 .as_file_mut()
                 .pathlike,
             &mut self.read_write_loop.must_close_source_fd,
-            true,
+            bun_sys::O::RDONLY,
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
@@ -1467,6 +1541,13 @@ impl<'a> CopyFileWindows<'a> {
                 return;
             }
         };
+
+        // Only a regular file has a position to write at. A pipe takes the bytes in order.
+        self.read_write_loop.positioned = self.offset != 0
+            && matches!(
+                bun_sys::File::borrow(&self.read_write_loop.destination_fd).kind(),
+                bun_sys::Result::Ok(bun_sys::FileKind::File)
+            );
 
         match self.read_write_loop_start() {
             bun_sys::Result::Err(err) => {
@@ -1479,10 +1560,12 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn copyfile(&mut self) {
-        // This is for making it easier for us to test this code path
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
-            .get()
-            .unwrap_or(false)
+        // uv_fs_copyfile replaces the whole destination.
+        if self.offset != 0
+            // This is for making it easier for us to test this code path
+            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
+                .get()
+                .unwrap_or(false)
         {
             self.prepare_read_write_loop();
             return;
@@ -1645,7 +1728,10 @@ impl<'a> CopyFileWindows<'a> {
 
     pub(crate) fn on_complete(&mut self, written_actual: usize) {
         let mut written = written_actual;
-        if written > usize::try_from(self.size).expect("int cast") && self.size != MAX_SIZE {
+        if self.offset == 0
+            && written > usize::try_from(self.size).expect("int cast")
+            && self.size != MAX_SIZE
+        {
             self.truncate();
             written = usize::try_from(self.size).expect("int cast");
         }

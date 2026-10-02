@@ -634,19 +634,23 @@ test("a file: override that several registry packages depend on is one package",
   const { out } = await runBunInstall(env, packageDir);
   expect(out).toContain(`${Object.keys(dependents).length + 1} packages installed`);
 
+  // one entry for the override target, whatever path spelling its name carries
   const store = join(packageDir, "node_modules", ".bun");
+  const entries = await readdirSorted(store);
+  expect(entries.filter(dir => dir.startsWith("no-deps@"))).toEqual([expect.stringMatching(/^no-deps@file\+/)]);
+  const overrideEntry = entries.find(dir => dir.startsWith("no-deps@"))!;
+
   expect(
     await Promise.all(
       Object.entries(dependents).map(([name, version]) =>
         readlink(join(store, `${name}@${version}`, "node_modules", "no-deps")),
       ),
     ),
-  ).toEqual(
-    Object.keys(dependents).map(() => join("..", "..", "no-deps@file+.+vendor+no-deps", "node_modules", "no-deps")),
-  );
-  expect(
-    await file(join(store, "no-deps@file+.+vendor+no-deps", "node_modules", "no-deps", "package.json")).json(),
-  ).toEqual({ name: "no-deps", version: "9.9.9" });
+  ).toEqual(Object.keys(dependents).map(() => join("..", "..", overrideEntry, "node_modules", "no-deps")));
+  expect(await file(join(store, overrideEntry, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "9.9.9",
+  });
 });
 
 describe("isolated workspaces", () => {

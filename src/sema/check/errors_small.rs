@@ -68,181 +68,6 @@ pub(super) fn has_parameter_list_error(hir: &hir::File, func: &Func) -> bool {
 }
 
 impl Checker<'_> {
-    /// `checkAndReportErrorForInvalidInitializer`: 2301 2844. Where fields are set up by assignments put in the constructor, a name in
-    /// an initializer would come to mean what the constructor declares by it.
-    fn check_initializers_against_constructors(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        if self.p.files.options.emit_standard_class_fields {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // The operand of a `typeof` in the type of a property is looked up from there as well.
-        let has_queries = !bound.type_query_operands.is_empty();
-        for c in &hir.classes {
-            let Some(constructor) = c.members.iter().find(|&m| {
-                hir[m].kind == MemberKind::Constructor
-                    && !matches!(hir[hir[m].func].body, FnBody::None)
-            }) else {
-                continue;
-            };
-            let locals = bound.scopes[bound.fns[hir[constructor].func.idx()].scope.idx()].locals;
-            let is_instance_property = |m: MemberId| {
-                c.members.range().contains(&m.idx())
-                    && hir[m].kind == MemberKind::Property
-                    && !hir[m].flags.contains(Flags::STATIC)
-            };
-            if locals.is_none()
-                || !c.members.iter().any(|m| {
-                    is_instance_property(m)
-                        && (hir[m].init.is_some()
-                            || has_queries && hir[m].ty.is_some()
-                            || matches!(hir[m].key, PropKey::Computed(_)))
-                })
-            {
-                continue;
-            }
-            let index = self.exprs_by_kind(file);
-            for &id in index.of(ExprTag::Ident) {
-                let i = id.idx();
-                let ExprKind::Ident(name) = hir.exprs[i].kind else {
-                    continue;
-                };
-                if !bound
-                    .lookup(locals, name)
-                    .is_some_and(|s| bound.symbols[s.idx()].flags.intersects(SymFlags::VALUE))
-                {
-                    continue;
-                }
-                // `Resolve`: out to the property, past every function and every other class on the way.
-                let symbol = bound.expr_symbol[i];
-                let (mut parent, mut top) = (bound.expr_parent[i], ExprId(i as u32));
-                let member = loop {
-                    match parent {
-                        Parent::MemberInit(m) if is_instance_property(m) => break Some(m),
-                        // A computed name is part of what it names.
-                        Parent::Key(literal) => parent = Parent::Expr(literal),
-                        Parent::MemberKey => {
-                            if let Some(m) = hir
-                                .members
-                                .iter()
-                                .position(|m| m.key == PropKey::Computed(top))
-                            {
-                                parent = Parent::MemberInit(MemberId(m as u32));
-                            } else if let Some(p) = hir
-                                .props
-                                .iter()
-                                .position(|p| p.key == PropKey::Computed(top))
-                            {
-                                parent = Parent::Expr(bound.prop_owner[p]);
-                            } else {
-                                break None;
-                            }
-                        }
-                        Parent::None | Parent::File | Parent::Module(_) => break None,
-                        Parent::Stmt(s) if s.is_none() => break None,
-                        Parent::Expr(x) if x.is_none() => break None,
-                        Parent::Expr(x) => {
-                            top = x;
-                            parent = bound.expr_parent[x.idx()];
-                        }
-                        _ => parent = self.outward(file, parent),
-                    }
-                };
-                let Some(member) = member else { continue };
-                // Found before the property was reached: declared somewhere in the initializer itself.
-                if symbol.is_some() && self.is_declared_in_the_initializer_of(file, symbol, member)
-                {
-                    continue;
-                }
-                let start = hir.exprs[i].pos;
-                // `checkAndReportErrorForMissingPrefix` comes first: a member goes by the name, and `this.` is what is missing.
-                // It has nothing to say of the operand of a `typeof`.
-                if !bound.is_in_type_query(ExprId(i as u32))
-                    && out
-                        .iter()
-                        .any(|d| d.start == start && matches!(d.code, 2662 | 2663))
-                {
-                    continue;
-                }
-                // `Resolve` returns at once: nothing is said of a name that cannot be found.
-                out.retain(|d| {
-                    d.start != start
-                        || !matches!(
-                            d.code,
-                            2304 | 2552
-                                | 2583
-                                | 2584
-                                | 2585
-                                | 2591
-                                | 2592
-                                | 2593
-                                | 2662
-                                | 2663
-                                | 2689
-                                | 2693
-                                | 2708
-                                | 2863
-                                | 2868
-                        )
-                });
-                // `prop.Type.Loc.ContainsInclusive(errorLocation.Pos())`: the type comes after the name and before the initializer.
-                let (ty, init) = (hir[member].ty, hir[member].init);
-                let is_in_type = ty.is_some()
-                    && hir[ty].pos <= start
-                    && (init.is_none() || start < self.start_of(file, init));
-                let code = if is_in_type { 2844 } else { 2301 };
-                out.push(Diagnostic { start, code });
-                // `DeclarationNameToString`: the name of the property as it is written.
-                self.explain(start, code, |checker| {
-                    let end = checker.end_of_member_name(file, member);
-                    vec![
-                        checker.source_text(file, hir[member].pos, end),
-                        checker.atom_text(name),
-                    ]
-                });
-            }
-        }
-    }
-
-    fn is_declared_in_the_initializer_of(
-        &self,
-        file: FileId,
-        symbol: SymbolId,
-        member: MemberId,
-    ) -> bool {
-        let bound = self.bound(file);
-        let Some(&decl) = bound.symbols[symbol.idx()].decls.first() else {
-            return false;
-        };
-        let mut parent = match decl {
-            Decl::Param(mut root) | Decl::Var(mut root) => loop {
-                match bound.pat_parent[root.idx()] {
-                    PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
-                    PatParent::Var(d) => break Parent::VarInit(d),
-                    PatParent::Param(p) => break Parent::ParamDefault(p),
-                    PatParent::None => return false,
-                }
-            },
-            Decl::Fn(f) => match bound.fns[f.idx()].owner {
-                FnOwner::Stmt(s) => Parent::Stmt(s),
-                FnOwner::Expr(e) => Parent::Expr(e),
-                _ => return false,
-            },
-            Decl::Class(c) => match bound.class_owner[c.idx()] {
-                ClassOwner::Stmt(s) => Parent::Stmt(s),
-                ClassOwner::Expr(e) => Parent::Expr(e),
-            },
-            _ => return false,
-        };
-        loop {
-            match parent {
-                Parent::MemberInit(m) if m == member => return true,
-                Parent::None | Parent::File | Parent::Module(_) => return false,
-                Parent::Stmt(s) if s.is_none() => return false,
-                _ => parent = self.outward(file, parent),
-            }
-        }
-    }
-
     /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot get past a `let` or a `const` of the same name on its way up.
     fn check_vars_not_shadowed(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -380,7 +205,6 @@ impl Checker<'_> {
         self.check_accessor_parameters(file, out);
         self.check_names_that_are_keywords(file, out);
         self.check_vars_not_shadowed(file, out);
-        self.check_initializers_against_constructors(file, out);
         if self.p.files.options.strict_null_checks {
             self.check_known_truthy_tests(file, out);
         }
@@ -804,18 +628,17 @@ impl Checker<'_> {
             self.explain_to(start, end, 2845, |_| vec![is_truthy.to_string()]);
             return;
         }
-        // Sure to be truthy: nothing in it can be falsy.
+        // `isPropertyExpressionCast`
         if matches!(hir[location].kind, ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::As { .. } | ExprKind::AsConst(_)))
-            || self.is_any(ty)
-            || ty == TypeId::UNKNOWN
-            || ty == TypeId::NEVER
-            || !self.every_type(ty, |c, m| {
-                c.is_object_type(m) || matches!(c.data(m), TypeData::Intersection(_))
-            })
+            || !self.can_be_truthy(ty)
         {
             return;
         }
-        let is_promise = self.parts(ty).iter().all(|&m| self.awaited(m) != m);
+        // `getAwaitedTypeOfPromise(t) != nil`
+        let is_promise = self
+            .thenable_value(ty)
+            .and_then(|promised| self.awaited_or_none(promised))
+            .is_some_and(|awaited| self.is_known(awaited));
         if self.signatures(ty, false).is_empty() && !is_promise {
             return;
         }

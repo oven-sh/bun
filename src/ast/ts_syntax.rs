@@ -354,6 +354,8 @@ pub struct MappedType {
 pub struct TypeParam {
     pub name: StoreStr,
     pub loc: Loc,
+    /// Of its first token: a modifier, or the name.
+    pub start: Loc,
     pub constraint: TypeId,
     pub default: TypeId,
     /// `const`, `in`, `out`
@@ -407,6 +409,8 @@ pub struct Member {
     pub trailing_comma_loc: Option<Loc>,
     pub signature: SignatureId,
     pub loc: Loc,
+    /// Of its first token: a modifier, `get`, `set`, or `loc`.
+    pub start: Loc,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -428,6 +432,20 @@ pub struct FunctionBody {
     pub stmts: StoreSlice<Stmt>,
 }
 
+/// The `this` parameter of a signature: its type, if it has one, and where its name is.
+#[derive(Copy, Clone)]
+pub struct ThisParam {
+    pub ty: TypeId,
+    pub loc: Loc,
+}
+
+impl ThisParam {
+    pub const NONE: ThisParam = ThisParam {
+        ty: TypeId::NONE,
+        loc: Loc::EMPTY,
+    };
+}
+
 /// `<T>(this: A, b: B): R`
 #[derive(Copy, Clone)]
 pub struct Signature {
@@ -435,7 +453,7 @@ pub struct Signature {
     pub flags: Flags,
     pub type_params: Span<TypeParam>,
     pub params: Span<Param>,
-    pub this_type: TypeId,
+    pub this_param: ThisParam,
     pub return_type: TypeId,
     /// `get name() { .. }` in a type, which is an error.
     pub body: Option<FunctionBody>,
@@ -489,6 +507,8 @@ pub struct PatternElement {
     pub pattern: PatternId,
     pub default: Option<Expr>,
     pub is_rest: bool,
+    /// Of its first token: the `...`, or the pattern.
+    pub loc: Loc,
 }
 
 /// A statement that only exists in TypeScript. The parser leaves an `S::TypeScript` placeholder in the statement list, which refers to

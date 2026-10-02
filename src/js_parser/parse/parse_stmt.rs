@@ -620,7 +620,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 lexical_decl: LexicalDecl::AllowAll,
                                 ..Default::default()
                             };
-                            body.push(p.parse_stmt(&mut stmt_opts)?);
+                            let stmt_start = p.lexer.loc();
+                            let stmt = p.parse_stmt(&mut stmt_opts)?;
+                            if stmt.loc.start > stmt_start.start {
+                                p.mark_type_syntax(
+                                    stmt.loc,
+                                    crate::sema::Mark::DeclarationStart,
+                                    stmt_start,
+                                );
+                            }
+                            body.push(stmt);
                         }
                     }
                 }

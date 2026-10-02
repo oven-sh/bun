@@ -20,57 +20,10 @@ fn has_body_node(func: &Func) -> bool {
     has_body(func) || func.flags.contains(Flags::MISSING_BODY)
 }
 
-/// Where a constructor starts. An error about one goes to the first of its modifiers (`GetErrorRangeForNode`); `member.pos` is
-/// the keyword. Only the modifiers it is known to have are looked for, each once.
-fn start_of_constructor(text: &[u8], member: &Member) -> u32 {
-    const MODIFIERS: &[(&[u8], Flags)] = &[
-        (b"public", Flags::PUBLIC),
-        (b"private", Flags::PRIVATE),
-        (b"protected", Flags::PROTECTED),
-        (b"abstract", Flags::ABSTRACT),
-        (b"override", Flags::OVERRIDE),
-        (b"readonly", Flags::READONLY),
-        (b"declare", Flags::AMBIENT),
-        (b"async", Flags::ASYNC),
-        (b"accessor", Flags::ACCESSOR),
-    ];
-    let mut start = member.pos as usize;
-    if start > text.len() {
-        return member.pos;
-    }
-    let mut left = member.flags;
-    loop {
-        let before = text[..start].trim_ascii_end();
-        match MODIFIERS
-            .iter()
-            .find(|m| left.contains(m.1) && before.ends_with(m.0))
-        {
-            Some(m) => {
-                left.remove(m.1);
-                start = before.len() - m.0.len();
-            }
-            None => return start as u32,
-        }
-    }
-}
-
-/// Whether the parser skipped a token right before the declaration whose name is at `name`. `previous`: the name of the declaration
-/// before it in the list. Then `previous.End() != node.Pos()`, though the two are neighbours in the tree.
-fn follows_skipped_token(hir: &hir::File, previous: u32, name: u32) -> bool {
-    let after = hir.after_skipped.partition_point(|&start| start <= name);
-    let Some(&start) = after
-        .checked_sub(1)
-        .and_then(|last| hir.after_skipped.get(last))
-    else {
-        return false;
-    };
-    // Only modifiers and keywords stand between the first token of a declaration and its name. A token skipped inside the previous
-    // declaration is followed by whatever closes the list it was skipped in.
-    start > previous
-        && hir
-            .text
-            .get(start as usize..name as usize)
-            .is_some_and(|head| !head.iter().any(|&b| matches!(b, b'}' | b')' | b']' | b';')))
+/// Whether the parser skipped a token right before the declaration that starts at `start`. Then `previous.End() != node.Pos()`, though
+/// the two are neighbours in the tree.
+fn follows_skipped_token(hir: &hir::File, start: u32) -> bool {
+    hir.after_skipped.binary_search(&start).is_ok()
 }
 
 /// The way `checkFunctionOrConstructorSymbolWorker` goes through the declarations of one function, method or constructor.
@@ -213,7 +166,7 @@ impl Checker<'_> {
             return;
         }
         let starts_at_previous_end = |i: usize| match (functions[i - 1], functions[i]) {
-            (Some((_, previous)), Some((_, start))) => !follows_skipped_token(hir, previous, start),
+            (Some(_), Some((f, _))) => !follows_skipped_token(hir, hir[f].start),
             _ => true,
         };
         // `reportImplementationExpectedError`
@@ -451,7 +404,7 @@ impl Checker<'_> {
         }
         let start_of = |member: &Member| {
             if member.kind == MemberKind::Constructor {
-                start_of_constructor(&hir.text, member)
+                member.start
             } else {
                 member.pos
             }
@@ -465,9 +418,8 @@ impl Checker<'_> {
                 self.end_of_member_name(file, m)
             }
         };
-        let starts_at_previous_end = |i: usize| {
-            !follows_skipped_token(hir, hir[members.at(i - 1)].pos, hir[members.at(i)].pos)
-        };
+        let starts_at_previous_end =
+            |i: usize| !follows_skipped_token(hir, hir[members.at(i)].start);
         // `reportImplementationExpectedError`
         let mut report = |i: usize| {
             let member = &hir[members.at(i)];

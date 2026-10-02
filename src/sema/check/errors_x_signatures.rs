@@ -33,41 +33,6 @@ fn has_line_break(text: &[u8], from: usize, to: usize) -> bool {
         .is_some_and(|between| between.iter().any(|&b| b == b'\n' || b == b'\r'))
 }
 
-const MEMBER_MODIFIERS: &[(&[u8], Flags)] = &[
-    (b"public", Flags::PUBLIC),
-    (b"private", Flags::PRIVATE),
-    (b"protected", Flags::PROTECTED),
-    (b"static", Flags::STATIC),
-    (b"abstract", Flags::ABSTRACT),
-    (b"override", Flags::OVERRIDE),
-    (b"readonly", Flags::READONLY),
-    (b"declare", Flags::AMBIENT),
-    (b"async", Flags::ASYNC),
-    (b"accessor", Flags::ACCESSOR),
-];
-
-const TYPE_PARAMETER_MODIFIERS: &[(&[u8], Flags)] = &[
-    (b"in", Flags::IN),
-    (b"out", Flags::OUT),
-    (b"const", Flags::CONST),
-];
-
-/// The start of the node named at `name`, modifiers included. Only looks for the modifiers in `flags`; one may be repeated (`in out in T`).
-fn start_with_modifiers(text: &[u8], name: u32, flags: Flags, modifiers: &[(&[u8], Flags)]) -> u32 {
-    let mut start = name as usize;
-    if start > text.len() {
-        return name;
-    }
-    loop {
-        let end = skip_trivia_back(text, start);
-        let word = word_before(text, end);
-        if !modifiers.iter().any(|m| m.0 == word && flags.contains(m.1)) {
-            return start as u32;
-        }
-        start = end - word.len();
-    }
-}
-
 /// Where the type the summary has at `pos` starts as it is written. Neither the parentheses around a type are kept nor a `|` or a `&`
 /// before its only member. Only for a type that follows a `:`, a `=`, an `is` or a `<`, which none of these can be mistaken for.
 fn start_of_written_type(text: &[u8], pos: u32) -> u32 {
@@ -525,8 +490,7 @@ fn check_grammar_arrow_function(
             && let Some(end) = end
             && text.get(skip_trivia(text, end)) == Some(&b'>')
         {
-            let start =
-                start_with_modifiers(text, first.pos, first.flags, TYPE_PARAMETER_MODIFIERS);
+            let start = first.start;
             out.push(Diagnostic { start, code: 7060 });
             let end = c.end_of_type_param(file, func.type_params.at(0));
             c.note(start, end, 7060, vec![]);
@@ -1444,12 +1408,6 @@ impl Checker<'_> {
         self.check_type_parameter_lists(file, out);
         self.check_variance_annotations(file, out);
         self.check_grammar_of_signatures(file, out);
-        // `checkSourceFile` checks a declaration file like any other file. The passes after this branch are not enabled for
-        // declaration files.
-        if hir.kind == FileKind::Declaration {
-            self.check_declarations_of_blocks(file, out);
-            return;
-        }
         self.check_parameters_of_signatures(file, out);
         self.check_abstract_members_and_accessor_pairs(file, out);
         self.check_type_predicates(file, out);
@@ -1458,7 +1416,10 @@ impl Checker<'_> {
         self.check_promise_constructor_is_there(file, out);
         self.check_member_overloads_agree(file, out);
         self.check_declarations_of_blocks(file, out);
-        self.check_erasable_syntax(file, out);
+        // `NodeFlagsAmbient`: all there is in a declaration file has it.
+        if hir.kind != FileKind::Declaration {
+            self.check_erasable_syntax(file, out);
+        }
     }
 
     /// Whether `source` is known not to fit `target`.
@@ -1663,12 +1624,7 @@ impl Checker<'_> {
                     seen_default = true;
                     defaults.push((decl.default, list, index));
                 } else if seen_default {
-                    let start = start_with_modifiers(
-                        &hir.text,
-                        decl.pos,
-                        decl.flags,
-                        TYPE_PARAMETER_MODIFIERS,
-                    );
+                    let start = decl.start;
                     out.push(Diagnostic { start, code: 2706 });
                     let end = self.end_of_type_param(file, p);
                     self.explain_to(start, end, 2706, |_| vec![]);
@@ -1783,8 +1739,7 @@ impl Checker<'_> {
                 if !self.is_known(declared) {
                     continue;
                 }
-                let start =
-                    start_with_modifiers(&hir.text, decl.pos, decl.flags, TYPE_PARAMETER_MODIFIERS);
+                let start = decl.start;
                 // `ObjectFlagsAnonymous | ObjectFlagsMapped`
                 if is_alias
                     && !matches!(
@@ -2360,9 +2315,7 @@ impl Checker<'_> {
         let owner = bound.fns[f.idx()].owner;
         match (func.kind, owner) {
             (FnKind::Arrow, _) => func.pos,
-            (FnKind::Constructor, FnOwner::Member(m)) => {
-                start_with_modifiers(&hir.text, hir[m].pos, hir[m].flags, MEMBER_MODIFIERS)
-            }
+            (FnKind::Constructor, FnOwner::Member(m)) => hir[m].start,
             (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => func.name_pos,
             _ if func.name.is_some() => func.name_pos,
             // `GetAssignedName`: one without a name goes by what it is given to, if it is written right there.
@@ -2574,11 +2527,7 @@ impl Checker<'_> {
                 let ret = self.type_from_node(file, func.ret);
                 let ret = self.force(ret);
                 let start = start_of_written_type(&hir.text, hir[func.ret].pos);
-                // What is in error is `any` here too: only an `any` that is written out is known not to be.
-                if self.is_known(ret)
-                    && (!self.has_any_flag(ret)
-                        || matches!(hir[func.ret].kind, TypeNodeKind::Keyword(Keyword::Any)))
-                {
+                if self.is_known(ret) && !self.is_error_type(ret) {
                     if has_promise_type && self.is_global_ref(ret, known::Promise).is_none() {
                         out.push(Diagnostic { start, code: 1064 });
                         let end = self.end_of_type_node_from(file, func.ret, start);
@@ -2823,11 +2772,7 @@ impl Checker<'_> {
                     continue;
                 }
                 let (symbol, checked, at) = if member.kind == MemberKind::Constructor {
-                    (
-                        None,
-                        Flags::PRIVATE | Flags::PROTECTED,
-                        start_with_modifiers(&hir.text, member.pos, member.flags, MEMBER_MODIFIERS),
-                    )
+                    (None, Flags::PRIVATE | Flags::PROTECTED, member.start)
                 } else {
                     let declaration = MemberDeclaration::Member(m);
                     (

@@ -30,8 +30,6 @@ pub enum VisitedKind {
     ImportDeferName(ExprId),
     /// The `const` of `x as const` and of `<const>x`.
     ConstOfAsConst(ExprId),
-    /// The template of a tagged template, of which the lowered tree keeps the substitutions.
-    TaggedTemplateLiteral(ExprId),
     /// The name of an intrinsic element in a tag of the JSX element, and the string the lowered tree keeps for it.
     JsxIntrinsicTagName(ExprId, ExprId),
     /// One of the two identifiers of a `JsxNamespacedName`.
@@ -114,7 +112,6 @@ impl Checker<'_> {
             | VisitedKind::AccessName(e)
             | VisitedKind::ImportDeferName(e)
             | VisitedKind::ConstOfAsConst(e)
-            | VisitedKind::TaggedTemplateLiteral(e)
             | VisitedKind::JsxIntrinsicTagName(e, _) => self.enclosing_scope_of_expr(file, e),
             VisitedKind::DeclarationName(decl, _) | VisitedKind::SpecifierPropertyName(decl, _) => {
                 self.enclosing_scope_of_declaration(file, decl)
@@ -207,7 +204,11 @@ impl Visitor<'_, '_> {
     /// `createMissingNode`: an identifier the parser missed at `pos` is a node without text, where the token before it ends. The
     /// harness puts it on the line of the token after it (`SkipTrivia`).
     fn missing_identifier(&mut self, pos: u32, kind: VisitedKind) {
-        if self.hir.has_parse_diagnostics {
+        // `parseThrowStatement` alone reports nothing for the identifier it misses.
+        let is_thrown = matches!(kind, VisitedKind::Expression(e)
+            if matches!(self.c.bound(self.file).expr_parent[e.idx()], Parent::Stmt(s)
+                if matches!(self.hir[s].kind, StmtKind::Throw(_))));
+        if self.hir.has_parse_diagnostics || is_thrown {
             let start = self.skip_trivia(self.c.end_of_token_before(self.file, pos));
             let end = start;
             self.nodes.push(VisitedNode { start, end, kind });
@@ -223,6 +224,10 @@ impl Visitor<'_, '_> {
     /// Takes the identifiers of the entity name `names`, which is written at `start`.
     fn entity_name(&mut self, start: u32, names: IdList<Atom>, kind: impl Fn(u32) -> VisitedKind) {
         let ranges = self.c.entity_name_ranges(self.file, start, names);
+        // `parseRightSideOfDot`
+        if let Some(&(_, end)) = ranges.last().filter(|_| ranges.len() < names.len()) {
+            self.missing_identifier(self.skip_trivia(end) + 1, kind(ranges.len() as u32));
+        }
         for (position, (start, end)) in (0..).zip(ranges) {
             self.node(start, end, kind(position));
         }
@@ -286,7 +291,7 @@ impl Visitor<'_, '_> {
                         self.token(name, VisitedKind::AccessName(e));
                     }
                 }
-                ExprKind::ImportCall(specifier)
+                ExprKind::ImportCall(specifier, _)
                     if hir
                         .deferred_import_calls
                         .iter()
@@ -304,18 +309,6 @@ impl Visitor<'_, '_> {
                     };
                     if self.is_written_at(start, b"const") {
                         self.node(start, start + 5, VisitedKind::ConstOfAsConst(e));
-                    }
-                }
-                ExprKind::TaggedTemplate(c) => {
-                    let end = self.c.end_inside_parentheses(file, e);
-                    // The cooked text is not kept. It is the raw text if nothing in that is escaped.
-                    if let Some(start) = self.c.start_of_tagged_template_literal(file, c)
-                        && let Some(raw) = hir.text.get(start as usize + 1..end as usize)
-                        && (!hir[c].args.is_empty()
-                            || raw.ends_with(b"`")
-                                && !raw.iter().any(|b| matches!(b, b'\\' | b'\r')))
-                    {
-                        self.node(start, end, VisitedKind::TaggedTemplateLiteral(e));
                     }
                 }
                 ExprKind::Jsx(jsx) if bound.expr_scope.contains_key(&e) => {
@@ -412,6 +405,16 @@ impl Visitor<'_, '_> {
                 ExprKind::Missing if hir.text.get(expr.pos as usize) == Some(&b'@') => {
                     not_missed.push(ExprId(index as u32));
                 }
+                // The keyword of a `MetaProperty` is no node.
+                ExprKind::Dot { obj, .. }
+                    if matches!(hir[obj].kind, ExprKind::Missing)
+                        && hir
+                            .text
+                            .get(hir[obj].pos as usize..)
+                            .is_some_and(|text| text.starts_with(b"import")) =>
+                {
+                    not_missed.push(obj);
+                }
                 _ => {}
             }
         }
@@ -452,8 +455,9 @@ impl Visitor<'_, '_> {
                     .map(|p| hir[p].value)
                     .filter(|e| e.is_some())
             };
-            // The empty `{}`
-            not_missed.extend(hir.ids(jsx.children).chain(values()));
+            // The empty `{}` of `name={}`, which the parser puts where the brace is. It makes no child of one.
+            let is_at_brace = |e: &ExprId| hir.text.get(hir[*e].pos as usize) == Some(&b'{');
+            not_missed.extend(values().filter(is_at_brace));
             // The name of an intrinsic element is an identifier, which the lowered tree keeps as a string.
             not_visited.extend(
                 [jsx.tag, jsx.close_tag]
@@ -534,7 +538,8 @@ impl Visitor<'_, '_> {
                     let kind = VisitedKind::LiteralInEnumMemberName(m);
                     self.literal_in_computed_name(PropKey::Name(name), start, kind);
                 }
-                if name.is_some() {
+                // `[e]` names nothing.
+                if name.is_some() || matches!(decl, Decl::EnumMember(_)) {
                     let is_missing = self.is_missing(name, start);
                     self.name_of(is_missing, start, VisitedKind::DeclarationName(decl, id));
                 }
@@ -684,6 +689,11 @@ impl Visitor<'_, '_> {
         for (index, stmt) in hir.stmts.iter().enumerate() {
             let start = match stmt.kind {
                 StmtKind::Labeled { .. } => stmt.pos,
+                StmtKind::Break(known::empty) | StmtKind::Continue(known::empty) => {
+                    let keyword_end = self.c.end_of_token_at(self.file, stmt.pos);
+                    self.missing_identifier(keyword_end, VisitedKind::Label(StmtId(index as u32)));
+                    continue;
+                }
                 StmtKind::Break(label) | StmtKind::Continue(label) if label.is_some() => {
                     self.token_after(stmt.pos)
                 }
@@ -721,6 +731,11 @@ impl Visitor<'_, '_> {
                     }
                 }
                 TypeNodeKind::Ref { name, .. } if hir.ids(name).eq([known::empty]) => {
+                    self.missing_identifier(start, VisitedKind::TypeReferenceName(node, 0));
+                }
+                TypeNodeKind::Keyword(_)
+                    if !hir.is_in_jsdoc(start) && self.c.is_missing_type(file, node) =>
+                {
                     self.missing_identifier(start, VisitedKind::TypeReferenceName(node, 0));
                 }
                 // A `QualifiedName` is neither an expression node nor an identifier.

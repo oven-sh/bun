@@ -390,22 +390,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// Whether the first parameter of `func` is written `this`. No node is kept of one without a type.
-    fn has_written_this_parameter(&self, func: FnId) -> bool {
-        let func = &self.b.file[func];
-        let open = func.anchor as usize;
-        if func.kind == FnKind::Arrow || self.source.get(open) != Some(&b'(') {
-            return false;
-        }
-        let at = super::lower::skip_trivia(self.source, open + 1);
-        self.source
-            .get(at..)
-            .is_some_and(|rest| rest.starts_with(b"this"))
-            && !self.source.get(at + 4).is_some_and(|&next| {
-                next == b'_' || next == b'$' || next >= 0x80 || next.is_ascii_alphanumeric()
-            })
-    }
-
     /// `FullSignature != nil`
     fn has_full_signature(&self, func: FnId) -> bool {
         self.full_signatures.contains(&func.0)
@@ -496,6 +480,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 init: ExprId::NONE,
                 func: FnId::NONE,
                 pos: name.start,
+                start: tag.pos,
             });
         }
         let members = self.b.file.add_members(&members);
@@ -575,6 +560,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 params.push(TypeParam {
                     name: self.name_atom(param.name),
                     pos: param.name.start,
+                    start: param.pos,
                     constraint,
                     default,
                     flags,
@@ -644,6 +630,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             flags,
             type_params,
             ty,
+            start: tag.pos,
         };
         let alias = self.b.file.add_alias(alias);
         let mut statement = self.b.file.stmt(StmtKind::TypeAlias(alias), tag.pos);
@@ -659,6 +646,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 },
                 body: self.b.file.list(&[statement]),
                 has_body: true,
+                start: namespace.start,
             };
             let module = self.b.file.add_module(module);
             statement = self.b.file.stmt(StmtKind::Module(module), namespace.start);
@@ -712,11 +700,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                     .named
                     .iter()
                     .map(|specifier| ImportSpec {
+                        start: specifier.imported_pos,
                         imported: self.b.atom(&specifier.imported),
                         local: self.b.atom(&specifier.local),
                         pos: specifier.local_pos,
                         type_only: false,
                         imported_pos: specifier.imported_pos,
+                        import: ImportId(self.b.file.imports.len() as u32),
                     })
                     .collect();
                 let declaration = Import {
@@ -729,6 +719,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                         .namespace
                         .map_or(Atom::NONE, |name| self.name_atom(name)),
                     namespace_pos: import.namespace.map_or(0, |name| name.start),
+                    clause_start: import.clause_start,
+                    namespace_start: import.namespace_start,
                     named: self.b.file.add_import_specs(&named),
                     type_only: true,
                     mode,
@@ -759,6 +751,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                             init: ExprId::NONE,
                             func,
                             pos: tag.name_pos,
+                            start: tag.name_pos,
                             ..member
                         });
                     }
@@ -782,13 +775,15 @@ impl<'p, 'a> Lower<'p, 'a> {
             Some(_) => self.gather_type_parameters(doc, false, TemplateOwner::Function),
             None => Span::EMPTY,
         };
-        let mut this_ty = TypeNodeId::NONE;
+        let (mut this_ty, mut this_pos) = (TypeNodeId::NONE, u32::MAX);
         let mut params = Vec::with_capacity(signature.params.len());
         for (index, param) in signature.params.iter().enumerate() {
             let property = match &param.kind {
                 TagKind::This(ty) => {
                     if this_ty.is_none() {
                         this_ty = self.reparse_type(*ty);
+                        // `thisIdent.Loc = thisTag.Loc`
+                        this_pos = param.pos;
                     }
                     continue;
                 }
@@ -869,10 +864,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             type_params,
             params,
             this_ty,
+            this_pos,
             ret,
             body: FnBody::None,
             anchor: pos,
             pos,
+            start: pos,
         })
     }
 
@@ -940,10 +937,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let func = self.function_like_host(host);
                 if func.is_some()
                     && self.b.file[func].this_ty.is_none()
-                    && !self.has_written_this_parameter(func)
+                    && self.b.file[func].this_pos == u32::MAX
                 {
                     let ty = self.reparse_type(*ty);
                     self.b.file[func].this_ty = ty;
+                    // `finishReparsedNode(thisParam, tag.TagName())`
+                    self.b.file[func].this_pos = tag.name_pos;
                     // `checkParameter`: the parameter is where the name of the tag is.
                     let code = match self.b.file[func].kind {
                         FnKind::Arrow => Some(2730),

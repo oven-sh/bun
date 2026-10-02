@@ -1656,13 +1656,6 @@ impl Checker<'_> {
             } else {
                 ExprId::NONE
             };
-            // A type parameter where none is in scope was not got to the bottom of: `check_assignable` keeps quiet about it.
-            if inner.is_some()
-                && (self.has_type_variables(given) || self.has_type_variables(wanted))
-                && !self.is_in_generic_context(file, inner)
-            {
-                return Applicable::Unknown;
-            }
             // The pieces of text of a tagged template: where the template starts is not kept.
             if let Some(out) = report.as_deref_mut()
                 && node != e

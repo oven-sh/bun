@@ -82,7 +82,7 @@ impl Checker<'_> {
                 // The static side is looked at only if the instances are in order.
                 None => {
                     let static_type = self.type_of_symbol(sym);
-                    let base_constructor = self.type_of_expr(file, class.extends);
+                    let base_constructor = self.base_constructor_type_of_class(sym);
                     let static_base = self.apparent_type(base_constructor);
                     if self.is_known(static_type)
                         && self.is_known(static_base)
@@ -193,12 +193,7 @@ impl Checker<'_> {
             }
             // As it is declared: where a private or protected one comes from tells whether it is the same.
             let mut own = prop.clone();
-            match own.source {
-                PropSource::Type(t) => {
-                    own.source = PropSource::Type(self.instantiate(t, members.mapper))
-                }
-                _ => own.mapper = self.compose(own.mapper, members.mapper),
-            }
+            self.instantiate_prop(&mut own, members.mapper);
             shape.props.push(own);
         }
         Some(self.synth(shape))
@@ -229,12 +224,7 @@ impl Checker<'_> {
                 let mut shape = Shape::default();
                 for prop in &members.shape().props {
                     let mut prop = prop.clone();
-                    match prop.source {
-                        PropSource::Type(t) => {
-                            prop.source = PropSource::Type(self.instantiate(t, mapper))
-                        }
-                        _ => prop.mapper = self.compose(prop.mapper, mapper),
-                    }
+                    self.instantiate_prop(&mut prop, mapper);
                     shape.props.push(prop);
                 }
                 for &sig in &members.shape().call {

@@ -680,7 +680,7 @@ impl Checker<'_> {
             if strict
                 && !(is_shorthand
                     && !self.is_uncertain(file, value)
-                    && self.has_undefined_in_it(default))
+                    && self.is_possibly_undefined(default))
             {
                 source = self.type_with_ne_undefined(source);
             }
@@ -912,38 +912,6 @@ impl Checker<'_> {
             }
             _ => {}
         }
-    }
-
-    /// `getTypeFactsWorker`: an instantiable type or an intersection has the facts of its base constraint, or of `unknown` if it has
-    /// none. Returns the type whose members decide the facts of `member`, which is not a union.
-    fn type_deciding_facts(&mut self, member: TypeId) -> TypeId {
-        if !self.is_deferred(member) && !self.is_intersection(member) {
-            return member;
-        }
-        let constraint = self.base_constraint_of(member).unwrap_or(TypeId::UNKNOWN);
-        self.force(constraint)
-    }
-
-    /// `hasTypeFacts(ty, TypeFactsIsUndefined)`: `undefined` is in `ty`, or in what it extends. `any`, `unknown` and `void` have it not.
-    fn has_undefined_in_it(&mut self, ty: TypeId) -> bool {
-        for &m in self.parts(ty) {
-            let m = self.type_deciding_facts(m);
-            if self.some_type(m, |_, p| p.is_undefined()) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// `getTypeWithFacts(ty, TypeFactsNEUndefined)`: `ty` without the members that can only be `undefined`. `VoidFacts` lacks
-    /// `NEUndefined` as well, and `never` has no facts.
-    fn type_with_ne_undefined(&mut self, ty: TypeId) -> TypeId {
-        self.filter(ty, |c, member| {
-            let deciding = c.type_deciding_facts(member);
-            c.some_type(deciding, |_, part| {
-                !part.is_undefined() && part != TypeId::VOID && part != TypeId::NEVER
-            })
-        })
     }
 
     /// `checkReferenceAssignment`, and what `checkAssignmentOperator` does for a default: `source` is assigned to `target`, which is

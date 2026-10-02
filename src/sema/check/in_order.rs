@@ -371,7 +371,7 @@ impl Checker<'_> {
             | ExprKind::AsConst(x)
             | ExprKind::NonNull(x)
             | ExprKind::Instantiation { expr: x, .. }
-            | ExprKind::ImportCall(x) => self.expression_in_order(file, x, put_off),
+            | ExprKind::ImportCall(x, _) => self.expression_in_order(file, x, put_off),
             ExprKind::Index {
                 obj: a, index: b, ..
             }

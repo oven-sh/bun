@@ -88,9 +88,9 @@ use spans::end_of_brackets;
 use spans::is_identifier_part;
 use spans::line_break_len;
 use spans::skip_trivia;
+use spans::start_of_token_before;
 use spans::{is_word_at, word_at, word_before, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
-use spans::{start_of_token_before, start_with_type};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -247,9 +247,6 @@ pub struct Program {
     /// See `optional_property_kept`.
     optional_properties: ById<TypeId, TypeId>,
     intersected_props: ByKey<(TypeId, Atom), TypeId>,
-    /// What an object type whose properties are copies (`PropSource::Type`) was made from: a copy is declared where the original is.
-    /// Of a spread (the flag) what is on the left and on the right, otherwise where to look, in that order. `place_of_copied_prop`
-    copied_from: ByKey<TypeId, (bool, Box<[TypeId]>)>,
     /// `isDiscriminantProperty`, by union and property name.
     discriminants: ByKey<(TypeId, Atom), bool>,
     never_intersections: ById<TypeId, bool>,
@@ -450,7 +447,6 @@ impl Program {
             mapped_prop_types: Default::default(),
             optional_properties: Default::default(),
             intersected_props: Default::default(),
-            copied_from: Default::default(),
             discriminants: Default::default(),
             never_intersections: Default::default(),
             mapped_targets: Default::default(),
@@ -540,6 +536,7 @@ impl Program {
             lowest_taint: usize::MAX,
             depth: 0,
             contextual: Vec::new(),
+            pulls_contextual_types_at: usize::MAX,
             inference: Vec::new(),
             instantiation_depth: 0,
             recent_instantiations: Default::default(),
@@ -778,6 +775,10 @@ pub struct Checker<'p> {
     depth: usize,
     /// Expressions that are being checked against a type somebody pushed, innermost last.
     contextual: Vec<(FileId, ExprId, TypeId)>,
+    /// How high `stack` is where `getContextualType` finds nothing pushed: what call resolution recorded as pushed (`arg_contexts`)
+    /// is not read, and an argument is expected to be what `links.resolvedSignature` takes. A question entered on top of that is
+    /// answered as ever, so that what is kept of it does not depend on who asked. `usize::MAX`: nowhere.
+    pulls_contextual_types_at: usize,
     inference: Vec<infer::Inference>,
     instantiation_depth: u32,
     /// What was last read from or put into `Program::instantiations`.
@@ -1300,9 +1301,10 @@ impl<'p> Checker<'p> {
         // TypeScript does not notice an expression that is looked at again while it is being looked at: it goes the
         // same way once more, and the first resolution on that way is the one to come back to itself.
         // A call that is asked what it expects of an argument while it is being resolved is another matter
-        // (`resolvingSignature`): whoever asks goes without an answer, and nothing is wrong.
-        let marked =
-            !(matches!(q, Query::Call(..)) && self.asking_for_context) && self.mark_circle_from(i);
+        // (`resolvingSignature`): whoever asks goes without an answer, and nothing is wrong. So are members that are in place.
+        let marked = !(matches!(q, Query::Call(..)) && self.asking_for_context)
+            && !self.has_members_in_place(q)
+            && self.mark_circle_from(i);
         self.came_full_circle = marked && self.is_resolution(q);
         if marked && self.is_runaway(i) {
             self.last_enter = EnterOutcome::Runaway;
@@ -1315,6 +1317,23 @@ impl<'p> Checker<'p> {
             eprintln!("cycle: {:?}", &self.stack[i..]);
         }
         true
+    }
+
+    /// Whether `q` asks for the members of a function, class, enum or module as a value. `resolveAnonymousTypeMembers` calls
+    /// `setStructuredTypeMembers` before it asks for the base constructor type or a signature, so for whoever asks meanwhile
+    /// `resolveStructuredTypeMembers` returns at once.
+    fn has_members_in_place(&self, q: Query) -> bool {
+        matches!(q, Query::Shape(ty) if matches!(
+            self.data(ty),
+            TypeData::Anon {
+                origin: Origin::ClassStatic(_)
+                    | Origin::Function(_)
+                    | Origin::EnumObject(_)
+                    | Origin::Module(_)
+                    | Origin::GlobalThis,
+                ..
+            }
+        ))
     }
 
     /// Whether re-entering `stack[i]` is a recursion that tsgo does not detect. `getTypeFromTypeNode`, `getTypeAliasInstantiation` and
@@ -1735,6 +1754,12 @@ impl<'p> Checker<'p> {
         if is_reported {
             self.p.excessive_reported.insert(key, ());
         }
+    }
+
+    /// See `pulls_contextual_types_at`.
+    #[inline]
+    fn pulls_contextual_types(&self) -> bool {
+        self.stack.len() == self.pulls_contextual_types_at
     }
 
     /// Whether the answer holds whoever asks, and so may be kept.

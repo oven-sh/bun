@@ -14,7 +14,7 @@
 use super::errors::{Diagnostic, is_close};
 use super::*;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId};
-use crate::resolve::{JsxEmit, ModuleKind, join, parent_dir};
+use crate::resolve::{ModuleKind, join, parent_dir};
 use crate::util::FxHashSet;
 
 const ALL_MEANINGS: SymFlags = SymFlags::VALUE
@@ -204,6 +204,15 @@ impl Checker<'_> {
         }
     }
 
+    /// The start of `GetErrorRangeForNode` of the declaration `decl` of an alias: the name of `* as ns` in an import, and where each of
+    /// the others starts.
+    fn xa_alias_node_start(&self, file: FileId, decl: Decl) -> u32 {
+        match decl {
+            Decl::ImportNamespace(import) => self.hir(file)[import].namespace_pos,
+            _ => self.start_of_declaration(file, decl),
+        }
+    }
+
     /// `GetErrorRangeForNode` of the declaration `decl` of the alias `sym`, in the file of `sym`. `None`: it declares no alias.
     pub(super) fn place_of_alias_declaration(
         &self,
@@ -219,13 +228,9 @@ impl Checker<'_> {
                     (StmtKind::Import(x), Decl::ImportDefault(of) | Decl::ImportNamespace(of)) => {
                         x == of
                     }
-                    (StmtKind::Import(x), Decl::ImportSpec(spec)) => {
-                        hir[x].named.range().contains(&spec.idx())
-                    }
+                    (StmtKind::Import(x), Decl::ImportSpec(spec)) => x == hir[spec].import,
                     (StmtKind::ImportEquals(x), Decl::ImportEquals(of)) => x == of,
-                    (StmtKind::ExportNamed(x), Decl::ExportSpec(spec)) => {
-                        hir[x].items.range().contains(&spec.idx())
-                    }
+                    (StmtKind::ExportNamed(x), Decl::ExportSpec(spec)) => x == hir[spec].export,
                     _ => false,
                 };
                 let s = (0..hir.stmts.len()).find(|&s| {
@@ -234,7 +239,7 @@ impl Checker<'_> {
                 StmtId(s as u32)
             }
         };
-        let start = alias_node_start(hir, decl, hir[stmt].pos);
+        let start = self.xa_alias_node_start(file, decl);
         let node = AliasNode {
             sym,
             decl,
@@ -382,11 +387,7 @@ impl Checker<'_> {
                 (hir[x].type_only, TypeOnlyKind::Import)
             }
             Decl::ImportSpec(s) => (
-                hir[s].type_only
-                    || hir
-                        .imports
-                        .iter()
-                        .any(|x| x.type_only && x.named.range().contains(&s.idx())),
+                hir[s].type_only || hir[hir[s].import].type_only,
                 TypeOnlyKind::Import,
             ),
             Decl::ImportEquals(x) => (
@@ -394,11 +395,7 @@ impl Checker<'_> {
                 TypeOnlyKind::Import,
             ),
             Decl::ExportSpec(s) => (
-                hir[s].type_only
-                    || hir
-                        .exports
-                        .iter()
-                        .any(|x| x.type_only && x.items.range().contains(&s.idx())),
+                hir[s].type_only || hir[hir[s].export].type_only,
                 TypeOnlyKind::ExportSpecifier,
             ),
             Decl::ExportStarAs(stmt) => (
@@ -517,10 +514,7 @@ impl Checker<'_> {
             }
             // `getTargetOfImportSpecifier`
             Decl::ImportSpec(s) => {
-                let import = hir
-                    .imports
-                    .iter()
-                    .find(|x| x.named.range().contains(&s.idx()))?;
+                let import = &hir[hir[s].import];
                 let Some(module) = files.module_of_specifier(file, import.spec) else {
                     self.xa_mark_type_only(sym, decl, links);
                     return None;
@@ -532,11 +526,7 @@ impl Checker<'_> {
             }
             // `getTargetOfExportSpecifier`
             Decl::ExportSpec(s) => {
-                let (index, export) = hir
-                    .exports
-                    .iter()
-                    .enumerate()
-                    .find(|(_, x)| x.items.range().contains(&s.idx()))?;
+                let export = &hir[hir[s].export];
                 if export.spec.is_some() {
                     let Some(module) = files.module_of_specifier(file, export.spec) else {
                         self.xa_mark_type_only(sym, decl, links);
@@ -549,7 +539,7 @@ impl Checker<'_> {
                 }
                 let found = self.xa_resolve_entity(
                     file,
-                    bound.export_scope[index],
+                    bound.export_scope[hir[s].export.idx()],
                     &[hir[s].local],
                     ALL_MEANINGS,
                     true,
@@ -1161,15 +1151,6 @@ impl Checker<'_> {
                 *of = StmtId(i as u32);
             }
         }
-        // The statement each name in braces is in. The first import or export that has it counts.
-        let mut import_spec_stmts = vec![StmtId::NONE; hir.import_specs.len()];
-        for (x, import) in hir.imports.iter().enumerate().rev() {
-            import_spec_stmts[import.named.range()].fill(import_stmts[x]);
-        }
-        let mut export_spec_stmts = vec![StmtId::NONE; hir.export_specs.len()];
-        for (x, export) in hir.exports.iter().enumerate().rev() {
-            export_spec_stmts[export.items.range()].fill(export_stmts[x]);
-        }
         let mut nodes: Vec<AliasNode> = Vec::new();
         for (i, symbol) in bound.symbols.iter().enumerate() {
             if !symbol.flags.contains(SymFlags::ALIAS) {
@@ -1179,16 +1160,16 @@ impl Checker<'_> {
             for &decl in &symbol.decls {
                 let stmt = match decl {
                     Decl::ImportDefault(x) | Decl::ImportNamespace(x) => import_stmts[x.idx()],
-                    Decl::ImportSpec(s) => import_spec_stmts[s.idx()],
+                    Decl::ImportSpec(s) => import_stmts[hir[s].import.idx()],
                     Decl::ImportEquals(x) => import_equals_stmts[x.idx()],
-                    Decl::ExportSpec(s) => export_spec_stmts[s.idx()],
+                    Decl::ExportSpec(s) => export_stmts[hir[s].export.idx()],
                     Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => s,
                     _ => continue,
                 };
                 if stmt.is_none() {
                     continue;
                 }
-                let start = alias_node_start(hir, decl, hir[stmt].pos);
+                let start = self.xa_alias_node_start(file, decl);
                 nodes.push(AliasNode {
                     sym,
                     decl,
@@ -2190,7 +2171,7 @@ impl Checker<'_> {
         }
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::ImportCall) {
-            if let ExprKind::ImportCall(argument) = hir[e].kind
+            if let ExprKind::ImportCall(argument, _) = hir[e].kind
                 && argument.is_some()
                 && !matches!(bound.expr_parent[e.idx()], Parent::None)
                 && let ExprKind::String(spec) = hir[argument].kind
@@ -2284,19 +2265,6 @@ impl Checker<'_> {
             return;
         };
         let target = files.module(target);
-        // `GetResolutionDiagnostic`. A file that is refused is not loaded for the sake of the import.
-        if target.path.ends_with(".tsx")
-            && options.jsx == JsxEmit::None
-            && !importing
-                .project_reference_imports
-                .contains(&(spec, site.mode))
-        {
-            out.push(Diagnostic { start, code: 6142 });
-            self.note(start, 0, 6142, vec![text.to_string(), target.path.clone()]);
-            if !options.files.contains(&target.path) {
-                return;
-            }
-        }
         // `ResolvedUsingTsExtension`
         let using_ts_extension = importing.ts_extension_imports.contains(&(spec, site.mode));
         let is_declaration_name = (using_ts_extension
@@ -2429,7 +2397,7 @@ impl Checker<'_> {
                         self.xa_const_enum_access(file, e, out);
                     }
                 }
-                ExprKind::ImportCall(_)
+                ExprKind::ImportCall(..)
                 | ExprKind::ImportMeta
                 | ExprKind::Missing
                 | ExprKind::NewTarget => self.xa_import_call_or_meta_property(file, e, out),
@@ -2451,7 +2419,7 @@ impl Checker<'_> {
         }
         match hir[e].kind {
             // `checkImportCallExpression`
-            ExprKind::ImportCall(argument) => {
+            ExprKind::ImportCall(argument, _) => {
                 if argument.is_none()
                     || matches!(hir[argument].kind, ExprKind::Missing | ExprKind::Spread(_))
                 {
@@ -2459,10 +2427,6 @@ impl Checker<'_> {
                 }
                 let ty = self.type_of_expr(file, argument);
                 if !self.is_known(ty) || self.is_uncertain(file, argument) {
-                    return;
-                }
-                // A type parameter where none is in scope is something that was not got to the bottom of.
-                if self.has_type_variables(ty) && !self.is_in_generic_context(file, argument) {
                     return;
                 }
                 if ty.is_undefined() || ty.is_null() || !self.is_assignable(ty, TypeId::STRING) {
@@ -2891,30 +2855,6 @@ fn string_literal(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
 fn says_export_type(text: &[u8], pos: u32) -> bool {
     eat_word(text, pos as usize, b"export")
         .is_some_and(|end| eat_word(text, skip_trivia(text, end), b"type").is_some())
-}
-
-/// Where the `*` of `export * as ns`, the statement at `pos`, is.
-fn namespace_export_start(text: &[u8], pos: u32) -> u32 {
-    let Some(end) = eat_word(text, pos as usize, b"export") else {
-        return pos;
-    };
-    let at = skip_trivia(text, end);
-    eat_word(text, at, b"type").map_or(at, |end| skip_trivia(text, end)) as u32
-}
-
-/// The start of `GetErrorRangeForNode` of the declaration `decl` of an alias, which is in the statement at `pos`: the name of
-/// `* as ns` in an import, and where each of the others starts.
-fn alias_node_start(hir: &hir::File, decl: Decl, pos: u32) -> u32 {
-    let text = &hir.text[..];
-    match decl {
-        Decl::ImportDefault(x) => eat_word(text, pos as usize, b"import")
-            .map_or(hir[x].default_pos, |end| skip_trivia(text, end) as u32),
-        Decl::ImportNamespace(x) => hir[x].namespace_pos,
-        Decl::ImportSpec(s) => start_with_type(text, hir[s].imported_pos, hir[s].type_only),
-        Decl::ExportSpec(s) => start_with_type(text, hir[s].local_pos, hir[s].type_only),
-        Decl::ExportStarAs(_) => namespace_export_start(text, pos),
-        _ => pos,
-    }
 }
 
 /// Where the specifier of `import("m")` or `typeof import("m")`, the type at `pos`, is.

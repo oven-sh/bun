@@ -13,8 +13,8 @@ use bun_ast::ts_syntax::{
     Flags, FunctionBody, IdList, ImportType, Interface, Keyword, MappedModifier, MappedType,
     Member, MemberKind, Modifier, Name, Param, Pattern, PatternData, PatternElement, PatternId,
     PatternProperty, PropertyKey, ResolutionMode, Signature, SignatureId, SignatureKind, Span,
-    Statement, StatementData, StatementId, TupleElement, Type, TypeAlias, TypeData, TypeId,
-    TypeParam,
+    Statement, StatementData, StatementId, ThisParam, TupleElement, Type, TypeAlias, TypeData,
+    TypeId, TypeParam,
 };
 use bun_ast::{Expr, Loc, StoreStr};
 use bun_collections::HashMap;
@@ -386,8 +386,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             last_type_args,
             ..
         } = self.type_syntax_mut();
-        // `typeof a.`: what is before the last dot is still looked up (`parseRightSideOfDot`). Any other missing name makes the type unusable.
-        let required = (name_stack.len() - names_base).saturating_sub(1).max(1);
+        // `typeof a.`: what is before the last dot is still looked up (`parseRightSideOfDot`). `typeof` before no name has the one,
+        // which is missing (`parseEntityName`). Any other missing name makes the type unusable.
+        let required = (name_stack.len() - names_base).saturating_sub(1);
         let is_complete = name_stack[names_base..]
             .iter()
             .take(required)
@@ -511,6 +512,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let param = TypeParam {
             name,
             loc: loc(name_pos),
+            start: loc(name_pos),
             constraint,
             default: TypeId::NONE,
             flags: Flags::empty(),
@@ -619,6 +621,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .add_pattern(PatternData::Missing, loc),
             default: None,
             is_rest: false,
+            loc,
         }
     }
 
@@ -667,16 +670,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.type_syntax_mut().ast.add_modifiers(modifiers)
     }
 
-    /// Finishes a parameter list whose `(` is at `open_paren`. `this_type` is `None` if any parameter is unusable.
+    /// Finishes a parameter list whose `(` is at `open_paren`. `this_param` is `None` if any parameter is unusable.
     pub(crate) fn finish_params(
         &mut self,
         parameters: &[Param],
-        this_type: Option<TypeId>,
+        this_param: Option<ThisParam>,
         open_paren: i32,
     ) {
         let syntax = self.type_syntax_mut();
         syntax.last_params =
-            this_type.map(|this_type| (syntax.ast.add_params(parameters), this_type));
+            this_param.map(|this_param| (syntax.ast.add_params(parameters), this_param));
         if let Some(parameters) = syntax.last_params {
             let kept = self.with_end(parameters);
             self.type_syntax_mut()
@@ -726,7 +729,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         head: Option<FnTypeHead>,
         open_paren: u32,
-        parameters: Option<(Span<Param>, TypeId)>,
+        parameters: Option<(Span<Param>, ThisParam)>,
     ) {
         let head = head.unwrap_or(FnTypeHead {
             kind: SignatureKind::FunctionType,
@@ -735,7 +738,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             pos: open_paren,
         });
         let return_type = self.last_type();
-        let (Some(type_params), Some((params, this_type)), true) =
+        let (Some(type_params), Some((params, this_param)), true) =
             (head.type_params, parameters, return_type.is_some())
         else {
             return self.clear_last_type();
@@ -745,7 +748,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags: head.flags,
             type_params,
             params,
-            this_type,
+            this_param,
             return_type,
             body: None,
             open_paren_loc: loc(open_paren),
@@ -782,7 +785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: Flags,
         pos: u32,
     ) -> Option<SignatureId> {
-        let (params, this_type) = member.parameters??;
+        let (params, this_param) = member.parameters??;
         let type_params = member.type_parameters.unwrap_or(Some(Span::EMPTY))?;
         let return_type = member.ty.unwrap_or(TypeId::NONE);
         if member.ty.is_some() && return_type.is_none() {
@@ -793,7 +796,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             flags,
             type_params,
             params,
-            this_type,
+            this_param,
             return_type,
             body: None,
             open_paren_loc: loc(member.open_paren),
@@ -926,6 +929,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             trailing_comma_loc: member.trailing_comma,
             signature: SignatureId::NONE,
             loc: loc(member.start),
+            start: loc(member.start),
         };
         if member.bracket_kind == BracketKind::IndexParameters {
             let (flags, modifiers) =
@@ -939,7 +943,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 flags: made.flags,
                 type_params: Span::EMPTY,
                 params,
-                this_type: TypeId::NONE,
+                this_param: ThisParam::NONE,
                 return_type: ty,
                 body: None,
                 open_paren_loc: loc(member.bracket_pos),
@@ -980,6 +984,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let param = TypeParam {
                         name,
                         loc: name_loc,
+                        start: name_loc,
                         constraint,
                         default: TypeId::NONE,
                         flags: Flags::empty(),
@@ -1022,7 +1027,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         flags: made.flags,
                         type_params: Span::EMPTY,
                         params,
-                        this_type: TypeId::NONE,
+                        this_param: ThisParam::NONE,
                         return_type: ty,
                         body: None,
                         open_paren_loc: loc(member.bracket_pos),
@@ -1304,7 +1309,7 @@ pub(crate) struct KeptNodes {
     pub(crate) type_arguments: HashMap<i32, KeptNode<IdList<Type>>>,
     pub(crate) type_parameters: HashMap<i32, KeptNode<Span<TypeParam>>>,
     /// Keyed by the offset of `(`. The second value is the type of a `this` parameter.
-    pub(crate) parameters: HashMap<i32, KeptNode<(Span<Param>, TypeId)>>,
+    pub(crate) parameters: HashMap<i32, KeptNode<(Span<Param>, ThisParam)>>,
     /// Keyed by the offset of `{`.
     pub(crate) object_types: HashMap<i32, KeptNode<ObjectTypeBody>>,
 }
@@ -1373,7 +1378,7 @@ pub(crate) struct TypeMemberParts {
     /// Outer `None`: no type parameters. Inner `None`: unusable.
     pub(crate) type_parameters: Option<Option<Span<TypeParam>>>,
     pub(crate) open_paren: u32,
-    pub(crate) parameters: Option<Option<(Span<Param>, TypeId)>>,
+    pub(crate) parameters: Option<Option<(Span<Param>, ThisParam)>>,
     /// Where the comma before the `]` of an index signature is.
     pub(crate) trailing_comma: Option<Loc>,
     /// The type after `:`. `Some(NONE)` means unusable.

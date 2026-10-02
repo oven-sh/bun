@@ -590,7 +590,7 @@ impl Checker<'_> {
         match hir[e].kind {
             ExprKind::Await(_)
             | ExprKind::Call(_)
-            | ExprKind::ImportCall(_)
+            | ExprKind::ImportCall(..)
             | ExprKind::TaggedTemplate(_)
             | ExprKind::Index { .. }
             | ExprKind::ImportMeta

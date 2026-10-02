@@ -232,6 +232,9 @@ pub struct Lexer<'a> {
     /// Tolerant mode: how many errors were not logged because the log was disabled. TypeScript keeps the errors of a speculative
     /// parse that succeeds (`mark`, `rewind`), so one during which this changed has to be run again with the log enabled.
     pub(crate) swallowed: u32,
+    /// Without `EscapeSequenceScanningFlagsReportInvalidEscapeErrors`: an escape that is objected to elsewhere is not, and stands for
+    /// its own text.
+    is_under_tag: bool,
     /// `statementHasAwaitIdentifier`: `await` was used as a name in the top-level statement being parsed. Tolerant mode only.
     pub(crate) await_name_seen: bool,
     /// `parsingContexts`: one bit per `parse::lists::ListKind` that is currently being parsed. Only maintained in tolerant mode. It lives
@@ -592,8 +595,11 @@ impl<'a> Lexer<'a> {
                         }
                         0x38 | 0x39 => {
                             if self.tolerant {
-                                // `scanEscapeSequence`: objected to, and it stands for the digit.
+                                // `scanEscapeSequence`: objected to, and it stands for the digit. Under a tag for its own text.
                                 self.escape_error(start, iter.i as usize - 1, 2, 1488);
+                                if self.is_under_tag {
+                                    buf.push(u16::from(b'\\'));
+                                }
                             }
                             iter.c = c2;
                         }
@@ -1352,6 +1358,9 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn escape_error(&mut self, start: usize, at: usize, len: usize, code: u32) {
+        if self.is_under_tag {
+            return;
+        }
         let is_unterminated = start.checked_sub(1) == Some(self.unterminated_at);
         // TypeScript reads the escapes of a string while it scans it: those of one that is not closed were gone over
         // then, and are not objected to again when its value is asked for.
@@ -1395,6 +1404,10 @@ impl<'a> Lexer<'a> {
         }
         if is_octal(end) {
             end += 1;
+        }
+        if self.is_under_tag {
+            buf.extend(text[digit - 1..end].iter().map(|&b| u16::from(b)));
+            return end - 1;
         }
         let code = text[digit..end]
             .iter()
@@ -3087,6 +3100,7 @@ impl<'a> Lexer<'a> {
             tolerant: false,
             stuck: 0,
             swallowed: 0,
+            is_under_tag: false,
             await_name_seen: false,
             list_contexts: 0,
             unterminated_at: usize::MAX,
@@ -4000,6 +4014,15 @@ impl<'a> Lexer<'a> {
         self.next()?;
         self.rescan_close_brace_as_template_token = false;
         Ok(())
+    }
+
+    /// `scanTemplateAndSetTokenValue` under a tag: what the piece of text `raw` stands for.
+    pub(crate) fn cooked_template_contents(&mut self, raw: &[u8]) -> Vec<u8> {
+        self.is_under_tag = true;
+        let mut units = Vec::new();
+        let _ = self.decode_escape_sequences(0, raw, &mut units);
+        self.is_under_tag = false;
+        utf16_to_wtf8(&units)
     }
 
     pub(crate) fn raw_template_contents(&mut self) -> &'a [u8] {

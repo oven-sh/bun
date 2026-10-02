@@ -60,6 +60,11 @@ impl Checker<'_> {
                     }
                 }
                 ExprKind::Satisfies { expr, ty } => check_satisfies(self, file, e, expr, ty, out),
+                // `checkTaggedTemplateExpression` never comes to `checkTemplateExpression`.
+                ExprKind::Template { .. }
+                    if matches!(bound.expr_parent[i], Parent::Expr(p)
+                        if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].template == e)) =>
+                    {}
                 ExprKind::Template { exprs, .. } => check_template_spans(self, file, exprs, out),
                 ExprKind::TaggedTemplate(call) => check_tagged_template(self, file, e, call, out),
                 // `checkGrammarBigIntLiteral`. One that is a type is not an expression here.
@@ -138,7 +143,7 @@ impl Checker<'_> {
             if self.is_uncertain(file, expr) {
                 continue;
             }
-            let given = self.receiver_that_is_there(given);
+            let given = self.non_null_type(given);
             let usage = if is_await {
                 IterationUse::ForAwaitOf
             } else {
@@ -448,35 +453,6 @@ fn is_in_ambient_context(c: &Checker<'_>, file: FileId, e: ExprId) -> bool {
 
 // ───────────────────────────── kinds of types ─────────────────────────────
 
-/// `maybeTypeOfKind`
-fn maybe_type_of_kind<'p>(
-    c: &Checker<'p>,
-    ty: TypeId,
-    kind: fn(&Checker<'p>, TypeId) -> bool,
-) -> bool {
-    match c.data(ty) {
-        TypeData::Union(parts) | TypeData::Intersection(parts) => {
-            parts.iter().any(|&p| maybe_type_of_kind(c, p, kind))
-        }
-        _ => kind(c, ty),
-    }
-}
-
-/// `maybeTypeOfKindConsideringBaseConstraint`
-fn maybe_type_of_kind_considering_base_constraint<'p>(
-    c: &mut Checker<'p>,
-    ty: TypeId,
-    kind: fn(&Checker<'p>, TypeId) -> bool,
-) -> bool {
-    if maybe_type_of_kind(c, ty, kind) {
-        return true;
-    }
-    match c.base_constraint_of(ty) {
-        Some(base) if base != ty => maybe_type_of_kind(c, base, kind),
-        _ => false,
-    }
-}
-
 /// `number` or the type of a numeric literal: assignable to `number | bigint`, and no `bigint`.
 fn is_plain_number(c: &Checker<'_>, ty: TypeId) -> bool {
     ty == TypeId::NUMBER || matches!(c.data(ty), TypeData::NumberLit { .. })
@@ -595,7 +571,7 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
             };
             // Two numbers fit, and give a number.
             if !(is_plain_number(c, l) && is_plain_number(c, r)) {
-                let (l, r) = (c.receiver_that_is_there(l), c.receiver_that_is_there(r));
+                let (l, r) = (c.non_null_type(l), c.non_null_type(r));
                 // Of two booleans another operator is suggested, and that is all.
                 let is_boolean =
                     |c: &Checker<'_>, t: TypeId| t == TypeId::BOOLEAN || c.is_boolean_like(t);
@@ -609,8 +585,8 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
                 let both_fit = c.is_assignable(l, numeric) && c.is_assignable(r, numeric);
                 let is_anything = |c: &Checker<'_>, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
                 let gives_number = is_anything(c, l) && is_anything(c, r)
-                    || !maybe_type_of_kind(c, l, Checker::is_bigint_like)
-                        && !maybe_type_of_kind(c, r, Checker::is_bigint_like);
+                    || !c.maybe_type_of_kind(l, Checker::is_bigint_like)
+                        && !c.maybe_type_of_kind(r, Checker::is_bigint_like);
                 if op == BinOp::Pow
                     && !gives_number
                     && c.is_assignable(l, TypeId::BIGINT)
@@ -667,8 +643,8 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
                 return check_assignment_operator(c, file, left, ExprId::NONE, out);
             }
             if !c.is_assignable(l, TypeId::STRING) && !c.is_assignable(r, TypeId::STRING) {
-                l = c.receiver_that_is_there(l);
-                r = c.receiver_that_is_there(r);
+                l = c.non_null_type(l);
+                r = c.non_null_type(r);
             }
             // `isTypeAssignableToKindEx(t, kind, strict)`
             let is_strictly = |c: &mut Checker<'_>, t: TypeId, kind: TypeId| {
@@ -682,8 +658,8 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
                 || c.is_any(r);
             // `checkForDisallowedESSymbolOperand`
             if has_result
-                && !maybe_type_of_kind_considering_base_constraint(c, l, Checker::is_symbol_like)
-                && !maybe_type_of_kind_considering_base_constraint(c, r, Checker::is_symbol_like)
+                && !c.maybe_type_of_kind_considering_base_constraint(l, Checker::is_symbol_like)
+                && !c.maybe_type_of_kind_considering_base_constraint(r, Checker::is_symbol_like)
             {
                 check_assignment_operator(c, file, left, ExprId::NONE, out);
             }
@@ -989,7 +965,7 @@ fn check_assignment_operator(
     // `isExactOptionalPropertyMismatch`. Only an unparenthesized property access changes the head message. The property is looked
     // up in the type of `obj` itself: an object that is possibly `undefined` or `null` has no such property.
     let is_mismatch = !is_parenthesized(hir, target)
-        && maybe_type_of_kind(c, source, is_undefined)
+        && c.maybe_type_of_kind(source, is_undefined)
         && type_of_property_of_type(c, object, name)
             .is_some_and(|declared| c.contains_missing_type(declared));
     let at = c.start_of(file, target);
@@ -1063,7 +1039,7 @@ fn check_unary(
     }
     if !matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot) {
         let fits = is_plain_number(c, ty) || {
-            let there = c.receiver_that_is_there(ty);
+            let there = c.non_null_type(ty);
             let numeric = c.union(&[TypeId::NUMBER, TypeId::BIGINT]);
             c.is_assignable(there, numeric)
         };
@@ -1081,7 +1057,7 @@ fn check_unary(
         return;
     }
     c.check_not_nullish(file, operand, ty, out);
-    if maybe_type_of_kind_considering_base_constraint(c, ty, Checker::is_symbol_like) {
+    if c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like) {
         let start = c.error_start_of(file, operand);
         out.push(Diagnostic { start, code: 2469 });
         let operator = match op {
@@ -1093,7 +1069,7 @@ fn check_unary(
         c.note(start, end, 2469, vec![operator.to_owned()]);
     }
     if op == UnOp::Plus
-        && maybe_type_of_kind_considering_base_constraint(c, ty, Checker::is_bigint_like)
+        && c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_bigint_like)
     {
         let start = c.error_start_of(file, operand);
         out.push(Diagnostic { start, code: 2736 });
@@ -1138,7 +1114,7 @@ fn check_template_spans(
         let ty = c.type_of_expr(file, span);
         if c.is_known(ty)
             && !c.is_uncertain(file, span)
-            && maybe_type_of_kind_considering_base_constraint(c, ty, Checker::is_symbol_like)
+            && c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like)
         {
             let start = c.error_start_of(file, span);
             out.push(Diagnostic { start, code: 2731 });
@@ -1460,7 +1436,7 @@ fn check_right_operand_of_in(
     if !c.is_known(ty) || c.is_uncertain(file, right) {
         return;
     }
-    let there = c.receiver_that_is_there(ty);
+    let there = c.non_null_type(ty);
     if c.is_assignable(there, TypeId::OBJECT) && has_empty_object_intersection(c, ty) {
         let start = c.error_start_of(file, right);
         out.push(Diagnostic { start, code: 2638 });
@@ -1768,7 +1744,7 @@ fn check_yield_result(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Ve
         return;
     }
     // `getContextualTypeForArgumentAtIndex`: what `import()` is given is expected to be a string.
-    if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall(_)))
+    if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall(..)))
     {
         return;
     }

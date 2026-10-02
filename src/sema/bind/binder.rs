@@ -24,6 +24,15 @@ struct Label {
 /// Set in what stands for a label while the file is bound. The rest is its number in `Binder::label_edges`.
 const PENDING: u32 = 1 << 31;
 
+/// `local` of `declareModuleMember`, of a name that a block exports.
+#[derive(Default)]
+struct LocalSymbol {
+    /// `local.Declarations`, each with whether it is exported.
+    declarations: SmallVec<[(Decl, bool); 2]>,
+    /// The symbols those declarations have here.
+    symbols: SmallVec<[SymbolId; 2]>,
+}
+
 pub(super) struct Binder<'f> {
     f: &'f File,
     options: BindOptions,
@@ -31,6 +40,8 @@ pub(super) struct Binder<'f> {
     atoms: Option<&'f Interner>,
     b: Bound,
     tables: Vec<FxHashMap<Atom, SymbolId>>,
+    /// By the locals of the block and the name.
+    local_symbols: FxHashMap<(TableId, Atom), LocalSymbol>,
     scope: ScopeId,
     /// Identifiers to look up once everything is declared.
     idents: Vec<(ExprId, ScopeId)>,
@@ -144,6 +155,7 @@ impl<'f> Binder<'f> {
             atoms,
             b,
             tables: Vec::new(),
+            local_symbols: FxHashMap::default(),
             scope: ScopeId::NONE,
             idents: Vec::new(),
             assigned: Vec::new(),
@@ -270,6 +282,7 @@ impl<'f> Binder<'f> {
             let symbol = &mut self.b.symbols[existing.idx()];
             symbol.decls.push(decl);
             if is_refused {
+                self.b.refused_declarations.push((existing, decl));
                 return self.new_symbol(name, flags, decl, parent);
             }
             symbol.flags |= flags;
@@ -348,9 +361,19 @@ impl<'f> Binder<'f> {
             let Some(exported_one) =
                 in_locals.filter(|_| own.is_none() && !flags.contains(SymFlags::ALIAS))
             else {
-                return self.declare_in(locals, name, flags, decl, container);
+                let symbol = self.declare_in(locals, name, flags, decl, container);
+                let is_accepted = in_locals.is_none_or(|there| there == symbol);
+                self.note_local_declaration(
+                    (locals, name),
+                    (decl, false),
+                    symbol,
+                    is_accepted,
+                    None,
+                );
+                return symbol;
             };
             let symbol = self.new_symbol(name, flags, decl, container);
+            self.note_local_declaration((locals, name), (decl, false), symbol, true, None);
             // `getExportSymbolOfValueSymbolIfExported`: as a value the name goes on meaning what is exported.
             if !(is_only_a_value(flags)
                 && self.b.symbols[exported_one.idx()]
@@ -361,6 +384,7 @@ impl<'f> Binder<'f> {
             }
             return symbol;
         }
+        let own_symbol = own;
         let own = own.map(|local| self.b.symbols[local.idx()].flags);
         // `declareSymbol(locals, .., exportKind, symbolExcludes)`
         let goes_with_own = own.is_none_or(|there| !Self::is_refused(there, flags, decl));
@@ -371,9 +395,17 @@ impl<'f> Binder<'f> {
         {
             let symbol = self.declare_in(locals, name, flags, decl, container);
             self.tables[exports.idx()].insert(name, symbol);
+            self.note_local_declaration((locals, name), (decl, true), symbol, true, own_symbol);
             return symbol;
         }
         let symbol = self.declare_in(exports, name, flags, decl, container);
+        self.note_local_declaration(
+            (locals, name),
+            (decl, true),
+            symbol,
+            goes_with_own,
+            own_symbol,
+        );
         let is_accepted = in_exports.is_none_or(|there| there == symbol);
         // `local.ExportSymbol`: as a value the name means, in this block, what was exported under it last, be it refused. As
         // anything else it means what the block keeps to itself, and then what the table of exports has.
@@ -390,6 +422,55 @@ impl<'f> Binder<'f> {
         symbol
     }
 
+    /// `declareSymbol(GetLocals(container), nil, node, ..)` of `declareModuleMember`: `decl`, whose symbol here is `symbol`, is a
+    /// declaration of the local symbol `name` of the block, unless that refused it. Only the names that the block exports are kept
+    /// track of. `own`: what the block had declared under the name without exporting it, when the first is exported.
+    fn note_local_declaration(
+        &mut self,
+        key: (TableId, Atom),
+        (decl, is_exported): (Decl, bool),
+        symbol: SymbolId,
+        is_accepted: bool,
+        own: Option<SymbolId>,
+    ) {
+        if !self.local_symbols.contains_key(&key) {
+            if !is_exported {
+                return;
+            }
+            let mut local = LocalSymbol::default();
+            if let Some(own) = own {
+                for &earlier in &self.b.symbols[own.idx()].decls {
+                    if earlier != decl && !self.b.refused_declarations.contains(&(own, earlier)) {
+                        local.declarations.push((earlier, false));
+                    }
+                }
+                local.symbols.push(own);
+            }
+            self.local_symbols.insert(key, local);
+        }
+        if is_accepted && let Some(local) = self.local_symbols.get_mut(&key) {
+            local.declarations.push((decl, is_exported));
+            if !local.symbols.contains(&symbol) {
+                local.symbols.push(symbol);
+            }
+        }
+    }
+
+    /// Keeps `local.Declarations` of the local symbols that have both what is exported and what is not.
+    fn keep_local_declarations(&mut self) {
+        for (_, local) in std::mem::take(&mut self.local_symbols) {
+            if local.declarations.iter().any(|declaration| declaration.1)
+                && local.declarations.iter().any(|declaration| !declaration.1)
+            {
+                for &symbol in &local.symbols {
+                    self.b
+                        .local_declarations
+                        .insert(symbol, local.declarations.clone());
+                }
+            }
+        }
+    }
+
     /// `declareSymbolEx` for `export { a as b }` and `export * as b` among the exports. `AliasExcludes`: it is one symbol with what
     /// else is exported as `b`, of which each use takes the meaning it is after. Another alias that has the name keeps it, and so
     /// does whatever is the default: what is refused is in no table.
@@ -398,7 +479,7 @@ impl<'f> Binder<'f> {
         if container.is_some() {
             let exports = self.b.symbols[container.idx()].exports;
             let Some(there) = self.tables[exports.idx()].get(&name).copied() else {
-                let symbol = self.new_symbol(name, flags, decl, SymbolId::NONE);
+                let symbol = self.new_symbol(name, flags, decl, container);
                 self.tables[exports.idx()].insert(name, symbol);
                 return;
             };
@@ -409,7 +490,7 @@ impl<'f> Binder<'f> {
                 return;
             }
         }
-        self.new_symbol(name, flags, decl, SymbolId::NONE);
+        self.new_symbol(name, flags, decl, container);
     }
 
     /// `export { a }` where `a` means nothing but what is exported as `a`. Made one symbol with that it stands for itself, and most
@@ -432,11 +513,12 @@ impl<'f> Binder<'f> {
                     let whole = &mut self.b.symbols[symbol.idx()];
                     whole.decls.retain(|&d| d != decl);
                     whole.flags.remove(SymFlags::ALIAS);
+                    let container = self.b.scopes[scope.idx()].symbol;
                     self.new_symbol(
                         name,
                         SymFlags::ALIAS | SymFlags::EXPORT_ONLY,
                         decl,
-                        SymbolId::NONE,
+                        container,
                     );
                 }
             }
@@ -495,6 +577,24 @@ impl<'f> Binder<'f> {
             self.tables[exports.idx()]
                 .entry(known::default)
                 .or_insert(symbol);
+            // It is exported all the same.
+            let noted = self
+                .local_symbols
+                .get_mut(&(locals, name))
+                .and_then(|it| it.declarations.last_mut())
+                .filter(|last| last.0 == decl);
+            if let Some(last) = noted {
+                last.1 = true;
+            } else {
+                let is_accepted = symbol == local;
+                self.note_local_declaration(
+                    (locals, name),
+                    (decl, true),
+                    symbol,
+                    is_accepted,
+                    Some(local),
+                );
+            }
             return symbol;
         }
         // With an alias it would be one symbol too, which is the declaration wherever that has the meaning asked for. Here an alias
@@ -521,6 +621,7 @@ impl<'f> Binder<'f> {
         // The name means the last that took it: `ExportSymbol` of the local symbol.
         if name.is_some() {
             self.tables[locals.idx()].insert(name, symbol);
+            self.note_local_declaration((locals, name), (decl, true), symbol, true, None);
         }
         symbol
     }
@@ -1392,57 +1493,8 @@ impl<'f> Binder<'f> {
         if !self.f.is_js {
             return;
         }
-        for i in 0..self.f.exprs.len() {
-            let e = ExprId(i as u32);
-            if assignment_declaration_kind(self.f, e) != JsDeclarationKind::ThisProperty {
-                continue;
-            }
-            let ExprKind::Assign { target, .. } = self.f[e].kind else {
-                continue;
-            };
-            // `getDeclarationName`
-            let name = match self.f[target].kind {
-                ExprKind::Dot { name, name_pos, .. } if !is_private_name_at(self.f, name_pos) => {
-                    name
-                }
-                ExprKind::Index { index, .. } => string_literal_text(self.f, index),
-                _ => continue,
-            };
-            if name.is_none() {
-                continue;
-            }
-            let b = &self.b;
-            let mut parent = b.expr_parent[i];
-            let member = loop {
-                parent = match parent {
-                    Parent::Expr(x) if x.is_some() => b.expr_parent[x.idx()],
-                    Parent::Stmt(s) if s.is_some() => b.stmt_parent[s.idx()],
-                    Parent::VarInit(d) => Parent::Stmt(b.var_stmt[d.idx()]),
-                    Parent::Prop(p) => Parent::Expr(b.prop_owner[p.idx()]),
-                    Parent::Case(c) => Parent::Stmt(b.case_stmt[c.idx()]),
-                    Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                        let f = match parent {
-                            Parent::FnBody(f) => f,
-                            Parent::ParamDefault(p) => b.param_fn[p.idx()],
-                            _ => unreachable!(),
-                        };
-                        match b.fns[f.idx()].owner {
-                            FnOwner::Expr(owner) if self.f[f].kind == FnKind::Arrow => {
-                                b.expr_parent[owner.idx()]
-                            }
-                            FnOwner::Member(m) => break Some(m),
-                            _ => break None,
-                        }
-                    }
-                    Parent::MemberInit(m) => break Some(m),
-                    _ => break None,
-                };
-            };
-            if let Some(m) = member
-                && let MemberOwner::Class(class) = b.member_owner[m.idx()]
-            {
-                let is_static = self.f[m].flags.contains(Flags::STATIC)
-                    || self.f[m].kind == MemberKind::StaticBlock;
+        for e in (0..self.f.exprs.len() as u32).map(ExprId) {
+            if let Some((class, is_static, name)) = self.b.this_property(self.f, e) {
                 self.b.this_properties.push((class, is_static, name, e));
             }
         }
@@ -1476,6 +1528,17 @@ impl<'f> Binder<'f> {
                     && innermost.is_none()
                 {
                     innermost = f;
+                }
+                // `Bound::property_with_invalid_initializer`, while the tables are not flat yet. `Resolve` returns nil in the end:
+                // the name is left to `Files::resolve`, which says why.
+                if let ScopeKind::PropertyDeclaration(_, constructor)
+                | ScopeKind::PropertyType(_, constructor) = s.kind
+                    && let Some(&local) = tables
+                        [b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()]
+                    .get(&name)
+                    && b.symbols[local.idx()].flags.intersects(SymFlags::VALUE)
+                {
+                    return Ok(SymbolId::NONE);
                 }
                 if let Some(&symbol) = tables[s.locals.idx()].get(&name)
                     && b.symbols[symbol.idx()]
@@ -1567,6 +1630,7 @@ impl<'f> Binder<'f> {
         self.collect_expandos();
         self.collect_this_properties();
         self.declare_member_symbols();
+        self.keep_local_declarations();
         // Tables, flat and sorted.
         self.b.tables.reserve_exact(self.tables.len());
         self.b
@@ -1819,6 +1883,9 @@ impl<'f> Binder<'f> {
                     };
                     self.b.enum_member_symbol[m.idx()] = member;
                     self.b.enum_member_owner[m.idx()] = e;
+                    if self.f[m].computed_name.is_some() {
+                        self.expr(self.f[m].computed_name, Parent::EnumInit(m));
+                    }
                     if self.f[m].init.is_some() {
                         self.expr(self.f[m].init, Parent::EnumInit(m));
                     }
@@ -3042,6 +3109,10 @@ impl<'f> Binder<'f> {
             let base_expression = self.push_scope(ScopeKind::BaseExpression, SymbolId::NONE);
             self.b.expr_scope.insert(c.extends, base_expression);
             self.expr(c.extends, Parent::ClassExtends(id));
+            for other in self.f.ids(c.other_extends) {
+                self.b.expr_scope.insert(other, base_expression);
+            }
+            self.exprs(c.other_extends, Parent::ClassExtends(id));
             self.pop_scope();
             self.scope_change_of = scope_change_of;
         }
@@ -3155,10 +3226,28 @@ impl<'f> Binder<'f> {
 
     fn members(&mut self, members: Span<MemberId>, owner: MemberOwner) {
         let is_in_class_expression = matches!(owner, MemberOwner::Class(c) if matches!(self.b.class_owner[c.idx()], ClassOwner::Expr(_)));
+        // `FindConstructorDeclaration`, for `ScopeKind::PropertyDeclaration`.
+        let constructor =
+            if matches!(owner, MemberOwner::Class(_)) && !self.options.emit_standard_class_fields {
+                members
+                    .iter()
+                    .find(|&m| {
+                        self.f[m].kind == MemberKind::Constructor
+                            && !matches!(self.f[self.f[m].func].body, FnBody::None)
+                    })
+                    .map_or(FnId::NONE, |m| self.f[m].func)
+            } else {
+                FnId::NONE
+            };
         for m in members.iter() {
             self.b.member_owner[m.idx()] = owner;
             let member = &self.f[m];
             let seen_this = self.seen_this;
+            let constructor = if member.kind == MemberKind::Property && !self.is_static(m, owner) {
+                constructor
+            } else {
+                FnId::NONE
+            };
             // `requiresScopeChangeWorker`: a static property, unless fields are left as they are written.
             if member.kind == MemberKind::Property
                 && member.flags.contains(Flags::STATIC)
@@ -3190,6 +3279,13 @@ impl<'f> Binder<'f> {
                 }
                 if member.func.is_some() {
                     self.function_key(key, is_in_class_expression);
+                } else if constructor.is_some() {
+                    self.push_scope(
+                        ScopeKind::PropertyDeclaration(m, constructor),
+                        SymbolId::NONE,
+                    );
+                    self.expr(key, Parent::MemberKey);
+                    self.pop_scope();
                 } else {
                     self.expr(key, Parent::MemberKey);
                 }
@@ -3210,14 +3306,29 @@ impl<'f> Binder<'f> {
             self.b.member_scope[m.idx()] = self.scope;
             // The type of an index signature is the return type of its function, which is bound below.
             if member.ty.is_some() && member.kind != MemberKind::IndexSignature {
+                if constructor.is_some() {
+                    self.push_scope(ScopeKind::PropertyType(m, constructor), SymbolId::NONE);
+                }
                 self.ty(member.ty);
+                if constructor.is_some() {
+                    self.pop_scope();
+                }
             }
             if member.func.is_some() {
                 self.func(member.func, FnOwner::Member(m));
             }
             if member.init.is_some() {
                 let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
+                if constructor.is_some() {
+                    self.push_scope(
+                        ScopeKind::PropertyDeclaration(m, constructor),
+                        SymbolId::NONE,
+                    );
+                }
                 self.expr(member.init, Parent::MemberInit(m));
+                if constructor.is_some() {
+                    self.pop_scope();
+                }
                 self.scope_change_of = scope_change_of;
                 (self.flow, self.exception_target) = saved;
                 // `GetContainerFlags`: a property with an initializer is a container of its own, name and type and all.
@@ -3626,6 +3737,7 @@ impl<'f> Binder<'f> {
                 self.expr(call.callee, me);
                 self.tys(call.type_args);
                 self.exprs(call.args, me);
+                self.b.expr_parent[call.template.idx()] = me;
             }
             ExprKind::Array(items) => {
                 self.in_assignment_pattern = in_pattern;
@@ -3857,8 +3969,8 @@ impl<'f> Binder<'f> {
             | ExprKind::Await(e)
             | ExprKind::AsConst(e)
             | ExprKind::NonNull(e)
-            | ExprKind::ImportCall(e) => {
-                let is_import = matches!(self.f[id].kind, ExprKind::ImportCall(_));
+            | ExprKind::ImportCall(e, _) => {
+                let is_import = matches!(self.f[id].kind, ExprKind::ImportCall(..));
                 if is_import && let ExprKind::String(spec) = self.f[e].kind {
                     self.specifier(spec);
                 }
@@ -3866,11 +3978,8 @@ impl<'f> Binder<'f> {
                     self.in_assignment_pattern = in_pattern;
                 }
                 self.expr(e, me);
-                // The second argument of `import()`.
-                if is_import
-                    && let Some(&(_, options)) = self.f.import_options.iter().find(|o| o.0 == e)
-                {
-                    self.expr(options, me);
+                if let ExprKind::ImportCall(_, more) = self.f[id].kind {
+                    self.exprs(more, me);
                 }
             }
             ExprKind::Yield { value, .. } => {

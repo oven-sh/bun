@@ -140,6 +140,21 @@ impl Checker<'_> {
         );
         let index = self.exprs_by_kind(file);
         u.note_references(&index);
+        // `Resolve` notes the use before `OnPropertyWithInvalidInitializer` makes it return nil, and the binder has no symbol for the name.
+        if !self.p.files.options.emit_standard_class_fields {
+            for &(e, scope) in &bound.free_idents {
+                if let ExprKind::Ident(name) = hir[e].kind
+                    && let Err((2301 | 2844, _)) =
+                        self.files()
+                            .resolve(file, scope, name, SymFlags::VALUE, true)
+                    && !matches!(bound.expr_parent[e.idx()], Parent::None)
+                    && !u.is_unchecked(e)
+                    && !u.is_write_only(e)
+                {
+                    u.note_name(scope, name, SymFlags::VALUE, VALUE);
+                }
+            }
+        }
         self.note_jsdoc_links(file, &mut u);
         if parameters {
             u.merge_type_parameters();
@@ -1195,44 +1210,20 @@ impl Unused<'_> {
         meaning: SymFlags,
         bit: u8,
     ) -> Option<SymbolId> {
-        let bound = self.bound;
-        let mut scope = from;
-        // The declaration furthest out that the name is written in, short of where it is found.
+        let (found, found_in) = self.bound.resolve_with_scope(from, name, meaning)?;
+        // `lastSelfReferenceLocation`: the declaration furthest out that the name is written in, short of where it is found.
         let mut inside = SymbolId::NONE;
-        while scope.is_some() {
-            if bound
-                .type_parameter_out_of_reach(scope, name, meaning)
-                .is_some()
-            {
-                return None;
-            }
-            let s = &bound.scopes[scope.idx()];
-            let mut found = bound.lookup(s.locals, name).filter(|f| {
-                bound.symbols[f.idx()]
-                    .flags
-                    .intersects(meaning | SymFlags::ALIAS)
-            });
-            if found.is_none() && s.symbol.is_some() {
-                found = bound
-                    .lookup(bound.symbols[s.symbol.idx()].exports, name)
-                    .filter(|f| {
-                        bound.symbols[f.idx()]
-                            .flags
-                            .intersects(meaning | SymFlags::ALIAS)
-                    });
-            }
-            if let Some(found) = found {
-                if found != inside {
-                    self.referenced[found.idx()] |= bit;
-                }
-                return Some(found);
-            }
+        let mut scope = from;
+        while scope != found_in {
             if self.owner_of_scope[scope.idx()].is_some() {
                 inside = self.owner_of_scope[scope.idx()];
             }
-            scope = s.parent;
+            scope = self.bound.scopes[scope.idx()].parent;
         }
-        None
+        if found != inside {
+            self.referenced[found.idx()] |= bit;
+        }
+        Some(found)
     }
 
     /// `IsWriteOnlyAccess`
@@ -1647,11 +1638,7 @@ impl Unused<'_> {
                         imports.push((id, hir[id].namespace_pos))
                     }
                     Decl::ImportSpec(spec) if !starts_with_underscore => {
-                        if let Some(id) = (0..hir.imports.len())
-                            .find(|&i| hir.imports[i].named.range().contains(&spec.idx()))
-                        {
-                            imports.push((ImportId(id as u32), hir[spec].pos));
-                        }
+                        imports.push((hir[spec].import, hir[spec].pos))
                     }
                     Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => {}
                     _ if self.declaration_has_syntax_error(decl) => {}
@@ -2063,7 +2050,7 @@ impl Unused<'_> {
         {
             // `rangeOfTypeParameters`: from the `<`. A list made of `@template` tags begins at the `@` of the first
             // (`gatherTypeParameters`), so it is from one before that.
-            let first = self.start_of_type_parameter(params.at(0));
+            let first = self.hir[params.at(0)].start;
             let before = self.hir.text.get(..first as usize).unwrap_or_default();
             let open = if self.hir[params.at(0)].flags.contains(Flags::REPARSED) {
                 before
@@ -2082,33 +2069,13 @@ impl Unused<'_> {
         }
         for p in params.iter() {
             if self.is_unreferenced_type_parameter(p) {
-                let start = self.start_of_type_parameter(p);
+                let start = self.hir[p].start;
                 out.push(Diagnostic { start, code: 6196 });
                 self.reported_on
                     .borrow_mut()
                     .push((start, 6196, Reported::TypeParameter(p)));
             }
         }
-    }
-
-    /// Where the type parameter `p` starts, `const`, `in` and `out` included.
-    fn start_of_type_parameter(&self, p: TypeParamId) -> u32 {
-        const MODIFIERS: [&[u8]; 3] = [b"const", b"in", b"out"];
-        let hir = self.hir;
-        let mut start = hir[p].pos as usize;
-        if hir[p]
-            .flags
-            .intersects(Flags::CONST | Flags::IN | Flags::OUT)
-        {
-            while let Some(before) = hir.text.get(..start).map(|text| text.trim_ascii_end())
-                && let Some(modifier) = MODIFIERS
-                    .into_iter()
-                    .find(|modifier| before.ends_with(modifier))
-            {
-                start = before.len() - modifier.len();
-            }
-        }
-        start as u32
     }
 
     fn is_unreferenced_type_parameter(&self, p: TypeParamId) -> bool {

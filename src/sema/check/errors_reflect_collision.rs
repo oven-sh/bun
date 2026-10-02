@@ -230,9 +230,9 @@ impl Checker<'_> {
             if extends.is_none() {
                 continue;
             }
-            // `classDeclarationExtendsNull`. Of a class without a base type `super` is in error, and not what the class extends.
-            let constructor = self.type_of_expr(file, extends);
-            if constructor == TypeId::NULL || self.type_of_expr(file, e) != constructor {
+            // `checkSuperExpression` returns before it marks anything: `classDeclarationExtendsNull`, `baseClassType == nil`.
+            let sym = self.class_sym(file, class);
+            if self.class_declaration_extends_null(sym) || self.base_types(sym).is_empty() {
                 continue;
             }
             for scope in self.rc_block_scopes_around(file, around) {

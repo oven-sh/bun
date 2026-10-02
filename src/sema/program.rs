@@ -65,8 +65,9 @@ pub struct Module {
     /// `AlternateResult`, of those of `untyped_imports` that have one: the file with the types that is found if the `exports` of the
     /// package are passed over.
     pub untyped_import_alternates: Few<(Atom, ResolutionMode, Atom)>,
-    /// Those of `untyped_imports` that lead to a `.jsx` file, which takes `jsx` (`GetResolutionDiagnostic`).
-    pub jsx_imports: Few<(Atom, ResolutionMode)>,
+    /// `GetResolutionDiagnostic`, `needJsx`: the specifiers that resolve to a `.tsx` or `.jsx` file while `jsx` is not set, with the mode
+    /// they are resolved in and `ResolvedFileName`. The file is not brought into the program for them (6142).
+    pub jsx_imports: Few<(Atom, ResolutionMode, Atom)>,
     /// Those of `untyped_imports` that resolve to a file inside a package. With `allowJs` such a file is loaded only up to
     /// `maxNodeModuleJsDepth` (`elideOnDepth`).
     pub untyped_package_imports: Few<(Atom, ResolutionMode)>,
@@ -519,11 +520,13 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                     .enumerate()
                     .map(|(i, (k, v))| {
                         let member = members.get(i);
+                        let pos = member.map_or(end, |member| member.name_from);
                         Prop {
                             kind: PropKind::Init,
                             key: PropKey::Name(atoms.intern_str(k)),
                             value: value(f, v, member.map(|member| &member.value), end, atoms),
-                            pos: member.map_or(end, |member| member.name_from),
+                            pos,
+                            start: pos,
                         }
                     })
                     .collect();
@@ -578,6 +581,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                             key,
                             value,
                             pos: 0,
+                            start: 0,
                         }
                     })
                     .collect();
@@ -950,7 +954,7 @@ fn reference_locations(
     }
     let call_mode = options.import_call_mode(module.default_mode);
     for e in hir.exprs.iter() {
-        if let ExprKind::ImportCall(argument) = e.kind
+        if let ExprKind::ImportCall(argument, _) = e.kind
             && let ExprKind::String(spec) = hir[argument].kind
             && let Some(&target) = module.imports.get(&(spec, call_mode))
         {
@@ -1034,11 +1038,32 @@ fn implied_format_reason(
     }
 }
 
-/// `checkSourceFilesBelongToPath`, `createDiagnosticExplainingFile`: 6059 for each source file that would be emitted and is not under
-/// `root_dir`. With it the first import or `/// <reference path>` that brings the file into the program (`preferredLocation`: the
-/// file, from where to where), which is where it is reported.
+/// `sourceFileMayBeEmitted`. `IsSourceFileFromExternalLibrary` and `GetProjectReferenceFromSource` are asked in `explain_source_files`.
+fn source_file_may_be_emitted(options: &Options, module: &Module, is_case_sensitive: bool) -> bool {
+    if module.is_lib
+        || module.hir.kind == FileKind::Declaration
+        || module.path.contains("/node_modules/")
+    {
+        return false;
+    }
+    // `GetCommonSourceDirectory`, if `rootDir` or the configuration file says it.
+    let common = match options.root_dir.as_str() {
+        "" => parent_dir(&options.config_path),
+        root_dir => root_dir,
+    };
+    // `GetSourceFilePathInNewDirWorker`: a JSON file that is not under there would be written over itself.
+    module.hir.kind != FileKind::Json
+        || !options.out_dir.is_empty()
+            && (common.is_empty()
+                || is_path_under(common, &module.path, is_case_sensitive)
+                    && !is_same_name(&options.out_dir, common, is_case_sensitive))
+}
+
+/// `createDiagnosticExplainingFile`: `code`, said of the file and `arg`, for each source file that would be emitted and that `is_wrong`
+/// holds for, which is told whether it is a root file. With it the first import or `/// <reference path>` that brings the file into
+/// the program (`preferredLocation`: the file, from where to where), which is where it is reported.
 #[allow(clippy::too_many_arguments)]
-fn source_files_outside_root_dir(
+fn explain_source_files(
     host: &dyn Host,
     options: &Options,
     atoms: &Interner,
@@ -1046,27 +1071,28 @@ fn source_files_outside_root_dir(
     by_path: &FxHashMap<String, FileId>,
     roots: &[String],
     starts: &[FileId],
-    root_dir: &str,
+    code: u32,
+    arg: &str,
+    is_wrong: &dyn Fn(&Module, bool) -> bool,
 ) -> Vec<(Option<(FileId, u32, u32)>, Problem)> {
     let is_case_sensitive = host.is_case_sensitive();
-    // `sourceFileMayBeEmitted`. A JSON file outside of the common source directory would be written over itself: it is not emitted.
-    let mut is_outside: Vec<bool> = modules
-        .iter()
-        .map(|module| {
-            !module.is_lib
-                && matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-                && !module.path.contains("/node_modules/")
-                && !is_path_under(root_dir, &module.path, is_case_sensitive)
-        })
-        .collect();
-    if !is_outside.contains(&true) {
-        return Vec::new();
-    }
     let mut is_root = vec![false; modules.len()];
     for root in roots {
         if let Some(&id) = by_path.get(root) {
             is_root[id.idx()] = true;
         }
+    }
+    let mut is_reported: Vec<bool> = modules
+        .iter()
+        .zip(&is_root)
+        .map(|(module, &is_root)| {
+            let module: &Module = module;
+            source_file_may_be_emitted(options, module, is_case_sensitive)
+                && is_wrong(module, is_root)
+        })
+        .collect();
+    if !is_reported.contains(&true) {
+        return Vec::new();
     }
     // `IsSourceFileFromExternalLibrary`: `lowestDepth > 0`. `IsExternalLibraryImport` goes by the path before links are followed, which
     // is not kept, so a specifier that is not relative and that `paths` does not match counts as one that leads into a package.
@@ -1096,11 +1122,11 @@ fn source_files_outside_root_dir(
             }
         }
     }
-    for (i, outside) in is_outside.iter_mut().enumerate() {
+    for (i, reported) in is_reported.iter_mut().enumerate() {
         // `GetProjectReferenceFromSource`: which files belong to a referenced project is not known here.
-        *outside &= is_local[i] && (is_root[i] || !options.has_project_references);
+        *reported &= is_local[i] && (is_root[i] || !options.has_project_references);
     }
-    if !is_outside.contains(&true) {
+    if !is_reported.contains(&true) {
         return Vec::new();
     }
     // `collectFiles`: the reason of a sub task is added before the walk goes into it.
@@ -1108,7 +1134,7 @@ fn source_files_outside_root_dir(
     let mut locations: FxHashMap<FileId, Vec<(FileId, u32, u32, u32)>> = FxHashMap::default();
     let mut seen = vec![false; modules.len()];
     for &first in starts {
-        if is_outside[first.idx()] && is_root[first.idx()] {
+        if is_reported[first.idx()] && is_root[first.idx()] {
             reasons[first.idx()].push(IncludeReason::RootFile);
         }
         // (file, how many of its edges have been followed)
@@ -1124,7 +1150,7 @@ fn source_files_outside_root_dir(
                 continue;
             };
             top.1 += 1;
-            if is_outside[edge.idx()] && !edges[..next].contains(&edge) {
+            if is_reported[edge.idx()] && !edges[..next].contains(&edge) {
                 let found = locations.entry(file).or_insert_with(|| {
                     reference_locations(host, options, atoms, by_path, &modules[file.idx()])
                 });
@@ -1146,7 +1172,7 @@ fn source_files_outside_root_dir(
     let mut problems = Vec::new();
     for (i, module) in modules.iter().enumerate() {
         let reasons = &reasons[i];
-        if !is_outside[i] || reasons.is_empty() {
+        if !is_reported[i] || reasons.is_empty() {
             continue;
         }
         let preferred_location = reasons.iter().find_map(|reason| match *reason {
@@ -1155,7 +1181,7 @@ fn source_files_outside_root_dir(
             } => Some((from, start, end)),
             IncludeReason::RootFile => None,
         });
-        let mut problem = Problem::new(6059, &[module.path.as_str(), root_dir], Place::Nowhere);
+        let mut problem = Problem::new(code, &[module.path.as_str(), arg], Place::Nowhere);
         if preferred_location.is_none() || reasons.len() != 1 {
             problem = problem.with(1, 1430, &[]);
             for reason in reasons {
@@ -1193,8 +1219,9 @@ fn source_files_outside_root_dir(
     problems
 }
 
-/// The parts of `verifyCompilerOptions` that go by where output is written. 6059 (`checkSourceFilesBelongToPath`) for a source file
-/// that is not under `rootDir`, 5009 and 5011 for what the sources have in common, and `verifyEmitFilePath`: 5055 for an output file
+/// The parts of `verifyCompilerOptions` that go by what is emitted and where. 6307 for a source file that a composite project does not
+/// list, 6059 (`checkSourceFilesBelongToPath`) for one that is not under `rootDir`, 5009 and 5011 for what the sources have in
+/// common, and `verifyEmitFilePath`: 5055 for an output file
 /// that is an input file, 5056 for one that two input files are written to. What is reported at a place in a file goes to
 /// `include_errors`.
 #[allow(clippy::too_many_arguments)]
@@ -1215,18 +1242,21 @@ fn output_path_errors(
     } else {
         ""
     };
-    // `sourceFileMayBeEmitted`: without `outDir` a JSON file is not.
     let sources: Vec<&Module> = modules
         .iter()
         .map(|module| &**module)
-        .filter(|module| {
-            !module.is_lib
-                && module.hir.kind != FileKind::Declaration
-                && !module.path.contains("/node_modules/")
-                && (module.hir.kind != FileKind::Json || !options.out_dir.is_empty())
-        })
+        .filter(|module| source_file_may_be_emitted(options, module, is_case_sensitive))
         .collect();
     let paths: Vec<&str> = sources.iter().map(|module| module.path.as_str()).collect();
+    let explain = |code: u32, arg: &str, is_wrong: &dyn Fn(&Module, bool) -> bool| {
+        explain_source_files(
+            host, options, atoms, modules, by_path, roots, starts, code, arg, is_wrong,
+        )
+    };
+    let mut explained = Vec::new();
+    if options.composite {
+        explained = explain(6307, options.config_path.as_str(), &|_, is_root| !is_root);
+    }
     // `CommonSourceDirectory`, where anything goes by it. `None`: there is none.
     let mut common = None;
     if !options.out_dir.is_empty()
@@ -1244,18 +1274,19 @@ fn output_path_errors(
         if said.is_empty() {
             common = common_directory_of(&paths, is_case_sensitive);
         } else {
-            for (at, problem) in source_files_outside_root_dir(
-                host, options, atoms, modules, by_path, roots, starts, said,
-            ) {
-                match at {
-                    Some((file, start, end)) => include_errors.push((file, start, end, problem)),
-                    None => errors.push(problem),
-                }
-            }
+            explained.extend(explain(6059, said, &|module, _| {
+                !is_path_under(said, &module.path, is_case_sensitive)
+            }));
             common = Some(said.to_owned());
         }
         if common.is_none() && !options.out_dir.is_empty() {
             errors.push(Problem::new(5009, &[], Place::Key("outDir", "")));
+        }
+    }
+    for (at, problem) in explained {
+        match at {
+            Some((file, start, end)) => include_errors.push((file, start, end, problem)),
+            None => errors.push(problem),
         }
     }
     if options.no_emit {
@@ -2123,7 +2154,7 @@ impl Files {
                     continue;
                 }
                 match e.kind {
-                    ExprKind::ImportCall(argument) => {
+                    ExprKind::ImportCall(argument, _) => {
                         if let ExprKind::String(spec) = hir[argument].kind {
                             called.push(spec);
                         }
@@ -2212,24 +2243,19 @@ impl Files {
                                 .and_then(|id| Some(&id[..1 + id.get(1..)?.find('@')?]))
                                 .map(|name| atoms.intern(name.as_bytes())),
                         ));
-                        let is_jsx = found.ends_with(".jsx");
-                        if is_jsx {
-                            jsx_imports.push((spec, mode));
+                        let needs_jsx = options.jsx == JsxEmit::None && found.ends_with(".jsx");
+                        if needs_jsx {
+                            jsx_imports.push((spec, mode, atoms.intern(found.as_bytes())));
                         }
                         if found.contains("/node_modules/") {
                             untyped_package_imports.push((spec, mode));
                         }
-                        // `shouldAddFile`: with `allowJs`, JavaScript is loaded like any other file, except `.jsx` without the `jsx`
-                        // option. `Files::load` skips files too deep inside packages. A file that is not loaded for this import is
-                        // still linked if it is in the program for another reason.
+                        // `shouldAddFile`: with `allowJs`, JavaScript is loaded like any other file. `Files::load` skips files too deep
+                        // inside packages. A file that is not loaded for this import is still linked if it is in the program for
+                        // another reason.
                         if options.allow_js {
-                            let should_load = !(is_jsx && options.jsx == JsxEmit::None);
-                            imports.push((
-                                spec,
-                                mode,
-                                found,
-                                should_load && (i < imported || !is_module_name),
-                            ));
+                            let brings_in = !needs_jsx && (i < imported || !is_module_name);
+                            imports.push((spec, mode, found, brings_in));
                         }
                     }
                     // `needAllowArbitraryExtensions`: the file is refused, even if it is in the program for another reason.
@@ -2244,10 +2270,18 @@ impl Files {
                         if using_ts_extension {
                             ts_extension_imports.push((spec, mode));
                         }
-                        if resolver.is_project_reference_redirect(&text, path, mode) {
+                        // `Extension` of what is redirected is that of the declaration file.
+                        let is_redirect = resolver.is_project_reference_redirect(&text, path, mode);
+                        if is_redirect {
                             project_reference_imports.push((spec, mode));
                         }
-                        imports.push((spec, mode, found, i < imported || !is_module_name));
+                        let needs_jsx =
+                            options.jsx == JsxEmit::None && !is_redirect && found.ends_with(".tsx");
+                        if needs_jsx {
+                            jsx_imports.push((spec, mode, atoms.intern(found.as_bytes())));
+                        }
+                        let brings_in = !needs_jsx && (i < imported || !is_module_name);
+                        imports.push((spec, mode, found, brings_in));
                     }
                     None => {}
                 }
@@ -3471,20 +3505,17 @@ impl Files {
         let hir = self.hir(file);
         match decl {
             Decl::ImportSpec(s) => {
-                let import = hir
-                    .imports
-                    .iter()
-                    .find(|i| i.named.range().contains(&s.idx()))?;
+                let import = &hir[hir[s].import];
                 let mode = self.mode_of_import(file, import.mode);
                 Some((import.spec, mode, hir[s].imported))
             }
             Decl::ExportSpec(s) => {
-                let export = hir
-                    .exports
-                    .iter()
-                    .find(|x| x.spec.is_some() && x.items.range().contains(&s.idx()))?;
+                let export = &hir[hir[s].export];
                 let mode = self.mode_of_import(file, export.mode);
-                Some((export.spec, mode, hir[s].local))
+                export
+                    .spec
+                    .is_some()
+                    .then_some((export.spec, mode, hir[s].local))
             }
             Decl::Require(pat) => {
                 let (spec, name) = self.bound(file).required_by(hir, pat)?;
@@ -3504,7 +3535,7 @@ impl Files {
             .is_some_and(|m| self.export(m, known::export_equals).is_some())
     }
 
-    /// `NameResolver.Resolve`: what `name` means in `scope` of `file`.
+    /// `NameResolver.Resolve` without a `nameNotFoundMessage`: what `name` means in `scope` of `file`.
     pub fn resolve_name(
         &self,
         file: FileId,
@@ -3512,27 +3543,49 @@ impl Files {
         name: Atom,
         meaning: SymFlags,
     ) -> Option<Sym> {
-        self.resolve_name_or_error(file, scope, name, meaning)
+        self.resolve(file, scope, name, meaning, false)
             .unwrap_or(None)
     }
 
-    /// `NameResolver.Resolve`. `Err`: the error it reports where it ends the search before it is through, which takes the place of
+    /// `NameResolver.Resolve`. `Err`: the error it reports where it returns nil for a reason of its own, which takes the place of
     /// the one for a name that is not found.
     pub fn resolve_name_or_error(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+    ) -> Result<Option<Sym>, u32> {
+        self.resolve(file, scope, name, meaning, true)
+            .map_err(|error| error.0)
+    }
+
+    /// The same, with `propertyWithInvalidInitializer` next to 2301 and 2844. `reports_errors`: `nameNotFoundMessage != nil`.
+    pub fn resolve(
         &self,
         file: FileId,
         mut scope: ScopeId,
         name: Atom,
         meaning: SymFlags,
-    ) -> Result<Option<Sym>, u32> {
+        reports_errors: bool,
+    ) -> Result<Option<Sym>, (u32, MemberId)> {
         let bound = self.bound(file);
         // `lastLocation`: the kind of the scope the search has just left.
         let mut from = ScopeKind::Block;
         while scope.is_some() {
             if let Some(code) = bound.type_parameter_out_of_reach(scope, name, meaning) {
-                return Err(code);
+                return Err((code, MemberId::NONE));
             }
             let s = &bound.scopes[scope.idx()];
+            if reports_errors
+                && let Some(invalid) = bound.property_with_invalid_initializer(scope, name, meaning)
+            {
+                // Nil, whatever is found. The property remembered last, the outermost, is the one the error is about.
+                return Err(self
+                    .resolve(file, s.parent, name, meaning, true)
+                    .err()
+                    .unwrap_or(invalid));
+            }
             // The `infer`s of a conditional type are seen from its true branch, not from the `extends` clause that declares them.
             if !matches!(from, ScopeKind::Extends)
                 && let Some(id) = bound.lookup(s.locals, name)
@@ -4319,11 +4372,8 @@ impl Files {
             },
             // Without `from`.
             Decl::ExportSpec(spec) => {
-                let index = hir
-                    .exports
-                    .iter()
-                    .position(|e| e.items.range().contains(&spec.idx()))?;
-                self.resolve_name(file, bound.export_scope[index], hir[spec].local, all)
+                let scope = bound.export_scope[hir[spec].export.idx()];
+                self.resolve_name(file, scope, hir[spec].local, all)
             }
             Decl::UmdGlobal(_) => Some(self.module_value(self.file_symbol(file))),
             Decl::ExportStarAs(stmt) => {

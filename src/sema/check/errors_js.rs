@@ -188,16 +188,6 @@ fn modifiers_around(text: &[u8], at: u32, flags: Flags) -> SmallVec<[(u32, bool)
     found
 }
 
-/// Where the class member `member` starts: at its first modifier, or at its name.
-pub(super) fn start_of_member(text: &[u8], member: &Member) -> u32 {
-    if member.pos as usize > text.len() {
-        return member.pos;
-    }
-    modifiers_around(text, member.pos, member.flags | Flags::CONST)
-        .first()
-        .map_or(member.pos, |m| m.0)
-}
-
 /// `IsModifier`, of the word before the name of a parameter (`name`) or before its `...`. `start`: where the parameter starts.
 fn has_parameter_modifier(text: &[u8], start: u32, name: u32) -> bool {
     let mut end = skip_trivia_back(text, (name as usize).min(text.len()));

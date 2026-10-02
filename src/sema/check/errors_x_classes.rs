@@ -99,14 +99,6 @@ fn modifier_before(text: &[u8], pos: u32) -> Option<(u32, &[u8])> {
     Some((word as u32, &before[word..]))
 }
 
-/// Where the member whose name is at `pos` starts: at the first of the modifiers before the name.
-fn start_with_modifiers(text: &[u8], mut pos: u32) -> u32 {
-    while let Some((start, _)) = modifier_before(text, pos) {
-        pos = start;
-    }
-    pos
-}
-
 /// Whether `declare` is one of the modifiers before the member name at `pos`.
 fn has_declare_modifier(text: &[u8], mut pos: u32) -> bool {
     while let Some((start, modifier)) = modifier_before(text, pos) {
@@ -266,17 +258,12 @@ impl Checker<'_> {
         } else {
             ClassBase::Nothing
         };
-        let constructor = self.type_of_expr(file, extends);
+        let constructor = self.base_constructor_type_of_class(sym);
         // `resolveBaseTypesOfClass`: the error type is no base type.
         if self.is_error_type(constructor) {
             return nothing;
         }
         if !self.is_known(constructor) || self.is_uncertain(file, extends) {
-            return ClassBase::Unknown;
-        }
-        // A type parameter that is not in scope here is left over from an incomplete resolution.
-        let is_generic_here = !class.type_params.is_empty() || self.has_outer_type_parameters(sym);
-        if !is_generic_here && self.has_type_variables_except_this(file, c, constructor) {
             return ClassBase::Unknown;
         }
         if constructor == TypeId::NULL {
@@ -285,10 +272,6 @@ impl Checker<'_> {
         let apparent = self.apparent_type(constructor);
         if !self.is_known(apparent) {
             return ClassBase::Unknown;
-        }
-        // `isConstructorType`
-        if !self.has_any_flag(constructor) && self.signatures(apparent, true).is_empty() {
-            return nothing;
         }
         if !(self.is_object_type(apparent)
             || self.is_intersection(apparent)
@@ -345,9 +328,7 @@ impl Checker<'_> {
         if self.is_error_type(base) {
             return nothing;
         }
-        if !self.is_settled_base(base)
-            || !is_generic_here && self.has_type_variables_except_this(file, c, base)
-        {
+        if !self.is_settled_base(base) {
             return ClassBase::Unknown;
         }
         let unreduced = base;
@@ -725,7 +706,7 @@ impl Checker<'_> {
                     && parts
                         .iter()
                         .any(|part| part.flags.contains(PropFlags::PRIVATE))
-                    && parts.iter().any(|part| part.source != parts[0].source)
+                    && Self::value_declaration(prop).is_none()
                 {
                     return TypeId::NEVER;
                 }
@@ -1126,7 +1107,7 @@ impl Checker<'_> {
             | PropSource::Literal(..)
             | PropSource::Symbol(_)
             | PropSource::Assigned(..) => Some((true, false)),
-            PropSource::Intersected(_, parts) => {
+            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => {
                 let (mut is_declared, mut is_abstract) = (false, false);
                 for part in parts.iter() {
                     let (declared, abstract_) = self.declarations_of_base_property(part)?;
@@ -1294,7 +1275,7 @@ impl Checker<'_> {
                 }
             }
             if !is_first {
-                let start = start_with_modifiers(&hir.text, hir[m].pos);
+                let start = hir[m].start;
                 out.push(Diagnostic { start, code: 2376 });
                 // `GetErrorRangeForNode`: up to the keyword.
                 self.note(
@@ -1428,7 +1409,7 @@ impl Checker<'_> {
             | ExprKind::Satisfies { expr: inner, .. }
             | ExprKind::AsConst(inner)
             | ExprKind::NonNull(inner)
-            | ExprKind::ImportCall(inner) => expr(inner),
+            | ExprKind::ImportCall(inner, _) => expr(inner),
             ExprKind::Jsx(j) => {
                 let jsx = &hir[j];
                 expr(jsx.tag)

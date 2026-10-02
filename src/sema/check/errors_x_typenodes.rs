@@ -170,34 +170,6 @@ fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     }
 }
 
-/// Where the member whose name is at `pos` starts, modifiers included.
-fn start_of_modifiers(text: &[u8], pos: u32) -> u32 {
-    let mut at = pos as usize;
-    loop {
-        let end = skip_trivia_back(text, at);
-        let mut start = end;
-        while start > 0 && is_identifier_part(text[start - 1]) {
-            start -= 1;
-        }
-        if !matches!(
-            &text[start..end],
-            b"public"
-                | b"private"
-                | b"protected"
-                | b"static"
-                | b"declare"
-                | b"abstract"
-                | b"override"
-                | b"readonly"
-                | b"accessor"
-                | b"async"
-        ) {
-            return at as u32;
-        }
-        at = start;
-    }
-}
-
 /// Where an element of a tuple type starts: at its `...`, at its name, or at its type.
 fn start_of_tuple_element(hir: &hir::File, elem: &TupleElem) -> u32 {
     let text: &[u8] = &hir.text;
@@ -430,7 +402,9 @@ fn is_this_type_available(
             | ScopeKind::InferConstraint
             | ScopeKind::StaticMember
             | ScopeKind::ComputedName
-            | ScopeKind::BaseExpression => {}
+            | ScopeKind::BaseExpression
+            | ScopeKind::PropertyDeclaration(..)
+            | ScopeKind::PropertyType(..) => {}
         }
         scope = s.parent;
     }
@@ -549,11 +523,6 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // The text of the default library is not kept.
         if hir.text.is_empty() {
-            return;
-        }
-        // Of a declaration file only `checkGrammarIndexSignature` is gone into.
-        if hir.kind == FileKind::Declaration {
-            self.check_keys_of_index_signatures(file, out);
             return;
         }
         let exprs = self.exprs_by_kind(file);
@@ -886,7 +855,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkTemplateLiteralType` compares each placeholder with `templateConstraintType`. Reported is 2321, for a comparison made on the
+    /// `checkTemplateLiteralType` compares each placeholder with `templateConstraintType`: 2322. And 2321, for a comparison made on the
     /// way that runs out of depth: it has no error node, and the template literal type is `currentNode`.
     fn check_template_literal_type_nodes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -908,8 +877,12 @@ impl Checker<'_> {
             self.relation_too_deep = false;
             for placeholder in hir.ids(types) {
                 let ty = self.type_from_node(file, placeholder);
-                if self.is_known(ty) {
-                    self.answer_if_sure(|c| c.is_assignable(ty, constraint));
+                if self.is_known(ty)
+                    && self.answer_if_sure(|c| c.is_assignable(ty, constraint)) == Some(false)
+                {
+                    let start = start_of_type(hir, placeholder);
+                    let end = self.end_of_type_node_from(file, placeholder, start);
+                    self.report_not_assignable_with_end(ty, constraint, start, end, 2322, out);
                 }
             }
             if std::mem::take(&mut self.relation_too_deep) {
@@ -1652,7 +1625,7 @@ impl Checker<'_> {
                 continue;
             }
             // `checkGrammarModifiers` comes first, and what it objects to is all that is said.
-            let modifiers = start_of_modifiers(&hir.text, member.pos)..member.pos;
+            let modifiers = member.start..member.pos;
             if hir
                 .early_errors
                 .iter()
@@ -1672,10 +1645,8 @@ impl Checker<'_> {
             // `GetErrorRangeForNode`: at its name, if that is where an error about it goes. It is not for a method that is only declared.
             let first = &hir[all.at(0)];
             let start = match first.kind {
-                MemberKind::Constructor | MemberKind::StaticBlock => {
-                    start_of_modifiers(&hir.text, first.pos)
-                }
-                MemberKind::Method if !is_in_class => start_of_modifiers(&hir.text, first.pos),
+                MemberKind::Constructor | MemberKind::StaticBlock => first.start,
+                MemberKind::Method if !is_in_class => first.start,
                 _ => first.pos,
             };
             out.push(Diagnostic { start, code: 7061 });
@@ -1764,7 +1735,7 @@ impl Checker<'_> {
                 MemberKind::Method
                     if !self.is_signature_inside_a_class(file, MemberId(m as u32)) =>
                 {
-                    let start = start_of_modifiers(&hir.text, member.pos);
+                    let start = member.start;
                     out.push(Diagnostic { start, code: 18016 });
                     let end = self.end_of_member(file, MemberId(m as u32));
                     self.note(start, end, 18016, vec![]);
@@ -2570,7 +2541,7 @@ impl Checker<'_> {
                 continue;
             }
             // That it may be null or undefined is an error of its own, and does not stand in the way. `unknown` does.
-            let object = self.receiver_that_is_there(object);
+            let object = self.non_null_type(object);
             if !self.is_known(object)
                 || self.is_any(object)
                 || object == TypeId::NEVER
@@ -2589,9 +2560,7 @@ impl Checker<'_> {
             }
             // `getAssignmentTargetKind(node) != AssignmentKindNone`
             let is_written = self.is_written(file, e);
-            if !self.has_type_variables(object) && !self.has_type_variables(keys)
-                || !self.is_in_generic_context(file, e)
-            {
+            if !self.has_type_variables(object) && !self.has_type_variables(keys) {
                 continue;
             }
             let at = self.start_inside_parentheses(file, e);

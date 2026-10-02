@@ -15,7 +15,7 @@ use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
 use bun_ast::ts_syntax::{
     Flags, Name, Param, PatternElement, PatternId, PatternProperty, PropertyKey, ResolutionMode,
-    SignatureKind, TupleElement, TypeData, TypeId, TypeParam,
+    SignatureKind, ThisParam, TupleElement, TypeData, TypeId, TypeParam,
 };
 
 // Re-export so the parser-side type alias used in this file matches the
@@ -160,6 +160,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // "[...a]"
+                    let loc = self.lexer.loc();
                     let is_rest = self.lexer.token == T::TDotDotDot;
                     if self.lexer.token == T::TDotDotDot {
                         self.lexer.next()?;
@@ -181,6 +182,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             pattern,
                             default,
                             is_rest,
+                            loc,
                         });
                     }
 
@@ -232,7 +234,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if keeps {
                                 self.emit_identifier_binding();
                                 property.is_rest = true;
-                                property.loc = bun_ast::Loc { start: pos as i32 };
                             }
                             self.lexer.next()?;
                         }
@@ -310,7 +311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Keep mode stores the result in `TypeSyntax::last_params`.
         let keeps = self.should_keep_types();
         let mut parameters: Vec<Param> = Vec::new();
-        let mut this_type = Some(TypeId::NONE);
+        let mut this_param = Some(ThisParam::NONE);
 
         while self.lexer.token != T::TCloseParen {
             let mut parameter = Param {
@@ -334,7 +335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.flags |= Flags::REST;
             }
 
-            let is_this = self.lexer.token == T::TThis;
+            let (is_this, name_loc) = (self.lexer.token == T::TThis, self.lexer.loc());
             self.skip_type_script_binding()?;
             if keeps {
                 parameter.pattern = self.type_syntax_mut().last_binding;
@@ -363,9 +364,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             if keeps {
                 if !is_complete || (parameter.pattern.is_none() && !is_this) {
-                    this_type = None;
+                    this_param = None;
                 } else if is_this {
-                    this_type = this_type.and(Some(parameter.ty));
+                    this_param = this_param.and(Some(ThisParam {
+                        ty: parameter.ty,
+                        loc: name_loc,
+                    }));
                 } else {
                     parameters.push(parameter);
                 }
@@ -381,7 +385,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect(T::TCloseParen)?;
         if keeps {
-            self.finish_params(&parameters, this_type, open_paren);
+            self.finish_params(&parameters, this_param, open_paren);
         }
         Ok(())
     }
@@ -446,7 +450,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.expect(T::TOpenBracket)?;
         let keeps = self.should_keep_types();
         let mut parameters: Vec<Param> = Vec::new();
-        let mut this_type = Some(TypeId::NONE);
+        let mut this_param = Some(ThisParam::NONE);
         let mut trailing_comma = None;
 
         let saved_contexts = self.enter_list(ListKind::Parameters);
@@ -477,7 +481,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.flags |= Flags::REST;
             }
 
-            let is_this = self.lexer.token == T::TThis;
+            let (is_this, name_loc) = (self.lexer.token == T::TThis, self.lexer.loc());
             if matches!(
                 self.lexer.token,
                 T::TIdentifier | T::TThis | T::TOpenBracket | T::TOpenBrace
@@ -512,9 +516,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             if keeps {
                 if !is_complete || (parameter.pattern.is_none() && !is_this) {
-                    this_type = None;
+                    this_param = None;
                 } else if is_this {
-                    this_type = this_type.and(Some(parameter.ty));
+                    this_param = this_param.and(Some(ThisParam {
+                        ty: parameter.ty,
+                        loc: name_loc,
+                    }));
                 } else {
                     parameters.push(parameter);
                 }
@@ -533,7 +540,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect(T::TCloseBracket)?;
         if keeps {
-            self.finish_params(&parameters, this_type, open_bracket);
+            self.finish_params(&parameters, this_param, open_bracket);
         }
         Ok(trailing_comma)
     }
@@ -723,7 +730,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let open_paren = self.lexer.loc().start;
             self.lexer.expect(T::TOpenParen)?;
             if self.should_keep_types() {
-                self.finish_params(&[], Some(TypeId::NONE), open_paren);
+                self.finish_params(&[], Some(ThisParam::NONE), open_paren);
             }
         } else if has_head || self.is_unambiguously_start_of_function_type() {
             self.skip_typescript_fn_args()?;
@@ -1983,7 +1990,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // `parseEntityName`: the name is missing (1003), and the token stays.
                                 self.lexer.expect(T::TIdentifier)?;
                                 if KEEP {
-                                    self.emit_type(TypeData::Missing, pos);
+                                    let name = Name {
+                                        text: StoreStr::EMPTY,
+                                        loc: self.lexer.full_start(),
+                                    };
+                                    let names = self.type_syntax_mut().name_stack.len();
+                                    self.type_syntax_mut().name_stack.push(name);
+                                    self.emit_typeof_type(names, false, pos);
                                 }
                                 break;
                             }
@@ -2976,7 +2989,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let keeps = self.should_keep_types();
         if keeps {
             member.open_paren = self.token_start();
-            member.parameters = Some(Some((Default::default(), TypeId::NONE)));
+            member.parameters = Some(Some((Default::default(), ThisParam::NONE)));
         }
         self.lexer.expect(T::TOpenParen)?;
         if self.lexer.token == T::TColon {
@@ -3130,6 +3143,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut parameter = TypeParam {
                 name: StoreStr::EMPTY,
                 loc: bun_ast::Loc::EMPTY,
+                start: self.lexer.loc(),
                 constraint: TypeId::NONE,
                 default: TypeId::NONE,
                 flags: Flags::empty(),
@@ -3424,6 +3438,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut parameter = TypeParam {
             name: StoreStr::EMPTY,
             loc: bun_ast::Loc::EMPTY,
+            start: self.lexer.loc(),
             constraint: TypeId::NONE,
             default: TypeId::NONE,
             flags: Flags::empty(),

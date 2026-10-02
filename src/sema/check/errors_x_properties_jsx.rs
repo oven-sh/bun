@@ -717,24 +717,7 @@ impl Checker<'_> {
                 Parent::Module(m) => hir[m].flags.contains(Flags::AMBIENT),
                 _ => continue,
             };
-            // The statement may be said to start after its modifiers. A modifier is on the line of what follows it.
-            let mut first = (s.pos as usize).min(text.len());
-            let line = text[..first]
-                .iter()
-                .rposition(|&c| c == b'\n')
-                .map_or(0, |i| i + 1);
-            loop {
-                let before = trim_trivia_end(&text[line..first]);
-                let length = if ends_with_word(before, b"declare") {
-                    7
-                } else if ends_with_word(before, b"export") {
-                    6
-                } else {
-                    break;
-                };
-                first = line + before.len() - length;
-            }
-            let (mut at, mut has_export, mut last_declare) = (first, false, None);
+            let (mut at, mut has_export, mut last_declare) = (s.start as usize, false, None);
             let is_refused = loop {
                 at = skip_trivia(text, at);
                 if is_word_at(text, at, b"export") {
@@ -770,7 +753,7 @@ impl Checker<'_> {
             return;
         }
         for (i, s) in hir.stmts.iter().enumerate() {
-            let (first_name, code) = match s.kind {
+            let (start, code) = match s.kind {
                 // `checkGrammarModuleElementContext`
                 StmtKind::ExportNamed(x)
                     if hir[x].type_only
@@ -781,7 +764,7 @@ impl Checker<'_> {
                             .items
                             .iter()
                             .find(|&item| hir[item].type_only)
-                            .map(|item| hir[item].local_pos),
+                            .map(|item| hir[item].start),
                         2207,
                     )
                 }
@@ -796,21 +779,14 @@ impl Checker<'_> {
                             .named
                             .iter()
                             .find(|&item| hir[item].type_only)
-                            .map(|item| hir[item].imported_pos),
+                            .map(|item| hir[item].start),
                         2206,
                     )
                 }
                 _ => continue,
             };
-            let Some(first_name) = first_name else {
-                continue;
-            };
-            let before = trim_trivia_end(upto(&hir.text, first_name));
-            if ends_with_word(before, b"type") {
-                out.push(Diagnostic {
-                    start: before.len() as u32 - 4,
-                    code,
-                });
+            if let Some(start) = start {
+                out.push(Diagnostic { start, code });
             }
         }
     }

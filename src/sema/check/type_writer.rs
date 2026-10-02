@@ -134,7 +134,7 @@ impl Checker<'_> {
             VisitedKind::TypeReferenceName(node, index)
             | VisitedKind::HeritageClauseName(node, index)
             | VisitedKind::HeritageClausePropertyAccess(node, index) => {
-                matches!(hir[node].kind, TypeNodeKind::Ref { name, .. } if index as usize + 1 == name.len())
+                !matches!(hir[node].kind, TypeNodeKind::Ref { name, .. } if index as usize + 1 != name.len())
             }
             // The `b` of `typeof import("m").a.b` is not: `isPartOfTypeNodeInParent` leaves out an `ImportType` with `IsTypeOf`.
             VisitedKind::ImportTypeQualifierName(node, index) => {
@@ -240,14 +240,6 @@ impl Checker<'_> {
                 self.type_of_visited_expression(file, e, walk)
             }
             VisitedKind::BindingName(pat) => self.type_of_binding_name(file, pat),
-            VisitedKind::TaggedTemplateLiteral(e) => match hir[e].kind {
-                // `checkTemplateExpression` does not evaluate it: with substitutions it is a `string`.
-                ExprKind::TaggedTemplate(c) if hir[c].args.is_empty() => {
-                    let raw = &hir.text[node.start as usize + 1..node.end as usize - 1];
-                    self.string_literal(self.files().atoms.intern(raw), false)
-                }
-                _ => TypeId::STRING,
-            },
             // `IsJsxTagName`: the identifier is an expression, and `checkIdentifier` resolves it as a value from where the element is.
             VisitedKind::JsxIntrinsicTagName(element, tag) => {
                 let scope = self.bound(file).expr_scope.get(&element);
@@ -298,7 +290,7 @@ impl Checker<'_> {
             VisitedKind::Directive(index) => {
                 self.string_literal(hir.directives[index as usize].1, false)
             }
-            VisitedKind::ThisParameter(f) => self.type_from_node(file, hir[f].this_ty),
+            VisitedKind::ThisParameter(f) => self.type_of_this_parameter(file, f),
             // `getRegularTypeOfExpression` of the access, and of the name it ends with (`isRightSideOfQualifiedNameOrPropertyAccess`).
             VisitedKind::HeritageClauseName(reference, index)
             | VisitedKind::HeritageClausePropertyAccess(reference, index) => {
@@ -512,14 +504,8 @@ impl Checker<'_> {
             Decl::Enum(_) | Decl::Alias(_) => true,
             // `import type a from`, `import type { a }`, `export type { a }`: the `type` of the clause, not of the specifier.
             Decl::ImportDefault(import) => hir[import].type_only,
-            Decl::ImportSpec(spec) => hir
-                .imports
-                .iter()
-                .any(|import| import.type_only && import.named.range().contains(&spec.idx())),
-            Decl::ExportSpec(spec) => hir
-                .exports
-                .iter()
-                .any(|export| export.type_only && export.items.range().contains(&spec.idx())),
+            Decl::ImportSpec(spec) => hir[hir[spec].import].type_only,
+            Decl::ExportSpec(spec) => hir[hir[spec].export].type_only,
             _ => false,
         };
         // `IsTypeDeclarationName`: a name that is a string literal is not one.
@@ -552,17 +538,9 @@ impl Checker<'_> {
         let (hir, files) = (self.hir(file), self.files());
         let written = match decl {
             Decl::ImportDefault(import) | Decl::ImportNamespace(import) => hir[import].mode,
-            Decl::ImportSpec(spec) => {
-                hir.imports
-                    .iter()
-                    .find(|import| import.named.range().contains(&spec.idx()))?
-                    .mode
-            }
+            Decl::ImportSpec(spec) => hir[hir[spec].import].mode,
             Decl::ExportSpec(spec) => {
-                let export = hir
-                    .exports
-                    .iter()
-                    .find(|export| export.items.range().contains(&spec.idx()))?;
+                let export = &hir[hir[spec].export];
                 if export.spec.is_none() {
                     return None;
                 }
@@ -611,11 +589,11 @@ impl Checker<'_> {
         };
         let name = prop.name;
         // `declareSymbolEx`, `mergeSymbol`, `lateBindMember`: what the symbol of that name refused has a symbol of its own.
-        let in_table = match prop.source {
-            PropSource::Members(ref list) => list
+        let in_table = match Self::value_declaration(&prop) {
+            Some(PropSource::Members(list)) => list
                 .first()
                 .map(|&(of, first)| (of, MemberDeclaration::Member(first))),
-            PropSource::Parameter(of, parameter) => {
+            Some(&PropSource::Parameter(of, parameter)) => {
                 Some((of, MemberDeclaration::Parameter(parameter)))
             }
             _ => None,

@@ -57,6 +57,8 @@ pub(crate) struct Builder<'a> {
     pub(crate) is_js: bool,
     /// `NodeFlagsJSDoc`: the type being cloned is written in a JSDoc comment.
     pub(crate) in_jsdoc: bool,
+    /// Where the first token of the statement being made is: a decorator, a modifier or its keyword.
+    pub(crate) statement_start: u32,
 }
 
 /// A name of at most 16 bytes and its atom. The first bytes, the last bytes and the length say all there is to say of its spelling.
@@ -275,8 +277,9 @@ pub(crate) fn modifier_error(
 /// What `Builder::parse_parameter_list` read.
 struct ParameterList {
     params: Vec<Param>,
-    /// The type of a `this` parameter.
+    /// The type of a `this` parameter, and where its name is.
     this_ty: TypeNodeId,
+    this_pos: u32,
     /// Where the comma right before the closing token is.
     trailing_comma: Option<u32>,
     /// Where the `...` of the first parameter is, if it has `Flags::REST`.
@@ -320,6 +323,7 @@ impl<'a> Builder<'a> {
             pending_initializers: Vec::new(),
             is_js,
             in_jsdoc: false,
+            statement_start: 0,
         }
     }
 
@@ -662,6 +666,14 @@ impl<'a> Builder<'a> {
             .unwrap_or(IdList::EMPTY)
     }
 
+    /// The `A.B` at `offset`: an element of an `extends` clause, without its type arguments.
+    pub(crate) fn member_expr_at(&mut self, offset: u32) -> Option<ExprId> {
+        self.depth = 0;
+        self.seek(offset)
+            .and_then(|()| self.parse_member_expr())
+            .ok()
+    }
+
     /// `A, B<C>` at `offset`: what follows `implements`.
     pub(crate) fn type_list_at(&mut self, offset: u32) -> IdList<TypeNodeId> {
         self.depth = 0;
@@ -749,7 +761,10 @@ impl<'a> Builder<'a> {
                 self.depth = 0;
                 self.start_statement(false);
                 let start = self.pos();
-                stmts.push(self.parse_statement(Flags::AMBIENT)?);
+                self.statement_start = start;
+                let statement = self.parse_statement(Flags::AMBIENT)?;
+                self.file[statement].start = start;
+                stmts.push(statement);
                 if self.pos() == start {
                     return Err(Error::SyntaxError);
                 }
@@ -998,15 +1013,17 @@ impl<'a> Builder<'a> {
     }
 
     /// `<T>(a: A, b?: B)`
-    fn parse_signature_head(&mut self) -> R<(Span<TypeParamId>, u32, Span<ParamId>, TypeNodeId)> {
+    fn parse_signature_head(
+        &mut self,
+    ) -> R<(Span<TypeParamId>, u32, Span<ParamId>, (TypeNodeId, u32))> {
         let type_params = if self.tok() == T::TLessThan {
             self.parse_type_params()?
         } else {
             Span::EMPTY
         };
         let anchor = self.pos();
-        let (params, this_ty) = self.parse_params()?;
-        Ok((type_params, anchor, params, this_ty))
+        let (params, this) = self.parse_params()?;
+        Ok((type_params, anchor, params, this))
     }
 
     fn keyword(&mut self, k: Keyword, pos: u32) -> R<TypeNodeId> {
@@ -1258,9 +1275,16 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn signature_fn(&mut self, kind: FnKind, flags: Flags, name: Atom, name_pos: u32) -> R<FnId> {
+    fn signature_fn(
+        &mut self,
+        kind: FnKind,
+        flags: Flags,
+        name: Atom,
+        name_pos: u32,
+        start: u32,
+    ) -> R<FnId> {
         let pos = name_pos;
-        let (type_params, anchor, params, this_ty) = self.parse_signature_head()?;
+        let (type_params, anchor, params, (this_ty, this_pos)) = self.parse_signature_head()?;
         let ret = if self.eat(T::TColon)? {
             self.parse_type()?
         } else {
@@ -1274,10 +1298,12 @@ impl<'a> Builder<'a> {
             type_params,
             params,
             this_ty,
+            this_pos,
             ret,
             body: FnBody::None,
             anchor,
             pos,
+            start,
         }))
     }
 
@@ -1427,6 +1453,7 @@ impl<'a> Builder<'a> {
             init: ExprId::NONE,
             func: FnId::NONE,
             pos: start,
+            start,
         };
         while self.tok() == T::TAt {
             // In an ambient class a member's own `declare`, which `NodeCanBeDecorated` goes by, is not told from that of the class.
@@ -1481,10 +1508,12 @@ impl<'a> Builder<'a> {
                 type_params: Span::EMPTY,
                 params,
                 this_ty: TypeNodeId::NONE,
+                this_pos: u32::MAX,
                 ret,
                 body: FnBody::None,
                 anchor: pos,
                 pos,
+                start,
             });
             self.end_member()?;
             return Ok(member);
@@ -1569,7 +1598,7 @@ impl<'a> Builder<'a> {
             } else {
                 FnKind::Setter
             };
-            member.func = self.signature_fn(kind, member.flags, name, member.pos)?;
+            member.func = self.signature_fn(kind, member.flags, name, member.pos, start)?;
             self.body_if_any(member.func, member.flags.contains(Flags::AMBIENT))?;
             self.end_member()?;
             return Ok(member);
@@ -1599,10 +1628,12 @@ impl<'a> Builder<'a> {
                 type_params: Span::EMPTY,
                 params: Span::EMPTY,
                 this_ty: TypeNodeId::NONE,
+                this_pos: u32::MAX,
                 ret: TypeNodeId::NONE,
                 body: FnBody::None,
                 anchor: member.pos,
                 pos: member.pos,
+                start,
             });
             self.end_member()?;
             return Ok(member);
@@ -1623,7 +1654,7 @@ impl<'a> Builder<'a> {
             } else {
                 FnKind::Method
             };
-            member.func = self.signature_fn(kind, member.flags, name, member.pos)?;
+            member.func = self.signature_fn(kind, member.flags, name, member.pos, start)?;
             self.body_if_any(member.func, member.flags.contains(Flags::AMBIENT))?;
             self.end_member()?;
             return Ok(member);
@@ -1757,7 +1788,10 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
-        let close_pos = self.pos();
+        let close_pos = match self.tok() {
+            T::TCloseParen => self.pos(),
+            _ => self.lexer.full_start().start as u32 - 1,
+        };
         self.expect(T::TCloseParen)?;
         let args = self.file.list(&args);
         let call = self.file.add_call(Call {
@@ -1766,6 +1800,7 @@ impl<'a> Builder<'a> {
             type_args,
             close_pos,
             chain: Chain::No,
+            template: ExprId::NONE,
         });
         Ok(self.file.expr(ExprKind::Call(call), pos))
     }
@@ -1814,23 +1849,25 @@ impl<'a> Builder<'a> {
 
     // ───────────────────────────── parameters ─────────────────────────────
 
-    /// `(a: A, b?: B, ...c: C[])`. The second value is the type of a leading `this`.
-    fn parse_params(&mut self) -> R<(Span<ParamId>, TypeNodeId)> {
+    /// `(a: A, b?: B, ...c: C[])`. The second value is the type of a leading `this`, and where its name is.
+    fn parse_params(&mut self) -> R<(Span<ParamId>, (TypeNodeId, u32))> {
         let kept = self.kept.parameters.get(&(self.pos() as i32)).copied();
-        if let Some((parameters, this_type)) = self.reuse_kept(kept)? {
-            return Ok((self.clone_params(parameters), self.clone_type(this_type)));
+        if let Some((parameters, this)) = self.reuse_kept(kept)? {
+            let this = (self.clone_type(this.ty), this.loc.start as u32);
+            return Ok((self.clone_params(parameters), this));
         }
         if self.tolerant && self.tok() != T::TOpenParen {
             // `parseParameters`: without the `(` the list is empty, and no `)` is looked for.
-            return Ok((Span::EMPTY, TypeNodeId::NONE));
+            return Ok((Span::EMPTY, (TypeNodeId::NONE, u32::MAX)));
         }
         self.expect(T::TOpenParen)?;
         self.parse_params_inner()
     }
 
-    fn parse_params_inner(&mut self) -> R<(Span<ParamId>, TypeNodeId)> {
+    fn parse_params_inner(&mut self) -> R<(Span<ParamId>, (TypeNodeId, u32))> {
         let list = self.parse_parameter_list(T::TCloseParen)?;
-        Ok((self.file.add_params(&list.params), list.this_ty))
+        let this = (list.this_ty, list.this_pos);
+        Ok((self.file.add_params(&list.params), this))
     }
 
     /// `parseDelimitedList(PCParameters, parseParameter)` and then `close`. The opening token has been consumed.
@@ -1838,6 +1875,7 @@ impl<'a> Builder<'a> {
         let mut list = ParameterList {
             params: Vec::new(),
             this_ty: TypeNodeId::NONE,
+            this_pos: u32::MAX,
             trailing_comma: None,
             first_rest: 0,
             first_question: 0,
@@ -1900,6 +1938,7 @@ impl<'a> Builder<'a> {
             flags |= Flags::PARAMETER_PROPERTY;
         }
         if self.tok() == T::TThis {
+            list.this_pos = self.pos();
             self.next()?;
             if self.eat(T::TColon)? {
                 list.this_ty = self.parse_type_or_error()?;
@@ -2129,7 +2168,7 @@ impl<'a> Builder<'a> {
                             value,
                             default: ExprId::NONE,
                             is_rest: true,
-                            pos,
+                            pos: start,
                         });
                     } else {
                         let key_pos = self.pos();
@@ -2182,6 +2221,7 @@ impl<'a> Builder<'a> {
                             pat: hole,
                             default: ExprId::NONE,
                             is_rest: false,
+                            start: self.pos(),
                         });
                         self.next()?;
                         continue;
@@ -2214,6 +2254,7 @@ impl<'a> Builder<'a> {
                         pat,
                         default,
                         is_rest,
+                        start,
                     });
                     if self.eat(T::TComma)? {
                         continue;
@@ -2446,6 +2487,7 @@ impl<'a> Builder<'a> {
                             key,
                             value,
                             pos,
+                            start: pos,
                         });
                     } else {
                         let name = key.name().ok_or(Error::SyntaxError)?;
@@ -2455,6 +2497,7 @@ impl<'a> Builder<'a> {
                             key,
                             value,
                             pos,
+                            start: pos,
                         });
                     }
                     if !self.eat(T::TComma)? {
@@ -2533,7 +2576,11 @@ impl<'a> Builder<'a> {
         );
         while has_block && !matches!(self.tok(), T::TCloseBrace | T::TEndOfFile) {
             self.start_statement(flags.contains(Flags::AMBIENT));
-            stmts.push(self.parse_statement(flags)?);
+            let start = self.pos();
+            self.statement_start = start;
+            let statement = self.parse_statement(flags)?;
+            self.file[statement].start = start;
+            stmts.push(statement);
         }
         (
             self.in_ambient_block,
@@ -2718,7 +2765,7 @@ impl<'a> Builder<'a> {
                         self.parse_module(pos, flags)
                     }
                     b"global" => {
-                        let name_pos = self.pos();
+                        let (name_pos, start) = (self.pos(), self.statement_start);
                         self.next()?;
                         // `parseAmbientExternalModuleDeclaration`
                         let has_body = self.tok() == T::TOpenBrace;
@@ -2734,6 +2781,7 @@ impl<'a> Builder<'a> {
                             flags: flags | Flags::AMBIENT,
                             body,
                             has_body,
+                            start,
                         });
                         Ok(self.file.stmt(StmtKind::Module(module), pos))
                     }
@@ -3065,7 +3113,7 @@ impl<'a> Builder<'a> {
         } else {
             Atom::NONE
         };
-        let func = self.signature_fn(FnKind::Decl, flags, name, name_pos)?;
+        let func = self.signature_fn(FnKind::Decl, flags, name, name_pos, self.statement_start)?;
         self.file[func].pos = pos;
         if self.tok() == T::TOpenBrace {
             if !flags.contains(Flags::AMBIENT) {
@@ -3108,6 +3156,7 @@ impl<'a> Builder<'a> {
         };
         let mut extends = ExprId::NONE;
         let mut extends_args = IdList::EMPTY;
+        let mut other_extends = Vec::new();
         let mut implements = Vec::new();
         // `parseHeritageClauses`: any number of clauses, in any order. Only the first of each kind counts.
         let (mut seen_extends, mut seen_implements) = (false, false);
@@ -3147,7 +3196,12 @@ impl<'a> Builder<'a> {
                     implements.push(self.parse_implemented()?);
                 } else {
                     // The checker never looks at it.
+                    if is_extends {
+                        other_extends.extend(self.attempt(|p| p.parse_member_expr().map(Some)));
+                    }
                     self.skip_heritage_expression()?;
+                    let end = self.pos();
+                    self.file.stray_decorators.push((at, end));
                     if is_extends && count == 1 && error.is_none() {
                         error = Some((at, 1174));
                     }
@@ -3181,6 +3235,7 @@ impl<'a> Builder<'a> {
             }
         }
         let implements = self.file.list(&implements);
+        let other_extends = self.file.list(&other_extends);
         let outer = std::mem::replace(&mut self.in_abstract_class, flags.contains(Flags::ABSTRACT));
         // `parseClassDeclarationOrExpression`: without the `{` there are no members, and no `}` is looked for.
         let has_body = self.tok() == T::TOpenBrace || !self.tolerant;
@@ -3198,9 +3253,11 @@ impl<'a> Builder<'a> {
             type_params,
             extends,
             extends_args,
+            other_extends,
             implements,
             members,
             pos,
+            start: self.statement_start,
         });
         Ok(self.file.stmt(StmtKind::Class(class), pos))
     }
@@ -3322,6 +3379,7 @@ impl<'a> Builder<'a> {
             type_params,
             extends,
             members,
+            start: self.statement_start,
         });
         Ok(self.file.stmt(StmtKind::Interface(interface), pos))
     }
@@ -3448,6 +3506,7 @@ impl<'a> Builder<'a> {
             flags,
             type_params,
             ty,
+            start: self.statement_start,
         });
         Ok(self.file.stmt(StmtKind::TypeAlias(alias), pos))
     }
@@ -3474,17 +3533,23 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let pos = self.pos();
-            let name = match self.parse_property_name()? {
-                PropKey::Name(name) | PropKey::Private(name) => name,
+            let (name, computed_name) = match self.parse_property_name()? {
+                PropKey::Name(name) | PropKey::Private(name) => (name, ExprId::NONE),
                 // The checker objects to a computed name (1164). The member declares nothing.
-                PropKey::Computed(_) | PropKey::None => Atom::NONE,
+                PropKey::Computed(e) => (Atom::NONE, e),
+                PropKey::None => (Atom::NONE, ExprId::NONE),
             };
             let init = if self.eat(T::TEquals)? {
                 self.parse_initializer()?
             } else {
                 ExprId::NONE
             };
-            members.push(EnumMember { name, init, pos });
+            members.push(EnumMember {
+                name,
+                computed_name,
+                init,
+                pos,
+            });
             // Where the comma is missing (1357) nothing is consumed and the list goes on.
             if !self.eat(T::TComma)? && !self.tolerant {
                 break;
@@ -3499,13 +3564,14 @@ impl<'a> Builder<'a> {
             name_pos,
             flags,
             members,
+            start: self.statement_start,
         });
         Ok(self.file.stmt(StmtKind::Enum(id), pos))
     }
 
     /// After `namespace` or `module`.
     fn parse_module(&mut self, pos: u32, flags: Flags) -> R<StmtId> {
-        let name_pos = self.pos();
+        let (name_pos, start) = (self.pos(), self.statement_start);
         if self.tok() == T::TStringLiteral {
             let name = self.string_value()?;
             self.next()?;
@@ -3524,6 +3590,7 @@ impl<'a> Builder<'a> {
                 flags,
                 body,
                 has_body,
+                start,
             });
             return Ok(self.file.stmt(StmtKind::Module(module), pos));
         }
@@ -3531,6 +3598,7 @@ impl<'a> Builder<'a> {
         let body = if self.eat(T::TDot)? {
             // `namespace A.B { }` is `namespace A { export namespace B { } }`
             let inner_pos = self.pos();
+            self.statement_start = inner_pos;
             let inner = self.parse_module(inner_pos, (flags & Flags::AMBIENT) | Flags::EXPORT)?;
             self.file.list(&[inner])
         } else {
@@ -3542,6 +3610,7 @@ impl<'a> Builder<'a> {
             flags,
             body,
             has_body: true,
+            start,
         });
         Ok(self.file.stmt(StmtKind::Module(module), pos))
     }
@@ -3581,7 +3650,10 @@ impl<'a> Builder<'a> {
                 if type_only {
                     mode = self.resolution_mode_override();
                 }
-                self.skip_balanced()?;
+                // The parser reported a `}` that is missed.
+                if self.skip_balanced().is_err() && !self.tolerant {
+                    return Err(Error::SyntaxError);
+                }
             }
         }
         if let Some(last) = self.file.specifier_uses.last_mut() {
@@ -3608,6 +3680,8 @@ impl<'a> Builder<'a> {
             default_pos: 0,
             namespace: Atom::NONE,
             namespace_pos: 0,
+            clause_start: self.pos(),
+            namespace_start: 0,
             named: Span::EMPTY,
             type_only: false,
             mode: ResolutionMode::None,
@@ -3684,6 +3758,7 @@ impl<'a> Builder<'a> {
         }
         if self.tok() == T::TAsterisk {
             // `parseNamespaceImport`
+            import.namespace_start = self.pos();
             let mut end_of_last_token = self.lexer.end as u32;
             self.next()?;
             if self.is_kw(b"as") {
@@ -3705,17 +3780,20 @@ impl<'a> Builder<'a> {
             self.expect(T::TOpenBrace)?;
             let mut specs = Vec::new();
             while self.is_at_specifier()? {
+                let start = self.pos();
                 let (first, second, pos, type_only, imported_pos) = self.parse_clause_item()?;
                 // `parseImportSpecifier`: a string with no `as` after it names nothing, and nothing is looked up.
                 let is_only_a_string = pos == imported_pos
                     && matches!(self.lexer.contents.get(pos as usize), Some(b'"' | b'\''));
                 if !is_only_a_string {
                     specs.push(ImportSpec {
+                        start,
                         imported: first,
                         local: second,
                         pos,
                         type_only,
                         imported_pos,
+                        import: ImportId(self.file.imports.len() as u32),
                     });
                 }
                 if !self.eat(T::TComma)? && !self.tolerant {
@@ -3875,6 +3953,7 @@ impl<'a> Builder<'a> {
             name_pos,
             target,
             flags,
+            start: self.statement_start,
         });
         Ok(self.file.stmt(StmtKind::ImportEquals(id), pos))
     }
@@ -3910,6 +3989,7 @@ impl<'a> Builder<'a> {
             name_pos,
             target,
             flags,
+            start: self.statement_start,
         });
         Ok(self.file.stmt(StmtKind::ImportEquals(id), pos))
     }
@@ -4017,8 +4097,11 @@ impl<'a> Builder<'a> {
 
     /// `type_only`: after `export type`.
     fn parse_export_star(&mut self, pos: u32, type_only: bool) -> R<StmtId> {
+        let star_pos = self.pos();
         self.expect(T::TAsterisk)?;
-        let alias = if self.eat_kw(b"as")? {
+        let has_alias = self.eat_kw(b"as")?;
+        let alias_pos = self.pos();
+        let alias = if has_alias {
             self.clause_name()?
         } else {
             Atom::NONE
@@ -4036,6 +4119,8 @@ impl<'a> Builder<'a> {
                 alias,
                 type_only,
                 mode,
+                star_pos,
+                alias_pos,
             },
             pos,
         ))
@@ -4045,13 +4130,16 @@ impl<'a> Builder<'a> {
         self.expect(T::TOpenBrace)?;
         let mut specs = Vec::new();
         while self.is_at_specifier()? {
+            let start = self.pos();
             let (local, exported, pos, type_only, local_pos) = self.parse_clause_item()?;
             specs.push(ExportSpec {
+                start,
                 local,
                 exported,
                 pos,
                 type_only,
                 local_pos,
+                export: ExportId(self.file.exports.len() as u32),
             });
             if !self.eat(T::TComma)? && !self.tolerant {
                 break;

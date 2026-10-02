@@ -158,7 +158,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `import.name` where the name is not `meta`, after the dot (`parseLeftHandSideExpressionOrHigher`). It is a meta property
-    /// of the error type whatever the name is, and `checkGrammarMetaProperty` objects. `None`: `import.defer` before its arguments.
+    /// of the error type whatever the name is, and `checkGrammarMetaProperty` objects. It is kept as an access to the name on a missing
+    /// expression where the keyword is, which has that type. `None`: `import.defer` before its arguments.
     #[cold]
     #[inline(never)]
     fn parse_other_import_meta_property(
@@ -172,6 +173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(Some(p.new_expr(E::Missing {}, loc)));
         }
         let name = p.lexer.range();
+        let text = E::Str::new(p.lexer.identifier);
         let is_defer = p.lexer.identifier == b"defer";
         p.lexer.next()?;
         let is_callee = p.lexer.token == T::TOpenParen;
@@ -189,11 +191,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer
                 .ts_grammar_error(name, if is_callee { 18061 } else { 17012 });
         }
-        Ok(Some(p.new_expr(E::Missing {}, loc)))
+        let target = p.new_expr(E::Missing {}, loc);
+        Ok(Some(p.new_expr(
+            E::Dot {
+                target,
+                name: text,
+                name_loc: name.loc,
+                ..Default::default()
+            },
+            loc,
+        )))
     }
 
     /// `parseArgumentList` after `import` or `import.defer`: any number of arguments, spreads included.
-    /// `checkGrammarImportCallExpression` objects to them. Arguments after the second are dropped.
+    /// `checkGrammarImportCallExpression` objects to them. `E::Import` has room for two.
     #[cold]
     #[inline(never)]
     fn parse_import_call_tolerant(
@@ -214,6 +225,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(second) => *second,
             None => Expr::EMPTY,
         };
+        if let Some(more @ [_, ..]) = args.list.get(2..) {
+            p.keep_expressions(loc, more);
+        }
         Ok(p.new_expr(
             E::Import {
                 expr: specifier,

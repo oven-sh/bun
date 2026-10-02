@@ -224,6 +224,15 @@ impl About {
 /// `getTypeAtFlowNode`: the invocation that finds this many under way gives up.
 const MAX_FLOW_DEPTH: u32 = 2000;
 
+/// What `checkNonNullTypeWithReporter` reports.
+#[derive(Copy, Clone)]
+pub(super) enum NonNullError {
+    /// 18046, 2571
+    IsUnknown,
+    /// `TypeFactsIsUndefined`, `TypeFactsIsNull`
+    IsPossibly { undefined: bool, null: bool },
+}
+
 /// `TypeFacts`: the tests that come out true for some value of a type.
 mod facts {
     pub(super) const TYPEOF_EQ_STRING: u32 = 1 << 0;
@@ -444,6 +453,21 @@ impl<'p> Checker<'p> {
         self.has_type_facts(ty, facts::EQ_UNDEFINED_OR_NULL)
     }
 
+    /// `hasTypeFacts(ty, TypeFactsIsUndefined)`
+    pub(super) fn is_possibly_undefined(&mut self, ty: TypeId) -> bool {
+        self.has_type_facts(ty, facts::IS_UNDEFINED)
+    }
+
+    /// `hasTypeFacts(ty, TypeFactsEQUndefined)`
+    pub(super) fn can_equal_undefined(&mut self, ty: TypeId) -> bool {
+        self.has_type_facts(ty, facts::EQ_UNDEFINED)
+    }
+
+    /// `getTypeWithFacts(ty, TypeFactsNEUndefined)`
+    pub(super) fn type_with_ne_undefined(&mut self, ty: TypeId) -> TypeId {
+        self.type_with_facts(ty, facts::NE_UNDEFINED)
+    }
+
     /// `extractDefinitelyFalsyTypes`: the values of `ty` that are falsy. `""` for `string`, nothing for an object or a type parameter.
     pub fn definitely_falsy_part(&mut self, ty: TypeId) -> TypeId {
         self.map_type(ty, |c, m| match c.data(m) {
@@ -566,7 +590,7 @@ impl<'p> Checker<'p> {
                 .fold(0, |all, &p| all | self.type_facts_worker(p, mask)),
             // `getIntersectionTypeFacts`: next to a primitive, object types are tags.
             TypeData::Intersection(parts) => {
-                let ignore_objects = self.has_constituent(ty, &|c, t| c.is_primitive(t));
+                let ignore_objects = self.maybe_type_of_kind(ty, Self::is_primitive);
                 let (mut ored, mut anded) = (0, ALL);
                 for &p in parts.iter() {
                     if !(ignore_objects && self.is_object_type(p)) {
@@ -598,16 +622,6 @@ impl<'p> Checker<'p> {
                 }
             }
             _ => OF_UNKNOWN,
-        }
-    }
-
-    /// `maybeTypeOfKind`: whether `ty`, or something in the union or the intersection it is, passes.
-    fn has_constituent(&self, ty: TypeId, f: &impl Fn(&Self, TypeId) -> bool) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&p| self.has_constituent(p, f))
-            }
-            _ => f(self, ty),
         }
     }
 
@@ -1748,7 +1762,7 @@ impl<'p> Checker<'p> {
         let name = access.name;
         let remove_nullable = self.p.files.options.strict_null_checks
             && (access.optional || access.non_null)
-            && self.has_constituent(ty, &|_, m| m.is_undefined() || m.is_null());
+            && self.maybe_type_of_kind(ty, |_, m| m.is_undefined() || m.is_null());
         let base = if remove_nullable {
             self.type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL)
         } else {
@@ -2675,25 +2689,25 @@ impl<'p> Checker<'p> {
 
     /// `replacePrimitivesWithLiterals`: `string` that was found equal to `"a"` is `"a"`.
     fn replace_primitives_with_literals(&mut self, ty: TypeId, literals: TypeId) -> TypeId {
-        let is_pattern = |c: &Self, t: TypeId| {
+        fn is_pattern(c: &Checker<'_>, t: TypeId) -> bool {
             matches!(
                 c.data(t),
                 TypeData::Template { .. } | TypeData::StringMapping { .. }
             )
-        };
-        let has_primitives = self.has_constituent(ty, &|c, t| {
+        }
+        let has_primitives = self.maybe_type_of_kind(ty, |c, t| {
             matches!(t, TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT)
                 || matches!(c.data(t), TypeData::Template { .. })
         });
         if !has_primitives
-            || !self.has_constituent(literals, &|c, t| {
+            || !self.maybe_type_of_kind(literals, |c, t| {
                 c.is_literal(t) && !c.is_boolean_like(t) || is_pattern(c, t)
             })
         {
             return ty;
         }
         let has_wide_strings =
-            self.has_constituent(literals, &|c, t| t == TypeId::STRING || is_pattern(c, t));
+            self.maybe_type_of_kind(literals, |c, t| t == TypeId::STRING || is_pattern(c, t));
         self.map_type(ty, |c, m| {
             if m == TypeId::STRING {
                 c.filter(literals, |k, x| k.is_string_like(x))
@@ -3723,7 +3737,7 @@ impl<'p> Checker<'p> {
             return false;
         }
         let constraint = self.base_constraint(ty);
-        !self.has_constituent(constraint, &|_, m| m.is_undefined() || m.is_null())
+        !self.maybe_type_of_kind(constraint, |_, m| m.is_undefined() || m.is_null())
     }
 
     /// Whether `e` is where what its type extends is what counts: `e.x`, `e[x]`, `e()`, `new e()`.
@@ -4071,6 +4085,28 @@ impl<'p> Checker<'p> {
             self.p.initializer_is_undefined.insert((file, p), contains);
         }
         contains
+    }
+
+    /// `FindAncestor(e, IsFunctionOrModuleBlock)`: `Parent::FnBody`, `Parent::Module` or `Parent::File`, and `Parent::None` for an
+    /// expression the binder has not reached.
+    pub(super) fn function_or_module_block_of(&self, file: FileId, e: ExprId) -> Parent {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut block = bound.expr_parent[e.idx()];
+        loop {
+            block = match block {
+                // A static block is not function-like, and an expression body is not a block.
+                Parent::FnBody(f)
+                    if hir[f].kind != FnKind::StaticBlock
+                        && matches!(hir[f].body, FnBody::Block(_)) =>
+                {
+                    return block;
+                }
+                Parent::Module(_) | Parent::File | Parent::None => return block,
+                Parent::Expr(x) if x.is_none() => Parent::None,
+                Parent::Key(object) if object.is_some() => Parent::Expr(object),
+                _ => self.outward(file, block),
+            };
+        }
     }
 
     /// `is_variable`: `e` reads a variable, which starts out the way `assumes_initialized` has it.
@@ -5363,11 +5399,69 @@ impl<'p> Checker<'p> {
         ty
     }
 
+    /// `checkNonNullTypeWithReporter`: `ty` without `null` and `undefined`, where it has to be neither. `report` is told what is wrong
+    /// with `ty`, if anything is.
+    pub(super) fn check_non_null_type_with_reporter(
+        &mut self,
+        ty: TypeId,
+        report: impl FnOnce(&mut Self, NonNullError),
+    ) -> TypeId {
+        // Most types have neither fact, which shows in their kind.
+        if !self.some_type(ty, |c, m| {
+            m == TypeId::UNKNOWN
+                || m.is_undefined()
+                || m.is_null()
+                || c.is_deferred(m)
+                || c.is_intersection(m)
+        }) {
+            return ty;
+        }
+        let strict = self.p.files.options.strict_null_checks;
+        if strict && ty == TypeId::UNKNOWN {
+            report(self, NonNullError::IsUnknown);
+            return TypeId::ERROR;
+        }
+        let found = self.type_facts(ty, facts::IS_UNDEFINED | facts::IS_NULL);
+        if found == 0 {
+            return ty;
+        }
+        report(
+            self,
+            NonNullError::IsPossibly {
+                undefined: found & facts::IS_UNDEFINED != 0,
+                null: found & facts::IS_NULL != 0,
+            },
+        );
+        // `GetNonNullableType`
+        let non_nullable = if strict {
+            self.adjusted_type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL)
+        } else {
+            ty
+        };
+        if non_nullable == TypeId::NEVER || non_nullable.is_null() || non_nullable.is_undefined() {
+            TypeId::ERROR
+        } else {
+            non_nullable
+        }
+    }
+
+    /// `checkNonNullType`, less what it reports.
+    pub(super) fn non_null_type(&mut self, ty: TypeId) -> TypeId {
+        self.check_non_null_type_with_reporter(ty, |_, _| {})
+    }
+
     /// `getNonNullableTypeIfNeeded`
     pub(super) fn non_nullable_type_if_needed(&mut self, ty: TypeId) -> TypeId {
-        let is_nullable = self.p.files.options.strict_null_checks
-            && self.has_type_facts(ty, facts::IS_UNDEFINED | facts::IS_NULL);
-        if is_nullable {
+        if self.has_type_facts(ty, facts::IS_UNDEFINED | facts::IS_NULL) {
+            self.non_nullable(ty)
+        } else {
+            ty
+        }
+    }
+
+    /// `GetNonNullableType`
+    pub fn non_nullable(&mut self, ty: TypeId) -> TypeId {
+        if self.p.files.options.strict_null_checks {
             self.adjusted_type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL)
         } else {
             ty
@@ -6505,7 +6599,7 @@ impl<'p> Checker<'p> {
                         .type_of_property(object, name)
                         .unwrap_or(TypeId::UNRESOLVED);
                 }
-                let object = self.receiver_that_is_there(object);
+                let object = self.non_null_type(object);
                 let object = self.regular_object(object);
                 if self.is_assignment_to_readonly_property(file, target, obj, name) {
                     return TypeId::UNRESOLVED;
@@ -6553,7 +6647,7 @@ impl<'p> Checker<'p> {
                     };
                     return self.indexed_access(object, key);
                 }
-                let object = self.receiver_that_is_there(object);
+                let object = self.non_null_type(object);
                 let object = self.regular_object(object);
                 if !self.is_known(object) || !self.is_known(key) {
                     return TypeId::UNRESOLVED;

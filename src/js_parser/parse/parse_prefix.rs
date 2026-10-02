@@ -868,6 +868,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let loc = p.lexer.loc();
+        p.mark_type_syntax(loc, crate::sema::Mark::DeclarationStart, at_loc);
         let class_keyword = p.lexer.range();
         p.lexer.next()?;
         let mut name: Option<js_ast::LocRef> = None;
@@ -1165,6 +1166,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Some(&mut self_errors),
                 )? {
                     debug_assert!(prop.key.is_some() || prop.value.is_some());
+                    if let Some(key) = &prop.key
+                        && key.loc != element_start
+                    {
+                        p.mark_type_syntax(key.loc, crate::sema::Mark::MemberStart, element_start);
+                    }
                     properties.push(prop);
                 }
             }
@@ -1310,6 +1316,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match skipped {
                 SkipTypeParameterResult::DidNotSkipAnything => {}
                 result => {
+                    p.mark_type_syntax(loc, crate::sema::Mark::AssertedParen, p.lexer.loc());
                     p.lexer.expect(T::TOpenParen)?;
                     let mut value = p.parse_paren_expr(
                         loc,

@@ -82,7 +82,7 @@ fn print_loaded_sizes(program: &bun_sema::check::Program) {
         add(&mut rows, "hir.after_skipped", &m.hir.after_skipped);
         add(&mut rows, "hir.stray_decorators", &m.hir.stray_decorators);
         add(&mut rows, "hir.specifier_uses", &m.hir.specifier_uses);
-        add(&mut rows, "hir.import_options", &m.hir.import_options);
+
         add(
             &mut rows,
             "hir.deferred_import_calls",

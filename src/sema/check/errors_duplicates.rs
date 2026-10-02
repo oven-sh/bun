@@ -320,7 +320,10 @@ impl Checker<'_> {
         match decl {
             // The name of `export { a as b }` is `b`.
             Decl::ExportSpec(spec) => Some(hir[spec].pos),
-            Decl::ExportStarAs(stmt) => namespace_export_starts(hir, stmt).map(|(_, name)| name),
+            Decl::ExportStarAs(stmt) => match hir[stmt].kind {
+                StmtKind::ExportStar { alias_pos, .. } => Some(alias_pos),
+                _ => None,
+            },
             // `GetNonAssignedNameOfDeclaration`: the name of `export default a` and `export = a` is `a`.
             Decl::ExportExpr(stmt) => match hir[stmt].kind {
                 StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)
@@ -1187,13 +1190,10 @@ impl Checker<'_> {
                         names.push((hir[i].name, hir[i].name_pos))
                     }
                     // `bindExportDeclaration`
-                    StmtKind::ExportStar { alias, .. }
-                        if alias.is_some() && alias != known::default =>
-                    {
-                        names.extend(
-                            namespace_export_starts(hir, s)
-                                .map(|(_, name_start)| (alias, name_start)),
-                        );
+                    StmtKind::ExportStar {
+                        alias, alias_pos, ..
+                    } if alias.is_some() && alias != known::default => {
+                        names.push((alias, alias_pos));
                     }
                     StmtKind::ExportAssign(e) => {
                         equals.push(if matches!(hir[e].kind, ExprKind::Ident(_)) {
@@ -1388,7 +1388,7 @@ impl Checker<'_> {
                         let from_here = hir[x].spec.is_none();
                         declared.push(Declared {
                             name: hir[i].exported,
-                            start: export_specifier_start(hir, i),
+                            start: hir[i].start,
                             node: Node::Specifier(i),
                             includes: ALIAS,
                             excludes: ALIAS,
@@ -1400,21 +1400,22 @@ impl Checker<'_> {
                     }
                 }
                 // `bindExportDeclaration`: the declaration of `export * as ns` is the `* as ns` node.
-                StmtKind::ExportStar { alias, .. } if alias.is_some() => {
-                    if let Some((start, name_start)) = namespace_export_starts(hir, s) {
-                        declared.push(Declared {
-                            name: alias,
-                            start,
-                            node: Node::NamespaceExport(name_start),
-                            includes: ALIAS,
-                            excludes: ALIAS,
-                            is_overload: false,
-                            is_ambient: false,
-                            decl: None,
-                            specifier: None,
-                        });
-                    }
-                }
+                StmtKind::ExportStar {
+                    alias,
+                    star_pos,
+                    alias_pos,
+                    ..
+                } if alias.is_some() => declared.push(Declared {
+                    name: alias,
+                    start: star_pos,
+                    node: Node::NamespaceExport(alias_pos),
+                    includes: ALIAS,
+                    excludes: ALIAS,
+                    is_overload: false,
+                    is_ambient: false,
+                    decl: None,
+                    specifier: None,
+                }),
                 _ => {}
             }
         }
@@ -1614,7 +1615,7 @@ impl Checker<'_> {
                     files.resolve_alias_if_needed(found)
                 };
                 if target.is_some_and(|target| files.flags(target).intersects(excluded)) {
-                    let start = export_specifier_start(hir, spec);
+                    let start = hir[spec].start;
                     out.push(Diagnostic { start, code: 2484 });
                     let end = self.end_of_export_spec(file, spec);
                     self.note(start, end, 2484, vec![self.atom_text(exported)]);
@@ -1921,24 +1922,6 @@ fn start_after_tokens(text: &[u8], pos: u32, tokens: &[&[u8]]) -> Option<u32> {
         at += token.len();
     }
     Some(skip_trivia(text, at) as u32)
-}
-
-/// The starts of `*` and of `ns` in the statement `export * as ns from "m"`.
-fn namespace_export_starts(hir: &File, stmt: StmtId) -> Option<(u32, u32)> {
-    let StmtKind::ExportStar { type_only, .. } = hir[stmt].kind else {
-        return None;
-    };
-    let mut star = start_after_tokens(&hir.text, hir[stmt].pos, &[b"export"])?;
-    if type_only {
-        star = start_after_tokens(&hir.text, star, &[b"type"])?;
-    }
-    Some((star, start_after_tokens(&hir.text, star, &[b"*", b"as"])?))
-}
-
-/// The start of an export specifier: its `type` modifier if it has one, else its first name.
-fn export_specifier_start(hir: &File, spec: ExportSpecId) -> u32 {
-    let spec = &hir[spec];
-    start_with_type(&hir.text, spec.local_pos.min(spec.pos), spec.type_only)
 }
 
 /// `hasExportDeclarations`

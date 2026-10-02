@@ -652,10 +652,10 @@ impl Checker<'_> {
                     }
                 }
                 // A name like any other that happens to be `default`: no default export.
-                StmtKind::ExportStar { alias, .. } if alias == known::default => {
-                    if let Some(start) = start_of_namespace_export_name(&hir.text, hir[s].pos) {
-                        declare(start, StmtId::NONE, ALIAS, ALIAS, 2300);
-                    }
+                StmtKind::ExportStar {
+                    alias, alias_pos, ..
+                } if alias == known::default => {
+                    declare(alias_pos, StmtId::NONE, ALIAS, ALIAS, 2300);
                 }
                 // So is a `@typedef` of that name, which a module exports.
                 StmtKind::TypeAlias(a)
@@ -808,10 +808,7 @@ impl Checker<'_> {
                     }
                     Decl::ImportNamespace(i) => (hir[i].type_only, false, hir[i].spec, Atom::NONE),
                     Decl::ImportSpec(s) => {
-                        let import = hir
-                            .imports
-                            .iter()
-                            .find(|i| i.named.range().contains(&s.idx()))?;
+                        let import = &hir[hir[s].import];
                         (
                             hir[s].type_only || import.type_only,
                             false,
@@ -847,10 +844,7 @@ impl Checker<'_> {
                         }
                     },
                     Decl::ExportSpec(s) => {
-                        let export = hir
-                            .exports
-                            .iter()
-                            .find(|x| x.items.range().contains(&s.idx()))?;
+                        let export = &hir[hir[s].export];
                         (
                             hir[s].type_only || export.type_only,
                             true,
@@ -1264,21 +1258,6 @@ fn next_name(text: &[u8], end: u32) -> u32 {
     } else {
         end + 1
     }
-}
-
-/// Where the name of `export * as name from "m"` is written. `pos`: where the statement starts. Not to be told without the text.
-fn start_of_namespace_export_name(text: &[u8], pos: u32) -> Option<u32> {
-    let words: [&[u8]; 4] = [b"export", b"type", b"*", b"as"];
-    let mut at = pos as usize;
-    for word in words {
-        at = skip_trivia(text, at);
-        if text.get(at..)?.starts_with(word) {
-            at += word.len();
-        } else if word != b"type" {
-            return None;
-        }
-    }
-    Some(skip_trivia(text, at) as u32)
 }
 
 /// The end of `token` in the statement `export <token> ..` that starts at `pos`. `None` without the text.

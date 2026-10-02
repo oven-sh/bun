@@ -82,6 +82,8 @@ pub(crate) struct Signature {
 }
 
 pub(crate) struct TypeParameter {
+    /// Where its first token is: the `[`, a modifier, or the name.
+    pub(crate) pos: u32,
     pub(crate) name: Name,
     /// `const`, `in`, `out`, and nothing for a modifier that cannot be on a type parameter, with where each is.
     pub(crate) modifiers: Vec<(Flags, u32)>,
@@ -135,6 +137,9 @@ pub(crate) struct Import {
     pub(crate) has_clause: bool,
     pub(crate) default: Option<Name>,
     pub(crate) namespace: Option<Name>,
+    /// Where the first token of the import clause is, and the `*` of `* as namespace`.
+    pub(crate) clause_start: u32,
+    pub(crate) namespace_start: u32,
     pub(crate) named: Vec<ImportSpecifier>,
     /// The module specifier and where it is. `None` if it is no string.
     pub(crate) specifier: Option<(StoreStr, u32)>,
@@ -909,6 +914,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         p: &mut P<'a, true, false>,
         import: &mut Import,
     ) -> Result<(), Error> {
+        import.clause_start = p.token_start();
         if p.is_identifier_in_context() {
             import.default = Some(name_at_token(p));
             p.lexer.next()?;
@@ -929,6 +935,7 @@ impl<'p, 'a> Reader<'p, 'a> {
                 p.lexer.skips_jsdoc_asterisks = true;
                 if p.lexer.token == T::TAsterisk {
                     // `parseNamespaceImport`
+                    import.namespace_start = p.token_start();
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"as")?;
                     if p.is_identifier_in_context() {
@@ -1818,6 +1825,7 @@ impl<'p, 'a> Reader<'p, 'a> {
 
     /// `parseTemplateTagTypeParameter`
     fn template_type_parameter(&mut self) -> Option<TypeParameter> {
+        let pos = self.start as u32;
         let is_bracketed = self.eat_jsdoc(Token::OpenBracket);
         if is_bracketed {
             self.skip_whitespace();
@@ -1832,6 +1840,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             self.expect(Token::CloseBracket);
         }
         (!name.is_missing()).then_some(TypeParameter {
+            pos,
             name,
             modifiers,
             default,

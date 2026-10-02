@@ -3131,7 +3131,7 @@ impl<'p> Checker<'p> {
                 // Children alone do not make the attributes type fresh (`createJsxAttributesTypeFromAttributesProperty`), so a
                 // written attribute is required. A property copied by a spread is declared elsewhere.
                 // A `Partial` shape holds only properties written in the literal.
-                (PropSource::Type(_), None) => {
+                (PropSource::Type(_) | PropSource::Copy(..), None) => {
                     is_fresh_partial
                         || is_jsx
                             && prop.flags.contains(PropFlags::JSX_CHILDREN)
@@ -6007,7 +6007,7 @@ impl<'p> Checker<'p> {
             PropSource::Assigned(file, assignments) => {
                 let first = *assignments.first()?;
                 let bound = self.bound(*file);
-                let class = bound.this_properties.iter().find(|x| x.3 == first)?.0;
+                let class = bound.this_property(self.hir(*file), first)?.0;
                 return Some(self.files().sym(*file, bound.class_symbol[class.idx()]));
             }
             _ => return None,

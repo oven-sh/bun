@@ -171,7 +171,7 @@ impl Builder<'_> {
                 TypeNodeKind::Intersection(self.clone_type_list(members))
             }
             ts::TypeData::Function(signature) => {
-                TypeNodeKind::Fn(self.clone_signature(signature, Atom::NONE))
+                TypeNodeKind::Fn(self.clone_signature(signature, Atom::NONE, None))
             }
             ts::TypeData::Object(members) => TypeNodeKind::Object(self.clone_members(members)),
             ts::TypeData::Conditional {
@@ -456,6 +456,7 @@ impl Builder<'_> {
         let ts::TypeParam {
             name,
             loc,
+            start,
             constraint,
             default,
             flags: param_flags,
@@ -463,6 +464,7 @@ impl Builder<'_> {
         TypeParam {
             name: self.atom(&name),
             pos: pos(loc),
+            start: pos(start),
             constraint: self.clone_type(constraint),
             default: self.clone_type(default),
             flags: flags(param_flags),
@@ -561,12 +563,16 @@ impl Builder<'_> {
                     .iter()
                     .map(|element| {
                         let ts::PatternElement {
-                            pattern, is_rest, ..
+                            pattern,
+                            is_rest,
+                            loc,
+                            ..
                         } = self.ts[element];
                         PatElem {
                             pat: self.clone_pattern(pattern),
                             default: ExprId::NONE,
                             is_rest,
+                            start: pos(loc),
                         }
                     })
                     .collect();
@@ -630,14 +636,14 @@ impl Builder<'_> {
         }
     }
 
-    /// `name` is the name of the member the signature belongs to.
-    fn clone_signature(&mut self, id: ts::SignatureId, name: Atom) -> FnId {
+    /// `name` and `start` are those of the member the signature belongs to. A function type has neither.
+    fn clone_signature(&mut self, id: ts::SignatureId, name: Atom, start: Option<u32>) -> FnId {
         let ts::Signature {
             kind,
             flags: signature_flags,
             type_params,
             params,
-            this_type,
+            this_param,
             return_type,
             body,
             open_paren_loc,
@@ -659,11 +665,13 @@ impl Builder<'_> {
             name_pos: pos(loc),
             type_params: self.clone_type_params(type_params),
             params: self.clone_params(params),
-            this_ty: self.clone_type(this_type),
+            this_ty: self.clone_type(this_param.ty),
+            this_pos: this_param.loc.start as u32,
             ret: self.clone_type(return_type),
             body: FnBody::None,
             anchor: pos(open_paren_loc),
             pos: pos(loc),
+            start: start.unwrap_or(pos(loc)),
         };
         let func = self.file.add_fn(func);
         if let Some(body) = body {
@@ -745,6 +753,7 @@ impl Builder<'_> {
             type_params,
             extends: self.file.list(&heritage),
             members: self.clone_members(members),
+            start: self.statement_start,
         };
         let interface = self.file.add_interface(interface);
         Some(self.file.stmt(StmtKind::Interface(interface), pos))
@@ -786,6 +795,7 @@ impl Builder<'_> {
             flags,
             type_params,
             ty,
+            start: self.statement_start,
         };
         let alias = self.file.add_alias(alias);
         self.file.stmt(StmtKind::TypeAlias(alias), pos)
@@ -824,6 +834,7 @@ impl Builder<'_> {
             ty,
             signature,
             loc,
+            start,
             ..
         } = self.ts[id];
         let errors_before = self.file.early_errors.len();
@@ -862,7 +873,11 @@ impl Builder<'_> {
             key = PropKey::None;
         }
         let func = if signature.is_some() {
-            self.clone_signature(signature, key.name().unwrap_or(Atom::NONE))
+            self.clone_signature(
+                signature,
+                key.name().unwrap_or(Atom::NONE),
+                Some(pos(start)),
+            )
         } else {
             FnId::NONE
         };
@@ -887,6 +902,7 @@ impl Builder<'_> {
             init: ExprId::NONE,
             func,
             pos: pos(loc),
+            start: pos(start),
         }
     }
 

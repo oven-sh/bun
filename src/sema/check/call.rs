@@ -719,7 +719,7 @@ impl<'p> Checker<'p> {
         if data.chain != Chain::No || self.is_in_optional_chain(file, data.callee) {
             callee = self.non_nullable(callee);
         }
-        callee = self.receiver_that_is_there(callee);
+        callee = self.non_null_type(callee);
         let apparent = self.apparent_type(callee);
         if self.is_error_type(apparent) {
             return self.resolve_error_call(file, data.args);
@@ -868,7 +868,7 @@ impl<'p> Checker<'p> {
             return None;
         };
         let callee = self.type_of_expr(file, self.hir(file)[c].callee);
-        let callee = self.receiver_that_is_there(callee);
+        let callee = self.non_null_type(callee);
         let only = self.single_signature(callee, true, true)?;
         if !self.sig_type_params(only).is_empty() {
             return None;
@@ -894,7 +894,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let callee = self.type_of_expr(file, callee);
-        let callee = self.receiver_that_is_there(callee);
+        let callee = self.non_null_type(callee);
         let only = self.single_signature(callee, false, true)?;
         if !self.sig_type_params(only).is_empty() {
             return None;
@@ -2039,12 +2039,7 @@ impl<'p> Checker<'p> {
         let mut props = Vec::with_capacity(members.shape().props.len());
         for prop in &members.shape().props {
             let mut prop = prop.clone();
-            match prop.source {
-                PropSource::Type(t) => {
-                    prop.source = PropSource::Type(self.instantiate(t, members.mapper))
-                }
-                _ => prop.mapper = self.compose(prop.mapper, members.mapper),
-            }
+            self.instantiate_prop(&mut prop, members.mapper);
             props.push(prop);
         }
         let index = members
@@ -3213,7 +3208,7 @@ impl<'p> Checker<'p> {
                         && type_args.is_empty()
                         && matches!(self.hir(file)[e].kind, ExprKind::Fn(_))
                         && self.has_type_variables(t)
-                        && self.may_be_deferred(t)
+                        && self.maybe_type_of_kind(t, Self::is_deferred)
                     {
                         let so_far = self.inference_from_arguments_before(
                             file,
@@ -3904,12 +3899,9 @@ impl<'p> Checker<'p> {
                 }
             }
             shape.props.retain(|x| x.name != name);
-            shape.props.push(Prop {
-                name,
-                flags: PropFlags::empty(),
-                source: PropSource::Type(ty),
-                mapper: MapperId::IDENTITY,
-            });
+            shape
+                .props
+                .push(Self::literal_member_of_type(file, p, name, ty));
         }
         let written = finish(self, shape);
         let literal_type = match spread {
@@ -4572,6 +4564,26 @@ impl<'p> Checker<'p> {
                 }
             };
             pairs.push((param, ty));
+        }
+        self.p.types.mapper(pairs)
+    }
+
+    /// `known`, and for each of `type_params` it says nothing of, what the arguments looked at so far come to, if they say anything.
+    fn with_arguments_so_far(
+        &mut self,
+        known: MapperId,
+        type_params: &[TypeId],
+        inference: &Inference,
+    ) -> MapperId {
+        let mut pairs = self.p.types.mapping(known).to_vec();
+        for k in 0..type_params.len() {
+            let c = &inference.candidates[k];
+            if c.priority == 0
+                && (c.fixed.is_some() || !c.covariant.is_empty() || !c.contravariant.is_empty())
+                && !pairs.iter().any(|p| p.0 == type_params[k])
+            {
+                pairs.push((type_params[k], self.inferred_type(inference, k)));
+            }
         }
         self.p.types.mapper(pairs)
     }
@@ -5391,19 +5403,8 @@ impl<'p> Checker<'p> {
                             from_plain = Some((known, lesser));
                             let known = self.plain_arguments_say_to_literal(param, known, lesser);
                             // And the arguments before it, whatever they are.
-                            let mut pairs = self.p.types.mapping(known).to_vec();
-                            for k in 0..type_params.len() {
-                                let c = &inference.candidates[k];
-                                if c.priority == 0
-                                    && (c.fixed.is_some()
-                                        || !c.covariant.is_empty()
-                                        || !c.contravariant.is_empty())
-                                    && !pairs.iter().any(|p| p.0 == type_params[k])
-                                {
-                                    pairs.push((type_params[k], self.inferred_type(&inference, k)));
-                                }
-                            }
-                            let so_far = self.p.types.mapper(pairs);
+                            let so_far =
+                                self.with_arguments_so_far(known, &type_params, &inference);
                             let context = self.instantiate(context, so_far);
                             // `getInferredType`: a type parameter that is still open comes to no more than what it extends, which
                             // may be known by now.
@@ -5549,7 +5550,8 @@ impl<'p> Checker<'p> {
                 let Arg::Expr(e) = arg else { continue };
                 if !is_sensitive[i] {
                     // `getSpreadArgumentType`: `checkExpressionWithContextualType(arg, contextualType, ..)`. Recorded like the
-                    // contextual type of any other argument: the members of an object literal are read after the inference.
+                    // contextual type of any other argument: it stands for the element of the instantiated rest type, under which
+                    // `getSignatureApplicabilityError` checks the argument again.
                     if self.is_literal_that_depends_on_context(file, e) {
                         let element = self.rest_argument_context(
                             rest,
@@ -5559,6 +5561,12 @@ impl<'p> Checker<'p> {
                         if self.has_type_variables(element) {
                             let context =
                                 self.instantiate_with_expected_result(element, return_mapper);
+                            let so_far = self.with_arguments_so_far(
+                                MapperId::IDENTITY,
+                                &type_params,
+                                &inference,
+                            );
+                            let context = self.instantiate(context, so_far);
                             self.set_context(file, e, context);
                         }
                     }
@@ -5612,6 +5620,25 @@ impl<'p> Checker<'p> {
                 .any(|a| matches!(a, Arg::Expr(e) if self.depends_on_context(file, *e)))
             {
                 self.note_so_far(&inference);
+            }
+            for (i, &arg) in args.iter().enumerate().skip(arg_count) {
+                if let Arg::Expr(e) = arg
+                    && !is_sensitive[i]
+                {
+                    let element = self.rest_argument_context(
+                        rest,
+                        i - arg_count,
+                        Some(args.len() - arg_count),
+                    );
+                    taken_for[i] = self.literal_argument_type_for_inference(
+                        file,
+                        sig,
+                        e,
+                        element,
+                        return_mapper,
+                        &mut inference.array_literals,
+                    );
+                }
             }
             let spread =
                 self.spread_argument_type(file, args, arg_count, rest, &taken_for, return_mapper);
@@ -5887,7 +5914,7 @@ impl<'p> Checker<'p> {
         if data.chain != Chain::No || self.is_in_optional_chain(file, data.callee) {
             callee = self.non_nullable(callee);
         }
-        let callee = self.receiver_that_is_there(callee);
+        let callee = self.non_null_type(callee);
         if self.is_any(callee) {
             return false;
         }
@@ -6071,22 +6098,18 @@ impl<'p> Checker<'p> {
                     props.push(Prop {
                         name: prop.name,
                         flags: prop.flags,
-                        source: PropSource::Type(ty),
+                        source: Self::copy_of(ty, &[prop], true),
                         mapper: MapperId::IDENTITY,
                     });
                 }
                 if is_equal_to_cached || props.is_empty() {
                     return cached;
                 }
-                let copy = self.synth(Shape {
+                self.synth(Shape {
                     props,
                     literal: Literalness::Literal,
                     ..Shape::default()
-                });
-                self.p
-                    .copied_from
-                    .insert(copy, (false, vec![cached].into_boxed_slice()));
-                copy
+                })
             }
             // `checkArrayLiteral`
             ExprKind::Array(items) => {
@@ -6634,7 +6657,7 @@ impl<'p> Checker<'p> {
         from_result: MapperId,
     ) -> TypeId {
         let ty = self.force(ty);
-        if from_result == MapperId::IDENTITY || !self.may_be_deferred(ty) {
+        if from_result == MapperId::IDENTITY || !self.maybe_type_of_kind(ty, Self::is_deferred) {
             return ty;
         }
         let instantiated = self.instantiate_instantiable_types(ty, from_result);
@@ -7085,7 +7108,7 @@ impl<'p> Checker<'p> {
                 if data.chain != Chain::No || self.is_in_optional_chain(file, data.callee) {
                     callee = self.non_nullable(callee);
                 }
-                let callee = self.receiver_that_is_there(callee);
+                let callee = self.non_null_type(callee);
                 if self.is_any(callee) {
                     return false;
                 }
@@ -7185,7 +7208,7 @@ impl<'p> Checker<'p> {
                     } else {
                         left
                     };
-                    let left = self.non_nullable_operand(left);
+                    let left = self.non_nullable(left);
                     self.union_reduced(&[left, right])
                 } else {
                     left
@@ -7983,6 +8006,9 @@ impl<'p> Checker<'p> {
 
     /// What `e` was settled to be expected to be.
     pub(super) fn explicit_context(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        if self.pulls_contextual_types() {
+            return None;
+        }
         // A contextual type recorded inside an argument has `boolean` removed too: see `arg_context_keeping_boolean`.
         if self.keeps_boolean_in_arg_contexts
             && let Some(return_mapper) = self.resolving.last().map(|r| r.return_mapper)
@@ -8713,12 +8739,9 @@ impl<'p> Checker<'p> {
                 }
             }
             shape.props.retain(|x| x.name != name);
-            shape.props.push(Prop {
-                name,
-                flags: PropFlags::empty(),
-                source: PropSource::Type(ty),
-                mapper: MapperId::IDENTITY,
-            });
+            shape
+                .props
+                .push(Self::literal_member_of_type(file, p, name, ty));
         }
         let written = close(self, shape);
         Some(match before {
@@ -8846,27 +8869,11 @@ impl<'p> Checker<'p> {
                         self.type_of_literal_prop(file, p)
                     };
                     shape.props.retain(|x| x.name != name);
-                    shape.props.push(Prop {
-                        name,
-                        flags: PropFlags::empty(),
-                        source: PropSource::Type(ty),
-                        mapper: MapperId::IDENTITY,
-                    });
+                    shape
+                        .props
+                        .push(Self::literal_member_of_type(file, p, name, ty));
                 }
-                let partial = self.synth(shape);
-                // They are the members of the literal.
-                if !props.iter().any(|p| hir[p].kind == PropKind::Spread) {
-                    let scope = self.scope_of_expr(file, e);
-                    let mapper = self.identity_mapper(file, scope);
-                    let whole = self.intern(TypeData::Anon {
-                        origin: Origin::ObjectLiteral(file, e),
-                        mapper,
-                    });
-                    self.p
-                        .copied_from
-                        .insert(partial, (false, vec![whole].into_boxed_slice()));
-                }
-                partial
+                self.synth(shape)
             }
             ExprKind::Array(items) => {
                 let mut types = Vec::with_capacity(items.len());
@@ -9030,16 +9037,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `maybeTypeOfKind(ty, TypeFlagsInstantiable)`
-    fn may_be_deferred(&self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&part| self.may_be_deferred(part))
-            }
-            _ => self.is_deferred(ty),
-        }
-    }
-
     /// `instantiateInstantiableTypes`: what waits for type parameters, be it in a union or an intersection. Object types stay.
     fn instantiate_instantiable_types(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         if self.is_deferred(ty) {
@@ -9073,7 +9070,7 @@ impl<'p> Checker<'p> {
         ty: TypeId,
     ) -> TypeId {
         let ty = self.force(ty);
-        if !self.may_be_deferred(ty) {
+        if !self.maybe_type_of_kind(ty, Self::is_deferred) {
             return ty;
         }
         // `hasInferenceCandidatesOrDefault`
@@ -9590,7 +9587,9 @@ impl<'p> Checker<'p> {
                 return None;
             }
         }
-        if self.provisional > 0
+        let pulls = self.pulls_contextual_types();
+        if !pulls
+            && self.provisional > 0
             && let Some(&known) = self.provisional_arg_contexts.get(&(file, arg))
         {
             self.note_provisional_read();
@@ -9599,7 +9598,7 @@ impl<'p> Checker<'p> {
                     .unwrap_or(known),
             );
         }
-        if let Some(known) = self.p.arg_contexts.get(&(file, arg)) {
+        if !pulls && let Some(known) = self.p.arg_contexts.get(&(file, arg)) {
             return Some(
                 self.arg_context_keeping_boolean(file, call, arg)
                     .unwrap_or(known),
@@ -9632,6 +9631,28 @@ impl<'p> Checker<'p> {
             }
         }
         let (index, count) = (index + offset, count + offset);
+        if pulls {
+            // `resolvingSignature`: `resolving` is popped before the candidates are compared, and another thread may have kept the
+            // call. Nothing is resolved for the question.
+            if self
+                .resolving
+                .iter()
+                .any(|r| r.file == file && r.call == call)
+                || self.stack.contains(&Query::Call(file, call))
+            {
+                return None;
+            }
+            let resolved = self.p.calls.get(&(file, call))?;
+            // `resolveCall` stores the candidate for overload failure in `resolvedSignature` before it reports.
+            let Some(sig) = self.p.failure_sigs.get(&(file, call)).or(resolved.sig) else {
+                return self.has_any_flag(resolved.ret).then_some(TypeId::ANY);
+            };
+            let params = self.sig_params(sig);
+            let param = self
+                .context_of_arg_at(&params, index, Some(count))
+                .unwrap_or(TypeId::ANY);
+            return Some(self.without_no_infer(param));
+        }
         if let Some(resolving) = self
             .resolving
             .iter()

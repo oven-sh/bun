@@ -893,28 +893,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `checkNonNullType`: what can be looked into of `receiver`. That it may be null or undefined is an error, and does not stand
-    /// in the way. Where it can be nothing else, or is `unknown`, nothing is left: what is in error can be anything.
-    pub(super) fn receiver_that_is_there(&mut self, receiver: TypeId) -> TypeId {
-        if !self.p.files.options.strict_null_checks {
-            return if receiver.is_null() || receiver.is_undefined() {
-                TypeId::ERROR
-            } else {
-                receiver
-            };
-        }
-        if receiver == TypeId::UNKNOWN {
-            return TypeId::ERROR;
-        }
-        if !self.some_type(receiver, |_, m| m.is_null() || m.is_undefined()) {
-            return receiver;
-        }
-        match self.non_nullable(receiver) {
-            TypeId::NEVER => TypeId::ERROR,
-            rest => rest,
-        }
-    }
-
     /// Whether it is the program that is in error where nothing was found in `receiver`, the type of `obj`: all of it is known,
     /// and no question has gone unanswered since `cycles_before`.
     fn is_certainly_missing(
@@ -951,7 +929,7 @@ impl<'p> Checker<'p> {
         if self.is_any(receiver) {
             return (Err(receiver), false);
         }
-        let left = self.receiver_that_is_there(receiver);
+        let left = self.non_null_type(receiver);
         if self.is_error_type(left) {
             return (Err(TypeId::ERROR), stops);
         }
@@ -1318,7 +1296,7 @@ impl<'p> Checker<'p> {
             return (TypeId::UNRESOLVED, false);
         };
         let (object, stops) = self.chain_receiver(file, obj, chain);
-        let receiver = self.receiver_that_is_there(object);
+        let receiver = self.non_null_type(object);
         let target = self.target_kind(file, e);
         // `getWidenedType(exprType)`: what is written to or called is looked up in what a variable holding the object would be.
         let receiver = if target.written || self.is_called(file, e) {
@@ -1409,7 +1387,7 @@ impl<'p> Checker<'p> {
         let found = match of_super {
             Some(name) => self.type_of_super_property(file, obj, receiver, name),
             None => {
-                let read = self.indexed_access_if_any(receiver, key, is_read);
+                let read = self.indexed_access_of_element_access(receiver, key, is_read);
                 // `AssignmentKindCompound` has `AccessFlagsExpressionPosition` as well: an index signature gives what it gives a read.
                 let mut is_writing = target.written;
                 if is_writing && !target.definite {
@@ -1444,12 +1422,6 @@ impl<'p> Checker<'p> {
         };
         let declared = match found {
             Some(found) => found,
-            // `isJSLiteralType(objectType)`: `anyType`, not nil.
-            None if self.is_js_literal_type(receiver) => TypeId::ANY,
-            // An object literal that is read on the spot answers for what it lacks.
-            None if is_read && self.is_object_literal_type(receiver) => {
-                self.indexed_access_for_read(receiver, key)
-            }
             // `core.OrElse(c.getIndexedAccessTypeOrUndefined(..), c.errorType)`
             None if self.is_known(key)
                 && !self.is_uncertain(file, index)
@@ -1462,17 +1434,13 @@ impl<'p> Checker<'p> {
         (self.flow_type_of_access(file, e, declared, target), stops)
     }
 
-    /// `checkIndexedAccessIndexType`, of the type `ty` of `e`: `T[K]` where `K` cannot be used to look into `T` is an error (2536,
-    /// 4105), and `errorType`.
-    fn checked_indexed_access_index_type(&mut self, file: FileId, e: ExprId, ty: TypeId) -> TypeId {
+    /// `checkIndexedAccessIndexType`: `T[K]` where `K` cannot be used to look into `T` is an error (2536, 4105), and `errorType`.
+    fn checked_indexed_access_index_type(&mut self, ty: TypeId) -> TypeId {
         let TypeData::IndexedAccess { obj, index, .. } = *self.data(ty) else {
             return ty;
         };
         let cycles_before = self.cycles;
-        // Where a type parameter has got to a place none is in scope, it has not been got to the bottom of.
-        let is_refused = self.is_generic(index)
-            && self.is_in_generic_context(file, e)
-            && self.why_not_a_key_of(obj, index).is_some();
+        let is_refused = self.is_generic(index) && self.why_not_a_key_of(obj, index).is_some();
         if is_refused && self.cycles == cycles_before {
             TypeId::ERROR
         } else {
@@ -1487,7 +1455,7 @@ impl<'p> Checker<'p> {
             ExprKind::Dot { .. } => self.type_of_property_access(file, e),
             ExprKind::Index { .. } => {
                 let (ty, stops) = self.type_of_element_access_unchecked(file, e);
-                (self.checked_indexed_access_index_type(file, e, ty), stops)
+                (self.checked_indexed_access_index_type(ty), stops)
             }
             // `checkCallExpression`: what is required is the module. `resolveExternalModuleTypeByLiteral`
             ExprKind::Call(_) if self.is_commonjs_require(file, e) => {
@@ -1572,9 +1540,10 @@ impl<'p> Checker<'p> {
                 for x in hir.ids(exprs) {
                     self.look_at(file, x);
                 }
-                // What it comes to, if that can be told from the text alone. The tag of a tagged template is not evaluated.
+                // What it comes to, if that can be told from the text alone. `IsTaggedTemplateExpression(node.Parent)`: neither the tag
+                // nor the template of a tagged template is evaluated.
                 let is_tag = matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p)
-                    if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].callee == e))
+                    if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].callee == e || hir[c].template == e))
                     && !is_parenthesized(hir, e);
                 if !is_tag && let Some(EnumValue::String(text)) = self.constant_value(file, e) {
                     return self.string_literal(text, true);
@@ -1725,7 +1694,7 @@ impl<'p> Checker<'p> {
                 ty => ty,
             },
             ExprKind::Jsx(_) => self.jsx_element_type(file),
-            ExprKind::ImportCall(spec) => self.type_of_import_call(file, spec),
+            ExprKind::ImportCall(spec, _) => self.type_of_import_call(file, spec),
             ExprKind::ImportMeta => self.global_ref(known::ImportMeta, &[]),
             ExprKind::NewTarget => self.type_of_new_target(file, e),
         }
@@ -1761,6 +1730,18 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `maybeTypeOfKindConsideringBaseConstraint`
+    pub(super) fn maybe_type_of_kind_considering_base_constraint(
+        &mut self,
+        ty: TypeId,
+        kind: fn(&Self, TypeId) -> bool,
+    ) -> bool {
+        self.maybe_type_of_kind(ty, kind)
+            || self
+                .base_constraint_of(ty)
+                .is_some_and(|base| self.maybe_type_of_kind(base, kind))
+    }
+
     /// `checkImportCallExpression`, for `import(spec)`.
     fn type_of_import_call(&mut self, file: FileId, spec: ExprId) -> TypeId {
         // `createPromiseReturnType`: 2711 without a `Promise` to give.
@@ -1790,6 +1771,7 @@ impl<'p> Checker<'p> {
             };
             let wrapper = self.synth(Shape {
                 props: vec![default],
+                default_of: Some(module),
                 ..Shape::default()
             });
             // `isOnlyImportableAsDefault`: to Node a JSON module has a default and nothing else.
@@ -1816,6 +1798,7 @@ impl<'p> Checker<'p> {
                 ty = self.map_type(with_default, |c, m| match c.data(m) {
                     TypeData::Synth(shape) => c.synth(Shape {
                         literal: Literalness::SyntheticDefault,
+                        default_of: Some(module),
                         ..(**shape).clone()
                     }),
                     _ => m,
@@ -1867,8 +1850,20 @@ impl<'p> Checker<'p> {
         is_first_ambient == Some(true)
     }
 
-    /// The symbol an identifier means as a value.
+    /// `getResolvedSymbol`: the symbol an identifier means as a value.
     pub fn symbol_of_identifier(&self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
+        self.resolve_identifier(file, e, name, false)
+            .unwrap_or(None)
+    }
+
+    /// `resolveEntityName` with `SymbolFlagsValue`, of an identifier that is an expression. `Err`: as `Files::resolve_name_or_error`.
+    pub fn resolve_identifier(
+        &self,
+        file: FileId,
+        e: ExprId,
+        name: Atom,
+        ignore_errors: bool,
+    ) -> Result<Option<Sym>, u32> {
         let (files, bound) = (self.files(), self.bound(file));
         let local = bound.expr_symbol[e.idx()];
         if local.is_some() {
@@ -1881,25 +1876,37 @@ impl<'p> Checker<'p> {
                 && let Some(outer) =
                     files.resolve_name(file, bound.alias_idents[i].1, name, SymFlags::VALUE)
             {
-                return Some(outer);
+                return Ok(Some(outer));
             }
-            return Some(sym);
+            return Ok(Some(sym));
         }
         // `NameResolver.Resolve`: the arguments of a function around hide whatever goes by the name further out.
         if name == known::arguments && bound.is_arguments_object(e) {
-            return None;
+            return Ok(None);
         }
         // What another declaration of a module, a namespace or an enum around exports, in whichever file, is in scope too, and comes
         // before the globals.
         match bound.free_idents.binary_search_by_key(&e, |free| free.0) {
-            Ok(i) => files.resolve_name(file, bound.free_idents[i].1, name, SymFlags::VALUE),
-            Err(_) => files.global(name, SymFlags::VALUE),
+            Ok(i) => files
+                .resolve(
+                    file,
+                    bound.free_idents[i].1,
+                    name,
+                    SymFlags::VALUE,
+                    !ignore_errors,
+                )
+                .map_err(|error| error.0),
+            Err(_) => Ok(files.global(name, SymFlags::VALUE)),
         }
     }
 
     /// `checkIdentifier`
     fn type_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> TypeId {
-        let Some(sym) = self.symbol_of_identifier(file, e, name) else {
+        // `Err`: `Resolve` has returned nil, `getResolvedSymbol` is `unknownSymbol`.
+        let Ok(found) = self.resolve_identifier(file, e, name, false) else {
+            return TypeId::ERROR;
+        };
+        let Some(sym) = found else {
             return match name {
                 // `undefinedSymbol` and `globalThisSymbol` are no variables: 2539, 2631.
                 known::undefined | known::globalThis if self.is_written(file, e) => TypeId::ERROR,
@@ -2241,13 +2248,12 @@ impl<'p> Checker<'p> {
                 Some(declared) => self.narrow_this(file, e, declared),
                 None => TypeId::ANY,
             },
-            // `tryGetThisTypeAtEx`: at the top of a module it is `undefinedType`, at the top of a script `globalThis`, tests or no tests.
-            Err(Parent::File) if !self.files().module(file).is_module() => {
-                self.intern(TypeData::Anon {
-                    origin: Origin::GlobalThis,
-                    mapper: MapperId::IDENTITY,
-                })
-            }
+            // `tryGetThisTypeAtEx`: `undefinedType` in a file with an `ExternalModuleIndicator`, `globalThis` in any other, a CommonJS
+            // module too, tests or no tests.
+            Err(Parent::File) if !self.hir(file).has_module_syntax => self.intern(TypeData::Anon {
+                origin: Origin::GlobalThis,
+                mapper: MapperId::IDENTITY,
+            }),
             Err(Parent::File) if self.p.files.options.strict_null_checks => TypeId::UNDEFINED,
             Err(Parent::File) => TypeId::UNDEFINED_DECLARED,
             // In a namespace or an enum nothing says what it is.
@@ -2268,8 +2274,8 @@ impl<'p> Checker<'p> {
             Err(of_class) => of_class,
             Ok(func) => {
                 let f = &self.hir(file)[func];
-                if f.this_ty.is_some() {
-                    return Some(self.type_from_node(file, f.this_ty));
+                if f.this_ty.is_some() || f.this_pos != u32::MAX {
+                    return Some(self.type_of_this_parameter(file, func));
                 }
                 // To the default of a parameter only a `this` parameter that is written counts.
                 if !self.is_in_parameter_initializer(file, e) {
@@ -2311,6 +2317,28 @@ impl<'p> Checker<'p> {
         } else {
             self.intern(TypeData::ThisParam(sym))
         })
+    }
+
+    /// `getTypeOfSymbol(signature.thisParameter)`, which is `getTypeForVariableLikeDeclaration`: the type it has; without one, for a
+    /// setter that of the `this` parameter of the getter, then `getContextualThisParameterType`, then `any`.
+    pub(super) fn type_of_this_parameter(&mut self, file: FileId, func: FnId) -> TypeId {
+        let f = self.hir(file)[func];
+        let mut declared = f.this_ty;
+        if declared.is_none()
+            && f.kind == FnKind::Setter
+            && let Some(getter) = self.sibling_accessor(file, func, FnKind::Getter)
+        {
+            declared = self.hir(file)[getter].this_ty;
+        }
+        if declared.is_some() {
+            return self.type_from_node(file, declared);
+        }
+        match self.bound(file).fns[func.idx()].owner {
+            FnOwner::Expr(owner) => self
+                .contextual_this_parameter_type(file, func, owner)
+                .unwrap_or(TypeId::ANY),
+            _ => TypeId::ANY,
+        }
     }
 
     /// `checkNewTargetMetaProperty`
@@ -2753,7 +2781,7 @@ impl<'p> Checker<'p> {
                             prop.flags.remove(PropFlags::READONLY);
                         }
                         if let Some(&(_, ty)) = changed.iter().find(|c| c.0 == written) {
-                            prop.source = PropSource::Type(ty);
+                            prop.source = Self::copy_of(ty, &[&*prop], true);
                         }
                     }
                     if was_const {
@@ -3008,13 +3036,13 @@ impl<'p> Checker<'p> {
         if extends.is_none() {
             return TypeId::ERROR;
         }
+        let sym = self.class_sym(file, class);
+        let constructor = self.base_constructor_type_of_class(sym);
         // `classDeclarationExtendsNull`
-        let constructor = self.type_of_expr(file, extends);
         if constructor == TypeId::NULL {
             return if is_call { TypeId::ERROR } else { TypeId::NULL };
         }
         let is_static = hir[member].flags.contains(Flags::STATIC);
-        let sym = self.class_sym(file, class);
         let Some(base) = self.base_types(sym).first().copied() else {
             let sigs = self.super_constructor_sigs(sym);
             let instance = match sigs.first() {
@@ -3214,7 +3242,7 @@ impl<'p> Checker<'p> {
             && let Parent::Expr(call) = bound.expr_parent[spread.idx()]
             && matches!(
                 hir[call].kind,
-                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall(_)
+                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall(..)
             )
         {
             return true;
@@ -4076,7 +4104,7 @@ impl<'p> Checker<'p> {
                 }
                 let r = self.type_of_expr(file, right);
                 let truthy = self.remove_definitely_falsy(l);
-                let truthy = self.non_nullable_operand(truthy);
+                let truthy = self.non_nullable(truthy);
                 self.union_reduced(&[truthy, r])
             }
             BinOp::Nullish => {
@@ -4086,7 +4114,7 @@ impl<'p> Checker<'p> {
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
-                let present = self.non_nullable_operand(l);
+                let present = self.non_nullable(l);
                 self.union_reduced(&[present, r])
             }
             BinOp::Add => {
@@ -4123,8 +4151,8 @@ impl<'p> Checker<'p> {
                 if !self.is_assignable_to_kind(l, Self::is_string_like, TypeId::STRING, false)
                     && !self.is_assignable_to_kind(r, Self::is_string_like, TypeId::STRING, false)
                 {
-                    l = self.operand_without_nullish(l);
-                    r = self.operand_without_nullish(r);
+                    l = self.non_null_type(l);
+                    r = self.non_null_type(r);
                 }
                 if self.is_assignable_to_kind(l, Self::is_number_like, TypeId::NUMBER, true)
                     && self.is_assignable_to_kind(r, Self::is_number_like, TypeId::NUMBER, true)
@@ -4150,10 +4178,7 @@ impl<'p> Checker<'p> {
                     self.type_of_expr(file, left),
                     self.type_of_expr(file, right),
                 );
-                let (l, r) = (
-                    self.operand_without_nullish(l),
-                    self.operand_without_nullish(r),
-                );
+                let (l, r) = (self.non_null_type(l), self.non_null_type(r));
                 let any_or_unknown = |c: &Self, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
                 if any_or_unknown(self, l) && any_or_unknown(self, r)
                     || !self.maybe_type_of_kind(l, Self::is_bigint_like)
@@ -4170,29 +4195,6 @@ impl<'p> Checker<'p> {
                     TypeId::ERROR
                 }
             }
-        }
-    }
-
-    /// `checkNonNullType`: what is left of an operand that must not be `null` or `undefined`. Nothing at all is `errorType`.
-    fn operand_without_nullish(&mut self, ty: TypeId) -> TypeId {
-        if !self.p.files.options.strict_null_checks {
-            return if ty.is_null() || ty.is_undefined() {
-                TypeId::ERROR
-            } else {
-                ty
-            };
-        }
-        if ty == TypeId::UNKNOWN {
-            return TypeId::ERROR;
-        }
-        // `getTypeFacts(t, TypeFactsIsUndefinedOrNull)`: what waits for type parameters goes by what it extends.
-        let by = self.base_constraint(ty);
-        if !self.some_type(by, |_, m| m.is_null() || m.is_undefined()) {
-            return ty;
-        }
-        match self.non_nullable(ty) {
-            TypeId::NEVER => TypeId::ERROR,
-            rest => rest,
         }
     }
 
@@ -4298,6 +4300,14 @@ impl<'p> Checker<'p> {
 
     /// What the attributes of the JSX element `e` are expected to be, together.
     pub(super) fn jsx_props_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        // As `contextual_type_of_arg`.
+        if self.pulls_contextual_types() {
+            if self.stack.contains(&Query::Call(file, e)) {
+                return None;
+            }
+            let known = self.p.calls.get(&(file, e))?;
+            return (known.ret != TypeId::UNRESOLVED).then_some(known.ret);
+        }
         // While the type arguments of a signature are being worked out: what it takes, with the type parameters still in it. While
         // a signature is tried: what that one takes.
         if let Some(&(_, _, ty)) = self
@@ -4548,17 +4558,16 @@ impl<'p> Checker<'p> {
                 continue;
             };
             let waits = prop.value.is_some() && self.is_context_sensitive(file, prop.value);
-            let source = if waits {
-                PropSource::Type(left_out)
-            } else {
-                PropSource::Literal(file, p)
-            };
             shape.props.retain(|x| x.name != name);
-            shape.props.push(Prop {
-                name,
-                flags: PropFlags::empty(),
-                source,
-                mapper: MapperId::IDENTITY,
+            shape.props.push(if waits {
+                Self::literal_member_of_type(file, p, name, left_out)
+            } else {
+                Prop {
+                    name,
+                    flags: PropFlags::empty(),
+                    source: PropSource::Literal(file, p),
+                    mapper: MapperId::IDENTITY,
+                }
             });
         }
         if hir

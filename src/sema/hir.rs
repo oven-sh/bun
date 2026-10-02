@@ -428,7 +428,8 @@ pub enum ExprKind {
         type_args: IdList<TypeNodeId>,
     },
     Jsx(JsxId),
-    ImportCall(ExprId),
+    /// `import(specifier, ..)`: the first of `CallExpression.Arguments`, a missing expression if there is none, and the others.
+    ImportCall(ExprId, IdList<ExprId>),
     ImportMeta,
     NewTarget,
 }
@@ -564,6 +565,8 @@ pub struct Call {
     /// Where the `)` is. `u32::MAX` for `new C`. A tagged template has `u32::MAX` or [`INCOMPLETE_TEMPLATE`].
     pub close_pos: u32,
     pub chain: Chain,
+    /// `TaggedTemplateExpression.Template`. Its substitutions are `args`.
+    pub template: ExprId,
 }
 
 /// [`Call::close_pos`] of a tagged template whose last piece of text is missing or unterminated (`callIsIncomplete`).
@@ -607,19 +610,21 @@ pub struct Prop {
     pub key: PropKey,
     pub value: ExprId,
     pub pos: u32,
+    /// Where its first token is: a modifier, `get`, `set`, `*`, or `pos`.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct Jsx {
     /// The name in the opening tag. `NONE` for a fragment. An intrinsic element's is a `String`.
     pub tag: ExprId,
-    /// The name in `</tag>`, an expression of its own. `NONE` for `<tag />`, a fragment, a missing closing tag, and an intrinsic
-    /// name that repeats the opening one. After a syntax error the two names may differ.
+    /// The name in `</tag>`, an expression of its own. `NONE` for `<tag />`, a fragment, and an intrinsic name that repeats the
+    /// opening one. A missing expression where the closing tag is missed. After a syntax error the two names may differ.
     pub close_tag: ExprId,
     pub attrs: Span<PropId>,
     pub children: IdList<ExprId>,
     pub type_args: IdList<TypeNodeId>,
-    /// Where `</tag>` starts. `u32::MAX` for `<tag />`.
+    /// Where `</tag>` starts, or is missed. `u32::MAX` for `<tag />`.
     pub close_pos: u32,
 }
 
@@ -643,7 +648,7 @@ pub struct PatProp {
     pub value: PatId,
     pub default: ExprId,
     pub is_rest: bool,
-    /// Where the name of the property is.
+    /// Where its first token is: the name of the property, or the `...`.
     pub pos: u32,
 }
 
@@ -653,6 +658,8 @@ pub struct PatElem {
     pub pat: PatId,
     pub default: ExprId,
     pub is_rest: bool,
+    /// Where its first token is: the `...`, or `pat`.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -677,6 +684,8 @@ pub struct VarDecl {
 pub struct Stmt {
     pub kind: StmtKind,
     pub pos: u32,
+    /// Where its first token is, decorators and modifiers included.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -751,6 +760,9 @@ pub enum StmtKind {
         alias: Atom,
         type_only: bool,
         mode: ResolutionMode,
+        star_pos: u32,
+        /// Where `alias` is.
+        alias_pos: u32,
     },
     ExportDefault(ExprId),
     /// `export = e`
@@ -802,11 +814,16 @@ pub struct Func {
     pub params: Span<ParamId>,
     /// The type of a leading `this` parameter.
     pub this_ty: TypeNodeId,
+    /// Where the name of that parameter is, with or without a type. Of one that is made of a `@this` tag, where the name of the tag
+    /// is; in a `@callback`, where the tag is. `u32::MAX`: there is none.
+    pub this_pos: u32,
     pub ret: TypeNodeId,
     pub body: FnBody,
     /// The `(` of the parameters; the `=>` of an arrow function.
     pub anchor: u32,
     pub pos: u32,
+    /// Where its first token is, decorators and modifiers included. That of the member, for a method or an accessor.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -823,6 +840,8 @@ pub struct Param {
 pub struct TypeParam {
     pub name: Atom,
     pub pos: u32,
+    /// Where its first token is: a modifier, or `pos`.
+    pub start: u32,
     pub constraint: TypeNodeId,
     pub default: TypeNodeId,
     pub flags: Flags,
@@ -851,6 +870,8 @@ pub struct Member {
     pub init: ExprId,
     pub func: FnId,
     pub pos: u32,
+    /// Where its first token is: a decorator, a modifier, `get`, `set`, `*`, or `pos`.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -866,11 +887,17 @@ pub struct Class {
     pub name_pos: u32,
     pub flags: Flags,
     pub type_params: Span<TypeParamId>,
+    /// `GetExtendsHeritageClauseElement`: the first element of the first `extends` clause.
     pub extends: ExprId,
     pub extends_args: IdList<TypeNodeId>,
+    /// The other elements of `extends` clauses, which are an error and which the checker never looks at: `extends A, B`,
+    /// `extends A extends B`.
+    pub other_extends: IdList<ExprId>,
     pub implements: IdList<TypeNodeId>,
     pub members: Span<MemberId>,
     pub pos: u32,
+    /// Where its first token is, decorators and modifiers included.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -881,6 +908,8 @@ pub struct Interface {
     pub type_params: Span<TypeParamId>,
     pub extends: IdList<TypeNodeId>,
     pub members: Span<MemberId>,
+    /// Where its first token is, modifiers included.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -890,6 +919,8 @@ pub struct Alias {
     pub flags: Flags,
     pub type_params: Span<TypeParamId>,
     pub ty: TypeNodeId,
+    /// Where its first token is, modifiers included. The `@` of a `@typedef` or a `@callback`.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -898,11 +929,15 @@ pub struct Enum {
     pub name_pos: u32,
     pub flags: Flags,
     pub members: Span<EnumMemberId>,
+    /// Where its first token is, modifiers included.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct EnumMember {
     pub name: Atom,
+    /// The `e` of `[e]` (`HasDynamicName`). `name` is `NONE` then. The checker objects to such a name and never looks at `e`.
+    pub computed_name: ExprId,
     pub init: ExprId,
     pub pos: u32,
 }
@@ -925,6 +960,8 @@ pub struct Module {
     pub body: IdList<StmtId>,
     /// `declare module "m";` has none.
     pub has_body: bool,
+    /// Where its first token is, modifiers included. The name of the `B` of `namespace A.B`.
+    pub start: u32,
 }
 
 /// `core.ResolutionMode`. `None`: not said; it goes by the file and the syntax.
@@ -963,6 +1000,10 @@ pub struct Import {
     pub default_pos: u32,
     pub namespace: Atom,
     pub namespace_pos: u32,
+    /// Where the token after `import` is: the first of the import clause.
+    pub clause_start: u32,
+    /// Where the `*` of `* as namespace` is.
+    pub namespace_start: u32,
     pub named: Span<ImportSpecId>,
     pub type_only: bool,
     /// As in [`SpecifierUse`].
@@ -971,12 +1012,16 @@ pub struct Import {
 
 #[derive(Copy, Clone, Debug)]
 pub struct ImportSpec {
+    /// Where its first token is: `type`, or `imported_pos`.
+    pub start: u32,
     pub imported: Atom,
     pub local: Atom,
     /// Where `local` is.
     pub pos: u32,
     pub type_only: bool,
     pub imported_pos: u32,
+    /// `node.Parent.Parent.Parent`
+    pub import: ImportId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -991,6 +1036,8 @@ pub struct ImportEquals {
     pub name_pos: u32,
     pub target: ImportEqualsTarget,
     pub flags: Flags,
+    /// Where its first token is, modifiers included.
+    pub start: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1005,12 +1052,16 @@ pub struct Export {
 
 #[derive(Copy, Clone, Debug)]
 pub struct ExportSpec {
+    /// Where its first token is: `type`, or `local_pos`.
+    pub start: u32,
     pub local: Atom,
     pub exported: Atom,
     /// Where `exported` is.
     pub pos: u32,
     pub type_only: bool,
     pub local_pos: u32,
+    /// `node.Parent.Parent`
+    pub export: ExportId,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1293,6 +1344,7 @@ pub struct File {
     pub unclosed_literals: Few<(u32, u32)>,
     /// The decorators of missing declarations and of `this` parameters, which `checkDecorators` never looks at: from where the
     /// expression starts to where what comes after the decorators starts. The expressions are statements of their own.
+    /// `Class::other_extends` and `EnumMember::computed_name` too.
     pub stray_decorators: Few<(u32, u32)>,
     /// The opening and closing JSX tags in which the parser objected to something: where their `<` is, and where they end
     /// (`finishNode`). Sorted.
@@ -1302,8 +1354,7 @@ pub struct File {
     pub directives: Few<(u32, Atom)>,
     /// Where module specifiers are written, but for those of `import()`, which are expressions.
     pub specifier_uses: Vec<SpecifierUse>,
-    /// The specifier of an `import()` that has a second argument, and that argument.
-    pub import_options: Few<(ExprId, ExprId)>,
+
     /// The specifier of each `import.defer(..)`, and where the `)` of the call is.
     pub deferred_import_calls: Few<(ExprId, u32)>,
     /// `with { .. }` of imports and exports: the start of `with`, and the attributes as an `ExprKind::Object`.
@@ -1434,7 +1485,11 @@ impl File {
     }
     #[inline]
     pub fn stmt(&mut self, kind: StmtKind, pos: u32) -> StmtId {
-        self.add_stmt_node(Stmt { kind, pos })
+        self.add_stmt_node(Stmt {
+            kind,
+            pos,
+            start: pos,
+        })
     }
     #[inline]
     pub fn ty(&mut self, kind: TypeNodeKind, pos: u32) -> TypeNodeId {
@@ -1552,7 +1607,6 @@ impl File {
             mapped,
             references,
             with_bodies,
-            import_options,
             deferred_import_calls,
             import_attributes,
             specifier_expressions,

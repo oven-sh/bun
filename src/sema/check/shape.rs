@@ -416,10 +416,24 @@ impl<'p> Checker<'p> {
 
     /// `getNoInferType`
     pub(super) fn no_infer(&mut self, ty: TypeId) -> TypeId {
-        if self.has_type_variables(ty) && !matches!(self.data(ty), TypeData::NoInfer(_)) {
+        if self.has_type_variables(ty) && self.is_no_infer_target_type(ty) {
             self.intern(TypeData::NoInfer(ty))
         } else {
             ty
+        }
+    }
+
+    /// `isNoInferTargetType`
+    fn is_no_infer_target_type(&mut self, ty: TypeId) -> bool {
+        match self.data(ty) {
+            TypeData::Union(parts) | TypeData::Intersection(parts) => {
+                parts.iter().any(|&part| self.is_no_infer_target_type(part))
+            }
+            TypeData::LazyAlias { .. } => !self.is_no_infer(ty),
+            _ => {
+                self.is_object_type(ty) && !self.is_empty_anonymous_object_type(ty)
+                    || self.is_instantiable(ty) && !self.is_pattern_literal(ty)
+            }
         }
     }
 
@@ -1014,10 +1028,10 @@ impl<'p> Checker<'p> {
                     source: PropSource::Members(list.into()),
                     mapper,
                 };
-                let later = self.type_of_prop(&later, MapperId::IDENTITY);
+                let later_type = self.type_of_prop(&later, MapperId::IDENTITY);
                 let mut call = self.signatures(so_far, false).into_vec();
                 if !call.is_empty() {
-                    call.extend(self.signatures(later, false));
+                    call.extend(self.signatures(later_type, false));
                     let ty = self.synth(Shape {
                         call,
                         ..Shape::default()
@@ -1027,10 +1041,22 @@ impl<'p> Checker<'p> {
                     } else {
                         ty
                     };
+                    // One symbol, with the declarations of both.
+                    let mut declarations = match Self::value_declaration(&earlier) {
+                        Some(PropSource::Members(list)) => list.to_vec(),
+                        _ => Vec::new(),
+                    };
+                    if let PropSource::Members(list) = &later.source {
+                        declarations.extend(list.iter().copied());
+                    }
+                    let declared = Prop {
+                        source: PropSource::Members(declarations.into()),
+                        ..later
+                    };
                     b.add(Prop {
                         name,
                         flags,
-                        source: PropSource::Type(ty),
+                        source: Self::copy_of(ty, &[&declared], true),
                         mapper: MapperId::IDENTITY,
                     });
                     continue;
@@ -1402,8 +1428,8 @@ impl<'p> Checker<'p> {
                 continue;
             }
             let mut prop = prop.clone();
-            match prop.source {
-                PropSource::Type(t) => prop.source = PropSource::Type(self.instantiate(t, mapper)),
+            match &mut prop.source {
+                PropSource::Type(t) | PropSource::Copy(t, ..) => *t = self.instantiate(*t, mapper),
                 _ => {
                     if prop.mapper != composed.0 {
                         composed = (prop.mapper, self.compose(prop.mapper, mapper));
@@ -1479,11 +1505,11 @@ impl<'p> Checker<'p> {
             let hir = self.hir(file);
             match decl {
                 Decl::Class(class) => ranges.push((
-                    self.full_start_of_declaration(file, hir[class].pos),
+                    self.end_of_token_before(file, hir[class].start),
                     self.end_of_class(file, class),
                 )),
                 Decl::Interface(interface) => ranges.push((
-                    self.full_start_of_declaration(file, hir[interface].name_pos),
+                    self.end_of_token_before(file, hir[interface].start),
                     self.end_of_interface(file, interface),
                 )),
                 _ => {}
@@ -1492,67 +1518,12 @@ impl<'p> Checker<'p> {
         ranges
     }
 
-    /// `node.Pos()` of the class or interface whose keyword or name is at `pos`: where the token before its modifiers ends.
-    fn full_start_of_declaration(&self, file: FileId, pos: u32) -> u32 {
-        let text = &self.hir(file).text[..];
-        let mut at = pos;
-        loop {
-            let end = self.end_of_token_before(file, at) as usize;
-            let mut start = end;
-            while start > 0
-                && (text[start - 1].is_ascii_alphanumeric()
-                    || matches!(text[start - 1], b'_' | b'$'))
-            {
-                start -= 1;
-            }
-            if !matches!(
-                &text[start..end],
-                b"interface" | b"class" | b"abstract" | b"declare" | b"default" | b"export"
-            ) {
-                return end as u32;
-            }
-            at = start as u32;
-        }
-    }
-
-    /// `node.Pos()` of a member of a class or an interface: where the member before it ends. Between the first and the brace there
-    /// are only its modifiers.
-    fn full_start_of_member(&self, file: FileId, member: MemberId) -> u32 {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let members = match bound.member_owner[member.idx()] {
-            MemberOwner::Class(class) => hir[class].members,
-            MemberOwner::Interface(interface) => hir[interface].members,
-            _ => return self.end_of_token_before(file, hir[member].pos),
-        };
-        if member.0 > members.start {
-            return self.end_of_member(file, MemberId(member.0 - 1));
-        }
-        let text = &hir.text[..];
-        let mut at = hir[member].pos;
-        loop {
-            let end = self.end_of_token_before(file, at) as usize;
-            // A computed name may be said to be where the expression in the brackets is.
-            if end > 0 && text[end - 1] == b'[' {
-                at = end as u32 - 1;
-                continue;
-            }
-            let mut start = end;
-            while start > 0 && text[start - 1].is_ascii_alphabetic() {
-                start -= 1;
-            }
-            if start == end {
-                return end as u32;
-            }
-            at = start as u32;
-        }
-    }
-
     /// `isDeclarationContainedBy`: whether `symbol.ValueDeclaration` of `prop` lies within one of `ranges`. Only positions are
     /// compared, whatever files they are in.
     fn is_within_ranges_of_declarations(&self, prop: &Prop, ranges: &[(u32, u32)]) -> bool {
         let is_near = |pos: u32| ranges.iter().any(|&(from, to)| from <= pos && pos < to);
-        let (start, end) = match &prop.source {
-            PropSource::Parameter(file, parameter) => {
+        let (start, end) = match Self::value_declaration(prop) {
+            Some(PropSource::Parameter(file, parameter)) => {
                 let pos = self.hir(*file)[*parameter].pos;
                 if !is_near(pos) {
                     return false;
@@ -1562,28 +1533,25 @@ impl<'p> Checker<'p> {
                     self.end_of_param(*file, *parameter),
                 )
             }
-            source => {
-                let first = match source {
-                    PropSource::Members(list) => list.first().copied(),
-                    _ => self.first_declaration_of_overloads(prop),
-                };
-                let Some((file, member)) = first else {
+            Some(PropSource::Members(list)) => {
+                let Some(&(file, member)) = list.first() else {
                     return false;
                 };
                 if !is_near(self.hir(file)[member].pos) {
                     return false;
                 }
                 (
-                    self.full_start_of_member(file, member),
+                    self.end_of_token_before(file, self.hir(file)[member].start),
                     self.end_of_member(file, member),
                 )
             }
+            _ => return false,
         };
         ranges.iter().any(|&(from, to)| from <= start && end <= to)
     }
 
     /// `compareSymbols`, of properties: by the file the first declaration is in, then by where it is there. What has none comes last.
-    fn place_in_program(&self, prop: &Prop) -> (u8, u32, u32) {
+    fn place_in_program(&mut self, prop: &Prop) -> (u8, u32, u32) {
         match self.order_of_property(prop) {
             (0, file, pos) => (0, self.files().rank_of_file(file), pos),
             (nowhere, ..) => (nowhere, 0, 0),
@@ -1647,9 +1615,13 @@ impl<'p> Checker<'p> {
             self.p.circular_base_constructors.insert(class, ());
             return self.p.base_constructor_types.insert(class, TypeId::ERROR);
         }
-        let ty = if !self.is_known(constructor)
+        // `nullWideningType`, which is `nullType` under `strictNullChecks`.
+        let ty = if constructor == TypeId::NULL
+            || constructor.is_null() && self.p.files.options.strict_null_checks
+        {
+            TypeId::NULL
+        } else if !self.is_known(constructor)
             || self.has_any_flag(constructor)
-            || constructor.is_null()
             || self.is_constructor_type(constructor)
         {
             constructor
@@ -1661,6 +1633,11 @@ impl<'p> Checker<'p> {
             return self.p.base_constructor_types.insert(class, ty);
         }
         self.p.base_constructor_types.get(&class).unwrap_or(ty)
+    }
+
+    /// `classDeclarationExtendsNull`
+    pub(super) fn class_declaration_extends_null(&mut self, class: Sym) -> bool {
+        self.base_constructor_type_of_class(class) == TypeId::NULL
     }
 
     /// `isConstructorType`
@@ -2028,7 +2005,6 @@ impl<'p> Checker<'p> {
                 let mut has_constructor = false;
                 let mut is_abstract = false;
                 let mut outer = MapperId::IDENTITY;
-                let this = self.intern(TypeData::ThisParam(sym));
                 for (file, decl) in self.files().decls(sym) {
                     let Decl::Class(c) = decl else { continue };
                     if !self.is_declaration_of_symbol(sym, file, decl) {
@@ -2043,16 +2019,8 @@ impl<'p> Checker<'p> {
                         let parent = self.bound(file).scopes[scope.idx()].parent;
                         outer = self.identity_mapper(file, parent);
                     }
-                    // A static member cannot mention the type parameters or the `this` type of its own class: both are errors
-                    // there, and `any` (`getThisType`, the name resolver's `Resolve`).
-                    let mut pairs: Vec<(TypeId, TypeId)> = hir[c]
-                        .type_params
-                        .iter()
-                        .map(|tp| (self.type_param(file, tp), TypeId::ANY))
-                        .collect();
-                    pairs.push((this, TypeId::ANY));
-                    let closed = self.p.types.mapper(pairs);
-                    self.add_members(&mut b, file, hir[c].members, true, closed, false);
+                    let members = hir[c].members;
+                    self.add_members(&mut b, file, members, true, MapperId::IDENTITY, false);
                     self.add_this_properties(&mut b, file, c, true);
                     if hir.is_js && file == sym.file {
                         let list = &self.bound(file).declared_fn_expandos;
@@ -2269,9 +2237,14 @@ impl<'p> Checker<'p> {
                                 prop = Prop {
                                     name: prop.name,
                                     flags: prop.flags & PropFlags::OPTIONAL,
-                                    source: PropSource::Type(TypeId::UNDEFINED),
+                                    source: Self::copy_of(TypeId::UNDEFINED, &[&prop], false),
                                     mapper: MapperId::IDENTITY,
                                 };
+                            } else if prop.flags.contains(PropFlags::READONLY) {
+                                // What can only be read, an `export const`, is made anew too: its declarations, no parent.
+                                let ty = self.type_of_prop(&prop, MapperId::IDENTITY);
+                                prop.source = Self::copy_of(ty, &[&prop], false);
+                                prop.mapper = MapperId::IDENTITY;
                             }
                             prop.flags.remove(PropFlags::READONLY);
                         }
@@ -2661,12 +2634,7 @@ impl<'p> Checker<'p> {
             b.reserve(members.shape().props.len());
             for prop in &members.shape().props {
                 let mut own = prop.clone();
-                match own.source {
-                    PropSource::Type(t) => {
-                        own.source = PropSource::Type(self.instantiate(t, members.mapper))
-                    }
-                    _ => own.mapper = self.compose(own.mapper, members.mapper),
-                }
+                self.instantiate_prop(&mut own, members.mapper);
                 match b.position(prop.name) {
                     // The very same property, come by in two ways, is there once.
                     Some(i) => {
@@ -2849,14 +2817,10 @@ impl<'p> Checker<'p> {
                     self.optional_property(ty)
                 };
                 let flags = PropFlags::OPTIONAL | self.name_flag_of_copy(owner, prop, true);
-                let place = self.order_of_property_in(members.shape(), prop);
-                if place.0 == 0 {
-                    shape.declared_at.push((prop.name, place.1, place.2));
-                }
                 shape.props.push(Prop {
                     name: prop.name,
                     flags,
-                    source: PropSource::Type(ty),
+                    source: Self::copy_of(ty, &[prop], false),
                     mapper: MapperId::IDENTITY,
                 });
             }
@@ -3056,7 +3020,7 @@ impl<'p> Checker<'p> {
             b.add(Prop {
                 name: prop.name,
                 flags,
-                source: PropSource::Type(ty),
+                source: Self::copy_of(ty, &[prop], !anew),
                 mapper: MapperId::IDENTITY,
             });
         }
@@ -3092,7 +3056,7 @@ impl<'p> Checker<'p> {
             } else {
                 self.type_of_prop(prop, r.mapper)
             };
-            let flags;
+            let (flags, source);
             if prop.flags.contains(PropFlags::OPTIONAL)
                 && let Some(i) = b.position(prop.name)
             {
@@ -3112,6 +3076,7 @@ impl<'p> Checker<'p> {
                 } else {
                     self.union_reduced(&[left_ty, present])
                 };
+                source = Self::copy_of(ty, &[&b.shape.props[i], prop], false);
             } else {
                 let anew = is_write_only || prop.flags.contains(PropFlags::READONLY);
                 let kept = if anew {
@@ -3126,15 +3091,15 @@ impl<'p> Checker<'p> {
                 };
                 flags =
                     prop.flags & kept | self.name_flag_of_copy(right, prop, anew) | function_flag;
+                source = Self::copy_of(ty, &[prop], !anew);
             }
             let copy = Prop {
                 name: prop.name,
                 flags,
-                source: PropSource::Type(ty),
+                source,
                 mapper: MapperId::IDENTITY,
             };
             match b.position(prop.name) {
-                // Its first declaration is that of the property on the left (`compareSymbols`).
                 Some(i) if prop.flags.contains(PropFlags::OPTIONAL) => b.shape.props[i] = copy,
                 // What comes later goes last.
                 _ => {
@@ -3143,45 +3108,7 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        // `getNamedMembers`: in the order they are declared in (`compareSymbols`), if that is known of all. What the right may or may
-        // not replace is declared where the left one is.
-        let places: Vec<(u8, FileId, u32)> = b
-            .shape
-            .props
-            .iter()
-            .map(|prop| {
-                let of_right = r
-                    .resolved
-                    .prop(prop.name)
-                    .filter(|right| self.is_spreadable_property(right));
-                match (l.resolved.prop(prop.name), of_right) {
-                    (Some(left), Some(right)) if right.flags.contains(PropFlags::OPTIONAL) => {
-                        self.order_of_property_in(l.shape(), left)
-                    }
-                    (_, Some(right)) => self.order_of_property_in(r.shape(), right),
-                    (Some(left), None) => self.order_of_property_in(l.shape(), left),
-                    (None, None) => (1, FileId(0), 0),
-                }
-            })
-            .collect();
-        let mut order: Vec<usize> = (0..places.len()).collect();
-        let is_sorted = places.iter().all(|place| place.0 == 0);
-        if is_sorted {
-            order.sort_by_key(|&i| self.place_in_program_order(places[i].1, places[i].2));
-        }
-        b.shape.declared_at = order
-            .iter()
-            .filter(|&&i| {
-                places[i].0 == 0 && matches!(b.shape.props[i].source, PropSource::Type(_))
-            })
-            .map(|&i| (b.shape.props[i].name, places[i].1, places[i].2))
-            .collect();
-        if is_sorted {
-            b.shape.props = order
-                .into_iter()
-                .map(|i| b.shape.props[i].clone())
-                .collect();
-        }
+        self.sort_named_members(&mut b.shape.props);
         // An index signature holds for the result if it holds for both. (Nothing at all on the left does not count.)
         let left_is_nothing = left == TypeId::EMPTY_OBJECT;
         let mut index = Vec::new();
@@ -3207,11 +3134,7 @@ impl<'p> Checker<'p> {
         } else {
             Literalness::WithSpread
         };
-        let made = self.synth(b.shape);
-        self.p
-            .copied_from
-            .insert(made, (true, vec![left, right].into_boxed_slice()));
-        made
+        self.synth(b.shape)
     }
 
     // ───────────────────────────── reading ─────────────────────────────
@@ -3233,7 +3156,7 @@ impl<'p> Checker<'p> {
         let mut adds_undefined = false;
         let mut own_mapper = prop.mapper;
         let base = match &prop.source {
-            PropSource::Type(t) => *t,
+            PropSource::Type(t) | PropSource::Copy(t, ..) => *t,
             // `getTypeOfMappedSymbol` instantiates the template with `prop.mapper` before it adjusts for optionality.
             PropSource::Mapped(of, strips_optional) => {
                 own_mapper = MapperId::IDENTITY;
@@ -4541,7 +4464,8 @@ impl<'p> Checker<'p> {
     pub(super) fn value_declaration(prop: &Prop) -> Option<&PropSource> {
         match &prop.source {
             // `addMemberForKeyTypeWorker` links `Declarations` to a mapped property, never a `ValueDeclaration`.
-            PropSource::Type(_) | PropSource::Mapped(..) => None,
+            PropSource::Type(_) | PropSource::Mapped(..) | PropSource::Copy(_, _, false) => None,
+            PropSource::Copy(_, of, true) => of.iter().find_map(Self::value_declaration),
             PropSource::Intersected(_, parts) => {
                 let mut declared = parts.iter().filter_map(Self::value_declaration);
                 let first = declared.next()?;
@@ -4549,6 +4473,50 @@ impl<'p> Checker<'p> {
             }
             source => Some(source),
         }
+    }
+
+    /// The source of a property of type `ty` that has the `Declarations` of the properties `of`, one after the other.
+    /// `keeps_value_declaration`: and the `ValueDeclaration` and the `Parent` of the first (`createSymbolWithType`, and where
+    /// `getSpreadSymbol` answers with the symbol itself), not only those (what `getSpreadSymbol` and `getSpreadType` make anew).
+    pub(super) fn copy_of(ty: TypeId, of: &[&Prop], keeps_value_declaration: bool) -> PropSource {
+        fn add_declared(prop: &Prop, declared: &mut Vec<Prop>) {
+            match &prop.source {
+                PropSource::Type(_) => {}
+                PropSource::Copy(_, parts, _) | PropSource::Intersected(_, parts) => {
+                    parts.iter().for_each(|part| add_declared(part, declared));
+                }
+                _ => declared.push(Prop {
+                    mapper: MapperId::IDENTITY,
+                    ..prop.clone()
+                }),
+            }
+        }
+        let mut declared = Vec::new();
+        of.iter().for_each(|prop| add_declared(prop, &mut declared));
+        if declared.is_empty() {
+            return PropSource::Type(ty);
+        }
+        let has_value_declaration =
+            keeps_value_declaration && Self::value_declaration(of[0]).is_some();
+        PropSource::Copy(ty, declared.into(), has_value_declaration)
+    }
+
+    /// The member `written` of an object literal, or attribute of a JSX element, as it is when checked otherwise than
+    /// `type_of_literal_prop` does: its symbol, with the type `ty`.
+    pub(super) fn literal_member_of_type(
+        file: FileId,
+        written: PropId,
+        name: Atom,
+        ty: TypeId,
+    ) -> Prop {
+        let mut prop = Prop {
+            name,
+            flags: PropFlags::empty(),
+            source: PropSource::Literal(file, written),
+            mapper: MapperId::IDENTITY,
+        };
+        prop.source = Self::copy_of(ty, &[&prop], true);
+        prop
     }
 
     /// Whether `ty` is an intersection nothing can be.

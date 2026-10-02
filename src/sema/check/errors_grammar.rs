@@ -201,7 +201,7 @@ impl Checker<'_> {
         let index = self.exprs_by_kind(file);
         for &id in index.of(ExprTag::ImportCall) {
             let (i, e) = (id.idx(), &hir[id]);
-            let ExprKind::ImportCall(specifier) = e.kind else {
+            let ExprKind::ImportCall(specifier, more) = e.kind else {
                 continue;
             };
             if matches!(bound.expr_parent[i], Parent::None) {
@@ -235,24 +235,14 @@ impl Checker<'_> {
             if after_keyword == Some(b'<') {
                 continue;
             }
-            let options = hir
-                .import_options
-                .iter()
-                .find(|o| o.0 == specifier)
-                .map(|o| o.1);
+            let options = hir.ids(more).next();
             if !has_import_attributes && let Some(options) = options {
                 let start = self.start_of(file, options);
                 out.push(Diagnostic { start, code: 1324 });
                 self.note(start, self.error_end_of(file, options), 1324, Vec::new());
                 continue;
             }
-            // Of the arguments only the first two are kept.
-            let has_a_third = options.is_some_and(|options| {
-                let comma = skip_trivia(&hir.text, self.end_of_expr(file, options) as usize);
-                hir.text.get(comma) == Some(&b',')
-                    && hir.text.get(skip_trivia(&hir.text, comma + 1)) != Some(&b')')
-            });
-            if has_a_third || matches!(hir[specifier].kind, ExprKind::Missing) {
+            if more.len() > 1 || matches!(hir[specifier].kind, ExprKind::Missing) {
                 out.push(Diagnostic {
                     start: e.pos,
                     code: 1450,
@@ -866,18 +856,9 @@ impl Checker<'_> {
                         named(self, hir[spec].local, hir[spec].pos, parent, out);
                     }
                 }
-                StmtKind::ExportStar { alias, .. } if is_reserved(alias) => {
-                    // Where the name is is not kept: past `export`, `type`, `*` and `as`.
-                    let words: [&[u8]; 4] = [b"export", b"type", b"*", b"as"];
-                    let mut at = s.pos as usize;
-                    for word in words {
-                        at = skip_trivia(text, at);
-                        if text.get(at..).is_some_and(|rest| rest.starts_with(word)) {
-                            at += word.len();
-                        }
-                    }
-                    named(self, alias, skip_trivia(text, at) as u32, parent, out);
-                }
+                StmtKind::ExportStar {
+                    alias, alias_pos, ..
+                } if is_reserved(alias) => named(self, alias, alias_pos, parent, out),
                 StmtKind::Labeled { label, .. } => named(self, label, s.pos, parent, out),
                 StmtKind::Break(label) if label.is_some() => {
                     named(

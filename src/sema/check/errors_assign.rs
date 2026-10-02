@@ -77,13 +77,6 @@ enum Written {
 impl Checker<'_> {
     pub(super) fn check_assignments(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let hir = self.hir(file);
-        // `SkipTypeChecking` is the only gate: the declarations and type nodes of a declaration file are checked like any other file's.
-        if hir.kind == FileKind::Declaration {
-            self.check_redeclared_variables(file, out);
-            self.check_type_argument_constraints(file, out);
-            self.check_mapped_type_keys(file, out);
-            return;
-        }
         let bound = self.bound(file);
         let strict = self.p.files.options.strict_null_checks;
         for d in 0..hir.var_decls.len() {
@@ -132,7 +125,6 @@ impl Checker<'_> {
                 },
                 decl.init,
                 false,
-                false,
                 2322,
                 out,
             );
@@ -149,7 +141,7 @@ impl Checker<'_> {
             if strict && Self::pattern_binds_nothing(hir, param.pat) {
                 continue;
             }
-            let (target, is_uninstantiated) = self.param_default_target(file, ParamId(p as u32));
+            let target = self.param_default_target(file, ParamId(p as u32));
             let source = self.type_of_expr(file, param.default);
             let written = if param.ty.is_some() {
                 Written::At(file, param.ty)
@@ -167,7 +159,6 @@ impl Checker<'_> {
                 },
                 param.default,
                 false,
-                is_uninstantiated,
                 2322,
                 out,
             );
@@ -220,7 +211,6 @@ impl Checker<'_> {
                         },
                         default,
                         false,
-                        false,
                         2322,
                         out,
                     );
@@ -258,7 +248,6 @@ impl Checker<'_> {
                 },
                 value,
                 false,
-                false,
                 2322,
                 out,
             );
@@ -291,7 +280,6 @@ impl Checker<'_> {
                     (c.start_of(file, e), end)
                 },
                 e,
-                false,
                 false,
                 2322,
                 out,
@@ -330,7 +318,6 @@ impl Checker<'_> {
                     (member.pos, end)
                 },
                 member.init,
-                false,
                 false,
                 2322,
                 out,
@@ -422,7 +409,6 @@ impl Checker<'_> {
                     (c.start_of(file, target), end)
                 },
                 value,
-                false,
                 false,
                 2322,
                 out,
@@ -564,23 +550,19 @@ impl Checker<'_> {
         }
     }
 
-    /// The type `checkVariableLikeDeclaration` compares the default of parameter `p` with. The flag is set if that type comes from the
-    /// uninstantiated signature of a generic callee, so it may mention the callee's type parameters.
-    fn param_default_target(&mut self, file: FileId, p: ParamId) -> (TypeId, bool) {
+    /// The type `checkVariableLikeDeclaration` compares the default of parameter `p` with.
+    fn param_default_target(&mut self, file: FileId, p: ParamId) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let param = &hir[p];
         let is_optional = param.flags.contains(Flags::OPTIONAL);
         if param.ty.is_some() {
             let declared = self.type_from_node(file, param.ty);
             // `addOptionalityEx`: a `?` adds `undefined`. A default alone does not.
-            return (
-                if is_optional {
-                    self.optional(declared)
-                } else {
-                    declared
-                },
-                false,
-            );
+            return if is_optional {
+                self.optional(declared)
+            } else {
+                declared
+            };
         }
         // Resolving the parameter also resolves the enclosing call, whose signature `open_contextual_signature` reads.
         let resolved = self.type_of_param(file, p);
@@ -589,24 +571,24 @@ impl Checker<'_> {
         if !matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_))
             || !hir[func].type_params.is_empty()
         {
-            return (resolved, false);
+            return resolved;
         }
         // A binding pattern is compared with `getWidenedTypeForVariableLikeDeclaration`, not with the type of a symbol.
         // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` checks the parameters the first time the function is checked, so
         // `getContextuallyTypedParameterType` sees the callee's signature before its type arguments are inferred. The adjustments of
         // `assignContextualParameterTypes` and `assignParameterType` only reach the symbol's type.
         let index = (p.0 - hir[func].params.start) as usize;
-        let (expected, is_uninstantiated) = match self.open_contextual_signature(file, func) {
+        let expected = match self.open_contextual_signature(file, func) {
             Some(open) => {
                 let params = self.sig_params(open);
-                (self.param_type_at(&params, index), true)
+                self.param_type_at(&params, index)
             }
-            None => (self.contextual_param_type(file, func, index), false),
+            None => self.contextual_param_type(file, func, index),
         };
         match expected {
-            Some(ty) if is_optional => (self.optional(ty), is_uninstantiated),
-            Some(ty) => (ty, is_uninstantiated),
-            None => (resolved, false),
+            Some(ty) if is_optional => self.optional(ty),
+            Some(ty) => ty,
+            None => resolved,
         }
     }
 
@@ -729,7 +711,7 @@ impl Checker<'_> {
             shape.props.push(Prop {
                 name: prop.name,
                 flags: prop.flags,
-                source: PropSource::Type(held),
+                source: Self::copy_of(held, &[prop], true),
                 mapper: MapperId::IDENTITY,
             });
         }
@@ -1082,12 +1064,8 @@ impl Checker<'_> {
                     } else {
                         TypeId::UNRESOLVED
                     };
-                    firsts[slot] = Some(
-                        (self.is_known(ty)
-                            && !self.is_error_type(ty)
-                            && !self.is_declared_in_error(of, pat, ty))
-                        .then_some(ty),
-                    );
+                    firsts[slot] =
+                        Some((self.is_known(ty) && !self.is_error_type(ty)).then_some(ty));
                     first_names[slot] = (of, pat);
                     continue;
                 };
@@ -1100,7 +1078,6 @@ impl Checker<'_> {
                 if !self.is_known(here)
                     || self.is_error_type(here)
                     || self.is_identical(declared, here)
-                    || self.is_declared_in_error(of, pat, here)
                 {
                     continue;
                 }
@@ -1217,244 +1194,6 @@ impl Checker<'_> {
                     | StmtKind::ExportDefault(_)
             )
         })
-    }
-
-    /// `isErrorType`, of `ty`, which is what the declaration of `pat` makes of it. There is no error type to tell by: what is in
-    /// error is `any`, and whether it is that is told from what is written.
-    pub(super) fn is_declared_in_error(&mut self, file: FileId, pat: PatId, ty: TypeId) -> bool {
-        use crate::bind::PatParent;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let node = match bound.pat_parent[pat.idx()] {
-            PatParent::Param(p) => hir[p].ty,
-            PatParent::Var(d) if hir[d].ty.is_some() => hir[d].ty,
-            PatParent::Var(d) if hir[d].init.is_some() => match hir[hir[d].init].kind {
-                ExprKind::As { ty, .. } => ty,
-                _ => {
-                    return self.has_any_flag(ty) && self.is_expression_in_error(file, hir[d].init);
-                }
-            },
-            PatParent::Prop(parent, prop) => {
-                let given = self.type_of_pat(file, parent);
-                if !self.is_known(given) {
-                    return false;
-                }
-                // `getBindingElementTypeFromParentType`: what is taken from `any` is that very `any`.
-                if self.is_any(given) {
-                    return self.is_declared_in_error(file, parent, given);
-                }
-                let prop = &hir[prop];
-                // 2700
-                if prop.is_rest {
-                    return self.is_rest_of_invalid_type(given);
-                }
-                // 2339. `AccessFlagsAllowMissing`: with a default, what an object literal leaves out is `undefined`.
-                if !self.has_any_flag(ty)
-                    || prop.default.is_some() && self.is_object_literal_type(given)
-                {
-                    return false;
-                }
-                let Some(name) = self.member_name(file, prop.key) else {
-                    return false;
-                };
-                // `checkObjectLiteral`: a property has the type of its initializer, the error type included.
-                if let Some((
-                    Prop {
-                        source: PropSource::Literal(of, written),
-                        ..
-                    },
-                    _,
-                )) = self.prop_of(given, name)
-                {
-                    let written = self.hir(of)[written];
-                    return matches!(written.kind, PropKind::Init | PropKind::Shorthand)
-                        && self.is_expression_in_error(of, written.value);
-                }
-                let key = self.string_literal(name, false);
-                return self.type_of_property(given, name).is_none()
-                    && self.indexed_access_if_any(given, key, true).is_none();
-            }
-            PatParent::Elem(parent, _) => {
-                let given = self.type_of_pat(file, parent);
-                return self.is_known(given)
-                    && self.is_any(given)
-                    && self.is_declared_in_error(file, parent, given);
-            }
-            _ => return false,
-        };
-        if !self.has_any_flag(ty) || node.is_none() {
-            return false;
-        }
-        let (sym, args) = match hir[node].kind {
-            // `getTypeFromTypeReference`: an unresolved name.
-            TypeNodeKind::Ref { name, args } => {
-                let scope = bound.type_scope[node.idx()];
-                if scope.is_none() {
-                    return false;
-                }
-                let names: Vec<Atom> = hir.ids(name).collect();
-                let Some(sym) = self
-                    .files()
-                    .resolve_entity(file, scope, &names, SymFlags::TYPE)
-                else {
-                    return true;
-                };
-                let Some(sym) = self.files().resolve_alias_if_needed(sym) else {
-                    return true;
-                };
-                (sym, args)
-            }
-            // `getTypeFromTypeQueryNode`: widening leaves the error type alone.
-            TypeNodeKind::Typeof { expr, .. } => return self.is_expression_in_error(file, expr),
-            // `getTypeFromImportTypeNode`: a module or a member that is not found.
-            TypeNodeKind::Import {
-                spec,
-                name,
-                args,
-                is_typeof,
-                mode,
-            } => {
-                if is_typeof {
-                    let mode = self.files().mode_of_import(file, mode);
-                    return self
-                        .files()
-                        .module_of_specifier_as(file, spec, mode)
-                        .is_none();
-                }
-                let Some(sym) = self.import_type_symbol(file, spec, name, mode) else {
-                    return true;
-                };
-                (sym, args)
-            }
-            _ => return self.is_error_type_as_written(file, node, 0),
-        };
-        // The wrong number of type arguments.
-        let (least, most) = self.type_argument_arity(sym);
-        args.len() < least || args.len() > most || self.is_error_type_as_written(file, node, 0)
-    }
-
-    /// `isErrorType(checkExpression(e))`. There is no error type: an expression in error has type `any`, and the syntax tells that
-    /// `any` from a declared one. Forms that are not recognized answer `false`.
-    pub(super) fn is_expression_in_error(&mut self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        if e.is_none()
-            || !{
-                let ty = self.type_of_expr(file, e);
-                self.has_any_flag(ty)
-            }
-        {
-            return false;
-        }
-        match hir[e].kind {
-            ExprKind::Missing => true,
-            // `checkIdentifier`: `unknownSymbol`, for a name that resolves to no value or an alias that resolves to nothing.
-            ExprKind::Ident(name) => {
-                !matches!(
-                    name,
-                    known::undefined | known::arguments | known::globalThis
-                ) && self.symbol_of_identifier(file, e, name).is_none_or(|sym| {
-                    self.is_alias_in_error(sym)
-                        || self.is_missing_from_export_equals(sym)
-                        || !self
-                            .files()
-                            .flags(sym)
-                            .intersects(SymFlags::VALUE | SymFlags::ALIAS)
-                })
-            }
-            // The error type passes through these unchanged.
-            ExprKind::NonNull(inner)
-            | ExprKind::Await(inner)
-            | ExprKind::Satisfies { expr: inner, .. }
-            | ExprKind::Instantiation { expr: inner, .. }
-            | ExprKind::Assign {
-                op: None,
-                value: inner,
-                ..
-            }
-            | ExprKind::Binary {
-                op: BinOp::Comma,
-                right: inner,
-                ..
-            } => self.is_expression_in_error(file, inner),
-            // `getUnionType`: `TypeFlagsIncludesError`
-            ExprKind::Cond { yes, no, .. } => {
-                self.is_expression_in_error(file, yes) || self.is_expression_in_error(file, no)
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::And | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.is_expression_in_error(file, left) || self.is_expression_in_error(file, right)
-            }
-            // `checkBinaryLikeExpression`: `+` with an operand that is `any` gives the error type if either operand has it.
-            ExprKind::Binary {
-                op: BinOp::Add,
-                left,
-                right,
-            } => {
-                self.is_expression_in_error(file, left) || self.is_expression_in_error(file, right)
-            }
-            // `checkCallExpression`: `require("m")` in JavaScript is the module, or a plain `any`.
-            ExprKind::Call(_) if self.is_commonjs_require(file, e) => false,
-            // `resolveErrorCall`
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
-                self.is_expression_in_error(file, hir[call].callee)
-            }
-            // `checkPropertyAccessExpressionOrQualifiedName`
-            ExprKind::Dot {
-                obj, name, chain, ..
-            } => {
-                if self.is_expression_in_error(file, obj) {
-                    return true;
-                }
-                let receiver = self.chain_receiver(file, obj, chain).0;
-                if hir.is_js
-                    || !self.is_known(receiver)
-                    || self.is_any(receiver)
-                    || self.is_uncertain(file, obj)
-                {
-                    return false;
-                }
-                // `checkNonNullType` returns the error type for `unknown` and for a type that is only `null` or `undefined`.
-                let left = self.receiver_that_is_there(receiver);
-                if self.is_any(left) {
-                    return true;
-                }
-                // A property missing from `globalThis` is a plain `any`.
-                !matches!(
-                    self.data(left),
-                    TypeData::Anon {
-                        origin: Origin::GlobalThis,
-                        ..
-                    }
-                ) && self.type_of_property(left, name).is_none()
-            }
-            // `checkElementAccessExpression`: the error type stands in where `getIndexedAccessTypeOrUndefined` finds nothing.
-            ExprKind::Index { obj, index, chain } => {
-                if self.is_expression_in_error(file, obj) {
-                    return true;
-                }
-                let receiver = self.chain_receiver(file, obj, chain).0;
-                if hir.is_js
-                    || !self.is_known(receiver)
-                    || self.is_any(receiver)
-                    || self.has_type_variables(receiver)
-                    || self.is_uncertain(file, obj)
-                    || self.is_uncertain(file, index)
-                {
-                    return false;
-                }
-                let left = self.receiver_that_is_there(receiver);
-                if self.is_any(left) {
-                    return true;
-                }
-                // Only a key that names a property is looked up again. `isForInVariableForNumericPropertyNames` replaces other keys.
-                let key = self.type_of_expr(file, index);
-                self.property_name_of_type(key).is_some()
-                    && self.indexed_access_if_any(left, key, true).is_none()
-            }
-            _ => false,
-        }
     }
 
     /// `getTypeFromImportTypeNode`: the symbol `import("spec").A.B` names as a type. `None` if the module or a name is not found.
@@ -1595,7 +1334,7 @@ impl Checker<'_> {
             if self.base_types(sym).is_empty() {
                 continue;
             }
-            let constructor = self.type_of_expr(file, class.extends);
+            let constructor = self.base_constructor_type_of_class(sym);
             if !self.is_known(constructor) || self.is_uncertain(file, class.extends) {
                 continue;
             }
@@ -2290,7 +2029,6 @@ impl Checker<'_> {
             },
             e,
             true,
-            false,
             2322,
             out,
         );
@@ -2315,7 +2053,6 @@ impl Checker<'_> {
             Written::Nowhere,
             |_| (at, 0),
             e,
-            false,
             false,
             head,
             out,
@@ -2343,7 +2080,6 @@ impl Checker<'_> {
             |_| (at, end),
             e,
             false,
-            false,
             head,
             out,
         )
@@ -2370,7 +2106,6 @@ impl Checker<'_> {
             |c| (at, end(c)),
             e,
             false,
-            false,
             head,
             out,
         )
@@ -2382,7 +2117,6 @@ impl Checker<'_> {
     }
 
     /// `written`: where `target` is written out, if it is. `is_effective`: the parentheses around `e` are no part of it.
-    /// `is_uninstantiated`: `target` comes from the uninstantiated signature of a generic callee, so its type parameters are expected.
     /// `place`: where to complain if not further in, and where the node that starts there ends (`0`: with the token there). It is
     /// only asked once there is something to complain of.
     #[allow(clippy::too_many_arguments)]
@@ -2396,13 +2130,10 @@ impl Checker<'_> {
         place: impl FnOnce(&Self) -> (u32, u32),
         e: ExprId,
         is_effective: bool,
-        is_uninstantiated: bool,
         head: u32,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        let Some(is_too_complex) =
-            self.finds_unassignable(file, source, target, written, e, is_uninstantiated)
-        else {
+        let Some(is_too_complex) = self.finds_unassignable(file, source, target, written, e) else {
             return true;
         };
         let (at, end) = place(&*self);
@@ -2437,7 +2168,6 @@ impl Checker<'_> {
         target: TypeId,
         written: Written,
         e: ExprId,
-        is_uninstantiated: bool,
     ) -> Option<bool> {
         if !self.is_known(source) || !self.is_known(target) {
             return None;
@@ -2456,16 +2186,6 @@ impl Checker<'_> {
             _ => {}
         }
         if e.is_some() && self.is_uncertain(file, e) {
-            return None;
-        }
-        // A type parameter where none is in scope is something the resolver did not get to the bottom of.
-        if e.is_some()
-            && (self.has_type_variables(source)
-                || !is_uninstantiated
-                    && self.has_type_variables(target)
-                    && !self.is_reference_with_unbound_this(target))
-            && !self.is_in_generic_context(file, e)
-        {
             return None;
         }
         Some(is_too_complex)
@@ -2621,18 +2341,6 @@ impl Checker<'_> {
             Written::At(of, node) => Some((of, node)),
             Written::AnnotationOf(e) => self.annotation_of_reference(file, e),
         }
-    }
-
-    /// `combineValueAndTypeSymbols`: the declared type of the combined symbol, whose members keep the `this` type of the interface.
-    fn is_reference_with_unbound_this(&self, ty: TypeId) -> bool {
-        let TypeData::Ref { target, args } = self.data(ty) else {
-            return false;
-        };
-        let Some((&this, rest)) = args.split_last() else {
-            return false;
-        };
-        matches!(*self.data(this), TypeData::ThisParam(of) if of == *target)
-            && !rest.iter().any(|&arg| self.has_type_variables(arg))
     }
 
     /// The alias probe of `structuredTypeRelatedToWorker`, where `target` and the variable `e` are both annotated with instantiations
@@ -3131,40 +2839,6 @@ impl Checker<'_> {
         }
         let declared = self.declared_type(member);
         matches!(*self.data(declared), TypeData::Ref { target: aliased, .. } if aliased == wanted)
-    }
-
-    /// Whether `e` is written inside anything that has type parameters, or a `this` type, of its own.
-    pub(super) fn is_in_generic_context(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        let mut parent = bound.expr_parent[e.idx()];
-        loop {
-            parent = match parent {
-                Parent::Expr(x) => bound.expr_parent[x.idx()],
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-                Parent::Prop(p) => Parent::Expr(bound.prop_owner[p.idx()]),
-                Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
-                Parent::FnBody(_) | Parent::ParamDefault(_) => {
-                    let f = match parent {
-                        Parent::FnBody(f) => f,
-                        Parent::ParamDefault(p) => bound.param_fn[p.idx()],
-                        _ => unreachable!(),
-                    };
-                    if !hir[f].type_params.is_empty() {
-                        return true;
-                    }
-                    match bound.fns[f.idx()].owner {
-                        FnOwner::Expr(x) => bound.expr_parent[x.idx()],
-                        FnOwner::Stmt(s) => bound.stmt_parent[s.idx()],
-                        // In a class there is `this`.
-                        _ => return true,
-                    }
-                }
-                Parent::File | Parent::Module(_) | Parent::None => return false,
-                _ => return true,
-            };
-        }
     }
 
     // ───────────────────────────── further in ─────────────────────────────

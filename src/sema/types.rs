@@ -335,6 +335,7 @@ impl std::hash::Hash for MemberList {
 /// Where the type of a property comes from.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PropSource {
+    /// It is made up: nothing declares it.
     Type(TypeId),
     /// Members of classes, interfaces and type literals that declare it: overloads, a getter and a setter, merged declarations.
     Members(MemberList),
@@ -353,6 +354,10 @@ pub enum PropSource {
     /// `Prop::mapper`: the mapper of the mapped type plus its type parameter mapped to `keyType`. `type_of_mapped_prop` resolves it
     /// on demand (`getTypeOfMappedSymbol`). The flag is `CheckFlagsStripOptional`: `-?` removes `undefined` from the type.
     Mapped(TypeId, bool),
+    /// A symbol made from others (`createSymbolWithType`, `getSpreadSymbol`, `getSpreadType`, `resolveReverseMappedTypeMembers`): its
+    /// own type, and the symbols whose `Declarations` it has, one after the other. None of those is made up, a copy or
+    /// `Intersected`. The flag: it has the `ValueDeclaration` and the `Parent` of the first as well. `Checker::copy_of` makes it.
+    Copy(TypeId, Box<[Prop]>, bool),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -430,9 +435,8 @@ pub struct Shape {
     pub literal: Literalness,
     /// Of what `getInstantiationExpressionType` makes.
     pub instantiation_expression: Option<InstantiationExpression>,
-    /// `symbol.Declarations[0]` of the properties that are copies (`getSpreadSymbol`, `getAnonymousPartialType`), whose `source`
-    /// is only a type: the name, the file and the position. `getNamedMembers` orders by it.
-    pub declared_at: Vec<(Atom, FileId, u32)>,
+    /// Of what `createDefaultPropertyWrapperForModule` makes: `originalSymbol`, the module, which is the `Parent` of its `default`.
+    pub default_of: Option<Sym>,
 }
 
 /// Whether a made-up object type is still the type of an object literal expression, or what else it was made as that tells.
@@ -743,7 +747,7 @@ fn is_prop_local(prop: &Prop, file: FileId) -> bool {
             | PropSource::Literal(f, _)
             | PropSource::Assigned(f, _) => *f == file,
             PropSource::Symbol(sym) => sym.file == file,
-            PropSource::Intersected(t, props) => {
+            PropSource::Intersected(t, props) | PropSource::Copy(t, props, _) => {
                 t.is_local() || props.iter().any(|p| is_prop_local(p, file))
             }
             PropSource::Mapped(t, _) => t.is_local(),
@@ -800,6 +804,7 @@ fn is_type_local(data: &TypeData, file: FileId) -> bool {
         TypeData::Fns { decls, mapper } => mapper.is_local() || decls.iter().any(|d| d.0 == file),
         TypeData::Synth(shape) => {
             shape.symbol_declared_at.is_some_and(|at| at.0 == file)
+                || shape.default_of.is_some_and(|module| module.file == file)
                 || matches!(
                     shape.instantiation_expression,
                     Some(InstantiationExpression::Expr(f, _) | InstantiationExpression::TypeNode(f, _))
@@ -1166,7 +1171,7 @@ impl TypeStore {
             match &prop.source {
                 PropSource::Members(MemberList::Many(m)) => m.len() * 8,
                 PropSource::Assigned(_, e) => e.len() * 4,
-                PropSource::Intersected(_, props) => {
+                PropSource::Intersected(_, props) | PropSource::Copy(_, props, _) => {
                     props.len() * size_of::<Prop>() + props.iter().map(prop_bytes).sum::<usize>()
                 }
                 _ => 0,
@@ -1300,7 +1305,7 @@ impl TypeStore {
                     TypeFlags::HAS_OBJECT_LITERAL
                 };
                 for p in &shape.props {
-                    if let PropSource::Type(t) = p.source {
+                    if let PropSource::Type(t) | PropSource::Copy(t, ..) = p.source {
                         flags |= self.flags(t);
                     }
                     flags |= self.mapper_record(p.mapper).1;

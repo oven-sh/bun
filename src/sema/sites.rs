@@ -276,7 +276,7 @@ pub fn for_each_site(
                 emit(c, call.close_pos, SiteKind::CallResult, ty);
             }
             // The callee of `import.defer(..)` is a meta property, of the error type (`checkMetaProperty`). `import(..)` is no site.
-            ExprKind::ImportCall(specifier) => {
+            ExprKind::ImportCall(specifier, _) => {
                 let Some(&(_, close_pos)) =
                     hir.deferred_import_calls.iter().find(|d| d.0 == specifier)
                 else {

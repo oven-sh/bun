@@ -126,18 +126,9 @@ impl Checker<'_> {
             }
             return found;
         }
-        // `resolveReverseMappedTypeMembers`: a property has the declarations of the one it is inferred from.
-        if let TypeData::ReverseMapped { source, .. } = *self.data(ty) {
-            self.prop_of(ty, name)?;
-            let declared = self.first_declaration_of_property(source, name, depth + 1);
-            return Some(declared.flatten());
-        }
         let members = self.members(ty)?;
         let (prop, _) = self.property_of_type(&members, name)?;
-        Some(match prop.source {
-            PropSource::Type(_) => self.place_of_copied_prop(ty, name, depth),
-            _ => self.first_declaration_of_prop(&prop, depth),
-        })
+        Some(self.first_declaration_of_prop(&prop, depth))
     }
 
     /// `GetErrorRangeForNode` of `prop.Declarations[0]`
@@ -169,27 +160,13 @@ impl Checker<'_> {
                 self.place_of_declaration(file, decl)
             }
             PropSource::Assigned(..) => self.place_of_prop(prop),
-            PropSource::Intersected(_, parts) => parts
+            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => parts
                 .iter()
                 .find_map(|part| self.first_declaration_of_prop(part, depth + 1)),
             // `addMemberForKeyTypeWorker`: those of the property of the type the modifiers are taken from.
             &PropSource::Mapped(of, _) => {
-                let (file, node, mapper) = self.mapped_origin(of)?;
-                // `shouldLinkPropDeclarations`: not where the `as` clause makes other names of the keys.
-                let declared = self.intern(TypeData::Anon {
-                    origin: Origin::Mapped(file, node),
-                    mapper: MapperId::IDENTITY,
-                });
-                if let Some(renamed) = self.mapped_name_type(declared) {
-                    let key = self.mapped_type_param(declared);
-                    if !self.is_assignable(renamed, key) {
-                        return None;
-                    }
-                }
-                let (modifiers, _) = self.mapped_modifiers_source(file, node)?;
-                let modifiers = self.instantiate(modifiers, mapper);
-                self.first_declaration_of_property(modifiers, prop.name, depth + 1)
-                    .flatten()
+                let origin = self.synthetic_origin_of_mapped_property(of, prop.name)?;
+                self.first_declaration_of_prop(&origin, depth + 1)
             }
             PropSource::Type(_) => None,
         }

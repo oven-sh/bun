@@ -1,7 +1,6 @@
 //! Making unions and intersections.
 
 use super::*;
-use crate::bind::Decl;
 
 /// `TypeFlags`, with the values of types.go: between types of different kinds they are the order of `CompareTypes`.
 mod tf {
@@ -194,7 +193,8 @@ impl<'p> Checker<'p> {
         let pair = match *types {
             [] => return TypeId::NEVER,
             [one] => return one,
-            [a, b] if a == b => return a,
+            // `addTypeToUnion` sets `TypeFlagsIncludesError`: only a list of one type is returned as it is.
+            [a, b] if a == b && !self.is_error_type(a) => return a,
             [a, b] if merge_constrained => Some(if a < b { (a, b) } else { (b, a) }),
             _ => None,
         };
@@ -1378,60 +1378,8 @@ impl<'p> Checker<'p> {
         true
     }
 
-    /// `unknownEmptyObjectType`
-    pub(super) fn unknown_empty_object(&self) -> TypeId {
-        self.synth(Shape {
-            literal: Literalness::OfUnknown,
-            ..Shape::default()
-        })
-    }
-
     pub(super) fn is_unknown_empty_object(&self, ty: TypeId) -> bool {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.literal == Literalness::OfUnknown)
-    }
-
-    /// `GetNonNullableType`, of the left operand of `||` or `??`.
-    pub(super) fn non_nullable_operand(&mut self, ty: TypeId) -> TypeId {
-        if ty == TypeId::UNKNOWN && self.p.files.options.strict_null_checks {
-            return self.unknown_empty_object();
-        }
-        self.non_nullable(ty)
-    }
-
-    /// `ty` without `undefined` and `null`.
-    pub fn non_nullable(&mut self, ty: TypeId) -> TypeId {
-        if !self.p.files.options.strict_null_checks {
-            return ty;
-        }
-        if ty == TypeId::UNKNOWN {
-            return TypeId::UNKNOWN_EMPTY_OBJECT;
-        }
-        let filtered = self.filter(ty, |c, m| {
-            // `TypeFactsVoidFacts` has no `NEUndefinedOrNull` either.
-            if c.is_nullish(m) {
-                return false;
-            }
-            // `getTypeFactsWorker`: a type variable has the facts of its base constraint.
-            if !c.is_deferred(m) {
-                return true;
-            }
-            let constraint = c.base_constraint(m);
-            !c.every_type(constraint, |c, part| c.is_nullish(part))
-        });
-        self.map_type(filtered, |c, m| {
-            if c.is_deferred(m) && c.may_be_nullish_when_instantiated(m) {
-                c.intersection(&[m, TypeId::EMPTY_OBJECT])
-            } else {
-                m
-            }
-        })
-    }
-
-    fn may_be_nullish_when_instantiated(&mut self, ty: TypeId) -> bool {
-        let constraint = self.base_constraint(ty);
-        constraint == TypeId::UNKNOWN
-            || self.is_any(constraint)
-            || self.some_type(constraint, |c, m| c.is_nullish(m))
     }
 
     /// `ty` without `undefined`, that of what is not there included.
@@ -1532,19 +1480,7 @@ impl<'p> Checker<'p> {
         } else {
             (sym.file, files.symbol(sym).decls.first().copied()?)
         };
-        let hir = self.hir(file);
-        let pos = match decl {
-            Decl::Var(p) | Decl::Param(p) => hir[p].pos,
-            Decl::Fn(f) => hir[f].pos,
-            Decl::Class(c) => hir[c].pos,
-            Decl::Interface(i) => hir[i].name_pos,
-            Decl::Alias(a) => hir[a].name_pos,
-            Decl::Enum(e) => hir[e].name_pos,
-            Decl::EnumMember(m) => hir[m].pos,
-            Decl::Module(m) => hir[m].name_pos,
-            Decl::TypeParam(t) => hir[t].pos,
-            _ => 0,
-        };
+        let pos = self.start_of_declaration(file, decl);
         Some((!files.module(file).is_lib, file, pos))
     }
 

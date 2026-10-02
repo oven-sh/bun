@@ -924,20 +924,8 @@ impl<'p> DeclarationEmit<'_, 'p> {
             Decl::ImportDefault(i) | Decl::ImportNamespace(i) => {
                 self.statements_of(file).imports[i.idx()]
             }
-            Decl::ImportSpec(s) => {
-                let import = hir
-                    .imports
-                    .iter()
-                    .position(|import| import.named.range().contains(&s.idx()))?;
-                self.statements_of(file).imports[import]
-            }
-            Decl::ExportSpec(s) => {
-                let export = hir
-                    .exports
-                    .iter()
-                    .position(|export| export.items.range().contains(&s.idx()))?;
-                self.statements_of(file).exports[export]
-            }
+            Decl::ImportSpec(s) => self.statements_of(file).imports[hir[s].import.idx()],
+            Decl::ExportSpec(s) => self.statements_of(file).exports[hir[s].export.idx()],
             _ => return None,
         };
         statement.is_some().then_some(statement)
@@ -4297,38 +4285,14 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     // ───────────────────────────── anonymous object types ─────────────────────────────
 
-    /// `getBaseTypeVariableOfClass(symbol) != nil`
-    fn extends_type_variable(&mut self, class: Sym) -> bool {
-        for (file, decl) in self.decls_of(class) {
-            let Decl::Class(declaration) = decl else {
-                continue;
-            };
-            let extends = self.c.hir(file)[declaration].extends;
-            if extends.is_none() {
-                continue;
-            }
-            let base = self.c.type_of_expr(file, extends);
-            // `getBaseConstructorTypeOfClass`, `isConstructorType`: what cannot be constructed is the error type.
-            if self.c.signatures(base, true).is_empty() {
-                return false;
-            }
-            return match self.c.data(base) {
-                TypeData::Intersection(parts) => {
-                    parts.iter().any(|&part| self.c.is_type_variable(part))
-                }
-                _ => self.c.is_type_variable(base),
-            };
-        }
-        false
-    }
-
     /// `shouldEmitTypeOfSymbol`, but for functions: whether the type of a class, an enum or a namespace is written as its name.
     fn should_emit_type_of_symbol(&mut self, symbol: Sym, meaning: Meaning) -> bool {
         let flags = self.flags_of(symbol);
         if flags.intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE) {
             return true;
         }
-        if !flags.contains(SymFlags::CLASS) || self.extends_type_variable(symbol) {
+        if !flags.contains(SymFlags::CLASS) || self.c.base_type_variable_of_class(symbol).is_some()
+        {
             return false;
         }
         if self.b.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL == 0 {
@@ -4645,27 +4609,6 @@ impl<'p> DeclarationEmit<'_, 'p> {
 
     // ───────────────────────────── properties ─────────────────────────────
 
-    /// `syntheticOrigin`: the property of the type a mapped type takes its modifiers from that the property `name` of `of` has its
-    /// declarations from.
-    fn origin_of_mapped_property(&mut self, of: TypeId, name: Atom) -> Option<Prop> {
-        let (file, node, mapper) = self.c.mapped_origin(of)?;
-        let mapped = self.c.mapped_decl(file, node);
-        if self.c.hir(file)[mapped.param].constraint.is_none() {
-            return None;
-        }
-        // `MappedTypeNameTypeKindRemapping`
-        if let Some(renamed) = self.c.mapped_name_type(of) {
-            let key = self.c.mapped_type_param(of);
-            if !self.c.is_assignable(renamed, key) {
-                return None;
-            }
-        }
-        let (declared, _) = self.c.mapped_modifiers_source(file, node)?;
-        let modifiers = self.c.instantiate(declared, mapper);
-        let modifiers = self.c.apparent_type(modifiers);
-        self.c.prop_of(modifiers, name).map(|found| found.0)
-    }
-
     /// The start of `addPropertyToElementList`, of a property that a `unique symbol` names.
     fn track_late_bound_name(&mut self, prop: &Prop, depth: u32) {
         let (file, key) = match &prop.source {
@@ -4674,7 +4617,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 None => return,
             },
             PropSource::Literal(file, p) => (*file, self.c.hir(*file)[*p].key),
-            PropSource::Intersected(_, parts) => {
+            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) => {
                 if let Some(first) = parts.first()
                     && depth < 8
                 {
@@ -4683,7 +4626,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 return;
             }
             PropSource::Mapped(of, _) => {
-                match self.origin_of_mapped_property(*of, prop.name) {
+                match self.c.synthetic_origin_of_mapped_property(*of, prop.name) {
                     Some(origin) if depth < 8 => self.track_late_bound_name(&origin, depth + 1),
                     Some(_) => {}
                     // It has no declaration.
@@ -4694,7 +4637,11 @@ impl<'p> DeclarationEmit<'_, 'p> {
                 }
                 return;
             }
-            PropSource::Type(_) => return self.track_name_of_copy(prop.name),
+            // It has no declaration.
+            PropSource::Type(_) => {
+                let name = self.c.prop_to_string(prop);
+                return self.report(Report::NonSerializableProperty(name));
+            }
             _ => return,
         };
         // `hasLateBindableName`
@@ -4702,50 +4649,6 @@ impl<'p> DeclarationEmit<'_, 'p> {
             && is_entity_name_expression(self.c.hir(file), e)
         {
             self.track_computed_name(file, e);
-        }
-    }
-
-    /// The same for the copy a spread makes of a property, which does not keep where that is declared. Its name is taken to be written
-    /// there as the `unique symbol` is declared: `[a]`, or `[N.a]` of one in a namespace or a class.
-    fn track_name_of_copy(&mut self, name: Atom) {
-        let files = self.c.files();
-        if !files.atoms.is_symbol_name(name) {
-            return;
-        }
-        let Some(name_type) = self.c.key_type_of_name(name) else {
-            return;
-        };
-        let TypeData::UniqueSymbol { symbol, .. } = *self.c.data(name_type) else {
-            return;
-        };
-        let Some(Some(owner)) = self.owner_of_unique_symbol(symbol) else {
-            return;
-        };
-        let (hir, bound) = (self.c.hir(owner.file), self.c.bound(owner.file));
-        let mut first = owner.id;
-        loop {
-            let parent = bound.symbols[first.idx()].parent;
-            if parent.is_none()
-                || !bound.symbols[parent.idx()].decls.iter().all(|decl| {
-                    matches!(decl, Decl::Module(m) if matches!(hir[*m].name, ModuleName::Ident(_)))
-                })
-            {
-                break;
-            }
-            first = parent;
-        }
-        let first = files.sym(owner.file, first);
-        let at = self.b.enclosing;
-        let name = files.symbol(first).name;
-        match files.resolve_name(at.file, at.scope, name, SymFlags::VALUE) {
-            Some(symbol) => self.track_symbol(symbol, at, Meaning::Value),
-            None if self.c.hir(at.file).is_js => {}
-            None => self.track(Tracked {
-                symbol: first,
-                at,
-                meaning: Meaning::Value,
-                as_local: true,
-            }),
         }
     }
 

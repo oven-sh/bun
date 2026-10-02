@@ -125,43 +125,47 @@ impl Cx<'_> {
     }
 
     /// `checkGrammarModifiers`, of `export` on what is more than a type at the top of a file.
-    fn export_modifier(&self, pos: u32, flags: Flags, around: Around, out: &mut Vec<Diagnostic>) {
+    fn export_modifier(&self, start: u32, flags: Flags, around: Around, out: &mut Vec<Diagnostic>) {
         if self.verbatim_commonjs
             && self.grammar
             && around.module.is_none()
             && !around.is_ambient
             && flags.contains(Flags::EXPORT)
             && !flags.contains(Flags::AMBIENT)
-            && let Some(start) =
-                find_modifier(self.text, statement_start(self.text, pos), b"export")
+            && let Some(start) = find_modifier(self.text, start, b"export")
         {
             out.push(Diagnostic { start, code: 1287 });
         }
     }
 
     /// `checkGrammarModifiers`, of `default` in a namespace.
-    fn default_modifier(&self, pos: u32, flags: Flags, around: Around, out: &mut Vec<Diagnostic>) {
+    fn default_modifier(
+        &self,
+        start: u32,
+        flags: Flags,
+        around: Around,
+        out: &mut Vec<Diagnostic>,
+    ) {
         if self.grammar
             && around.module.is_some()
             && !around.is_ambient_module
             && flags.contains(Flags::DEFAULT)
-            && let Some(start) =
-                find_modifier(self.text, statement_start(self.text, pos), b"default")
+            && let Some(start) = find_modifier(self.text, start, b"default")
         {
             out.push(Diagnostic { start, code: 1319 });
         }
     }
 
-    /// `checkExportAssignment` (1120), `checkExportDeclaration` (1193): the statement whose own `export` is at `pos` has modifiers.
+    /// `checkExportAssignment` (1120), `checkExportDeclaration` (1193): `statement`, whose own `export` is at `pos`, has modifiers.
     /// Reported at the first one, unless `checkGrammarModifiers` rejects them: it accepts `export`, `declare` and `export declare`.
     fn modifiers_before_export(
         &self,
-        pos: u32,
+        statement: Stmt,
         code: u32,
         around: Around,
         out: &mut Vec<Diagnostic>,
     ) {
-        let start = statement_start(self.text, pos);
+        let Stmt { pos, start, .. } = statement;
         if !self.grammar || start == pos || word_at(self.text, pos as usize) != b"export" {
             return;
         }
@@ -276,23 +280,7 @@ impl Checker<'_> {
             if self.p.flows_too_deep.len() == 0 || self.p.flows_too_deep.get(&(file, e)).is_none() {
                 continue;
             }
-            // `FindAncestor(node, IsFunctionOrModuleBlock)`
-            let mut block = bound.expr_parent[i];
-            loop {
-                block = match block {
-                    // A static block is not function-like, and an expression body is not a block.
-                    Parent::FnBody(f)
-                        if hir[f].kind != FnKind::StaticBlock
-                            && matches!(hir[f].body, FnBody::Block(_)) =>
-                    {
-                        break;
-                    }
-                    Parent::Module(_) | Parent::File | Parent::None => break,
-                    Parent::Expr(x) if x.is_none() => Parent::None,
-                    Parent::Key(object) if object.is_some() => Parent::Expr(object),
-                    _ => self.outward(file, block),
-                };
-            }
+            let block = self.function_or_module_block_of(file, e);
             // Consecutive references usually share a block.
             if block == reported {
                 continue;
@@ -548,40 +536,37 @@ impl Checker<'_> {
     ) {
         let hir = self.hir(cx.file);
         for s in hir.ids(lists.list) {
-            let pos = hir[s].pos;
+            let Stmt { pos, start, .. } = hir[s];
             match hir[s].kind {
-                StmtKind::Module(m) => self.xm_module(cx, lists, pos, m, around, says_module, out),
-                StmtKind::Import(i) => self.xm_import(cx, pos, i, around, out),
-                StmtKind::ImportEquals(i) => self.xm_import_equals(cx, pos, i, around, out),
-                StmtKind::ExportNamed(x) => self.xm_export_named(cx, pos, x, around, out),
+                StmtKind::Module(m) => self.xm_module(cx, lists, s, m, around, says_module, out),
+                StmtKind::Import(i) => self.xm_import(cx, s, i, around, out),
+                StmtKind::ImportEquals(i) => self.xm_import_equals(cx, s, i, around, out),
+                StmtKind::ExportNamed(x) => self.xm_export_named(cx, s, x, around, out),
                 StmtKind::ExportStar { spec, alias, .. } => {
-                    self.xm_export_star(cx, pos, spec, alias, around, out)
+                    self.xm_export_star(cx, s, spec, alias, around, out)
                 }
                 StmtKind::ExportDefault(e) => {
-                    self.xm_export_assignment(cx, pos, e, false, around, out)
+                    self.xm_export_assignment(cx, s, e, false, around, out)
                 }
-                StmtKind::ExportAssign(e) => {
-                    self.xm_export_assignment(cx, pos, e, true, around, out)
-                }
+                StmtKind::ExportAssign(e) => self.xm_export_assignment(cx, s, e, true, around, out),
                 StmtKind::Var(decls) => {
                     if let Some(d) = decls.iter().next() {
-                        cx.export_modifier(pos, hir[d].flags, around, out);
+                        cx.export_modifier(start, hir[d].flags, around, out);
                     }
                 }
                 StmtKind::Fn(f) => {
-                    cx.export_modifier(pos, hir[f].flags, around, out);
-                    cx.default_modifier(pos, hir[f].flags, around, out);
+                    cx.export_modifier(start, hir[f].flags, around, out);
+                    cx.default_modifier(start, hir[f].flags, around, out);
                 }
                 StmtKind::Class(c) => {
-                    cx.export_modifier(pos, hir[c].flags, around, out);
-                    cx.default_modifier(pos, hir[c].flags, around, out);
+                    cx.export_modifier(start, hir[c].flags, around, out);
+                    cx.default_modifier(start, hir[c].flags, around, out);
                 }
-                StmtKind::Interface(i) => cx.default_modifier(pos, hir[i].flags, around, out),
-                StmtKind::Enum(e) => cx.export_modifier(pos, hir[e].flags, around, out),
+                StmtKind::Interface(i) => cx.default_modifier(start, hir[i].flags, around, out),
+                StmtKind::Enum(e) => cx.export_modifier(start, hir[e].flags, around, out),
                 // `bindNamespaceExportDeclaration`: `export as namespace N` takes no modifiers, and belongs at the top of a declaration
                 // file that is a module.
                 StmtKind::ExportAsNamespace(_) => {
-                    let start = statement_start(cx.text, pos);
                     if start != pos {
                         out.push(Diagnostic { start, code: 1184 });
                         self.note(start, self.end_of_stmt(cx.file, s), 1184, Vec::new());
@@ -606,15 +591,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `node.End()` of the statement said to be at `pos`. 0 if there is none.
-    fn xm_statement_end(&self, cx: &Cx<'_>, pos: u32) -> u32 {
-        self.hir(cx.file)
-            .stmts
-            .iter()
-            .position(|s| s.pos == pos)
-            .map_or(0, |s| self.end_of_stmt(cx.file, StmtId(s as u32)))
-    }
-
     // ───────────────────────────── module declarations ─────────────────────────────
 
     /// `bindModuleDeclaration`, `checkModuleDeclaration`
@@ -622,7 +598,7 @@ impl Checker<'_> {
         &self,
         cx: &Cx<'_>,
         lists: &Lists<'_>,
-        pos: u32,
+        s: StmtId,
         m: ModuleId,
         around: Around,
         inherited: bool,
@@ -631,7 +607,7 @@ impl Checker<'_> {
         let (hir, files) = (self.hir(cx.file), self.files());
         let module = hir[m];
         let name_pos = module.name_pos;
-        let start = statement_start(cx.text, pos);
+        let start = hir[s].start;
         let is_global = module.name == ModuleName::Global;
         let is_ambient_module = !matches!(module.name, ModuleName::Ident(_));
         let is_ambient = around.is_ambient || module.flags.contains(Flags::AMBIENT);
@@ -764,7 +740,7 @@ impl Checker<'_> {
                         _ => continue,
                     };
                     out.push(Diagnostic {
-                        start: statement_start(cx.text, hir[s].pos),
+                        start: hir[s].start,
                         code,
                     });
                 }
@@ -1101,11 +1077,11 @@ impl Checker<'_> {
 
     // ───────────────────────────── imports and exports ─────────────────────────────
 
-    /// `checkExternalImportOrExportDeclaration`, of the statement at `pos` that names the module `spec`.
+    /// `checkExternalImportOrExportDeclaration`, of the statement `s` that names the module `spec`.
     fn xm_is_in_place(
         &self,
         cx: &Cx<'_>,
-        pos: u32,
+        s: StmtId,
         spec: Atom,
         is_export: bool,
         around: Around,
@@ -1115,6 +1091,7 @@ impl Checker<'_> {
         if spec.is_none() {
             return false;
         }
+        let Stmt { pos, start, .. } = self.hir(cx.file)[s];
         let written = cx.specifier(pos, spec);
         if around.module.is_some() {
             if !around.is_ambient_module {
@@ -1131,9 +1108,8 @@ impl Checker<'_> {
                 && !cx.may_be_module
                 && is_relative_name(self.files().atoms.bytes(spec))
             {
-                let start = statement_start(cx.text, pos);
                 out.push(Diagnostic { start, code: 2439 });
-                self.note(start, self.xm_statement_end(cx, pos), 2439, Vec::new());
+                self.note(start, self.end_of_stmt(cx.file, s), 2439, Vec::new());
                 return false;
             }
         }
@@ -1189,7 +1165,7 @@ impl Checker<'_> {
             }
             !is_relative
                 && hir.ids(module.body).any(|inner| names_it(inner) || matches!(hir[inner].kind, StmtKind::Module(x) if hir[x].name == ModuleName::String(spec)))
-        }) || hir.exprs.iter().any(|e| matches!(e.kind, ExprKind::ImportCall(a) if matches!(hir[a].kind, ExprKind::String(named) if named == spec)))
+        }) || hir.exprs.iter().any(|e| matches!(e.kind, ExprKind::ImportCall(a, _) if matches!(hir[a].kind, ExprKind::String(named) if named == spec)))
             || hir.types.iter().any(|t| matches!(t.kind, TypeNodeKind::Import { spec: named, .. } if named == spec))
     }
 
@@ -1340,14 +1316,14 @@ impl Checker<'_> {
     fn xm_import(
         &self,
         cx: &Cx<'_>,
-        pos: u32,
+        s: StmtId,
         i: ImportId,
         around: Around,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let import = hir[i];
-        if self.xm_is_in_place(cx, pos, import.spec, false, around, out) {
+        let (import, pos) = (hir[i], hir[s].pos);
+        if self.xm_is_in_place(cx, s, import.spec, false, around, out) {
             // `checkGrammarImportClause`, of `import defer * as ns`. A default name (18058) and named imports (18059) come first.
             let mut is_clause_refused = false;
             if cx.grammar
@@ -1500,17 +1476,17 @@ impl Checker<'_> {
     fn xm_import_equals(
         &self,
         cx: &Cx<'_>,
-        pos: u32,
+        s: StmtId,
         i: ImportEqualsId,
         around: Around,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let import = hir[i];
-        cx.export_modifier(pos, import.flags, around, out);
+        let (import, pos) = (hir[i], hir[s].pos);
+        cx.export_modifier(import.start, import.flags, around, out);
         let names = match import.target {
             ImportEqualsTarget::Require(spec) => {
-                if self.xm_is_in_place(cx, pos, spec, false, around, out) {
+                if self.xm_is_in_place(cx, s, spec, false, around, out) {
                     self.xm_collision_of_import_equals(cx, &import, around, out);
                     self.xm_module_is_missing(
                         cx,
@@ -1616,15 +1592,15 @@ impl Checker<'_> {
     fn xm_export_named(
         &self,
         cx: &Cx<'_>,
-        pos: u32,
+        s: StmtId,
         x: ExportId,
         around: Around,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let export = hir[x];
-        cx.modifiers_before_export(pos, 1193, around, out);
-        if export.spec.is_none() || self.xm_is_in_place(cx, pos, export.spec, true, around, out) {
+        let (export, pos) = (hir[x], hir[s].pos);
+        cx.modifiers_before_export(hir[s], 1193, around, out);
+        if export.spec.is_none() || self.xm_is_in_place(cx, s, export.spec, true, around, out) {
             let is_missing = if export.spec.is_none() {
                 false
             } else if export.items.is_empty() {
@@ -1686,9 +1662,9 @@ impl Checker<'_> {
             }
             let is_in_ambient_namespace = export.spec.is_none() && around.is_ambient;
             if around.module.is_some() && !around.is_ambient_module && !is_in_ambient_namespace {
-                let start = statement_start(cx.text, pos);
+                let start = hir[s].start;
                 out.push(Diagnostic { start, code: 1194 });
-                self.note(start, self.xm_statement_end(cx, pos), 1194, Vec::new());
+                self.note(start, self.end_of_stmt(cx.file, s), 1194, Vec::new());
             }
         } else {
             // What a file exports other files may ask for.
@@ -1706,18 +1682,20 @@ impl Checker<'_> {
     fn xm_export_star(
         &self,
         cx: &Cx<'_>,
-        pos: u32,
+        s: StmtId,
         spec: Atom,
         alias: Atom,
         around: Around,
         out: &mut Vec<Diagnostic>,
     ) {
         let files = self.files();
+        let statement = self.hir(cx.file)[s];
+        let pos = statement.pos;
         // `export type *`
         let star = after_export(cx.text, pos);
         let is_type_only = word_at(cx.text, star) == b"type";
-        cx.modifiers_before_export(pos, 1193, around, out);
-        if self.xm_is_in_place(cx, pos, spec, true, around, out) {
+        cx.modifiers_before_export(statement, 1193, around, out);
+        if self.xm_is_in_place(cx, s, spec, true, around, out) {
             if !self.xm_module_is_missing(
                 cx,
                 pos,
@@ -1784,21 +1762,21 @@ impl Checker<'_> {
     fn xm_export_assignment(
         &self,
         cx: &Cx<'_>,
-        pos: u32,
+        s: StmtId,
         e: ExprId,
         is_export_equals: bool,
         around: Around,
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let start = statement_start(cx.text, pos);
+        let start = hir[s].start;
         if around.module.is_some() && !around.is_ambient_module {
             let code = if is_export_equals { 1063 } else { 1319 };
             out.push(Diagnostic { start, code });
-            self.note(start, self.xm_statement_end(cx, pos), code, Vec::new());
+            self.note(start, self.end_of_stmt(cx.file, s), code, Vec::new());
             return;
         }
-        cx.modifiers_before_export(pos, 1120, around, out);
+        cx.modifiers_before_export(hir[s], 1120, around, out);
         // The rest is about what a compiler that sees one file at a time makes of it.
         if around.is_ambient || !self.p.files.options.isolated_modules {
             return;
@@ -1811,7 +1789,7 @@ impl Checker<'_> {
             });
             self.note(
                 start,
-                self.xm_statement_end(cx, pos),
+                self.end_of_stmt(cx.file, s),
                 cx.esm_syntax_code,
                 Vec::new(),
             );
@@ -1915,21 +1893,9 @@ impl Checker<'_> {
                     hir[i].type_only && files.module_of_specifier(sym.file, hir[i].spec).is_some()
                 }
                 Decl::ImportNamespace(i) => hir[i].type_only,
-                Decl::ImportSpec(s) => {
-                    hir[s].type_only
-                        || hir
-                            .imports
-                            .iter()
-                            .any(|i| i.type_only && i.named.range().contains(&s.idx()))
-                }
+                Decl::ImportSpec(s) => hir[s].type_only || hir[hir[s].import].type_only,
                 Decl::ImportEquals(i) => hir[i].flags.contains(Flags::TYPE_ONLY),
-                Decl::ExportSpec(s) => {
-                    hir[s].type_only
-                        || hir
-                            .exports
-                            .iter()
-                            .any(|x| x.type_only && x.items.range().contains(&s.idx()))
-                }
+                Decl::ExportSpec(s) => hir[s].type_only || hir[hir[s].export].type_only,
                 Decl::ExportStarAs(s) => {
                     word_at(&hir.text, after_export(&hir.text, hir[s].pos)) == b"type"
                 }
@@ -2299,9 +2265,9 @@ impl Checker<'_> {
                 && hir[c].name.is_none()
                 && !hir[c].flags.contains(Flags::DEFAULT)
                 // `default` without `export` (1029) is a modifier all the same.
-                && find_modifier(cx.text, statement_start(cx.text, s.pos), b"default").is_none()
+                && find_modifier(cx.text, s.start, b"default").is_none()
             {
-                let start = class_declaration_start(hir, s.pos, c);
+                let start = hir[c].start;
                 out.push(Diagnostic { start, code: 1211 });
                 self.note(
                     start,
@@ -2336,7 +2302,7 @@ impl Checker<'_> {
             };
             if code != 1184 {
                 out.push(Diagnostic {
-                    start: statement_start(cx.text, s.pos),
+                    start: s.start,
                     code,
                 });
                 continue;
@@ -2362,7 +2328,7 @@ impl Checker<'_> {
             if !flags.intersects(MODIFIERS) {
                 continue;
             }
-            let start = statement_start(cx.text, s.pos);
+            let start = skip_decorators(cx.text, s.start as usize) as u32;
             let first = word_at(cx.text, start as usize);
             if first != allowed && is_modifier(first, false) {
                 out.push(Diagnostic { start, code });
@@ -2389,14 +2355,15 @@ impl Checker<'_> {
                 if &cx.text[keyword..end] != b"static" {
                     continue;
                 }
-                (statement_start(cx.text, keyword as u32), keyword as u32)
+                (member.start, keyword as u32)
             } else {
                 let Some(keyword) = find_modifier(cx.text, member.pos, b"static") else {
                     continue;
                 };
                 (member.pos, keyword)
             };
-            if start != keyword {
+            // `reportObviousDecoratorErrors` comes first, and nothing more is said then.
+            if start != keyword && cx.text.get(start as usize) != Some(&b'@') {
                 out.push(Diagnostic { start, code: 1184 });
             }
         }
@@ -2859,62 +2826,11 @@ fn is_modifier(word: &[u8], is_before_line_break: bool) -> bool {
     }
 }
 
-/// Where the declaration said to be at `pos` starts. That may be past some or all of its modifiers.
-fn statement_start(text: &[u8], pos: u32) -> u32 {
-    let mut start = pos as usize;
-    if start > text.len() {
-        return pos;
-    }
-    loop {
-        // On the same line only a word or the end of a comment is worth a closer look.
-        if let Some(&c) = text[..start]
-            .iter()
-            .rev()
-            .find(|&&c| c != b' ' && c != b'\t')
-            && !is_identifier_part(c)
-            && !matches!(c, b'/' | b'\n' | b'\r')
-        {
-            return start as u32;
-        }
-        let end = skip_trivia_back(text, start);
-        let word = word_start(text, end);
-        // `a.default`, `"declare"`, `@async`
-        let stands_alone = word == 0
-            || !matches!(
-                text[word - 1],
-                b'.' | b'"' | b'\'' | b'`' | b'#' | b'@' | b'\\'
-            );
-        if !stands_alone || !is_modifier(&text[word..end], has_line_break(&text[end..start])) {
-            return start as u32;
-        }
-        start = word;
-    }
-}
-
-/// The start of the class declaration `c`, whose statement is at `pos`: its first decorator or modifier.
-fn class_declaration_start(hir: &hir::File, mut pos: u32, c: ClassId) -> u32 {
-    let text = &hir.text[..];
-    if let Some(&(_, decorator)) = hir
-        .decorators
-        .iter()
-        .find(|d| d.0 == DecoratorOwner::Class(c))
-        && let Some(at) = text
-            .get(..hir[decorator].pos as usize)
-            .and_then(|before| before.iter().rposition(|&b| b == b'@'))
-    {
-        pos = pos.min(at as u32);
-    }
-    statement_start(text, pos)
-}
-
 /// The start of the first token of a statement list in braces. `None` if the HIR has no statement of the list.
 fn statement_list_start(hir: &hir::File, statements: IdList<StmtId>) -> Option<u32> {
     let text = &hir.text[..];
     let first = hir.ids(statements).next()?;
-    let mut start = match hir[first].kind {
-        StmtKind::Class(c) => class_declaration_start(hir, hir[first].pos, c),
-        _ => statement_start(text, hir[first].pos),
-    } as usize;
+    let mut start = hir[first].start as usize;
     // The HIR drops directives, empty statements and `debugger` statements. They can precede `first`.
     loop {
         let end = skip_trivia_back(text, start);
@@ -2930,11 +2846,33 @@ fn statement_list_start(hir: &hir::File, statements: IdList<StmtId>) -> Option<u
     }
 }
 
-/// Where `wanted` is among the modifiers that start at `start`.
+/// `parseDecorator`: from `at`, past trivia and decorators. A decorator is an `@`, a name or what is in parentheses, and then `.name`,
+/// `(..)` and `[..]`.
+fn skip_decorators(text: &[u8], mut at: usize) -> usize {
+    loop {
+        at = skip_trivia(text, at);
+        if text.get(at) != Some(&b'@') {
+            return at;
+        }
+        at = word_end(text, skip_trivia(text, at + 1));
+        loop {
+            let next = skip_trivia(text, at);
+            at = match text.get(next) {
+                Some(b'.') => word_end(text, skip_trivia(text, next + 1)),
+                _ => match end_of_brackets(text, next) {
+                    Some(end) if text[next] != b'{' => end,
+                    _ => break,
+                },
+            };
+        }
+    }
+}
+
+/// Where `wanted` is among the decorators and modifiers that start at `start`.
 fn find_modifier(text: &[u8], start: u32, wanted: &[u8]) -> Option<u32> {
     let mut at = start as usize;
     loop {
-        at = skip_trivia(text, at);
+        at = skip_decorators(text, at);
         let word = word_at(text, at);
         if word == wanted {
             return Some(at as u32);

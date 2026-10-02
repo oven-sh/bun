@@ -361,6 +361,12 @@ pub enum ScopeKind {
     ComputedName,
     /// The same for the expression a class extends, without its type arguments.
     BaseExpression,
+    /// Where the computed name and the initializer of a non-static property of a class are written, if the class has a constructor
+    /// with a body, which is given, and class fields are not emitted as they are. It declares nothing: what the constructor declares
+    /// cannot be named from here, nor what it hides. `Bound::property_with_invalid_initializer`
+    PropertyDeclaration(MemberId, FnId),
+    /// The same for the type of the property.
+    PropertyType(MemberId, FnId),
 }
 
 pub struct Scope {
@@ -700,6 +706,11 @@ pub struct Bound {
     /// `local.ExportSymbol` of `declareModuleMember`: the exported values that what is exported under their names refuses. In the block
     /// it is written in each is what its name means as a value all the same: it is among the locals there, without being local.
     pub refused_exports: Few<SymbolId>,
+    /// `declareSymbolEx`: the declarations that the symbol they are listed with refused. Each has a symbol of its own.
+    pub refused_declarations: Few<(SymbolId, Decl)>,
+    /// `local.Declarations` of `declareModuleMember`, of the names that a block of a module or a namespace both exports and keeps to
+    /// itself: each declaration, with whether it is exported. By each of the symbols those declarations have here.
+    pub local_declarations: FxHashMap<SymbolId, SmallVec<[(Decl, bool); 2]>>,
     /// `export as namespace N`
     pub umd_globals: Few<(Atom, SymbolId)>,
     /// The module specifiers in the file that are looked for, in the order they are first mentioned. `collectModuleReferences`
@@ -1047,6 +1058,80 @@ impl Bound {
         self.expando_declarations.binary_search(&e).is_ok()
     }
 
+    /// `bindThisPropertyAssignment`: the class, whether it is the static side, and the name of the property that `e` declares, if `e`
+    /// is `this.name = value` or `this["name"] = value` in a member of a class, in JavaScript. `this_properties` has all of them.
+    pub fn this_property(&self, f: &File, e: ExprId) -> Option<(ClassId, bool, Atom)> {
+        if !f.is_js || assignment_declaration_kind(f, e) != JsDeclarationKind::ThisProperty {
+            return None;
+        }
+        let ExprKind::Assign { target, .. } = f[e].kind else {
+            return None;
+        };
+        // `getDeclarationName`
+        let name = match f[target].kind {
+            ExprKind::Dot { name, name_pos, .. } if !is_private_name_at(f, name_pos) => name,
+            ExprKind::Index { index, .. } => string_literal_text(f, index),
+            _ => return None,
+        };
+        if name.is_none() {
+            return None;
+        }
+        // `GetThisContainer`
+        let mut parent = self.expr_parent[e.idx()];
+        let member = loop {
+            parent = match parent {
+                Parent::Expr(x) if x.is_some() => self.expr_parent[x.idx()],
+                Parent::Stmt(s) if s.is_some() => self.stmt_parent[s.idx()],
+                Parent::VarInit(d) => Parent::Stmt(self.var_stmt[d.idx()]),
+                Parent::Prop(p) => Parent::Expr(self.prop_owner[p.idx()]),
+                Parent::Case(c) => Parent::Stmt(self.case_stmt[c.idx()]),
+                Parent::FnBody(_) | Parent::ParamDefault(_) => {
+                    let function = match parent {
+                        Parent::FnBody(function) => function,
+                        Parent::ParamDefault(p) => self.param_fn[p.idx()],
+                        _ => unreachable!(),
+                    };
+                    match self.fns[function.idx()].owner {
+                        FnOwner::Expr(owner) if f[function].kind == FnKind::Arrow => {
+                            self.expr_parent[owner.idx()]
+                        }
+                        FnOwner::Member(m) => break m,
+                        _ => return None,
+                    }
+                }
+                Parent::MemberInit(m) => break m,
+                _ => return None,
+            };
+        };
+        let MemberOwner::Class(class) = self.member_owner[member.idx()] else {
+            return None;
+        };
+        let is_static =
+            f[member].flags.contains(Flags::STATIC) || f[member].kind == MemberKind::StaticBlock;
+        Some((class, is_static, name))
+    }
+
+    /// `symbol.Declarations`. Where `symbol` stands for the local symbol of `declareModuleMember` and for `local.ExportSymbol`:
+    /// of the first if `as_local`, otherwise of the second.
+    pub fn declarations_of_symbol(&self, symbol: SymbolId, as_local: bool) -> SmallVec<[Decl; 4]> {
+        let local = self.local_declarations.get(&symbol);
+        let exported: SmallVec<[Decl; 4]> = self.symbols[symbol.idx()]
+            .decls
+            .iter()
+            .copied()
+            .filter(|&decl| {
+                !local.is_some_and(|local| local.contains(&(decl, false)))
+                    && !self.refused_declarations.contains(&(symbol, decl))
+            })
+            .collect();
+        match local {
+            Some(local) if as_local || exported.is_empty() => {
+                local.iter().map(|declaration| declaration.0).collect()
+            }
+            _ => exported,
+        }
+    }
+
     /// Those of one side of `class`.
     pub fn this_properties_of(
         &self,
@@ -1160,8 +1245,40 @@ impl Bound {
             .then_some(code)
     }
 
+    /// `NameResolver.Resolve`, `case KindPropertyDeclaration`: `propertyWithInvalidInitializer`, if a search for `meaning` that has got
+    /// to `scope` is to remember one there, with the error `checkAndReportErrorForInvalidInitializer` has for it. The search goes on,
+    /// and returns nil when it is over if it has a `nameNotFoundMessage`.
+    pub fn property_with_invalid_initializer(
+        &self,
+        scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+    ) -> Option<(u32, MemberId)> {
+        let (code, property, constructor) = match self.scopes[scope.idx()].kind {
+            ScopeKind::PropertyDeclaration(property, constructor) => (2301, property, constructor),
+            ScopeKind::PropertyType(property, constructor) => (2844, property, constructor),
+            _ => return None,
+        };
+        let locals = self.scopes[self.fns[constructor.idx()].scope.idx()].locals;
+        let local = self.lookup(locals, name)?;
+        (meaning & self.symbols[local.idx()].flags)
+            .intersects(SymFlags::VALUE)
+            .then_some((code, property))
+    }
+
     /// What `name` means in `scope`, going outwards, as far as this file knows.
-    pub fn resolve(&self, mut scope: ScopeId, name: Atom, meaning: SymFlags) -> Option<SymbolId> {
+    pub fn resolve(&self, scope: ScopeId, name: Atom, meaning: SymFlags) -> Option<SymbolId> {
+        self.resolve_with_scope(scope, name, meaning)
+            .map(|found| found.0)
+    }
+
+    /// The same, with the scope it is found in.
+    pub fn resolve_with_scope(
+        &self,
+        mut scope: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+    ) -> Option<(SymbolId, ScopeId)> {
         // `lastLocation`: the kind of the scope the search has just left.
         let mut from = ScopeKind::Block;
         while scope.is_some() {
@@ -1178,7 +1295,7 @@ impl Bound {
                     .intersects(meaning | SymFlags::ALIAS)
                 && self.is_seen_from(from, self.symbols[symbol.idx()].flags, meaning)
             {
-                return Some(symbol);
+                return Some((symbol, scope));
             }
             // `Resolve`: nothing goes by the name `default` where it is exported. Of an enum and a namespace that are one symbol, the
             // enum sees the members only and the namespace all but the members.
@@ -1193,7 +1310,7 @@ impl Bound {
                     _ => (meaning | SymFlags::ALIAS) & SymFlags::MODULE_MEMBER,
                 })
             {
-                return Some(symbol);
+                return Some((symbol, scope));
             }
             from = s.kind;
             scope = s.parent;

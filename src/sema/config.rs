@@ -445,7 +445,14 @@ fn extends_config_path(
     let found = if extended == "." || extended == ".." {
         load_config_from_directory(host, &join(base, &extended))
     } else {
-        resolve_config_in_packages(host, &extended, base)
+        // `createResolvedModuleHandlingSymlink`: what is in a package is where the links to it lead.
+        resolve_config_in_packages(host, &extended, base).map(|found| {
+            if found.contains("/node_modules/") {
+                host.realpath(&found)
+            } else {
+                found
+            }
+        })
     };
     if found.is_none() {
         errors.push(ConfigError::new(6053, &[&extended]));

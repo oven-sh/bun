@@ -2104,7 +2104,7 @@ impl<'p> Checker<'p> {
             shape.props.push(Prop {
                 name: prop.name,
                 flags,
-                source: PropSource::Type(ty),
+                source: Self::copy_of(ty, &[prop], false),
                 mapper: MapperId::IDENTITY,
             });
         }
@@ -2844,7 +2844,9 @@ impl<'p> Checker<'p> {
                 .any(|&(_, v)| self.mentions(v, param, depth + 1)),
             TypeData::Synth(shape) => {
                 shape.props.iter().any(|p| match p.source {
-                    PropSource::Type(t) => self.mentions(t, param, depth + 1),
+                    PropSource::Type(t) | PropSource::Copy(t, ..) => {
+                        self.mentions(t, param, depth + 1)
+                    }
                     _ => self
                         .p
                         .types

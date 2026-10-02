@@ -1,5 +1,5 @@
 //! Declarations that are out of place or at odds with each other:
-//! 2369 2370 2371 2463, 2372 2373, 2302, 2428, 2440, 2507, 2374, 2717 2403.
+//! 2369 2370 2371 2463, 2372 2373, 2428, 2440, 2507, 2374, 2717 2403.
 //!
 //! Follows `checkParameter`, the end of `onSuccessfullyResolvedSymbol`, `checkTypeParameterListsIdentical`, `checkAliasSymbol`,
 //! `getSymbolFlags`, `getExternalModuleMember`, `getBaseConstructorTypeOfClass`, `checkTypeForDuplicateIndexSignatures` and
@@ -18,7 +18,6 @@ impl Checker<'_> {
     pub(super) fn check_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         self.check_parameters(file, out);
         self.check_parameter_references(file, out);
-        self.check_static_type_parameter_references(file, out);
         self.check_merged_declarations(file, out);
         self.check_subsequent_property_declarations(file, out);
         self.check_base_constructors(file, out);
@@ -298,43 +297,6 @@ impl Checker<'_> {
                 | Parent::Decorator(..) => self.outward(file, parent),
                 _ => return NOWHERE,
             };
-        }
-    }
-
-    /// 2302: the type parameters of a class are those of its instances.
-    fn check_static_type_parameter_references(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let has_static =
-            |members: Span<MemberId>| members.iter().any(|m| hir[m].flags.contains(Flags::STATIC));
-        // The names of the type parameters of what has a static member.
-        let mut names: SmallVec<[Atom; 8]> = SmallVec::new();
-        let classes = hir.classes.iter().map(|c| (c.type_params, c.members));
-        let interfaces = hir.interfaces.iter().map(|i| (i.type_params, i.members));
-        for (type_params, members) in classes.chain(interfaces) {
-            if !type_params.is_empty() && has_static(members) {
-                names.extend(type_params.iter().map(|p| hir[p].name));
-            }
-        }
-        if names.is_empty() {
-            return;
-        }
-        for t in 0..hir.types.len() {
-            if let TypeNodeKind::Ref { name, .. } = hir.types[t].kind
-                && name.len() == 1
-                && names.contains(&hir.id_at(name, 0))
-                && bound.type_scope[t].is_some()
-                && self.files().resolve_name_or_error(
-                    file,
-                    bound.type_scope[t],
-                    hir.id_at(name, 0),
-                    SymFlags::TYPE,
-                ) == Err(2302)
-            {
-                out.push(Diagnostic {
-                    start: hir.types[t].pos,
-                    code: 2302,
-                });
-            }
         }
     }
 
@@ -705,10 +667,12 @@ impl Checker<'_> {
         // What it is declared by, the module that names if it names one, and where it starts (`GetErrorRangeForNode`): `* as ns` at
         // the name, `import a = b` where the statement does.
         let (import, import_equals, spec, start) = match decl {
-            Decl::ImportDefault(i) => {
-                let start = start_with_type(&hir.text, hir[i].default_pos, hir[i].type_only);
-                (i, ImportEqualsId::NONE, hir[i].spec, Some(start))
-            }
+            Decl::ImportDefault(i) => (
+                i,
+                ImportEqualsId::NONE,
+                hir[i].spec,
+                Some(hir[i].clause_start),
+            ),
             Decl::ImportNamespace(i) => (
                 i,
                 ImportEqualsId::NONE,
@@ -716,20 +680,9 @@ impl Checker<'_> {
                 Some(hir[i].namespace_pos),
             ),
             Decl::ImportSpec(s) => {
-                let Some(i) = hir
-                    .imports
-                    .iter()
-                    .position(|i| i.named.range().contains(&s.idx()))
-                else {
-                    return;
-                };
-                let start = start_with_type(&hir.text, hir[s].imported_pos, hir[s].type_only);
-                (
-                    ImportId(i as u32),
-                    ImportEqualsId::NONE,
-                    hir.imports[i].spec,
-                    Some(start),
-                )
+                let i = hir[s].import;
+                let start = hir[s].start;
+                (i, ImportEqualsId::NONE, hir[i].spec, Some(start))
             }
             Decl::ImportEquals(i) => match hir[i].target {
                 ImportEqualsTarget::Require(spec) => (ImportId::NONE, i, spec, None),
@@ -859,21 +812,32 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let base = self.type_of_expr(file, extends);
-            if !self.is_known(base)
-                || self.is_any(base)
-                || base == TypeId::NULL
-                || self.is_uncertain(file, extends)
+            // The error type, not for a circle (2506) and not because the expression has it.
+            let sym = self.class_sym(file, ClassId(c as u32));
+            if self.base_constructor_type_of_class(sym) != TypeId::ERROR
+                || self.p.circular_base_constructors.get(&sym).is_some()
             {
                 continue;
             }
-            // `isConstructorType`
-            let apparent = self.apparent_type(base);
-            if self.signatures(apparent, true).is_empty() {
-                let start = self.start_of(file, extends);
-                out.push(Diagnostic { start, code: 2507 });
-                let end = self.end_of_expr(file, extends);
-                self.explain_to(start, end, 2507, |c| vec![c.type_to_string(base)]);
+            let base = self.type_of_expr(file, extends);
+            if !self.is_known(base) || self.is_any(base) || self.is_uncertain(file, extends) {
+                continue;
+            }
+            let start = self.start_of(file, extends);
+            out.push(Diagnostic { start, code: 2507 });
+            let end = self.end_of_expr(file, extends);
+            self.explain_to(start, end, 2507, |c| vec![c.type_to_string(base)]);
+            if let TypeData::TypeParam(of, tp, _) = *self.data(base) {
+                self.relate(start, 2507, |c| {
+                    let constraint = c.constraint_of_type_param(base);
+                    let first = constraint.and_then(|t| c.signatures(t, true).first().copied());
+                    let returned = first.map_or(TypeId::UNKNOWN, |sig| c.sig_return(sig));
+                    vec![super::explain::Related {
+                        at: Some(c.place_of_type_parameter_declaration(of, tp)),
+                        code: 2735,
+                        args: vec![c.atom_text(c.hir(of)[tp].name), c.type_to_string(returned)],
+                    }]
+                });
             }
         }
     }

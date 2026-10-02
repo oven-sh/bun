@@ -696,6 +696,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Ok(Some(G::Property {
                                 kind: PropertyKind::ClassStaticBlock,
                                 class_static_block: Some(js_ast::StoreRef::from_bump(block)),
+                                // For the type checker only: nothing else expects a static block to have any.
+                                ts_decorators: if p.keeps_type_syntax() {
+                                    ExprNodeList::from_slice(&opts.ts_decorators)
+                                } else {
+                                    ExprNodeList::from_slice(&[])
+                                },
                                 ..Default::default()
                             }));
                         } else if matches!(p.lexer.token, T::TOpenBrace | T::TDotDotDot)

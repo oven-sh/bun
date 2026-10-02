@@ -568,7 +568,7 @@ impl Checker<'_> {
         }
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::ImportCall) {
-            if let ExprKind::ImportCall(argument) = hir[e].kind
+            if let ExprKind::ImportCall(argument, _) = hir[e].kind
                 && !matches!(self.bound(file).expr_parent[e.idx()], Parent::None)
                 && let ExprKind::String(spec) = hir[argument].kind
             {
@@ -629,14 +629,22 @@ impl Checker<'_> {
             }
         }
         // `checkImportCallExpression`: the second argument is an `ImportCallOptions`, taken as a whole.
-        if !hir.import_options.is_empty()
+        let import_options: Vec<ExprId> = index
+            .of(ExprTag::ImportCall)
+            .iter()
+            .filter_map(|&e| match hir[e].kind {
+                ExprKind::ImportCall(_, more) => hir.ids(more).next(),
+                _ => None,
+            })
+            .collect();
+        if !import_options.is_empty()
             && let Some(sym) = self
                 .files()
                 .atoms
                 .lookup(b"ImportCallOptions")
                 .and_then(|name| self.global_type_symbol(name))
         {
-            for &(_, options) in &hir.import_options {
+            for &options in &import_options {
                 if matches!(self.bound(file).expr_parent[options.idx()], Parent::None) {
                     continue;
                 }
@@ -666,7 +674,7 @@ impl Checker<'_> {
         }
         // `checkImportCallExpression`: 2880 at the first `assert: ..` of an options object literal, with or without a global
         // `ImportCallOptions`.
-        for &(_, options) in &hir.import_options {
+        for &options in &import_options {
             if matches!(self.bound(file).expr_parent[options.idx()], Parent::None)
                 || is_parenthesized(hir, options)
             {
@@ -784,17 +792,11 @@ impl Checker<'_> {
             if import.default.is_some()
                 && self.module_has_default(usage, module, target) == Some(false)
             {
-                // `reportNonDefaultExport`: 2613 is said of the whole clause, which starts with `type` if that is written.
+                // `reportNonDefaultExport`: 2613 is said of the whole clause.
                 let (start, code) = if self.files().export(module, import.default).is_none() {
                     (import.default_pos, 1192)
-                } else if import.type_only {
-                    (
-                        start_of_token_before(&hir.text, import.default_pos, b"type")
-                            .unwrap_or(import.default_pos),
-                        2613,
-                    )
                 } else {
-                    (import.default_pos, 2613)
+                    (import.clause_start, 2613)
                 };
                 out.push(Diagnostic { start, code });
                 let end = if code == 2613 {
@@ -1341,29 +1343,28 @@ impl Checker<'_> {
             });
         }
         let module = self.files().module(file);
-        let is_jsx_set = options.jsx != crate::resolve::JsxEmit::None;
         let found = self.files().module_of_specifier_as(file, spec, mode);
-        if let Some(&target) = module.imports.get(&(spec, mode))
+        let target = module
+            .imports
+            .get(&(spec, mode))
             // A module that is declared by name is what it is declared to be.
-            && found.is_none_or(|m| m == self.files().file_symbol(target))
-        {
-            // `GetResolutionDiagnostic`: `.tsx` and `.jsx` files need the `jsx` option. The error is reported even if the file is in the
-            // program.
-            let path = &self.files().module(target).path;
-            let is_jsx_file = path.ends_with(".jsx");
-            let is_refused = !is_jsx_set
-                && (is_jsx_file || path.ends_with(".tsx"))
-                && !module.project_reference_imports.contains(&(spec, mode));
-            if is_refused {
-                out.push(Diagnostic { start, code: 6142 });
-                self.explain(start, 6142, |c| vec![c.atom_text(spec), path.clone()]);
+            .filter(|&&target| found.is_none_or(|m| m == self.files().file_symbol(target)));
+        if target.is_none() && found.is_some() {
+            return;
+        }
+        // `GetResolutionDiagnostic`, `needJsx`: reported whether or not the file is in the program for another reason.
+        let mut needs_jsx = module.jsx_imports.iter();
+        if let Some(&(.., path)) = needs_jsx.find(|r| (r.0, r.1) == (spec, mode)) {
+            out.push(Diagnostic { start, code: 6142 });
+            self.explain(start, 6142, |c| vec![c.atom_text(spec), c.atom_text(path)]);
+            if target.is_none() {
+                return;
             }
-            // The file is not a module. The loader reads a refused `.tsx` file for the import, which tsc does not do, so that file only
-            // counts if it is a root file. A refused `.jsx` file is linked only if the program has it for another reason.
-            if found.is_none()
-                && !is_side_effect
-                && (!is_refused || is_jsx_file || options.files.contains(path))
-            {
+        }
+        if let Some(&target) = target {
+            // The file is not a module.
+            if found.is_none() && !is_side_effect {
+                let path = &self.files().module(target).path;
                 out.push(Diagnostic { start, code: 2306 });
                 self.explain(start, 2306, |c| {
                     let mut redirected = module.redirected_imports.iter();
@@ -1373,9 +1374,6 @@ impl Checker<'_> {
                     }
                 });
             }
-            return;
-        }
-        if found.is_some() {
             return;
         }
         // `GetResolutionDiagnostic`, `needAllowArbitraryExtensions`
@@ -1391,16 +1389,7 @@ impl Checker<'_> {
         }
         // The specifier resolves to JavaScript that is not in the program.
         if module.untyped_imports.contains(&(spec, mode)) {
-            // `GetResolutionDiagnostic`: a `.jsx` file needs `jsx` before anything else.
-            if !is_jsx_set && module.jsx_imports.contains(&(spec, mode)) {
-                out.push(Diagnostic { start, code: 6142 });
-                let at = module
-                    .untyped_imports
-                    .iter()
-                    .position(|&u| u == (spec, mode));
-                let path = module.untyped_import_files[at.unwrap()].0;
-                self.explain(start, 6142, |c| vec![c.atom_text(spec), c.atom_text(path)]);
-            } else if options.no_implicit_any && !is_side_effect {
+            if options.no_implicit_any && !is_side_effect {
                 self.error_on_implicit_any_module(file, spec, mode, (start, 0), out);
             }
             return;
@@ -1977,7 +1966,11 @@ impl Checker<'_> {
             if matches!(bound.expr_parent[e.idx()], Parent::None)
                 || matches!(name, known::undefined | known::globalThis)
                 // What another declaration of the namespace or the enum around exports, in whichever file, is in scope too.
-                || self.files().resolve_name(file, scope, name, SymFlags::VALUE).is_some()
+                || matches!(
+                    self.files()
+                        .resolve_name_or_error(file, scope, name, SymFlags::VALUE),
+                    Ok(Some(_))
+                )
             {
                 continue;
             }
@@ -2014,7 +2007,21 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let code = self.why_no_value(file, Some(e), scope, name, hir[e].pos);
+            let code = match self
+                .files()
+                .resolve(file, scope, name, SymFlags::VALUE, true)
+            {
+                Err(invalid) => {
+                    // `result == nil`
+                    let is_found = self
+                        .files()
+                        .resolve_name(file, scope, name, SymFlags::VALUE)
+                        .is_some();
+                    let not_found = (!is_found).then_some(e);
+                    self.why_invalid_initializer(file, not_found, hir[e].pos, name, invalid)
+                }
+                Ok(_) => self.why_no_value(file, Some(e), scope, name, hir[e].pos),
+            };
             out.push(Diagnostic {
                 start: hir[e].pos,
                 code,
@@ -2105,12 +2112,21 @@ impl Checker<'_> {
                 self.check_entity_name(file, scope, &names, start, SymFlags::TYPE, out);
                 continue;
             }
-            // `Err`: `Resolve` has an error of its own, which is not said here.
-            let Ok(found) = self
+            let found = match self
                 .files()
-                .resolve_name_or_error(file, scope, first, SymFlags::TYPE)
-            else {
-                continue;
+                .resolve(file, scope, first, SymFlags::TYPE, true)
+            {
+                Ok(found) => found,
+                // 2302 2467 2562
+                Err((code, property)) if property.is_none() => {
+                    out.push(Diagnostic { start, code });
+                    continue;
+                }
+                Err(invalid) => {
+                    let code = self.why_invalid_initializer(file, None, start, first, invalid);
+                    out.push(Diagnostic { start, code });
+                    continue;
+                }
             };
             // `getSymbol`: an alias that ends at a property has no type meaning, and the search goes on further out.
             // `checkAndReportErrorForUsingValueAsType`
@@ -2296,6 +2312,15 @@ impl Checker<'_> {
             if names.len() > 1 {
                 self.check_qualified_name(file, scope, names, start, meaning, out);
             }
+            return;
+        }
+        // `resolveEntityName` looks for a namespace that is not found once more, with a message.
+        if let Err(invalid) = self
+            .files()
+            .resolve(file, scope, first, SymFlags::NAMESPACE, true)
+        {
+            let code = self.why_invalid_initializer(file, None, start, first, invalid);
+            out.push(Diagnostic { start, code });
             return;
         }
         // `checkAndReportErrorForUsingTypeAsNamespace`
@@ -2596,7 +2621,8 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let constructor = self.type_of_expr(file, class.extends);
+            let sym = self.class_sym(file, ClassId(c as u32));
+            let constructor = self.base_constructor_type_of_class(sym);
             if !self.is_known(constructor) || self.is_uncertain(file, class.extends) {
                 continue;
             }
@@ -2609,11 +2635,8 @@ impl Checker<'_> {
                 continue;
             };
             // `areAllOuterTypeParametersApplied`: a class declared where type parameters can be mentioned goes by its construct
-            // signatures. `getBaseConstructorTypeOfClass`: a class that comes back to itself extends what is in error.
-            if !self.outer_type_params_of_symbol(base).is_empty()
-                || self.base_constructor_type_of_class(self.class_sym(file, ClassId(c as u32)))
-                    == TypeId::ERROR
-            {
+            // signatures.
+            if !self.outer_type_params_of_symbol(base).is_empty() {
                 continue;
             }
             if let Some(code) = self.why_wrong_type_argument_count(base, class.extends_args.len()) {
@@ -2772,7 +2795,7 @@ impl Checker<'_> {
         if code == 2304
             && self.files().atoms.bytes(name) == b"await"
             && let Some(e) = e
-            && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(self.hir(file)[p].kind, ExprKind::Call(_) | ExprKind::ImportCall(_)))
+            && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(self.hir(file)[p].kind, ExprKind::Call(_) | ExprKind::ImportCall(..)))
             && !is_parenthesized(self.hir(file), e)
         {
             return 2311;
@@ -3106,6 +3129,33 @@ impl Checker<'_> {
         }
         let object = self.global_ref(known::Object, &[]);
         self.prop_ref(object, name).is_some()
+    }
+
+    /// `checkAndReportErrorForInvalidInitializer`: what is said of `name`, written at `start`, for which `Files::resolve` has ended
+    /// with `invalid`, 2301 or 2844 and the property. `not_found`: the name, if it is an expression and nothing goes by it.
+    fn why_invalid_initializer(
+        &mut self,
+        file: FileId,
+        not_found: Option<ExprId>,
+        start: u32,
+        name: Atom,
+        invalid: (u32, MemberId),
+    ) -> u32 {
+        if let Some(e) = not_found
+            && let Some(code) = self.member_meant_without_prefix(file, e, name)
+        {
+            return code;
+        }
+        let (code, property) = invalid;
+        // `DeclarationNameToString`: the name of the property as it is written.
+        self.explain(start, code, |c| {
+            let end = c.end_of_member_name(file, property);
+            vec![
+                c.source_text(file, c.hir(file)[property].pos, end),
+                c.atom_text(name),
+            ]
+        });
+        code
     }
 
     /// `x` where `this.x` or `C.x` was meant: 2663, 2662. `checkAndReportErrorForMissingPrefix`
@@ -3590,26 +3640,7 @@ pub(super) fn edit_distance(a: &[u8], b: &[u8]) -> f64 {
 /// Where the first declaration of `sym` is: the libraries first, then by file, then by position. `compareSymbols`, `compareNodes`
 pub(super) fn place_of_first_declaration(c: &Checker<'_>, sym: Sym) -> Option<(bool, FileId, u32)> {
     let (file, decl) = c.files().decls_of(sym).first().copied()?;
-    let hir = c.hir(file);
-    let pos = match decl {
-        Decl::Var(p) | Decl::Param(p) | Decl::Require(p) => hir[p].pos,
-        Decl::Fn(f) => hir[f].pos,
-        Decl::Class(x) => hir[x].pos,
-        Decl::Interface(i) => hir[i].name_pos,
-        Decl::Alias(a) => hir[a].name_pos,
-        Decl::Enum(e) => hir[e].name_pos,
-        Decl::EnumMember(m) => hir[m].pos,
-        Decl::Module(m) => hir[m].name_pos,
-        Decl::TypeParam(t) => hir[t].pos,
-        Decl::ImportDefault(i) => hir[i].default_pos,
-        Decl::ImportNamespace(i) => hir[i].namespace_pos,
-        Decl::ImportSpec(s) => hir[s].pos,
-        Decl::ImportEquals(i) => hir[i].name_pos,
-        Decl::ExportSpec(s) => hir[s].pos,
-        Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => hir[s].pos,
-        Decl::ModuleExports(e) | Decl::ExportsProperty(e) => hir[e].pos,
-        _ => 0,
-    };
+    let pos = c.start_of_declaration(file, decl);
     Some((!c.files().module(file).is_lib, file, pos))
 }
 
@@ -4326,17 +4357,7 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             {
                 last = right;
             }
-            let mut end = c.end_of_expr(file, last);
-            // One that is never closed takes all that follows for its children.
-            if let ExprKind::Jsx(jsx) = hir[last].kind
-                && hir[jsx].close_pos == u32::MAX
-                && !text[..(end as usize).saturating_sub(1).min(text.len())]
-                    .trim_ascii_end()
-                    .ends_with(b"/")
-            {
-                end = text.len() as u32;
-            }
-            c.note(start, end, code, Vec::new());
+            c.note(start, c.end_of_expr(file, last), code, Vec::new());
         }
         1029 | 1040 | 1243 => {
             let (word, before) = (word_at(c, file, start), modifiers_before(text, at));
@@ -5224,7 +5245,7 @@ impl Checker<'_> {
                 && let ExprKind::Dot { obj, name, .. } = hir[target].kind
             {
                 let object = self.type_of_expr(file, obj);
-                let object = self.receiver_that_is_there(object);
+                let object = self.non_null_type(object);
                 let (read, written) = (
                     self.type_of_property(object, name),
                     self.write_type_of_property(object, name),
@@ -5254,7 +5275,7 @@ impl Checker<'_> {
             && let Some((obj, name)) = property
         {
             let object = self.type_of_expr(file, obj);
-            let object = self.receiver_that_is_there(object);
+            let object = self.non_null_type(object);
             let (read, written) = (
                 self.type_of_property(object, name),
                 self.write_type_of_property(object, name),
@@ -5268,10 +5289,6 @@ impl Checker<'_> {
         // `checkIdentifier`, `getFlowTypeOfAccessExpression`: a literal counts for all of its kind.
         let wanted = self.base_of_literal(wanted);
         let source = self.type_of_expr(file, e);
-        // A type parameter where none is in scope is something the resolver did not get to the bottom of.
-        if self.has_type_variables(wanted) && !self.is_in_generic_context(file, e) {
-            return;
-        }
         self.check_assignable_with_end_from(
             file,
             source,
@@ -5333,14 +5350,8 @@ impl Checker<'_> {
         r: TypeId,
         out: &mut Vec<Diagnostic>,
     ) -> bool {
-        // `maybeTypeOfKindConsideringBaseConstraint`
-        let mut may_be_symbol = |t: TypeId| {
-            self.maybe_type_of_kind(t, Self::is_symbol_like)
-                || match self.base_constraint_of(t) {
-                    Some(base) => self.maybe_type_of_kind(base, Self::is_symbol_like),
-                    None => false,
-                }
-        };
+        let mut may_be_symbol =
+            |t| self.maybe_type_of_kind_considering_base_constraint(t, Self::is_symbol_like);
         let offending = if may_be_symbol(l) {
             left
         } else if may_be_symbol(r) {
@@ -5435,90 +5446,41 @@ impl Checker<'_> {
         ty: TypeId,
         out: &mut Vec<Diagnostic>,
     ) -> TypeId {
-        // Most of what is asked about is neither of the two, nor made of other types, nor `is_deferred`.
-        if ty != TypeId::UNKNOWN
-            && !ty.is_undefined()
-            && !ty.is_null()
-            && !matches!(
-                self.data(ty),
-                TypeData::Union(_)
-                    | TypeData::Intersection(_)
-                    | TypeData::TypeParam(..)
-                    | TypeData::ThisParam(_)
-                    | TypeData::Marker(_)
-                    | TypeData::IndexedAccess { .. }
-                    | TypeData::Cond { .. }
-                    | TypeData::Keyof(_)
-            )
-        {
-            return ty;
-        }
+        use super::flow::NonNullError;
         if self.is_uncertain(file, node) {
             return ty;
         }
-        let hir = self.hir(file);
-        // This much alone is a matter of strictNullChecks: without them a type that is `null` or `undefined` is nothing else.
-        if ty == TypeId::UNKNOWN && self.p.files.options.strict_null_checks {
-            let start = self.error_start_of(file, node);
-            let code = if self.is_entity_name(file, node) {
-                18046
-            } else {
-                2571
+        self.check_non_null_type_with_reporter(ty, |c, error| {
+            let hir = c.hir(file);
+            let start = c.error_start_of(file, node);
+            let is_name = c.is_entity_name(file, node);
+            let code = match error {
+                NonNullError::IsUnknown if is_name => 18046,
+                NonNullError::IsUnknown => 2571,
+                NonNullError::IsPossibly { undefined, null } => match hir[node].kind {
+                    // `(null)` and `(undefined)` are expressions in parentheses.
+                    ExprKind::Null if !is_parenthesized(hir, node) => 18050,
+                    ExprKind::Ident(known::undefined) if is_name => 18050,
+                    _ => match (is_name, undefined, null) {
+                        (true, true, true) => 18049,
+                        (true, true, false) => 18048,
+                        (true, false, _) => 18047,
+                        (false, true, true) => 2533,
+                        (false, true, false) => 2532,
+                        (false, false, _) => 2531,
+                    },
+                },
             };
             out.push(Diagnostic { start, code });
-            let end = self.error_end_of(file, node);
-            self.explain_to(start, end, code, |c| match code {
-                18046 => vec![entity_name_text(c, file, node)],
+            let end = c.error_end_of(file, node);
+            c.explain_to(start, end, code, |c| match code {
+                18050 if matches!(c.hir(file)[node].kind, ExprKind::Null) => {
+                    vec!["null".to_owned()]
+                }
+                18046..=18050 => vec![entity_name_text(c, file, node)],
                 _ => Vec::new(),
             });
-            return TypeId::ERROR;
-        }
-        // `getTypeFacts`: what waits for type parameters goes by what it extends, and so does an intersection.
-        let goes_by_constraint = |c: &Self, m: TypeId| {
-            c.is_deferred(m) || matches!(c.data(m), TypeData::Intersection(_))
-        };
-        let seen = if self.some_type(ty, goes_by_constraint) {
-            self.map_type(ty, |c, m| {
-                if goes_by_constraint(c, m) {
-                    c.base_constraint(m)
-                } else {
-                    m
-                }
-            })
-        } else {
-            ty
-        };
-        let undefined = self.some_type(seen, |_, m| m.is_undefined());
-        let null = self.some_type(seen, |_, m| m.is_null());
-        if !undefined && !null {
-            return ty;
-        }
-        let start = self.error_start_of(file, node);
-        let is_name = self.is_entity_name(file, node);
-        let code = match hir[node].kind {
-            // `(null)` and `(undefined)` are expressions in parentheses.
-            ExprKind::Null if !is_parenthesized(self.hir(file), node) => 18050,
-            ExprKind::Ident(known::undefined) if is_name => 18050,
-            _ => match (is_name, undefined, null) {
-                (true, true, true) => 18049,
-                (true, true, false) => 18048,
-                (true, false, _) => 18047,
-                (false, true, true) => 2533,
-                (false, true, false) => 2532,
-                (false, false, _) => 2531,
-            },
-        };
-        out.push(Diagnostic { start, code });
-        let end = self.error_end_of(file, node);
-        self.explain_to(start, end, code, |c| match code {
-            18050 if matches!(c.hir(file)[node].kind, ExprKind::Null) => vec!["null".to_owned()],
-            18047..=18050 => vec![entity_name_text(c, file, node)],
-            _ => Vec::new(),
-        });
-        match self.non_nullable(ty) {
-            rest if rest == TypeId::NEVER || rest.is_null() || rest.is_undefined() => TypeId::ERROR,
-            rest => rest,
-        }
+        })
     }
 
     /// A name that is short enough to be repeated in what is said: `IsEntityNameExpression(node)`,
@@ -5541,6 +5503,44 @@ impl Checker<'_> {
     /// Where `e` starts, not counting parentheses around the whole of it.
     pub(super) fn start_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
         self.start_from(file, e, true)
+    }
+
+    /// `GetTokenPosOfNode`, of a declaration: where its first token is, decorators and modifiers included.
+    pub(super) fn start_of_declaration(&self, file: FileId, decl: Decl) -> u32 {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match decl {
+            Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
+                match bound.pat_parent[pat.idx()] {
+                    PatParent::Param(parameter) => hir[parameter].pos,
+                    PatParent::Prop(_, element) => hir[element].pos,
+                    PatParent::Elem(_, element) => hir[element].start,
+                    PatParent::Var(_) | PatParent::None => hir[pat].pos,
+                }
+            }
+            Decl::Fn(function) => hir[function].start,
+            Decl::Class(class) => hir[class].start,
+            Decl::Interface(interface) => hir[interface].start,
+            Decl::Alias(alias) => hir[alias].start,
+            Decl::Enum(enumeration) => hir[enumeration].start,
+            Decl::EnumMember(member) => hir[member].pos,
+            Decl::Module(module) => hir[module].start,
+            Decl::TypeParam(parameter) => hir[parameter].start,
+            Decl::ImportDefault(import) => hir[import].clause_start,
+            Decl::ImportNamespace(import) => hir[import].namespace_start,
+            Decl::ImportSpec(specifier) => hir[specifier].start,
+            Decl::ImportEquals(import) => hir[import].start,
+            Decl::ExportSpec(specifier) => hir[specifier].start,
+            Decl::ExportStarAs(statement)
+            | Decl::ExportExpr(statement)
+            | Decl::UmdGlobal(statement) => match hir[statement].kind {
+                StmtKind::ExportStar { star_pos, .. } => star_pos,
+                _ => hir[statement].start,
+            },
+            Decl::ModuleExports(e) | Decl::ExportsProperty(e) => {
+                self.start_inside_parentheses(file, e)
+            }
+            Decl::File | Decl::CommonJsVariable => 0,
+        }
     }
 
     fn start_from(&self, file: FileId, mut e: ExprId, mut inside: bool) -> u32 {
@@ -5956,17 +5956,19 @@ impl Checker<'_> {
         let FnOwner::Member(constructor) = bound.fns[f.idx()].owner else {
             return false;
         };
-        match &prop.source {
-            PropSource::Members(members) => members.iter().any(|&(other, m)| {
+        match Self::value_declaration(prop) {
+            Some(PropSource::Members(members)) => members.iter().any(|&(other, m)| {
                 other == file
                     && bound.member_owner[m.idx()] == bound.member_owner[constructor.idx()]
             }),
-            PropSource::Parameter(other, p) => *other == file && bound.param_fn[p.idx()] == f,
+            Some(PropSource::Parameter(other, p)) => *other == file && bound.param_fn[p.idx()] == f,
             // `isLocalThisPropertyAssignment`
-            PropSource::Assigned(other, assignments) => {
+            Some(PropSource::Assigned(other, assignments)) => {
                 *other == file
                     && matches!(bound.member_owner[constructor.idx()], MemberOwner::Class(class)
-                        if bound.this_properties.iter().any(|x| x.0 == class && Some(&x.3) == assignments.first()))
+                    if assignments.first().is_some_and(|&first| {
+                        bound.this_property(hir, first).is_some_and(|x| x.0 == class)
+                    }))
             }
             _ => false,
         }

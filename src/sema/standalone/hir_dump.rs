@@ -92,7 +92,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         after_skipped,
         stray_decorators,
         specifier_uses,
-        import_options,
         deferred_import_calls,
         import_attributes,
         specifier_expressions,
@@ -207,11 +206,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     for &specifier in specifier_expressions {
         d.expr(0, "specifier_expression", specifier);
     }
-    put!(d, 0, "", "import_options[{}]:", import_options.len());
-    for &(spec, options) in import_options {
-        d.expr(1, "spec", spec);
-        d.expr(1, "options", options);
-    }
+
     for &(_, close_pos) in deferred_import_calls {
         put!(d, 0, "", "deferred_import_call close_pos={close_pos}");
     }
@@ -573,10 +568,14 @@ impl Dump<'_> {
             ExprKind::Spread(expr)
             | ExprKind::Await(expr)
             | ExprKind::AsConst(expr)
-            | ExprKind::NonNull(expr)
-            | ExprKind::ImportCall(expr) => {
+            | ExprKind::NonNull(expr) => {
                 self.line(depth, label, &head);
                 self.expr(d, "expr", expr);
+            }
+            ExprKind::ImportCall(specifier, more) => {
+                self.line(depth, label, &head);
+                self.expr(d, "specifier", specifier);
+                self.list(d, "more", more, Self::expr);
             }
             ExprKind::Instantiation { expr, type_args } => {
                 self.line(depth, label, &head);
@@ -606,6 +605,7 @@ impl Dump<'_> {
             type_args,
             close_pos,
             chain,
+            template,
         } = node!(self, depth, label, calls, id);
         put!(
             self,
@@ -617,6 +617,9 @@ impl Dump<'_> {
         self.expr(d, "callee", callee);
         self.list(d, "type_args", type_args, Self::ty);
         self.list(d, "args", args, Self::expr);
+        if template.is_some() {
+            self.expr(d, "template", template);
+        }
     }
 
     fn key(&mut self, depth: usize, label: &str, key: PropKey) {
@@ -637,12 +640,13 @@ impl Dump<'_> {
             key,
             value,
             pos,
+            start,
         } = node!(self, depth, label, props, id);
         put!(
             self,
             depth,
             label,
-            "Prop kind={} pos={pos}",
+            "Prop kind={} pos={pos} start={start}",
             prop_kind_name(kind)
         );
         let d = depth + 1;
@@ -706,8 +710,14 @@ impl Dump<'_> {
             pat,
             default,
             is_rest,
+            start,
         } = node!(self, depth, label, pat_elems, id);
-        put!(self, depth, label, "PatElem is_rest={is_rest}");
+        put!(
+            self,
+            depth,
+            label,
+            "PatElem is_rest={is_rest} start={start}"
+        );
         let d = depth + 1;
         self.pat(d, "pat", pat);
         self.expr(d, "default", default);
@@ -729,8 +739,8 @@ impl Dump<'_> {
     }
 
     fn stmt(&mut self, depth: usize, label: &str, id: StmtId) {
-        let Stmt { kind, pos } = node!(self, depth, label, stmts, id);
-        let head = format!("Stmt {} pos={pos}", stmt_kind_name(kind));
+        let Stmt { kind, pos, start } = node!(self, depth, label, stmts, id);
+        let head = format!("Stmt {} pos={pos} start={start}", stmt_kind_name(kind));
         let d = depth + 1;
         match kind {
             StmtKind::Empty => self.line(depth, label, &head),
@@ -862,12 +872,14 @@ impl Dump<'_> {
                 alias,
                 type_only,
                 mode,
+                star_pos,
+                alias_pos,
             } => {
                 put!(
                     self,
                     depth,
                     label,
-                    "{head} spec={} alias={} type_only={type_only} mode={mode:?}",
+                    "{head} spec={} alias={} type_only={type_only} mode={mode:?} star_pos={star_pos} alias_pos={alias_pos}",
                     self.q(spec),
                     self.q(alias)
                 )
@@ -892,22 +904,27 @@ impl Dump<'_> {
             type_params,
             params,
             this_ty,
+            this_pos,
             ret,
             body,
             anchor,
             pos,
+            start,
         } = node!(self, depth, label, fns, id);
         put!(
             self,
             depth,
             label,
-            "Func kind={kind:?} flags={flags:?} name={} name_pos={name_pos} anchor={anchor} pos={pos}",
+            "Func kind={kind:?} flags={flags:?} name={} name_pos={name_pos} anchor={anchor} pos={pos} start={start}",
             self.q(name)
         );
         let d = depth + 1;
         self.span(d, "type_params", type_params, Self::type_param);
         self.span(d, "params", params, Self::param);
         self.ty(d, "this_ty", this_ty);
+        if this_pos != u32::MAX {
+            put!(self, d, "this_pos", "{this_pos}");
+        }
         self.ty(d, "ret", ret);
         match body {
             FnBody::None => self.line(d, "body", "None"),
@@ -941,6 +958,7 @@ impl Dump<'_> {
         let TypeParam {
             name,
             pos,
+            start,
             constraint,
             default,
             flags,
@@ -949,7 +967,7 @@ impl Dump<'_> {
             self,
             depth,
             label,
-            "TypeParam name={} pos={pos} flags={flags:?}",
+            "TypeParam name={} pos={pos} start={start} flags={flags:?}",
             self.q(name)
         );
         let d = depth + 1;
@@ -966,12 +984,13 @@ impl Dump<'_> {
             init,
             func,
             pos,
+            start,
         } = node!(self, depth, label, members, id);
         put!(
             self,
             depth,
             label,
-            "Member kind={} flags={flags:?} pos={pos}",
+            "Member kind={} flags={flags:?} pos={pos} start={start}",
             member_kind_name(kind)
         );
         let d = depth + 1;
@@ -989,21 +1008,24 @@ impl Dump<'_> {
             type_params,
             extends,
             extends_args,
+            other_extends,
             implements,
             members,
             pos,
+            start,
         } = node!(self, depth, label, classes, id);
         put!(
             self,
             depth,
             label,
-            "Class name={} name_pos={name_pos} flags={flags:?} pos={pos}",
+            "Class name={} name_pos={name_pos} flags={flags:?} pos={pos} start={start}",
             self.q(name)
         );
         let d = depth + 1;
         self.span(d, "type_params", type_params, Self::type_param);
         self.expr(d, "extends", extends);
         self.list(d, "extends_args", extends_args, Self::ty);
+        self.list(d, "other_extends", other_extends, Self::expr);
         self.list(d, "implements", implements, Self::ty);
         self.span(d, "members", members, Self::member);
     }
@@ -1016,12 +1038,13 @@ impl Dump<'_> {
             type_params,
             extends,
             members,
+            start,
         } = node!(self, depth, label, interfaces, id);
         put!(
             self,
             depth,
             label,
-            "Interface name={} name_pos={name_pos} flags={flags:?}",
+            "Interface name={} name_pos={name_pos} flags={flags:?} start={start}",
             self.q(name)
         );
         let d = depth + 1;
@@ -1037,12 +1060,13 @@ impl Dump<'_> {
             flags,
             type_params,
             ty,
+            start,
         } = node!(self, depth, label, aliases, id);
         put!(
             self,
             depth,
             label,
-            "Alias name={} name_pos={name_pos} flags={flags:?}",
+            "Alias name={} name_pos={name_pos} flags={flags:?} start={start}",
             self.q(name)
         );
         let d = depth + 1;
@@ -1056,19 +1080,25 @@ impl Dump<'_> {
             name_pos,
             flags,
             members,
+            start,
         } = node!(self, depth, label, enums, id);
         put!(
             self,
             depth,
             label,
-            "Enum name={} name_pos={name_pos} flags={flags:?}",
+            "Enum name={} name_pos={name_pos} flags={flags:?} start={start}",
             self.q(name)
         );
         self.span(depth + 1, "members", members, Self::enum_member);
     }
 
     fn enum_member(&mut self, depth: usize, label: &str, id: EnumMemberId) {
-        let EnumMember { name, init, pos } = node!(self, depth, label, enum_members, id);
+        let EnumMember {
+            name,
+            computed_name,
+            init,
+            pos,
+        } = node!(self, depth, label, enum_members, id);
         put!(
             self,
             depth,
@@ -1076,6 +1106,7 @@ impl Dump<'_> {
             "EnumMember name={} pos={pos}",
             self.q(name)
         );
+        self.expr(depth + 1, "computed_name", computed_name);
         self.expr(depth + 1, "init", init);
     }
 
@@ -1086,6 +1117,7 @@ impl Dump<'_> {
             flags,
             body,
             has_body,
+            start,
         } = node!(self, depth, label, modules, id);
         let name = match name {
             ModuleName::Ident(name) => format!("Ident {}", self.q(name)),
@@ -1096,7 +1128,7 @@ impl Dump<'_> {
             self,
             depth,
             label,
-            "Module name={name} name_pos={name_pos} flags={flags:?} has_body={has_body}"
+            "Module name={name} name_pos={name_pos} flags={flags:?} has_body={has_body} start={start}"
         );
         self.list(depth + 1, "body", body, Self::stmt);
     }
@@ -1108,6 +1140,8 @@ impl Dump<'_> {
             default_pos,
             namespace,
             namespace_pos,
+            clause_start,
+            namespace_start,
             named,
             type_only,
             mode,
@@ -1116,7 +1150,7 @@ impl Dump<'_> {
             self,
             depth,
             label,
-            "Import spec={} default={} default_pos={default_pos} namespace={} namespace_pos={namespace_pos} type_only={type_only} mode={mode:?}",
+            "Import spec={} default={} default_pos={default_pos} namespace={} namespace_pos={namespace_pos} clause_start={clause_start} namespace_start={namespace_start} type_only={type_only} mode={mode:?}",
             self.q(spec),
             self.q(default),
             self.q(namespace)
@@ -1126,17 +1160,19 @@ impl Dump<'_> {
 
     fn import_spec(&mut self, depth: usize, label: &str, id: ImportSpecId) {
         let ImportSpec {
+            start,
             imported,
             local,
             pos,
             type_only,
             imported_pos,
+            import: _,
         } = node!(self, depth, label, import_specs, id);
         put!(
             self,
             depth,
             label,
-            "ImportSpec imported={} local={} pos={pos} type_only={type_only} imported_pos={imported_pos}",
+            "ImportSpec imported={} local={} pos={pos} type_only={type_only} imported_pos={imported_pos} start={start}",
             self.q(imported),
             self.q(local)
         );
@@ -1148,6 +1184,7 @@ impl Dump<'_> {
             name_pos,
             target,
             flags,
+            start,
         } = node!(self, depth, label, import_equals, id);
         let target = match target {
             ImportEqualsTarget::Require(spec) => format!("Require {}", self.q(spec)),
@@ -1157,7 +1194,7 @@ impl Dump<'_> {
             self,
             depth,
             label,
-            "ImportEquals name={} name_pos={name_pos} target={target} flags={flags:?}",
+            "ImportEquals name={} name_pos={name_pos} target={target} flags={flags:?} start={start}",
             self.q(name)
         );
     }
@@ -1181,17 +1218,19 @@ impl Dump<'_> {
 
     fn export_spec(&mut self, depth: usize, label: &str, id: ExportSpecId) {
         let ExportSpec {
+            start,
             local,
             exported,
             pos,
             type_only,
             local_pos,
+            export: _,
         } = node!(self, depth, label, export_specs, id);
         put!(
             self,
             depth,
             label,
-            "ExportSpec local={} exported={} pos={pos} type_only={type_only} local_pos={local_pos}",
+            "ExportSpec local={} exported={} pos={pos} type_only={type_only} local_pos={local_pos} start={start}",
             self.q(local),
             self.q(exported)
         );
@@ -1378,7 +1417,7 @@ fn expr_kind_name(kind: ExprKind) -> &'static str {
         ExprKind::AsConst(_) => "AsConst",
         ExprKind::NonNull(_) => "NonNull",
         ExprKind::Jsx(_) => "Jsx",
-        ExprKind::ImportCall(_) => "ImportCall",
+        ExprKind::ImportCall(..) => "ImportCall",
         ExprKind::ImportMeta => "ImportMeta",
         ExprKind::NewTarget => "NewTarget",
     }

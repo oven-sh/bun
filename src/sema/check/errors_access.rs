@@ -536,12 +536,10 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let is_generic_here =
-                !self.has_type_variables(object) || self.is_in_generic_context(file, e);
             let apparent = if object == TypeId::ANY {
                 Some(object)
             } else {
-                self.type_looked_into(object, is_generic_here)
+                self.type_looked_into(object)
             };
             let Some(apparent) = apparent else {
                 continue;
@@ -627,11 +625,7 @@ impl Checker<'_> {
                     }
                 }
                 let plain = self.constraint_for_operator(key);
-                let is_key_like = !self.is_nullish(key)
-                    && (self.is_any(key)
-                        || self.every_type(plain, |c, m| {
-                            c.is_string_like(m) || c.is_number_like(m) || c.is_symbol_like(m)
-                        }));
+                let is_key_like = self.is_key_like(key);
                 let is_literal_key =
                     self.is_literal(key) && (self.is_string_like(key) || self.is_number_like(key));
                 // `objectType.flags&(TypeFlagsAny|TypeFlagsNever) != 0`: they have every key that is string-, number- or symbol-like.
@@ -683,7 +677,7 @@ impl Checker<'_> {
                                 code: 2339,
                             });
                             let end = self.end_inside_parentheses(file, e);
-                            self.explain_to(at_access, end, 2339, |c| {
+                            self.explain_another(at_access, end, 2339, |c| {
                                 c.names_in_no_lookup(2339, apparent, key)
                             });
                             continue;
@@ -881,25 +875,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `getReducedApparentType`, of what an expression or a pattern looks into. `is_generic_here`: it is written where type parameters,
-    /// if it has any, can be in scope. `None`: it is `any`, it has not been got to the bottom of, or the answer is put off.
-    fn type_looked_into(&mut self, object: TypeId, is_generic_here: bool) -> Option<TypeId> {
-        // A type parameter where none is in scope has not been got to the bottom of.
-        if !is_generic_here {
-            return None;
-        }
-        // Nor, always, has what `T[K]` or a conditional type extends, which passes for `unknown` then.
-        let is_put_off = |c: &Self, m: TypeId| {
-            c.is_deferred(m)
-                && !matches!(c.data(m), TypeData::TypeParam(..) | TypeData::ThisParam(_))
-        };
-        if self.some_type(object, |c, m| match c.data(m) {
-            TypeData::Intersection(parts) => parts.iter().any(|&p| is_put_off(c, p)),
-            _ => is_put_off(c, m),
-        }) {
-            return None;
-        }
-        // A type parameter is looked into through what it extends.
+    /// `getReducedApparentType`, of what an expression or a pattern looks into. `None`: it is `any`, or the answer is put off.
+    fn type_looked_into(&mut self, object: TypeId) -> Option<TypeId> {
+        // What waits for its type parameters is looked into through what it extends.
         let looked_into = if self.has_type_variables(object) {
             self.map_type(object, |c, m| {
                 // Of `T & { a: 1 }`, what `T` extends and `{ a: 1 }`.
@@ -933,9 +911,13 @@ impl Checker<'_> {
         } else {
             apparent
         };
-        // A tuple with `...T` in it puts the answer off (`shouldDeferIndexedAccessType`); a mapped type whose keys are yet to be
-        // known cannot be looked into.
-        if !self.is_known(apparent) || self.is_any(apparent) || self.is_generic(apparent) {
+        // `shouldDeferIndexedAccessType`: of the objects only a tuple with `...T` in it puts the answer off.
+        if !self.is_known(apparent)
+            || self.is_any(apparent)
+            || self.some_type(apparent, |c, m| {
+                c.is_deferred(m) || c.is_generic_tuple_type(m)
+            })
+        {
             return None;
         }
         Some(apparent)
@@ -946,36 +928,6 @@ impl Checker<'_> {
         let ty = self.reduced(ty);
         let apparent = self.apparent_type(ty);
         self.reduced(apparent)
-    }
-
-    /// Whether what `at` stands for is written inside anything that has type parameters, or a `this` type, of its own.
-    fn is_generic_context_around(&self, file: FileId, mut at: Parent) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        loop {
-            let func = match at {
-                Parent::None | Parent::File | Parent::Module(_) => return false,
-                Parent::Expr(x) if x.is_none() => return false,
-                Parent::FnBody(f) => f,
-                Parent::ParamDefault(p) => bound.param_fn[p.idx()],
-                Parent::Expr(_)
-                | Parent::Stmt(_)
-                | Parent::VarInit(_)
-                | Parent::Prop(_)
-                | Parent::Case(_) => FnId::NONE,
-                // In a class there is `this`.
-                _ => return true,
-            };
-            if func.is_some()
-                && (!hir[func].type_params.is_empty()
-                    || !matches!(
-                        bound.fns[func.idx()].owner,
-                        FnOwner::Expr(_) | FnOwner::Stmt(_)
-                    ))
-            {
-                return true;
-            }
-            at = self.parent_of(file, at);
-        }
     }
 
     /// Whether `name` is a global `let`, `const`, class or enum (`SymbolFlagsBlockScoped`): those are no properties of `globalThis`.
@@ -1107,7 +1059,7 @@ impl Checker<'_> {
     /// Whether `getPropertyOfType` finds `name` in `ty`, which is an apparent type. In a union (`createUnionOrIntersectionProperty`)
     /// a member declares it, and each of the others has a signature for the name, which the name of a symbol never has, or is an
     /// object literal that leaves it out. What is private or protected in a member, and not the same declaration in all, is not there.
-    fn has_property_of_type(&mut self, ty: TypeId, name: Atom) -> bool {
+    pub(super) fn has_property_of_type(&mut self, ty: TypeId, name: Atom) -> bool {
         let is_late_bound = self.files().atoms.is_symbol_name(name);
         let mut is_declared = false;
         for &part in self.parts(ty) {
@@ -1434,7 +1386,10 @@ impl Checker<'_> {
                     self.end_of_expr(file, first),
                 ))
             }
-            PropSource::Type(_) | PropSource::Intersected(..) | PropSource::Mapped(..) => None,
+            PropSource::Type(_)
+            | PropSource::Intersected(..)
+            | PropSource::Mapped(..)
+            | PropSource::Copy(..) => None,
         }
     }
 
@@ -1521,7 +1476,7 @@ impl Checker<'_> {
     }
 
     /// Where `prop` is first declared, as `compareSymbols` orders symbols: what has no declaration comes last.
-    pub(super) fn order_of_property(&self, prop: &Prop) -> (u8, FileId, u32) {
+    pub(super) fn order_of_property(&mut self, prop: &Prop) -> (u8, FileId, u32) {
         let declared = match &prop.source {
             PropSource::Members(declared) => declared
                 .first()
@@ -1537,54 +1492,30 @@ impl Checker<'_> {
             // Not by the number of the symbol: the binder declares the functions of a block before the rest of it.
             PropSource::Symbol(symbol) => super::errors::place_of_first_declaration(self, *symbol)
                 .map(|(_, file, pos)| (file, pos)),
-            PropSource::Intersected(_, parts) if !parts.is_empty() => {
+            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _)
+                if !parts.is_empty() =>
+            {
                 return self.order_of_property(&parts[0]);
             }
-            PropSource::Type(_) => self
-                .first_declaration_of_overloads(prop)
-                .map(|(file, member)| (file, self.hir(file)[member].pos)),
+            PropSource::Mapped(of, _) => {
+                return match self.synthetic_origin_of_mapped_property(*of, prop.name) {
+                    Some(origin) => self.order_of_property(&origin),
+                    None => (1, FileId(0), 0),
+                };
+            }
             _ => None,
         };
         declared.map_or((1, FileId(0), 0), |(file, pos)| (0, file, pos))
     }
 
-    /// `order_of_property` of `prop`, which is a property of `shape`.
-    pub(super) fn order_of_property_in(&self, shape: &Shape, prop: &Prop) -> (u8, FileId, u32) {
-        match shape
-            .declared_at
-            .iter()
-            .find(|declared| declared.0 == prop.name)
-        {
-            Some(&(_, file, pos)) if matches!(prop.source, PropSource::Type(_)) => (0, file, pos),
-            _ => self.order_of_property(prop),
-        }
-    }
-
-    /// The first declaration of a method of which only the signatures are kept, because its overloads are declared with type
-    /// parameters of their own: that of the first signature.
-    pub(super) fn first_declaration_of_overloads(&self, prop: &Prop) -> Option<(FileId, MemberId)> {
-        let PropSource::Type(ty) = &prop.source else {
-            return None;
-        };
-        if !prop.flags.contains(PropFlags::METHOD) {
-            return None;
-        }
-        // One that may be left out is that or `undefined`.
-        let first = self
-            .parts(*ty)
-            .iter()
-            .find_map(|&part| match self.data(part) {
-                TypeData::Synth(shape) => shape.call.first().copied(),
-                _ => None,
-            })?;
-        let SigData::Decl { file, func, .. } = *self.p.types.sig(self.p.types.sig_origin(first))
-        else {
-            return None;
-        };
-        match self.bound(file).fns[func.idx()].owner {
-            FnOwner::Member(member) => Some((file, member)),
-            _ => None,
-        }
+    /// `getNamedMembers`: `props` in the order of `compareSymbols`: by where the first declaration is, what has none last, by name.
+    pub(super) fn sort_named_members(&mut self, props: &mut [Prop]) {
+        let atoms = &self.files().atoms;
+        props.sort_by_cached_key(|prop| {
+            let (nowhere, file, pos) = self.order_of_property(prop);
+            let place = self.place_in_program_order(file, pos);
+            (nowhere, place, atoms.bytes(prop.name))
+        });
     }
 
     /// `getSuggestionForNonexistentIndexSignature`: it has a `get`, or a `set`, that takes the key.
@@ -1765,9 +1696,7 @@ impl Checker<'_> {
         {
             return;
         }
-        let is_generic_here =
-            !self.has_type_variables(given) || self.is_generic_context_around(file, around);
-        let Some(declared) = self.type_looked_into(given, is_generic_here) else {
+        let Some(declared) = self.type_looked_into(given) else {
             return;
         };
         let initializer = match bound.pat_parent[pattern.idx()] {
@@ -1819,7 +1748,7 @@ impl Checker<'_> {
         let looked_into = if taken_apart == given {
             Some(declared)
         } else {
-            self.type_looked_into(taken_apart, is_generic_here)
+            self.type_looked_into(taken_apart)
         };
         let Some(looked_into) = looked_into else {
             return;
@@ -1945,12 +1874,7 @@ impl Checker<'_> {
                 }
             }
         }
-        // `isTypeAssignableToKind`, of strings, numbers and symbols: each kind by itself.
-        let is_key_like = !self.is_nullish(key)
-            && [TypeId::NUMBER, TypeId::STRING, TypeId::SYMBOL]
-                .into_iter()
-                .any(|kind| self.is_assignable(key, kind));
-        if is_key_like {
+        if self.is_key_like(key) {
             // `any` and `never` have whatever can be a key at all.
             if self.is_any(object) || object == TypeId::NEVER {
                 return None;
@@ -2480,7 +2404,7 @@ impl Checker<'_> {
                 };
                 let modifiers = self.hir(*f).jsdoc_modifiers_of(first);
                 if modifiers.is_empty()
-                    || self.bound(*f).this_properties.iter().any(|x| x.3 == first)
+                    || self.bound(*f).this_property(self.hir(*f), first).is_some()
                 {
                     modifiers
                 } else {

@@ -34,20 +34,30 @@ pub(crate) enum Mark {
     ReturnType,
     /// From the token after `<T, U>`, to its `<`.
     TypeParameters,
-    /// From the `(` of a function's parameters, to the type of its `this` parameter.
+    /// From the `(` of a function's parameters, to its `this` parameter. The type is the `Annotation` of that.
     ThisParameter,
     /// From the `)` of a call or the `new` of a `new` expression, to the `<` of its type arguments.
     TypeArguments,
+    /// From the `<` of `<T>(e)`, to its `(`.
+    AssertedParen,
     /// From a tagged template, to the `<` of the type arguments of its tag.
     TagTypeArguments,
+    /// From a tagged template, to its `` ` ``.
+    Template,
     /// From where the body of an arrow function is said to be, to its `=>`.
     ArrowToken,
     /// From the `class` keyword, to the `<` after the expression it extends.
     ExtendsArguments,
+    /// From the `class` keyword, to an element of an `extends` clause that is not the first. As many as there are.
+    OtherExtends,
     /// From the `class` keyword, to what follows `implements`.
     Implements,
-    /// From the name of a class member (the `{` of a static block), to its first decorator or modifier.
+    /// From the name of a member of a class (the `{` of a static block) or of an object literal, to its first token: a decorator, a
+    /// modifier, `get`, `set`, `*`, `[`.
     MemberStart,
+    /// From where a statement or a class expression is said to be, to its first token: a decorator or a modifier. From the dot before
+    /// the `B` of `namespace A.B`, to `B`.
+    DeclarationStart,
     /// From the `class` keyword, to a member the parser dropped. As many as there are.
     DroppedMember,
     /// From the `with` keyword, to the token after its statement.
@@ -62,6 +72,8 @@ pub(crate) enum Mark {
     DeferredImportClose,
     /// From the `<` of an opening or closing JSX tag in which something was objected to, to where the tag ends.
     JsxTagEnd,
+    /// From the `<` of a JSX element or fragment, to where `parseJsxClosingElement` or `parseJsxClosingFragment` found no `</` for it.
+    JsxClosingMissed,
     /// From a decorator that decorates nothing (`note_stray_decorators`), to where what comes after the decorators starts.
     StrayDecorator,
     /// From the bracket that opens an array or object literal whose closing bracket is missed, to where the token before the miss ends.
@@ -516,6 +528,8 @@ pub(crate) struct TypeSyntax {
     pub(crate) specifier_expressions: Vec<Expr>,
     /// The `<` of a JSX element, and the name in its closing tag. The element's `tag` is then the name in its opening tag.
     pub(crate) closing_tags: Vec<(i32, Expr)>,
+    /// The expressions of a node that `bun_ast` has no place for, by where the node starts (`keep_expressions`).
+    pub(crate) kept_expressions: bun_collections::HashMap<i32, Vec<Expr>>,
     /// `f<T>` was just parsed: where the `<` is, and where the next token starts.
     pub(crate) pending_type_arguments: (i32, i32),
     /// Build type nodes instead of only recording where types are.
@@ -535,7 +549,7 @@ pub(crate) struct TypeSyntax {
     /// The most recently parsed binding pattern. `NONE` if unusable.
     pub(crate) last_binding: ts::PatternId,
     /// The most recently parsed parameter list and the type of its `this` parameter. `None` if unusable.
-    pub(crate) last_params: Option<(ts::Span<ts::Param>, ts::TypeId)>,
+    pub(crate) last_params: Option<(ts::Span<ts::Param>, ts::ThisParam)>,
     /// `new`, `abstract new` and type parameters that precede the `(` of the function type about to be parsed.
     pub(crate) pending_fn_type_head: Option<keep::FnTypeHead>,
     /// The most recently parsed type parameters. `None` if unusable.
@@ -564,6 +578,7 @@ impl TypeSyntax {
             import_attributes: Vec::new(),
             specifier_expressions: Vec::new(),
             closing_tags: Vec::new(),
+            kept_expressions: Default::default(),
             pending_type_arguments: (0, 0),
             keep_types: true,
             ast: ts::Syntax::new(),
@@ -708,6 +723,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
             && let Some(tag) = tag
         {
             syntax.closing_tags.push((element.start, tag));
+        }
+    }
+
+    /// Keeps `expressions` for the node that starts at `of`. Parsed again, it keeps the same.
+    pub(crate) fn keep_expressions(&mut self, of: bun_ast::Loc, expressions: &[Expr]) {
+        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+            syntax
+                .kept_expressions
+                .insert(of.start, expressions.to_vec());
         }
     }
 

@@ -572,6 +572,7 @@ impl<'p> Checker<'p> {
             };
             return Some(self.synth(Shape {
                 props: vec![default],
+                default_of: Some(module),
                 ..Shape::default()
             }));
         }
@@ -617,7 +618,7 @@ impl<'p> Checker<'p> {
             // Under its own name it joins what is exported already, which is the value.
             Decl::ExportSpec(spec) => {
                 files.symbol(alias).name != files.symbol(target).name
-                    && hir.exports.iter().any(|x| x.spec.is_none() && x.items.range().contains(&spec.idx()))
+                    && hir[hir[spec].export].spec.is_none()
             }
             _ => false,
         });
@@ -677,18 +678,20 @@ impl<'p> Checker<'p> {
             origin: Origin::ClassStatic(sym),
             mapper,
         });
-        // `getBaseTypeVariableOfClass`
-        let base = self.base_constructor_type_of_class(sym);
-        let variable = match self.data(base) {
+        match self.base_type_variable_of_class(sym) {
+            Some(variable) => self.intersection(&[statics, variable]),
+            None => statics,
+        }
+    }
+
+    /// `getBaseTypeVariableOfClass`
+    pub(super) fn base_type_variable_of_class(&mut self, class: Sym) -> Option<TypeId> {
+        let base = self.base_constructor_type_of_class(class);
+        match self.data(base) {
             TypeData::Intersection(parts) => {
                 parts.iter().copied().find(|&p| self.is_type_variable(p))
             }
-            _ if self.is_type_variable(base) => Some(base),
-            _ => None,
-        };
-        match variable {
-            Some(variable) => self.intersection(&[statics, variable]),
-            None => statics,
+            _ => self.is_type_variable(base).then_some(base),
         }
     }
 
@@ -730,16 +733,6 @@ impl<'p> Checker<'p> {
     /// The type of the property of a module's `export =` value that the import or export specifier `sym` names, if there is one.
     pub(super) fn imported_property_of_export_equals(&mut self, sym: Sym) -> Option<TypeId> {
         self.property_of_export_equals(sym)?.1
-    }
-
-    /// `errorNoModuleMemberSymbol`: whether the import or export specifier `sym` stands for nothing because the `export =` value of its
-    /// module has no property of that name. It has the error type then.
-    pub(super) fn is_missing_from_export_equals(&mut self, sym: Sym) -> bool {
-        !matches!(self.files().alias_target(sym), Some(next) if next != sym)
-            && matches!(
-                self.property_of_export_equals(sym),
-                Some((value, None)) if self.is_known(value) && !self.is_any(value)
-            )
     }
 
     /// `getExternalModuleMember` for an import that resolves to no symbol.
@@ -1083,13 +1076,7 @@ impl<'p> Checker<'p> {
                     for info in &mut shape.index {
                         info.value = self.regular_object(info.value);
                     }
-                    let widened = self.synth(shape);
-                    if widened != ty {
-                        self.p
-                            .copied_from
-                            .insert(widened, (false, vec![ty].into_boxed_slice()));
-                    }
-                    return widened;
+                    return self.synth(shape);
                 }
                 _ => return ty,
             }
@@ -1098,10 +1085,7 @@ impl<'p> Checker<'p> {
             return ty;
         };
         let mut shape = Shape::default();
-        // Where each property is declared. What is made up is declared where what it is made after is (`createSymbolWithType`).
-        let mut places: Vec<(u8, FileId, u32)> = Vec::new();
         for prop in &members.shape().props {
-            places.push(self.order_of_property(prop));
             let mut prop_ty = self.type_of_prop(prop, members.mapper);
             if !prop.flags.intersects(as_they_are) {
                 if self.contains_object_literal(prop_ty, 0) {
@@ -1122,7 +1106,7 @@ impl<'p> Checker<'p> {
             shape.props.push(Prop {
                 name: prop.name,
                 flags: prop.flags,
-                source: PropSource::Type(prop_ty),
+                source: Self::copy_of(prop_ty, &[prop], true),
                 mapper: MapperId::IDENTITY,
             });
         }
@@ -1141,50 +1125,29 @@ impl<'p> Checker<'p> {
             };
             for prop in &theirs.shape().props {
                 match shape.props.iter().position(|p| p.name == prop.name) {
-                    None => {
-                        shape.props.push(Prop {
-                            name: prop.name,
-                            // `createSymbolWithType`
-                            flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
-                            source: PropSource::Type(missing),
-                            mapper: MapperId::IDENTITY,
-                        });
-                        places.push(self.order_of_property(prop));
-                    }
+                    None => shape.props.push(Prop {
+                        name: prop.name,
+                        // `createSymbolWithType`
+                        flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
+                        source: Self::copy_of(missing, &[prop], true),
+                        mapper: MapperId::IDENTITY,
+                    }),
                     // `getPropertiesOfContext`: it is made after the last there is of the name.
                     Some(made) if made >= members.shape().props.len() => {
-                        places[made] = self.order_of_property(prop);
+                        shape.props[made].source = Self::copy_of(missing, &[prop], true);
                     }
                     Some(_) => {}
                 }
             }
         }
-        // `getNamedMembers`: in the order they are declared in (`compareSymbols`).
-        if places.iter().all(|place| place.0 == 0) {
-            let mut order: Vec<usize> = (0..places.len()).collect();
-            order.sort_by_key(|&i| self.place_in_program_order(places[i].1, places[i].2));
-            shape.props = order.into_iter().map(|i| shape.props[i].clone()).collect();
-        }
+        self.sort_named_members(&mut shape.props);
         for info in &members.shape().index {
             let value = self.instantiate(info.value, members.mapper);
             let value = self.regular_object(value);
             shape.index.push(IndexInfo { value, ..*info });
         }
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(ty);
-        let widened = self.synth(shape);
-        // What is made up is made after the last there is of the name.
-        let mut from = vec![ty];
-        from.extend(
-            others
-                .iter()
-                .rev()
-                .copied()
-                .filter(|&other| self.is_closed_object_literal_type(other)),
-        );
-        self.p
-            .copied_from
-            .insert(widened, (false, from.into_boxed_slice()));
-        widened
+        self.synth(shape)
     }
 
     // ───────────────────────────── bindings ─────────────────────────────
@@ -1396,8 +1359,9 @@ impl<'p> Checker<'p> {
             default_ty
         };
         if is_annotated {
-            // `TypeFactsIsUndefined`
-            let may_be_missing = self.some_type(default_ty, |c, m| m.is_undefined() || c.is_any(m));
+            // What is not known might be.
+            let may_be_missing =
+                default_ty == TypeId::UNRESOLVED || self.is_possibly_undefined(default_ty);
             return if may_be_missing {
                 ty
             } else {
@@ -1454,8 +1418,7 @@ impl<'p> Checker<'p> {
         } else {
             ty
         };
-        // `TypeFactsNEUndefined`, which `void` does not have either.
-        self.filter(ty, |_, m| !m.is_undefined() && m != TypeId::VOID)
+        self.type_with_ne_undefined(ty)
     }
 
     fn pattern_is_constant(&self, file: FileId, mut pat: PatId) -> bool {
@@ -1576,7 +1539,6 @@ impl<'p> Checker<'p> {
         if !self.p.files.options.strict_null_checks {
             return ty;
         }
-        let has_nullish = self.some_type(ty, |c, m| c.is_nullish(m));
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `IsPartOfParameterDeclaration`
         let mut root = pattern;
@@ -1600,11 +1562,7 @@ impl<'p> Checker<'p> {
                 scope = s.parent;
             }
             if is_ambient {
-                return if has_nullish {
-                    self.non_nullable(ty)
-                } else {
-                    ty
-                };
+                return self.non_nullable(ty);
             }
         }
         let initializer = match bound.pat_parent[pattern.idx()] {
@@ -1620,39 +1578,15 @@ impl<'p> Checker<'p> {
         // `getTypeOfInitializer` is asked whatever `ty` is: an initializer that reads a name of the pattern is a circle.
         let uncertain = self.uncertain;
         let given = self.type_of_declaration_initializer(file, initializer);
-        // `TypeFactsNEUndefined`, which `void` does not have either.
-        if !self.some_type(ty, |_, m| m.is_undefined() || m == TypeId::VOID) {
+        let there = self.type_with_ne_undefined(ty);
+        if there == ty {
             self.uncertain = uncertain;
             return ty;
         }
-        if self.may_be_undefined(given) {
+        if self.can_equal_undefined(given) {
             return ty;
         }
-        self.filter(ty, |_, m| !m.is_undefined() && m != TypeId::VOID)
-    }
-
-    /// `TypeFactsEQUndefined`, where `null` and `undefined` are told apart: whether a `ty` can be `undefined`.
-    fn may_be_undefined(&mut self, ty: TypeId) -> bool {
-        for &m in self.parts(ty) {
-            let may_be = match self.data(m) {
-                // It has to be all of them at once.
-                TypeData::Intersection(members) => {
-                    members.iter().all(|&m| self.may_be_undefined(m))
-                }
-                // What it extends says; if nothing is known of that, it can be anything.
-                _ if self.is_deferred(m) => {
-                    let constraint = self.base_constraint(m);
-                    self.is_deferred(constraint) || self.may_be_undefined(constraint)
-                }
-                _ => {
-                    self.is_any(m) || m == TypeId::UNKNOWN || m.is_undefined() || m == TypeId::VOID
-                }
-            };
-            if may_be {
-                return true;
-            }
-        }
-        false
+        there
     }
 
     /// `getBindingElementTypeFromParentType`: what `pat`, an element of a pattern, is bound to when what the pattern destructures is a
@@ -1974,24 +1908,20 @@ impl<'p> Checker<'p> {
             } else {
                 self.type_of_prop(prop, members.mapper)
             };
-            let place = self.order_of_property_in(members.shape(), prop);
-            if place.0 == 0 {
-                shape.declared_at.push((prop.name, place.1, place.2));
-            }
+            let anew = prop
+                .flags
+                .intersects(PropFlags::WRITE_ONLY | PropFlags::READONLY);
             shape.props.push(Prop {
                 name: prop.name,
                 // A copy: what could not be written to in the original can be in it.
                 flags: prop.flags
-                    & if prop
-                        .flags
-                        .intersects(PropFlags::WRITE_ONLY | PropFlags::READONLY)
-                    {
+                    & if anew {
                         PropFlags::OPTIONAL | PropFlags::STRING_NAME
                     } else {
                         // `getSpreadSymbol` returns the symbol itself.
                         PropFlags::OPTIONAL | PropFlags::STRING_NAME | PropFlags::METHOD
                     },
-                source: PropSource::Type(ty),
+                source: Self::copy_of(ty, &[prop], !anew),
                 mapper: MapperId::IDENTITY,
             });
         }
@@ -2000,31 +1930,6 @@ impl<'p> Checker<'p> {
             shape.index.push(IndexInfo { value, ..*info });
         }
         self.synth(shape)
-    }
-
-    /// `checkNonNullType`, less what it reports: `ty` without `null` and `undefined`. `unknown`, or nothing left, is the error type.
-    pub(super) fn non_null_type(&mut self, ty: TypeId) -> TypeId {
-        // Without strictNullChecks `GetNonNullableType` returns its argument, so only `null` and `undefined` themselves are errors.
-        if !self.p.files.options.strict_null_checks {
-            return if ty.is_undefined() || ty.is_null() {
-                TypeId::ERROR
-            } else {
-                ty
-            };
-        }
-        if ty == TypeId::UNKNOWN {
-            return TypeId::ERROR;
-        }
-        // `GetNonNullableType` changes every type that has one of `TypeFactsIsUndefinedOrNull`.
-        let rest = self.non_nullable_type_if_needed(ty);
-        if rest == ty {
-            return ty;
-        }
-        if rest == TypeId::NEVER || self.every_type(rest, |_, m| m.is_undefined() || m.is_null()) {
-            TypeId::ERROR
-        } else {
-            rest
-        }
     }
 
     /// `getTypeForVariableLikeDeclaration`, and `widenTypeForVariableLikeDeclaration` of that if the variable has a name: what a
@@ -2328,7 +2233,7 @@ impl<'p> Checker<'p> {
                     shape.props.push(Prop {
                         name: prop.name,
                         flags: prop.flags,
-                        source: PropSource::Type(ty),
+                        source: Self::copy_of(ty, &[prop], true),
                         mapper: MapperId::IDENTITY,
                     });
                 }

@@ -33,6 +33,7 @@ pub(crate) struct Lower<'p, 'a> {
     cast_starts: Vec<u64>,
     /// From the `<` of a JSX element, to the name in its closing tag. The `tag` of such an element is the name in its opening tag.
     closing_tags: HashMap<i32, Expr>,
+    kept_expressions: HashMap<i32, Vec<Expr>>,
     /// The statements being lowered are in a block or a function body, not directly in the file or in a namespace.
     in_block: bool,
     pub(super) source: &'a [u8],
@@ -170,6 +171,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             casts,
             cast_starts,
             closing_tags,
+            kept_expressions: syntax.kept_expressions,
             in_block: false,
             source: p.source.contents(),
             stack_check: bun_core::StackCheck::init(),
@@ -209,12 +211,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             .collect();
         this.b.file.after_skipped.sort_unstable();
         this.b.file.after_skipped.dedup();
-        this.b.file.stray_decorators = this
+        let stray_decorators = this
             .marks
             .iter()
             .filter(|mark| mark.1 == Mark::StrayDecorator)
-            .map(|mark| (mark.0 as u32, mark.2 as u32))
-            .collect();
+            .map(|mark| (mark.0 as u32, mark.2 as u32));
+        this.b.file.stray_decorators.extend(stray_decorators);
         this.b.file.unclosed_literals = this
             .marks
             .iter()
@@ -666,6 +668,10 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     fn stmt(&mut self, stmt: &Stmt) -> Option<StmtId> {
         let id = self.stmt_without_jsdoc(stmt);
+        if let Some(id) = id {
+            let start = self.declaration_start(stmt.loc);
+            self.b.file[id].start = start;
+        }
         if !self.jsdoc.list.is_empty() {
             self.statement_jsdoc(stmt, id);
         }
@@ -674,7 +680,7 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// `withJSDoc`, of the statement `stmt`, which was lowered to `id`.
     fn statement_jsdoc(&mut self, stmt: &Stmt, id: Option<StmtId>) {
-        let start = self.statement_start(stmt);
+        let start = self.declaration_start(stmt.loc);
         let mut host = match id.map(|id| (id, self.b.file[id].kind)) {
             Some((_, StmtKind::Var(decls))) => Host::VariableStatement(decls),
             // `parseExpressionOrLabeledStatement`: what starts with a parenthesis leaves the comment to that.
@@ -693,36 +699,11 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.with_jsdoc(start, false, &mut host);
     }
 
-    /// Where the first token of `stmt` is: its decorators and `export` are part of it.
-    fn statement_start(&self, stmt: &Stmt) -> u32 {
-        let first_decorator = |class: &G::Class| {
-            let first = class.ts_decorators.first()?;
-            bun_core::strings::last_index_of_char(&self.source[..pos_of(first.loc) as usize], b'@')
-        };
-        let (is_export, decorator) = match &stmt.data {
-            StmtData::SLocal(s) => (s.is_export, None),
-            StmtData::SFunction(s) => (s.func.flags.contains(ast::flags::Function::IsExport), None),
-            StmtData::SClass(s) => (s.is_export, first_decorator(&s.class)),
-            StmtData::SExportDefault(s) => match &s.value {
-                StmtOrExpr::Stmt(inner) => match &inner.data {
-                    StmtData::SClass(c) => (false, first_decorator(&c.class)),
-                    _ => (false, None),
-                },
-                StmtOrExpr::Expr(_) => (false, None),
-            },
-            _ => (false, None),
-        };
-        let mut at = pos_of(stmt.loc) as usize;
-        // `@decorator export class`, `export @decorator class`
-        for _ in 0..2 {
-            if is_export
-                && let Some(before) = self.source[..at].trim_ascii_end().strip_suffix(b"export")
-            {
-                at = before.len();
-            }
-            at = decorator.map_or(at, |decorator| at.min(decorator));
-        }
-        at as u32
+    /// Where the first token of the statement or the class expression that is said to be at `loc` is: its decorators and modifiers are
+    /// part of it.
+    fn declaration_start(&self, loc: ast::Loc) -> u32 {
+        self.mark(loc, Mark::DeclarationStart)
+            .unwrap_or_else(|| pos_of(loc))
     }
 
     /// The initializer of a `for` statement, which is no statement: a comment before it belongs to nothing.
@@ -739,6 +720,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             return None;
         }
         let pos = pos_of(stmt.loc);
+        let start = self.declaration_start(stmt.loc);
+        self.b.statement_start = start;
         let kind = match &stmt.data {
             StmtData::STypeScript(placeholder) if placeholder.syntax.is_some() => {
                 let errors_before = self.b.file.early_errors.len();
@@ -842,13 +825,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             StmtData::SForOf(s) => {
                 let left = self.for_initializer(&s.init);
                 // `checkForOfStatement` only checks the right side through the declared variable. `for (var of X)` declares none.
-                let declares_nothing =
-                    matches!(&s.init.data, StmtData::SLocal(local) if local.decls.len() == 0);
-                let expr = if declares_nothing {
-                    self.b.file.expr(ExprKind::Missing, pos_of(s.value.loc))
-                } else {
-                    self.expr(&s.value)
-                };
+                if matches!(&s.init.data, StmtData::SLocal(local) if local.decls.len() == 0) {
+                    let unchecked = (pos_of(s.value.loc), pos_of(s.body.loc));
+                    self.b.file.stray_decorators.push(unchecked);
+                }
+                let expr = self.expr(&s.value);
                 let body = self.required_stmt(&s.body);
                 // `parseForOrForInOrForOfStatement`: `await` after `for` makes it one wherever it stands. The parser forgets the
                 // one it objects to.
@@ -970,7 +951,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if s.func.flags.contains(ast::flags::Function::IsExport) {
                     flags |= Flags::EXPORT;
                 }
-                StmtKind::Fn(self.func(&s.func, FnKind::Decl, flags, pos))
+                StmtKind::Fn(self.func(&s.func, FnKind::Decl, flags, pos, start))
             }
             StmtData::SClass(s) => {
                 let flags = if s.is_export {
@@ -978,7 +959,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 } else {
                     Flags::empty()
                 };
-                StmtKind::Class(self.class(&s.class, flags, pos))
+                StmtKind::Class(self.class(&s.class, flags, pos, start))
             }
             StmtData::SExportDefault(s) => match &s.value {
                 StmtOrExpr::Expr(e) => StmtKind::ExportDefault(self.expr(e)),
@@ -988,10 +969,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                         FnKind::Decl,
                         Flags::EXPORT | Flags::DEFAULT,
                         pos,
+                        start,
                     )),
-                    StmtData::SClass(c) => {
-                        StmtKind::Class(self.class(&c.class, Flags::EXPORT | Flags::DEFAULT, pos))
-                    }
+                    StmtData::SClass(c) => StmtKind::Class(self.class(
+                        &c.class,
+                        Flags::EXPORT | Flags::DEFAULT,
+                        pos,
+                        start,
+                    )),
                     _ => return self.stmt(inner),
                 },
             },
@@ -1001,21 +986,17 @@ impl<'p, 'a> Lower<'p, 'a> {
                 for value in s.values.slice() {
                     let init = self.optional_expr(value.value.as_ref());
                     let member_pos = pos_of(value.loc);
-                    // `HasDynamicName`: `[e]` declares nothing. The parser leaves its name empty. `[""]` is named by its literal.
-                    let has_dynamic_name = value.name.slice().is_empty()
-                        && self.source.get(member_pos as usize) == Some(&b'[')
-                        && !matches!(
-                            self.source
-                                .get(skip_trivia(self.source, member_pos as usize + 1)),
-                            Some(b'"' | b'\'' | b'`')
-                        );
-                    let name = if has_dynamic_name {
+                    // `HasDynamicName`: `[e]` declares nothing.
+                    let computed_name =
+                        self.optional_expr(self.kept_expressions(value.loc).first());
+                    let name = if computed_name.is_some() {
                         Atom::NONE
                     } else {
                         self.b.atom(value.name.slice())
                     };
                     members.push(EnumMember {
                         name,
+                        computed_name,
                         init,
                         pos: member_pos,
                     });
@@ -1036,6 +1017,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     name_pos: pos_of(s.name.loc),
                     flags,
                     members,
+                    start,
                 }))
             }
             StmtData::SNamespace(s) => {
@@ -1062,6 +1044,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     },
                     body,
                     has_body: true,
+                    start,
                 }))
             }
         };
@@ -1171,6 +1154,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                         pat,
                         default,
                         is_rest,
+                        start: if is_rest {
+                            self.dots_before(item.binding.loc)
+                        } else {
+                            self.b.file[pat].pos
+                        },
                     });
                 }
                 PatKind::Array(self.b.file.add_pat_elems(&elems))
@@ -1187,7 +1175,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     };
                     let value = self.binding(&property.value);
                     let default = self.optional_expr(property.default_value.as_ref());
-                    let pos = if is_computed {
+                    let pos = if is_rest {
+                        self.dots_before(property.value.loc)
+                    } else if is_computed {
                         self.start_of_computed_name(&property.key)
                     } else {
                         pos_of(property.key.loc)
@@ -1211,6 +1201,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.source[..pos_of(at) as usize]
             .trim_ascii_end()
             .ends_with(b"...")
+    }
+
+    /// Where the `...` is that is the token before `at`.
+    fn dots_before(&self, at: ast::Loc) -> u32 {
+        bun_core::strings::last_index_of(&self.source[..pos_of(at) as usize], b"...")
+            .map_or(pos_of(at), |dots| dots as u32)
     }
 
     /// `createMissingIdentifier`: whether `binding` stands for a name that is not written.
@@ -1321,10 +1317,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             let mut pos = pos_of(arg.binding.loc);
             if flags.contains(Flags::REST) {
-                let before = self.b.lexer.contents[..pos as usize].trim_ascii_end();
-                if before.ends_with(b"...") {
-                    pos = before.len() as u32 - 3;
-                }
+                pos = self.dots_before(arg.binding.loc);
             } else if self.is_missing_name(&arg.binding) {
                 // The parameter starts at its first token, which is the one after the empty name.
                 pos = skip_trivia(self.source, pos as usize) as u32;
@@ -1444,7 +1437,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         params
     }
 
-    fn func(&mut self, func: &G::Fn, kind: FnKind, mut flags: Flags, pos: u32) -> FnId {
+    fn func(&mut self, func: &G::Fn, kind: FnKind, mut flags: Flags, pos: u32, start: u32) -> FnId {
         if func.flags.contains(ast::flags::Function::IsAsync) {
             flags |= Flags::ASYNC;
         }
@@ -1456,7 +1449,10 @@ impl<'p, 'a> Lower<'p, 'a> {
             Some(at) => self.type_params_at(at),
             None => Span::EMPTY,
         };
-        let this_ty = match self.mark(open, Mark::ThisParameter) {
+        let this_pos = self.mark(open, Mark::ThisParameter);
+        let this_annotation =
+            this_pos.and_then(|at| self.mark(ast::Loc { start: at as i32 }, Mark::Annotation));
+        let this_ty = match this_annotation {
             Some(at) => self.type_at(at),
             None => TypeNodeId::NONE,
         };
@@ -1495,10 +1491,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             type_params,
             params,
             this_ty,
+            this_pos: this_pos.unwrap_or(u32::MAX),
             ret,
             body,
             anchor,
             pos,
+            start,
         })
     }
 
@@ -1555,14 +1553,16 @@ impl<'p, 'a> Lower<'p, 'a> {
             type_params,
             params,
             this_ty: TypeNodeId::NONE,
+            this_pos: u32::MAX,
             ret,
             body,
             anchor,
             pos,
+            start: pos,
         })
     }
 
-    fn class(&mut self, class: &G::Class, mut flags: Flags, pos: u32) -> ClassId {
+    fn class(&mut self, class: &G::Class, mut flags: Flags, pos: u32, start: u32) -> ClassId {
         let keyword = class.class_keyword.loc;
         // `GetContainingClass`: its decorators and heritage clauses are inside it too.
         self.b.classes_around += 1;
@@ -1595,6 +1595,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             extends = expr;
             extends_args = type_args;
         }
+        let other_extends: Vec<ExprId> = self
+            .marks_from(keyword, Mark::OtherExtends)
+            .into_iter()
+            .filter_map(|at| self.b.member_expr_at(at))
+            .collect();
+        let other_extends = self.b.file.list(&other_extends);
         let implements = match self.mark(keyword, Mark::Implements) {
             Some(at) => self.b.type_list_at(at),
             None => IdList::EMPTY,
@@ -1657,9 +1663,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             type_params,
             extends,
             extends_args,
+            other_extends,
             implements,
             members,
             pos,
+            start,
         });
         for e in of_class {
             self.b.file.decorators.push((DecoratorOwner::Class(id), e));
@@ -1676,16 +1684,18 @@ impl<'p, 'a> Lower<'p, 'a> {
             init: ExprId::NONE,
             func: FnId::NONE,
             pos: 0,
+            start: 0,
         };
         if let Some(block) = property.class_static_block_ref() {
             member.kind = MemberKind::StaticBlock;
             member.flags = Flags::STATIC;
             member.pos = pos_of(block.loc);
+            member.start = self
+                .mark(block.loc, Mark::MemberStart)
+                .unwrap_or(member.pos);
             // `reportObviousDecoratorErrors`
-            if let Some(start) = self.mark(block.loc, Mark::MemberStart)
-                && self.source.get(start as usize) == Some(&b'@')
-            {
-                self.b.file.early_errors.push((start, 1206));
+            if self.source.get(member.start as usize) == Some(&b'@') {
+                self.b.file.early_errors.push((member.start, 1206));
             }
             let body = FnBody::Block(self.stmts(block.stmts.as_slice(), false));
             member.func = self.b.file.add_fn(Func {
@@ -1696,10 +1706,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                 type_params: Span::EMPTY,
                 params: Span::EMPTY,
                 this_ty: TypeNodeId::NONE,
+                this_pos: u32::MAX,
                 ret: TypeNodeId::NONE,
                 body,
                 anchor: member.pos,
                 pos: member.pos,
+                start: member.start,
             });
             return member;
         }
@@ -1707,6 +1719,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             return member;
         };
         member.pos = pos_of(key.loc);
+        member.start = member.pos;
         let is_computed = property.flags.contains(ast::flags::Property::IsComputed);
         member.key = self.key(key, is_computed);
         // `getDeclarationName`: a bigint names nothing.
@@ -1716,6 +1729,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         let mut modifiers = Vec::new();
         if let Some(start) = self.mark(key.loc, Mark::MemberStart) {
+            member.start = start;
             let (flags, ty) = self.b.member_header_at(start);
             member.flags = flags;
             member.ty = ty;
@@ -1794,7 +1808,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             if !is_method {
                 member.flags.remove(Flags::ASYNC);
             }
-            let func = self.func(&f.func, fn_kind, member.flags, pos_of(*loc));
+            let func = self.func(&f.func, fn_kind, member.flags, pos_of(*loc), member.start);
             if !is_method {
                 self.b.file[func].flags.remove(Flags::ASYNC);
             }
@@ -1839,6 +1853,14 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     // ───────────────────────────── expressions ─────────────────────────────
+
+    /// What the parser kept for the node that starts at `of` (`keep_expressions`).
+    fn kept_expressions(&self, of: ast::Loc) -> Vec<Expr> {
+        self.kept_expressions
+            .get(&of.start)
+            .cloned()
+            .unwrap_or_default()
+    }
 
     fn optional_expr(&mut self, expr: Option<&Expr>) -> ExprId {
         match expr {
@@ -1887,7 +1909,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             for (kind, at) in casts.clone() {
                 let kind = match kind {
                     CastKind::Paren => {
-                        let Some(open) = self.open_paren(at as u32, pos) else {
+                        let Some(open) = self.open_paren(at as u32) else {
                             continue;
                         };
                         // `parseParenthesizedExpression`
@@ -1962,19 +1984,13 @@ impl<'p, 'a> Lower<'p, 'a> {
         id
     }
 
-    /// Where the parenthesis noted at `at` opens, around what starts at `inside`.
-    fn open_paren(&self, at: u32, inside: u32) -> Option<u32> {
+    /// Where the parenthesis noted at `at` opens.
+    fn open_paren(&self, at: u32) -> Option<u32> {
         if self.source.get(at as usize) != Some(&b'<') {
             return Some(at);
         }
-        // `<T>(e)`: the parser has it open where the assertion starts. It is the first after the `>`.
-        let mut before = self.source[..inside as usize].trim_ascii_end();
-        let mut open = None;
-        while let Some(rest) = before.strip_suffix(b"(") {
-            open = Some(rest.len() as u32);
-            before = rest.trim_ascii_end();
-        }
-        open
+        // `<T>(e)`: the parser has it open where the assertion starts.
+        self.mark(ast::Loc { start: at as i32 }, Mark::AssertedParen)
     }
 
     fn call(
@@ -2000,13 +2016,18 @@ impl<'p, 'a> Lower<'p, 'a> {
             type_args,
             close_pos,
             chain,
+            template: ExprId::NONE,
         })
     }
 
-    fn template_text(&self, contents: &ast::E::TemplateContents) -> Atom {
+    fn template_text(&mut self, contents: &ast::E::TemplateContents) -> Atom {
         match contents {
             ast::E::TemplateContents::Cooked(s) => self.string(s),
-            ast::E::TemplateContents::Raw(s) => self.b.atom(s.slice()),
+            // Under a tag.
+            ast::E::TemplateContents::Raw(s) => {
+                let cooked = self.b.lexer.cooked_template_contents(s.slice());
+                self.b.atom(&cooked)
+            }
         }
     }
 
@@ -2116,6 +2137,14 @@ impl<'p, 'a> Lower<'p, 'a> {
             Data::EMissing(_) => ExprKind::Missing,
             Data::ETemplate(e) => {
                 let exprs = self.exprs(e.parts().iter().map(|part| &part.value));
+                let base = self.list_ids.len();
+                let head = self.template_text(&e.head);
+                self.list_ids.push(head.0);
+                for part in e.parts().iter() {
+                    let tail = self.template_text(&part.tail);
+                    self.list_ids.push(tail.0);
+                }
+                let texts = self.take_ids(base);
                 match &e.tag {
                     Some(tag) => {
                         let type_args = match self.mark(expr.loc, Mark::TagTypeArguments) {
@@ -2129,34 +2158,31 @@ impl<'p, 'a> Lower<'p, 'a> {
                         } else {
                             u32::MAX
                         };
+                        // A `NoSubstitutionTemplateLiteral` is a string, as it is without a tag.
+                        let template = if exprs.is_empty() {
+                            ExprKind::String(head)
+                        } else {
+                            ExprKind::Template { exprs, texts }
+                        };
+                        let template_pos = self.mark(expr.loc, Mark::Template).unwrap_or(pos);
+                        let template = self.b.file.expr(template, template_pos);
                         ExprKind::TaggedTemplate(self.b.file.add_call(Call {
                             callee,
                             args: exprs,
                             type_args,
                             close_pos,
                             chain: Chain::No,
+                            template,
                         }))
                     }
-                    None => {
-                        let base = self.list_ids.len();
-                        let head = self.template_text(&e.head);
-                        self.list_ids.push(head.0);
-                        for part in e.parts().iter() {
-                            let tail = self.template_text(&part.tail);
-                            self.list_ids.push(tail.0);
-                        }
-                        ExprKind::Template {
-                            exprs,
-                            texts: self.take_ids(base),
-                        }
-                    }
+                    None => ExprKind::Template { exprs, texts },
                 }
             }
             Data::EArray(e) => ExprKind::Array(self.exprs(e.items.iter())),
             Data::EObject(e) => ExprKind::Object(self.props(e.properties.as_slice(), true)),
             Data::ESpread(e) => ExprKind::Spread(self.expr(&e.value)),
             Data::EFunction(e) => {
-                let func = self.func(&e.func, FnKind::Expr, Flags::empty(), pos);
+                let func = self.func(&e.func, FnKind::Expr, Flags::empty(), pos, pos);
                 self.with_jsdoc(pos, true, &mut Host::Function(func));
                 ExprKind::Fn(func)
             }
@@ -2166,7 +2192,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 ExprKind::Fn(func)
             }
             Data::EClass(e) => {
-                let class = self.class(e, Flags::empty(), pos);
+                let class = self.class(e, Flags::empty(), pos, self.declaration_start(expr.loc));
                 self.with_jsdoc(pos, false, &mut Host::Class(class));
                 ExprKind::Class(class)
             }
@@ -2252,11 +2278,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if let Some(close) = self.mark(expr.loc, Mark::DeferredImportClose) {
                     self.b.file.deferred_import_calls.push((spec, close));
                 }
-                if !matches!(e.options.data, Data::EMissing(_)) {
-                    let options = self.expr(&e.options);
-                    self.b.file.import_options.push((spec, options));
-                }
-                ExprKind::ImportCall(spec)
+                let options = (!matches!(e.options.data, Data::EMissing(_))).then_some(&e.options);
+                let kept = self.kept_expressions(expr.loc);
+                ExprKind::ImportCall(spec, self.exprs(options.into_iter().chain(&kept)))
             }
             Data::EJsxElement(e) => {
                 // Of the two names of an element that has a closing tag, the parser keeps one. The other is in `closing_tags` or read again.
@@ -2271,12 +2295,17 @@ impl<'p, 'a> Lower<'p, 'a> {
                 // The closing tag is said to be where its name is.
                 let before =
                     self.b.lexer.contents[..pos_of(e.close_tag_loc) as usize].trim_ascii_end();
-                let close_pos = match before.strip_suffix(b"/").map(<[u8]>::trim_ascii_end) {
-                    Some(rest) if rest.ends_with(b"<") => rest.len() as u32 - 1,
+                let before = before.strip_suffix(b"/").map(<[u8]>::trim_ascii_end);
+                let missed = self.mark(expr.loc, Mark::JsxClosingMissed);
+                let close_pos = match (missed, before) {
+                    (Some(at), _) => at,
+                    (None, Some(rest)) if rest.ends_with(b"<") => rest.len() as u32 - 1,
                     _ => u32::MAX,
                 };
                 let (tag, close_tag) = if close_pos == u32::MAX || kept.is_none() {
                     (kept, ExprId::NONE)
+                } else if missed.is_some() {
+                    (kept, self.b.file.expr(ExprKind::Missing, close_pos))
                 } else if self.b.file[kept].pos < close_pos {
                     // The parser kept the opening name, and noted the closing one unless it is missing.
                     match self.closing_tags.get(&expr.loc.start).copied() {
@@ -2415,6 +2444,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     key: PropKey::None,
                     value,
                     pos,
+                    start: pos,
                 });
                 continue;
             }
@@ -2425,6 +2455,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             } else {
                 pos
             };
+            let start = self.mark(key.loc, Mark::MemberStart).unwrap_or(pos);
             let written_key = key;
             let mut key = self.key(key, is_computed);
             // `getDeclarationName`: a private name with no class around it names nothing.
@@ -2460,7 +2491,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         PropKind::Setter => FnKind::Setter,
                         _ => FnKind::Method,
                     };
-                    let func = self.func(&f.func, fn_kind, Flags::empty(), pos_of(*loc));
+                    let func = self.func(&f.func, fn_kind, Flags::empty(), pos_of(*loc), start);
                     self.b.file[func].name = key.name().unwrap_or(Atom::NONE);
                     self.b.file[func].name_pos = pos;
                     self.b.file.expr(ExprKind::Fn(func), pos_of(*loc))
@@ -2484,11 +2515,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                 key,
                 value,
                 pos,
+                start,
             };
             // `parseObjectLiteralElement`
             if is_literal && !self.jsdoc.list.is_empty() {
                 let mut host = Host::Property(prop, TypeNodeId::NONE);
-                self.with_jsdoc(self.property_start(property, pos), false, &mut host);
+                self.with_jsdoc(start, false, &mut host);
                 if let Host::Property(documented, ty) = host {
                     prop = documented;
                     if ty.is_some() {
@@ -2508,37 +2540,6 @@ impl<'p, 'a> Lower<'p, 'a> {
                 .push((JsDocTypeOwner::Prop(props.at(index)), ty));
         }
         props
-    }
-
-    /// Where the first token of a property of an object literal is, whose name is at `name`: at `async`, `get`, `set` or `*`.
-    fn property_start(&self, property: &G::Property, name: u32) -> u32 {
-        let mut before = self.source[..name as usize].trim_ascii_end();
-        let mut strip = |word: &[u8]| {
-            if let Some(rest) = before.strip_suffix(word) {
-                before = rest.trim_ascii_end();
-                return rest.len() as u32;
-            }
-            name
-        };
-        let mut start = name;
-        if let Some(Expr {
-            data: Data::EFunction(f),
-            ..
-        }) = &property.value
-        {
-            if f.func.flags.contains(ast::flags::Function::IsGenerator) {
-                start = start.min(strip(b"*"));
-            }
-            match property.kind {
-                G::PropertyKind::Get => start = start.min(strip(b"get")),
-                G::PropertyKind::Set => start = start.min(strip(b"set")),
-                _ => {}
-            }
-            if f.func.flags.contains(ast::flags::Function::IsAsync) {
-                start = start.min(strip(b"async"));
-            }
-        }
-        start
     }
 }
 

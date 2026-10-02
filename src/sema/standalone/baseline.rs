@@ -1154,20 +1154,24 @@ fn run_one(
         .is_some_and(|v| v.eq_ignore_ascii_case("true"));
 
     // One line per location: unit, line, offset, source text without line breaks, type.
-    let write_types = |checker: &mut bun_sema::check::Checker<'_>,
-                       file: bun_sema::program::FileId| {
+    // `unit_text`: what the unit at `path` says, where that is not `file` itself.
+    let write_unit = |checker: &mut bun_sema::check::Checker<'_>,
+                      file: bun_sema::program::FileId,
+                      path: &str,
+                      unit_text: Option<&[u8]>| {
         let Some(types) = types else { return };
-        let path = checker.p.files.modules[file.idx()].path.clone();
-        if is_default_library(&path) {
+        // The harness goes through the units of the test, whatever they are called.
+        let mut units = roots.iter().chain(&others);
+        if is_default_library(path) && !units.any(|unit| absolute(&unit.name, &cwd) == path) {
             return;
         }
         let text = checker.hir(file).text.clone();
         let starts = compute_ecma_line_starts(&text);
-        let unit = without_prefixes(&path, setup.lib_dir);
+        let unit = without_prefixes(path, setup.lib_dir);
         // The source goes along, so that each entry of a baseline can be given its line.
         let mut lines = format!(
             "#source\t{unit}\t{}\n",
-            String::from_utf8_lossy(&text)
+            String::from_utf8_lossy(unit_text.unwrap_or(&text))
                 .replace('\\', "\\\\")
                 .replace('\n', "\\n")
                 .replace('\r', "\\r")
@@ -1205,6 +1209,27 @@ fn run_one(
             ));
         }
         symbols.lock().unwrap().push_str(&lines);
+    };
+    let write_types = |checker: &mut bun_sema::check::Checker<'_>,
+                       file: bun_sema::program::FileId| {
+        let files = &checker.p.files;
+        let path = files.modules[file.idx()].path.clone();
+        // `GetSourceFile` of a path in `redirectFilesByPath` is the copy of the package that is kept: the harness walks it once more,
+        // next to the text of that unit.
+        let mut copies: Vec<String> = Vec::new();
+        if path.contains("/node_modules/") {
+            let same_file = files.by_path.iter().filter(|&(_, &id)| id == file);
+            copies.extend(
+                same_file
+                    .map(|(other, _)| other.clone())
+                    .filter(|other| *other != path),
+            );
+            copies.sort();
+        }
+        write_unit(checker, file, &path, None);
+        for copy in copies {
+            write_unit(checker, file, &copy, host.read(&copy).as_deref());
+        }
     };
     let request = Request {
         compiler_options: &[],

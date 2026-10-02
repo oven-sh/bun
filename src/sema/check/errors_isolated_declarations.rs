@@ -1198,7 +1198,7 @@ impl<'p> Checker<'p> {
                 Node::Expr(e) => matches!(
                     hir[e].kind,
                     ExprKind::Call(_)
-                        | ExprKind::ImportCall(_)
+                        | ExprKind::ImportCall(..)
                         | ExprKind::Satisfies { .. }
                         | ExprKind::As { .. }
                         | ExprKind::Jsx(_)
@@ -1997,6 +1997,7 @@ impl<'p> Checker<'p> {
             PropSource::Assigned(_, assignments) => assignments.len(),
             PropSource::Parameter(..) => 1,
             PropSource::Symbol(sym) => self.files().decls_of(*sym).len(),
+            PropSource::Copy(_, of, _) => of.iter().map(|p| self.iso_declaration_count(p)).sum(),
             PropSource::Type(_) | PropSource::Intersected(..) | PropSource::Mapped(..) => 0,
         }
     }
@@ -3336,19 +3337,13 @@ impl<'p> Checker<'p> {
             },
             Decl::Param(_) | Decl::TypeParam(_) | Decl::File | Decl::UmdGlobal(_) => return true,
             Decl::ExportSpec(x) => {
-                let Some(export) = hir
-                    .exports
-                    .iter()
-                    .position(|e| e.items.range().contains(&x.idx()))
-                else {
-                    return false;
-                };
+                let export = hir[x].export;
                 let statement = hir
                     .stmts
                     .iter()
-                    .position(|s| matches!(s.kind, StmtKind::ExportNamed(e) if e.idx() == export));
+                    .position(|s| matches!(s.kind, StmtKind::ExportNamed(e) if e == export));
                 return match statement {
-                    Some(s) if hir.exports[export].spec.is_none() => {
+                    Some(s) if hir[export].spec.is_none() => {
                         let container = self.iso_container(file, StmtId(s as u32));
                         self.iso_is_container_visible(tx, container)
                     }
@@ -3452,11 +3447,7 @@ impl<'p> Checker<'p> {
             let aliasing = match decl {
                 // `getAnyImportSyntax`
                 Decl::ImportDefault(i) | Decl::ImportNamespace(i) => Some(tx.imports[i.idx()]),
-                Decl::ImportSpec(x) => hir
-                    .imports
-                    .iter()
-                    .position(|i| i.named.range().contains(&x.idx()))
-                    .map(|i| tx.imports[i]),
+                Decl::ImportSpec(x) => Some(tx.imports[hir[x].import.idx()]),
                 // A binding element.
                 Decl::Var(pat) if !matches!(bound.pat_parent[pat.idx()], PatParent::Var(_)) => {
                     if !self

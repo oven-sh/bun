@@ -133,7 +133,36 @@ fn line_comment_start(line: &[u8]) -> Option<usize> {
     None
 }
 
-/// Where the token before `pos` ends: back over blanks and comments. A missing node is there (`createMissingNode`).
+/// `isConflictMarkerTrivia`, of what is written at `line`, where a line starts.
+fn is_conflict_marker_trivia(text: &[u8], line: usize) -> bool {
+    text.get(line..line + 8).is_some_and(|marker| {
+        matches!(marker[0], b'<' | b'>' | b'=' | b'|')
+            && marker[..7].iter().all(|&b| b == marker[0])
+            && (marker[0] == b'=' || marker[7] == b' ')
+    })
+}
+
+/// `scanConflictMarkerTrivia`, backwards from the marker at `line`: where the trivia starts that ends with that line. All from a
+/// `|||||||` or a `=======` to the `>>>>>>>` is trivia.
+fn conflict_marker_trivia_start(text: &[u8], line: usize) -> usize {
+    let (mut start, mut at) = (line, line);
+    while text[line] == b'>' && at > 0 {
+        at = text[..at - 1]
+            .iter()
+            .rposition(|&c| matches!(c, b'\n' | b'\r'))
+            .map_or(0, |i| i + 1);
+        if is_conflict_marker_trivia(text, at) {
+            match text[at] {
+                b'=' | b'|' => start = at,
+                _ => break,
+            }
+        }
+    }
+    start
+}
+
+/// Where the token before `pos` ends: back over blanks, comments, conflict markers and a shebang. A missing node is there
+/// (`createMissingNode`).
 pub(super) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
     let mut at = pos.min(text.len());
     loop {
@@ -146,7 +175,11 @@ pub(super) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
                     .iter()
                     .rposition(|&c| matches!(c, b'\n' | b'\r'))
                     .map_or(0, |i| i + 1);
-                if let Some(comment) = line_comment_start(&text[line..at]) {
+                if is_conflict_marker_trivia(text, line) {
+                    at = conflict_marker_trivia_start(text, line);
+                } else if line == 0 && text.starts_with(b"#!") {
+                    at = 0;
+                } else if let Some(comment) = line_comment_start(&text[line..at]) {
                     at = line + comment;
                 }
             } else if matches!(b, b' ' | b'\t' | 0x0B | 0x0C) {
@@ -202,14 +235,6 @@ pub(super) fn start_of_token_before(text: &[u8], at: u32, written: &[u8]) -> Opt
     before
         .ends_with(written)
         .then(|| (before.len() - written.len()) as u32)
-}
-
-/// Where an import clause or a specifier starts whose first name is at `name_pos`: at its `type` modifier, if it has one.
-pub(super) fn start_with_type(text: &[u8], name_pos: u32, type_only: bool) -> u32 {
-    match start_of_token_before(text, name_pos, b"type") {
-        Some(start) if type_only => start,
-        _ => name_pos,
-    }
 }
 
 /// The name or keyword that starts at `at`, which may be none.
@@ -982,6 +1007,10 @@ impl<'a> Spans<'a> {
         let mut index = 0;
         while is_substitution {
             let inside = end_of_part(index, at).max(at);
+            // `parseLiteralOfTemplateSpan`: the rest is a missing `TemplateTail`.
+            if self.hir.has_parse_diagnostics && self.byte(self.skip_trivia(inside)) != b'}' {
+                return inside;
+            }
             (at, is_substitution) = template_text(self.text, self.close(inside, b'}'));
             index += 1;
         }
@@ -1210,17 +1239,14 @@ impl<'a> Spans<'a> {
                 self.type_args(type_args, self.expr(expr))
             }
             ExprKind::Jsx(jsx) => self.jsx(pos, jsx),
-            ExprKind::ImportCall(specifier) => {
+            ExprKind::ImportCall(specifier, more) => {
                 let mut deferred = self.hir.deferred_import_calls.iter();
                 if let Some(&(_, close)) = deferred.find(|call| call.0 == specifier)
                     && self.byte(close as usize) == b')'
                 {
                     return close as usize + 1;
                 }
-                let mut options = self.hir.import_options.iter();
-                let last = options
-                    .find(|options| options.0 == specifier)
-                    .map_or(specifier, |options| options.1);
+                let last = self.hir.ids(more).last().unwrap_or(specifier);
                 self.close(self.expr(last).max(pos), b')')
             }
             // `import.meta`, `new.target`
@@ -1246,20 +1272,12 @@ impl<'a> Spans<'a> {
         let Some(call) = self.hir.calls.get(c.idx()) else {
             return self.token(pos);
         };
-        let has_arguments = call.close_pos < INCOMPLETE_TEMPLATE;
-        if has_arguments && self.byte(call.close_pos as usize) == b')' {
+        // The `)`, or where it is missed the last character of the last token of the call (`finishNode`).
+        if call.close_pos < INCOMPLETE_TEMPLATE {
             return call.close_pos as usize + 1;
         }
-        let callee_end = self.type_args(call.type_args, self.expr(call.callee));
-        if !has_arguments {
-            // `new C<T>`
-            return callee_end;
-        }
-        // The `)` is missing: it ends with the last token there is.
-        match self.hir.ids(call.args).next_back() {
-            Some(last) => self.eat(self.expr(last), b","),
-            None => self.eat(self.eat(callee_end, b"?."), b"("),
-        }
+        // `new C<T>`
+        self.type_args(call.type_args, self.expr(call.callee))
     }
 
     /// A property of an object literal.
@@ -1285,7 +1303,15 @@ impl<'a> Spans<'a> {
     /// The name `key`, which is written at `pos`.
     fn key(self, key: PropKey, pos: usize) -> usize {
         match key {
-            PropKey::Computed(e) => self.close(self.expr(e), b']'),
+            PropKey::Computed(e) => {
+                let end = self.expr(e);
+                // `parseComputedPropertyName`
+                let is_missed = self.byte(self.skip_trivia(end)) != b']';
+                if is_missed && self.hir.has_parse_diagnostics {
+                    return end;
+                }
+                self.close(end, b']')
+            }
             _ => self.name(pos),
         }
     }
@@ -1334,6 +1360,10 @@ impl<'a> Spans<'a> {
         };
         if element.close_pos == u32::MAX {
             return 0;
+        }
+        let name = self.hir.exprs.get(element.close_tag.idx());
+        if name.is_some_and(|name| matches!(name.kind, ExprKind::Missing)) {
+            return element.close_pos as usize;
         }
         if let Some(end) = self.jsx_tag_end(element.close_pos as usize) {
             return end;
@@ -1945,7 +1975,7 @@ impl<'a> Spans<'a> {
     // ───────────────────────────── statements ─────────────────────────────
 
     fn stmt(self, s: StmtId) -> usize {
-        let Some(&Stmt { kind, pos }) = self.hir.stmts.get(s.idx()) else {
+        let Some(&Stmt { kind, pos, .. }) = self.hir.stmts.get(s.idx()) else {
             return 0;
         };
         let pos = pos as usize;
@@ -2006,7 +2036,7 @@ impl<'a> Spans<'a> {
             }),
             StmtKind::Break(label) | StmtKind::Continue(label) => {
                 let keyword_end = self.token(pos);
-                self.semicolon(if label.is_some() {
+                self.semicolon(if label.is_some() && label != known::empty {
                     self.eat_name(keyword_end)
                 } else {
                     keyword_end
@@ -2258,15 +2288,6 @@ impl Checker<'_> {
 
     // ───────────────────────────── JSX ─────────────────────────────
 
-    /// Where the template of the tagged template `c` starts. `None` if it is missing.
-    pub(super) fn start_of_tagged_template_literal(&self, file: FileId, c: CallId) -> Option<u32> {
-        let spans = self.spans(file);
-        let call = spans.hir.calls.get(c.idx())?;
-        let tag_end = spans.type_args(call.type_args, spans.expr(call.callee));
-        let open = spans.skip_trivia(spans.eat(tag_end, b"?."));
-        (spans.byte(open) == b'`').then_some(open as u32)
-    }
-
     /// `node.End()` of `<tag attrs>`, of `<>`, or of the whole of `<tag attrs />`. `e` is the element, `jsx` what it holds.
     pub(super) fn end_of_jsx_opening(&self, file: FileId, e: ExprId, jsx: JsxId) -> u32 {
         let spans = self.spans(file);
@@ -2384,7 +2405,7 @@ impl Checker<'_> {
     /// the whole of anything else.
     pub(super) fn error_range_of_stmt(&self, file: FileId, s: StmtId) -> (u32, u32) {
         let (hir, spans) = (self.hir(file), self.spans(file));
-        let Some(&Stmt { kind, pos }) = hir.stmts.get(s.idx()) else {
+        let Some(&Stmt { kind, pos, .. }) = hir.stmts.get(s.idx()) else {
             return (0, 0);
         };
         let name = match kind {
@@ -2521,32 +2542,7 @@ impl Checker<'_> {
             MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {}
             MemberKind::Method if is_in_class => {}
             MemberKind::Constructor => {
-                let mut start = member.pos as usize;
-                loop {
-                    let end = skip_trivia_back(&hir.text, start);
-                    let word = hir.text[..end]
-                        .iter()
-                        .rposition(|b| !b.is_ascii_alphabetic())
-                        .map_or(0, |i| i + 1);
-                    if !matches!(
-                        &hir.text[word..end],
-                        b"public"
-                            | b"private"
-                            | b"protected"
-                            | b"abstract"
-                            | b"override"
-                            | b"readonly"
-                            | b"declare"
-                            | b"async"
-                            | b"accessor"
-                            | b"static"
-                            | b"export"
-                    ) {
-                        break;
-                    }
-                    start = word;
-                }
-                return (start as u32, spans.token(member.pos as usize) as u32);
+                return (member.start, spans.token(member.pos as usize) as u32);
             }
             _ => return (member.pos, spans.member(m) as u32),
         }
@@ -2632,23 +2628,19 @@ impl Checker<'_> {
 
     /// Where the name of the `this` parameter of `f` is written. `None`: `f` has none, or has it from a `@this` tag.
     pub(super) fn start_of_this_parameter(&self, file: FileId, f: FnId) -> Option<u32> {
+        let hir = self.hir(file);
+        let start = hir.fns.get(f.idx())?.this_pos;
+        (start != u32::MAX && !hir.is_in_jsdoc(start)).then_some(start)
+    }
+
+    /// Whether `node` is where a type must be and none starts: a reference to a type whose name is missing, which the lowered tree
+    /// keeps as an `any` that is not written. So it keeps JSDoc's `*` and `?`, and `unique T`.
+    pub(super) fn is_missing_type(&self, file: FileId, node: TypeNodeId) -> bool {
         let spans = self.spans(file);
-        let func = spans.hir.fns.get(f.idx())?;
-        if func.this_ty.is_none() || spans.byte(func.anchor as usize) != b'(' {
-            return None;
-        }
-        // `parseParameter`: it is the first.
-        let first = spans.skip_trivia(func.anchor as usize + 1);
-        if spans.word_at(first) == b"this" {
-            return Some(first as u32);
-        }
-        // After decorators, which are an error there: it is what the `:` before its type follows.
-        let colon_end = skip_trivia_back(spans.text, spans.type_pos(func.this_ty));
-        if colon_end <= first || spans.byte(colon_end - 1) != b':' {
-            return None;
-        }
-        let start = skip_trivia_back(spans.text, colon_end - 1).checked_sub(4)?;
-        (start > first && spans.word_at(start) == b"this").then_some(start as u32)
+        let pos = spans.type_pos(node);
+        !spans.is_written_keyword(node)
+            && !matches!(spans.byte(pos), b'*' | b'?' | b'.')
+            && spans.word_at(pos) != b"unique"
     }
 
     /// The range of each name of the entity name `A.B.C` that is written at `pos`, up to a name that is missing.

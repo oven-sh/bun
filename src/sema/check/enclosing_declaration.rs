@@ -209,20 +209,12 @@ impl Checker<'_> {
                 .enclosing_scope_of_kind(file, ScopeKind::Enum(bound.enum_member_owner[m.idx()])),
             Decl::Module(m) => self.enclosing_scope_of_kind(file, ScopeKind::Module(m)),
             Decl::ImportEquals(i) => bound.import_equals_scope[i.idx()],
-            Decl::ExportSpec(spec) => hir
-                .exports
-                .iter()
-                .position(|export| export.items.range().contains(&spec.idx()))
-                .map_or(ScopeId::NONE, |export| bound.export_scope[export]),
+            Decl::ExportSpec(spec) => bound.export_scope[hir[spec].export.idx()],
             Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => {
                 bound.stmt_scope[s.idx()]
             }
             Decl::ImportDefault(i) | Decl::ImportNamespace(i) => bound.import_scope[i.idx()],
-            Decl::ImportSpec(spec) => hir
-                .imports
-                .iter()
-                .position(|import| import.named.range().contains(&spec.idx()))
-                .map_or(ScopeId::NONE, |import| bound.import_scope[import]),
+            Decl::ImportSpec(spec) => bound.import_scope[hir[spec].import.idx()],
             _ => ScopeId::NONE,
         })
     }

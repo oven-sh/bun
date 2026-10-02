@@ -1506,7 +1506,7 @@ impl<'p> Checker<'p> {
         }
         match hir[parent].kind {
             ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
-                if hir[c].callee == e {
+                if hir[c].callee == e || hir[c].template == e {
                     return None;
                 }
                 self.contextual_type_of_arg(file, parent, e)
@@ -1601,10 +1601,13 @@ impl<'p> Checker<'p> {
                 let context = self.without_pattern_marks(context);
                 self.awaited_or_promise_like(context)
             }
-            // `getContextualTypeForArgumentAtIndex`: of an `import()`, a string and an `ImportCallOptions`.
-            ExprKind::ImportCall(specifier) => {
+            // `getContextualTypeForArgumentAtIndex`: of an `import()`, a string, an `ImportCallOptions`, and `any`.
+            ExprKind::ImportCall(specifier, more) => {
                 if e == specifier {
                     return Some(TypeId::STRING);
+                }
+                if hir.ids(more).next() != Some(e) {
+                    return Some(TypeId::ANY);
                 }
                 let name = self.files().atoms.lookup(b"ImportCallOptions")?;
                 let sym = self.global_type_symbol(name)?;
@@ -1724,9 +1727,7 @@ impl<'p> Checker<'p> {
                 ExprKind::This => {
                     // In JavaScript the assignment may be what declares the property (`binary.Symbol != nil`): nothing is expected of it,
                     // unless the first declaration says what the property is (`binary.Symbol.ValueDeclaration.Type()`).
-                    if hir.is_js
-                        && let Some(&(class, is_static, declared, _)) =
-                            bound.this_properties.iter().find(|x| x.3 == assignment)
+                    if let Some((class, is_static, declared)) = bound.this_property(hir, assignment)
                         && bound
                             .this_properties_of(class, is_static)
                             .iter()
@@ -2465,110 +2466,18 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getContextualType` of `e`, (part of) an argument of a call that has been resolved, once no contextual type is pushed any
-    /// more: derived from the parameter type of the resolved signature (`getContextualTypeForArgumentAtIndex`). `arg_contexts` keeps
-    /// what was pushed. `None`: there is no such call, it is not settled, or the way up to it is not covered.
+    /// `getContextualType` of `e` with nothing pushed: what is expected of an argument, and of all that is part of one, comes from the
+    /// parameter type of the resolved signature (`getContextualTypeForArgumentAtIndex`). `arg_contexts` keeps what was pushed while
+    /// the call was resolved. A call that is not resolved, or is being resolved, expects nothing.
     pub(super) fn contextual_type_from_resolved_signature(
         &mut self,
         file: FileId,
         e: ExprId,
     ) -> Option<TypeId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let context = match bound.expr_parent[e.idx()] {
-            Parent::Expr(parent) => match hir[parent].kind {
-                ExprKind::Call(c) | ExprKind::New(c) => {
-                    let args = hir[c].args;
-                    if matches!(hir[hir[c].callee].kind, ExprKind::Fn(_))
-                        || hir
-                            .ids(args)
-                            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
-                        || self
-                            .resolving
-                            .iter()
-                            .any(|r| r.file == file && r.call == parent)
-                        // `resolvingSignature`: `resolving` is popped before the candidates are compared, and another thread may
-                        // have kept the call.
-                        || self.stack.contains(&Query::Call(file, parent))
-                    {
-                        return None;
-                    }
-                    let index = hir.ids(args).position(|a| a == e)?;
-                    // `resolveCall` stores the candidate for overload failure in `resolvedSignature` before it reports.
-                    let resolved = self.p.calls.get(&(file, parent))?;
-                    let sig = self.p.failure_sigs.get(&(file, parent)).or(resolved.sig)?;
-                    let params = self.sig_params(sig);
-                    let param = self.context_of_arg_at(&params, index, Some(args.len()))?;
-                    self.without_no_infer(param)
-                }
-                ExprKind::Cond { test, .. } if test != e => {
-                    self.contextual_type_from_resolved_signature(file, parent)?
-                }
-                ExprKind::Binary {
-                    op: BinOp::Or | BinOp::Nullish,
-                    ..
-                }
-                | ExprKind::NonNull(_) => {
-                    self.contextual_type_from_resolved_signature(file, parent)?
-                }
-                ExprKind::Binary {
-                    op: BinOp::And | BinOp::Comma,
-                    right,
-                    ..
-                } if right == e => self.contextual_type_from_resolved_signature(file, parent)?,
-                // `getContextualTypeForElementExpression`
-                ExprKind::Array(items) => {
-                    let context = self.contextual_type_from_resolved_signature(file, parent)?;
-                    let index = hir.ids(items).position(|i| i == e)?;
-                    let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
-                    let first = hir.ids(items).position(is_spread);
-                    let last = first.and_then(|_| hir.ids(items).rposition(is_spread));
-                    self.contextual_element_at(context, index, Some(items.len()), first, last)?
-                }
-                _ => return None,
-            },
-            // `getContextualTypeForObjectLiteralElement`
-            Parent::Prop(p) => {
-                let literal = bound.prop_owner[p.idx()];
-                if literal.is_none()
-                    || !matches!(hir[literal].kind, ExprKind::Object(_))
-                    || !matches!(
-                        hir[p].kind,
-                        PropKind::Init | PropKind::Shorthand | PropKind::Method
-                    )
-                    || hir.jsdoc_type(JsDocTypeOwner::Prop(p)).is_some()
-                {
-                    return None;
-                }
-                let context = self.contextual_type_from_resolved_signature(file, literal)?;
-                let context = self.apparent_context_of_object_literal(file, literal, context);
-                let name = self.member_name(file, hir[p].key)?;
-                self.contextual_property(context, name)?
-            }
-            // `getContextualReturnType`
-            parent @ (Parent::FnBody(_) | Parent::Stmt(_)) => {
-                if let Parent::Stmt(s) = parent
-                    && (s.is_none() || !matches!(hir[s].kind, StmtKind::Return(_)))
-                {
-                    return None;
-                }
-                let func = self.enclosing_fn(file, parent)?;
-                let function = self.takes_context(file, func)?;
-                if hir[func].ret.is_some()
-                    || hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
-                {
-                    return None;
-                }
-                let context = self.contextual_type_from_resolved_signature(file, function)?;
-                let sig = self.contextual_signature_in(file, func, context)?;
-                if self.is_resolving_return_type(sig) || self.is_at_first_look(sig) {
-                    return None;
-                }
-                self.sig_return(sig)
-            }
-            _ => return None,
-        };
-        let context = self.force(context);
-        (context != TypeId::UNRESOLVED).then_some(context)
+        let outer = std::mem::replace(&mut self.pulls_contextual_types_at, self.stack.len());
+        let context = self.contextual_type(file, e);
+        self.pulls_contextual_types_at = outer;
+        context
     }
 
     /// Whether `sig` is the signature `func` declares, not an instantiation of it.

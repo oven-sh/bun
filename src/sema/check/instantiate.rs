@@ -162,6 +162,14 @@ impl<'p> Checker<'p> {
         new
     }
 
+    /// `getInstantiatedSymbol`
+    pub(super) fn instantiate_prop(&mut self, prop: &mut Prop, mapper: MapperId) {
+        match &mut prop.source {
+            PropSource::Type(ty) | PropSource::Copy(ty, ..) => *ty = self.instantiate(*ty, mapper),
+            _ => prop.mapper = self.compose(prop.mapper, mapper),
+        }
+    }
+
     /// `instantiateTypeWithAlias`
     pub fn instantiate(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         if mapper == MapperId::IDENTITY {
@@ -301,15 +309,11 @@ impl<'p> Checker<'p> {
                 let cycles_before = self.cycles;
                 let mut new = Shape {
                     literal: shape.literal,
-                    declared_at: shape.declared_at.clone(),
                     ..Shape::default()
                 };
                 for p in &shape.props {
                     let mut p = p.clone();
                     match p.source {
-                        PropSource::Type(t) => {
-                            p.source = PropSource::Type(self.instantiate(t, mapper))
-                        }
                         // `getObjectTypeInstantiation` maps the outer type parameters of the literal and nothing else.
                         // `p.mapper` has a key for each of them.
                         PropSource::Literal(file, written)
@@ -317,7 +321,7 @@ impl<'p> Checker<'p> {
                         {
                             p.mapper = self.map_mapper(p.mapper, mapper)
                         }
-                        _ => p.mapper = self.compose(p.mapper, mapper),
+                        _ => self.instantiate_prop(&mut p, mapper),
                     }
                     new.props.push(p);
                 }

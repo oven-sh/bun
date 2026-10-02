@@ -3,7 +3,7 @@
 //! 7018 7025 7055 (and 7006 7008 7010 7011 7019 where `null` and `undefined` widen), 2700, 2842.
 //!
 //! Follows `checkIdentifier`, `checkPropertyAccessExpressionOrQualifiedName`, `checkPrivateIdentifierPropertyAccess`,
-//! `getFlowTypeOfAccessExpression`, `checkThisExpression`, `evaluateEnumMember`, `getBindingElementTypeFromParentType`,
+//! `getFlowTypeOfAccessExpression`, `checkThisExpression`, `getBindingElementTypeFromParentType`,
 //! `checkUnusedRenamedBindingElements`, `widenTypeForVariableLikeDeclaration`, `reportErrorsFromWidening`,
 //! `reportWideningErrorsInType` and `reportImplicitAny` of TypeScript 7.0.2's checker.go, and, for variables that find out their type
 //! as they go, `getFlowTypeOfReferenceEx` and what it calls of its flow.go.
@@ -33,16 +33,14 @@ impl Checker<'_> {
             inline_level: 0,
             type_parents: None,
         };
-        // Of the checks below, only `evaluateEnumMember` (2565) and `widenTypeForVariableLikeDeclaration` (7005) run on a declaration file.
+        // Of the checks below, only `widenTypeForVariableLikeDeclaration` (7005) runs on a declaration file.
         if hir.kind == FileKind::Declaration {
-            pass.check_enum_initializers();
             pass.check_variables_without_a_type();
             return;
         }
         pass.check_identifiers();
         pass.check_this_expressions();
         pass.check_accesses();
-        pass.check_enum_initializers();
         pass.check_variables_without_a_type();
         pass.check_widening();
         pass.check_rest_elements();
@@ -307,9 +305,9 @@ impl Pass<'_, '_> {
             | ExprKind::Await(x)
             | ExprKind::AsConst(x)
             | ExprKind::NonNull(x) => out.push(x),
-            ExprKind::ImportCall(x) => {
+            ExprKind::ImportCall(x, more) => {
                 out.push(x);
-                out.extend(hir.import_options.iter().filter(|o| o.0 == x).map(|o| o.1));
+                out.extend(hir.ids(more));
             }
             ExprKind::Yield { value, .. } => {
                 if value.is_some() {
@@ -496,7 +494,7 @@ impl Pass<'_, '_> {
     /// Whether the `this` at `e` is `globalThis`, and if so whether an arrow function is on the way there: what `checkThisExpression`
     /// finds for a container and `tryGetThisTypeAtEx` makes of it.
     fn global_this(&mut self, e: ExprId) -> Option<bool> {
-        if self.c.files().module(self.file).is_module() {
+        if self.hir.has_module_syntax {
             return None;
         }
         if self.bound.is_in_type_query(e) {
@@ -3218,87 +3216,6 @@ impl Pass<'_, '_> {
             return None;
         }
         Some(self.c.type_of_prop(&prop, mapper))
-    }
-
-    // ───────────────────────────── the initializers of enum members ─────────────────────────────
-
-    /// `computeConstantEnumMemberValue`, for what `evaluateEnumMember` says on the way: 2565.
-    fn check_enum_initializers(&mut self) {
-        for m in 0..self.hir.enum_members.len() {
-            let init = self.hir.enum_members[m].init;
-            if init.is_some() && self.is_bound(init) {
-                self.evaluate(init, EnumMemberId(m as u32));
-            }
-        }
-    }
-
-    /// What the evaluator looks at of the initializer `e` of `member`: a member that is worked out from itself is used before it is
-    /// assigned.
-    fn evaluate(&mut self, e: ExprId, member: EnumMemberId) {
-        let hir = self.hir;
-        if self.c.is_stack_low() {
-            return;
-        }
-        let referenced = match hir[e].kind {
-            ExprKind::Unary {
-                op:
-                    UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::PreInc | UnOp::PreDec,
-                operand,
-            } => {
-                return self.evaluate(operand, member);
-            }
-            ExprKind::Binary { left, right, .. }
-            | ExprKind::Assign {
-                target: left,
-                value: right,
-                ..
-            } => {
-                self.evaluate(left, member);
-                return self.evaluate(right, member);
-            }
-            ExprKind::Template { exprs, .. } => {
-                for span in hir.ids(exprs) {
-                    self.evaluate(span, member);
-                    // Once there is no telling what it comes to, the rest is not looked at.
-                    if self.c.constant_value(self.file, span).is_none() {
-                        return;
-                    }
-                }
-                return;
-            }
-            // It is `None` of what is no `IsEntityNameExpression`.
-            ExprKind::Ident(_) | ExprKind::Dot { .. } => {
-                self.c
-                    .resolve_entity_name_expression(self.file, e, SymFlags::VALUE)
-            }
-            ExprKind::Index { obj, index, .. }
-                if !is_parenthesized(hir, index) && is_entity_name_expression(hir, obj) =>
-            {
-                let root = self
-                    .c
-                    .resolve_entity_name_expression(self.file, obj, SymFlags::VALUE);
-                match (root, self.string_literal_like(index)) {
-                    (Some(root), Some(name))
-                        if self.c.files().flags(root).contains(SymFlags::ENUM) =>
-                    {
-                        self.c.files().export(root, name)
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-        let symbol = self.bound.enum_member_symbol[member.idx()];
-        if referenced == Some(self.c.files().sym(self.file, symbol))
-            && self.bound.symbols[symbol.idx()].decls.first() == Some(&Decl::EnumMember(member))
-        {
-            let start = self.c.start_inside_parentheses(self.file, e);
-            self.report(start, 2565);
-            let end = self.c.end_inside_parentheses(self.file, e);
-            let member = self.c.files().sym(self.file, symbol);
-            self.c
-                .explain_to(start, end, 2565, |c| vec![c.symbol_to_string(member)]);
-        }
     }
 }
 

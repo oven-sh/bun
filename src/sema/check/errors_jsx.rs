@@ -433,7 +433,7 @@ impl<'c, 'p> JsxCheckOrder<'c, 'p> {
             | ExprKind::AsConst(x)
             | ExprKind::NonNull(x)
             | ExprKind::Instantiation { expr: x, .. }
-            | ExprKind::ImportCall(x) => self.check_expression(x),
+            | ExprKind::ImportCall(x, _) => self.check_expression(x),
             ExprKind::Index {
                 obj: a, index: b, ..
             }

@@ -2,15 +2,14 @@
 //! name that is found, or is not, in a way that calls for words of its own.
 //!
 //! 1061 18056, 1066 18033 18055 2474 2477 2478, 2651 (and the 2565 that is decided next to it), 2475 2476, 2397, 1281, 2311 18004,
-//! 2690, 2686, 2467 2562, 2844.
+//! 2690, 2686.
 //!
 //! Follows `computeEnumMemberValues`, `computeEnumMemberValue`, `computeConstantEnumMemberValue`, `evaluateEntity`,
 //! `evaluateEnumMember`, `isBlockScopedNameDeclaredBeforeUse`, `checkConstEnumAccess`, `checkElementAccessExpression`,
 //! `initializeChecker`, `addUndefinedToGlobalsOrErrorOnRedeclaration`, `getCannotFindNameDiagnosticForName`,
 //! `checkAndReportErrorForUsingTypeAsValue`, `maybeMappedType`, `allTypesAssignableToKindEx`,
-//! `onSuccessfullyResolvedSymbol`, `checkImportEqualsDeclaration`, `markJsxAliasReferenced` and
-//! `checkAndReportErrorForInvalidInitializer` of TypeScript 7.0.2's checker.go, `NewEvaluator` of its evaluator.go and `Resolve` of
-//! its nameresolver.go.
+//! `onSuccessfullyResolvedSymbol`, `checkImportEqualsDeclaration` and `markJsxAliasReferenced` of TypeScript 7.0.2's checker.go,
+//! `NewEvaluator` of its evaluator.go and `Resolve` of its nameresolver.go.
 //!
 //! Comes after the passes that say that a name cannot be found: some of what they say is put in other words here.
 
@@ -40,8 +39,6 @@ impl Checker<'_> {
         self.check_x_words_for_missing_names(file, out);
         self.check_x_mapped_types_meant(file, out);
         self.check_x_umd_globals(file, out);
-        self.check_x_class_type_parameters_out_of_reach(file, out);
-        self.check_x_property_types_against_constructors(file, out);
     }
 
     // ───────────────────────────── the values of enum members ─────────────────────────────
@@ -56,7 +53,11 @@ impl Checker<'_> {
         for tag in [ExprTag::Template, ExprTag::Binary, ExprTag::Assign] {
             evaluated.extend(by_kind.of(tag).iter().copied().filter(|&e| {
                 let is_evaluated = match hir[e].kind {
-                    ExprKind::Template { exprs, .. } => !exprs.is_empty(),
+                    ExprKind::Template { exprs, .. } => {
+                        !exprs.is_empty()
+                            && !matches!(bound.expr_parent[e.idx()], Parent::Expr(p)
+                                if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].template == e))
+                    }
                     ExprKind::Binary {
                         op: BinOp::Shl | BinOp::Shr | BinOp::UShr,
                         right,
@@ -632,146 +633,6 @@ impl Checker<'_> {
                     2686,
                     vec![self.atom_text(factory)],
                 );
-            }
-        }
-    }
-
-    /// `Resolve`, at what a class extends and at a computed name: 2562 2467.
-    fn check_x_class_type_parameters_out_of_reach(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let classes = hir
-            .classes
-            .iter()
-            .map(|c| (c.type_params, c.extends, c.members));
-        let interfaces = hir
-            .interfaces
-            .iter()
-            .map(|i| (i.type_params, ExprId::NONE, i.members));
-        // The names of the type parameters of what extends an expression or has a computed name.
-        let mut names: Vec<Atom> = Vec::new();
-        for (type_params, extends, members) in classes.chain(interfaces) {
-            if !type_params.is_empty()
-                && (extends.is_some()
-                    || members
-                        .iter()
-                        .any(|m| matches!(hir[m].key, PropKey::Computed(_))))
-            {
-                names.extend(type_params.iter().map(|p| hir[p].name));
-            }
-        }
-        if names.is_empty() {
-            return;
-        }
-        for (t, node) in hir.types.iter().enumerate() {
-            if let TypeNodeKind::Ref { name, .. } = node.kind
-                && name.len() == 1
-                && names.contains(&hir.id_at(name, 0))
-                && bound.type_scope[t].is_some()
-                && let Err(code @ (2467 | 2562)) = self.files().resolve_name_or_error(
-                    file,
-                    bound.type_scope[t],
-                    hir.id_at(name, 0),
-                    SymFlags::TYPE,
-                )
-            {
-                out.push(Diagnostic {
-                    start: node.pos,
-                    code,
-                });
-            }
-        }
-    }
-
-    /// `Resolve`, at a property declaration, and `checkAndReportErrorForInvalidInitializer`: 2844. Where fields are set up by
-    /// assignments put in the constructor, a name in the type of one would come to mean what the constructor declares by it.
-    fn check_x_property_types_against_constructors(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        if self.p.files.options.emit_standard_class_fields {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, class) in hir.classes.iter().enumerate() {
-            // `FindConstructorDeclaration`
-            let Some(constructor) = class.members.iter().find(|&m| {
-                hir[m].kind == MemberKind::Constructor
-                    && !matches!(hir[hir[m].func].body, FnBody::None)
-            }) else {
-                continue;
-            };
-            let (own, scope) = (
-                bound.class_scope[i],
-                bound.fns[hir[constructor].func.idx()].scope,
-            );
-            if own.is_none() || scope.is_none() {
-                continue;
-            }
-            let locals = bound.scopes[scope.idx()].locals;
-            for m in class.members.iter() {
-                let member = &hir[m];
-                if member.kind != MemberKind::Property || member.flags.contains(Flags::STATIC) {
-                    continue;
-                }
-                for_each_type_in(hir, member.ty, &mut |node: TypeNodeId| {
-                    // The name that is looked up, where it is, what it is to mean, and what of that is a value.
-                    let (name, start, meaning, as_value) = match hir[node].kind {
-                        TypeNodeKind::Typeof { name, expr, .. }
-                            if !name.is_empty() && expr.is_some() =>
-                        {
-                            let first = first_identifier(hir, expr);
-                            (
-                                hir.id_at(name, 0),
-                                hir[first].pos,
-                                SymFlags::VALUE,
-                                SymFlags::VALUE,
-                            )
-                        }
-                        TypeNodeKind::Ref { name, .. } if name.len() == 1 => (
-                            hir.id_at(name, 0),
-                            hir[node].pos,
-                            SymFlags::TYPE,
-                            SymFlags::CLASS | SymFlags::ENUM | SymFlags::ENUM_MEMBER,
-                        ),
-                        TypeNodeKind::Ref { name, .. } if name.len() > 1 => (
-                            hir.id_at(name, 0),
-                            hir[node].pos,
-                            SymFlags::NAMESPACE,
-                            SymFlags::VALUE_MODULE | SymFlags::ENUM,
-                        ),
-                        _ => return,
-                    };
-                    let has = |table, wanted| {
-                        bound
-                            .lookup(table, name)
-                            .is_some_and(|s| bound.symbols[s.idx()].flags.intersects(wanted))
-                    };
-                    if !has(locals, as_value) {
-                        return;
-                    }
-                    // Found before the property is reached: a parameter of a function type, say.
-                    let mut at = bound.type_scope[node.idx()];
-                    while at.is_some() && at != own {
-                        if has(bound.scopes[at.idx()].locals, meaning | SymFlags::ALIAS) {
-                            return;
-                        }
-                        at = bound.scopes[at.idx()].parent;
-                    }
-                    if at.is_none() {
-                        return;
-                    }
-                    // `resolveEntityName`: a namespace is first looked for with nothing to be said, and again only if there is none.
-                    if meaning == SymFlags::NAMESPACE
-                        && self
-                            .files()
-                            .resolve_name(file, own, name, meaning)
-                            .is_some()
-                    {
-                        return;
-                    }
-                    out.retain(|d| d.start != start || !is_name_not_found(d.code));
-                    out.push(Diagnostic { start, code: 2844 });
-                    let property =
-                        self.source_text(file, member.pos, self.end_of_member_name(file, m));
-                    self.note(start, 0, 2844, vec![property, self.atom_text(name)]);
-                });
             }
         }
     }
@@ -1812,80 +1673,6 @@ fn is_instantiated(hir: &hir::File, m: ModuleId) -> bool {
         StmtKind::ExportNamed(e) => !hir[e].type_only,
         _ => true,
     })
-}
-
-// ───────────────────────────── what is written in what ─────────────────────────────
-
-/// Calls `f` with `node` and with every type written in it.
-fn for_each_type_in(hir: &hir::File, node: TypeNodeId, f: &mut dyn FnMut(TypeNodeId)) {
-    if node.is_none() {
-        return;
-    }
-    f(node);
-    match hir[node].kind {
-        TypeNodeKind::Ref { args: types, .. }
-        | TypeNodeKind::Typeof { args: types, .. }
-        | TypeNodeKind::Import { args: types, .. }
-        | TypeNodeKind::Template { types, .. }
-        | TypeNodeKind::Union(types)
-        | TypeNodeKind::Intersection(types) => {
-            for t in hir.ids(types) {
-                for_each_type_in(hir, t, f);
-            }
-        }
-        TypeNodeKind::Array(t)
-        | TypeNodeKind::Keyof(t)
-        | TypeNodeKind::Readonly(t)
-        | TypeNodeKind::Predicate { ty: t, .. } => for_each_type_in(hir, t, f),
-        TypeNodeKind::Tuple(elems) => {
-            for e in elems.iter() {
-                for_each_type_in(hir, hir[e].ty, f);
-            }
-        }
-        TypeNodeKind::Cond {
-            check,
-            extends,
-            yes,
-            no,
-        } => {
-            for t in [check, extends, yes, no] {
-                for_each_type_in(hir, t, f);
-            }
-        }
-        TypeNodeKind::IndexedAccess { obj, index } => {
-            for_each_type_in(hir, obj, f);
-            for_each_type_in(hir, index, f);
-        }
-        TypeNodeKind::Mapped(m) => {
-            for t in [hir[hir[m].param].constraint, hir[m].name_ty, hir[m].ty] {
-                for_each_type_in(hir, t, f);
-            }
-        }
-        TypeNodeKind::Infer(p) => for_each_type_in(hir, hir[p].constraint, f),
-        TypeNodeKind::Fn(func) => for_each_type_in_signature(hir, func, f),
-        TypeNodeKind::Object(members) => {
-            for m in members.iter() {
-                for_each_type_in(hir, hir[m].ty, f);
-                if hir[m].func.is_some() {
-                    for_each_type_in_signature(hir, hir[m].func, f);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn for_each_type_in_signature(hir: &hir::File, func: FnId, f: &mut dyn FnMut(TypeNodeId)) {
-    let func = &hir[func];
-    for p in func.type_params.iter() {
-        for_each_type_in(hir, hir[p].constraint, f);
-        for_each_type_in(hir, hir[p].default, f);
-    }
-    for_each_type_in(hir, func.this_ty, f);
-    for p in func.params.iter() {
-        for_each_type_in(hir, hir[p].ty, f);
-    }
-    for_each_type_in(hir, func.ret, f);
 }
 
 // ───────────────────────────── where things are written ─────────────────────────────

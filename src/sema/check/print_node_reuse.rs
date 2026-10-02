@@ -196,8 +196,11 @@ impl<'p> Printer<'_, 'p> {
                 Some((*file, SyntaxNode::Expr(declaration)))
             }
             PropSource::Mapped(of, _) if depth < 8 => {
-                let origin = self.origin_of_mapped_property(*of, prop.name)?;
+                let origin = self.c.synthetic_origin_of_mapped_property(*of, prop.name)?;
                 self.value_declaration_of_property(&origin, depth + 1)
+            }
+            PropSource::Copy(_, of, _) if depth < 8 => {
+                self.value_declaration_of_property(of.first()?, depth + 1)
             }
             _ => None,
         }

@@ -93,48 +93,6 @@ fn start_of_declaration_list(text: &[u8], at: u32) -> u32 {
     at as u32
 }
 
-/// Where the first of the `export` and `declare` of the variable statement said to be at `at` is. They are written there or
-/// before it, depending on who parsed the statement.
-fn first_modifier(text: &[u8], at: u32) -> Option<u32> {
-    let at = at as usize;
-    let mut first =
-        (is_word_at(text, at, b"export") || is_word_at(text, at, b"declare")).then_some(at);
-    let mut before = text.get(..at)?;
-    loop {
-        let rest = before.trim_ascii_end();
-        // `declare` at the end of a line is a name.
-        let is_on_the_line = !before[rest.len()..]
-            .iter()
-            .any(|&b| matches!(b, b'\n' | b'\r'));
-        let word: &[u8] = if rest.ends_with(b"export") {
-            b"export"
-        } else if rest.ends_with(b"declare") && is_on_the_line {
-            b"declare"
-        } else {
-            break;
-        };
-        let start = rest.len() - word.len();
-        // `a.export`, `$declare`
-        if rest[..start]
-            .last()
-            .is_some_and(|&b| is_identifier_part(b) || b == b'.')
-        {
-            break;
-        }
-        // The last word of a comment.
-        let line = rest[..start]
-            .iter()
-            .rposition(|&b| matches!(b, b'\n' | b'\r'))
-            .map_or(0, |i| i + 1);
-        if rest[line..start].windows(2).any(|w| w == b"//") {
-            break;
-        }
-        first = Some(start);
-        before = &rest[..start];
-    }
-    first.map(|at| at as u32)
-}
-
 /// What the parser makes of an `await` that nothing says is a keyword, going by what follows it.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum AfterAwait {
@@ -503,7 +461,7 @@ impl Checker<'_> {
         let text: &[u8] = &hir.text;
         let mut misplaced_returns = Vec::new();
         for i in 0..hir.stmts.len() {
-            let Stmt { kind, pos } = hir.stmts[i];
+            let Stmt { kind, pos, .. } = hir.stmts[i];
             let is_looked_at = match kind {
                 StmtKind::Block(_)
                 | StmtKind::Return(_)
@@ -744,7 +702,13 @@ impl Checker<'_> {
         };
         let start = start_of_declaration_list(&hir.text, hir[s].pos);
         // `checkGrammarModifiers` refuses `export` and `declare`, whichever comes first, and then the list is not looked at.
-        if parses && let Some(modifier) = first_modifier(&hir.text, hir[s].pos) {
+        let modifier = hir[s].start;
+        if parses
+            && matches!(
+                word_at(&hir.text, modifier as usize),
+                b"export" | b"declare"
+            )
+        {
             out.retain(|d| {
                 !(d.start == start && matches!(d.code, 1545 | 1546)
                     || d.start == modifier && d.code == 1038)
@@ -1395,9 +1359,6 @@ impl Checker<'_> {
             }
             // `widenTypeForVariableLikeDeclaration`: an object literal may well have more than it takes.
             let source = self.regular_object(source);
-            if self.has_type_variables(source) && !self.is_in_generic_context(file, decl.init) {
-                continue;
-            }
             if !self.is_known(source) || self.is_assignable(source, target) {
                 continue;
             }
@@ -1567,12 +1528,8 @@ impl Checker<'_> {
         for (i, x) in hir.var_decls.iter().enumerate() {
             consider(hir[x.pat].pos, Parent::Stmt(bound.var_stmt[i]));
         }
-        // A member starts at its modifiers.
         for (i, x) in hir.members.iter().enumerate() {
-            consider(
-                super::errors_js::start_of_member(&hir.text, x),
-                Parent::MemberInit(MemberId(i as u32)),
-            );
+            consider(x.start, Parent::MemberInit(MemberId(i as u32)));
         }
         for (i, x) in hir.props.iter().enumerate() {
             consider(x.pos, Parent::Prop(PropId(i as u32)));

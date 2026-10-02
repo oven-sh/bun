@@ -415,6 +415,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     } else {
                         p.discard_scopes_up_to(scope_index);
+                        p.mark_type_syntax(class_keyword.loc, Mark::OtherExtends, start.loc);
+                        p.mark_type_syntax(start.loc, Mark::StrayDecorator, p.lexer.full_start());
                         if count == 1 && !stop_checking {
                             p.lexer.ts_grammar_error(start, 1174);
                             stop_checking = true;
@@ -1422,7 +1424,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.token.is_reserved_word() || p.lexer.token == T::TEscapedKeyword;
                 p.lexer
                     .ts_error(range, if is_reserved_word { 1359 } else { 1003 });
-                return Ok(None);
+                return Ok(Some(LocRef {
+                    loc: p.lexer.full_start(),
+                    ref_: p.store_name_in_ref(b""),
+                }));
             }
             // A private name is objected to, and taken for the name all the same.
             p.lexer.ts_error(range, 18016);
@@ -2685,6 +2690,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     continue;
                 }
+            }
+            if stmt.loc.start > stmt_start.start {
+                p.mark_type_syntax(stmt.loc, Mark::DeclarationStart, stmt_start);
             }
 
             let mut skip = matches!(stmt.data, js_ast::stmt::Data::SEmpty(_));

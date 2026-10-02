@@ -329,6 +329,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TDot {
             let dot_loc = p.lexer.loc();
             p.lexer.next()?;
+            p.mark_type_syntax(dot_loc, crate::sema::Mark::DeclarationStart, p.lexer.loc());
 
             let mut _opts = ParseStatementOptions {
                 is_export: true,
@@ -699,7 +700,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = p.parse_expr(Level::Lowest);
                 p.allow_in = old_allow_in;
                 // `["a"]` and `[1]` are names like `"a"` and `1`. Any other expression leaves the member without a name.
-                match name?.data {
+                let name = name?;
+                match name.data {
                     js_ast::ExprData::EString(string) if !string.is_utf16 => {
                         value.name = string.data
                     }
@@ -708,7 +710,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         value.name =
                             js_ast::StoreStr::new(p.arena.alloc_slice_copy(text.as_bytes()));
                     }
-                    _ => {}
+                    js_ast::ExprData::EString(_) => {}
+                    // `checkEnumMember` never looks at it.
+                    _ => {
+                        p.keep_expressions(value.loc, &[name]);
+                        let end = p.lexer.full_start();
+                        p.mark_type_syntax(name.loc, crate::sema::Mark::StrayDecorator, end);
+                    }
                 }
                 if p.lexer.token != T::TCloseBracket {
                     p.lexer.expect(T::TCloseBracket)?;

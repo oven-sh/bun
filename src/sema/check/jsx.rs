@@ -576,10 +576,7 @@ impl<'p> Checker<'p> {
         flush(self, &mut spread, &mut pending);
         // `getSpreadType(.., objectFlags, ..)`: what comes of spreading is still the attributes of an element.
         let attributes = match spread {
-            Some(ty) if has_spread => {
-                let ty = self.map_type(ty, |c, m| c.as_jsx_attributes(m));
-                self.jsx_attributes_in_order_of_declaration(file, j, ty)
-            }
+            Some(ty) if has_spread => self.map_type(ty, |c, m| c.as_jsx_attributes(m)),
             Some(ty) => ty,
             None => empty,
         };
@@ -590,79 +587,6 @@ impl<'p> Checker<'p> {
             not_spread.push(attributes);
         }
         self.intersection(&not_spread)
-    }
-
-    /// `getNamedMembers`: `ty`, what the attributes of `j` come to with something spread among them, with its properties by where the
-    /// first declaration of each is, those without one last. As it is where that cannot be told.
-    fn jsx_attributes_in_order_of_declaration(
-        &mut self,
-        file: FileId,
-        j: JsxId,
-        ty: TypeId,
-    ) -> TypeId {
-        let TypeData::Synth(shape) = self.data(ty) else {
-            return ty;
-        };
-        let hir = self.hir(file);
-        // `getSpreadType`: what comes later takes the place of what was there, unless it may be left out.
-        let mut places: Vec<(Atom, (bool, u32, u32))> = Vec::new();
-        for p in hir[j].attrs.iter() {
-            let attr = &hir[p];
-            if attr.kind != PropKind::Spread {
-                if let Some(name) = self.member_name(file, attr.key) {
-                    places.retain(|place| place.0 != name);
-                    places.push((name, (true, file.0, attr.pos)));
-                }
-                continue;
-            }
-            let spread = self.type_of_expr(file, attr.value);
-            let spread = self.reduced(spread);
-            if !self.is_valid_spread_type(spread) {
-                continue;
-            }
-            if self.is_union(spread) {
-                return ty;
-            }
-            let Some(members) = self.members(spread) else {
-                return ty;
-            };
-            for prop in &members.shape().props {
-                let is_there = places.iter().any(|place| place.0 == prop.name);
-                if !self.is_spreadable_property(prop)
-                    || is_there && prop.flags.contains(PropFlags::OPTIONAL)
-                {
-                    continue;
-                }
-                let Some((of, start, _)) = self.place_of_first_prop_declaration(prop) else {
-                    return ty;
-                };
-                places.retain(|place| place.0 != prop.name);
-                places.push((prop.name, (!self.files().module(of).is_lib, of.0, start)));
-            }
-        }
-        // What is made up for the children has no declaration.
-        if hir
-            .ids(hir[j].children)
-            .any(|child| !matches!(hir[child].kind, ExprKind::Missing))
-            && let JsxName::Name(name) = self.jsx_children_property_name(file)
-        {
-            places.retain(|place| place.0 != name);
-        }
-        let atoms = &self.files().atoms;
-        let key = |prop: &Prop| match places.iter().find(|place| place.0 == prop.name) {
-            Some(place) => (false, place.1),
-            None => (true, (false, 0, 0)),
-        };
-        let mut ordered = Shape::clone(shape);
-        ordered.props.sort_by(|a, b| {
-            key(a)
-                .cmp(&key(b))
-                .then_with(|| atoms.bytes(a.name).cmp(atoms.bytes(b.name)))
-        });
-        if ordered.props == shape.props {
-            return ty;
-        }
-        self.synth(ordered)
     }
 
     /// `ty`, which came of spreading into the attributes of an element, marked as the attributes of one.

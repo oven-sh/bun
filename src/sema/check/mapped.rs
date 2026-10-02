@@ -4,6 +4,16 @@ use super::relate::Relation;
 use super::*;
 use smallvec::SmallVec;
 
+/// `accessNode` of `getIndexedAccessTypeOrUndefined`, as far as the answer goes by what it is. `None`: an access that instantiation
+/// or a constraint produces. `ElementAccess`: `accessExpression != nil`. `Other`: a name in a pattern.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AccessNode {
+    None,
+    IndexedAccessType,
+    ElementAccess,
+    Other,
+}
+
 impl<'p> Checker<'p> {
     /// The pairs of `mapper`, and after them `ty` for `param`.
     fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
@@ -466,49 +476,18 @@ impl<'p> Checker<'p> {
         index: TypeId,
         undefined: bool,
     ) -> Option<TypeId> {
-        self.indexed_access_worker(obj, index, false, undefined, false)
+        self.indexed_access_worker(obj, index, AccessNode::None, undefined)
     }
 
-    /// The type of the expression `obj[index]` when it is read. Where there is no such property it is an error.
-    pub fn indexed_access_for_read(&mut self, obj: TypeId, index: TypeId) -> TypeId {
-        if let Some(ty) = self.indexed_access_if_any(obj, index, true) {
-            return ty;
-        }
-        self.read_of_object_literal(obj, index)
-            .unwrap_or(TypeId::UNRESOLVED)
-    }
-
-    /// `getPropertyTypeForIndexType`, for `obj[index]` the expression: an object literal that is read on the spot has what is
-    /// written and nothing else.
-    fn read_of_object_literal(&mut self, obj: TypeId, index: TypeId) -> Option<TypeId> {
-        let (obj, index) = (self.force(obj), self.force(index));
-        if !self.is_object_literal_type(obj) {
-            return None;
-        }
-        let members = self.members(obj)?;
-        let mut types = Vec::new();
-        for &key in self.parts(index) {
-            if let Some(ty) = self.indexed_access_if_any(obj, key, true) {
-                types.push(ty);
-            } else if self.p.files.options.no_implicit_any
-                && matches!(
-                    self.data(key),
-                    TypeData::StringLit { .. }
-                        | TypeData::NumberLit { .. }
-                        | TypeData::EnumLit { .. }
-                )
-            {
-                types.push(self.undefined_as_declared());
-            } else if key == TypeId::STRING || key == TypeId::NUMBER {
-                for prop in &members.shape().props {
-                    types.push(self.type_of_prop(prop, members.mapper));
-                }
-                types.push(self.undefined_as_declared());
-            } else {
-                return None;
-            }
-        }
-        Some(self.union(&types))
+    /// `None`: the expression `obj[index]` finds nothing. `is_read`: `AccessFlagsExpressionPosition`.
+    pub(super) fn indexed_access_of_element_access(
+        &mut self,
+        obj: TypeId,
+        index: TypeId,
+        is_read: bool,
+    ) -> Option<TypeId> {
+        let include_undefined = is_read && self.p.files.options.no_unchecked_indexed_access;
+        self.indexed_access_worker(obj, index, AccessNode::ElementAccess, include_undefined)
     }
 
     /// `None`: `obj` has nothing under `index`, or under a member of the union that is.
@@ -520,18 +499,21 @@ impl<'p> Checker<'p> {
         is_expression: bool,
     ) -> Option<TypeId> {
         let include_undefined = is_expression && self.p.files.options.no_unchecked_indexed_access;
-        self.indexed_access_worker(obj, index, is_expression, include_undefined, true)
+        let access_node = if is_expression {
+            AccessNode::Other
+        } else {
+            AccessNode::IndexedAccessType
+        };
+        self.indexed_access_worker(obj, index, access_node, include_undefined)
     }
 
-    /// `getIndexedAccessTypeOrUndefined`. `include_undefined`: what an index signature gives may be missing. `has_access_node` is
-    /// `accessNode != nil`: false for an access that instantiation or a constraint produces.
+    /// `getIndexedAccessTypeOrUndefined`. `include_undefined`: what an index signature gives may be missing.
     fn indexed_access_worker(
         &mut self,
         obj: TypeId,
         index: TypeId,
-        is_expression: bool,
+        access_node: AccessNode,
         include_undefined: bool,
-        has_access_node: bool,
     ) -> Option<TypeId> {
         let (obj, index) = (self.force(obj), self.force(index));
         if obj == TypeId::UNRESOLVED || index == TypeId::UNRESOLVED {
@@ -540,6 +522,8 @@ impl<'p> Checker<'p> {
         // `getReducedType`: an intersection nothing can be is not there.
         let obj = self.reduced(obj);
         let index = self.key_into_string_index_only(obj, index);
+        // `accessNode != nil && !ast.IsIndexedAccessTypeNode(accessNode)`
+        let is_expression = matches!(access_node, AccessNode::ElementAccess | AccessNode::Other);
         if self.is_generic(index) || self.defers_access(obj, index, is_expression) {
             if self.has_any_flag(obj) || obj == TypeId::UNKNOWN {
                 return Some(obj);
@@ -550,9 +534,6 @@ impl<'p> Checker<'p> {
                 undefined: include_undefined,
             }));
         }
-        if self.has_any_flag(obj) || obj == TypeId::NEVER {
-            return Some(obj);
-        }
         if let TypeData::Union(keys) = self.data(index) {
             let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(keys.len());
             for &key in keys.iter() {
@@ -560,12 +541,12 @@ impl<'p> Checker<'p> {
                     obj,
                     key,
                     include_undefined,
-                    has_access_node,
+                    access_node,
                 )?);
             }
             return Some(self.union(&types));
         }
-        self.property_type_for_index(obj, index, include_undefined, has_access_node)
+        self.property_type_for_index(obj, index, include_undefined, access_node)
     }
 
     /// The start of `getIndexedAccessTypeOrUndefined`: where `obj`, reduced, has a string index signature and nothing else, it is
@@ -759,31 +740,70 @@ impl<'p> Checker<'p> {
         obj: TypeId,
         index: TypeId,
         include_undefined: bool,
-        has_access_node: bool,
+        access_node: AccessNode,
+    ) -> Option<TypeId> {
+        let found = self.type_found_for_index(obj, index, include_undefined, access_node);
+        if found.is_some() {
+            return found;
+        }
+        if self.is_js_literal_type(obj) {
+            return Some(TypeId::ANY);
+        }
+        if access_node != AccessNode::ElementAccess {
+            return self.has_any_flag(index).then_some(index);
+        }
+        // nil, but for an object literal that is read on the spot: it has what is written and nothing else.
+        if !self.is_object_literal_type(obj) {
+            return None;
+        }
+        if index == TypeId::STRING || index == TypeId::NUMBER {
+            let members = self.members(obj)?;
+            let mut types = vec![self.undefined_as_declared()];
+            for prop in &members.shape().props {
+                types.push(self.type_of_prop(prop, members.mapper));
+            }
+            return Some(self.union(&types));
+        }
+        let is_literal = matches!(
+            self.data(index),
+            TypeData::StringLit { .. } | TypeData::NumberLit { .. } | TypeData::EnumLit { .. }
+        );
+        (is_literal && self.p.files.options.no_implicit_any).then(|| self.undefined_as_declared())
+    }
+
+    /// `indexType.flags&TypeFlagsNullable == 0 && isTypeAssignableToKind(indexType, StringLike|NumberLike|ESSymbolLike)`: each
+    /// kind by itself.
+    pub(super) fn is_key_like(&mut self, index: TypeId) -> bool {
+        !self.is_nullish(index)
+            && [TypeId::NUMBER, TypeId::STRING, TypeId::SYMBOL]
+                .into_iter()
+                .any(|kind| self.is_assignable(index, kind))
+    }
+
+    /// `getPropertyTypeForIndexType` as far as it finds something: a property, an element of a tuple, an index signature.
+    fn type_found_for_index(
+        &mut self,
+        obj: TypeId,
+        index: TypeId,
+        include_undefined: bool,
+        access_node: AccessNode,
     ) -> Option<TypeId> {
         let name = self.property_name_of_type(index);
-        if let TypeData::Union(parts) = self.data(obj) {
-            return self.property_type_of_union_for_index(
-                parts,
-                index,
-                name,
-                include_undefined,
-                has_access_node,
-            );
-        }
         // `getReducedApparentType`
         let apparent = self.apparent_type(obj);
         let apparent = self.reduced(apparent);
+        // `any` and `never` have whatever can be a key at all.
         if self.is_any(apparent) || apparent == TypeId::NEVER {
-            return Some(apparent);
+            let has = apparent == TypeId::UNRESOLVED || self.is_key_like(index);
+            return has.then_some(apparent);
         }
-        if let TypeData::Union(parts) = self.data(apparent) {
+        if self.is_union(apparent) {
             return self.property_type_of_union_for_index(
-                parts,
+                apparent,
                 index,
                 name,
                 include_undefined,
-                has_access_node,
+                access_node,
             );
         }
         if let Some(name) = name
@@ -804,7 +824,8 @@ impl<'p> Checker<'p> {
                 });
             }
             // Without a rest element, an index past the end gives `undefinedType`. So does a negative index that is written (2514).
-            if variable == flags.len() && (at >= 0.0 || at < 0.0 && has_access_node) {
+            if variable == flags.len() && (at >= 0.0 || at < 0.0 && access_node != AccessNode::None)
+            {
                 return Some(self.undefined_as_declared());
             }
             // `getTupleElementTypeOutOfStartCount`: past the fixed start it is any of what follows. What is below zero goes by
@@ -838,44 +859,14 @@ impl<'p> Checker<'p> {
     /// (`createUnionOrIntersectionProperty`), and the index signatures that all members have (`getUnionIndexInfos`).
     fn property_type_of_union_for_index(
         &mut self,
-        parts: &[TypeId],
+        union: TypeId,
         index: TypeId,
         name: Option<Atom>,
         include_undefined: bool,
-        has_access_node: bool,
+        access_node: AccessNode,
     ) -> Option<TypeId> {
-        let mut is_property = false;
-        if let Some(name) = name {
-            let mut is_restricted = false;
-            for &part in parts {
-                let apparent = self.apparent_type(part);
-                let Some(members) = self.members(apparent) else {
-                    continue;
-                };
-                match members.resolved.prop(name) {
-                    Some(prop) => {
-                        is_property = true;
-                        is_restricted |= match &prop.source {
-                            PropSource::Intersected(_, props) => props.iter().any(|p| {
-                                p.flags
-                                    .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
-                            }),
-                            _ => prop
-                                .flags
-                                .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED),
-                        };
-                    }
-                    None if !is_property => {
-                        is_property = self.property_of_type(&members, name).is_some()
-                    }
-                    None => {}
-                }
-            }
-            // Private or protected in one member, missing or declared elsewhere in another: not there.
-            if is_restricted && self.is_hidden_in_union(parts, name) {
-                is_property = false;
-            }
-        }
+        let parts = self.parts(union);
+        let is_property = name.is_some_and(|name| self.has_property_of_type(union, name));
         // A number that is no property of tuples: of each, what follows its fixed start.
         let is_past_tuples = !is_property
             && name.is_some_and(|name| self.is_numeric_name(name))
@@ -884,11 +875,11 @@ impl<'p> Checker<'p> {
             let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(parts.len());
             for &part in parts {
                 // What stands in for a property is there.
-                match self.property_type_for_index(
+                match self.type_found_for_index(
                     part,
                     index,
                     include_undefined && !is_property,
-                    has_access_node,
+                    access_node,
                 ) {
                     Some(ty) => types.push(ty),
                     // An object literal that does not mention what another has does not have it.
@@ -941,7 +932,7 @@ impl<'p> Checker<'p> {
         infos
     }
 
-    /// The end of `getPropertyTypeForIndexType`: `index` names no property of `obj`, whose `members` are given.
+    /// What an index signature of `obj`, whose `members` are given, has for `index`, which names no property of it.
     fn index_signature_type(
         &mut self,
         obj: TypeId,
@@ -965,7 +956,7 @@ impl<'p> Checker<'p> {
             );
             return Some(self.or_missing(value, include_undefined && !is_own_member));
         }
-        (index == TypeId::NEVER || self.has_any_flag(index)).then_some(index)
+        (index == TypeId::NEVER).then_some(index)
     }
 
     // ───────────────────────────── conditional types ─────────────────────────────
@@ -1955,6 +1946,35 @@ impl<'p> Checker<'p> {
         any.then(|| self.intersection(&types))
     }
 
+    /// `syntheticOrigin` (`addMemberForKeyTypeWorker`): the property of the modifiers type that the property `name` of the mapped type
+    /// `of` has its `Declarations` from. `None`: there is none, or an `as` clause renames (`MappedTypeNameTypeKindRemapping`).
+    pub(super) fn synthetic_origin_of_mapped_property(
+        &mut self,
+        of: TypeId,
+        name: Atom,
+    ) -> Option<Prop> {
+        let (file, node, mapper) = self.mapped_origin(of)?;
+        if self.hir(file)[self.mapped_decl(file, node).param]
+            .constraint
+            .is_none()
+        {
+            return None;
+        }
+        if let Some(renamed) = self.mapped_name_type(of) {
+            let key = self.mapped_type_param(of);
+            if !self.is_assignable(renamed, key) {
+                return None;
+            }
+        }
+        let (declared, _) = self.mapped_modifiers_source(file, node)?;
+        let modifiers = self.instantiate(declared, mapper);
+        // `getPropertyOfType`: `getReducedApparentType`
+        let modifiers = self.reduced(modifiers);
+        let modifiers = self.apparent_type(modifiers);
+        let modifiers = self.reduced(modifiers);
+        self.prop_of(modifiers, name).map(|found| found.0)
+    }
+
     /// What can be said of a value of the union `ty` without knowing which member it is: the properties all of them have,
     /// by name or by index signature (`getPropertiesOfUnionOrIntersectionType`), and the index signatures all of them have.
     pub fn union_as_object(&mut self, ty: TypeId) -> TypeId {
@@ -1974,8 +1994,7 @@ impl<'p> Checker<'p> {
                 };
                 // `createUnionOrIntersectionProperty`: it can be left out, can only be read or is not public if it is so in some member.
                 let mut flags = PropFlags::empty();
-                // Of a name that reads as a number: the properties that go by it, and who has the first.
-                let is_numeric = self.is_numeric_name(prop.name);
+                // `propSet`: the properties that go by the name, and who has the first.
                 let mut all: Vec<Prop> = Vec::new();
                 let mut first_owner = apparent;
                 for &other in parts {
@@ -1990,10 +2009,10 @@ impl<'p> Checker<'p> {
                                     | PropFlags::READONLY
                                     | PropFlags::PRIVATE
                                     | PropFlags::PROTECTED);
-                            if is_numeric {
-                                if all.is_empty() {
-                                    first_owner = other;
-                                }
+                            if all.is_empty() {
+                                first_owner = other;
+                            }
+                            if !all.iter().any(|known| known.source == p.source) {
                                 all.push(p);
                             }
                         }
@@ -2009,16 +2028,20 @@ impl<'p> Checker<'p> {
                     }
                 }
                 if !all.is_empty()
+                    && self.is_numeric_name(prop.name)
                     && self
                         .key_type_of_props(first_owner, &all)
                         .is_some_and(|key| self.is_string_like(key))
                 {
                     flags |= PropFlags::STRING_NAME;
                 }
+                // `hasNonUniformValueDeclaration`
+                let first = all.first().and_then(Self::value_declaration);
+                let is_uniform = all.iter().all(|p| Self::value_declaration(p) == first);
                 shape.props.push(Prop {
                     name: prop.name,
                     flags,
-                    source: PropSource::Type(value),
+                    source: Self::copy_of(value, &all.iter().collect::<Vec<_>>(), is_uniform),
                     mapper: MapperId::IDENTITY,
                 });
             }
@@ -2100,16 +2123,6 @@ impl<'p> Checker<'p> {
         (keys, modifiers)
     }
 
-    /// `maybeTypeOfKind(ty, TypeFlagsUndefined | TypeFlagsVoid)`
-    fn may_be_undefined_or_void(&self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&p| self.may_be_undefined_or_void(p))
-            }
-            _ => ty.is_undefined() || ty == TypeId::VOID,
-        }
-    }
-
     /// `getTypeOfMappedSymbol`: what a property of a mapped type holds, `ty` being what the template comes to for it.
     /// `strips`: `-?` makes it a property that cannot be left out of one that could (`CheckFlagsStripOptional`).
     fn mapped_property_type(
@@ -2123,7 +2136,8 @@ impl<'p> Checker<'p> {
             // `getTemplateTypeFromMappedType` has it in the template as declared, whatever comes of that.
             self.optional_property(ty)
         } else if optional {
-            if self.may_be_undefined_or_void(ty) {
+            // `maybeTypeOfKind(ty, TypeFlagsUndefined | TypeFlagsVoid)`
+            if self.maybe_type_of_kind(ty, |_, t| t.is_undefined() || t == TypeId::VOID) {
                 ty
             } else {
                 self.optional_property(ty)

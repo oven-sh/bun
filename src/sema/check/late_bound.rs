@@ -16,9 +16,16 @@ pub(super) enum MemberContainer {
     ObjectLiteral(FileId, ExprId),
 }
 
-/// `symbol.Declarations` of each symbol with `CheckFlagsLate` of one side of a container, after `combineSymbolTables`: those of the
-/// early bound symbol of that name come first, if the two go together. `None`: no name is worked out there.
-pub(super) type LateBoundMembers = Option<Arc<[Vec<(FileId, MemberDeclaration)>]>>;
+/// The symbols with `CheckFlagsLate` of one side of a container, after `combineSymbolTables`.
+pub(super) struct LateBoundSymbols {
+    /// `symbol.Declarations` of each: those of the early bound symbol of that name come first, if the two go together.
+    declarations: Vec<Vec<(FileId, MemberDeclaration)>>,
+    /// Which of them a declaration is a declaration of.
+    symbol_of: FxHashMap<(FileId, MemberDeclaration), u32>,
+}
+
+/// `None`: no name is worked out there.
+pub(super) type LateBoundMembers = Option<Arc<LateBoundSymbols>>;
 
 impl<'p> Checker<'p> {
     /// `getLateBoundSymbol(getMergedSymbol(declaration.Symbol)).Declarations`
@@ -30,12 +37,11 @@ impl<'p> Checker<'p> {
         let late = self
             .container_of_member(file, declaration)
             .and_then(|(container, is_static)| self.late_bound_members(container, is_static));
-        let late = late.as_ref().and_then(|late| {
-            late.iter()
-                .find(|symbol| symbol.contains(&(file, declaration)))
-        });
-        match late {
-            Some(declarations) => List::Own(declarations.clone()),
+        match late
+            .as_ref()
+            .and_then(|late| Some((late, *late.symbol_of.get(&(file, declaration))?)))
+        {
+            Some((late, symbol)) => List::Own(late.declarations[symbol as usize].clone()),
             None => self.files().declarations_of_member(file, declaration),
         }
     }
@@ -77,10 +83,7 @@ impl<'p> Checker<'p> {
                 }
             }
             MemberDeclaration::Assignment(assignment) => {
-                let &(it, is_static, ..) = bound
-                    .this_properties
-                    .iter()
-                    .find(|property| property.3 == assignment)?;
+                let (it, is_static, _) = bound.this_property(hir, assignment)?;
                 (MemberContainer::Symbol(class(it)), is_static)
             }
             MemberDeclaration::Property(property) => {
@@ -229,8 +232,20 @@ impl<'p> Checker<'p> {
                 symbol.1.splice(0..0, early.iter().copied());
             }
         }
-        let late: LateBoundMembers =
-            (!late.is_empty()).then(|| late.into_iter().map(|symbol| symbol.1).collect());
+        let late: LateBoundMembers = (!late.is_empty()).then(|| {
+            let declarations: Vec<_> = late.into_iter().map(|symbol| symbol.1).collect();
+            let symbol_of = declarations
+                .iter()
+                .zip(0..)
+                .flat_map(|(symbol, index)| {
+                    symbol.iter().map(move |&declaration| (declaration, index))
+                })
+                .collect();
+            Arc::new(LateBoundSymbols {
+                declarations,
+                symbol_of,
+            })
+        });
         self.late_bound_members
             .insert((container, is_static), late.clone());
         late

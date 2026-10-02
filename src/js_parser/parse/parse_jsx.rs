@@ -487,6 +487,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if belongs_to_parent {
                             close_tag_loc = loc;
                             p.jsx_adopted_close = Some(end_tag);
+                            p.mark_type_syntax(
+                                loc,
+                                crate::sema::Mark::JsxClosingMissed,
+                                less_than_loc,
+                            );
                         } else {
                             p.mark_closing_tag(loc, end_tag.data.as_expr());
                         }
@@ -551,6 +556,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && !p.lexer.is_log_disabled
                     {
                         Self::report_unclosed_jsx_element(p, loc, &tag, parent_tag.is_some());
+                        p.mark_type_syntax(loc, crate::sema::Mark::JsxClosingMissed, p.lexer.loc());
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {
@@ -575,6 +581,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let at = p.lexer.loc();
                         let marker = p.lexer.range();
                         p.lexer.ts_expected(marker, "</");
+                        p.mark_type_syntax(loc, crate::sema::Mark::JsxClosingMissed, at);
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {

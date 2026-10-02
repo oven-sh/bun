@@ -798,7 +798,7 @@ impl<'p> Checker<'p> {
 
     /// `getErrorRangeForNode` of `symbol.Declarations[0]` of the type parameter `tp` of `file`: all of the declaration, from `const`,
     /// `in` or `out` on.
-    fn place_of_type_parameter_declaration(
+    pub(super) fn place_of_type_parameter_declaration(
         &self,
         file: FileId,
         tp: TypeParamId,
@@ -1207,7 +1207,7 @@ impl<'p> Checker<'p> {
                     *file == of && self.bound(of).prop_owner[p.idx()] == e
                 }
                 (PropSource::Literal(..), None) => true,
-                (PropSource::Type(_), None) => {
+                (PropSource::Type(_) | PropSource::Copy(..), None) => {
                     is_fresh_partial
                         || is_jsx
                             && prop.flags.contains(PropFlags::JSX_CHILDREN)
@@ -2662,11 +2662,7 @@ impl<'p> Checker<'p> {
             let (source_type, target_type) = self.type_names_for_error_display(source, target);
             let name = self.prop_to_string(only);
             x.report(2741, vec![name.clone(), source_type, target_type]);
-            let place = match only.source {
-                PropSource::Type(_) => self.place_of_copied_prop(target, only.name, 0),
-                _ => self.place_of_first_prop_declaration(only),
-            };
-            if let Some(place) = place {
+            if let Some(place) = self.place_of_first_prop_declaration(only) {
                 x.related.push(self.declared_here(place, name));
             }
         } else if self.try_elaborate_array_like_errors(x, source, target, false) {

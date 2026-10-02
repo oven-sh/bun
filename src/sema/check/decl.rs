@@ -1090,104 +1090,6 @@ impl<'p> Checker<'p> {
         self.p.types.mapper(pairs)
     }
 
-    /// `isErrorType`, of the `any` that comes of `node`, told by what is written like `may_be_error_type`; in doubt it is not.
-    pub(super) fn is_error_type_as_written(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-        depth: u32,
-    ) -> bool {
-        if node.is_none() || depth > 8 {
-            return false;
-        }
-        let hir = self.hir(file);
-        match hir[node].kind {
-            // `addTypeToUnion`, `addTypeToIntersection`: `TypeFlagsIncludesError`
-            TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
-                let types: Vec<TypeNodeId> = hir.ids(types).collect();
-                self.any_is_error_type_as_written(file, &types, depth + 1)
-            }
-            // `getPropertyTypeForIndexType`: whatever is looked up in `any` is that `any`.
-            TypeNodeKind::IndexedAccess { obj, .. } => {
-                self.any_is_error_type_as_written(file, &[obj], depth + 1)
-            }
-            TypeNodeKind::Typeof { expr, .. } => {
-                expr.is_some()
-                    && matches!(hir[expr].kind, ExprKind::Ident(name)
-                        if self.symbol_of_identifier(file, expr, name).is_some_and(|sym| self.is_alias_in_error(sym)))
-            }
-            TypeNodeKind::Import { spec, mode, .. } => {
-                let mode = self.files().mode_of_import(file, mode);
-                self.files()
-                    .module_of_specifier_as(file, spec, mode)
-                    .is_none()
-            }
-            TypeNodeKind::Ref { name, args } => {
-                if self.intended_type_of_jsdoc_reference(file, node).is_some() {
-                    return false;
-                }
-                let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
-                let scope = self.bound(file).type_scope[node.idx()];
-                let Some(sym) = self
-                    .files()
-                    .resolve_entity(file, scope, &names, SymFlags::TYPE)
-                    .and_then(|found| self.files().resolve_alias_as(found, SymFlags::TYPE))
-                else {
-                    return true;
-                };
-                // Nothing but an alias can stand for `any`: of anything else `any` is the sign of an error.
-                if !self
-                    .type_flags_of_symbol(sym)
-                    .contains(SymFlags::TYPE_ALIAS)
-                {
-                    return {
-                        let ty = self.type_from_node(file, node);
-                        self.has_any_flag(ty)
-                    };
-                }
-                let (least, most) = self.type_argument_arity(sym);
-                if args.len() < least || args.len() > most {
-                    return true;
-                }
-                // The nodes of its body are being resolved.
-                if self.stack.contains(&Query::Declared(sym)) {
-                    return false;
-                }
-                let Some((of, alias)) = self.alias_declaration(sym) else {
-                    return false;
-                };
-                let alias = &self.hir(of)[alias];
-                let given: Vec<TypeNodeId> = hir.ids(args).collect();
-                // What is not given is what the alias says it is then.
-                let defaults: Vec<TypeNodeId> = alias
-                    .type_params
-                    .iter()
-                    .skip(given.len())
-                    .map(|p| self.hir(of)[p].default)
-                    .collect();
-                self.any_is_error_type_as_written(file, &given, depth + 1)
-                    || self.any_is_error_type_as_written(of, &defaults, depth + 1)
-                    || self.is_error_type_as_written(of, alias.ty, depth + 1)
-            }
-            _ => false,
-        }
-    }
-
-    /// The same of what is made of `nodes`: those that come to `any` themselves are where it has it from.
-    fn any_is_error_type_as_written(
-        &mut self,
-        file: FileId,
-        nodes: &[TypeNodeId],
-        depth: u32,
-    ) -> bool {
-        nodes.iter().any(|&t| {
-            ({
-                let ty = self.type_from_node(file, t);
-                self.has_any_flag(ty)
-            }) && self.is_error_type_as_written(file, t, depth)
-        })
-    }
-
     /// `getInferredTypeParameterConstraint`: what follows for `infer T` from where it is written.
     #[inline(never)]
     fn inferred_type_param_constraint(
@@ -1670,6 +1572,11 @@ impl<'p> Checker<'p> {
     pub fn enum_member_type(&mut self, member: Sym) -> TypeId {
         for (file, decl) in declarations_of(self.files(), member) {
             if let Decl::EnumMember(m) = decl {
+                // `getDeclaredTypeOfEnum` passes over a member without a bindable name (`hasBindableName`), which is left with the
+                // type of the enum.
+                if self.hir(file)[m].name.is_none() {
+                    return self.enum_type_of_member(member);
+                }
                 // `createComputedEnumType`: what has no value is a type of its own.
                 let Some(value) = self.enum_member_value(file, m) else {
                     return self.intern(TypeData::Enum {
@@ -1911,7 +1818,14 @@ impl<'p> Checker<'p> {
     ) -> Option<Sym> {
         let hir = self.hir(file);
         let found = match hir[e].kind {
-            ExprKind::Ident(name) => self.symbol_of_identifier(file, e, name)?,
+            // `resolveName(e, name, meaning)`. The binder has what an identifier means as a value.
+            ExprKind::Ident(name) if meaning == SymFlags::VALUE => {
+                self.symbol_of_identifier(file, e, name)?
+            }
+            ExprKind::Ident(name) => {
+                let scope = self.enclosing_scope_of_expr(file, e);
+                self.files().resolve_name(file, scope, name, meaning)?
+            }
             ExprKind::Dot { obj, name, .. } if !is_parenthesized(hir, obj) => {
                 let namespace =
                     self.resolve_entity_name_expression(file, obj, SymFlags::NAMESPACE)?;
@@ -2242,7 +2156,6 @@ impl<'p> Checker<'p> {
                 // Without one, in an instantiation, it is `unknown`.
                 if self.is_known(obj)
                     && self.is_known(index)
-                    && !self.is_any(obj)
                     && index != TypeId::NEVER
                     && !self.is_generic(obj)
                     && !self.is_generic(index)
@@ -3628,11 +3541,11 @@ impl<'p> Checker<'p> {
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
         };
-        let this_ty = self.hir(file)[func].this_ty;
-        if this_ty.is_none() {
+        let f = &self.hir(file)[func];
+        if f.this_ty.is_none() && f.this_pos == u32::MAX {
             return None;
         }
-        let declared = self.type_from_node(file, this_ty);
+        let declared = self.type_of_this_parameter(file, func);
         Some(self.instantiate(declared, mapper))
     }
 

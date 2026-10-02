@@ -18,24 +18,6 @@ fn starts_with_word(hir: &hir::File, s: StmtId, word: &[u8]) -> bool {
         .is_some_and(|text| text.starts_with(word))
 }
 
-/// Where the statement `s` starts. A class starts with what decorates it.
-fn start_of_statement(hir: &hir::File, s: StmtId) -> u32 {
-    let pos = hir[s].pos;
-    if let StmtKind::Class(c) = hir[s].kind
-        && let Some(&(_, first)) = hir
-            .decorators
-            .iter()
-            .find(|d| d.0 == DecoratorOwner::Class(c))
-        && let Some(at) = hir
-            .text
-            .get(..hir[first].pos as usize)
-            .and_then(|before| before.iter().rposition(|&b| b == b'@'))
-    {
-        return pos.min(at as u32);
-    }
-    pos
-}
-
 /// Where the return type `node` starts as it is written. Neither the parentheses around a type are kept nor a `|` or a `&` before
 /// its only member, nor the `!` of a JSDocNonNullableType; what comes before a return type is a `:`, which none of these can be
 /// mistaken for.
@@ -48,26 +30,6 @@ fn start_of_return_type(hir: &hir::File, node: TypeNodeId) -> u32 {
             return at as u32;
         }
         at = before - 1;
-    }
-}
-
-/// Where the constructor `m` starts: at the first of the modifiers before the keyword. `GetErrorRangeForNode`
-fn start_of_constructor(hir: &hir::File, m: MemberId) -> u32 {
-    const MODIFIERS: [(&[u8], Flags); 3] = [
-        (b"public", Flags::PUBLIC),
-        (b"private", Flags::PRIVATE),
-        (b"protected", Flags::PROTECTED),
-    ];
-    let mut at = (hir[m].pos as usize).min(hir.text.len());
-    loop {
-        let before = hir.text[..at].trim_ascii_end();
-        match MODIFIERS
-            .iter()
-            .find(|(word, flag)| hir[m].flags.contains(*flag) && before.ends_with(word))
-        {
-            Some((word, _)) => at = before.len() - word.len(),
-            None => return at as u32,
-        }
     }
 }
 
@@ -312,7 +274,7 @@ impl Checker<'_> {
                 && self.is_source_element_unreachable(file, s)
             {
                 if !std::mem::replace(&mut in_run, true) {
-                    run_start = start_of_statement(hir, s);
+                    run_start = hir[s].start;
                     out.push(Diagnostic {
                         start: run_start,
                         code: 7027,
@@ -343,7 +305,7 @@ impl Checker<'_> {
             if c.is_potentially_executable(file, inner)
                 && c.is_source_element_unreachable(file, inner)
             {
-                let start = start_of_statement(c.hir(file), inner);
+                let start = c.hir(file)[inner].start;
                 out.push(Diagnostic { start, code: 7027 });
                 let end = c.end_of_stmt(file, inner);
                 c.explain_to(start, end, 7027, |_| vec![]);
@@ -421,12 +383,7 @@ impl Checker<'_> {
 
     /// `maybeTypeOfKind(t, TypeFlagsVoid)`
     fn maybe_void(&self, t: TypeId) -> bool {
-        match self.data(t) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&part| self.maybe_void(part))
-            }
-            _ => t == TypeId::VOID,
-        }
+        self.maybe_type_of_kind(t, |_, t| t == TypeId::VOID)
     }
 
     /// Where an error about the function `func` as a whole goes: at its name, or else at the name of what it is given to.
@@ -896,7 +853,9 @@ impl Checker<'_> {
             let MemberOwner::Class(c) = bound.member_owner[m.idx()] else {
                 continue;
             };
-            if hir[c].extends.is_none() || matches!(hir[hir[c].extends].kind, ExprKind::Null) {
+            if hir[c].extends.is_none()
+                || self.class_declaration_extends_null(self.class_sym(file, c))
+            {
                 continue;
             }
             if starts_anew
@@ -1191,8 +1150,10 @@ impl Checker<'_> {
             if hir[class].extends.is_none() {
                 out.push(Diagnostic { start, code: 2335 });
             } else if in_parameters
-                && !matches!(hir[hir[class].extends].kind, ExprKind::Null)
                 && matches!(container, Ok((Some(f), _)) if hir[f].kind == FnKind::Constructor)
+                // `checkSuperExpression` returns first: `classDeclarationExtendsNull`, `baseClassType == nil`.
+                && !self.class_declaration_extends_null(self.class_sym(file, class))
+                && !self.base_types(self.class_sym(file, class)).is_empty()
             {
                 out.push(Diagnostic { start, code: 2336 });
             }
@@ -1210,7 +1171,7 @@ impl Checker<'_> {
             if hir[c].extends.is_none() {
                 continue;
             }
-            let extends_null = matches!(hir[hir[c].extends].kind, ExprKind::Null);
+            let extends_null = self.class_declaration_extends_null(self.class_sym(file, c));
             match calling.iter().filter(|x| x.0.idx() == f).map(|x| x.1).min() {
                 Some(first) if extends_null => {
                     out.push(Diagnostic {
@@ -1225,7 +1186,7 @@ impl Checker<'_> {
                     }
                 }
                 None if !extends_null => {
-                    let start = start_of_constructor(hir, m);
+                    let start = hir[m].start;
                     out.push(Diagnostic { start, code: 2377 });
                     // Up to the end of the keyword.
                     let end = self.end_of_name_at(file, hir[m].pos);

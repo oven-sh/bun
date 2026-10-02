@@ -334,14 +334,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         args.push(arg);
                     }
                 } else {
+                    let this_loc = p.lexer.loc();
+                    p.mark_type_syntax(func.open_parens_loc, Mark::ThisParameter, this_loc);
                     p.lexer.next()?;
                     if p.lexer.token == T::TColon {
                         p.lexer.next()?;
-                        p.mark_type_syntax(
-                            func.open_parens_loc,
-                            Mark::ThisParameter,
-                            p.lexer.loc(),
-                        );
+                        p.mark_type_syntax(this_loc, Mark::Annotation, p.lexer.loc());
                         p.skip_type_script_type(Level::Lowest)?;
                     }
                 }
@@ -708,13 +706,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let loc = p.lexer.loc();
         p.lexer.next()?;
+        if is_first {
+            p.mark_type_syntax(open_parens_loc, Mark::ThisParameter, loc);
+        }
         if p.lexer.token == T::TColon {
             p.lexer.next()?;
-            if is_first {
-                p.mark_type_syntax(open_parens_loc, Mark::ThisParameter, p.lexer.loc());
-            } else {
-                p.mark_type_syntax(loc, Mark::Annotation, p.lexer.loc());
-            }
+            p.mark_type_syntax(loc, Mark::Annotation, p.lexer.loc());
             p.skip_type_script_type(Level::Lowest)?;
         }
         if let Some(start) = first_modifier {

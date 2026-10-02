@@ -329,7 +329,13 @@ declare module "bun" {
       /**
        * Whether to use TLS/SSL for the connection. A string selects the
        * SSL mode (`"disable"`, `"allow"`, `"prefer"`, `"require"`, `"verify-ca"`, `"verify-full"`).
+       * A `BunFile` is the CA certificate to verify the server against, the
+       * same as `{ ca: Bun.file(path) }`, and selects `"verify-full"`.
        * @default false
+       * @example
+       * ```ts
+       * const sql = new SQL(url, { tls: Bun.file("./rds-ca-bundle.pem") });
+       * ```
        */
       tls?:
         | Bun.BunFile

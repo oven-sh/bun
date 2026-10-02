@@ -417,6 +417,13 @@ impl PendingSystemError {
 /// `needs_deref` releases the ref the now-detached native socket held. The idle
 /// teardown is gated on the socket still holding the `Handlers` we entered with:
 /// `onConnectError` can reconnect, and we must not tear that connection down.
+/// The ref `connect_finish` took for the native socket.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NativeSocketRef {
+    Held,
+    Released,
+}
+
 struct ConnectErrorTeardown<const SSL: bool> {
     socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
     entered: Rc<Handlers>,
@@ -427,7 +434,7 @@ impl<const SSL: bool> Drop for ConnectErrorTeardown<SSL> {
     fn drop(&mut self) {
         let this = self.socket;
         // `deref` before `mark_inactive`, as the hand-rolled guard did. It
-        // cannot free the socket here: `handle_connect_error`'s `_guard`
+        // cannot free the socket here: `connect_failed`'s `_guard`
         // is declared before this guard, so it outlives it.
         if self.needs_deref {
             this.get().deref();
@@ -1124,6 +1131,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
         dns_error: i32,
     ) -> JsResult<()> {
+        let native_ref = if this.socket.get().is_detached() {
+            NativeSocketRef::Released
+        } else {
+            NativeSocketRef::Held
+        };
+        Self::connect_failed(this, errno, dns_error, native_ref)
+    }
+
+    fn connect_failed(
+        this: bun_ptr::ThisPtr<Self>,
+        errno: c_int,
+        dns_error: i32,
+        native_ref: NativeSocketRef,
+    ) -> JsResult<()> {
         let handlers = this.get_handlers();
         log!(
             "onConnectError {} ({}, {})",
@@ -1142,7 +1163,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
 
-        let needs_deref = !this.socket.get().is_detached();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
         let vm = handlers.vm;
@@ -1160,10 +1180,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         let cleanup = ConnectErrorTeardown {
             socket: this,
             entered: Rc::clone(&handlers),
-            needs_deref,
+            needs_deref: native_ref == NativeSocketRef::Held,
         };
 
-        if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+        if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
+            || this.flags.get().contains(Flags::FINALIZING)
+        {
             drop(cleanup);
             return Ok(());
         }
@@ -1201,7 +1223,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
             // Unix-path connect errors keep their real code (a non-socket file
             // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
-            // ENOENT, an inexpressible path is EINVAL); everything else stays
+            // ENOENT, an inexpressible path is EINVAL), and a connect that was
+            // closed rather than failed is ECANCELED; everything else stays
             // ECONNREFUSED.
             let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
                 || errno == sys::SystemErrno::ENOTSOCK as c_int
@@ -1210,6 +1233,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 || errno == sys::SystemErrno::ECONNRESET as c_int
                 || errno == sys::SystemErrno::EADDRINUSE as c_int
                 || errno == sys::SystemErrno::EADDRNOTAVAIL as c_int
+                || errno == sys::SystemErrno::ECONNABORTED as c_int
+                || errno == sys::SystemErrno::ECANCELED as c_int
             {
                 errno
             } else {
@@ -1229,6 +1254,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 BunString::static_("EADDRINUSE")
             } else if errno == sys::SystemErrno::EADDRNOTAVAIL as c_int {
                 BunString::static_("EADDRNOTAVAIL")
+            } else if errno == sys::SystemErrno::ECONNABORTED as c_int {
+                BunString::static_("ECONNABORTED")
+            } else if errno == sys::SystemErrno::ECANCELED as c_int {
+                BunString::static_("ECANCELED")
             } else {
                 BunString::static_("ECONNREFUSED")
             };
@@ -1314,7 +1343,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        Self::handle_connect_error(this, errno, socket.dns_error())
+        Self::connect_failed(this, errno, socket.dns_error(), NativeSocketRef::Held)
     }
 
     pub(crate) fn mark_active(&self) {
@@ -1833,6 +1862,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // node:tls sockets defer the hostname verdict: their JS layer applies
         // `checkServerIdentity` (default or user override) itself.
         let flags = this.flags.get();
+        // node:tls closes its own sockets, and nothing marks the ones its servers accept.
+        let failed_native_client = SSL
+            && success == 0
+            && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)
+            && !this.acts_as_tls_server();
         // Deliberately independent of `success`: the inline-reject path
         // dispatches with success=0 after suppressing the client Finished, and
         // REJECTED must still be set there or the write-refusal guards are
@@ -1841,6 +1875,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // failure flavor).
         let reject_unauthorized = flags.contains(Flags::REJECT_UNAUTHORIZED)
             && (verify_failed
+                || failed_native_client
                 || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
         // A handshake that failed outright (success == 0 with no policy
         // verdict: protocol error, peer alert, EOF mid-handshake) never has a
@@ -2403,7 +2438,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
-        if this.socket.get().is_detached() {
+        let socket = this.socket.get();
+        if socket.is_detached() {
             // The verdict must survive the forced close.
             return Ok(this
                 .stored_verify_error_to_js(global)
@@ -2412,7 +2448,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // this error can change if called in different stages of hanshake
         // is very usefull to have this feature depending on the user workflow
-        let ssl_error = this.socket.get().get_verify_error();
+        let ssl_error = socket.get_verify_error();
         // `on_handshake` stores the name verdict, with its full message, for the in-handshake check too.
         if ssl_error.error_no == 0
             || ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH
@@ -2423,6 +2459,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             if ssl_error.error_no == 0 {
                 return Ok(JSValue::NULL);
             }
+        } else if this.flags.get().contains(Flags::HANDSHAKE_COMPLETE) && socket.is_shutdown() {
+            // What `on_handshake` reported stands.
+            return Ok(this
+                .stored_verify_error_to_js(global)
+                .unwrap_or(JSValue::NULL));
         }
 
         let code: &[u8] = ssl_error.code_bytes();
@@ -3188,26 +3229,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        // Capture the in-flight-connect state before close_and_detach() sets
-        // DETACHED. Resetting a SEMI_SOCKET (Connected arm, handshake not yet
-        // established) dispatches no terminal callback in us_socket_close, so
-        // on_close/mark_inactive never runs — balance connect_finish's ref_(),
-        // downgrade the Strong this_value, and release the event-loop ref here,
-        // exactly as close() does. Without it those refs leak (LSan-caught).
-        let socket = this.socket.get();
-        let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
         this.close_and_detach(uws::CloseCode::Failure);
-        if is_semi_connect {
-            this.poll_ref.with_mut(|p| {
-                p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
-            if !matches!(this.this_value.get(), JsRef::Finalized) {
-                this.this_value.with_mut(|r| r.downgrade());
-            }
-            this.deref();
-        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3236,21 +3258,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         let socket = this.socket.get();
-        // An in-flight `connect()` whose `on_open` has not fired yet is a
-        // SEMI_SOCKET — `us_socket_close` skips dispatch for those (firing
-        // `on_close` without a prior `on_open` is wrong, and the natural
-        // failure path delivers `on_connect_error` from the loop instead).
-        // Closing one here therefore runs *no* terminal callback, stranding
-        // the +1 `connect_finish` took on `this` (whose matching `deref()`
-        // lives in `on_close`/`handle_connect_error`) and the Strong
-        // `this_value` upgrade. node:net reaches this for every aborted /
-        // `autoSelectFamily`-timed-out attempt via `_handle.close()`.
-        //
-        // `socket.socket.get().is_some()` is `true` only for the
-        // `Connected(us_socket_t)` arm — the `Connecting` arm fires
-        // `on_connecting_error` synchronously inside `close()` and so does
-        // its own `deref()`; double-releasing it would underflow.
-        let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
         // `_handle.close()` is the net.Socket `_destroy()` path. Node closes the fd
         // with no close_notify (crypto_tls.cc sends the alert only from DoShutdown,
         // the end() path), so `.fast_shutdown` raw-closes synchronously: a bare FIN.
@@ -3267,15 +3274,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 bun_io::AllocatorType::Js,
             ))
         });
-        if is_semi_connect {
-            if !matches!(this.this_value.get(), JsRef::Finalized) {
-                this.this_value.with_mut(|r| r.downgrade());
-            }
-            // Balance `connect_finish`'s `socket_ref.ref_()`. The JS wrapper
-            // we were called through holds the remaining +1, so refcount
-            // stays ≥ 1 across this call.
-            this.deref();
-        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -4433,6 +4431,7 @@ impl DuplexUpgradeContext {
         if this.is_open.get() {
             if let Some(tls) = this.tls_this_ptr() {
                 crate::dispatch::fold(tls.handle_error(err_value));
+                return;
             }
         } else if let Some(tls) = this.tls.replace(None) {
             // Pre-open error (e.g. the duplex emitted non-Buffer data
@@ -4462,7 +4461,13 @@ impl DuplexUpgradeContext {
                 sys::SystemErrno::ECONNREFUSED as c_int,
                 0,
             ));
+            return;
         }
+        // The socket has closed: uncaught, like what a transport method throws in node.
+        let vm = this.vm;
+        let _ = vm
+            .as_mut()
+            .uncaught_exception(vm.global(), err_value, false);
     }
 
     fn on_timeout(this: bun_ptr::ThisPtr<Self>) {
@@ -4514,7 +4519,7 @@ impl DuplexUpgradeContext {
                 // The transport closed while this task was queued: an engine
                 // started now could never handshake, and nothing would free it.
                 if this.upgrade.pending_close.replace(false) {
-                    Self::on_close(this);
+                    this.upgrade.finish_close();
                     return;
                 }
                 log!(
@@ -4904,10 +4909,6 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     if duplex_context_ref.ssl_config.get().is_none() {
         drop(ssl_opts.take());
     }
-    // Disarm the guard — either moved into duplexContext or just
-    // freed above; both the move-target and the deinit case must not see it
-    // freed again on a later throw.
-    let _ = ssl_opts;
     tls_ref.ref_();
 
     tls_ref.socket.set(duplex_context_ref.duplex_socket());
@@ -5212,11 +5213,14 @@ pub(crate) mod testing_apis {
                 )));
             };
 
-            // "short" clamps a byte count, which only recv/send have; arming it
-            // on any other syscall would silently never fire.
-            if action == fi::ACTION_SHORT && syscall != fi::RECV && syscall != fi::SEND {
+            // "short" clamps a byte count, which only these have; arming it on any other syscall would silently never fire.
+            if action == fi::ACTION_SHORT
+                && syscall != fi::RECV
+                && syscall != fi::SEND
+                && syscall != fi::WRITEV
+            {
                 return Err(global.throw(format_args!(
-                    "rule.action \"short\" is only supported for syscall \"recv\" or \"send\""
+                    "rule.action \"short\" is only supported for syscall \"recv\", \"send\" or \"writev\""
                 )));
             }
 

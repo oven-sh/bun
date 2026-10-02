@@ -292,7 +292,12 @@ struct us_bun_verify_error_t {
 };
 
 /* Immutable callback table. ~20 instances total (one per kind), all static
- * const / .rodata. Nullable entries are skipped by dispatch. */
+ * const / .rodata. Nullable entries are skipped by dispatch.
+ *
+ * Whoever holds a socket hears that it is gone exactly once, whoever closed it:
+ * on_close if on_open ran, on_connect_error if the connect never completed,
+ * on_connecting_error for a us_connecting_socket_t. It is already closed then,
+ * and freed after the loop iteration. */
 struct us_socket_vtable_t {
     struct us_socket_t *(*on_open)(us_socket_r, int is_client, char *ip, int ip_length);
     struct us_socket_t *(*on_data)(us_socket_r, char *data, int length);
@@ -338,8 +343,10 @@ void us_socket_group_init(us_socket_group_r group, us_loop_r loop,
  * to free the embedding storage. */
 void us_socket_group_deinit(us_socket_group_r group) nonnull_fn_decl;
 
-/* Close every socket in the group (fires on_close for each). Used by server
- * shutdown. The group itself stays valid. */
+/* Close every socket that is in the group now; each holder hears of it (see
+ * us_socket_vtable_t). What a handler opens into the group meanwhile stays open, so
+ * an owner that frees the group next has made sure none can
+ * (us_socket_group_deinit asserts it). The group itself stays valid. */
 void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
 /* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
  * teardown — listen sockets are owned by a Listener/App that frees them in
@@ -413,6 +420,11 @@ void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
 /* Returns an owned reference; the caller must release it. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
+/* tls.Server#setSecureContext(): swap the default SSL_CTX used for NEWLY
+ * accepted sockets (SNI-selected contexts are untouched). Up_refs ctx; live
+ * connections keep the previous context alive through their own SSL refs. */
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+    struct ssl_ctx_st *ctx) __attribute__((nonnull(1, 2)));
 /* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
  * returns 0 with a static *err_reason tag on failure. */
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
@@ -643,6 +655,8 @@ struct us_iovec_t {
  * partial-write poll handling, one writev for all chunks (sequential sends
  * on platforms without writev). Returns total bytes written. */
 int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
+/* Vectored us_socket_write: through TLS if `s->ssl` is set, with the records of all chunks in one write. */
+int us_socket_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)
@@ -695,7 +709,6 @@ int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
 void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 
-struct us_socket_t *us_socket_detach(us_socket_r s) nonnull_fn_decl;
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;

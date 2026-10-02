@@ -47,6 +47,8 @@ pub struct FileSink {
     pub(crate) pollable: Cell<bool>,
     pub(crate) nonblocking: Cell<bool>,
     pub(crate) force_sync: Cell<bool>,
+    #[cfg(unix)]
+    pub(crate) is_tty: Cell<bool>,
 
     pub(crate) is_socket: Cell<bool>,
     pub(crate) fd: Cell<Fd>,
@@ -401,6 +403,13 @@ impl FileSink {
             }
 
             let was_pending = (*this).pending.get().state == streams::PendingState::Pending;
+            let resumes = was_pending || (status == WriteStatus::Drained && !has_pending_data);
+            // Opened before `run_pending` so the settle and the resume share one checkpoint.
+            let _entered = if resumes && (*this).source_pending_pull.get() {
+                (*this).completion_scope()
+            } else {
+                None
+            };
             if was_pending {
                 // `consumed` was credited when the pending operation accepted its
                 // bytes; `amount` is only what this drain pushed to the fd.
@@ -419,9 +428,7 @@ impl FileSink {
                 FileSink::run_pending(this);
             }
 
-            if (was_pending || (status == WriteStatus::Drained && !has_pending_data))
-                && (*this).source_pending_pull.replace(false)
-            {
+            if resumes && (*this).source_pending_pull.replace(false) {
                 let mut src = *(*this).source.get();
                 src.ready(None, None);
             }
@@ -494,6 +501,12 @@ impl FileSink {
         }
     }
 
+    /// Microtask checkpoint owed for the JS a writer callback enters while a stream is piped in.
+    fn completion_scope(&self) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
+        self.pipe.get().cell()?;
+        Some(self.event_loop().entered())
+    }
+
     /// This sink opened its file itself, for the script that is running: if that is a
     /// `Bun.ModuleGraph`'s, the file is closed with the graph. (The host's sinks are left to
     /// flush at exit as they always have.)
@@ -508,12 +521,15 @@ impl FileSink {
 
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
-    /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `clear_keep_alive_ref`
-    /// at the end may free `this`.
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit)). May free `this`.
     pub unsafe fn on_close(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
+            // `source.close()` may drop the last ref (a Subprocess whose `.stdin` was never read).
+            let _guard = RefPtr::init_ref(this);
+            let _entered = (*this).completion_scope();
+
             (*this).abort_handle.leave();
             if (*this).js_global().is_some() {
                 if let Some(stream) = (*this).pipe.get().stream() {
@@ -533,8 +549,7 @@ impl FileSink {
             (*this).release_pipe();
 
             // The writer is fully closed; no further callbacks will arrive. Release
-            // the ref taken when a write returned `.pending`. This must be the last
-            // thing we do as it may free `this`.
+            // the ref taken when a write returned `.pending`.
             FileSink::clear_keep_alive_ref(this);
         }
     }
@@ -666,7 +681,7 @@ impl FileSink {
 
         // reshaped for borrowck — split into a local capture and apply after.
         // R-2: out-params for `bun_io::open_for_writing` are local then `Cell::set`.
-        let mut force_sync_out = self.force_sync.get();
+        let mut is_tty_out = false;
         let mut pollable_out = self.pollable.get();
         let mut is_socket_out = self.is_socket.get();
         let mut nonblocking_out = self.nonblocking.get();
@@ -681,7 +696,7 @@ impl FileSink {
         let open = |pollable_out: &mut bool,
                     is_socket_out: &mut bool,
                     nonblocking_out: &mut bool,
-                    force_sync_out: &mut bool| {
+                    is_tty_out: &mut bool| {
             bun_io::open_for_writing(
                 Fd::cwd(),
                 &io_path,
@@ -691,11 +706,11 @@ impl FileSink {
                 is_socket_out,
                 self.force_sync.get(),
                 nonblocking_out,
-                force_sync_out,
-                |_fs: &mut bool| {
+                is_tty_out,
+                |_tty: &mut bool| {
                     #[cfg(unix)]
                     {
-                        *_fs = true;
+                        *_tty = true;
                     }
                 },
                 is_pollable,
@@ -705,7 +720,7 @@ impl FileSink {
             &mut pollable_out,
             &mut is_socket_out,
             &mut nonblocking_out,
-            &mut force_sync_out,
+            &mut is_tty_out,
         );
         if options.mkdirp {
             if let (sys::Result::Err(err), bun_io::PathOrFileDescriptor::Path(path)) =
@@ -717,7 +732,7 @@ impl FileSink {
                             &mut pollable_out,
                             &mut is_socket_out,
                             &mut nonblocking_out,
-                            &mut force_sync_out,
+                            &mut is_tty_out,
                         ),
                         Err(err) => Err(err),
                     };
@@ -728,7 +743,9 @@ impl FileSink {
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);
         #[cfg(unix)]
-        if force_sync_out {
+        if is_tty_out {
+            // TTY writes are synchronous, as in Node.
+            self.is_tty.set(true);
             self.force_sync.set(true);
             // SAFETY(JsCell): single-field write; does not call into JS.
             self.writer.with_mut(|w| w.force_sync = true);
@@ -793,6 +810,12 @@ impl FileSink {
                             .get_poll()
                             .unwrap()
                             .set_flag(bun_io::FilePollFlag::Socket);
+                    } else if self.is_tty.get() {
+                        self.writer
+                            .get()
+                            .get_poll()
+                            .unwrap()
+                            .set_flag(bun_io::FilePollFlag::Tty);
                     } else if self.pollable.get() {
                         self.writer
                             .get()
@@ -1619,6 +1642,8 @@ impl FileSink {
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
+            #[cfg(unix)]
+            is_tty: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
             auto_flusher: JsCell::new(AutoFlusher::default()),

@@ -36,7 +36,9 @@ pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
 pub use crate::garbage_collection_controller::GarbageCollectionController;
 pub use crate::jsc_scheduler as JSCScheduler;
-pub use crate::posix_signal_handle::{PosixSignalHandle, PosixSignalTask};
+#[cfg(unix)]
+pub use crate::posix_signal_handle::PosixSignalHandle;
+pub use crate::posix_signal_handle::PosixSignalTask;
 
 bun_core::declare_scope!(EventLoop, hidden);
 
@@ -108,8 +110,6 @@ pub struct EventLoop {
     /// `enqueue()` reads go through the single audited `BackRef::deref`
     /// instead of an open-coded `NonNull::as_ref` `unsafe` at each site.
     pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
-    #[cfg(not(unix))]
-    pub signal_handler: (),
 }
 
 impl Default for EventLoop {
@@ -136,8 +136,6 @@ impl Default for EventLoop {
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
-            #[cfg(not(unix))]
-            signal_handler: (),
         }
     }
 }
@@ -467,20 +465,12 @@ impl EventLoop {
         Ok(())
     }
 
-    /// `run_callback*`'s way in: whether `callback` may be called at all, and if so the scope it
-    /// is called inside of. Not with an exception pending, and not a function of a realm that
-    /// `bun test --isolate` retired (a killed child's late `onExit`). `context` is entered for
+    /// `run_callback*`'s way in: whether a callback may be called at all, and if so the scope it
+    /// is called inside of. Not with an exception pending. `context` is entered for
     /// the call; [`ContextId::NONE`](crate::ContextId::NONE) enters nothing.
     #[inline]
-    fn enter_js<'a>(
-        context: crate::ContextId,
-        callback: JSValue,
-        global_object: &'a JSGlobalObject,
-    ) -> EnterJs<'a> {
-        if global_object.has_exception()
-            || (global_object.bun_vm().test_isolation_enabled
-                && callback.is_from_retired_test_isolation_realm())
-        {
+    fn enter_js<'a>(context: crate::ContextId, global_object: &'a JSGlobalObject) -> EnterJs<'a> {
+        if global_object.has_exception() {
             return EnterJs::CannotEnter;
         }
         EnterJs::Entered(
@@ -511,7 +501,7 @@ impl EventLoop {
         // exception already pending — a prior callback's microtasks can request
         // termination (worker.terminate()), and entering JS then would trip
         // executeCallImpl's `assertNoException`.
-        let EnterJs::Entered(_context) = Self::enter_js(context, callback, global_object) else {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return;
         };
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
@@ -550,7 +540,7 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
-        let EnterJs::Entered(_context) = Self::enter_js(context, callback, global_object) else {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return JSValue::ZERO;
         };
         // R-2 noalias mitigation — see `run_callback` above.
@@ -1253,7 +1243,7 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JsResult<JSValue> {
-        let EnterJs::Entered(_context) = Self::enter_js(context, callback, global_object) else {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return Ok(JSValue::UNDEFINED);
         };
         let result = callback.call(global_object, this_value, arguments)?;

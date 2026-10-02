@@ -1542,6 +1542,21 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
         wss.close();
       });
     }
+
+    // The 'upgrade' event comes when the read that carried the request is parsed, so behind its body.
+    it(`reads the frame behind a ${framing} body after an upgrade in the 'upgrade' event`, async () => {
+      const server = createServer();
+      const wss = new WebSocketServer({ noServer: true });
+      server.on("upgrade", (req, socket, head) => {
+        wss.handleUpgrade(req, socket, head, ws => ws.on("message", message => ws.send(`echo:${message}`)));
+      });
+      const head = upgradeRequest().replace("\r\n\r\n", `\r\n${header}\r\n\r\n`);
+      // FIN + text "ping", masked with a zero key.
+      const frame = Buffer.concat([Buffer.from([0x81, 0x84, 0, 0, 0, 0]), Buffer.from("ping")]);
+      await using upgrade = await receiveUpgrade(Buffer.concat([Buffer.from(head + body), frame]), server);
+      expect(await upgrade.received("echo:ping")).toContain("echo:ping");
+      wss.close();
+    });
   }
 
   // The parser of connection A must not take an upgrade of connection B, done

@@ -666,10 +666,11 @@ describe("upgrade request whose whole body arrived with its head", () => {
   });
 
   it("a read of the upgrade socket still resumes a request that is not paused", async () => {
-    // Inside the listener req.complete is still false here (Node.js has true), so a listener
-    // that waits for the end of the message depends on this resume.
+    // The body comes in a later read than the head, so req.complete is false inside the listener.
+    // A listener that waits for the end of the message then depends on this resume.
     const { watch, orFail } = failureWatcher();
     const { promise: completeWhenAccepted, resolve: onAccept } = Promise.withResolvers<boolean>();
+    const { promise: completeInListener, resolve: onUpgrade } = Promise.withResolvers<boolean>();
     const server = createServer();
     server.on("upgrade", (req, socket) => {
       watch("the upgrade socket", socket);
@@ -680,12 +681,15 @@ describe("upgrade request whose whole body arrived with its head", () => {
       };
       if (req.complete) accept();
       else req.once("end", accept);
+      onUpgrade(req.complete);
     });
     let client: Awaited<ReturnType<typeof connectTo>> | undefined;
     try {
       client = await connectTo(server);
       watch("the client socket", client.socket);
-      client.socket.write(fixedLengthPost);
+      client.socket.write(fixedLengthPost.slice(0, -body.length));
+      expect(await orFail(completeInListener)).toBe(false);
+      client.socket.write(body);
       expect(await orFail(completeWhenAccepted)).toBe(true);
       await orFail(client.receive("101 Switching Protocols"));
     } finally {

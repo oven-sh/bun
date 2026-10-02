@@ -1939,6 +1939,22 @@ describe.concurrent("arguments after --", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("a wrapper script that ends with -- forwards its own args to every script", async () => {
+    using dir = tempDir("mr-pt-wrapper", {
+      "package.json": JSON.stringify({
+        scripts: {
+          one: "echo one-got",
+          two: "echo two-got",
+          all: `${bunExe()} run --parallel one two --`,
+        },
+      }),
+    });
+    const r = await runMulti(["run", "all", "--", "--watch", hostile], String(dir));
+    expectPrefixed(r.stdout, "one", `one-got --watch ${hostile}`);
+    expectPrefixed(r.stdout, "two", `two-got --watch ${hostile}`);
+    expect(r.exitCode).toBe(0);
+  });
+
   test("sequential: args are passed literally to every script", async () => {
     using dir = tempDir("mr-pt-sequential", {
       "args.js": ARGS_JS,

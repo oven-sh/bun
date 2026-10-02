@@ -4970,6 +4970,13 @@ static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
         dead[i] = 0;
 }
 
+void JSC__VM__completeAllJITPlans(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(vm);
+    // Concurrent compiler plans can root values that are no longer JS-reachable.
+    vm->heap.completeAllJITPlans();
+}
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);

@@ -1875,59 +1875,48 @@ export { greeting };`,
 
 // `Bun.build()` and `new Bun.Transpiler()` create a `Transpiler` before they
 // validate every option. When validation fails (here: a `define` value that is
-// not valid JSON) the error path must still drop it. The assertion compares
-// leaked bytes between a 1-iteration and an 11-iteration run so one-time
-// at-exit allocations (the `-e` script's own source map) cancel out.
-test.skipIf(!isASAN)(
-  "Bun.build / Bun.Transpiler configure_bundler error path does not leak the transpiler",
-  async () => {
-    const run = async (iters: number) => {
-      using dir = tempDir("bun-build-configure-err-leak", { "e.js": "0;\n" });
-      const script = `
-        const entry = ${JSON.stringify(join(String(dir), "e.js"))};
-        const bad = { X: '{"a":' };
-        let rejected = 0;
-        for (let i = 0; i < ${iters}; i++) {
-          try { await Bun.build({ entrypoints: [entry], define: bad }); } catch { rejected++; }
-          try { new Bun.Transpiler({ define: bad }); } catch { rejected++; }
-        }
-        Bun.gc(true);
-        console.log("rejected", rejected);
-      `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: {
-          ...bunEnv,
-          // The test reads only the byte count. Symbolizing every leak
-          // stack in a debug binary costs seconds per process.
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "symbolize=0"].filter(Boolean).join(":"),
-          // verbosity=1 makes the exit-time check announce itself on stderr.
-          LSAN_OPTIONS: [bunEnv.LSAN_OPTIONS, "verbosity=1"].filter(Boolean).join(":"),
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // Both calls must reach the option error, or the test measures nothing.
-      expect(stdout.trim()).toBe(`rejected ${iters * 2}`);
-      expect(stderr).toContain("LeakSanitizer: checking for leaks");
-      // A signal or a sanitizer report other than the leak summary is a
-      // failure, not a zero-leak run.
-      const summaries = stderr.split("\n").filter(line => line.includes("SUMMARY: AddressSanitizer:"));
-      const m = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
-      expect({ exitCode, signalCode: proc.signalCode, summaries: summaries.length }).toEqual({
-        exitCode: m ? 1 : 0,
-        signalCode: null,
-        summaries: m ? 1 : 0,
-      });
-      return m ? Number(m[1]) : 0;
-    };
-    const [small, large] = await Promise.all([run(1), run(11)]);
-    // Before the fix each failed `Bun.build` leaked about 5.4 KB and each
-    // failed `new Bun.Transpiler` about 1 KB: a delta of about 64 KB.
-    expect(large - small).toBeLessThan(4000);
-  },
-);
+// not valid JSON) the error path must still drop it.
+test.skipIf(!isASAN)("Bun.build / Bun.Transpiler option error path does not leak the transpiler", async () => {
+  using dir = tempDir("bun-build-configure-err-leak", { "e.js": "0;\n" });
+  const iters = 3;
+  const script = `
+    const entry = ${JSON.stringify(join(String(dir), "e.js"))};
+    const bad = { X: '{"a":' };
+    let rejected = 0;
+    for (let i = 0; i < ${iters}; i++) {
+      try { await Bun.build({ entrypoints: [entry], define: bad }); } catch { rejected++; }
+      try { new Bun.Transpiler({ define: bad }); } catch { rejected++; }
+    }
+    console.log("rejected", rejected);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      // Bun's built-in ASAN defaults turn LSan off. Destructing the VM on exit
+      // frees what JS still referenced, so only lost allocations get reported.
+      // abort_on_error=0 so a leak exits 1 instead of raising SIGABRT.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "abort_on_error=0"].filter(Boolean).join(":"),
+      // verbosity=1 makes the exit-time check announce itself on stderr. The
+      // binary's built-in suppressions cover the detached bundler thread; the
+      // shared test/leaksan.supp is not used so a new entry there cannot hide
+      // this leak.
+      LSAN_OPTIONS: "verbosity=1",
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Both calls must reach the option error, or the test measures nothing.
+  expect(stdout.trim()).toBe(`rejected ${iters * 2}`);
+  expect(stderr).toContain("LeakSanitizer: checking for leaks");
+  // LSan prints one blank-line-separated block per leaking allocation stack.
+  // Before the fix each failed `Bun.build` left about 200 of them.
+  const leaks = stderr.split(/\n\s*\n/).filter(block => /^(?:Direct|Indirect) leak of /.test(block));
+  expect(leaks).toEqual([]);
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+});
 
 // On release builds mimalloc's large-allocation arenas make RSS growth too
 // non-deterministic to draw a clean line between "leaking" and "not leaking"

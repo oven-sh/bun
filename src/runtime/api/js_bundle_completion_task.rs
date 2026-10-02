@@ -1277,9 +1277,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        // Boxed before `configure_bundler`: `configure_linker` stores the
-        // transpiler's own field addresses, so it must already sit at its
-        // final address.
+        // `configure_linker` stores field addresses: box first, then configure.
         let mut transpiler = Box::new(Transpiler::init(bump, log, opts, Some(self.env))?);
         self.configure_bundler(&mut transpiler, bump)?;
         Ok(transpiler)

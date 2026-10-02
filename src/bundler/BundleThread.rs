@@ -83,11 +83,8 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// struct.
     fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
-    /// `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
-    /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
-    /// configure pair is folded into one trait call returning the
-    /// fully-configured transpiler. The box owns it, so its global-heap
-    /// state (options, resolver caches) drops on every path.
+    /// Builds and configures the per-build transpiler. The box drops it on
+    /// every path.
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
@@ -277,15 +274,10 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         transpiler.resolver.generation = generation;
 
-        // Construction + run delegated — see `init_and_run` doc. It takes
-        // `&'a mut Transpiler<'a>`, a borrow for the whole arena lifetime
-        // that the borrow checker cannot take out of the box local. Reborrow
-        // through a raw ptr instead; `transpiler` is not used again until it
-        // drops at scope end.
         let transpiler_ptr: *mut Transpiler<'_> = &raw mut *transpiler;
         let run = completion.init_and_run(
-            // SAFETY: the box keeps `*transpiler_ptr` alive and unaliased
-            // until this function returns.
+            // SAFETY: `init_and_run` wants `&'a mut Transpiler<'a>`; the box
+            // outlives the call and is not touched again until it drops.
             unsafe { &mut *transpiler_ptr },
             bump,
             // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
@@ -299,9 +291,10 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `deinitWithoutFreeingArena` + wait-group drain live inside `init_and_run`
         // (it owns `this`).
         let mut out_log = bun_ast::Log::init();
-        // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
-        // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
-        // `&'a mut Transpiler` consumed by `init_and_run` above is not reborrowed.
+        // SAFETY: `transpiler.log` points at the completion task's own `Log`,
+        // which its owner keeps alive until `complete_on_bundle_thread`. Raw
+        // deref so the `&'a mut Transpiler` given to `init_and_run` is not
+        // reborrowed.
         let _ = unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) }; // logger OOM-only
         completion.set_log(out_log);
 

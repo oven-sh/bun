@@ -443,6 +443,10 @@ Set any of the following environment variables to enable AI-friendly output:
 - `REPL_ID=1` - For Replit
 - `AGENT=1` - Generic AI agent flag
 
+`AGENT` wins if it is set at all. Only `AGENT=1` turns the quiet mode on. Any other value (including an empty string) turns it off, even when `CLAUDECODE=1` or `REPL_ID` is set.
+
+If `AGENT` is not set, `RUNNER_DEBUG` (GitHub Actions debug) also turns the quiet mode off, so you see passing tests again. After that, `CLAUDECODE` or `REPL_ID` still enable it.
+
 ### Behavior
 
 When Bun detects an AI agent environment:

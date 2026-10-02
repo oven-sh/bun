@@ -157,6 +157,15 @@ add("fn.rest-comma",
   "interface I { m(...a,): void }",
   "type X = (...a: A[],) => void;",
   "function f(...a,): asserts a is A; function f() {}",
+  "declare function f(a = class { m(...b,) {} }): void;",
+  "declare function f(a = class { m(...b,): void }): void;",
+  "declare function f(a = { m(...b,) {} }): void;",
+  "declare namespace N { function f(a = class { m(...b,) {} }): void }",
+  "declare class C { m(a = class { n(b = class { o(...c,) {} }) {} }): void }",
+  "class C { m(a = class { n(...b,) {} }): void; m() {} }",
+  "class C { m(a = class { n(...b,) {} }) {} }",
+  "function f(a = class { m(...b,) {} }) {}",
+  "function f(a = class { m(...b,): void; m() {} }) {}",
 );
 
 // parse/mod.rs: an entry of implements that is no type

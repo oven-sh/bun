@@ -8,6 +8,8 @@
 #   files    every tracked TypeScript and JavaScript file under test/ and src/js of TREE, with the configurations of its loader
 #   runtime  the small corpora as modules that the runtime loads and never evaluates: the entries of the runtime
 #            transpiler cache (version, output, source map, module record)
+#   bundle   the small corpora, each source as the one entry point of Bun.build, as .ts, .tsx and .js: the output, the
+#            mappings and names of its source map, the messages
 #   pmdiff   the small corpora as .js, .ts and .tsx files of two folders through `bun pm diff`: the parser with its default
 #            features and the visit pass, which no configuration of Bun.Transpiler runs for JavaScript
 # env: BASE    the base binary, a release build of main     default /workspace/base/bun.f4d755a9c
@@ -18,7 +20,7 @@
 #      EXPECT  zero (default) | differ: the binary under test is known to differ and the run has to see it, in
 #              every seam of the seams corpus and in every pair of MUST_SEE
 #      FINE    1 (default): an error is message, line, column, length, offset, level, notes | 0: message, line, column
-#      RUNTIME_CORPORA, PMDIFF_CORPORA   the corpora of those two steps, default the small ones
+#      RUNTIME_CORPORA, BUNDLE_CORPORA, PMDIFF_CORPORA   the corpora of those three steps, default the small ones
 # A binary with debug assertions ends the message of Lexer::expect_contextual_keyword with " (token: T...)": its runs are
 # compared without that text, and the steps runtime and pmdiff are left out for it.
 # The body is functions, so that an edit of this file during a run does not reach the run.
@@ -281,6 +283,76 @@ console.log(`versions ${[...versions].sort().join(",")} entries ${lines.length}`
 console.log(lines.join("\n"));
 JS
 
+cat > "$T/bundle-worker.mjs" <<'JS'
+// What Bun.build gives for each source of a corpus as its one entry point: the output, the mappings and the names of the source map, the messages.
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const [corpusPath, outPath, dir] = process.argv.slice(2);
+const corpus = JSON.parse(readFileSync(corpusPath, "utf8"));
+const inputs = [];
+for (const f of corpus.forms) for (const template of Object.values(corpus.contexts)) inputs.push(template.replace("%T%", () => f.t));
+for (const s of corpus.sources) inputs.push(s.src);
+rmSync(dir, { recursive: true, force: true });
+mkdirSync(join(dir, "in"), { recursive: true });
+writeFileSync(outPath, "");
+const at = p => [p?.line ?? null, p?.column ?? null, p?.length ?? null, p?.lineText ?? null];
+const logs = list => list.map(l => [String(l.message).replace(/ \(token: T[A-Za-z]+\)$/, ""), l.level ?? null, ...at(l.position)]);
+let buffer = "";
+let records = 0;
+for (let i = 0; i < inputs.length; i++) {
+  for (const ext of ["ts", "tsx", "js"]) {
+    const file = join(dir, "in", `f.${ext}`);
+    writeFileSync(file, inputs[i]);
+    const outdir = join(dir, "out");
+    rmSync(outdir, { recursive: true, force: true });
+    let record;
+    try {
+      const result = await Bun.build({ entrypoints: [file], outdir, sourcemap: "external", target: "bun", packages: "external", throw: false });
+      if (!result.success) {
+        record = { e: logs(result.logs) };
+      } else {
+        const js = existsSync(join(outdir, "f.js")) ? readFileSync(join(outdir, "f.js"), "utf8") : null;
+        const map = existsSync(join(outdir, "f.js.map")) ? JSON.parse(readFileSync(join(outdir, "f.js.map"), "utf8")) : null;
+        record = { js, mappings: map?.mappings ?? null, names: map?.names ?? null, w: logs(result.logs) };
+      }
+    } catch (e) {
+      record = { threw: String(e?.message ?? e).slice(0, 300) };
+    }
+    rmSync(file, { force: true });
+    records++;
+    buffer += JSON.stringify({ i, ext, src: inputs[i], ...record }) + "\n";
+    if (buffer.length > 1 << 16) {
+      appendFileSync(outPath, buffer);
+      buffer = "";
+    }
+  }
+}
+appendFileSync(outPath, buffer);
+rmSync(dir, { recursive: true, force: true });
+console.log(`${inputs.length} sources, ${records} bundles, bun ${Bun.version} ${Bun.revision}`);
+JS
+
+cat > "$T/bundle-diff.mjs" <<'JS'
+import { readFileSync } from "node:fs";
+const read = path => readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+const [a, b] = [read(process.argv[2]), read(process.argv[3])];
+const kind = r => (r === undefined ? "missing" : r.e ? "R" : r.threw ? "T" : "A");
+const classes = {};
+let differ = 0;
+for (let k = 0; k < Math.max(a.length, b.length); k++) {
+  const [x, y] = [a[k], b[k]];
+  if (JSON.stringify(x) === JSON.stringify(y)) continue;
+  differ++;
+  let cls = `${kind(x)}>${kind(y)}`;
+  if (cls === "A>A") cls += x.js !== y.js ? " output" : x.mappings !== y.mappings ? " same output, mappings" : JSON.stringify(x.names) !== JSON.stringify(y.names) ? " same output, names" : " same output and map, messages";
+  const key = `${(x ?? y).ext.padEnd(4)} ${cls}`;
+  classes[key] = (classes[key] ?? 0) + 1;
+  if (differ <= 6) console.log(`        ${key.padEnd(28)} ${JSON.stringify((x ?? y).src).slice(0, 110)}`);
+}
+for (const key of Object.keys(classes).sort()) console.log(`        ${key.padEnd(44)} ${classes[key]}`);
+console.log(`${Math.max(a.length, b.length)} bundles compared, ${differ} differ`);
+JS
+
 cat > "$T/pmdiff-make.mjs" <<'JS'
 // Two folders for `bun pm diff`: every source of a corpus as s<i>.js, s<i>.ts and s<i>.tsx, and on the other side with one more line end.
 // A file that parses is "formatting only", one that does not is "not parsed".
@@ -384,7 +456,7 @@ corpus_file() {
 # sha256 of the corpora that the notes hold: a corpus that changed is no longer the one of the recorded runs.
 corpus_pin() {
   case $1 in
-    seams) echo 986dc86909310fddf97dadd58f0ca36c7b6cf16a112aa9b02dbda55e694ae1c9 ;;
+    seams) echo 140755828465cf395762eaeb73ffb94d6fdc991d2373e17e63158ea5ed1412d5 ;;
     small) echo 19d140cdf29b4cfcc6682bf827642a0c3e138ad34a120867b0e0e21e35e3dc81 ;;
     small-sub) echo edb744ab7286d2fc7d774bea188dde4eb861f3bfd97160ba108de5b68f279bc4 ;;
     targeted) echo 68d65cd91163a1d165a2f68da19054bf895024e4459ef6cce03977fc56b63487 ;;
@@ -406,6 +478,20 @@ golden() {
     0.extra.targeted) echo 8d963576d4e66888ec4389e6ca9f46f738bdfd4f274f23207d7a7731a1a0ae19 ;;
     0.extra.small-sub) echo 2c5ab7ff4fc64f0afca2ef969d9c8f06fdbb05a8f46008e47ccc858f2ab95ce0 ;;
     0.extra.small) echo 4b4a01e5fbdadff0c584d23853b3b7292db84966d458adc9070c7169d236fa83 ;;
+    1.main.seams) echo SEAMS_MAIN_GOLDEN ;;
+    1.main.testrows) echo 425c436806c46c5c01b0ba16c81d3b9ac3e92a6089e14eea7e1cff2053493c93 ;;
+    1.main.comments) echo 0e74102d0cd37a5d9529a5815c2cd136a443801bfa710159541e0067b0039aea ;;
+    1.main.targeted) echo a42a1c9f81a3cc1b5ce95f0c7472d0bf5ecf4599ec4f790da4645154f7716d7e ;;
+    1.main.small-sub) echo 3d29777be9d305f2c9f7a1bd42beaa086bcaf653999b0af1cff31cf9aa60376e ;;
+    1.main.check) echo e7eb1e9cbd2e1079d0c3d84fe52ac86edc5df6f286932f8cbed010b99c549297 ;;
+    1.main.small) echo 550b15871c279c804e1bfcc0ff9886bbb118c248fedd84b561c71bff35e84d97 ;;
+    1.extra.seams) echo SEAMS_EXTRA_GOLDEN ;;
+    1.extra.testrows) echo a2344c70cd5705e693b3814f65df335504d9f3025dc5ba21af0fd4a5be45ea19 ;;
+    1.extra.comments) echo 864080cb8f259d443b5345c21248268973f322d3e86dd75575bd686cd0edf7f3 ;;
+    1.extra.targeted) echo 0b12128e2fc0add9ddaf51ccba0941300b8acd655517f27e6a40d1585b675154 ;;
+    1.extra.small-sub) echo 88e69a40f3ec4477389406df06d52fb970dc7ff000b80d45d96a4aeb4c2d0477 ;;
+    1.extra.check) echo c5219b150811afe0ac13ad71b63c680d56c6bf960c78b9f56729d1a4060c7671 ;;
+    1.extra.small) echo cfaa4130587c781f7a6fa5b1a36abb522894a982991e4a47e3cc757c3427df73 ;;
   esac
 }
 
@@ -521,6 +607,24 @@ runtime_one() {
   count "runtime.$c" "$mark"
 }
 
+# Bun.build of every source of a corpus as .ts, .tsx and .js, both sides in the same directory, never from an earlier run.
+bundle_one() {
+  local c=$1 cfile side dir bin how=same mark
+  cfile=$(corpus_file "$c")
+  [ -s "$cfile" ] || { echo "FAIL  bundle $c: no corpus"; count "bundle.$c" FAIL; return; }
+  for side in base next; do
+    if [ $side = base ]; then dir=$B; bin=$BASE; else dir=$D; bin=$NEXT; fi
+    (cd "$OUT" && env $ENVS "$bin" "$T/bundle-worker.mjs" "$cfile" "$dir/bundle.$c.jsonl" "$OUT/bundle-work") > "$dir/bundle.$c.log" 2>&1 \
+      || { echo "FAIL  bundle $c: the $side run ended early, $dir/bundle.$c.log"; count "bundle.$c" FAIL; return; }
+  done
+  cmp -s "$B/bundle.$c.jsonl" "$D/bundle.$c.jsonl" || how=other
+  mark=$(verdict $how)
+  printf '%-4s  bundle  %-9s %s | %s  sha256 %s %s\n' "$mark" "$c" "$(tail -1 "$B/bundle.$c.log" | cut -d, -f1-2)" "$(tail -1 "$D/bundle.$c.log" | cut -d, -f1-2)" \
+    "$(sha256sum < "$B/bundle.$c.jsonl" | cut -c1-16)" "$(cmp -s "$B/bundle.$c.jsonl" "$D/bundle.$c.jsonl" && echo = || echo "!= $(sha256sum < "$D/bundle.$c.jsonl" | cut -c1-16)")"
+  [ $how = other ] && "$BASE" "$T/bundle-diff.mjs" "$B/bundle.$c.jsonl" "$D/bundle.$c.jsonl" | tee "$D/diff.bundle.$c.txt"
+  count "bundle.$c" "$mark"
+}
+
 # `bun pm diff` of two folders that hold the sources of a corpus: what it prints on a terminal, its errors, its exit code.
 pmdiff_one() {
   local c=$1 cfile csha work side dir bin how=same mark
@@ -557,6 +661,9 @@ run_steps() {
       runtime)
         [ $STRIP = 0 ] || { echo "skip  runtime: a binary with debug assertions names its cache entries *.debug.pile"; continue; }
         for r in $RUNTIME_CORPORA; do runtime_one "$r"; done
+        ;;
+      bundle)
+        for r in $BUNDLE_CORPORA; do bundle_one "$r"; done
         ;;
       pmdiff)
         [ $STRIP = 0 ] || { echo "skip  pmdiff: left to the release build"; continue; }
@@ -601,14 +708,15 @@ parity() {
   EXPECT=${EXPECT:-zero}
   FINE=${FINE:-1}
   JOBS=${JOBS:-4}
-  MUST_SEE=${MUST_SEE:-main.seams extra.seams main.testrows extra.testrows main.comments extra.comments main.targeted extra.targeted main.small-sub extra.small-sub main.check extra.check main.tscases extra.tscases main.small extra.small files runtime.seams runtime.testrows pmdiff.seams pmdiff.testrows}
+  MUST_SEE=${MUST_SEE:-main.seams extra.seams main.testrows extra.testrows main.comments extra.comments main.targeted extra.targeted main.small-sub extra.small-sub main.check extra.check main.tscases extra.tscases main.small extra.small files runtime.seams runtime.testrows bundle.seams bundle.testrows pmdiff.seams pmdiff.testrows}
   RUNTIME_CORPORA=${RUNTIME_CORPORA:-seams testrows comments targeted small-sub bench}
+  BUNDLE_CORPORA=${BUNDLE_CORPORA:-seams testrows comments targeted}
   PMDIFF_CORPORA=${PMDIFF_CORPORA:-seams testrows comments targeted}
   [ $# -ge 2 ] || { echo "usage: parity.sh <tag> <bun under test> [step ...]"; return 2; }
   TAG=$1
   NEXT=$(readlink -f "$2")
   shift 2
-  [ $# -gt 0 ] || set -- seams testrows comments targeted small-sub check bench tscases repo-ts repo-js small files runtime pmdiff
+  [ $# -gt 0 ] || set -- seams testrows comments targeted small-sub check bench tscases repo-ts repo-js small files runtime bundle pmdiff
   [ -x "$BASE" ] && [ -x "$NEXT" ] || { echo "missing binary: $BASE or $NEXT"; return 2; }
   case "$OUT" in /workspace/notes*) echo "OUT must be outside the notes"; return 2 ;; esac
   case "$EXPECT" in zero | differ) ;; *) echo "EXPECT is zero or differ"; return 2 ;; esac

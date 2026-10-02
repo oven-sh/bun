@@ -2586,3 +2586,99 @@ At `e9755c9f92`, called by their upstream names with upstream's parameter order:
   context_flags)`.
 - `crate::core::Map` (`make`, `is_nil`, `get`, `get_ok`, `set -> bool`, `clear`) and `crate::core::LiveList` (`NIL`,
   `is_nil`, `len`, `at`, `set -> bool`, `iter`), section C of the look-ahead.
+
+## Checker: conditional types and import types (`checker/c40_type_nodes_conditional_tuples.rs`)
+
+Commits `6469fdd56c`, `cad7795f23` and `a582ea9efb` (written by the job that commits the worktree). The 57 functions
+of `checker.go` 24225-25124 in upstream order: the 12 that the file did not have (`getTypeFromConditionalTypeNode`,
+`getConditionalType`, `getTailRecursionRoot`, `isSimpleTupleType`, `isDeferredType`, the true, false and inferred true
+type of a conditional type, `getTypeFromImportTypeNode`, `getIdentifierChain`, `resolveImportSymbolType`,
+`getGlobalImportMetaExpressionType`) at their upstream places among the 45 that it had, which are unchanged.
+PORT_STATUS.md has the row.
+
+NOT compiled by cargo: `checker/mod.rs` still names modules without a file. "Verified" below says what was checked
+instead.
+
+### How a caller writes the calls
+
+- `get_type_from_conditional_type_node(node)` and `get_type_from_import_type_node(node)` answer a `TypeId` and keep it
+  in the type node links, as the other `get_type_from_*_node`.
+- `get_conditional_type(root: ConditionalRootId, mapper, for_constraint, alias: TypeAliasId) -> TypeId`: the root is
+  the id of its record in `conditional_roots`, nil ids for upstream's nil mapper and alias.
+- `get_tail_recursion_root(new_type, new_mapper) -> (ConditionalRootId, TypeMapperId)`: two nil ids for `nil, nil`.
+- `get_true_type_from_conditional_type(t)`, `get_false_type_from_conditional_type(t)` and
+  `get_inferred_true_type_from_conditional_type(t)` take the conditional type and keep their answer in its data.
+- `is_deferred_type(t, check_tuples) -> bool`, `resolve_import_symbol_type(node, symbol, meaning) -> TypeId`,
+  `get_global_import_meta_expression_type() -> TypeId`.
+- These only read and take `&self`: `is_simple_tuple_type(node)` and `get_identifier_chain(node) -> Vec<NodeId>`.
+  Every other method takes `&mut self`.
+
+### Differences from upstream
+
+- `getTypeFromConditionalTypeNode`: the root is a record of `conditional_roots` and `root.node` is the id of the
+  conditional type node. `core.Filter` is `Checker::filter`: the list itself when nothing is removed (nil stays nil),
+  else a new list that is not nil, so `outerTypeParameters != nil` asks the same.
+- `getConditionalType`: `result` is the value of the loop, each `break` of upstream with its value. The conditions
+  of 24500, 24506 and 24538 are the locals `definitely_false`, `include_true_type` and `definitely_true`, filled in
+  upstream's order of evaluation with its short circuits (the permissive and restrictive instantiations are made only
+  where upstream makes them). The fields of the root (`node`, `checkType`, `extendsType`, `inferTypeParameters`) are
+  read once for an iteration, and the flags of the check type and of the inferred extends type once: nothing writes
+  them after the record is made. `extraTypes != nil` is "not empty". The comment of 24454-24467 is one line, and the
+  issue reference of 24480 is not kept.
+- No budget was added to the loop of `getConditionalType`. Upstream counts to 1000 only the tail roots that have an
+  alias. A root without one can be its own tail root (`interface I<T> { p: T extends object ? I<T>["p"] : never }`
+  with `I<{}>["p"]`): every such iteration instantiates the check type with a mapper that is not nil, so the loop
+  ends where `instantiate_type` reaches 5,000,000 instantiations and answers the error type, as upstream's does.
+  `tsc` 6.0.2 reports TS2589 for those two declarations, about two seconds later than it answers for a file
+  without them.
+- `isDeferredType`: two `if` with a return for `a || b && c && core.Some(...)`.
+- The three types of a conditional type: read with `as_conditional_type`, written with `as_conditional_type_mut`;
+  `d.combinedMapper` is read once.
+- `getTypeFromImportTypeNode`: `n.Argument.AsLiteralTypeNode().Literal` is read once. `i == len(nameChain)-1` is
+  `i + 1 == len`. The `TODO` comment of 24709 and the `!!!` of 24737 are not kept.
+- `getIdentifierChain`: a stack test is the first statement (the empty chain at the limit; the recursion is as deep
+  as the qualified name is long). A node that is neither an identifier nor a qualified name ends the chain with the
+  empty chain, after the cast has recorded its fault: upstream's type assertion panics there, and the left side of a
+  failed cast is the nil node, on which the recursion would not end before the stack limit.
+- `getGlobalImportMetaExpressionType`: `Parent` and `Members` of the two transient symbols are written with
+  `update_symbol`.
+
+### Verified
+
+No cargo build has seen the file, and nothing ran a function of it. What was checked:
+
+- `rustfmt --check --edition 2024`: exit 0, and the same for a copy of the file with short names in place of the two
+  long message names of `get_type_from_import_type_node`.
+- `sh round2-layer7-checker/c40-probe.sh`: `rustc` alone and `clippy-driver` alone (the clippy table of the workspace
+  from `conventions-scratch/data/clippy_flags.txt`, the `clippy.toml` of the repository), exit 0 each, no output. The
+  probe denies warnings, unused imports, variables, `mut` and assignments and `unreachable_pub`. It holds this file
+  and `checker/types.rs` by `#[path]`, the leaf files they stand on by `#[path]` (as the probe of `c20` above), and a
+  stand-in for every other name. `c40-probe-gen.py` reads from this file what it names (the methods of the checker
+  and of `Ast` that it calls, the fields of the checker that it reads, the names it imports) and reads each signature
+  from the file of the tree that defines the function, and each field type from `checker_fields!`: 76 methods of the
+  checker from 27 files, 11 free functions of `checker/`, 26 methods of `Ast`, 15 free functions of `ast/`, `or_else`
+  of `core/core.rs`, `declaration_name_to_string` of `scanner/utilities.rs`, 32 fields, 13 node records, `Symbol`,
+  `JSDeclarationKind`, `CacheHashKey`, `Targets`, and of `c01_data.rs` `InferenceContext`,
+  `IntraExpressionInferenceSite`, `CachedTypeKey` and six flag sets. Written by hand there: the two callees of the
+  last section, `core::Map` and `core::LiveList` after the contract, `StackCheck`, `ScriptTarget`, `PseudoBigInt`,
+  `evaluator::Result`, `Fallback`, `ListItem`. A copy of the file with an unused import and an unused variable gave
+  the two errors.
+- Scripts over the file: the 57 functions have upstream's names in upstream's order
+  (`round2-layer7-checker/ranges.py`: 57 in the file, 0 nowhere); no two comment lines are adjacent; no `unwrap`,
+  `expect`, `panic`, `todo`, `unimplemented`, `unreachable` or `unsafe`; every `[...]` indexes a store of records or
+  a link store of the checker.
+- Read against the tree at `a582ea9efb`: the calls that other files make into the 12 match by name, number and order
+  of arguments (`c29` 328-329, `c37` 725 and 730, `c38` 106 and 108, `c50` 147 and 155, `c52` 89, `inference.rs`
+  804-812, 2557 and 2561, `nodebuilderimpl.rs` 4713 and 4715, `relater.rs` 5837-5850, 6255, 6270 and 6582-6594).
+- Not checked: the two callees that have no definition, the `core::Map` of the tree (no file defines it), clippy and
+  rustc on the real crate, and any result against upstream's baselines.
+
+### What this file expects and the tree does not have
+
+At `a582ea9efb`, called by their upstream names with upstream's parameter order:
+
+- `c17`: `get_instantiation_expression_type(expr_type, node) -> TypeId` (10750), from `resolve_import_symbol_type`,
+  and `check_expression_with_type_arguments(node) -> TypeId` (10727), from `get_type_from_type_query_node`, which
+  the file had.
+- `crate::core::Map` as the contract has it (`make`, `get`, `set` with its `bool`, and `Default` for the nil map),
+  for `cached_types`, `tuple_types` and the instantiations of a conditional root and of a tuple target.

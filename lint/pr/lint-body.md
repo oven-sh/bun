@@ -8,7 +8,7 @@ Part of #2246
 ### Fix
 
 - `bun --lint <files>` parses each file and never runs it. It prints syntax errors and the findings of 11 lint rules. It needs `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1`.
-- The type grammar reads what tsc reads. A lint parse keeps the type syntax in a side table beside the unchanged tree.
+- A lint parse reads what tsc reads and keeps the type syntax in a side table beside the unchanged tree.
 - The type checker (a port of typescript-go) is not in this branch yet. The notes list each step.
 - Verified: `test/cli/lint/` (89 tests), `test/bundler/transpiler/typescript-grammar*.test.ts` (366 cases), 70 parser Rust tests.
 
@@ -20,9 +20,9 @@ Part of #2246
 
 ### Downsides
 
-- The transpiler now accepts TypeScript that it rejected, and some `emitDecoratorMetadata` values change to those of tsc. The transpiler cache version goes from 33 to 34.
+- Defect of this state, fix in progress: a parse without `--lint` is slower on type-heavy files. Declaration files cost +10.7% to +14.6% parser instructions, `.tsx` +3.9%, JavaScript -0.07%. The fix gives such a parse the type skipper of main again, with no change of behaviour.
+- Stripped binary: +376,832 bytes (80,873,032 to 81,249,864).
 - The parser stops at the first syntax error. tsc continues.
-- Not measured yet for this state: binary size, and the instructions of a parse without `--lint`.
 
 <details><summary>Notes</summary>
 
@@ -36,7 +36,7 @@ Part of #2246
 | The type grammar is generic over a sink (`Discard`, `DecoratorMetadata`, `Build`) | done |
 | One read-only walker over `Stmt`, `Expr` and `Binding` (`bun_ast::walk`), `bun pm diff` moved onto it | done |
 | The tables that only `Parser::parse_only` fills go behind a `Box`, size assertions on `P` | done |
-| The type grammar reads what tsc reads, with the tree shape of the reference | done, the comparison with the base build on a corpus is open |
+| The type grammar of a lint parse reads what tsc reads, with the tree shape of the reference | done for every parse, which costs a parse without `--lint` (see the measurement). In progress: only a lint parse uses it |
 | Type nodes with start and end (`bun_ast::ts`), built by the `Build` sink | done |
 | `Parser::parse_for_lint` and the side table: annotations, type parameters and arguments, casts, non-null, parentheses, erased statements and class members, tsc codes of syntax errors | done |
 | Comments, directive comments and triple-slash directives in the side table | open |
@@ -44,13 +44,34 @@ Part of #2246
 | Diagnostics with a code, sorted, in tsc's plain format and as code frames | done |
 | 11 lint rules on JavaScript, with ESLint's names and cases: `no-compare-neg-zero`, `no-debugger`, `no-dupe-class-members`, `no-dupe-keys`, `no-duplicate-case`, `no-empty-pattern`, `no-self-assign`, `no-sparse-arrays`, `no-unsafe-negation`, `use-isnan`, `valid-typeof` | done |
 | The lint rules on TypeScript files, and the rest of `eslint:recommended` | open |
-| TypeScript conformance corpus, runner and expectations file | written on a branch, its test does not pass yet |
-| Type checker: node table, binder, checker (typescript-go 89d5d5b) | translated on a branch: 121,196 lines in 172 files, not compiled yet |
+| TypeScript conformance corpus, runner and expectations file | on a branch: 12,445 cases and the baselines (7.4 MB packed). Its test does not pass yet (66 of 104) |
+| Type checker: node table, binder, checker (typescript-go 89d5d5b) | on a branch. Compiles: node table, scanner, binder, importer of tsc trees, lowering from Bun's tree (94 files, 59,354 lines). Translated, not compiled yet: the checker and the type printer (85 files, 65,179 lines). 15 parts of the checker are not translated |
 | Program: compilerOptions, resolution of types, embedded lib files, `bun --lint` with no operand | open |
 | Comment directives, JSDoc, checkJs | open |
 | Type-aware lint rules, help text, completions, docs. The flag becomes public | open |
 
 A defect that is older than this PR is fixed here, because the new tests show it: `Metadata::MDot` held a `Vec<Ref>` inside AST nodes that an arena holds, so a decorated member with a type such as `ns.A.B` leaked the buffer at each parse. It is an arena slice now.
+
+**Measurement of this state of the branch (23a20afa7e) against main (f4d755a9cf)**
+
+linux-x64 release builds. Benchmark `bench/snippets/transpiler-typescript.mjs`, 20 passes, valgrind 3.27.1 (`--tool=cachegrind --cache-sim=no --branch-sim=yes`), `BUN_JSC_useJIT=0`, counts for the symbols of `bun_js_parser`.
+
+| Group | Instructions | Conditional branches |
+|---|---:|---:|
+| bun-types | 314,436,617 to 348,219,899 (+10.7%) | 44,553,098 to 49,988,140 (+12.2%) |
+| typescript-lib | 1,106,661,637 to 1,268,668,079 (+14.6%) | 160,854,698 to 186,797,938 (+16.1%) |
+| src-js | 4,450,919,644 to 4,470,041,686 (+0.43%) | 515,005,866 to 519,050,646 (+0.79%) |
+| tsx | 1,179,608,115 to 1,226,053,701 (+3.9%) | 137,933,729 to 146,225,734 (+6.0%) |
+| js-control | 2,904,302,641 to 2,902,157,443 (-0.07%) | 312,333,038 to 312,536,378 (+0.065%) |
+
+| Item | main | this branch |
+|---|---:|---:|
+| `bun` (stripped) | 80,873,032 B | 81,249,864 B |
+| `bun_js_parser` text | 1,400,688 B | 1,670,251 B |
+| `P<true, false>` | 475,578 B | 611,843 B |
+| `P<true, true>` | 191,090 B | 318,030 B |
+
+The cause: in this state every parse uses the grammar that reads what tsc reads. For the lib files, the three functions of main's skipper cost 134 M instructions, and the functions that replace them cost about 250 M. The fix in progress: a parse without `--lint` uses main's skipper again (in the form of the sink step, which was measured at +0 instructions and +0 branches), and only a lint parse uses the new grammar. After that the transpiler accepts and emits what main accepts and emits, and the cache version goes back to 33.
 
 **Measurements for the four groundwork steps**
 
@@ -110,4 +131,5 @@ Boxed tables:
 - The estimate for the complete checker is +2.1 to 2.7 MB of cold code. Each step adds its measured size to this description.
 
 </details>
+
 

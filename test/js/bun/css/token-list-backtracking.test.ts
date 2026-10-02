@@ -84,6 +84,21 @@ test.concurrent("deeply nested rgb() with an invalid var() in the alpha parses i
   await expectBounded(css, true);
 });
 
+test.concurrent.each([
+  { fn: "rgb", open: "rgb(from light-dark(red,currentColor) r g b/" },
+  { fn: "hsl", open: "hsl(from light-dark(red,currentColor) h s l/" },
+])("$fn: a non-convertible light-dark() origin half parses in bounded time", async ({ open }) => {
+  // The dark half (currentColor) cannot convert to the colorspace, so the
+  // attempt fails and the value falls back to unparsed tokens. Before the
+  // convertibility pre-check the light half first parsed the whole alpha token
+  // list at every level: O(n^5) work, and 2^depth on the PR base. Depth 96 did
+  // not finish.
+  const depth = 96;
+  const css =
+    ".a{--x:" + Buffer.alloc(depth * open.length, open).toString() + "1" + Buffer.alloc(depth, ")").toString() + "}";
+  await expectBounded(css, false);
+});
+
 test("original fuzzer input parses in bounded time and memory", () => {
   // Minimized fuzzer testcase: thousands of unclosed `{` blocks, unterminated
   // strings, and a trailing run of `}`.
@@ -162,7 +177,13 @@ const lightDarkOriginShapes = [
 ];
 
 function nestedLightDarkOrigin(depth: number, property: string, open = lightDarkOriginShapes[0].open): string {
-  return `.a{${property}:` + open.repeat(depth) + "1" + ")".repeat(depth) + "}";
+  return (
+    `.a{${property}:` +
+    Buffer.alloc(depth * open.length, open).toString() +
+    "1" +
+    Buffer.alloc(depth, ")").toString() +
+    "}"
+  );
 }
 
 // The fully resolved form of `depth` nested origins whose innermost alpha is

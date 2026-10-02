@@ -1,6 +1,6 @@
 import { Subprocess, spawn, write } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isPosix, tempDir } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -461,11 +461,12 @@ afterAll(async () => {
     // gets. The retroactive walk must not recurse once per level. Linux sizes the main
     // thread's stack from `ulimit -s`: at the 1 MB pinned below, a native frame per level
     // overflows it at this depth. A debug build has larger frames and spends about 0.5 ms
-    // per `found` event, so the slow builds get a shallower tree.
+    // per `found` event, so it gets a shallower tree. Release builds, sanitizer builds
+    // included, need the deep tree: their frames are small enough to survive 2_000 levels.
     //
     // This uses the WebSocket transport. The `found` events arrive as one burst, and the
     // WebSocket writer queues messages across partial writes.
-    const depth = isDebug || isASAN ? 2_000 : 20_000;
+    const depth = isDebug ? 2_000 : 20_000;
     using dir = tempDir("test-reporter-deep-nesting", {
       "deep.test.ts": `
 import { afterAll, describe, test, expect } from "bun:test";

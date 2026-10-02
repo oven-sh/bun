@@ -10,6 +10,8 @@ pub mod internal;
 pub mod jsnum;
 pub mod lowering;
 pub mod module;
+pub mod nodebuilder;
+pub mod pseudochecker;
 pub mod scanner;
 pub mod stringutil;
 pub mod tspath;

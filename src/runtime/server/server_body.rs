@@ -2325,7 +2325,7 @@ where
                 }
 
                 if let Some(body__) = opts.fast_get(ctx, jsc::BuiltinName::Body)? {
-                    match Blob::get::<true, false>(ctx, body__) {
+                    match Blob::get::<false>(ctx, body__) {
                         Ok(new_blob) => body = BodyValue::Blob(new_blob),
                         Err(err) => {
                             return Ok(JSPromise::rejected_promise_with_caught_exception(

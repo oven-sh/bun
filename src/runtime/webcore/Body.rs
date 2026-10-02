@@ -1047,7 +1047,7 @@ impl Value {
             ));
         }
 
-        Ok(Value::Blob(Blob::get::<true, false>(global_this, value)?))
+        Ok(Value::Blob(Blob::get::<false>(global_this, value)?))
     }
 
     pub(crate) fn from_readable_stream_without_lock_check(

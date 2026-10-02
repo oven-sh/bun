@@ -1,0 +1,35 @@
+Clear jobReady when the job table is erased.
+
+With nbWorkers >= 1, ZSTDMT_createCompressionJob() sets mtctx->jobReady when
+it has prepared a job and no worker is free to take it.
+ZSTDMT_releaseAllJobResources() erases every job description, the prepared one
+too, and leaves the flag set. ZSTDMT_initCStream_internal() does not clear it
+either.
+
+The next frame on that context then skips the preparation and posts the
+erased description. The worker calls ZSTDMT_getCCtx(NULL) and the process gets
+SIGSEGV (zstdmt_compress.c:697).
+
+The caller does not have to reset anything to get there. zstd erases the table
+and starts a new session by itself when a job fails, and when
+ZSTDMT_compressStream_generic() returns stage_wrong. A frame on the same
+context after one of those, while a job waited for a worker, crashes.
+
+ZSTD_CCtx_reset(cctx, ZSTD_reset_session_only) in an open frame is one more
+way in. reset() of a node:zlib zstd stream makes that call, and Node v26.10.0
+exits with SIGSEGV there.
+
+facebook/zstd has the same code on its dev branch, and no issue there reports
+it (checked 2026-09-29).
+
+--- a/lib/compress/zstdmt_compress.c
++++ b/lib/compress/zstdmt_compress.c
+@@ -1023,6 +1023,8 @@
+     }
+     mtctx->inBuff.buffer = g_nullBuffer;
+     mtctx->inBuff.filled = 0;
++    /* Bun: the loop above erased the job that jobReady refers to. */
++    mtctx->jobReady = 0;
+     mtctx->allJobsCompleted = 1;
+ }
+ 

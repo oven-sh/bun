@@ -940,19 +940,16 @@ test("--hot reload: the connections of the last run of the script belong to the 
       import { createServer } from "node:http";
       import { connect } from "node:net";
 
-      const state = (globalThis.state ??= { runs: 0, received: "" });
+      const state = (globalThis.state ??= { runs: 0, received: "", afterSweep: Promise.withResolvers() });
       const run = ++state.runs;
-      const server = createServer((req, res) => {
-        res.end(req.url === "/server" ? "socket.server is this server: " + (req.socket.server === server) : req.url);
-      });
+      const server = createServer((req, res) => res.end(req.url));
       server.keepAliveTimeout = 60000;
+      if (run === 1) server.on("connection", socket => (state.serverSocket = socket));
       await once(server.listen(0, "127.0.0.1"), "listening");
 
       if (run === 1) {
         // One keep-alive connection gets a response, and then the script runs again.
         const socket = (state.socket = connect(server.address().port, "127.0.0.1"));
-        const serverOfSocket = (state.serverOfSocket = Promise.withResolvers());
-        const afterSweep = (state.afterSweep = Promise.withResolvers());
         socket.on("error", () => {});
         socket.on("data", chunk => {
           state.received += chunk;
@@ -960,25 +957,21 @@ test("--hot reload: the connections of the last run of the script belong to the 
             const self = new URL(import.meta.url);
             writeFileSync(self, readFileSync(self, "utf8"));
           }
-          const answer = /socket.server is this server: (true|false)$/.exec(state.received);
-          if (answer) serverOfSocket.resolve(answer[1] === "true");
-          if (state.received.endsWith("/second")) afterSweep.resolve("answered");
+          if (state.received.endsWith("/second")) state.afterSweep.resolve("answered");
         });
-        socket.on("close", () => {
-          serverOfSocket.resolve("closed");
-          afterSweep.resolve("closed");
-        });
+        socket.on("close", () => state.afterSweep.resolve("closed"));
         socket.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
       } else if (run === state.runs && !state.swept) {
+        // No await up to the sweep: one write of the file can run the script more than once.
         state.swept = true;
-        state.socket.write("GET /server HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-        const socketServerIsThisServer = await state.serverOfSocket.promise;
-        const connections = new Promise(resolve => server.getConnections((error, count) => resolve(count)));
+        const socketServerIsThisServer = state.serverSocket.server === server;
+        let connections;
+        server.getConnections((error, count) => (connections = count));
         server.closeIdleConnections();
         // A connection that the server closed does not answer.
         state.socket.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
         const afterSweep = await state.afterSweep.promise;
-        console.log(JSON.stringify({ socketServerIsThisServer, connections: await connections, afterSweep }));
+        console.log(JSON.stringify({ socketServerIsThisServer, connections, afterSweep }));
         process.exit(0);
       }
     `,

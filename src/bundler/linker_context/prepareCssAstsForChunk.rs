@@ -18,7 +18,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_resolver::DataURL;
 
-use crate::chunk::{Content, CssImportOrderKind};
+use crate::chunk::{Content, CssImportOrder, CssImportOrderKind};
 
 // Raw pointers rather than `&mut` / `&` so that
 // (a) the container_of `container_of` recovery of `*mut BundleV2` from
@@ -97,6 +97,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
         let Content::Css(css_chunk) = &mut chunk.content else {
             unreachable!()
         };
+        let targets = chunk_targets(&css_chunk.imports_in_chunk_in_order, asts);
         let mut i: usize = css_chunk.imports_in_chunk_in_order.len() as usize;
         while i != 0 {
             i -= 1;
@@ -149,6 +150,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
                         options: ParserOptions::default(None),
+                        targets,
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
@@ -221,7 +223,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             });
 
                             let printer_options = PrinterOptions {
-                                targets: Targets::for_bundler_target(c.options.target),
+                                targets,
                                 // TODO: make this more configurable
                                 minify: c.options.minify_whitespace
                                     || c.options.minify_syntax
@@ -324,6 +326,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
                         options: ParserOptions::default(None),
+                        targets,
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
@@ -431,6 +434,22 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
             }
         }
     }
+}
+
+/// All of a chunk's stylesheets come from one module graph, so the first one's targets are the chunk's.
+fn chunk_targets(order: &[CssImportOrder], asts: &[crate::bundled_ast::CssCol]) -> Targets {
+    order
+        .iter()
+        .find_map(|entry| match entry.kind {
+            CssImportOrderKind::SourceIndex(idx) => Some(
+                asts[idx.get() as usize]
+                    .as_deref()
+                    .expect("css ast present")
+                    .targets,
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// Builds a `BundlerCssRuleList` whose backing storage is arena-owned.

@@ -1,7 +1,7 @@
-// A server accepts one Upgrade request that has a 100-byte body. The JSON in argv[2] says what the client sends and
-// what the 'upgrade' listener does when it has read the last chunk. Prints `events` (what the request and the upgrade
-// socket emitted, in order), `eofs` (how many times the request got its EOF after the listener ran) and `upgrade`
-// (what the listener got). Also runs in Node.js.
+// A server accepts one Upgrade request that has a 100-byte body. The client sends the body when the 'upgrade' listener
+// has run, so the listener reads it as it comes. The JSON in argv[2] says what the client sends and what the listener
+// does when it has read the last chunk. Prints `events` (what the request and the upgrade socket emitted, in order)
+// and `eofs` (how many times the request got its EOF). Also runs in Node.js.
 const http = require("node:http");
 const https = require("node:https");
 const net = require("node:net");
@@ -14,16 +14,13 @@ const {
   read = "data",
   // What the listener does inside the last chunk.
   act,
-  // The second half of the body comes in a later read than the head.
+  // The body comes in two reads.
   split = false,
   secure = false,
   // The client sends this after the server's FIN, as bytes of the tunnel.
   tunnelBytes = "",
   // The listener reads the upgrade socket and writes more to it than a client that does not read takes.
   spill = false,
-  // "throws": the listener ends the socket and throws. "none": shouldUpgradeCallback accepts the request, and no
-  // listener takes it.
-  listener = "reads",
 } = JSON.parse(process.argv[2]);
 
 const keys = path.join(__dirname, "..", "test", "fixtures", "keys");
@@ -39,7 +36,6 @@ const server = (secure ? https : http).createServer(
 const body = Buffer.alloc(100, "B").toString();
 const events = [];
 let eofs = 0;
-let upgrade;
 let client;
 const serverSocketClosed = Promise.withResolvers();
 const clientClosed = Promise.withResolvers();
@@ -70,8 +66,7 @@ function letGo(req, socket) {
   }
 }
 
-function onUpgrade(req, socket, head) {
-  upgrade = { head: head.length, complete: req.complete, readableLength: req.readableLength };
+server.on("upgrade", (req, socket) => {
   const push = req.push;
   req.push = function (chunk) {
     if (chunk === null) eofs++;
@@ -85,10 +80,6 @@ function onUpgrade(req, socket, head) {
     events.push("socket close");
     serverSocketClosed.resolve();
   });
-  if (listener === "throws") {
-    socket.end();
-    throw new Error("listener threw");
-  }
   if (tunnelBytes) socket.on("data", chunk => events.push(`socket data ${chunk.length}`));
   if (spill) {
     socket.on("data", () => {});
@@ -116,13 +107,8 @@ function onUpgrade(req, socket, head) {
       if (chunk !== null) onChunk(chunk);
     });
   }
-}
-if (listener === "none") {
-  server.shouldUpgradeCallback = () => true;
-  server.on("connection", socket => socket.on("close", serverSocketClosed.resolve));
-} else {
-  server.on("upgrade", onUpgrade);
-}
+  client.write(split ? body.slice(0, 50) : body);
+});
 
 server.listen(0, "127.0.0.1", () => {
   const options = { port: server.address().port, host: "127.0.0.1", allowHalfOpen: tunnelBytes !== "" };
@@ -134,8 +120,7 @@ server.listen(0, "127.0.0.1", () => {
   if (tunnelBytes) client.on("end", () => client.end(tunnelBytes));
   client.on(secure ? "secureConnect" : "connect", () => {
     client.write(
-      `POST /upgrade HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: test\r\nContent-Length: ${body.length}\r\n\r\n` +
-        (split ? body.slice(0, 50) : body),
+      `POST /upgrade HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: test\r\nContent-Length: ${body.length}\r\n\r\n`,
     );
   });
 });
@@ -143,5 +128,5 @@ server.listen(0, "127.0.0.1", () => {
 Promise.all([serverSocketClosed.promise, clientClosed.promise]).then(() => {
   server.close();
   // One more turn: an event that follows the close of the socket is part of the result.
-  setImmediate(() => console.log(JSON.stringify({ events, eofs, upgrade })));
+  setImmediate(() => console.log(JSON.stringify({ events, eofs })));
 });

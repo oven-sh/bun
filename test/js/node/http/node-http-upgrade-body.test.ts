@@ -301,6 +301,56 @@ describe("the 'upgrade' event of a request with a body", () => {
     await storage.run("listen", () => upgrade(false, inOneRead(fixed + "HELLOAFTER"), { onUpgrade }));
     expect(store).toBe("listen");
   });
+
+  test.concurrent("the socket is destroyed when shouldUpgradeCallback accepts and no listener takes it", async () => {
+    const server = http.createServer({ shouldUpgradeCallback: () => true });
+    const closed = Promise.withResolvers<boolean>();
+    server.on("connection", socket => socket.on("close", () => closed.resolve(socket.destroyed)));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.resume();
+      await once(client, "connect");
+      client.write(fixed + "HELLOAFTER");
+      expect(await closed.promise).toBe(true);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  // The exception is uncaught, so the server runs in a process of its own.
+  test.concurrent("a listener that throws gets the request first", async () => {
+    const script = `
+      const http = require("node:http");
+      const net = require("node:net");
+      const seen = {};
+      process.on("uncaughtException", err => (seen.uncaught = err.message));
+      const server = http.createServer();
+      server.on("upgrade", (req, socket, head) => {
+        Object.assign(seen, { head: String(head), complete: req.complete, readableLength: req.readableLength });
+        socket.on("close", () => {
+          console.log(JSON.stringify(seen));
+          server.close();
+        });
+        socket.end();
+        throw new Error("listener threw");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = net.connect(server.address().port, "127.0.0.1");
+        client.resume();
+        client.end(${JSON.stringify(fixed + "HELLOAFTER")});
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ head: "AFTER", complete: true, readableLength: 5, uncaught: "listener threw" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // The close of a tunnel gave the request body handler one more last chunk, also when the parser had given it one.
@@ -332,73 +382,65 @@ describe("an Upgrade request with a body", () => {
   }
 
   const exited = { stderr: "", exitCode: 0, signalCode: null };
+  const ended = ["req data 100", "req end", "req close"];
+  const destroyed = (read: string) => [`req ${read} 100`, "req aborted", "req close", "socket close"];
 
-  // The listener reads the 100-byte body and lets go when it has the last byte. `split`: the second half of the body
-  // comes in a read of its own, so the listener lets go inside the delivery of the last chunk, and the request gets
-  // its EOF once after that. Otherwise the whole body came with the head: the request has its EOF when the listener
-  // runs (`eofs` 0), and it emits 'end' before 'close', as in Node.js v26.3.0.
-  const reads = (split: boolean, read = "data") => (split ? [`req ${read} 50`, `req ${read} 50`] : [`req ${read} 100`]);
-  const destroyed = (split: boolean, read = "data") => ({
-    events: [...reads(split, read), "req aborted", ...(split ? [] : ["req end"]), "req close", "socket close"],
-    eofs: split ? 1 : 0,
-  });
-  const ended = (split: boolean, ...after: string[]) => ({
-    events: [...reads(split), "req end", "req close", ...after],
-    eofs: split ? 1 : 0,
-  });
-
-  describe.each([
-    ["with its head", false],
-    ["in a read of its own", true],
-  ] as const)("whose last chunk comes %s, when the listener lets go at the last byte", (_where, split) => {
+  describe("gets its EOF once when the listener lets go inside the last chunk", () => {
     const rows: [name: string, options: Record<string, unknown>, expected: { events: string[]; eofs: number }][] = [
-      ["req.destroy() in 'data'", { act: "req.destroy()" }, destroyed(split)],
-      ["req.destroy() in 'readable'", { act: "req.destroy()", read: "readable" }, destroyed(split, "readable")],
-      ["req.destroy() over TLS", { act: "req.destroy()", secure: true }, destroyed(split)],
+      ["req.destroy() in 'data'", { act: "req.destroy()" }, { events: destroyed("data"), eofs: 1 }],
+      [
+        "req.destroy() in 'readable'",
+        { act: "req.destroy()", read: "readable" },
+        { events: destroyed("readable"), eofs: 1 },
+      ],
+      ["req.destroy() over TLS", { act: "req.destroy()", secure: true }, { events: destroyed("data"), eofs: 1 }],
       [
         "req.destroy(err)",
         { act: "req.destroy(err)" },
         {
-          events: [
-            ...reads(split),
-            "req aborted",
-            "req error: stop",
-            "req close",
-            "socket error: stop",
-            "socket close",
-          ],
-          eofs: split ? 1 : 0,
+          events: ["req data 100", "req aborted", "req error: stop", "req close", "socket error: stop", "socket close"],
+          eofs: 1,
         },
       ],
-      ["socket.destroy(), then req.destroy()", { act: "socket.destroy() then req.destroy()" }, destroyed(split)],
+      [
+        "socket.destroy(), then req.destroy()",
+        { act: "socket.destroy() then req.destroy()" },
+        { events: destroyed("data"), eofs: 1 },
+      ],
       [
         "req.destroy(), then a throw",
         { act: "req.destroy() then throw" },
         {
-          events: [
-            ...reads(split),
-            "req aborted",
-            "uncaughtException: listener threw",
-            ...(split ? [] : ["req end"]),
-            "req close",
-            "socket close",
-          ],
-          // Inside the last chunk, the throw leaves the callback before it gives the request its EOF.
+          events: ["req data 100", "req aborted", "uncaughtException: listener threw", "req close", "socket close"],
+          // The throw leaves the callback before it gives the request its EOF.
           eofs: 0,
         },
       ],
-      ["socket.destroy()", { act: "socket.destroy()" }, ended(split, "socket close")],
-      ["socket.resetAndDestroy()", { act: "socket.resetAndDestroy()" }, ended(split, "socket close")],
-      ["socket.destroySoon()", { act: "socket.destroySoon()" }, ended(split, "socket end", "socket close")],
+      [
+        "req.destroy() at the end of a body that took two reads",
+        { act: "req.destroy()", split: true },
+        { events: ["req data 50", "req data 50", "req aborted", "req close", "socket close"], eofs: 1 },
+      ],
+      ["socket.destroy()", { act: "socket.destroy()" }, { events: [...ended, "socket close"], eofs: 1 }],
+      [
+        "socket.resetAndDestroy()",
+        { act: "socket.resetAndDestroy()" },
+        { events: [...ended, "socket close"], eofs: 1 },
+      ],
+      [
+        "socket.destroySoon()",
+        { act: "socket.destroySoon()" },
+        { events: [...ended, "socket end", "socket close"], eofs: 1 },
+      ],
       [
         "req.destroy() in 'readable', while a TLS write that spilled defers the close",
         { act: "req.destroy()", read: "readable", secure: true, spill: true },
-        destroyed(split, "readable"),
+        { events: destroyed("readable"), eofs: 1 },
       ],
     ];
     for (const [name, options, expected] of rows) {
       test.concurrent(name, async () => {
-        expect(await run({ ...options, split })).toMatchObject({ ...expected, ...exited });
+        expect(await run(options)).toMatchObject({ ...expected, ...exited });
       });
     }
   });
@@ -406,16 +448,12 @@ describe("an Upgrade request with a body", () => {
   // Only a debug build prints what uws gives to the body handler of the request.
   describe.skipIf(!isDebug)("gets nothing from uws after its last chunk", () => {
     const rows: [name: string, options: Record<string, unknown>, events: string[]][] = [
-      [
-        "the close of the socket inside that chunk",
-        { act: "socket.destroy()", split: true },
-        ended(true, "socket close").events,
-      ],
+      ["the close of the socket inside that chunk", { act: "socket.destroy()" }, [...ended, "socket close"]],
       [
         "bytes of the tunnel after socket.end() inside that chunk",
-        { act: "socket.end()", split: true, tunnelBytes: "0123456789" },
+        { act: "socket.end()", tunnelBytes: "0123456789" },
         // The upgrade socket got the bytes, so uws did read them.
-        ended(true, "socket data 10", "socket end", "socket close").events,
+        [...ended, "socket data 10", "socket end", "socket close"],
       ],
     ];
     for (const [name, options, events] of rows) {
@@ -426,29 +464,11 @@ describe("an Upgrade request with a body", () => {
         expect({ ...result, native }).toMatchObject({
           events,
           eofs: 1,
-          native: ["onData(50 bytes, is_last = 0)", "onData(50 bytes, is_last = 1)"],
+          // The read that carried the head had nothing of the body.
+          native: ["onData(0 bytes, is_last = 0)", "onData(100 bytes, is_last = 1)"],
           ...exited,
         });
       });
     }
-  });
-
-  // These end the process when they go wrong, so each one runs in a process of its own.
-  describe.each([
-    ["http", false],
-    ["https", true],
-  ] as const)("whose whole body came with its head, over %s", (_transport, secure) => {
-    test.concurrent("a listener that throws gets the request first", async () => {
-      expect(await run({ listener: "throws", secure })).toMatchObject({
-        events: ["uncaughtException: listener threw", "socket end", "socket close"],
-        upgrade: { head: 0, complete: true, readableLength: 100 },
-        ...exited,
-      });
-    });
-
-    test.concurrent("the socket is destroyed when shouldUpgradeCallback accepts and no listener takes it", async () => {
-      // The fixture prints when the server has seen the close of that socket.
-      expect(await run({ listener: "none", secure })).toMatchObject({ events: [], ...exited });
-    });
   });
 });

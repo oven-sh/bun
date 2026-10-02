@@ -11,9 +11,6 @@ use super::wrappers::Wrapper;
 use crate::defines::Define;
 use crate::type_sink_tests::{read_from, type_parameters_read, type_read};
 
-/// Whether the line of a source holds the types of the side table.
-const RECORDS: bool = true;
-
 /// How a source is read: its loader, and with `Decorators` the decorators of TypeScript and their metadata.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Dialect {
@@ -24,7 +21,7 @@ enum Dialect {
 }
 
 enum Want {
-    /// tsc parses the source and reads this outside its types: the line that `facts` makes.
+    /// tsc parses the source and reads this: the line that `facts` makes.
     Reads(&'static str),
     /// tsc rejects the source: the code, the start and the end of its first diagnostic.
     Fails(u32, u32, u32),
@@ -240,9 +237,6 @@ fn facts(parsed: &ParsedForLint<'_, '_>) -> String {
         &nodes.enums,
         parsed.sidecar.attached.return_types.len(),
     );
-    if !RECORDS {
-        return line;
-    }
     format!("{line} {}", records(parsed))
 }
 

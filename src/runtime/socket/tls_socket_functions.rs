@@ -267,11 +267,7 @@ pub(super) mod ffi {
             ctx: *mut X509_STORE_CTX,
             x: *mut X509,
         ) -> c_int;
-        // Returns the EXFLAG_* bits of `x509`. EXFLAG_SS is set when the
-        // certificate names itself as its issuer (subject, authority key
-        // identifier). The key usage extension does not factor in, so a
-        // self-signed leaf without keyCertSign is self-signed too, the same
-        // way X509_STORE_CTX_get1_issuer sees it.
+        // Returns the EXFLAG_* bits of `x509`; EXFLAG_SS marks a self-signed one.
         pub(crate) fn X509_get_extension_flags(x509: *mut X509) -> u32;
     }
 }

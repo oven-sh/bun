@@ -450,7 +450,6 @@ impl<'a> PackageInstaller<'a> {
     }
 
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn manager_mut(&self) -> &'a mut PackageManager {
         // SAFETY: BACKREF — never null; disjoint from `*self`; install pass
         // is single-threaded so no concurrent `&mut PackageManager` exists.
@@ -464,14 +463,12 @@ impl<'a> PackageInstaller<'a> {
     }
 
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn lockfile_mut(&self) -> &'a mut Lockfile {
         // SAFETY: BACKREF — never null; disjoint from `*self`; see `manager_mut`.
         unsafe { &mut *self.lockfile }
     }
 
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn progress_mut(&self) -> &'a mut Progress {
         // SAFETY: BACKREF into `manager.progress` — never null; disjoint from
         // `*self`; the install pass is single-threaded so no concurrent `&mut
@@ -1478,19 +1475,8 @@ impl<'a> PackageInstaller<'a> {
                 } else {
                     // transitive folder dependencies are not hoisted
                     if folder.len() >= self.folder_path_buf.len()
-                        || (bin::bin_target_escapes_package_dir(folder) && {
-                            // overrides/resolutions are only ever parsed from the root
-                            // package.json, so a folder path that reached here via an
-                            // override was written by the user and is trusted the same
-                            // as a direct dependency of the root.
-                            let dep = &self.lockfile().buffers.dependencies.as_slice()
-                                [dependency_id as usize];
-                            !self.lockfile().overrides.contains_name(
-                                dep.name_hash,
-                                dep.name.slice(string_buf!()),
-                                string_buf!(),
-                            )
-                        })
+                        || (bin::bin_target_escapes_package_dir(folder)
+                            && !self.lockfile().is_trusted_folder_dependency(dependency_id))
                     {
                         if log_level != Options::LogLevel::Silent {
                             bun_core::pretty_errorln!(

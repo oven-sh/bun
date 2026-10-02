@@ -32,7 +32,7 @@ public:
         Sink,
         // the JSPromise readStreamIntoSink returned (what Rust's Signal protocol awaits).
         Result,
-        // Nullable: the unwritten batch tail stashed on sink backpressure; drained on m_onPull.
+        // Nullable: the unwritten batch tail stashed on sink backpressure; drained on onReady.
         PendingBatch,
         // Nullable: the byte-producing JSTransformStream subclass whose transform arms
         // write output straight to this sink. Set at attach; onReady flips its
@@ -42,12 +42,6 @@ public:
 
     static JSReadStreamIntoSinkOperation* create(JSC::VM&, JSC::Structure*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
-
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(JSReadStreamIntoSinkOperation);
-    }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -88,7 +82,7 @@ public:
     bool m_didThrow : 1 { false };
     bool m_didClose : 1 { false };
     bool m_started : 1 { false };
-    // Set when rsisWriteChunk suspends on sink backpressure; cleared when m_onPull resumes.
+    // Set when rsisWriteChunk suspends on sink backpressure; cleared when onReady resumes.
     bool m_waitingOnSink : 1 { false };
 
 private:

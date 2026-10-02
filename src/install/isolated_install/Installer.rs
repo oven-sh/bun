@@ -127,7 +127,6 @@ impl<'a> Installer<'a> {
         unsafe { &*self.manager }
     }
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn manager_mut(&self) -> &'a mut PackageManager {
         // SAFETY: BACKREF — never null; disjoint from `*self`. Return is `'a`
         // (not elided) so `start_task` can hold it across `&mut self.tasks[i]`

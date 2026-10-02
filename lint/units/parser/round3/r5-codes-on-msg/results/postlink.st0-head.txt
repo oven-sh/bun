@@ -1,0 +1,11 @@
+functions a 1998 b 2003: identical 1994, different 4, only a 0, only b 5; text bytes a 1916362 b 1917525 (+1163)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      3004    2995    690    711    77    77  <p::P<false, false>>::parse_stmt
+DIFF      3004    2995    690    711    77    77  <p::P<false, true>>::parse_stmt
+DIFF      3932    3878    898    904    96    96  <p::P<true, false>>::parse_stmt
+DIFF      3908    3878    898    904    96    96  <p::P<true, true>>::parse_stmt
+ONLY-B             215            56           5  <p::P<false, false>>::statement_expected
+ONLY-B             215            56           5  <p::P<false, true>>::statement_expected
+ONLY-B             215            56           5  <p::P<true, false>>::statement_expected
+ONLY-B             215            56           5  <p::P<true, true>>::statement_expected
+ONLY-B             405           103          11  <parse::syntax_errors::SyntaxErrors>::refine

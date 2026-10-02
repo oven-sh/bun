@@ -1,0 +1,40 @@
+")" [ts] TS1128 [0,1) Declaration or statement expected.
+"{ ) }" [js] TS1128 [2,3) Declaration or statement expected.
+"function f() { default }" [ts] TS1128 [15,22) Declaration or statement expected.
+"default" [ts] TS1005 [0,7) 'export' expected.
+"catch (e) {}" [ts] TS1005 [0,5) 'try' expected.
+"x = 1\n)" [ts] TS1128 [6,7) Declaration or statement expected.
+"foo();\n}" [ts] TS1128 [7,8) Declaration or statement expected.
+"function f() {}\n}" [ts] TS1128 [16,17) Declaration or statement expected.
+"a: { ) }" [ts] TS1128 [5,6) Declaration or statement expected.
+"switch (x) { case 1: ) }" [ts] TS1129 [21,22) Statement expected.
+"class A { static { ) } }" [ts] TS1128 [19,20) Declaration or statement expected.
+"namespace N { ) }" [ts] TS1128 [14,15) Declaration or statement expected.
+"() => { ) }" [ts] TS1128 [8,9) Declaration or statement expected.
+"const f = () => { ) }" [tsx] TS1128 [18,19) Declaration or statement expected.
+"if (x) )" [ts] TS1109 [7,8) Expression expected.
+"let x = ;" [ts] TS1109 [8,9) Expression expected.
+"x = 1 +" [ts] TS1109 [7,7) Expression expected.
+"for ()" [ts] TS1109 [5,6) Expression expected.
+"for (;)" [ts] TS1005 [6,7) ';' expected.
+"for (;;) )" [ts] TS1109 [9,10) Expression expected.
+"while (x) )" [ts] TS1109 [10,11) Expression expected.
+"a ? (b): ;" [ts] TS1109 [9,10) Expression expected.
+"return )" [ts] TS1109 [7,8) Expression expected.
+"`${ )`" [ts] TS1109 [4,5) Expression expected.
+"let a = <div>{ )}</div>" [tsx] TS1109 [15,16) Expression expected.
+"x = [ ) ]" [ts] TS1137 [6,7) Expression or comma expected.
+"do )" [ts] TS1109 [3,4) Expression expected.
+"if (a) b; else )" [ts] TS1109 [15,16) Expression expected.
+"label: )" [ts] TS1109 [7,8) Expression expected.
+"class A implements ) {}" [ts] TS1109 [19,20) Expression expected.
+"export default )" [ts] TS1109 [15,16) Expression expected.
+"throw )" [ts] TS1109 [6,7) Expression expected.
+"x = () => )" [ts] TS1109 [10,11) Expression expected.
+"with (a) )" [ts] TS1109 [9,10) Expression expected.
+"{" [ts] TS1005 [1,1) '}' expected.
+"in x" [ts] TS1109 [0,2) Expression expected.
+"finally {}" [ts] TS1005 [0,7) 'try' expected.
+"function f() { catch }" [ts] TS1005 [15,20) 'try' expected.
+"{ default }" [ts] TS1128 [2,9) Declaration or statement expected.
+6.0.2

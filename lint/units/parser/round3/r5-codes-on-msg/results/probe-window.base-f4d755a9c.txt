@@ -1,0 +1,36 @@
+ok   ")" [ts] first: @0+1 Unexpected ) | probe: list
+ok   "{ ) }" [js] first: @2+1 Unexpected ) | probe: list
+ok   "function f() { default }" [ts] first: @15+7 Unexpected default | probe: list
+ok   "default" [ts] first: @0+7 Unexpected default | probe: list
+ok   "catch (e) {}" [ts] first: @0+5 Unexpected catch | probe: list
+ok   "x = 1\n)" [ts] first: @6+1 Unexpected ) | probe: list
+ok   "foo();\n}" [ts] first: @7+1 Unexpected } | probe: list
+ok   "function f() {}\n}" [ts] first: @16+1 Unexpected } | probe: list
+ok   "a: { ) }" [ts] first: @5+1 Unexpected ) | probe: list
+ok   "switch (x) { case 1: ) }" [ts] first: @21+1 Unexpected ) | probe: list
+ok   "class A { static { ) } }" [ts] first: @19+1 Unexpected ) | probe: list
+ok   "namespace N { ) }" [ts] first: @14+1 Unexpected ) | probe: list
+ok   "() => { ) }" [ts] first: @8+1 Unexpected ) | probe: list
+ok   "const f = () => { ) }" [tsx] first: @18+1 Unexpected ) | probe: list
+ok   "if (x) )" [ts] first: @7+1 Unexpected ) | probe: no (@7 Cannot use a declaration in a single-statement context)
+ok   "let x = ;" [ts] first: @8+1 Unexpected ; | probe: no (@8 Unexpected const)
+ok   "x = 1 +" [ts] first: @7+0 Unexpected end of file | probe: no (@7 Unexpected const)
+ok   "for ()" [ts] first: @5+1 Unexpected ) | probe: no (@15 Unexpected if)
+ok   "for (;)" [ts] first: @6+1 Unexpected ) | probe: no (@6 Unexpected const)
+ok   "for (;;) )" [ts] first: @9+1 Unexpected ) | probe: no (@9 Cannot use a declaration in a single-statement context)
+ok   "while (x) )" [ts] first: @10+1 Unexpected ) | probe: no (@10 Cannot use a declaration in a single-statement context)
+ok   "a ? (b): ;" [ts] first: @9+1 Unexpected ; | probe: no (@9 Unexpected const)
+ok   "return )" [ts] first: @7+1 Unexpected ) | probe: no (@7 Unexpected const)
+n/a  "f() )" [ts] first: @4+1 Expected ";" but found ")" | probe: no (@4 Expected ";" but found "const")
+ok   "`${ )`" [ts] first: @4+1 Unexpected ) | probe: no (@4 Unexpected const)
+ok   "let a = <div>{ )}</div>" [tsx] first: @15+1 Unexpected ) | probe: no (@15 Unexpected const)
+ok   "x = [ ) ]" [ts] first: @6+1 Unexpected ) | probe: no (@6 Unexpected const)
+ok   "do )" [ts] first: @3+1 Unexpected ) | probe: no (@3 Cannot use a declaration in a single-statement context; @13 Expected "while" but found "if")
+ok   "if (a) b; else )" [ts] first: @15+1 Unexpected ) | probe: no (@15 Cannot use a declaration in a single-statement context)
+ok   "label: )" [ts] first: @7+1 Unexpected ) | probe: no (@7 Cannot use a declaration in a single-statement context)
+ok   "class A implements ) {}" [ts] first: @19+1 Unexpected ) | probe: no (@25 Expected "{" but found "_"; @26 Expected identifier but found "="; @32 Expected identifier but found "0")
+ok   "export default )" [ts] first: @15+1 Unexpected ) | probe: no (@15 Unexpected const)
+ok   "throw )" [ts] first: @6+1 Unexpected ) | probe: no (@6 Unexpected const)
+ok   "x = () => )" [ts] first: @10+1 Unexpected ) | probe: no (@10 Unexpected const)
+ok   "with (a) )" [ts] first: @9+1 Unexpected ) | probe: no (@9 Cannot use a declaration in a single-statement context)
+0 rows differ from what was expected; 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356

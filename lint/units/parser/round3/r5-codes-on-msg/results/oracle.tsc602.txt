@@ -1,0 +1,28 @@
+"class A implements ) {}" [ts] TS1109 [19,20) Expression expected.
+"class A extends ) {}" [ts] TS1109 [16,17) Expression expected.
+"interface A extends ) {}" [ts] TS1109 [20,21) Expression expected.
+"a ? (b): ;" [ts] TS1109 [9,10) Expression expected.
+"x = a ? (b): c => ;" [ts] TS1109 [18,19) Expression expected.
+"function (" [ts] TS1003 [9,10) Identifier expected. | TS1005 [10,10) ')' expected.
+"let x: (a: ) => void" [ts] TS1110 [11,12) Type expected.
+"f<A | >(x)" [ts] TS1110 [6,7) Type expected.
+"let v = <A | >x;" [ts] TS1110 [13,14) Type expected.
+"let f = async <T,>(a: ) => a;" [ts] TS1110 [22,23) Type expected.
+"type T = { a: }" [ts] TS1110 [14,15) Type expected.
+"type T = A | () => void;" [ts] TS1385 [12,23) Function type notation must be parenthesized when used in a union type.
+"let x = ;" [ts] TS1109 [8,9) Expression expected.
+"let x = ;" [js] TS1109 [8,9) Expression expected.
+")" [js] TS1128 [0,1) Declaration or statement expected.
+"default" [js] TS1005 [0,7) 'export' expected.
+"x = \"abc" [js] TS1002 [8,8) Unterminated string literal.
+"f(1;" [js] TS1005 [3,4) ')' expected.
+"let a = <div>{;}</div>" [tsx] TS1109 [14,15) Expression expected. | TS1381 [15,16) Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+"\"abc" [ts] TS1002 [4,4) Unterminated string literal.
+"/* abc" [ts] TS1010 [6,6) '*/' expected.
+"`abc" [ts] TS1160 [4,4) Unterminated template literal.
+"#!/usr/bin/env bun\n\"abc" [ts] TS1002 [23,23) Unterminated string literal.
+"enum E { A B }" [ts] TS1357 [11,12) An enum member name must be followed by a ',', '=', or '}'.
+"import * ass x from 'y'" [ts] TS1005 [9,12) 'as' expected. | TS1005 [13,14) 'from' expected. | TS1005 [15,19) ';' expected.
+"await" [ts] parses
+"function f() { await x }" [ts] parses
+6.0.2

@@ -23,8 +23,9 @@ const skip = !fault.available() || isWindows;
 //
 // On macOS the fixtures get a directory for unix sockets, because TCP loopback
 // does not deliver inside write() there (see tls-fixture-transport.ts). The
-// low-prio fixture does not use it: it needs fault injection, which no macOS
-// lane has, so a change of its transport could not be checked there.
+// low-prio fixture does not use it. It needs fault injection, so on macOS only
+// a local debug build runs it and no CI lane does: a change of its transport
+// could not be checked there.
 async function runFixture(name: string) {
   using unixDir = isMacOS ? tempDir("tlsq", {}) : undefined;
   await using proc = Bun.spawn({

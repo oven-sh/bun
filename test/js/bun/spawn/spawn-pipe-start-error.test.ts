@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // On Windows, when the initial uv_read_start on a subprocess stdout/stderr
@@ -95,6 +96,13 @@ try {
 // through. The kernel does not fail that MOD either. The mode stands in for
 // any error that ends the writer inside write(), such as EBADF after other
 // code closed the writer's fd by number.
+//
+// FAIL_EPOLL_CTL=pidfd-add fails the EPOLL_CTL_ADD of a pidfd and nothing else:
+// the registration that watches a child for its exit. FAIL_EPOLL_CTL=every-add
+// fails every EPOLL_CTL_ADD, through syscall() and through the epoll_ctl()
+// wrapper that uSockets uses, which is what an exhausted
+// fs.epoll.max_user_watches does. With FAIL_EPOLL_CTL_WHEN_EXISTS=<path> both
+// modes start to fail only once that file exists, so a fixture can set up first.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 const SHIM_C = /* c */ `
@@ -102,19 +110,43 @@ const SHIM_C = /* c */ `
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
 static long (*real_syscall)(long, ...);
 static int writer_mods;
+
+static int armed(void) {
+  const char *flag = getenv("FAIL_EPOLL_CTL_WHEN_EXISTS");
+  return !flag || access(flag, F_OK) == 0;
+}
+
+// The link reads "anon_inode:[pidfd]", or "pidfd:[<inode>]" on a kernel with pidfs.
+static int is_pidfd(int fd) {
+  char path[64], target[64];
+  snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+  ssize_t length = readlink(path, target, sizeof(target) - 1);
+  if (length <= 0) return 0;
+  target[length] = 0;
+  return strstr(target, "pidfd") != NULL;
+}
+
+static int every_add(long op) {
+  const char *mode = getenv("FAIL_EPOLL_CTL");
+  return mode && strcmp(mode, "every-add") == 0 && op == EPOLL_CTL_ADD && armed();
+}
 
 static int should_fail(long op, int fd, struct epoll_event *event) {
   if (!event) return 0;
   const char *mode = getenv("FAIL_EPOLL_CTL");
   if (!mode) return op == EPOLL_CTL_ADD && (event->events & EPOLLOUT);
+  if (strcmp(mode, "pidfd-add") == 0) return op == EPOLL_CTL_ADD && armed() && is_pidfd(fd);
+  if (strcmp(mode, "every-add") == 0) return every_add(op);
   // TIOCGPTN succeeds on a pty master only.
   unsigned int pty_number;
   if (strcmp(mode, "pty-writer-mod") == 0) {
@@ -138,6 +170,15 @@ long syscall(long number, ...) {
   }
   if (!real_syscall) real_syscall = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");
   return real_syscall(number, a1, a2, a3, a4, a5, a6);
+}
+
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
+  if (every_add(op)) {
+    errno = ENOSPC;
+    return -1;
+  }
+  if (!real_syscall) real_syscall = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");
+  return (int)real_syscall(SYS_epoll_ctl, (long)epfd, (long)op, (long)fd, (long)event, 0L, 0L);
 }
 `;
 
@@ -216,11 +257,151 @@ while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.n
 console.log(JSON.stringify({ error, write, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
+// The argument selects how a child is started once the shim fails to register
+// the pidfd that watches it. The report is what the caller saw, how many
+// processes this one is still the parent of (zombies included), and, where the
+// fds are the call's own, the leaks as in the fixture above. Waits are bounded
+// so that a call that never settles is reported, not hung on.
+const WATCH_FIXTURE = /* js */ `
+import { $ } from "bun";
+import { heapStats } from "bun:jsc";
+import { fork, spawn } from "node:child_process";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const kind = process.argv[2];
+const openFds = () => readdirSync("/proc/self/fd").length;
+const wrappers = () => heapStats().objectTypeCounts.Subprocess ?? 0;
+const children = () =>
+  readdirSync("/proc").filter(name => {
+    if (!/^[0-9]+$/.test(name)) return false;
+    try {
+      const stat = readFileSync("/proc/" + name + "/stat", "utf8");
+      return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) === process.pid;
+    } catch {
+      return false;
+    }
+  }).length;
+const bounded = promise => {
+  let timer;
+  const lapsed = new Promise(resolve => (timer = setTimeout(resolve, 3000, "never settled")));
+  return Promise.race([promise, lapsed]).finally(() => clearTimeout(timer));
+};
+const ignored = { stdin: "ignore", stdout: "ignore", stderr: "ignore" };
+
+globalThis.anchor = Bun.spawn({ cmd: ["true"], ...ignored });
+await globalThis.anchor.exited;
+// spawnSync creates its event loop on first use: here, before the fault starts.
+if (kind === "spawn-sync-warm") Bun.spawnSync({ cmd: ["true"], ...ignored });
+const fdBaseline = openFds();
+const wrapperBaseline = wrappers();
+writeFileSync(process.env.FAIL_EPOLL_CTL_WHEN_EXISTS, "");
+
+let error = null;
+let result;
+try {
+  switch (kind) {
+    case "spawn-ignore":
+      Bun.spawn({ cmd: ["sleep", "100"], ...ignored });
+      break;
+    case "spawn-pipe":
+      Bun.spawn({
+        cmd: ["sleep", "100"],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        onExit() {
+          result = "onExit ran";
+        },
+      });
+      break;
+    case "spawn-buffer":
+      Bun.spawn({
+        cmd: ["sleep", "100"],
+        stdin: Buffer.from("data"),
+        stdout: "ignore",
+        stderr: "ignore",
+        onExit() {
+          result = "onExit ran";
+        },
+      });
+      break;
+    case "spawn-many": {
+      let thrown = 0;
+      for (let i = 0; i < 100; i++) {
+        try {
+          Bun.spawn({ cmd: ["true"], ...ignored });
+        } catch {
+          thrown++;
+        }
+      }
+      result = { thrown };
+      break;
+    }
+    case "child-process":
+      spawn("sleep", ["100"]);
+      break;
+    case "fork":
+      fork(join(import.meta.dir, "fork-child.js"));
+      break;
+    case "shell":
+      result = await bounded(
+        $\`sleep 100\`
+          .nothrow()
+          .quiet()
+          .then(output => ({ exitCode: output.exitCode, stderr: output.stderr.toString() })),
+      );
+      break;
+    case "spawn-sync":
+    case "spawn-sync-warm": {
+      const { exitCode, stdout } = Bun.spawnSync({ cmd: ["echo", "hi"], stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+      result = { exitCode, stdout: stdout.toString() };
+      break;
+    }
+    case "sigchld": {
+      const nextSignal = () => bounded(new Promise(resolve => process.once("SIGCHLD", () => resolve("called"))));
+      const failingSpawn = () => {
+        try {
+          Bun.spawn({ cmd: ["true"], ...ignored });
+          return "spawned";
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const before = nextSignal();
+      const first = failingSpawn();
+      result = { first, listenerAddedBefore: await before };
+      const after = nextSignal();
+      result.second = failingSpawn();
+      result.listenerAddedAfter = await after;
+      break;
+    }
+  }
+} catch (e) {
+  error = { code: e.code, message: e.message, syscall: e.syscall };
+}
+const report = { error, result, children: children() };
+if (["spawn-ignore", "spawn-pipe", "spawn-buffer", "spawn-many", "child-process", "fork"].includes(kind)) {
+  const deadline = performance.now() + 2000;
+  while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.now() < deadline) {
+    Bun.gc(true);
+    await Bun.sleep(5);
+  }
+  report.leakedFds = openFds() - fdBaseline;
+  report.leakedWrappers = wrappers() - wrapperBaseline;
+}
+console.log(JSON.stringify(report));
+`;
+
 let dir: ReturnType<typeof tempDir> | undefined;
 
 beforeAll(async () => {
   if (!isLinux || !cc) return;
-  dir = tempDir("poll-start-error", { "shim.c": SHIM_C, "fixture.js": FIXTURE });
+  dir = tempDir("poll-start-error", {
+    "shim.c": SHIM_C,
+    "fixture.js": FIXTURE,
+    "watch-fixture.js": WATCH_FIXTURE,
+    "fork-child.js": `process.on("message", () => {});`,
+  });
   await using ccProc = Bun.spawn({
     cmd: [cc, "-shared", "-fPIC", "-o", join(String(dir), "shim.so"), join(String(dir), "shim.c"), "-ldl"],
     env: bunEnv,
@@ -235,9 +416,9 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-async function runFixture(kind: string, env: Record<string, string> = {}) {
+async function runFixture(kind: string, env: Record<string, string> = {}, fixture = "fixture.js") {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.js", kind],
+    cmd: [bunExe(), fixture, kind],
     cwd: String(dir),
     env: { ...bunEnv, ...env, LD_PRELOAD: join(String(dir), "shim.so") },
     stdout: "pipe",
@@ -331,5 +512,151 @@ describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose writer fails to re-arm it
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// A child whose pidfd cannot be registered would never be seen to exit. The
+// spawn used to report the registration error as the exit of that running
+// child: kill() sent nothing, `exited` rejected, and the child was never
+// reaped. Now the child is killed and reaped on the spot and the spawn fails
+// with the registration error.
+describe.skipIf(!isLinux || !cc)("a child whose exit watch cannot be registered", () => {
+  const watch = (kind: string, mode = "pidfd-add", env: Record<string, string> = {}) =>
+    runFixture(
+      kind,
+      { ...env, FAIL_EPOLL_CTL: mode, FAIL_EPOLL_CTL_WHEN_EXISTS: join(String(dir), `armed-${kind}-${mode}`) },
+      "watch-fixture.js",
+    );
+  const ENOSPC = { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl", syscall: "epoll_ctl" };
+
+  test.concurrent.each(["spawn-ignore", "spawn-pipe"])("Bun.spawn (%s) throws and leaves no child", async kind => {
+    expect(await watch(kind)).toEqual({
+      report: { error: ENOSPC, children: 0, leakedFds: 0, leakedWrappers: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The pipe writer of a buffer stdin (see above for the memfd flag) cannot register either.
+  test.concurrent("Bun.spawn whose stdin writer fails too runs no callback", async () => {
+    expect(await watch("spawn-buffer", "every-add", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
+      report: { error: ENOSPC, children: 0, leakedFds: 0, leakedWrappers: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("100 failed spawns leave no zombie", async () => {
+    expect(await watch("spawn-many")).toEqual({
+      report: { error: null, result: { thrown: 100 }, children: 0, leakedFds: 0, leakedWrappers: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.each(["child-process", "fork"])("node:child_process (%s) throws the error", async kind => {
+    expect(await watch(kind)).toEqual({
+      report: { error: { ...ENOSPC, syscall: "spawn" }, children: 0, leakedFds: 0, leakedWrappers: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a shell command fails instead of never settling", async () => {
+    expect(await watch("shell")).toEqual({
+      report: {
+        error: null,
+        result: { exitCode: 1, stderr: expect.stringContaining("No space left on device") },
+        children: 0,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("SIGCHLD listeners added before and after keep firing", async () => {
+    expect(await watch("sigchld")).toEqual({
+      report: {
+        error: null,
+        result: { first: "ENOSPC", listenerAddedBefore: "called", second: "ENOSPC", listenerAddedAfter: "called" },
+        children: 0,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // spawnSync waits for the child itself, so it does not need the watch.
+  test.concurrent("spawnSync still returns the output", async () => {
+    expect(await watch("spawn-sync")).toEqual({
+      report: { error: null, result: { exitCode: 0, stdout: "hi\n" }, children: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // With every registration failing, the stdout pipe cannot be read either.
+  test.concurrent.each([
+    ["created under the fault", "spawn-sync"],
+    ["created before the fault", "spawn-sync-warm"],
+  ])("spawnSync throws when its event loop is %s and no fd can be registered", async (_, kind) => {
+    expect(await watch(kind, "every-add")).toEqual({
+      report: { error: ENOSPC, children: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The script's command line carries a number that no other process has.
+  const withCommandLine = (token: string) =>
+    readdirSync("/proc").filter(name => {
+      if (!/^[0-9]+$/.test(name)) return false;
+      try {
+        return readFileSync(`/proc/${name}/cmdline`, "utf8").includes(token);
+      } catch {
+        return false;
+      }
+    });
+
+  async function runCli(token: string, files: Record<string, string>, args: string[]) {
+    using cwd = tempDir("watch-failure-cli", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(cwd),
+      env: { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add", LD_PRELOAD: join(String(dir), "shim.so") },
+      // A script that outlives the command would hold a pipe open.
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const exitCode = await proc.exited;
+    const stillRunning = withCommandLine(token);
+    for (const pid of stillRunning) process.kill(Number(pid), "SIGKILL");
+    return { exitCode, stillRunning: stillRunning.length };
+  }
+
+  test.concurrent.each([
+    ["bun run --filter", 31337, ["run", "--filter", "*", "hold"]],
+    ["bun run --parallel", 31338, ["run", "--parallel", "hold", "hold2"]],
+    ["a lifecycle script of bun install", 31339, ["install"]],
+  ] as const)("%s fails and its script is not left running", async (_, seconds, args) => {
+    const token = `${seconds}.${process.pid}`;
+    const files = {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        scripts:
+          args[0] === "install"
+            ? { postinstall: `sleep ${token}` }
+            : { hold: `sleep ${token}`, hold2: `sleep ${token}` },
+      }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        scripts: args[0] === "install" ? {} : { hold: `sleep ${token}` },
+      }),
+    };
+    expect(await runCli(token, files, [...args])).toEqual({ exitCode: 1, stillRunning: 0 });
   });
 });

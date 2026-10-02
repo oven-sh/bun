@@ -68,14 +68,17 @@ describe("Native types report their size correctly", () => {
   });
 
   it("URL (heap size reporting bug)", () => {
-    for (let i = 0; i < 500; i++) {
-      // need to use String.repeat(4096) here to ensure lots of tiny strings get allocated and joined.
-      // need to assign it to a global to ensure JSC and Bun do not eliminate it.
-      globalThis.url = new URL("Hello, 世界! 🌍".repeat(4096), "https://developer.mozilla.org");
-    }
+    // DOMURL stores the href's GC cost in a uint16_t. It used to be a signed short (#23887), so an href
+    // whose length has bit 15 set reported a negative cost, and once the GC visited the URL
+    // heapStats().extraMemorySize saturated to ~2**64 (18446744073706270000).
+    const url = new URL(Buffer.alloc(40000, "a").toString(), "https://developer.mozilla.org");
+    expect(url.href.length).toBeGreaterThan(0x7fff);
+    expect(url.href.length).toBeLessThan(0x10000);
 
-    // Expected: < 9007199254740991
-    // Received: 18446744073706270000
+    // Keep the URL reachable so the full collection below visits it and reports its cost.
+    globalThis.url = url;
+    Bun.gc(true);
+
     expect(heapStats().extraMemorySize).toBeLessThan(Number.MAX_SAFE_INTEGER);
 
     delete globalThis.url;
@@ -127,8 +130,14 @@ describe("Native types report their size correctly", () => {
   it("Headers", () => {
     const headers = new Headers();
     const original = estimateShallowMemoryUsageOf(headers);
+    // The expected size is summed from the inputs instead of read back through keys()/values():
+    // iterating a Headers object is quadratic in its size, which takes seconds for 1000 headers on a debug build.
+    let stringLength = 0;
     for (let i = 0; i < 1000; i++) {
-      headers.set(`a${i}`, `b${i}`);
+      const name = `a${i}`;
+      const value = `b${i}`;
+      headers.set(name, value);
+      stringLength += name.length + value.length;
     }
     const after = estimateShallowMemoryUsageOf(headers);
     expect(after).toBeGreaterThan(original + 1000 * 2);
@@ -141,7 +150,7 @@ describe("Native types report their size correctly", () => {
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
     // Test that Headers includes the size of the strings
-    expect(summariesMap.get("Headers")?.size).toBeGreaterThan([...headers.keys(), ...headers.values()].join("").length);
+    expect(summariesMap.get("Headers")?.size).toBeGreaterThan(stringLength);
 
     delete globalThis.headers;
   });

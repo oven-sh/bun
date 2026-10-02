@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import { connect, createServer } from "node:tls";
+import { decodeErrorAlert, startMalformedServerHelloServer } from "./tls-handshake-alert-utils";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
   await expectMaxObjectTypeCount(expect, "TLSSocket", 0);
@@ -139,6 +140,19 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
     });
   },
 );
+
+it.if(isWindows)("a client over a named pipe sends its fatal alert when the handshake fails", async () => {
+  // Same contract as the Duplex transport test in node-tls-connect.test.ts.
+  const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  using server = await startMalformedServerHelloServer(pipeName);
+  const client = connect({ path: pipeName, rejectUnauthorized: false });
+  client.on("error", () => {});
+  try {
+    expect(await server.afterClientHello).toEqual(decodeErrorAlert);
+  } finally {
+    client.destroy();
+  }
+});
 
 it.if(isWindows)("setSecureContext() rotates the certificate of a server listening on a named pipe", async () => {
   const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");

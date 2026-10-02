@@ -989,7 +989,7 @@ pub mod ssl_wrapper {
         }
 
         /// Update the handshake state. Returns true if we can call handle_reading.
-        fn update_handshake_state(&self) -> bool {
+        fn update_handshake_state(&self, buffer: &mut IoBuffer) -> bool {
             if self.flags.closed_notified() {
                 return false;
             }
@@ -1077,6 +1077,11 @@ pub mod ssl_wrapper {
 
                     self.flags
                         .set_handshake_state(HandshakeState::HandshakeCompleted);
+                    // The report below makes the owner close, so the alert goes out first
+                    // (node's `TLSWrap::ClearOut` has the same order).
+                    if self.flags.fatal_error() && !self.flush_sealed_output(buffer) {
+                        return false;
+                    }
                     self.trigger_handshake_callback(HandshakeOutcome::HandshakeError);
 
                     if self.flags.fatal_error() {
@@ -1290,22 +1295,31 @@ pub mod ssl_wrapper {
             }
         }
 
+        /// Hands the owner what BoringSSL sealed before a call failed: the fatal alert.
+        /// Returns false if the owner's `write` closed the wrapper.
+        fn flush_sealed_output(&self, buffer: &mut IoBuffer) -> bool {
+            self.handle_writing(buffer);
+            self.ssl.get().is_some() && !self.flags.closed_notified()
+        }
+
         /// Not re-entrant. A call made from inside a pass's callback (a write
         /// from `on_data`, a synchronous peer feeding `receive_data`) flushes the
         /// ciphertext queued so far and schedules another pass; decrypting there
         /// would hand the owner the next chunk while it is still inside its
         /// callback for the previous one.
         fn handle_traffic(&self) {
+            // The one stack buffer of this call, for reading and writing.
+            // PERF: 64KiB on-stack array — verify stack-size headroom.
+            let mut buffer = IoBuffer::uninit();
             if self.traffic.get() != Traffic::Idle {
                 log!("handleTraffic re-entered, flushing and deferring to the outer pass");
-                let mut buffer = IoBuffer::uninit();
                 self.handle_writing(&mut buffer);
                 self.traffic.set(Traffic::RerunRequested);
                 return;
             }
             loop {
                 self.traffic.set(Traffic::Running);
-                self.traffic_pass();
+                self.traffic_pass(&mut buffer);
                 if self.traffic.get() != Traffic::RerunRequested {
                     break;
                 }
@@ -1313,24 +1327,21 @@ pub mod ssl_wrapper {
             self.traffic.set(Traffic::Idle);
         }
 
-        fn traffic_pass(&self) {
+        fn traffic_pass(&self, buffer: &mut IoBuffer) {
             // always handle the handshake first
-            if self.update_handshake_state() {
-                // shared stack buffer for reading and writing
-                // PERF: 64KiB on-stack array — verify stack-size headroom.
-                let mut buffer = IoBuffer::uninit();
+            if self.update_handshake_state(buffer) {
                 // drain the input BIO first
-                self.handle_writing(&mut buffer);
+                self.handle_writing(buffer);
 
                 // drain the output BIO in loop, because read can trigger writing and vice versa
                 // Once a callback re-entered, the next pass takes over: the bytes it fed in
                 // may belong to the handshake, which only update_handshake_state reports.
                 while self.traffic.get() == Traffic::Running
                     && self.has_pending_read()
-                    && self.handle_reading(&mut buffer)
+                    && self.handle_reading(buffer)
                 {
                     // read data can trigger writing so we need to handle it
-                    self.handle_writing(&mut buffer);
+                    self.handle_writing(buffer);
                 }
                 if self.traffic.get() != Traffic::Running {
                     return;

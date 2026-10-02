@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import tls from "node:tls";
+import { decodeErrorAlert, startMalformedServerHelloServer } from "../../node/tls/tls-handshake-alert-utils";
 import {
   type ClientEvent,
   clientEvents,
@@ -288,6 +289,25 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     });
     gc();
   });
+
+  // The client resets the proxy connection right after it writes the alert. On
+  // Windows a reset discards the data the proxy has not read yet.
+  test.skipIf(harness.isWindows)(
+    "the target gets the client's TLS alert when the tunneled handshake fails",
+    async () => {
+      using target = await startMalformedServerHelloServer();
+      using recorded = await startRecordingProxy();
+      const url = `wss://127.0.0.1:${target.port}`;
+      const ws = new WebSocket(url, {
+        proxy: `http://127.0.0.1:${recorded.port}`,
+        tls: { rejectUnauthorized: false },
+      });
+      expect({ events: await failingSession(ws), targetReceived: await target.afterClientHello }).toEqual({
+        events: failed(url, "TLS handshake failed", 1015),
+        targetReceived: decodeErrorAlert,
+      });
+    },
+  );
 
   test("server-initiated ping survives through TLS tunnel proxy", async () => {
     // Regression test: sendPong checked socket.isClosed() on the detached tcp

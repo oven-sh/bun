@@ -8,6 +8,7 @@ import net from "net";
 import { join } from "path";
 import stream from "stream";
 import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
+import { decodeErrorAlert, startMalformedServerHelloServer, tlsRecords } from "./tls-handshake-alert-utils";
 
 import type { AddressInfo } from "net";
 import { Duplex } from "node:stream";
@@ -2105,6 +2106,104 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+describe("a TLS socket over a Duplex transport sends its fatal alert when the handshake fails", () => {
+  // Node writes the alert to the stream before it reports the error:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L899-L905
+
+  // A Duplex in front of a TCP socket, so the other end of the handshake is a real remote peer.
+  const overTcp = (socket: net.Socket) => {
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        socket.write(chunk, encoding, callback);
+      },
+      final(callback) {
+        socket.end();
+        callback();
+      },
+    });
+    socket.on("data", chunk => transport.push(chunk));
+    socket.on("end", () => transport.push(null));
+    socket.on("error", () => {});
+    transport.on("close", () => socket.destroy());
+    return transport;
+  };
+
+  it.each(["TLSSocket", "tls.Server"])("a server wrap made by %s: the client gets the alert, not a reset", async by => {
+    // The server speaks only h2 and the client offers only xyz. The server
+    // fails the handshake with a no_application_protocol alert.
+    const options = { ...COMMON_CERT_, ALPNProtocols: ["h2"] };
+    const server = tls.createServer(options);
+    server.on("tlsClientError", () => {});
+    await using listener = net.createServer(socket => {
+      if (by === "tls.Server") {
+        server.emit("connection", overTcp(socket));
+      } else {
+        new TLSSocket(overTcp(socket), { isServer: true, ...options }).on("error", () => {});
+      }
+    });
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    const { port } = listener.address() as AddressInfo;
+
+    const client = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false, ALPNProtocols: ["xyz"] });
+    try {
+      const outcome = await new Promise<string>(resolve => {
+        client.on("secureConnect", () => resolve("secureConnect"));
+        client.on("error", (err: NodeJS.ErrnoException) => resolve(`error:${err.code}`));
+        client.on("close", () => resolve("close"));
+      });
+      expect(outcome).toBe("error:ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("a client wrap: the server gets the alert", async () => {
+    using server = await startMalformedServerHelloServer();
+    const transport = overTcp(net.connect(server.port, "127.0.0.1"));
+    const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+    client.on("error", () => {});
+    try {
+      expect(await server.afterClientHello).toEqual(decodeErrorAlert);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("a transport that destroys the socket from inside the alert's write gets a plain close", async () => {
+    const events: string[] = [];
+    const settled = Promise.withResolvers<void>();
+    const transport = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        events.push(`write:${JSON.stringify(tlsRecords(chunk))}`);
+        wrapped.destroy();
+        callback();
+      },
+    });
+    const wrapped = new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+    wrapped.on("secure", () => {
+      events.push("secure");
+      settled.resolve();
+    });
+    wrapped.on("error", (err: NodeJS.ErrnoException) => {
+      events.push(`error:${err.code}`);
+      settled.resolve();
+    });
+    wrapped.on("close", hadError => {
+      events.push(`close:${hadError}`);
+      settled.resolve();
+    });
+    // An application data record where the ClientHello belongs. A TLS server
+    // answers it with a fatal unexpected_message (10) alert.
+    transport.push(Buffer.from([0x17, 0x03, 0x03, 0x00, 0x01, 0x00]));
+
+    await settled.promise;
+    // The socket was destroyed with no error before the failure could be reported.
+    expect(events).toEqual([`write:[{"type":21,"body":"020a"}]`, "close:false"]);
   });
 });
 

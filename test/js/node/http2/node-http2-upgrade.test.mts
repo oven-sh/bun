@@ -299,6 +299,33 @@ describe("HTTP/2 upgrade — ALPN negotiation", () => {
     client.close();
     srv.netServer.close();
   });
+
+  test("a client that offers no protocol the server speaks gets the server's alert, not a reset", async () => {
+    const h2Server = http2.createSecureServer(TLS);
+    h2Server.on("error", () => {});
+    h2Server.on("tlsClientError", () => {});
+    const netServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      h2Server.emit("connection", socket);
+    });
+    await once(netServer.listen(0, "127.0.0.1"), "listening");
+    const port = (netServer.address() as net.AddressInfo).port;
+
+    // The server speaks only h2. It fails the handshake with a
+    // no_application_protocol alert.
+    const client = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false, ALPNProtocols: ["xyz"] });
+    try {
+      const outcome = await new Promise<string>(resolve => {
+        client.on("secureConnect", () => resolve("secureConnect"));
+        client.on("error", (err: NodeJS.ErrnoException) => resolve(`error:${err.code}`));
+        client.on("close", () => resolve("close"));
+      });
+      assert.strictEqual(outcome, "error:ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
+    } finally {
+      client.destroy();
+      netServer.close();
+    }
+  });
 });
 
 describe("HTTP/2 upgrade — varied status codes", () => {

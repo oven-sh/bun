@@ -8,6 +8,7 @@ import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
 import tls from "node:tls";
+import { decodeErrorAlert, startMalformedServerHelloServer } from "../../node/tls/tls-handshake-alert-utils";
 import { createAdversarialProxy, deadPort, proxyFreeEnv } from "./proxy-stress-helpers";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs = [];
@@ -1076,6 +1077,27 @@ test("HTTPS target through proxy with rejecting checkServerIdentity transmits no
     target.close();
   }
 });
+
+// The client resets the proxy connection right after it writes the alert. On
+// Windows a reset discards the data the proxy has not read yet.
+test.skipIf(isWindows)(
+  "HTTPS target through proxy gets the client's TLS alert when the tunneled handshake fails",
+  async () => {
+    using target = await startMalformedServerHelloServer();
+    const result = await fetch(`https://localhost:${target.port}/`, {
+      proxy: httpProxyServer.url,
+      keepalive: false,
+      tls: { rejectUnauthorized: false },
+    }).then(
+      () => "resolved",
+      (err: NodeJS.ErrnoException) => `rejected:${err.code}`,
+    );
+    expect({ result, targetReceived: await target.afterClientHello }).toEqual({
+      result: "rejected:EPROTO",
+      targetReceived: decodeErrorAlert,
+    });
+  },
+);
 
 test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async () => {
   // Create a custom HTTPS server that returns body size for this test

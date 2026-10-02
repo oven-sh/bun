@@ -158,6 +158,15 @@ describe("tagged template table", () => {
     expect(row.b - row.a).toBe(1);
   });
 
+  eachOf`
+      a    | b
+    | ${1} | ${2} |
+    | ${3} | ${4} |
+  `("takes value rows that start with |", row => {
+    expect(Reflect.ownKeys(row)).toEqual(["a", "b"]);
+    expect(row.b - row.a).toBe(1);
+  });
+
   // @ts-expect-error an array table takes one argument
   it.each([[1, 2]], "ignored")("an array with more arguments after it is an array table: %d %d", (a, b) => {
     expect([a, b]).toEqual([1, 2]);
@@ -253,8 +262,8 @@ describe("tagged template table", () => {
       }
     });
 
-    it("a heading row that goes on after a newline", () => {
-      for (const header of ["\n a |\n b\n", "\n a\n | b\n", "\n a\n |\n"]) {
+    it("a heading row on two lines", () => {
+      for (const header of ["\n a |\n b\n", "\n a\n | b\n", "\n a\n |b"]) {
         expect(titleCallError(it.each(strings(header, ""), 1))).toBe(badHeadings(JSON.stringify(header)));
       }
     });
@@ -270,8 +279,8 @@ describe("tagged template table", () => {
       const names = match.replace(/\s/g, "").split("|");
       const emptyName = names.includes("");
       const rowGoesOnAfterNewline = /\S\s*\n\s*\S/.test(match);
-      const pipeStartsNextText = header.slice(match.length).trimStart().startsWith("|");
-      return emptyName || rowGoesOnAfterNewline || pipeStartsNextText ? undefined : names;
+      const pipeAndNameStartNextText = /^\s*\|\s*\S/.test(header.slice(match.length));
+      return emptyName || rowGoesOnAfterNewline || pipeAndNameStartNextText ? undefined : names;
     };
 
     const headers = new Set<string>();
@@ -296,6 +305,8 @@ describe("tagged template table", () => {
       "\n a\u2028b | c\n",
       "\n a |b| c\n d | e\n",
       "\n a | b\n  | c\n",
+      "\n a | b\n  | ",
+      "\n a | b\n  |c",
       "\n a |\n b\n",
       "\n a||b\n",
       "\n 😀 | é\n",
@@ -329,7 +340,7 @@ describe("tagged template table", () => {
 
     it("has the headings that jest-each reads, or is malformed", () => {
       expect(mismatches).toEqual([]);
-      expect({ headers: headers.size, accepted }).toEqual({ headers: 360, accepted: 53 });
+      expect({ headers: headers.size, accepted }).toEqual({ headers: 362, accepted: 63 });
     });
   });
 

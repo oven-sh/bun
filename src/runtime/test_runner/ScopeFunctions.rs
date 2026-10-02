@@ -147,16 +147,19 @@ fn is_template_strings(global: &JSGlobalObject, array: JSValue) -> JsResult<bool
 
 /// The headings of a template table. `header` is `strings[0]`: a newline, one row of names
 /// with `|` between them, and a newline. jest-each also takes an empty name, and a row
-/// that goes on after a `|` on the next line. Both are malformed here.
+/// that goes on after the newline. Both are malformed here.
 fn template_headings(header: EncodedSlice<'_>) -> Option<Vec<BunString>> {
     let is_space = |i: usize| strings::is_js_whitespace(u32::from(header.char_at(i)));
+    let skip_space = |mut i: usize| {
+        while i < header.len && is_space(i) {
+            i += 1;
+        }
+        i
+    };
     if header.len == 0 || header.char_at(0) != u16::from(b'\n') {
         return None;
     }
-    let mut i = 1;
-    while i < header.len && is_space(i) {
-        i += 1;
-    }
+    let mut i = skip_space(1);
     let mut headings = Vec::new();
     let mut heading: Vec<u16> = Vec::new();
     let mut heading_ended = false;
@@ -188,12 +191,10 @@ fn template_headings(header: EncodedSlice<'_>) -> Option<Vec<BunString>> {
         return None;
     }
     headings.push(BunString::clone_utf16(&heading));
-    // In jest-each, a `|` that starts the next text continues the row.
-    i += 1;
-    while i < header.len && is_space(i) {
-        i += 1;
-    }
-    if i < header.len && header.char_at(i) == u16::from(b'|') {
+    // jest-each can read a `|` and a name at the start of the next line as more headings.
+    // A `|` with no name after it starts a row of values.
+    i = skip_space(i + 1);
+    if i < header.len && header.char_at(i) == u16::from(b'|') && skip_space(i + 1) < header.len {
         return None;
     }
     Some(headings)

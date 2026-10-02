@@ -1886,6 +1886,18 @@ pub(crate) struct ComponentParser {
     pub(crate) from: Option<RelativeComponentParser>,
 }
 
+/// Whether every origin in a relative color's `from` converts to `T`. A
+/// `light-dark()` origin converts only when both halves do; `currentColor` and
+/// system colors never do. See the pre-check in `ComponentParser::parse_from`.
+fn light_dark_origin_convertible<T: Colorspace>(from: &CssColor) -> bool {
+    match from {
+        CssColor::LightDark { light, dark } => {
+            light_dark_origin_convertible::<T>(light) && light_dark_origin_convertible::<T>(dark)
+        }
+        _ => T::try_from_css_color(from).is_some(),
+    }
+}
+
 impl ComponentParser {
     pub(crate) fn new(allow_none: bool) -> ComponentParser {
         ComponentParser {
@@ -1928,6 +1940,17 @@ impl ComponentParser {
         F: Fn(&mut css::Parser, &mut ComponentParser) -> CssResult<C> + Copy,
     {
         if let CssColor::LightDark { light, dark } = from {
+            // A relative color fails unless every light-dark() origin converts
+            // to T. Check both halves before parsing the component range: the
+            // light half parses (and recursively re-parses) the whole alpha
+            // token list, so a dark half that cannot convert (currentColor, a
+            // system color) would make that work O(n^5) across nesting. The
+            // outcome is unchanged; only the wasted parse is skipped.
+            if !light_dark_origin_convertible::<T>(&light)
+                || !light_dark_origin_convertible::<T>(&dark)
+            {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
+            }
             input.enter_light_dark_origin()?;
             let result = (|| -> CssResult<C> {
                 let state = input.state();

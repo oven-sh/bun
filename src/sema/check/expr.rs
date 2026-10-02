@@ -1712,11 +1712,7 @@ impl<'p> Checker<'p> {
                 }
                 self.string_literal(s, true)
             }
-            ExprKind::BigInt(text) => self.intern(TypeData::BigIntLit {
-                text,
-                negative: false,
-                fresh: true,
-            }),
+            ExprKind::BigInt(text) => self.fresh_bigint_literal(text, false),
             ExprKind::Regex => self.global_ref(known::RegExp, &[]),
             // `checkTemplateExpression`
             ExprKind::Template { exprs, texts } => {
@@ -1932,6 +1928,21 @@ impl<'p> Checker<'p> {
             || self
                 .base_constraint_of(ty)
                 .is_some_and(|base| self.maybe_type_of_kind(base, kind))
+    }
+
+    /// `getFreshTypeOfLiteralType(getBigIntLiteralType(..))`. The regular type is made first: `CompareTypes` orders bigint literal
+    /// types by when they were made.
+    fn fresh_bigint_literal(&mut self, text: Atom, negative: bool) -> TypeId {
+        self.intern(TypeData::BigIntLit {
+            text,
+            negative,
+            fresh: false,
+        });
+        self.intern(TypeData::BigIntLit {
+            text,
+            negative,
+            fresh: true,
+        })
     }
 
     /// `checkImportCallExpression`, for `import(spec)`.
@@ -3390,7 +3401,7 @@ impl<'p> Checker<'p> {
         match *self.data(ty) {
             TypeData::Anon {
                 origin:
-                    Origin::ObjectLiteral(_, _, is_js_literal)
+                    Origin::ObjectLiteral(_, _, is_js_literal, _)
                     | Origin::WidenedLiteral(_, _, is_js_literal),
                 ..
             } => is_js_literal,
@@ -3463,7 +3474,7 @@ impl<'p> Checker<'p> {
             let mapper = self.identity_mapper(file, scope);
             let is_js_literal = self.is_js_literal(file, e);
             let kept = self.intern(TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, is_js_literal),
+                origin: Origin::ObjectLiteral(file, e, is_js_literal, true),
                 mapper,
             });
             return if self.is_rechecking() {
@@ -4160,11 +4171,7 @@ impl<'p> Checker<'p> {
                         // `NewPseudoBigInt`: zero has no sign.
                         let digits = self.files().atoms.bytes(text);
                         let negative = !digits.iter().all(|&c| c == b'0' || c == b'n');
-                        self.intern(TypeData::BigIntLit {
-                            text,
-                            negative,
-                            fresh: true,
-                        })
+                        self.fresh_bigint_literal(text, negative)
                     }
                     _ => {
                         self.check_non_null_type(file, operand, ty);

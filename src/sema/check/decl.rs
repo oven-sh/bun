@@ -663,6 +663,56 @@ impl<'p> Checker<'p> {
         scope: ScopeId,
         node: TypeNodeId,
     ) -> MapperId {
+        let declared = self.identity_mapper_of_declared_for_node(file, scope, node);
+        let adopted = self.adopted_type_params_in_scope(file, scope, self.hir(file)[node].pos);
+        if adopted.is_empty() {
+            return declared;
+        }
+        let mut pairs = self.p.types.mapping(declared).to_vec();
+        pairs.extend(adopted.into_iter().map(|param| (param, param)));
+        self.p.types.mapper(pairs)
+    }
+
+    /// `getOuterTypeParameters`: a context sensitive function expression, arrow function or object literal method has the type
+    /// parameters of the signature expected of it (`assignContextualParameterTypes`). Those of the functions in whose bodies `pos`,
+    /// in `scope`, is. `isTypeParameterPossiblyReferenced` says yes to all of them: on the way up from a node it never comes to
+    /// where they are declared.
+    fn adopted_type_params_in_scope(
+        &mut self,
+        file: FileId,
+        mut scope: ScopeId,
+        pos: u32,
+    ) -> Vec<TypeId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut adopted = Vec::new();
+        while scope.is_some() {
+            let s = &bound.scopes[scope.idx()];
+            if let ScopeKind::Fn(f) = s.kind
+                && hir[f].type_params.is_empty()
+                && self.takes_context(file, f).is_some()
+                && match hir[f].body {
+                    FnBody::Block(stmts) => hir
+                        .ids(stmts)
+                        .next()
+                        .is_some_and(|first| pos >= hir[first].pos),
+                    FnBody::Expr(body) => pos >= hir[body].pos,
+                    FnBody::None => false,
+                }
+            {
+                let sig = self.sig_of_fn(file, f);
+                adopted.extend(self.adopted_type_params(sig));
+            }
+            scope = s.parent;
+        }
+        adopted
+    }
+
+    fn identity_mapper_of_declared_for_node(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+    ) -> MapperId {
         if self.type_params_in_scope(file, scope).is_empty() {
             return MapperId::IDENTITY;
         }

@@ -1020,8 +1020,9 @@ impl<'p> Checker<'p> {
         self.regular_object(ty)
     }
 
-    /// Whether `ty` is the type of an object literal expression, as opposed to that of something initialized with one. What a
-    /// binding pattern implies is marked too, but no expression has that type: it is never fresh (`getTypeFromObjectBindingPattern`).
+    /// `isObjectLiteralType`: whether `ty` is the type of an object literal expression, fresh or not, as opposed to that of something
+    /// initialized with one. What a binding pattern implies is marked too, but no expression has that type
+    /// (`getTypeFromObjectBindingPattern`).
     #[inline]
     pub fn is_object_literal_type(&self, ty: TypeId) -> bool {
         match self.data(ty) {
@@ -1030,6 +1031,19 @@ impl<'p> Checker<'p> {
                 ..
             } => true,
             TypeData::Synth(shape) => shape.literal.is_of_expression(),
+            _ => false,
+        }
+    }
+
+    /// `isObjectLiteralType(t) && t.objectFlags&ObjectFlagsFreshLiteral != 0`
+    #[inline]
+    pub fn is_fresh_object_literal_type(&self, ty: TypeId) -> bool {
+        match self.data(ty) {
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(.., is_fresh),
+                ..
+            } => *is_fresh,
+            TypeData::Synth(shape) => shape.literal.is_of_expression() && !shape.is_regular,
             _ => false,
         }
     }
@@ -1248,7 +1262,7 @@ impl<'p> Checker<'p> {
         if others.is_empty() {
             match self.data(ty) {
                 TypeData::Anon {
-                    origin: Origin::ObjectLiteral(file, e, is_js_literal),
+                    origin: Origin::ObjectLiteral(file, e, is_js_literal, _),
                     mapper,
                 } => {
                     return self.intern(TypeData::Anon {
@@ -1258,8 +1272,9 @@ impl<'p> Checker<'p> {
                 }
                 TypeData::Synth(shape) => {
                     let mut shape = Shape::clone(shape);
-                    shape.literal = Literalness::No;
+                    (shape.literal, shape.is_regular) = (Literalness::No, false);
                     for prop in &mut shape.props {
+                        prop.flags.remove(PropFlags::REGULAR);
                         if !prop.flags.intersects(as_they_are) {
                             prop.flags |= PropFlags::WIDEN;
                         }
@@ -2425,6 +2440,7 @@ impl<'p> Checker<'p> {
                 };
                 let mut shape = Shape {
                     literal,
+                    is_regular: !self.is_fresh_object_literal_type(ty),
                     ..Shape::default()
                 };
                 for prop in &members.shape().props {

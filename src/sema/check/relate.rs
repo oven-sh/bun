@@ -347,6 +347,19 @@ fn is_object_literal_kind(data: &TypeData) -> bool {
     }
 }
 
+/// `Checker::is_fresh_object_literal_type`
+#[inline]
+fn is_fresh_object_literal_kind(data: &TypeData) -> bool {
+    match data {
+        TypeData::Anon {
+            origin: Origin::ObjectLiteral(.., is_fresh),
+            ..
+        } => *is_fresh,
+        TypeData::Synth(shape) => shape.literal.is_of_expression() && !shape.is_regular,
+        _ => false,
+    }
+}
+
 /// `normalized` gives a type of this kind back as it is.
 #[inline]
 fn is_normalized_kind(data: &TypeData) -> bool {
@@ -1168,7 +1181,7 @@ impl<'p> Checker<'p> {
         if t == TypeId::OBJECT
             && is_object_kind(sd)
             && !(relation == Relation::StrictSubtype
-                && !self.is_object_literal_type(s)
+                && !self.is_fresh_object_literal_type(s)
                 && self.is_empty_anonymous_object_type(s))
         {
             return true;
@@ -1815,7 +1828,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `hasNonCircularBaseConstraint`
-    fn has_non_circular_base_constraint(&mut self, t: TypeId) -> bool {
+    pub(super) fn has_non_circular_base_constraint(&mut self, t: TypeId) -> bool {
         self.base_constraint(t);
         self.p.circular_constraints.get(&t).is_none()
     }
@@ -2673,7 +2686,7 @@ impl<'p> Checker<'p> {
         let source_is_structured_or_instantiable = is_structured_or_instantiable_kind(sd);
         if source_is_structured_or_instantiable || is_structured_or_instantiable_kind(td) {
             if state & (STATE_TARGET | STATE_REGULAR) == 0
-                && is_object_literal_kind(sd)
+                && is_fresh_object_literal_kind(sd)
                 && self.has_excess_properties(r, source, target)
             {
                 return Ternary::FALSE;
@@ -4044,7 +4057,10 @@ impl<'p> Checker<'p> {
                 false,
                 state & STATE_REGULAR,
             );
-            if result.holds() && state & STATE_REGULAR == 0 && self.is_object_literal_type(source) {
+            if result.holds()
+                && state & STATE_REGULAR == 0
+                && self.is_fresh_object_literal_type(source)
+            {
                 result &= self.index_signatures_related_to(r, source, target, false, STATE_NONE);
             }
         } else if result.holds()
@@ -4910,7 +4926,7 @@ impl<'p> Checker<'p> {
                     return self.is_related_to(r, constraint, target, REC_SOURCE);
                 }
             }
-            _ if relation.is_subtype() && self.is_object_literal_type(target) && self.is_empty_object_type(target) && !self.is_empty_object_type(source) => {
+            _ if relation.is_subtype() && self.is_fresh_object_literal_type(target) && self.is_empty_object_type(target) && !self.is_empty_object_type(source) => {
                 return Ternary::FALSE;
             }
             _ => {}
@@ -6778,7 +6794,7 @@ impl<'p> Checker<'p> {
         // A part of an intersection is never taken to have an index signature for what it has. For a strict subtype only an
         // object literal as written is, so that `{ [x: string]: X }` is one of `{}` and not the other way round as well.
         if state & STATE_SOURCE == 0
-            && (r.relation != Relation::StrictSubtype || self.is_object_literal_type(source))
+            && (r.relation != Relation::StrictSubtype || self.is_fresh_object_literal_type(source))
         {
             let looks = self.apparent_type_of_intersection(source);
             if self.is_object_type_with_inferable_index(looks) {

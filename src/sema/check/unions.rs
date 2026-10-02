@@ -1119,8 +1119,10 @@ impl<'p> Checker<'p> {
             return (left, false);
         }
         // `{}` goes next to what cannot be null or undefined (`TypeFlagsDefinitelyNonNullable`), which a union is not known to be.
-        // `U & {}` with a union `U` of nothing else is `U` once it is distributed over: no need to.
+        // `U & {}` with a union `U` of nothing else is `U` once it is distributed over: no need to. `boolean` and the union an enum is
+        // have a flag of their own that says so, and are not distributed over.
         let is_distributed_over = includes & tf::INCLUDES_EMPTY_OBJECT != 0
+            && includes & tf::DEFINITELY_NON_NULLABLE == 0
             && set.len() == 2
             && set.iter().any(|&t| {
                 self.is_union(t)

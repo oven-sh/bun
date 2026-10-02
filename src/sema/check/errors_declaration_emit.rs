@@ -1547,7 +1547,9 @@ impl<'p> EmitResolver<'_, 'p> {
         match self.c.originating_import_of_alias(alias) {
             Some(originating_import) => Some(module_clone(originating_import)),
             None => {
-                let target = self.c.target_of_alias(alias)?;
+                let Some(target) = self.c.target_of_alias(alias) else {
+                    return Some(self.c.files().unknown_symbol);
+                };
                 // `combineValueAndTypeSymbols` makes a symbol that nothing else is and that exports nothing.
                 let is_combined = !self.c.flags_of(target).intersects(SymFlags::VALUE)
                     && self.c.imported_property_of_export_equals(alias).is_some();

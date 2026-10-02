@@ -4716,6 +4716,7 @@ impl<'p> Checker<'p> {
         self.intern(TypeData::EvolvingArray(element))
     }
 
+    /// `finalizeEvolvingArrayType`, `createFinalArrayType`
     fn finalize_evolving_array(&mut self, ty: TypeId) -> TypeId {
         let TypeData::EvolvingArray(element) = *self.data(ty) else {
             return ty;
@@ -4723,9 +4724,6 @@ impl<'p> Checker<'p> {
         if element.is_never() {
             return self.auto_array_type;
         }
-        // An object literal is no subtype of one that lacks a property it has (`propertiesRelatedTo`): as alternatives to one another
-        // they get each other's properties first. None is fresh in the array.
-        let element = self.regular_object(element);
         let element = if self.is_union(element) {
             let parts = self.parts(element);
             self.union_reduced(parts)
@@ -4881,7 +4879,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The array `ty`, still being filled, after `value` was put in it.
+    /// `addEvolvingArrayElementType`: the array `ty`, still being filled, after `value` was put in it.
     fn add_evolving_element(&mut self, file: FileId, ty: TypeId, value: ExprId) -> TypeId {
         let TypeData::EvolvingArray(element) = *self.data(ty) else {
             return ty;
@@ -4895,12 +4893,7 @@ impl<'p> Checker<'p> {
             _ => self.type_of_expr(file, value),
         };
         let added = self.base_type_of_literal_type(added);
-        // `getRegularTypeOfObjectLiteral`: it stays the type of an object literal, and is widened with the others once the array is final.
-        let added = if self.is_object_literal_type(added) {
-            added
-        } else {
-            self.regular_object(added)
-        };
+        let added = self.regular_type_of_object_literal(added);
         if self
             .parts(added)
             .iter()

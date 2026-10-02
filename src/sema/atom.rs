@@ -138,6 +138,7 @@ known_atoms! {
     children = "children",
     props = "props",
     string = "string",
+    unknown = "unknown",
     number = "number",
     boolean = "boolean",
     bigint = "bigint",

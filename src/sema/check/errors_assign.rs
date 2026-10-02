@@ -680,33 +680,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `getRegularTypeOfObjectLiteral`: an object literal, and those its properties hold, as ordinary object types. Those in a list or
-    /// among alternatives stay as they are written.
-    pub(super) fn regular_type_of_object_literal(&mut self, ty: TypeId) -> TypeId {
-        if !self.is_object_literal_type(ty) {
-            return ty;
-        }
-        let Some(members) = self.members(ty) else {
-            return ty;
-        };
-        let mut shape = Shape::default();
-        for prop in &members.shape().props {
-            let held = self.type_of_prop(prop, members.mapper);
-            let held = self.regular_type_of_object_literal(held);
-            shape.props.push(Prop {
-                name: prop.name,
-                flags: prop.flags,
-                source: Self::copy_of(held, &[prop], true),
-                mapper: MapperId::IDENTITY,
-            });
-        }
-        for info in &members.shape().index {
-            let value = self.instantiate(info.value, members.mapper);
-            shape.index.push(IndexInfo { value, ..*info });
-        }
-        self.synth(shape)
-    }
-
     /// `checkObjectLiteral`, `contextualTypeHasPattern`: what a pattern takes apart may only have what the pattern takes out of it.
     /// 2353.
     fn check_literals_against_patterns(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {

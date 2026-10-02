@@ -294,6 +294,7 @@ impl<'p> Checker<'p> {
                 let cycles_before = self.cycles;
                 let mut new = Shape {
                     literal: shape.literal,
+                    is_regular: shape.is_regular,
                     ..Shape::default()
                 };
                 for p in &shape.props {

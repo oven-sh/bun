@@ -368,7 +368,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     None if !matches!(kind, VisitedKind::TypeReferenceName(..)) => None,
                     // `getUnresolvedSymbolForEntityName`, which is `unknownSymbol` for a name the parser missed.
                     None if names.last() == Some(&known::empty) => {
-                        Some(Found::Undeclared("unknown".to_owned()))
+                        Some(Found::Symbol(files.unknown_symbol))
                     }
                     None => {
                         let path: Vec<_> = names
@@ -623,11 +623,18 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             SymFlags::NAMESPACE
         };
         let &scope = bound.expr_scope.get(&whole)?;
-        let symbol =
-            self.c
-                .files()
-                .resolve_entity(self.file, scope, &names, meaning | SymFlags::ALIAS)?;
-        Some(Found::Symbol(symbol))
+        let files = self.c.files();
+        let found = files.resolve_entity(self.file, scope, &names, meaning | SymFlags::ALIAS);
+        // `resolveEntityName`: `else if namespace == c.unknownSymbol { return namespace }`
+        let namespace = SymFlags::NAMESPACE | SymFlags::ALIAS;
+        if found.is_none()
+            && names.len() > 1
+            && let Some(first) = files.resolve_name(self.file, scope, names[0], namespace)
+            && files.resolve_alias(first).is_none()
+        {
+            return Some(Found::Symbol(files.unknown_symbol));
+        }
+        found.map(Found::Symbol)
     }
 
     /// `getSymbolAtLocation`, of a string, a number or a template without substitutions.

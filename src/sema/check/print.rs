@@ -2643,9 +2643,13 @@ impl<'p> Printer<'_, 'p> {
 
     /// `typeParameterToDeclaration`
     fn type_parameter_declaration(&mut self, parameter: TypeId, clones: &[TypeId]) -> String {
+        // `getConstraintOfTypeParameter`. `constraint_of_type_param` is asked by `computeBaseConstraint` itself here, and sees a circle
+        // only as far as type parameters, unions and intersections lead.
         let constraint = match self.c.constraint_of_type_param(parameter) {
-            Some(constraint) => Some(self.constraint_to_node(parameter, constraint, clones).text),
-            None => None,
+            Some(constraint) if self.c.has_non_circular_base_constraint(parameter) => {
+                Some(self.constraint_to_node(parameter, constraint, clones).text)
+            }
+            _ => None,
         };
         let mut text = String::new();
         if let Some((_, declaration)) = self.c.type_param_decl(parameter) {

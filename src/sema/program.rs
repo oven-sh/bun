@@ -323,6 +323,8 @@ pub struct Files {
     pub global_this_symbol: Sym,
     /// `undefinedSymbol`: a property no file declares. It is in `globals` unless a file declares the name there.
     pub undefined_symbol: Sym,
+    /// `unknownSymbol`: what an alias that leads nowhere resolves to. It is in no table.
+    pub unknown_symbol: Sym,
     ambient_modules: FxHashMap<Atom, Sym>,
     /// `declare module "*.svg"`
     ambient_patterns: Vec<(String, String, Sym)>,
@@ -1895,6 +1897,10 @@ impl Files {
                 file: FileId(0),
                 id: SymbolId::NONE,
             },
+            unknown_symbol: Sym {
+                file: FileId(0),
+                id: SymbolId::NONE,
+            },
             ambient_modules: FxHashMap::default(),
             ambient_patterns: Vec::new(),
             pattern_augmentations: FxHashMap::default(),
@@ -2830,12 +2836,14 @@ impl Files {
         }
     }
 
-    /// `NewChecker`: `c.undefinedSymbol = c.newSymbol(ast.SymbolFlagsProperty, "undefined")`,
+    /// `NewChecker`: `c.unknownSymbol = c.newSymbol(ast.SymbolFlagsProperty, "unknown")`,
+    /// `c.undefinedSymbol = c.newSymbol(ast.SymbolFlagsProperty, "undefined")`,
     /// `c.globalThisSymbol = c.newSymbolEx(ast.SymbolFlagsModule, "globalThis", ..)`, `c.globalThisSymbol.Exports = c.globals`
     fn make_global_this_symbol(&mut self) {
         if self.modules.is_empty() {
             return;
         }
+        self.unknown_symbol = self.new_symbol(SymFlags::PROPERTY, known::unknown);
         self.undefined_symbol = self.new_symbol(SymFlags::PROPERTY, known::undefined);
         self.global_this_symbol =
             self.new_symbol(SymFlags::MODULE | SymFlags::MERGED, known::globalThis);

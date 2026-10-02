@@ -116,8 +116,9 @@ pub enum Origin {
     TypeLiteral(FileId, TypeNodeId),
     /// `{ [K in T]: U }`
     Mapped(FileId, TypeNodeId),
-    /// `{ a: 1 }`, as the type of the expression: known to have nothing but what is written. The last: `ObjectFlagsJSLiteral`.
-    ObjectLiteral(FileId, ExprId, bool),
+    /// `{ a: 1 }`, as the type of the expression: known to have nothing but what is written (`ObjectFlagsObjectLiteral`). The last
+    /// two: `ObjectFlagsJSLiteral`, `ObjectFlagsFreshLiteral`.
+    ObjectLiteral(FileId, ExprId, bool, bool),
     /// The same once it is the type of a variable, a result, a type argument: an ordinary object type.
     WidenedLiteral(FileId, ExprId, bool),
     /// The constructor function of a class, with its static members.
@@ -304,6 +305,9 @@ bitflags::bitflags! {
         /// the type just found and the `ValueDeclaration` of the member. The parent of that is the literal, so
         /// `shouldCheckAsExcessProperty` accepts it, unlike a property a spread brought along, which is a `PropSource::Copy` too.
         const WRITTEN = 1024;
+        /// Of an object literal type that is no longer fresh: nor is an object literal that is its type
+        /// (`getRegularTypeOfObjectLiteral`, `transformTypeOfMembers`).
+        const REGULAR = 2048;
     }
 }
 
@@ -464,6 +468,8 @@ pub struct Shape {
     pub construct: Vec<SigId>,
     pub index: Vec<IndexInfo>,
     pub literal: Literalness,
+    /// Of what `literal` says is of an expression: `ObjectFlagsFreshLiteral` is gone (`getRegularTypeOfObjectLiteral`).
+    pub is_regular: bool,
     /// `ObjectFlagsJSLiteral`
     pub is_js_literal: bool,
     /// Of what `getInstantiationExpressionType` makes.

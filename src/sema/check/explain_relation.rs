@@ -848,7 +848,7 @@ impl<'p> Checker<'p> {
         if self.is_structured_or_instantiable(source) || self.is_structured_or_instantiable(target)
         {
             if state & (STATE_TARGET | STATE_REGULAR) == 0
-                && self.is_object_literal_type(source)
+                && self.is_fresh_object_literal_type(source)
                 && self.has_excess_properties_reporting(x, source, target)
             {
                 let shown = if self.has_alias(original_target) {
@@ -1774,7 +1774,10 @@ impl<'p> Checker<'p> {
                 false,
                 state & STATE_REGULAR,
             );
-            if result.holds() && state & STATE_REGULAR == 0 && self.is_object_literal_type(source) {
+            if result.holds()
+                && state & STATE_REGULAR == 0
+                && self.is_fresh_object_literal_type(source)
+            {
                 result &= self.index_signatures_related_to_reporting(
                     x, source, target, false, true, STATE_NONE,
                 );
@@ -2364,7 +2367,7 @@ impl<'p> Checker<'p> {
                 }
             }
             _ if relation.is_subtype()
-                && self.is_object_literal_type(target)
+                && self.is_fresh_object_literal_type(target)
                 && self.is_empty_object_type(target)
                 && !self.is_empty_object_type(source) =>
             {
@@ -3502,7 +3505,8 @@ impl<'p> Checker<'p> {
             );
         }
         if state & STATE_SOURCE == 0
-            && (x.r.relation != Relation::StrictSubtype || self.is_object_literal_type(source))
+            && (x.r.relation != Relation::StrictSubtype
+                || self.is_fresh_object_literal_type(source))
         {
             let looks = self.apparent_type_of_intersection(source);
             if self.is_object_type_with_inferable_index(looks) {

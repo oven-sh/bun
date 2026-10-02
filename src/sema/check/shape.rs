@@ -2103,6 +2103,28 @@ impl<'p> Checker<'p> {
         self.base_constructors(class, false).1
     }
 
+    /// `getRegularTypeOfObjectLiteral`
+    pub(super) fn regular_type_of_object_literal(&mut self, ty: TypeId) -> TypeId {
+        match self.data(ty) {
+            &TypeData::Anon {
+                origin: Origin::ObjectLiteral(file, e, is_js_literal, true),
+                mapper,
+            } => self.intern(TypeData::Anon {
+                origin: Origin::ObjectLiteral(file, e, is_js_literal, false),
+                mapper,
+            }),
+            TypeData::Synth(shape) if shape.literal.is_of_expression() && !shape.is_regular => {
+                let mut shape = Shape::clone(shape);
+                shape.is_regular = true;
+                for prop in &mut shape.props {
+                    prop.flags |= PropFlags::REGULAR;
+                }
+                self.synth(shape)
+            }
+            _ => ty,
+        }
+    }
+
     fn build_origin_shape(&mut self, origin: Origin) -> Shape {
         let mut b = Builder::default();
         // What `get_named_members` is told. Only the static side of a class has a container.
@@ -2114,8 +2136,14 @@ impl<'p> Checker<'p> {
                     self.add_members(&mut b, file, members, false, MapperId::IDENTITY, false);
                 }
             }
-            Origin::ObjectLiteral(file, expr, ..) => {
-                return self.build_object_literal_shape(file, expr);
+            Origin::ObjectLiteral(file, expr, _, is_fresh) => {
+                let mut shape = self.build_object_literal_shape(file, expr);
+                if !is_fresh {
+                    for prop in &mut shape.props {
+                        prop.flags |= PropFlags::REGULAR;
+                    }
+                }
+                return shape;
             }
             Origin::WidenedLiteral(file, expr, ..) => {
                 let mut shape = self.build_object_literal_shape(file, expr);
@@ -3350,6 +3378,8 @@ impl<'p> Checker<'p> {
         let ty = self.force(ty);
         let ty = if prop.flags.contains(PropFlags::WIDEN) {
             self.regular_object(ty)
+        } else if prop.flags.contains(PropFlags::REGULAR) {
+            self.regular_type_of_object_literal(ty)
         } else {
             ty
         };

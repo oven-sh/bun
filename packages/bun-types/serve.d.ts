@@ -596,11 +596,16 @@ declare module "bun" {
      *
      * The route path **must** end in `/*`. The part of the request URL after
      * the prefix is percent-decoded once and opened relative to `dir`.
-     * Non-canonical paths (containing `.`, `..`, empty segments, `%2F`, or a
-     * `%XX` sequence encoding a character that may appear literally in a path
-     * segment) are rejected with `404` so the served path is always the path
-     * the router matched. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`,
-     * so symlinks that would escape `dir` are clamped by the kernel. Routing
+     * Non-canonical paths (a segment that is exactly `.` or `..`, an empty
+     * segment, `%2F`, or a `%XX` sequence encoding a character that may appear
+     * literally in a path segment) are rejected with `404` so the served path
+     * is always the path the router matched. On Linux the open uses
+     * `openat2(RESOLVE_IN_ROOT)`, so symlinks that would escape `dir` are
+     * clamped by the kernel; where `openat2` is unavailable (kernels before
+     * 5.6, or seccomp), and on macOS and Windows, symlinks are followed
+     * wherever they point, including outside `dir`. Dotfiles are not
+     * filtered: any regular file under `dir` (a `.env` file, the contents of
+     * `.git/`) is served, so `dir` should contain only public files. Routing
      * is case-sensitive but filesystems on macOS and Windows are not by
      * default: do not place access-controlled content inside `dir` and rely
      * on an overlapping route to gate it.

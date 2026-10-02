@@ -91,6 +91,12 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
     permissions:
       contents: read
+      # Lets npm mint an OIDC token for trusted publishing. For packages with
+      # a trusted publisher configured on npmjs.com, npm exchanges it for a
+      # short-lived publish token (and enables provenance); for the rest it
+      # silently falls back to NPM_TOKEN.
+      id-token: write
+    environment: release
     defaults:
       run:
         working-directory: packages/bun-release
@@ -101,6 +107,12 @@ jobs:
           persist-credentials: false
           # To workaround issue
           ref: main
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Trusted publishing requires npm >= 11.5.1; the runner's default
+          # node ships an older npm.
+          node-version: latest
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -111,6 +123,10 @@ jobs:
         run: bun upload-npm -- "$BUN_VERSION" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fallback auth until every published package has a trusted
+          # publisher on npmjs.com. Remove together with the _authToken line
+          # in packages/bun-release/.npmrc (npm errors on .npmrc env
+          # references that are unset).
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
   npm-types:
     name: Release types to NPM

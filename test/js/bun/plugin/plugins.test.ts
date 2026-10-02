@@ -1210,7 +1210,9 @@ describe.concurrent("onResolve is asked once about", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // (bun test reports there.)
+    if (args[0] !== "test") expect(stderr).toBe("");
     const asked = args[0] === "test" ? "a.test.mjs" : "a.mjs";
     const lines = stdout.split("\n").filter(line => line.startsWith("onResolve") || line.startsWith("loaded"));
     expect(lines).toEqual(["onResolve " + asked, "loaded b" + asked.slice(1)]);

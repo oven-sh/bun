@@ -98,6 +98,10 @@ JSValue fetchESMSourceCodeAsync(
     BunString* referrer,
     BunString* typeAttribute);
 
+// What Bun loads itself, which has no importer: an entry point, a test file, the argument of Module.runMain().
+// Null when it does not resolve, with the exception pending.
+JSC::JSPromise* resolveAndEvaluateModule(JSC::JSGlobalObject*, const WTF::String& specifier);
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,

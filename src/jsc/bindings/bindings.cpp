@@ -62,6 +62,7 @@
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMapIterator.h"
 #include "JavaScriptCore/JSModuleLoader.h"
+#include "ModuleLoader.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSONObject.h"
@@ -3808,12 +3809,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // loadAndEvaluateModule() takes a key.
-    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, arg1->toWTFString()), JSC::Identifier(), nullptr, /* useImportMap */ true);
-    if (scope.exception()) [[unlikely]]
-        return nullptr;
-
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    auto* promise = Bun::resolveAndEvaluateModule(globalObject, arg1->toWTFString());
     EXCEPTION_ASSERT(!!promise == !scope.exception());
     return promise;
 }

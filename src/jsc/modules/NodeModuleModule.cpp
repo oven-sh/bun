@@ -1,6 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "NodeModuleModule.h"
+#include "ModuleLoader.h"
 #include "CodeGenerationFromStrings.h"
 #include "ModuleGraph.h"
 #include "WebCoreJSBuiltins.h"
@@ -808,11 +809,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // loadAndEvaluateModule() takes a key.
-    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), JSC::Identifier(), nullptr, /* useImportMap */ true);
-    RETURN_IF_EXCEPTION(scope, {});
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    auto* promise = Bun::resolveAndEvaluateModule(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
     Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
 

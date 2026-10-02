@@ -275,6 +275,10 @@ pub mod ssl_wrapper {
         Running,
         /// A callback of the running pass called `handle_traffic` again.
         RerunRequested,
+        /// A callback of the running pass called `deinit`. `SSL_do_handshake`
+        /// can be below that callback on the stack, so the `SSL` is freed
+        /// when the pass has unwound.
+        FreeRequested,
     }
 
     /// CamelCase alias for callers that use the alternate spelling
@@ -923,6 +927,14 @@ pub mod ssl_wrapper {
 
         pub fn deinit(&self) {
             self.flags.set_closed_notified(true);
+            if self.traffic.get() != Traffic::Idle {
+                self.traffic.set(Traffic::FreeRequested);
+                return;
+            }
+            self.free();
+        }
+
+        fn free(&self) {
             if let Some(ssl) = self.ssl.take() {
                 // SAFETY: ssl was created by SSL_new and is owned by self; SSL_free also frees the input and output BIOs.
                 unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
@@ -1027,6 +1039,12 @@ pub mod ssl_wrapper {
 
             // SAFETY: ssl is a live SSL*.
             let result = unsafe { boring_sys::SSL_do_handshake(ssl.as_ptr()) };
+
+            // A callback inside the handshake (ALPNCallback) closed the wrapper.
+            if self.flags.closed_notified() {
+                boring_sys::ERR_clear_error();
+                return false;
+            }
 
             // A rejecting client (`set_inline_reject`) saw the server's chain
             // fail. All output queued since that verdict is the flight that
@@ -1296,18 +1314,31 @@ pub mod ssl_wrapper {
         /// would hand the owner the next chunk while it is still inside its
         /// callback for the previous one.
         fn handle_traffic(&self) {
-            if self.traffic.get() != Traffic::Idle {
-                log!("handleTraffic re-entered, flushing and deferring to the outer pass");
-                let mut buffer = IoBuffer::uninit();
-                self.handle_writing(&mut buffer);
-                self.traffic.set(Traffic::RerunRequested);
-                return;
+            match self.traffic.get() {
+                Traffic::Idle => {}
+                Traffic::FreeRequested => return,
+                Traffic::Running | Traffic::RerunRequested => {
+                    log!("handleTraffic re-entered, flushing and deferring to the outer pass");
+                    let mut buffer = IoBuffer::uninit();
+                    self.handle_writing(&mut buffer);
+                    // The flush can run a callback that calls `deinit`.
+                    if self.traffic.get() != Traffic::FreeRequested {
+                        self.traffic.set(Traffic::RerunRequested);
+                    }
+                    return;
+                }
             }
             loop {
                 self.traffic.set(Traffic::Running);
                 self.traffic_pass();
-                if self.traffic.get() != Traffic::RerunRequested {
-                    break;
+                match self.traffic.get() {
+                    Traffic::RerunRequested => {}
+                    Traffic::FreeRequested => {
+                        self.traffic.set(Traffic::Idle);
+                        self.free();
+                        return;
+                    }
+                    Traffic::Idle | Traffic::Running => break,
                 }
             }
             self.traffic.set(Traffic::Idle);
@@ -1349,7 +1380,7 @@ pub mod ssl_wrapper {
 
         /// Hand the parked sessions and keylog lines to the owner. The callbacks run JS, which may close the wrapper.
         fn flush_pending_events(&self) {
-            while self.ssl.get().is_some() {
+            while self.ssl.get().is_some() && !self.flags.closed_notified() {
                 let Some(entry) = self.callbacks.sessions.borrow_mut().pop_front() else {
                     break;
                 };
@@ -1358,7 +1389,7 @@ pub mod ssl_wrapper {
                     on_session(handlers.ctx, &entry);
                 }
             }
-            while self.ssl.get().is_some() {
+            while self.ssl.get().is_some() && !self.flags.closed_notified() {
                 let Some(entry) = self.callbacks.keylog.borrow_mut().pop_front() else {
                     break;
                 };
@@ -1372,7 +1403,8 @@ pub mod ssl_wrapper {
 
     impl<T: Copy> Drop for SSLWrapper<T> {
         fn drop(&mut self) {
-            self.deinit();
+            self.flags.set_closed_notified(true);
+            self.free();
         }
     }
 

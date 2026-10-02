@@ -1843,6 +1843,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         };
         // `defer result.deinit()` → Drop.
+        redirect_type = SignResult::redirect_mode(Some(redirect_type));
 
         if let Some(proxy_) = &proxy {
             // proxy and url are in the same buffer lets replace it

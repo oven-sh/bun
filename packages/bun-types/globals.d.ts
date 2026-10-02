@@ -2045,6 +2045,10 @@ interface BunFetchRequestInit extends RequestInit {
   /**
    * Override the default S3 options
    *
+   * Bun signs an `s3://` request for one host and path, so `fetch` never
+   * follows a redirect for it. `redirect: "follow"` resolves with the 3xx
+   * response, the same as `"manual"`, and `maxRedirects` has no effect.
+   *
    * @example
    * ```js
    * const response = await fetch("s3://bucket/key", {

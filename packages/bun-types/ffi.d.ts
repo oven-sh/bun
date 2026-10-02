@@ -988,6 +988,9 @@ declare module "bun:ffi" {
    * function. For performance reasons, FFI does not convert typed arrays to C
    * pointers automatically.
    *
+   * The pointer stays valid while `view` is referenced. `ptr()` does not keep
+   * `view` alive.
+   *
    * @param view The typed array, `ArrayBuffer`, or `DataView` to get the pointer of
    * @param byteOffset Optional offset into the view, in bytes
    *

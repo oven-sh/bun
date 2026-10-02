@@ -38,9 +38,6 @@ use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
 use crate::package_manager_real::package_manager_options::Do;
 
-/// Signal name for a raw signal byte.
-/// `Status::Signaled` carries the raw byte; named range 1..=31 maps via
-/// `SignalCode::name()`, RT/out-of-range values fall back to "UNKNOWN".
 #[inline]
 fn signal_name(raw: u8) -> &'static str {
     bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")
@@ -906,7 +903,6 @@ fn attempt_security_scan_with_retry(
         process: None,
         ipc_reader: BufferedReader::init::<SecurityScanSubprocess>(),
         ipc_data: Vec::new(),
-        stderr_data: Vec::new(),
         has_received_ipc: false,
         exit_status: None,
         remaining_fds: 0,
@@ -951,7 +947,6 @@ pub struct SecurityScanSubprocess<'a> {
     process: Option<ProcessHandle>,
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
-    stderr_data: Vec<u8>,
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
@@ -1011,7 +1006,6 @@ bun_io::impl_buffered_reader_parent! {
 impl<'a> SecurityScanSubprocess<'a> {
     pub(crate) fn spawn(&mut self) -> Result<(), Error> {
         self.ipc_data = Vec::new();
-        self.stderr_data = Vec::new();
         let parent: *mut Self = self;
         self.ipc_reader.set_parent(parent.cast());
 
@@ -1483,7 +1477,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         _original_cwd: &[u8],         // Reserved for future use
         is_retry: bool,
     ) -> Result<ScanAttemptResult, Error> {
-        // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
+        // `defer { ipc_data.deinit(); }`: Vec fields drop with self.
 
         let Some(status) = self.exit_status.clone() else {
             Output::err_generic(

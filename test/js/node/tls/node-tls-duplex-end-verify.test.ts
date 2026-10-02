@@ -40,6 +40,24 @@ async function inPieces(deliver, flight, pieces) {
   }
 }
 
+// Records the events of `client` in `events` and calls `closed` at 'close'. A client that was let through, or that got
+// data with no report of its handshake, is destroyed, so that it does not keep its test waiting.
+function recordClient(client, events, closed) {
+  client.on("secureConnect", () => {
+    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
+    setImmediate(() => client.destroy());
+  });
+  client.on("data", data => {
+    events.push(`data ${data}`);
+    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
+  });
+  client.on("error", err => events.push(`error ${err.code}`));
+  client.on("close", () => {
+    events.push("close");
+    closed();
+  });
+}
+
 // A client wraps a Duplex in TLS and calls end() right after its first flight left, so the handshake is still running.
 // The server's certificate is not trusted, unless `trusted`. It is for "agent1". With `resumed` the client offers the
 // session of an earlier connection that asked for "agent1", and its name check records whether the handshake resumed
@@ -105,21 +123,7 @@ async function endMidHandshake(
     }),
     ...(checkServerIdentity && { checkServerIdentity }),
   });
-  client.on("secureConnect", () => {
-    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
-    // A connection that was let through must not keep this test waiting.
-    setImmediate(() => client.destroy());
-  });
-  client.on("data", data => {
-    events.push(`data ${data}`);
-    // Data with no report of the handshake: this client must not keep the test waiting either.
-    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
-  });
-  client.on("error", err => events.push(`error ${err.code}`));
-  client.on("close", () => {
-    events.push("close");
-    resolve();
-  });
+  recordClient(client, events, resolve);
   await promise;
   raw.destroy();
   server.close();
@@ -269,20 +273,7 @@ async function endMidHandshakeOverTcp(
     ...(trusted && { ca: serverCA }),
     ...(checkServerIdentity && { checkServerIdentity }),
   });
-  client.on("secureConnect", () => {
-    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
-    setImmediate(() => client.destroy());
-  });
-  client.on("data", data => {
-    events.push(`data ${data}`);
-    // Data with no report of the handshake: this client must not keep the test waiting either.
-    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
-  });
-  client.on("error", err => events.push(`error ${err.code}`));
-  client.on("close", () => {
-    events.push("close");
-    resolve();
-  });
+  recordClient(client, events, resolve);
   await promise;
   close();
   return events;
@@ -352,20 +343,7 @@ async function endMidHandshakeOnConnectedSocket(
     ...(trusted && { ca: serverCA }),
     ...(checkServerIdentity && { checkServerIdentity }),
   });
-  client.on("secureConnect", () => {
-    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
-    setImmediate(() => client.destroy());
-  });
-  client.on("data", data => {
-    events.push(`data ${data}`);
-    // Data with no report of the handshake: this client must not keep the test waiting either.
-    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
-  });
-  client.on("error", err => events.push(`error ${err.code}`));
-  client.on("close", () => {
-    events.push("close");
-    resolve();
-  });
+  recordClient(client, events, resolve);
   client.end();
   await promise;
   raw.destroy();
@@ -463,20 +441,7 @@ async function endBeforeHandshakeStarts(overDuplex, rejectUnauthorized, ...endAr
       return tls.checkServerIdentity(name, peerCertificate);
     },
   });
-  client.on("secureConnect", () => {
-    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
-    setImmediate(() => client.destroy());
-  });
-  client.on("data", data => {
-    events.push(`data ${data}`);
-    // Data with no report of the handshake: this client must not keep the test waiting either.
-    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
-  });
-  client.on("error", err => events.push(`error ${err.code}`));
-  client.on("close", () => {
-    events.push("close");
-    resolve();
-  });
+  recordClient(client, events, resolve);
   client.end(...endArgs);
   await promise;
   raw.destroy();
@@ -505,6 +470,77 @@ for (const overDuplex of [false, true]) {
       { asked: ["another.name"], first: "secureConnect authorized=false authError=ERR_TLS_CERT_ALTNAME_INVALID" },
     );
   });
+}
+
+// A handshake that did not complete is never an established session. The client below wraps a Duplex, does not call
+// end(), and its peer makes the handshake fail. `peer(otherEnd)` plays the peer on the other end of the Duplex, and
+// can return a function that closes what it opened. Returns the ordered events of the client.
+async function failedHandshakeOverDuplex(rejectUnauthorized, peer) {
+  const events = [];
+  const { promise, resolve } = Promise.withResolvers();
+  const [transport, otherEnd] = duplexPair();
+  transport.on("error", () => {});
+  otherEnd.on("error", () => {});
+  const close = await peer(otherEnd);
+  const client = tls.connect({ socket: transport, servername: "agent1", ca: serverCA, rejectUnauthorized });
+  recordClient(client, events, resolve);
+  await promise;
+  close?.();
+  return events;
+}
+
+const HANDSHAKE = 0x16;
+const SERVER_KEY_EXCHANGE = 12;
+
+// A TLS 1.2 server with a trusted certificate for "agent1". The relay in front of it changes the last byte of the
+// signature in ServerKeyExchange, so the peer proves no possession of the key. The chain is already verified then.
+async function trustedChainWithBadKeyProof(otherEnd) {
+  const server = tls.createServer({ key, cert, maxVersion: "TLSv1.2" }, socket => socket.on("error", () => {}));
+  server.on("tlsClientError", () => {});
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const upstream = net.connect(server.address().port, "127.0.0.1");
+  upstream.on("error", () => {});
+  otherEnd.on("data", chunk => upstream.write(chunk));
+  eachRecord(upstream, record => {
+    if (record[0] === HANDSHAKE) {
+      // A record can carry several handshake messages: type (1 byte), length (3 bytes), body.
+      for (let at = 5; at + 4 <= record.length; ) {
+        const end = at + 4 + record.readUIntBE(at + 1, 3);
+        if (record[at] === SERVER_KEY_EXCHANGE && end <= record.length) record[end - 1] ^= 0xff;
+        at = end;
+      }
+    }
+    otherEnd.write(record);
+  });
+  upstream.on("close", () => otherEnd.destroy());
+  return () => {
+    upstream.destroy();
+    server.close();
+  };
+}
+
+for (const [failure, peer] of [
+  [
+    "a fatal alert",
+    otherEnd =>
+      void otherEnd.once("data", () => otherEnd.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]))),
+  ],
+  [
+    "bytes that are not TLS",
+    otherEnd => void otherEnd.once("data", () => otherEnd.write("this is not a TLS record\n")),
+  ],
+  ["a trusted chain with a bad key proof", trustedChainWithBadKeyProof],
+]) {
+  for (const rejectUnauthorized of [true, false]) {
+    test(`over a Duplex: ${failure} is an error, not a secureConnect, with rejectUnauthorized: ${rejectUnauthorized}`, async () => {
+      const events = await failedHandshakeOverDuplex(rejectUnauthorized, peer);
+      assert.match(events[0], /^error /, events.join(", "));
+      assert.deepStrictEqual(
+        events.filter(event => !event.startsWith("error ")),
+        ["close"],
+      );
+    });
+  }
 }
 
 // The server side of the same shape. A server that asks for a client certificate calls end() on its socket while the

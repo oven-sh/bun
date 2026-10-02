@@ -492,21 +492,21 @@ function onClientHandshake(self, socket, success, verifyError) {
   }
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1081-L1090
   if (self.destroyed) return;
-  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
-  if (!success && verifyError == null && self.writableFinished) {
-    self.secureConnecting = false;
-    return;
-  }
-  // `success` says whether the handshake completed. The chain's verdict and the name check are applied below.
-  const isProtocolFailure =
-    !success &&
-    verifyError?.code != null &&
-    (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
-  if (isProtocolFailure) {
-    // Surface the OpenSSL reason instead of letting the close path report a
-    // generic disconnect.
-    self.destroy(tlsHandshakeError(verifyError));
-    return;
+  if (!success) {
+    const code = verifyError?.code;
+    if (code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(code)) {
+      // Surface the OpenSSL reason instead of letting the close path report a
+      // generic disconnect.
+      self.destroy(tlsHandshakeError(verifyError));
+      return;
+    }
+    // Only a chain that this client refuses goes on: it gets its X509 error below.
+    if (code == null || !self._rejectUnauthorized) {
+      // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
+      if (self.writableFinished) self.secureConnecting = false;
+      else onConnectEnd.$call(self);
+      return;
+    }
   }
 
   self._securePending = false;

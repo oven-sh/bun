@@ -1783,3 +1783,122 @@ At `bb8a0745fd`:
 
 What waits in other files: `c43_unions_intersections.rs` keeps the type set of an intersection in a `Vec<TypeId>`
 where checker.go 26180 has an `orderedSet`.
+
+## Checker: keyof, indexed access and substitution types (`checker/c44_index_indexed_access.rs`)
+
+Commits `6fdbea41c8`, `29243aaf5a`, `51919074d5`, `badc91ca23` and `f1f0123b19`, all written by the job that commits
+the worktree. The file holds checker.go 26803-27549 whole and in upstream order: the 38 functions of the layers K-KEYOF
+(`getIndexType` to `checkComputedPropertyName`, `shouldDeferIndexType` to `getIndexTypeForMappedType`), K-INDEXED
+(`getIndexedAccessType` to `indexTypeLessThan`) and K-SUBST (`isNoInferType`, `getSubstitutionIntersection`,
+`getNoInferType` to `getOrCreateSubstitutionType`). No function is a stand-in. PORT_STATUS.md has the row.
+
+NOT compiled by cargo: it does not reach the file while a module of `checker/mod.rs` has no file. "Verified" below says
+what was checked instead.
+
+### How a caller writes the calls
+
+- Methods of `Checker<'a>` with `&mut self` and upstream's parameter order. A nil type, node, symbol or alias is
+  `TypeId::NIL`, `NodeId::NIL`, `SymbolId::NIL`, `TypeAliasId::NIL`.
+  - keyof: `get_index_type(t)`, `get_index_type_ex(t, IndexFlags)`, `get_index_type_for_generic_type(t, IndexFlags)`,
+    `get_index_type_for_mapped_type(t, IndexFlags)`, `should_defer_index_type(t, IndexFlags) -> bool`,
+    `get_mapped_type_name_type_kind(t) -> MappedTypeNameTypeKind` (`NONE`, `FILTERING`, `REMAPPING`),
+    `get_extract_string_type(t)`.
+  - Names as types: `get_literal_type_from_properties(t, include: TypeFlags, include_origin: bool)`,
+    `get_literal_type_from_property(prop, include, include_non_public)`,
+    `get_literal_type_from_property_name(name: NodeId)`, `check_computed_property_name(node)`.
+  - Indexed access: `get_indexed_access_type(object_type, index_type)`,
+    `get_indexed_access_type_ex(object_type, index_type, AccessFlags, access_node, alias)`,
+    `get_indexed_access_type_or_undefined(...)` with the same five parameters and the nil type for upstream's nil,
+    `get_property_type_for_index_type(original_object_type, object_type, index_type, full_index_type, access_node,
+    access_flags)`, `should_defer_indexed_access_type(object_type, index_type, access_node)`,
+    `error_if_writing_to_readonly_index(index_info: IndexInfoId, object_type, access_expression)`.
+  - Access checks: `is_self_type_access(name, parent: SymbolId)`,
+    `is_assignment_to_readonly_entity(expr, symbol, assignment_kind: AssignmentKind)`,
+    `is_this_property_access_in_constructor(node, prop)`, `type_has_static_property(prop_name: &[u8], containing_type)`.
+  - Substitution: `get_substitution_type(base_type, constraint)`, `get_or_create_substitution_type(base_type,
+    constraint)`, `get_substitution_intersection(t)`, `get_no_infer_type(t)`, `is_no_infer_target_type(t)`.
+- These only read and take `&self`: `is_no_infer_type(t)`, `is_key_type_included(key_type, include)`,
+  `is_auto_typed_property(symbol)`, `get_declaring_constructor(symbol) -> NodeId`,
+  `get_property_name_from_index(index_type, access_node)`,
+  `get_suggested_type_for_nonexistent_string_literal_type(source, target) -> TypeId` (nil for no suggestion).
+- A `string` result is a new `Vec<u8>`: `get_property_name_from_index` (`ast::INTERNAL_SYMBOL_NAME_MISSING` for no
+  name: `name != INTERNAL_SYMBOL_NAME_MISSING` and `&name` both work on the result),
+  `get_suggestion_for_nonexistent_property(name: &[u8], containing_type)` and
+  `get_suggestion_for_nonexistent_index_signature(object_type, expr, keyed_type)` (empty for no suggestion).
+- Free functions, re-exported as `crate::checker`: `is_invalid_computed_property_name(a, node)`,
+  `get_index_node_for_access_expression(a, access_node) -> NodeId`, `index_type_less_than(c, index_type, limit: isize)`.
+- The field `isStringIndexSignatureOnlyType` (the method value of checker.go:1260) is the method
+  `is_string_index_signature_only_type`, which calls `is_string_index_signature_only_type_worker`. Both are in this
+  file, as `could_contain_type_variables` is in `c37` and `mark_node_assignments` in `flow.rs`; `c03_init.rs` does not
+  define it.
+
+### Differences from upstream
+
+- Stack tests at the entries of `checker-type-layers-topdown/data/recursion.txt` that are in this range. The entry
+  records `StackLimit` and returns the error type (`get_index_type_ex`, `get_indexed_access_type_or_undefined`) or
+  false (`is_string_index_signature_only_type_worker`, `is_no_infer_target_type`, and `is_key_type_included` before
+  it descends into an intersection).
+- Closures take the checker: `addMemberForKeyType` of `getIndexTypeForMappedType` is one local closure
+  `|c: &mut Checker<'a>, key_type|` that owns the borrow of the key list and is handed on as `&mut dyn FnMut` three
+  times; `hasProp` of `getSuggestionForNonexistentIndexSignature` is a local closure `|c, name| -> bool`.
+- `core.Map` over constituents or properties is a loop into a local vector that is passed as `List::from_slice`
+  (26815, 26817, 27262): the callee copies what it keeps.
+- `get_property_type_for_index_type`: the cases of 27295 and 27297 (string literal, number literal) have one body
+  and are one branch. `!(accessNode != nil && IsPrivateIdentifier(accessNode))` of 27131 is written
+  `access_node.is_nil() || !is_private_identifier(a, access_node)`, and the enum test of 27240-27245 is a named
+  boolean that is computed only when `IncludeUndefined` is set. Both keep upstream's order of evaluation.
+- A literal value as a message argument (`indexType.AsLiteralType().value`, which `StringifyArgs` prints with `%v`)
+  is `evaluator::any_to_string` of the value: the text of a string, `Number.String()` of a number.
+- `index < 0` and `index >= 0` of a `jsnum.Number` compare its `f64`; `jsnum.Number(limit)` is `limit as f64`.
+- `should_defer_indexed_access_type` reads `getTotalFixedElementCount(objectType.TargetTupleType())` inside a block
+  of the `&&` chain: only for a tuple, as upstream's short circuit does, and before `index_type_less_than` borrows
+  the checker.
+- `get_suggested_type_for_nonexistent_string_literal_type`: `core.FilterSeq` is a lazy iterator, so the limit of
+  1000 counts the string literal constituents as upstream counts them.
+- `symbol.Parent.ValueDeclaration` of 27429-27430 reads the zero symbol through a nil parent, where upstream
+  dereferences nil. The range has no panic and no assert.
+
+### Verified
+
+No compiler has seen the file, and nothing ran a function of it. What was checked:
+
+- `rustfmt --check --edition 2024`: exit 0 (the file parses and is formatted).
+- `python3 round2-layer7-checker/ranges.py c44_index_indexed_access`: 38 of 38 functions of the range have a `fn` of
+  their name in the file. `round2-layer7-checker/globs.py`: the module exports `pub` names (its glob in `mod.rs` is
+  not empty) and none of them is a name of another globbed module. No other file of `src/typecheck/` defines a `fn`
+  with one of the 39 names.
+- A script over the tree of `a2dd5ba96a` (argument counts and receiver kind only, not types): 359 calls that the
+  file makes match a definition of the tree, and the 87 calls that other files make into the 39 functions match
+  their parameter counts (`relater.rs`, `jsx.rs`, `c14`, `c31`, `c33`, `c37`, `c38`, `c40`, `c45` and the others
+  of the look-ahead).
+- Read at their definitions, name, parameter order, receiver and result: the accessors and predicates of `ast/`
+  (`reader.rs`, `node_methods.rs`, `symbol.rs`, `utilities.rs`, the generated casts), `get_text_of_node`,
+  `jsnum::from_string`, `core::get_spelling_suggestion_with_max_candidate_count`, `core::or_else`,
+  `evaluator::any_to_string`, the fields of `Checker`, `Records`, `LinkStore`, the casts and records of `types.rs`,
+  the keys of `c01_data.rs`, and the callees in `c03`, `c14`, `c20` to `c22`, `c25`, `c27`, `c28`, `c31`, `c33`,
+  `c36` to `c38`, `c40` to `c43`, `c45`, `flow.rs`, `mapper.rs`, `printer.rs`, `relater.rs` and `utilities.rs`.
+  The modules that came in during the step were read again when they landed: `c41` (the three constructors), `c21`
+  (`add_deprecated_suggestion` takes `&[u8]`), `c14`, `utilities.rs` (`compare_types` takes `&Checker`, so the
+  spelling suggestion needs no copy of the candidates; `get_property_name_from_type` returns `Vec<u8>`), `c37` (the
+  mapped type accessors and the callback of `for_each_mapped_type_property_key_type_and_index_signature_key_type`)
+  and `c03` (`get_global_extract_symbol`, `contains_missing_type`).
+- The 16 diagnostic messages exist by name in `diagnostics_generated.rs`, and each call gives as many arguments as
+  the message has placeholders. No two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`,
+  `unimplemented`, `unreachable`, `unsafe` or slice index.
+- Not checked: types and borrows (no compiler), clippy, and any result against upstream's code.
+
+### What this file expects and the tree does not have
+
+At `a2dd5ba96a`, each called by its upstream name:
+
+- `c30_type_keys.rs` (no file): `get_type_list_key(types: List<'_, TypeId>) -> CacheHashKey` and
+  `get_indexed_access_key(c, object_type, index_type, access_flags, alias) -> CacheHashKey` (17690), the checker
+  first as the callers of `get_alias_key` and `get_union_key` pass it.
+- `c50` (no file): `get_type_of_property_of_contextual_type(t, name: &[u8]) -> TypeId`. The file passes the local
+  `Vec<u8>` of the property name: a parameter of type `Text<'a>` does not accept it.
+- `c18` (no file): `get_control_flow_container(node) -> NodeId` (11528) and
+  `is_uncalled_function_reference(node, symbol) -> bool` (11784).
+- `c45`: `mark_property_as_referenced(prop, node_for_check_write_only, is_self_type_access)` (27829) and
+  `get_modifiers_type_from_mapped_type(t) -> TypeId` (28250). `c35`: `get_lower_bound_of_key_type(t) -> TypeId`
+  (21135). `c04`: `get_spelling_suggestion_for_name(name: &[u8], symbols: &[SymbolId], meaning) -> SymbolId` (1806).
+- `crate::core::Map` as the contract has it (`get`, `get_ok`, `set` with its `bool`).

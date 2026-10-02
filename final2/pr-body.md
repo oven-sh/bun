@@ -8,7 +8,7 @@ Fixes #44170, fixes #12918
 - The methods of `EventEmitter.prototype` move to the module `internal/events/prototype`. The prototype is a native object that takes a method from it at the first read.
 - `process` inherits from it, with its listeners in `process._events`. The native emitter is deleted (1,397 lines).
 - Native code emits with `process.emit`.
-- Verified: `process.test.js` and 6 more files (54 new tests, 39 fail before). Also 873 of node's tests.
+- Verified: `process.test.js` and 6 more files (55 new tests, 39 fail before). Also 609 of node's tests.
 
 ### Background
 - An internal module is parsed at its first `require()`. `--compile --bytecode` embeds bytecode for the ones that a program can import.
@@ -87,6 +87,7 @@ The defaults are node's behaviour.
 - `NodeEventEmitterPrototype.cpp`: `EventEmitter.prototype` is a `JSNonFinalObject` with a static property table. Each entry is a `PropertyCallback`: the first read of `on` evaluates the module and stores its `addListener`. An entry with a getter or a setter would send every assignment to an emitter through the path that looks for setters, so all 17 entries are plain values.
 - `Process` is a `JSDestructibleObject`. Its prototype is a plain object with `constructor`, which inherits from `EventEmitter.prototype`. `Process::create` makes the prototype and the two symbols (`kCapture`, `kShapeMode`) that `events.ts` uses as keys. A program that never touches a method evaluates no module: the first read of `process` needs 36,768 instructions (was 50,852).
 - `Process::emit` is the one place where native code emits. It skips the call when the event has no listener and `process.emit` is the `emit` that `EventEmitter.prototype` started with. It finds that with no JavaScript: `process` and its prototype have no own `emit`, and the one of `EventEmitter.prototype` is not yet read or is the function of the module.
+- `Process::emitFromRuntime` is `emit` for an event that the runtime starts. What a listener throws is reported as an uncaught exception. A termination (a listener called `process.exit()` in a Worker) is taken there when no script is left to unwind, as a timer callback does (`Bun::takeTerminationOutsideScript`). The deleted emitter cleared every exception of a listener. Left pending, the termination reached the next garbage collection of the worker's event loop, where a debug build of JavaScriptCore asserts. A new test covers it.
 - `Process::createStructure` clears the flag that makes an assignment look for a setter in the static table. The generator of the tables (`create_hash_table`) does not write the attribute mask that JavaScriptCore reads for this, and `process.exitCode = 1` worked only because the old native prototype had an accessor. That generator bug is handed off.
 
 #### Measurements
@@ -146,10 +147,10 @@ This PR contains what #41830 (duplicates, `listenerCount(event, fn)`, `errorMoni
 - `test/js/node/process/process.test.js`: the block `process is an EventEmitter of node:events` (23 tests).
 - `test/js/node/process/process-signal-listener-count.test.ts` (from #41830), `call-constructor.test.js`.
 - `test/js/node/events/event-emitter.test.ts`: `errorMonitor` on `process`, the prototype, a method on an object whose `_events` getter throws.
-- `test/js/node/worker_threads/worker_threads.test.ts`: an `'exit'` listener that throws in a Worker (2), `postMessageToThread` with `once()`.
+- `test/js/node/worker_threads/worker_threads.test.ts`: an `'exit'` listener that throws in a Worker (2), `process.exit()` in an `'uncaughtException'` listener of a Worker, `postMessageToThread` with `once()`.
 - `test/cli/test/bun-test.test.ts`: an `'exit'` listener that throws fails the run.
 - `test/js/node/trace_events/trace-events.test.ts`: the trace file with an `'exit'` listener that throws (4).
 - Also run on the debug build with `BUN_JSC_validateExceptionChecks=1`: the process, events and trace files.
-- Release builds of both commits: 57 test files under `test/js/node/{process,events,worker_threads,child_process,trace_events,quic}`, `test/js/web/workers` and `test/cli/test/bun-test.test.ts` have the same failures, apart from the new tests. 873 of node's own tests (`test-process-*`, `test-events-*`, `test-worker-*`, `test-child-process-*`, `test-quic-*`, `test-trace-events-*` and more) have the same result on both.
+- Release builds of both commits: 57 test files under `test/js/node/{process,events,worker_threads,child_process,trace_events,quic}`, `test/js/web/workers` and `test/cli/test/bun-test.test.ts` have the same failures, apart from the new tests. 609 of node's own tests (`test-process-*`, `test-events-*`, `test-worker-*`, `test-child-process-*`, `test-signal-*` and more) have the same result on both: 601 pass, 8 fail. That run was before the last two changes (adeb164599). On the debug build of the final code, 293 of node's tests for trace events, QUIC, `process` exit and Worker exit: 288 pass, and the 5 that fail do not run with plain `bun <file>` on main either (they need a flag or `bun test`) or depend on timing.
 
 </details>

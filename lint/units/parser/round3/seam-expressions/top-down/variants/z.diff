@@ -12,7 +12,7 @@ diff -ru head/src/js_parser/p.rs z/src/js_parser/p.rs
  /// Where the lists of the side table end at one point of the parse: `StartsForParseOnly::rewind` cuts them back to there.
 diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
 --- head/src/js_parser/parse/mod.rs	2026-10-02 08:38:40.777152362 +0000
-+++ z/src/js_parser/parse/mod.rs	2026-10-02 08:54:03.046690933 +0000
++++ z/src/js_parser/parse/mod.rs	2026-10-02 09:16:33.137368382 +0000
 @@ -708,12 +708,9 @@
  
          // Are these arguments to an arrow function?
@@ -61,7 +61,26 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
                  arrow.is_async = opts.is_async;
                  arrow.has_rest_arg = spread_range.len > 0;
                  p.pop_scope();
-@@ -1245,7 +1226,7 @@
+@@ -1126,18 +1107,6 @@
+         Err(crate::Error::SyntaxError)
+     }
+ 
+-    /// `parse_paren_expr_for_lint` for a caller that a parse without lint runs too: the call stays out of its way.
+-    #[cold]
+-    #[inline(never)]
+-    pub(crate) fn parse_paren_expr_for_lint_cold(
+-        &mut self,
+-        loc: bun_ast::Loc,
+-        level: Level,
+-        opts: ParenExprOpts,
+-    ) -> Result<Expr, Error> {
+-        self.parse_paren_expr_for_lint(loc, level, opts)
+-    }
+-
+     /// The ":" after what may be the parameters of the arrow function at `arrow`, in a lint parse. True where a return type and "=>" follow: the type is built and recorded.
+     #[cold]
+     #[inline(never)]
+@@ -1245,7 +1214,7 @@
      ) -> Result<(), Error> {
          self.lexer.expect(T::TColon)?;
          self.build_typescript_return_type()?;
@@ -70,7 +89,7 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
          self.lexer.expect(T::TColon)?;
          Ok(())
      }
-@@ -2246,6 +2227,9 @@
+@@ -2246,6 +2215,9 @@
              starts
                  .async_arrow_parameters
                  .insert(async_range.loc.start, p.lexer.loc().start);
@@ -80,7 +99,7 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
          }
          // "async function() {}"
          if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
-@@ -2276,9 +2260,7 @@
+@@ -2276,9 +2248,7 @@
                              needs_async_loc: async_range.loc,
                              ..Default::default()
                          };
@@ -91,7 +110,7 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
                          p.pop_scope();
                          return Ok(p.new_expr(arrow_body, async_range.loc));
                      }
-@@ -2315,10 +2297,8 @@
+@@ -2315,10 +2285,8 @@
                                  needs_async_loc: args[0].binding.loc,
                                  ..Default::default()
                              };
@@ -103,7 +122,7 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
                                  Ok(body) => body,
                                  Err(e) => {
                                      p.pop_scope();
-@@ -2336,19 +2316,16 @@
+@@ -2336,19 +2304,16 @@
                  // "async () => {}"
                  T::TOpenParen => {
                      p.lexer.next()?;
@@ -133,7 +152,7 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
                  }
  
                  // "async<T>()"
-@@ -2357,13 +2334,125 @@
+@@ -2357,13 +2322,125 @@
                      if Self::IS_TYPESCRIPT_ENABLED
                          && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
                      {
@@ -211,8 +230,7 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
 +                        let mut data = FnOrArrowDataParse {
 +                            needs_async_loc: async_loc,
 +                            ..Default::default()
-                         };
--                        match skipped {
++                        };
 +                        let body_flags = Self::arrow_body_flags(flags);
 +                        let arrow_body = p.parse_arrow_body_for_lint(args, &mut data, body_flags)?;
 +                        p.pop_scope();
@@ -239,7 +257,8 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
 +                            allow_await: AwaitOrYield::AllowExpr,
 +                            needs_async_loc: arg_loc,
 +                            ..Default::default()
-+                        };
+                         };
+-                        match skipped {
 +                        let body_flags = Self::arrow_body_flags(flags);
 +                        let parsed = p.parse_arrow_body_for_lint(args, &mut data, body_flags);
 +                        p.pop_scope();
@@ -265,7 +284,7 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
                              SkipTypeParameterResult::DidNotSkipAnything => {}
                              result => {
                                  p.lexer.next()?;
-@@ -2377,37 +2466,79 @@
+@@ -2377,37 +2454,79 @@
                                      is_after_question_and_before_colon: is_before_colon,
                                      ..Default::default()
                                  };
@@ -309,7 +328,7 @@ diff -ru head/src/js_parser/parse/mod.rs z/src/js_parser/parse/mod.rs
 +    /// The flags that the expression at `start` is read with. `flags` is what a caller of main passes: the body of an arrow function with one name is before the ":" where a "?" stands before the name on its line, or where the name starts such a body.
 +    #[cold]
 +    #[inline(never)]
-+    pub(crate) fn lint_flags_of_arrow_body(&mut self, start: bun_ast::Loc, flags: EFlags) -> EFlags {
++    pub(crate) fn lint_flags_of_arrow_body(&self, start: bun_ast::Loc, flags: EFlags) -> EFlags {
 +        if flags != EFlags::None {
 +            return flags;
 +        }
@@ -693,7 +712,7 @@ diff -ru head/src/js_parser/parse/parse_suffix.rs z/src/js_parser/parse/parse_su
          p.try_skip_type_script_type_arguments_with_backtracking()
 diff -ru head/src/js_parser/parse/parse_typescript.rs z/src/js_parser/parse/parse_typescript.rs
 --- head/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:38:40.778147420 +0000
-+++ z/src/js_parser/parse/parse_typescript.rs	2026-10-02 08:54:03.094691290 +0000
++++ z/src/js_parser/parse/parse_typescript.rs	2026-10-02 09:16:33.135444664 +0000
 @@ -49,7 +49,11 @@
                  //   @Identifier.member
                  //   @Identifier.member(args)
@@ -707,28 +726,7 @@ diff -ru head/src/js_parser/parse/parse_typescript.rs z/src/js_parser/parse/pars
              } else {
                  // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
                  // EIndex expressions, since they may be part of a computed property:
-@@ -68,6 +72,20 @@
-         Ok(ExprNodeList::from_bump_vec(decorators))
-     }
- 
-+    /// `@(expr)` of a lint parse of TypeScript, at the `(`: what the parentheses hold is recorded.
-+    #[cold]
-+    #[inline(never)]
-+    fn lint_parenthesized_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
-+        let open = self.lexer.loc();
-+        self.lexer.next()?;
-+        let expr = self.parse_expr(Level::Lowest)?;
-+        if let Some(starts) = &mut self.starts_for_parse_only {
-+            starts.wrappers.parenthesized(expr, open, self.lexer.loc());
-+        }
-+        self.lexer.expect(T::TCloseParen)?;
-+        Ok(expr)
-+    }
-+
-     /// Parse a standard (TC39) decorator expression following the `@` token.
-     ///
-     /// DecoratorExpression:
-@@ -80,14 +98,8 @@
+@@ -80,14 +84,8 @@
  
          // @(Expression) — parenthesized, any expression allowed
          if p.lexer.token == T::TOpenParen {
@@ -743,7 +741,7 @@ diff -ru head/src/js_parser/parse/parse_typescript.rs z/src/js_parser/parse/pars
              p.lexer.expect(T::TCloseParen)?;
              return Ok(expr);
          }
-@@ -121,9 +133,6 @@
+@@ -121,9 +119,6 @@
                          p.lexer.unexpected()?;
                          return Err(crate::Error::SyntaxError);
                      }
@@ -753,7 +751,7 @@ diff -ru head/src/js_parser/parse/parse_typescript.rs z/src/js_parser/parse/pars
                      p.lexer.next()?;
                  }
  
-@@ -200,17 +209,142 @@
+@@ -200,17 +195,142 @@
                  _ => {
                      // "@x<y>" / "@x.y<z>"
                      if Self::IS_TYPESCRIPT_ENABLED

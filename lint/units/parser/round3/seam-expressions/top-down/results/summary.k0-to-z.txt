@@ -1,0 +1,29 @@
+# functions whose assembly differs between k0 (main's text at the expression sites, no hook) and z (the proposal); columns: insns k0, insns z, jcc k0, jcc z
+# code_syntax_error, parse_path, parse_stmt_named_like_cast, type_expected differ only by the offset of StartsForParseOnly::is_lint (one field added)
+DIFF            0       0     66     66     2     2  <p::P<false, false>>::code_syntax_error
+DIFF            0       0    664    664    71    71  <p::P<false, false>>::parse_path
+DIFF            0       0     66     66     2     2  <p::P<false, true>>::code_syntax_error
+DIFF            0       0    664    664    71    71  <p::P<false, true>>::parse_path
+DIFF            0       0     66     66     2     2  <p::P<true, false>>::code_syntax_error
+DIFF            0       0    651    654    44    44  <p::P<true, false>>::parse_async_prefix_expr
+DIFF            0       0   1116   1128   102   104  <p::P<true, false>>::parse_jsx_element
+DIFF            0       0    664    664    71    71  <p::P<true, false>>::parse_path
+DIFF            0       0    437    440    49    49  <p::P<true, false>>::parse_stmt_fallthrough
+DIFF            0       0    529    529    24    24  <p::P<true, false>>::parse_stmt_named_like_cast
+DIFF            0       0    425    436    18    20  <p::P<true, false>>::parse_suffix
+DIFF            0       0    153    185    13    16  <p::P<true, false>>::parse_type_script_decorators
+DIFF            0       0    291    300    23    25  <p::P<true, false>>::pfx_t_at
+DIFF            0       0    241    250    19    21  <p::P<true, false>>::pfx_t_class
+DIFF            0       0    156    174    19    21  <p::P<true, false>>::pfx_t_less_than
+DIFF            0       0    200    206    20    21  <p::P<true, false>>::pfx_t_new
+DIFF            0       0    109    118    10    11  <p::P<true, false>>::pfx_t_open_paren
+DIFF            0       0     97    109    16    18  <p::P<true, false>>::sfx_handle_typescript_as
+DIFF            0       0     23     50     2     5  <p::P<true, false>>::sfx_t_exclamation
+DIFF            0       0    108    116     8    10  <p::P<true, false>>::sfx_t_less_than
+DIFF            0       0    108    116     8    10  <p::P<true, false>>::sfx_t_less_than_less_than
+DIFF            0       0    335    333    27    29  <p::P<true, false>>::sfx_t_question_dot
+DIFF            0       0    114    114    14    14  <p::P<true, false>>::type_expected
+DIFF            0       0     66     66     2     2  <p::P<true, true>>::code_syntax_error
+DIFF            0       0    664    664    71    71  <p::P<true, true>>::parse_path
+DIFF            0       0    529    529    24    24  <p::P<true, true>>::parse_stmt_named_like_cast
+DIFF            0       0    114    114    14    14  <p::P<true, true>>::type_expected

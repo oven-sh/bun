@@ -216,16 +216,16 @@ impl<T> Default for LiveList<'_, T> {
     }
 }
 
-// checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs 223-268: `map[K]V` that nothing ranges over.
-pub struct Map<K, V>(Option<std::collections::HashMap<K, V>>);
+// checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs 223-268: `map[K]V` that nothing ranges over. The contract keeps a hash map: the probe keeps an ordered one, because clippy.toml disallows the hash map of std.
+pub struct Map<K, V>(Option<std::collections::BTreeMap<K, V>>);
 impl<K, V> Default for Map<K, V> {
     fn default() -> Self {
         Self(None)
     }
 }
-impl<K: std::hash::Hash + Eq + Copy, V: Copy + Default> Map<K, V> {
+impl<K: Ord + Copy, V: Copy + Default> Map<K, V> {
     pub fn make() -> Self {
-        Self(Some(std::collections::HashMap::new()))
+        Self(Some(std::collections::BTreeMap::new()))
     }
     pub fn is_nil(&self) -> bool {
         self.0.is_none()
@@ -312,9 +312,8 @@ w(block('ast/symbol.rs', 'pub struct Symbol<', 1))
 w('// ast/ast_generated.rs\n')
 for name in sorted(set(ast_records)):
     w(block('ast/ast_generated.rs', 'pub struct %s {' % name, 1))
-w('// ast/utilities.rs\n')
+w('// ast/utilities.rs: the record and, to the first closing brace, its constants.\n')
 w(block('ast/utilities.rs', 'pub struct JSDeclarationKind(', 2))
-w(block('ast/utilities.rs', 'impl JSDeclarationKind {', 0))
 w('''
 // Invariant in its lifetime, as the context of the tree is: it names stores with interior mutability.
 #[derive(Clone, Copy)]

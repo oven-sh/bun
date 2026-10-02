@@ -52,10 +52,21 @@ const STREAM_ID_UNI_BIT: u64 = 0x2;
 const H3_NO_ERROR: u64 = 0x100;
 const H3_INTERNAL_ERROR: u64 = 0x102;
 
-/// Node's `Session::Application::Type` (node/src/quic/application.h).
-const APPLICATION_TYPE_DEFAULT: u8 = 1;
-const APPLICATION_TYPE_HTTP3: u8 = 2;
-/// Node's `HeadersSupportState`; 0 is "no application yet".
+/// What a session's ALPN selects, with the values of node's
+/// `Session::Application::Type` (node/src/quic/application.h). An engine
+/// frames HTTP/3 or raw QUIC for every conn it owns, so the engine's mode
+/// decides it (`QuicEndpoint::application`).
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub(super) enum Application {
+    /// A version-negotiation probe has no engine and never handshakes.
+    None = 0,
+    /// Raw QUIC: node's `DefaultApplication`.
+    Default = 1,
+    Http3 = 2,
+}
+
+/// Node's `HeadersSupportState`; 0 is "no application".
 const HEADERS_SUPPORTED: u8 = 1;
 const HEADERS_UNSUPPORTED: u8 = 2;
 
@@ -260,9 +271,7 @@ pub(super) struct HskSnapshot {
     /// `(code name, reason)`, as node reports them.
     validation: Option<(&'static str, &'static str)>,
     peer_cert_der: Option<Vec<u8>>,
-    /// The context the handshake selected. `session.certificate` reads its
-    /// leaf, so a handshake does not pay for a certificate nobody asks for.
-    local_cert_ctx: Option<bun_boringssl_sys::OwnedSslCtx>,
+    local_cert_der: Option<Vec<u8>>,
     ephemeral: Option<(&'static str, Option<&'static str>, u32)>,
     /// `(early_data_attempted, early_data_accepted)` (RFC 8446 §2.3).
     early_data: (bool, bool),
@@ -470,6 +479,7 @@ impl QuicSession {
         endpoint_handle: JSValue,
         conn: *mut lsquic::lsquic_conn,
         is_server: bool,
+        application: Application,
     ) -> JsResult<(*mut QuicSession, JSValue)> {
         let raw = bun_core::heap::into_raw(Box::new(Self::new(global, vtable)));
         let handle = crate::generated_classes::js_QuicSession::to_js(raw, global);
@@ -496,11 +506,23 @@ impl QuicSession {
             reason = "`state_ptr` is the base of a fresh JSC ArrayBuffer (byteOffset 0); JSC allocates its backing store through Gigacage/fastMalloc, which is at least 16-byte aligned"
         )]
         this.state.set(state_ptr.cast::<SessionState>());
+        // Node's `Session::SetApplication`. Nothing else writes the
+        // application fields: the fate of the handshake does not change them.
         this.with_state(|s| {
             s.no_error_code = 0;
             s.internal_error_code = 1;
             s.stream_open_allowed = 1;
-            s.headers_supported = 0;
+            s.application_type = application as u8;
+            match application {
+                Application::None => {}
+                Application::Default => s.headers_supported = HEADERS_UNSUPPORTED,
+                Application::Http3 => {
+                    s.headers_supported = HEADERS_SUPPORTED;
+                    s.priority_supported = 1;
+                    s.no_error_code = H3_NO_ERROR;
+                    s.internal_error_code = H3_INTERNAL_ERROR;
+                }
+            }
         });
         #[expect(
             clippy::cast_ptr_alignment,
@@ -630,24 +652,6 @@ impl QuicSession {
     }
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
-    }
-    /// Node's `Session::SetApplication`: the one writer of the application
-    /// fields after `create`. An engine frames either HTTP/3 or raw QUIC for
-    /// every conn it owns (`QuicEndpoint::is_http`), so the engine's mode is
-    /// the application, whatever happens to the handshake.
-    pub(super) fn install_application(&self, is_http: bool) {
-        self.with_state(|s| {
-            if is_http {
-                s.application_type = APPLICATION_TYPE_HTTP3;
-                s.headers_supported = HEADERS_SUPPORTED;
-                s.priority_supported = 1;
-                s.no_error_code = H3_NO_ERROR;
-                s.internal_error_code = H3_INTERNAL_ERROR;
-            } else {
-                s.application_type = APPLICATION_TYPE_DEFAULT;
-                s.headers_supported = HEADERS_UNSUPPORTED;
-            }
-        });
     }
     /// The one producer of a successful handshake: every callback that learns
     /// of one passes the conn it completed on.
@@ -1698,7 +1702,7 @@ impl QuicSession {
         });
         let validation = tls::validation_error(ssl);
         let peer_cert_der = tls::peer_certificate_der(ssl);
-        let local_cert_ctx = tls::context_of(ssl);
+        let local_cert_der = tls::local_certificate_der(ssl);
         let ephemeral = tls::ephemeral_key_info(ssl);
         let early_data = tls::early_data_info(ssl);
         let max_datagram_size = peer_datagram_budget(conn).unwrap_or(0);
@@ -1709,7 +1713,7 @@ impl QuicSession {
                 alpn,
                 validation,
                 peer_cert_der,
-                local_cert_ctx,
+                local_cert_der,
                 ephemeral,
                 early_data,
                 max_datagram_size,
@@ -2205,8 +2209,7 @@ impl QuicSession {
             .hsk_snapshot
             .get()
             .as_ref()
-            .and_then(|s| s.local_cert_ctx.as_ref())
-            .and_then(tls::context_certificate_der)
+            .and_then(|s| s.local_cert_der.clone())
         {
             return ArrayBuffer::create_buffer(global, &der);
         }

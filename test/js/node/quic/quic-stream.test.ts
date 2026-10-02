@@ -563,8 +563,8 @@ describe("a malformed first request stream", () => {
 });
 
 // Node selects a session's application (HTTP/3 or raw QUIC) when the ALPN is
-// known, not when the handshake is reported: in the Session constructor for a
-// client, and after the `onsession` callback for a server.
+// known, not when the handshake is reported: a client has it from connect(),
+// and a server session has it inside the listen callback.
 describe("a session's application", () => {
   const listenOptions = { sni: { "*": { keys: [key], certs: [cert] } }, transportParams: { maxIdleTimeout: 5 } };
   const connectOptions = { servername: "localhost", verifyPeer: "manual", transportParams: { maxIdleTimeout: 5 } };
@@ -626,7 +626,7 @@ describe("a session's application", () => {
       "quic-test",
       { applicationType: "1", headersSupported: "2", isPrioritySupported: "false", internalErrorCode: "1n" },
     ],
-  ])("a server session for %s has none inside the listen callback and its own after it", async (alpn, application) => {
+  ])("a server session for %s has it inside the listen callback", async (alpn, application) => {
     const states = Promise.withResolvers<unknown>();
     await using server = await listen(
       (session: any) => {
@@ -640,15 +640,7 @@ describe("a session's application", () => {
     client.closed.catch(() => {});
     const seen = await states.promise;
     await client.close();
-    expect(seen).toEqual({
-      inListenCallback: {
-        applicationType: "0",
-        headersSupported: "0",
-        isPrioritySupported: "false",
-        internalErrorCode: "1n",
-      },
-      inOnhandshake: application,
-    });
+    expect(seen).toEqual({ inListenCallback: application, inOnhandshake: application });
   });
 
   // A server that cannot accept the 0-RTT data of a ticket makes the client

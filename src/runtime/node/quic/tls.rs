@@ -644,35 +644,11 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl.is_null() {
         return None;
     }
-    // SAFETY: returns a borrowed X509 owned by the SSL.
-    certificate_der(unsafe { ssl::SSL_get_certificate(ssl) })
-}
-
-/// A reference to the context `ssl` uses: on a server, the one the
-/// certificate lookup selected for the client's SNI.
-pub(super) fn context_of(ssl: *mut ssl::SSL) -> Option<ssl::OwnedSslCtx> {
-    if ssl.is_null() {
-        return None;
-    }
-    // SAFETY: `ssl` is live (caller contract) and holds a reference to its
-    // context; the up-ref is the +1 that `OwnedSslCtx` takes.
-    unsafe {
-        let ctx = ssl::SSL_get_SSL_CTX(ssl);
-        if ctx.is_null() || ssl::SSL_CTX_up_ref(ctx) != 1 {
-            return None;
-        }
-        ssl::OwnedSslCtx::from_raw(ctx)
-    }
-}
-
-/// The leaf certificate `load_cert_chain` installed on `ctx`. Every SSL of
-/// that context presents this leaf: nothing installs one on an SSL.
-pub(super) fn context_certificate_der(ctx: &ssl::OwnedSslCtx) -> Option<Vec<u8>> {
-    // SAFETY: returns a borrowed X509 owned by the context.
-    certificate_der(unsafe { ssl::SSL_CTX_get0_certificate(ctx.as_ptr()) })
-}
-
-fn certificate_der(cert: *mut ssl::X509) -> Option<Vec<u8>> {
+    // The leaf of the SSL's context: a certificate is only ever installed on
+    // a context (`load_cert_chain`), and the context parses its leaf once,
+    // where `SSL_get_certificate` parses a copy for each SSL.
+    // SAFETY: returns a borrowed X509 owned by the context `ssl` holds.
+    let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)) };
     if cert.is_null() {
         return None;
     }

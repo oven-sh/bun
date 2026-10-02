@@ -1495,7 +1495,7 @@ impl QuicEndpoint {
             // Arrival order: both push sites append, and a burst of Initials in
             // one recvmmsg batch must announce in the order the sessions loop
             // below then walks them.
-            let Some(announced) = self.pending_new_sessions.with_mut(|v| {
+            let Some(session) = self.pending_new_sessions.with_mut(|v| {
                 if v.is_empty() {
                     None
                 } else {
@@ -1504,7 +1504,7 @@ impl QuicEndpoint {
             }) else {
                 break;
             };
-            let Some(session) = self.live_session(announced) else {
+            let Some(session) = self.live_session(session) else {
                 continue;
             };
             let handle = session.handle();
@@ -1517,13 +1517,6 @@ impl QuicEndpoint {
                     self.this_value.get().get(),
                     &[handle],
                 );
-            }
-            // Node announces a server session before it reads the packet
-            // that selects the ALPN: the listen callback sees no application,
-            // and every event of the session sees the final one. The callback
-            // can destroy the session.
-            if let Some(session) = self.live_session(announced) {
-                session.install_application(self.server_is_http.get());
             }
         }
         let sessions: Vec<*mut QuicSession> = self.sessions.get().clone();
@@ -1737,6 +1730,7 @@ impl QuicEndpoint {
             endpoint_handle,
             null_mut(),
             true,
+            self.application(true),
         )?;
         let applied = self.apply_server_session_options(global, session);
         self.sessions.with_mut(|v| v.push(session));
@@ -1898,6 +1892,7 @@ impl QuicEndpoint {
             endpoint_handle,
             conn,
             true,
+            self.application(true),
         ) {
             Ok((session, _handle)) => {
                 if let Err(err) = self.apply_server_session_options(global, session) {
@@ -1942,6 +1937,16 @@ impl QuicEndpoint {
             self.server_is_http.get()
         } else {
             self.client_is_http.get()
+        }
+    }
+
+    /// The application of every session of the server engine, or of the
+    /// client engine.
+    fn application(&self, is_server: bool) -> session::Application {
+        if self.is_http(is_server) {
+            session::Application::Http3
+        } else {
+            session::Application::Default
         }
     }
 
@@ -2367,11 +2372,8 @@ impl QuicEndpoint {
             frame.this(),
             null_mut(),
             false,
+            self.application(false),
         )?;
-        // A client knows its ALPN up front, so node's Session constructor
-        // selects the application.
-        // SAFETY: `session` was just created.
-        unsafe { (*session).install_application(self.client_is_http.get()) };
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
         let sni = config.servername.as_ref();
         let local = self.local_addr.get();
@@ -2461,6 +2463,7 @@ impl QuicEndpoint {
             this_value,
             null_mut(),
             false,
+            session::Application::None,
         )?;
         let mut dcid = [0u8; VERNEG_PROBE_CID_LEN];
         let mut scid = [0u8; VERNEG_PROBE_CID_LEN];

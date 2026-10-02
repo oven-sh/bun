@@ -688,10 +688,16 @@ pub(crate) fn compute_chunks(
 
         if chunk.template.needs(PlaceholderField::Dir) {
             // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
-            let dir_path: &[u8] = if !pathname.dir.is_empty() {
-                pathname.dir
-            } else {
+            // An entry point such as `/entry.js` that is not a file on disk is not in the real `/` either.
+            let entry_point_path = &parse_graph.input_files.items_source()
+                [chunk.entry_point.source_index() as usize]
+                .path;
+            let dir_path: &[u8] = if pathname.dir.is_empty()
+                || (pathname.dir_is_root() && !bv2.is_file_in_root(entry_point_path))
+            {
                 b"."
+            } else {
+                pathname.dir
             };
             let mut real_path_buf = bun_paths::path_buffer_pool::get();
             let dir: &[u8] = 'dir: {

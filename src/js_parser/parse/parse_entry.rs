@@ -157,6 +157,9 @@ pub struct Options<'a> {
     /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
+
+    /// A virtual module directly in `/` (in-memory `/entry.js`): `__dirname` and `import.meta.dir` inline as "".
+    pub source_has_no_directory: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -191,6 +194,7 @@ impl<'a> Default for Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: false,
             is_entry_point: false,
+            source_has_no_directory: false,
         }
     }
 }
@@ -278,6 +282,7 @@ impl<'a> Options<'a> {
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
+            source_has_no_directory: self.source_has_no_directory,
         }
     }
 
@@ -352,6 +357,7 @@ impl<'a> Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
+            source_has_no_directory: false,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -1247,7 +1253,7 @@ impl<'a> Parser<'a> {
                         ),
                         value: Some(p.new_expr(
                             E::String {
-                                data: p.source.path.name().dir.into(),
+                                data: p.source_dirname().into(),
                                 ..Default::default()
                             },
                             bun_ast::Loc::EMPTY,

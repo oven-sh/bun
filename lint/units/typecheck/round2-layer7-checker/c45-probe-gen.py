@@ -212,7 +212,8 @@ for name, rel in [('core', 'core/mod.rs'), ('collections', 'collections/mod.rs')
     w('#[path = "%s/%s"]\npub mod %s;\n' % (ROOT, rel, name))
 w('''
 pub mod evaluator {
-    // evaluator/evaluator.rs 9: the result that an enum member keeps.
+    // evaluator/evaluator.rs 9: the result that an enum member keeps. The real one holds a number, so it is not Eq.
+    #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, Default, PartialEq, Debug)]
     pub struct Result<'a> {
         pub marker: std::marker::PhantomData<&'a ()>,

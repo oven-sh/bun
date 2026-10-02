@@ -367,3 +367,5 @@
 10-02_16:15:35 anon=277MB pids=59 load=931.58 top=cachegrind-amd6:299MB
 10-02_16:16:11 anon=240MB pids=37 load=909.16 top=cachegrind-amd6:266MB
 10-02_16:16:47 anon=262MB pids=37 load=923.38 top=cachegrind-amd6:286MB
+10-02_16:17:30 anon=1072MB pids=59 load=965.61 top=cachegrind-amd6:311MB
+10-02_16:18:09 anon=1054MB pids=61 load=964.76 top=clippy-driver:326MB

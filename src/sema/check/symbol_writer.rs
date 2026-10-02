@@ -1318,16 +1318,17 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let hir = self.c.hir(file);
         // Where the first token starts, and the flags of the declaration.
         let (start, flags) = match declaration {
-            Declaration::Bound(decl) => (
-                self.c.files().start_of_declaration(file, decl),
-                match decl {
-                    Decl::Fn(function) => hir[function].flags,
-                    Decl::Alias(alias) => hir[alias].flags,
-                    Decl::Module(module) => hir[module].flags,
-                    Decl::TypeParam(parameter) => hir[parameter].flags,
-                    _ => Flags::empty(),
-                },
-            ),
+            Declaration::Bound(decl) => match self.c.files().loc_of_declaration(file, decl) {
+                Some(loc) => return loc.pos,
+                None => (
+                    self.c.files().start_of_declaration(file, decl),
+                    match decl {
+                        Decl::Fn(function) => hir[function].flags,
+                        Decl::TypeParam(parameter) => hir[parameter].flags,
+                        _ => Flags::empty(),
+                    },
+                ),
+            },
             Declaration::Member(member) => return hir[member].loc.pos,
             Declaration::Parameter(parameter) => (hir[parameter].pos, Flags::empty()),
             Declaration::Property(property) => (hir[property].start, Flags::empty()),
@@ -1558,11 +1559,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         {
             return "__missing".to_owned();
         }
-        // The binder keeps `export default class C {}` under the name `C`.
-        let is_default_export = declared.name == known::default
-            || declared.parent.is_some()
-                && files.export(files.sym(symbol.file, declared.parent), known::default)
-                    == Some(symbol);
+        let is_default_export = declared.name == known::default;
         // `isDefaultBindingContext`, as far as files go.
         if is_default_export && (!is_initial || symbol.file != self.file) {
             return "default".to_owned();

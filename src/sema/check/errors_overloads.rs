@@ -347,7 +347,7 @@ impl Checker<'_> {
         }
         let is_static = |i: usize| hir[members.at(i)].flags.contains(Flags::STATIC);
         let mut group: Vec<usize> = (0..members.len())
-            .filter(|&i| hir[members.at(i)].kind == MemberKind::Constructor)
+            .filter(|&i| hir[members.at(i)].kind == MemberKind::Constructor && !is_static(i))
             .collect();
         if !group.is_empty() {
             self.check_member_symbol(file, c, &names, &group, out);

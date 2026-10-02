@@ -86,7 +86,7 @@ use errors::edit_distance;
 use errors_x_regexp_scanner::levenshtein_with_max;
 use errors_x_typenodes::array_element_type_node;
 use errors_x_typenodes::has_parse_diagnostics;
-use sink::Arg;
+use sink::{Arg, Reported};
 use spans::end_of_brackets;
 use spans::is_identifier_part;
 use spans::jsx_identifier_end;
@@ -565,6 +565,7 @@ impl Program {
             relation_too_deep: false,
             checking: None,
             is_type_checked: false,
+            reported: Vec::new(),
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
@@ -751,6 +752,10 @@ struct QueryFrame {
     tainted: bool,
     /// It `is_resolution`, and is part of a circle of such. See `mark_circle_from`.
     circular: bool,
+    /// What is reported for it is dropped: the answer rests on a circle, a trial or a guess, and is worked out again.
+    drops_reported: bool,
+    /// How long `Checker::reported` was when it was pushed. What comes after is reported for it.
+    reported_from: u32,
 }
 
 pub struct Checker<'p> {
@@ -842,6 +847,8 @@ pub struct Checker<'p> {
     pub(super) checking: Option<FileId>,
     /// `NodeCheckFlagsTypeChecked` of `checking`: `check_file` is through with it.
     is_type_checked: bool,
+    /// What has been reported for the questions under way, and with none under way: see `sink`.
+    reported: Vec<Reported>,
     /// From where to where in `checking` `checkSourceFile` never comes. The passes that go through all nodes of a kind do.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
     /// The intersections it is being found out of whether anything can be them.
@@ -1276,6 +1283,8 @@ impl<'p> Checker<'p> {
             entry_depth: self.instantiation_depth,
             tainted: false,
             circular: false,
+            drops_reported: false,
+            reported_from: self.reported.len() as u32,
         });
         true
     }
@@ -1797,6 +1806,9 @@ impl<'p> Checker<'p> {
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
         self.left_a_circle = frame.circular;
+        if self.reported.len() > frame.reported_from as usize {
+            self.settle_reported(frame);
+        }
         !frame.tainted
     }
 
@@ -1825,6 +1837,14 @@ impl<'p> Checker<'p> {
         self.lowest_taint = self.lowest_taint.min(from);
         for frame in &mut self.frames[from..] {
             frame.tainted = true;
+            frame.drops_reported = true;
+        }
+    }
+
+    /// What is reported for the innermost question is dropped, whether or not the answer is kept.
+    fn drop_reported(&mut self) {
+        if let Some(frame) = self.frames.last_mut() {
+            frame.drops_reported = true;
         }
     }
 
@@ -1910,11 +1930,8 @@ impl<'p> Checker<'p> {
             return None;
         }
         // Reading it leaves the marks that working it out again would: `cycles` moves only if it did then.
-        if held.came_back {
-            self.taint_from(held.depth);
-        } else {
-            self.mark_tainted_from(held.depth);
-        }
+        self.mark_tainted_from(held.depth);
+        self.cycles += u64::from(held.came_back);
         Some(held.ty)
     }
 
@@ -1930,12 +1947,15 @@ impl<'p> Checker<'p> {
 
     /// Something that only holds for now was just read, put there when `stack` was `depth` deep: the answers to the questions
     /// begun since are not kept. So of a loop under way: `getResolvedSignature` stores nothing while `flowLoopStack` has
-    /// something on it, and `checkExpressionCached` empties it first.
+    /// something on it, and `checkExpressionCached` empties it first. What they report stands: `getTypeOfExpression` reports as ever.
     fn taint_from(&mut self, depth: usize) {
         if depth >= self.frames.len() {
             return;
         }
-        self.mark_tainted_from(depth);
+        self.lowest_taint = self.lowest_taint.min(depth);
+        for frame in &mut self.frames[depth..] {
+            frame.tainted = true;
+        }
         self.cycles += 1;
     }
 

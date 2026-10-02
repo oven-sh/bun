@@ -320,7 +320,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         let Some(lowered) = self.stmt(statement) else {
             return;
         };
-        self.b.file.stmts[placeholder.idx()].kind = self.b.file.stmts[lowered.idx()].kind;
+        let kind = self.b.file[lowered].kind;
+        self.b.file.set_stmt_kind(placeholder, kind);
         // Nothing refers to `lowered` yet.
         if lowered.idx() + 1 == self.b.file.stmts.len() {
             self.b.file.stmts.pop();
@@ -1064,7 +1065,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     name_pos: pos_of(s.name.loc),
                     flags,
                     members,
-                    start,
+                    stmt: StmtId::NONE,
                 }))
             }
             StmtData::SNamespace(s) => {
@@ -1091,7 +1092,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     },
                     body,
                     has_body: true,
-                    start,
+                    stmt: StmtId::NONE,
                 }))
             }
         };
@@ -1842,9 +1843,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 && !f.func.flags.contains(ast::flags::Function::IsGenerator)
                 && (!is_quoted
                     || self.is_right_after_string(member.pos, pos_of(f.func.open_parens_loc)));
-            let is_constructor = is_named_constructor
-                && !member.flags.contains(Flags::STATIC)
-                && property.kind == G::PropertyKind::Normal;
+            let is_constructor = is_named_constructor && property.kind == G::PropertyKind::Normal;
             let (member_kind, fn_kind) = match property.kind {
                 G::PropertyKind::Get => (MemberKind::Getter, FnKind::Getter),
                 G::PropertyKind::Set => (MemberKind::Setter, FnKind::Setter),
@@ -1856,8 +1855,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             if !modifiers.is_empty() {
                 let on = match member_kind {
                     MemberKind::Constructor => Modified::Constructor,
-                    // `static constructor() {}` is one still, as far as what can be written before it goes.
-                    MemberKind::Method if is_named_constructor => Modified::Constructor,
                     MemberKind::Method => Modified::Method,
                     _ => Modified::Accessor,
                 };

@@ -1254,28 +1254,11 @@ impl<'p> Printer<'_, 'p> {
         String::new()
     }
 
-    /// Whether `symbol.Name` is `default`. The binder keeps a default export under the name it is declared with.
+    /// Whether `symbol.Name` is `default`. A class declaration without a name that is no default export is kept under that name too,
+    /// and has no parent.
     fn is_default_export(&self, symbol: Sym) -> bool {
         let declared = self.c.files().symbol(symbol);
-        if declared.parent.is_none() {
-            return false;
-        }
-        let hir = self.c.hir(symbol.file);
-        let modifiers = declared
-            .decls
-            .iter()
-            .find_map(|&decl| match decl {
-                Decl::Class(class) => Some(hir[class].flags),
-                Decl::Interface(interface) => Some(hir[interface].flags),
-                _ => None,
-            })
-            .or_else(|| {
-                declared.decls.iter().find_map(|&decl| match decl {
-                    Decl::Fn(function) => Some(hir[function].flags),
-                    _ => None,
-                })
-            });
-        modifiers.is_some_and(|flags| flags.contains(Flags::DEFAULT))
+        declared.name == known::default && declared.parent.is_some()
     }
 
     /// The string, the number or the `[computed]` name written at `pos`, as it is written. `None`: something else is written there,

@@ -1609,10 +1609,10 @@ impl<'p> Checker<'p> {
                     self.end_of_token_before(file, hir[class].start),
                     self.end_of_class(file, class),
                 )),
-                Decl::Interface(interface) => ranges.push((
-                    self.end_of_token_before(file, hir[interface].start),
-                    self.end_of_interface(file, interface),
-                )),
+                Decl::Interface(interface) => {
+                    let loc = hir[hir[interface].stmt].loc;
+                    ranges.push((loc.pos, loc.end));
+                }
                 _ => {}
             }
         }
@@ -1727,16 +1727,7 @@ impl<'p> Checker<'p> {
         {
             constructor
         } else {
-            let extends = self.hir(file)[c].extends;
-            if holds
-                && !self.bound(file).is_unchecked(extends.idx())
-                && !self.is_uncertain(file, extends)
-            {
-                let at = (
-                    file,
-                    self.start_of(file, extends),
-                    self.end_of_expr(file, extends),
-                );
+            if holds && let Some(at) = self.place_to_report_base_at(file, c) {
                 let mut err = self.new_diagnostic(at, 2507, &[Arg::Type(constructor)]);
                 if let TypeData::TypeParam(of, tp, _) = *self.data(constructor) {
                     let constraint = self.constraint_of_type_param(constructor);
@@ -1891,7 +1882,16 @@ impl<'p> Checker<'p> {
             let mapper = self.decl_params_mapper(sym, file, self.hir(file)[c].type_params);
             let base = self.base_instance_type(sym, file, c);
             let base = self.instantiate(base, mapper);
-            if let Some(base) = self.as_base_type(base) {
+            let valid = self.as_base_type(base, |checker, reduced, unreduced| {
+                let Some(at) = checker.place_to_report_base_at(file, c) else {
+                    return;
+                };
+                let chain = checker.elaborate_never_intersection(None, at, unreduced);
+                let args = [Arg::Type(reduced)];
+                let diagnostic = checker.new_diagnostic_chain(chain, at, 2509, &args);
+                checker.add_diagnostic(diagnostic);
+            });
+            if let Some(base) = valid {
                 if !self.has_base(base, sym, 0) {
                     bases.push(base);
                 } else {
@@ -1917,7 +1917,11 @@ impl<'p> Checker<'p> {
                 }
                 let base = self.type_from_node(file, node);
                 let base = self.instantiate(base, mapper);
-                if let Some(base) = self.as_base_type(base)
+                let valid = self.as_base_type(base, |checker, _, _| {
+                    let at = (file, hir[node].pos, checker.end_of_type_node(file, node));
+                    checker.error(at, 2312, &[]);
+                });
+                if let Some(base) = valid
                     && !bases.contains(&base)
                     && !self.has_base(base, sym, 0)
                 {
@@ -1952,9 +1956,14 @@ impl<'p> Checker<'p> {
     }
 
     /// `getReducedType`, `isErrorType`, `isValidBaseType`: `base` as a base type of the class or interface whose base types are being
-    /// worked out, if it can be one.
-    fn as_base_type(&mut self, base: TypeId) -> Option<TypeId> {
+    /// worked out, if it can be one. `report`: told one that cannot, reduced and as it was.
+    fn as_base_type(
+        &mut self,
+        base: TypeId,
+        report: impl FnOnce(&mut Self, TypeId, TypeId),
+    ) -> Option<TypeId> {
         let base = self.force(base);
+        let unreduced = base;
         // `isGenericMappedType`: what a mapped type ranges over has to be known, and `keyof Y` takes the members of `Y`, which
         // take its base types. `getResolvedBaseConstraint`: a circle that comes of it goes through the key.
         let parts: &[TypeId] = match self.data(base) {
@@ -1979,8 +1988,30 @@ impl<'p> Checker<'p> {
         let is_worked_out = self.is_known(base)
             || self.is_object_type(base)
             || matches!(self.data(base), TypeData::Intersection(_));
-        (is_worked_out && !self.is_error_type(base) && self.is_valid_base_type(base))
-            .then_some(base)
+        if !is_worked_out || self.is_error_type(base) {
+            return None;
+        }
+        if self.is_valid_base_type(base) {
+            return Some(base);
+        }
+        if self.is_settled_base(base) {
+            report(self, base, unreduced);
+        }
+        None
+    }
+
+    /// `baseTypeNode.Expression()` of class `c`. `None`: nothing is to be said of it, `checkSourceFile` never comes there or its
+    /// type is a guess.
+    fn place_to_report_base_at(&self, file: FileId, c: ClassId) -> Option<(FileId, u32, u32)> {
+        let extends = self.hir(file)[c].extends;
+        if self.bound(file).is_unchecked(extends.idx()) || self.is_uncertain(file, extends) {
+            return None;
+        }
+        Some((
+            file,
+            self.start_of(file, extends),
+            self.end_of_expr(file, extends),
+        ))
     }
 
     /// `baseType` of `resolveBaseTypesOfClass`: the type of the instances of what class `sym` extends. `c`: its
@@ -2026,7 +2057,17 @@ impl<'p> Checker<'p> {
             .first()
         {
             Some(&sig) => self.sig_return(sig),
-            None => TypeId::UNRESOLVED,
+            None => {
+                let apparent = self.apparent_type(constructor);
+                if (self.is_object_type(apparent) || self.is_intersection(apparent))
+                    && self.is_known(apparent)
+                    && args.iter().all(|&arg| self.is_known(arg))
+                    && let Some(at) = self.place_to_report_base_at(file, c)
+                {
+                    self.error(at, 2508, &[]);
+                }
+                TypeId::UNRESOLVED
+            }
         }
     }
 
@@ -2147,10 +2188,14 @@ impl<'p> Checker<'p> {
                         let list = &self.bound(file).declared_fn_expandos;
                         Self::add_expandos(&mut b, file, Bound::expandos_of(list, sym.id));
                     }
+                    // `symbol.Members[InternalSymbolNameConstructor]`: `declareClassMember` puts a static one in the exports.
                     let constructors: Vec<MemberId> = hir[c]
                         .members
                         .iter()
-                        .filter(|&m| hir[m].kind == MemberKind::Constructor)
+                        .filter(|&m| {
+                            hir[m].kind == MemberKind::Constructor
+                                && !hir[m].flags.contains(Flags::STATIC)
+                        })
                         .collect();
                     for (i, &m) in constructors.iter().enumerate() {
                         has_constructor = true;
@@ -4386,6 +4431,9 @@ impl<'p> Checker<'p> {
                     .collect();
                 if constraints[..] == members[..] {
                     t
+                } else if constraints.contains(&TypeId::UNKNOWN) {
+                    // `len(baseTypes) == len(types)`: `any` next to it would make `any` of the union.
+                    TypeId::UNKNOWN
                 } else {
                     self.union(&constraints)
                 }

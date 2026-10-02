@@ -755,7 +755,7 @@ impl Builder<'_> {
             type_params,
             extends: self.file.list(&heritage),
             members: self.clone_members(members),
-            start: self.statement_start,
+            stmt: StmtId::NONE,
         };
         let interface = self.file.add_interface(interface);
         Some(self.file.stmt(StmtKind::Interface(interface), pos))
@@ -797,7 +797,7 @@ impl Builder<'_> {
             flags,
             type_params,
             ty,
-            start: self.statement_start,
+            stmt: StmtId::NONE,
         };
         let alias = self.file.add_alias(alias);
         self.file.stmt(StmtKind::TypeAlias(alias), pos)

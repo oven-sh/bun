@@ -1311,19 +1311,9 @@ impl<'p> EmitResolver<'_, 'p> {
         }
     }
 
-    /// `symbols[symbol.Name]`. The name of a default export is `default`. The binder keeps the name it is declared with on the symbol.
+    /// `symbols[symbol.Name]`
     fn lookup_symbol(&mut self, table: Table, symbol: Sym) -> Option<Sym> {
-        let files = self.c.files();
-        let is_default_export = self
-            .c
-            .parent_of_symbol(symbol)
-            .is_some_and(|parent| files.export(parent, known::default) == Some(symbol));
-        let name = if is_default_export {
-            known::default
-        } else {
-            self.c.name_of(symbol)
-        };
-        self.lookup(table, name)
+        self.lookup(table, self.c.name_of(symbol))
     }
 
     /// `getSymbolTableAliases`, each with the name it is in the table under.

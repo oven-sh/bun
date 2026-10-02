@@ -249,6 +249,8 @@ impl<'f> Binder<'f> {
             | Decl::ImportEquals(_)
             | Decl::ExportSpec(_)
             | Decl::ExportStarAs(_) => SymFlags::ALIAS,
+            // `bindExportAssignment`: `SymbolFlagsAll`
+            Decl::ExportExpr(_) => SymFlags::all(),
             _ => SymFlags::empty(),
         };
         if there.intersects(excludes) {
@@ -297,7 +299,11 @@ impl<'f> Binder<'f> {
             let symbol = &mut self.b.symbols[existing.idx()];
             if is_refused {
                 // Listed all the same, for errors_duplicates.rs, which goes through specifiers by itself.
-                if !matches!(decl, Decl::ExportSpec(_) | Decl::ExportStarAs(_)) {
+                let is_listed = !matches!(
+                    decl,
+                    Decl::ExportSpec(_) | Decl::ExportStarAs(_) | Decl::ExportExpr(_)
+                );
+                if is_listed {
                     symbol.decls.push(decl);
                     self.b.refused_declarations.push((existing, decl));
                 }
@@ -394,72 +400,17 @@ impl<'f> Binder<'f> {
         }
     }
 
-    /// `export { a }` where `a` means nothing but what is exported as `a`. Made one symbol with that it stands for itself, and most
-    /// who meet an alias follow it whatever they are after. So it is a symbol of its own, in no table. Only once all is declared
-    /// can it be told.
-    fn part_exports_of_themselves(&mut self) {
-        let f = self.f;
-        for (i, export) in f.exports.iter().enumerate() {
-            let scope = self.b.export_scope[i];
-            if export.spec.is_some() || scope.is_none() {
-                continue;
-            }
-            for spec in export.items.iter() {
-                let (name, decl) = (f[spec].local, Decl::ExportSpec(spec));
-                // What the block keeps to itself under the name is what the specifier stands for.
-                let locals = self.b.scopes[scope.idx()].locals;
-                let is_kept_back = self.tables[locals.idx()].get(&name).is_some_and(|local| {
-                    let flags = self.b.symbols[local.idx()].flags;
-                    !flags.difference(SymFlags::EXPORT_VALUE).is_empty()
-                });
-                if f[spec].exported == name
-                    && !is_kept_back
-                    && let Some(symbol) = self.lookup_name(name, scope)
-                    && self.b.symbols[symbol.idx()].decls.len() > 1
-                    && self.b.symbols[symbol.idx()].decls.contains(&decl)
-                {
-                    let whole = &mut self.b.symbols[symbol.idx()];
-                    whole.decls.retain(|&d| d != decl);
-                    whole.flags.remove(SymFlags::ALIAS);
-                    let container = self.b.scopes[scope.idx()].symbol;
-                    self.new_symbol(
-                        name,
-                        SymFlags::ALIAS | SymFlags::EXPORT_ONLY,
-                        decl,
-                        container,
-                    );
-                }
-            }
-        }
-    }
-
-    /// `bindExportAssignment`: it goes with nothing, so what has the name already keeps it.
-    fn export_if_vacant(&mut self, name: Atom, symbol: SymbolId) {
-        let container = self.b.scopes[self.scope.idx()].symbol;
-        if container.is_some() {
-            let exports = self.b.symbols[container.idx()].exports;
-            self.tables[exports.idx()].entry(name).or_insert(symbol);
-        }
-    }
-
-    /// `declareModuleMember`, `declareSymbolEx` for `export default` on a declaration: among the exports it goes by `default`,
-    /// whatever it is called here. Without a name (`NONE`) nothing here can refer to it.
-    fn declare_default(
-        &mut self,
-        name: Atom,
-        flags: SymFlags,
-        excludes: SymFlags,
-        decl: Decl,
-    ) -> SymbolId {
+    /// `declareModuleMember` for `export default` on a declaration. `declareSymbolEx`: `if isDefaultExport && parent != nil`, which
+    /// is among the exports, its name is `default`. Without a name (`NONE`) nothing here can refer to it.
+    fn declare_default(&mut self, name: Atom, flags: SymFlags, decl: Decl) -> SymbolId {
         let s = &self.b.scopes[self.scope.idx()];
         let (locals, container) = (s.locals, s.symbol);
-        let shown = if name.is_some() { name } else { known::default };
-        // Only among exports does it go by `default`. Where there are none, what has no name goes in no table.
+        // Where there are no exports, what has no name goes in no table.
         if container.is_none() {
             return if name.is_some() {
                 self.declare(self.scope, name, flags, decl, false)
             } else {
-                self.new_symbol(shown, flags, decl, SymbolId::NONE)
+                self.new_symbol(known::default, flags, decl, SymbolId::NONE)
             };
         }
         let exports = self.b.symbols[container.idx()].exports;
@@ -467,27 +418,7 @@ impl<'f> Binder<'f> {
         let local = name
             .is_some()
             .then(|| self.declare_symbol(locals, name, export_kind(flags), flags, decl, container));
-        // With an alias it would be one symbol too, which is the declaration wherever that has the meaning asked for. Here an alias
-        // is followed wherever it is met, so the declaration takes its place.
-        let there = self.tables[exports.idx()].get(&known::default).copied();
-        let symbol = match there
-            .filter(|there| !self.b.symbols[there.idx()].flags.contains(SymFlags::ALIAS))
-        {
-            // It goes with what is there: one symbol.
-            Some(there) if !self.b.symbols[there.idx()].flags.intersects(excludes) => {
-                let symbol = &mut self.b.symbols[there.idx()];
-                symbol.flags |= flags;
-                symbol.decls.push(decl);
-                there
-            }
-            // Refused: a symbol of its own, which is not exported.
-            Some(_) => self.new_symbol(shown, flags, decl, container),
-            None => {
-                let symbol = self.new_symbol(shown, flags, decl, container);
-                self.tables[exports.idx()].insert(known::default, symbol);
-                symbol
-            }
-        };
+        let symbol = self.declare_in(exports, known::default, flags, decl, container);
         if let Some(local) = local {
             self.b.symbols[local.idx()].export_symbol = symbol;
         }
@@ -1375,7 +1306,6 @@ impl<'f> Binder<'f> {
     }
 
     fn finish(mut self) -> Bound {
-        self.part_exports_of_themselves();
         // Names, now that everything is declared.
         let idents = std::mem::take(&mut self.idents);
         let tables = &self.tables;
@@ -1617,9 +1547,7 @@ impl<'f> Binder<'f> {
             StmtKind::Fn(func) => {
                 let f = &self.f[func];
                 let symbol = if f.flags.contains(Flags::DEFAULT) {
-                    let excludes = SymFlags::VALUE
-                        .difference(SymFlags::FUNCTION | SymFlags::VALUE_MODULE | SymFlags::CLASS);
-                    self.declare_default(f.name, SymFlags::FUNCTION, excludes, Decl::Fn(func))
+                    self.declare_default(f.name, SymFlags::FUNCTION, Decl::Fn(func))
                 } else {
                     // `parseFunctionDeclaration`: the name that is missing is an identifier without text.
                     let name = if f.name.is_some() {
@@ -1641,10 +1569,7 @@ impl<'f> Binder<'f> {
             StmtKind::Class(class) => {
                 let c = &self.f[class];
                 let symbol = if c.flags.contains(Flags::DEFAULT) {
-                    let excludes = (SymFlags::VALUE | SymFlags::TYPE).difference(
-                        SymFlags::VALUE_MODULE | SymFlags::INTERFACE | SymFlags::FUNCTION,
-                    );
-                    self.declare_default(c.name, SymFlags::CLASS, excludes, Decl::Class(class))
+                    self.declare_default(c.name, SymFlags::CLASS, Decl::Class(class))
                 } else if c.name.is_none() {
                     // `declareSymbolEx`: what has no name goes in no table, exported or not.
                     self.new_symbol(
@@ -1668,13 +1593,7 @@ impl<'f> Binder<'f> {
             StmtKind::Interface(interface) => {
                 let i = &self.f[interface];
                 let symbol = if i.flags.contains(Flags::DEFAULT) {
-                    let excludes = SymFlags::TYPE.difference(SymFlags::INTERFACE | SymFlags::CLASS);
-                    self.declare_default(
-                        i.name,
-                        SymFlags::INTERFACE,
-                        excludes,
-                        Decl::Interface(interface),
-                    )
+                    self.declare_default(i.name, SymFlags::INTERFACE, Decl::Interface(interface))
                 } else {
                     self.declare(
                         self.scope,
@@ -2029,8 +1948,14 @@ impl<'f> Binder<'f> {
                 } else {
                     SymFlags::PROPERTY
                 } | SymFlags::EXPORT_ONLY;
-                let symbol = self.new_symbol(name, flags, Decl::ExportExpr(id), SymbolId::NONE);
-                self.export_if_vacant(name, symbol);
+                // `bindExportAssignment`
+                let container = self.b.scopes[self.scope.idx()].symbol;
+                if container.is_some() {
+                    let exports = self.b.symbols[container.idx()].exports;
+                    self.declare_in(exports, name, flags, Decl::ExportExpr(id), container);
+                } else {
+                    self.new_symbol(name, flags, Decl::ExportExpr(id), SymbolId::NONE);
+                }
                 self.b.expr_scope.insert(e, self.scope);
             }
             StmtKind::ExportAsNamespace(name) => {

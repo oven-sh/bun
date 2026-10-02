@@ -648,7 +648,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             flags,
             type_params,
             ty,
-            start: tag.pos,
+            stmt: StmtId::NONE,
         };
         let alias = self.b.file.add_alias(alias);
         let mut statement = self.b.file.stmt(StmtKind::TypeAlias(alias), tag.pos);
@@ -668,7 +668,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 },
                 body: self.b.file.list(&[statement]),
                 has_body: true,
-                start: namespace.start,
+                stmt: StmtId::NONE,
             };
             let module = self.b.file.add_module(module);
             statement = self.b.file.stmt(StmtKind::Module(module), namespace.start);

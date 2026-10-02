@@ -1477,13 +1477,6 @@ impl<'a> Builder<'a> {
                 MemberKind::Property => Modified::Property,
                 MemberKind::Getter | MemberKind::Setter => Modified::Accessor,
                 MemberKind::Constructor => Modified::Constructor,
-                // `static constructor()` is one still, as far as what can be written before it goes.
-                MemberKind::Method
-                    if member.key == PropKey::Name(known::constructor)
-                        && self.lexer.contents.get(member.pos as usize) != Some(&b'[') =>
-                {
-                    Modified::Constructor
-                }
                 _ => Modified::Method,
             };
             if member.kind != MemberKind::StaticBlock {
@@ -1670,8 +1663,7 @@ impl<'a> Builder<'a> {
         {
             // `tryParseConstructorDeclaration`, `parsePropertyOrMethodDeclaration`: `constructor` or a `*` decides.
             // `parseParameters`: without a `(` there are no parameters.
-            let is_constructor =
-                is_constructor_name && !member.flags.intersects(Flags::STATIC | Flags::GENERATOR);
+            let is_constructor = is_constructor_name && !member.flags.contains(Flags::GENERATOR);
             member.kind = if is_constructor {
                 MemberKind::Constructor
             } else {
@@ -1699,7 +1691,7 @@ impl<'a> Builder<'a> {
             return Ok(member);
         }
         if matches!(self.tok(), T::TOpenParen | T::TLessThan) {
-            let is_constructor = is_constructor_name && !member.flags.contains(Flags::STATIC);
+            let is_constructor = is_constructor_name;
             // Nor a constructor.
             if is_constructor && !inherited.contains(Flags::AMBIENT) {
                 member.flags.remove(Flags::AMBIENT);
@@ -2859,7 +2851,7 @@ impl<'a> Builder<'a> {
                         self.parse_module(pos, flags)
                     }
                     b"global" => {
-                        let (name_pos, start) = (self.pos(), self.statement_start);
+                        let name_pos = self.pos();
                         self.next()?;
                         // `parseAmbientExternalModuleDeclaration`
                         let has_body = self.tok() == T::TOpenBrace;
@@ -2875,7 +2867,7 @@ impl<'a> Builder<'a> {
                             flags: flags | Flags::AMBIENT,
                             body,
                             has_body,
-                            start,
+                            stmt: StmtId::NONE,
                         });
                         Ok(self.file.stmt(StmtKind::Module(module), pos))
                     }
@@ -3471,7 +3463,7 @@ impl<'a> Builder<'a> {
             type_params,
             extends,
             members,
-            start: self.statement_start,
+            stmt: StmtId::NONE,
         });
         Ok(self.file.stmt(StmtKind::Interface(interface), pos))
     }
@@ -3598,7 +3590,7 @@ impl<'a> Builder<'a> {
             flags,
             type_params,
             ty,
-            start: self.statement_start,
+            stmt: StmtId::NONE,
         });
         Ok(self.file.stmt(StmtKind::TypeAlias(alias), pos))
     }
@@ -3656,14 +3648,14 @@ impl<'a> Builder<'a> {
             name_pos,
             flags,
             members,
-            start: self.statement_start,
+            stmt: StmtId::NONE,
         });
         Ok(self.file.stmt(StmtKind::Enum(id), pos))
     }
 
     /// After `namespace` or `module`.
     fn parse_module(&mut self, pos: u32, flags: Flags) -> R<StmtId> {
-        let (name_pos, start) = (self.pos(), self.statement_start);
+        let name_pos = self.pos();
         if self.tok() == T::TStringLiteral {
             let name = self.string_value()?;
             self.next()?;
@@ -3682,7 +3674,7 @@ impl<'a> Builder<'a> {
                 flags,
                 body,
                 has_body,
-                start,
+                stmt: StmtId::NONE,
             });
             return Ok(self.file.stmt(StmtKind::Module(module), pos));
         }
@@ -3690,7 +3682,6 @@ impl<'a> Builder<'a> {
         let body = if self.eat(T::TDot)? {
             // `namespace A.B { }` is `namespace A { export namespace B { } }`
             let inner_pos = self.pos();
-            self.statement_start = inner_pos;
             let inner = self.parse_module(inner_pos, (flags & Flags::AMBIENT) | Flags::EXPORT)?;
             self.finish_statement(inner, inner_pos);
             self.file.list(&[inner])
@@ -3703,7 +3694,7 @@ impl<'a> Builder<'a> {
             flags,
             body,
             has_body: true,
-            start,
+            stmt: StmtId::NONE,
         });
         Ok(self.file.stmt(StmtKind::Module(module), pos))
     }
@@ -4046,7 +4037,7 @@ impl<'a> Builder<'a> {
             name_pos,
             target,
             flags,
-            start: self.statement_start,
+            stmt: StmtId::NONE,
         });
         Ok(self.file.stmt(StmtKind::ImportEquals(id), pos))
     }
@@ -4082,7 +4073,7 @@ impl<'a> Builder<'a> {
             name_pos,
             target,
             flags,
-            start: self.statement_start,
+            stmt: StmtId::NONE,
         });
         Ok(self.file.stmt(StmtKind::ImportEquals(id), pos))
     }

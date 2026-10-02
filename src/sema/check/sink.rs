@@ -3,6 +3,13 @@
 //! A diagnostic is reported where the answer it goes with is worked out, by whichever checker gets there first, and goes to the sink of
 //! the file it is in. Whoever finds the answer kept has nothing to report. `finish_file` reads the sink of a file once every file has
 //! been checked.
+//!
+//! `error` puts it in `Checker::reported`. `Checker::leave` settles what the question that is left has put there:
+//! - the answer holds: to the sink, before the answer is kept;
+//! - the answer rests on a circle, a trial or a guess (`drops_reported`): dropped, and reported when it is worked out again;
+//! - the answer is not kept only because a loop is under way (`taint_from`): it stays, and is settled with the question around.
+//!
+//! What is reported with no question under way goes to the sink when `check_file` ends.
 
 use super::errors::Diagnostic;
 use super::*;
@@ -10,12 +17,13 @@ use std::sync::Mutex;
 
 /// What goes into a message.
 #[derive(Copy, Clone)]
-pub(super) enum Arg {
+pub(super) enum Arg<'a> {
     /// `TypeToString`
     Type(TypeId),
     /// `symbolToString`
     Sym(Sym),
     Atom(Atom),
+    Text(&'a str),
 }
 
 /// `ast.Diagnostic`
@@ -26,6 +34,7 @@ pub(super) struct Reported {
     pub(super) end: u32,
     pub(super) code: u32,
     pub(super) args: Vec<String>,
+    pub(super) message_chain: Vec<Reported>,
     pub(super) related_information: Vec<Reported>,
 }
 
@@ -52,7 +61,7 @@ impl Checker<'_> {
         &mut self,
         at: (FileId, u32, u32),
         code: u32,
-        args: &[Arg],
+        args: &[Arg<'_>],
     ) -> Reported {
         let args = args
             .iter()
@@ -60,6 +69,7 @@ impl Checker<'_> {
                 Arg::Type(ty) => self.type_to_string(ty),
                 Arg::Sym(symbol) => self.symbol_to_string(symbol),
                 Arg::Atom(name) => self.atom_text(name),
+                Arg::Text(text) => text.to_owned(),
             })
             .collect();
         Reported {
@@ -68,7 +78,55 @@ impl Checker<'_> {
             end: at.2,
             code,
             args,
+            message_chain: Vec::new(),
             related_information: Vec::new(),
+        }
+    }
+
+    /// `NewDiagnosticChainForNode`
+    pub(super) fn new_diagnostic_chain(
+        &mut self,
+        chain: Option<Reported>,
+        at: (FileId, u32, u32),
+        code: u32,
+        args: &[Arg<'_>],
+    ) -> Reported {
+        let mut diagnostic = self.new_diagnostic(at, code, args);
+        diagnostic.message_chain.extend(chain);
+        diagnostic
+    }
+
+    /// `c.error`
+    pub(super) fn error(
+        &mut self,
+        at: (FileId, u32, u32),
+        code: u32,
+        args: &[Arg<'_>],
+    ) -> &mut Reported {
+        let diagnostic = self.new_diagnostic(at, code, args);
+        self.add_diagnostic(diagnostic)
+    }
+
+    /// `c.addDiagnostic`
+    pub(super) fn add_diagnostic(&mut self, diagnostic: Reported) -> &mut Reported {
+        self.reported.push(diagnostic);
+        self.reported.last_mut().unwrap()
+    }
+
+    /// Of the question `frame`, which has just been left.
+    #[cold]
+    pub(super) fn settle_reported(&mut self, frame: QueryFrame) {
+        let from = frame.reported_from as usize;
+        if frame.drops_reported {
+            self.reported.truncate(from);
+        } else if !frame.tainted {
+            self.commit_reported_from(from);
+        }
+    }
+
+    pub(super) fn commit_reported_from(&mut self, from: usize) {
+        for diagnostic in self.reported.split_off(from) {
+            self.commit(diagnostic);
         }
     }
 

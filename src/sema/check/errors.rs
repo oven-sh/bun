@@ -65,6 +65,7 @@ impl Checker<'_> {
         self.notes.borrow_mut().clear();
         self.suggestions.borrow_mut().clear();
         self.never_checked.borrow_mut().clear();
+        self.reported.clear();
         self.release_shapes_for_now();
         self.is_type_checked = false;
         let hir = self.hir(file);
@@ -241,6 +242,7 @@ impl Checker<'_> {
         if self.files().options.emits_declaration_files {
             pass!(check_declaration_emit);
         }
+        self.commit_reported_from(0);
         self.is_type_checked = true;
         self.checked(syntactic, Some(semantic), out, has_parse_diagnostics)
     }
@@ -5463,6 +5465,21 @@ impl Checker<'_> {
 }
 
 impl Files {
+    /// `declaration.Loc`. `None`: the tree does not have it.
+    pub(crate) fn loc_of_declaration(&self, file: FileId, decl: Decl) -> Option<hir::TextRange> {
+        let hir = self.hir(file);
+        let statement = match decl {
+            Decl::Interface(interface) => hir[interface].stmt,
+            Decl::Alias(alias) => hir[alias].stmt,
+            Decl::Enum(enumeration) => hir[enumeration].stmt,
+            Decl::Module(module) => hir[module].stmt,
+            Decl::ImportEquals(import) => hir[import].stmt,
+            Decl::ExportExpr(statement) | Decl::UmdGlobal(statement) => statement,
+            _ => return None,
+        };
+        Some(hir[statement].loc)
+    }
+
     /// `GetTokenPosOfNode`, of a declaration: where its first token is, decorators and modifiers included.
     pub(crate) fn start_of_declaration(&self, file: FileId, decl: Decl) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -5477,16 +5494,16 @@ impl Files {
             }
             Decl::Fn(function) => hir[function].start,
             Decl::Class(class) => hir[class].start,
-            Decl::Interface(interface) => hir[interface].start,
-            Decl::Alias(alias) => hir[alias].start,
-            Decl::Enum(enumeration) => hir[enumeration].start,
+            Decl::Interface(interface) => hir[hir[interface].stmt].start,
+            Decl::Alias(alias) => hir[hir[alias].stmt].start,
+            Decl::Enum(enumeration) => hir[hir[enumeration].stmt].start,
             Decl::EnumMember(member) => hir[member].pos,
-            Decl::Module(module) => hir[module].start,
+            Decl::Module(module) => hir[hir[module].stmt].start,
             Decl::TypeParam(parameter) => hir[parameter].start,
             Decl::ImportDefault(import) => hir[import].clause_start,
             Decl::ImportNamespace(import) => hir[import].namespace_start,
             Decl::ImportSpec(specifier) => hir[specifier].start,
-            Decl::ImportEquals(import) => hir[import].start,
+            Decl::ImportEquals(import) => hir[hir[import].stmt].start,
             Decl::ExportSpec(specifier) => hir[specifier].start,
             Decl::ExportStarAs(statement)
             | Decl::ExportExpr(statement)

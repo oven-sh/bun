@@ -44,6 +44,23 @@ pub(super) struct Note {
     is_another: bool,
 }
 
+/// `chain` and what hangs on it, each line under the one it is a reason for. The first is at level 1.
+pub(super) fn lines_of(chain: Vec<Reported>) -> Vec<Line> {
+    fn add(chain: Vec<Reported>, level: u32, lines: &mut Vec<Line>) {
+        for one in chain {
+            lines.push(Line {
+                code: one.code,
+                args: one.args,
+                level,
+            });
+            add(one.message_chain, level + 1, lines);
+        }
+    }
+    let mut lines = Vec::new();
+    add(chain, 1, &mut lines);
+    lines
+}
+
 impl From<Reported> for Note {
     fn from(reported: Reported) -> Note {
         Note {
@@ -55,7 +72,7 @@ impl From<Reported> for Note {
                 NO_LENGTH
             },
             args: reported.args,
-            chain: Vec::new(),
+            chain: lines_of(reported.message_chain),
             related: reported
                 .related_information
                 .into_iter()

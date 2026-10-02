@@ -186,6 +186,7 @@ impl Checker<'_> {
             let module = self.p.files.options.module.name();
             self.note(class.name_pos, 0, 2725, vec![module.to_owned()]);
         }
+        self.base_types(sym);
         let base = self.resolve_base_of_class(file, c, sym, out);
         if let ClassBase::Is { constructor, .. } = base {
             self.check_base_type_accessibility(file, c, constructor, out);
@@ -313,8 +314,6 @@ impl Checker<'_> {
                 };
                 returns = list;
                 let Some(&first) = returns.first() else {
-                    out.push(Diagnostic { start, code: 2508 });
-                    self.note(start, self.end_of_expr(file, extends), 2508, Vec::new());
                     return nothing;
                 };
                 first
@@ -329,15 +328,8 @@ impl Checker<'_> {
         if !self.is_settled_base(base) {
             return ClassBase::Unknown;
         }
-        let unreduced = base;
         let base = self.reduced_base_type(base);
         if !self.is_valid_base_type(base) {
-            out.push(Diagnostic { start, code: 2509 });
-            let end = self.end_of_expr(file, extends);
-            self.explain_to(start, end, 2509, |c| vec![c.type_to_string(base)]);
-            self.explain_chain(start, 2509, |c| {
-                c.never_intersection_line(unreduced).into_iter().collect()
-            });
             return nothing;
         }
         if self.has_base(base, sym, 0) {
@@ -647,7 +639,7 @@ impl Checker<'_> {
     }
 
     /// Whether `ty` was worked out for good: all of it is known, and it does not wait for type parameters that are not there.
-    fn is_settled_base(&self, ty: TypeId) -> bool {
+    pub(super) fn is_settled_base(&self, ty: TypeId) -> bool {
         self.is_known(ty) && (self.has_type_variables(ty) || !self.is_deferred(ty))
     }
 
@@ -743,7 +735,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `resolveBaseTypesOfInterface`: 2312. The end of `checkInterfaceDeclaration`: 2499.
+    /// The end of `checkInterfaceDeclaration`: 2499.
     fn check_bases_of_interface(
         &mut self,
         file: FileId,
@@ -761,18 +753,6 @@ impl Checker<'_> {
                 });
                 let end = self.end_of_heritage_expression(file, hir[node].pos);
                 self.note(hir[node].pos, end, 2499, Vec::new());
-                continue;
-            }
-            let base = self.type_from_node(file, node);
-            let base = self.force(base);
-            let base = self.reduced_base_type(base);
-            if self.is_settled_base(base) && !self.is_valid_base_type(base) {
-                out.push(Diagnostic {
-                    start: hir[node].pos,
-                    code: 2312,
-                });
-                let end = self.end_of_type_node(file, node);
-                self.note(hir[node].pos, end, 2312, Vec::new());
             }
         }
     }

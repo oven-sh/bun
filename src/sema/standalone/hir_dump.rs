@@ -1056,13 +1056,13 @@ impl Dump<'_> {
             type_params,
             extends,
             members,
-            start,
+            stmt: _,
         } = node!(self, depth, label, interfaces, id);
         put!(
             self,
             depth,
             label,
-            "Interface name={} name_pos={name_pos} flags={flags:?} start={start}",
+            "Interface name={} name_pos={name_pos} flags={flags:?}",
             self.q(name)
         );
         let d = depth + 1;
@@ -1078,13 +1078,13 @@ impl Dump<'_> {
             flags,
             type_params,
             ty,
-            start,
+            stmt: _,
         } = node!(self, depth, label, aliases, id);
         put!(
             self,
             depth,
             label,
-            "Alias name={} name_pos={name_pos} flags={flags:?} start={start}",
+            "Alias name={} name_pos={name_pos} flags={flags:?}",
             self.q(name)
         );
         let d = depth + 1;
@@ -1098,13 +1098,13 @@ impl Dump<'_> {
             name_pos,
             flags,
             members,
-            start,
+            stmt: _,
         } = node!(self, depth, label, enums, id);
         put!(
             self,
             depth,
             label,
-            "Enum name={} name_pos={name_pos} flags={flags:?} start={start}",
+            "Enum name={} name_pos={name_pos} flags={flags:?}",
             self.q(name)
         );
         self.span(depth + 1, "members", members, Self::enum_member);
@@ -1135,7 +1135,7 @@ impl Dump<'_> {
             flags,
             body,
             has_body,
-            start,
+            stmt: _,
         } = node!(self, depth, label, modules, id);
         let name = match name {
             ModuleName::Ident(name) => format!("Ident {}", self.q(name)),
@@ -1146,7 +1146,7 @@ impl Dump<'_> {
             self,
             depth,
             label,
-            "Module name={name} name_pos={name_pos} flags={flags:?} has_body={has_body} start={start}"
+            "Module name={name} name_pos={name_pos} flags={flags:?} has_body={has_body}"
         );
         self.list(depth + 1, "body", body, Self::stmt);
     }
@@ -1202,7 +1202,7 @@ impl Dump<'_> {
             name_pos,
             target,
             flags,
-            start,
+            stmt: _,
         } = node!(self, depth, label, import_equals, id);
         let target = match target {
             ImportEqualsTarget::Require(spec) => format!("Require {}", self.q(spec)),
@@ -1212,7 +1212,7 @@ impl Dump<'_> {
             self,
             depth,
             label,
-            "ImportEquals name={} name_pos={name_pos} target={target} flags={flags:?} start={start}",
+            "ImportEquals name={} name_pos={name_pos} target={target} flags={flags:?}",
             self.q(name)
         );
     }

@@ -9,11 +9,10 @@ use crate::atom::{Atom, known};
 use crate::bind::{FnOwner, MemberOwner};
 use crate::hir::{
     CallId, CaseId, ClassId, EnumMemberId, ExportSpecId, Expr, ExprId, ExprKind, File, FileKind,
-    Flags, FnBody, FnId, FnKind, Func, INCOMPLETE_TEMPLATE, IdList, ImportSpecId, InterfaceId,
-    JsxId, Keyword, MemberId, MemberKind, ParamId, PatElemId, PatId, PatKind, PatPropId, PropId,
-    PropKey, PropKind, Span, Stmt, StmtId, StmtKind, TupleElemId, TypeNode, TypeNodeId,
-    TypeNodeKind, TypeParamId, UnOp, VarDeclId, is_parenthesized, open_parenthesis,
-    start_inside_parentheses,
+    Flags, FnBody, FnId, FnKind, Func, INCOMPLETE_TEMPLATE, IdList, ImportSpecId, JsxId, Keyword,
+    MemberId, MemberKind, ParamId, PatElemId, PatId, PatKind, PatPropId, PropId, PropKey, PropKind,
+    Span, Stmt, StmtId, StmtKind, TupleElemId, TypeNode, TypeNodeId, TypeNodeKind, TypeParamId,
+    UnOp, VarDeclId, is_parenthesized, open_parenthesis, start_inside_parentheses,
 };
 use crate::program::FileId;
 use bun_core::lexer;
@@ -1856,26 +1855,6 @@ impl<'a> Spans<'a> {
         self.close(inside.max(class.pos as usize), b'}')
     }
 
-    fn interface(self, i: InterfaceId) -> usize {
-        let Some(interface) = self.hir.interfaces.get(i.idx()) else {
-            return 0;
-        };
-        let inside = match interface.members.iter().next_back() {
-            Some(last) => self.hir[last].loc.end as usize,
-            None => {
-                let head = match self.hir.ids(interface.extends).next_back() {
-                    Some(last) => self.ty_in(last, 0),
-                    None => self.type_params(
-                        interface.type_params,
-                        self.token(interface.name_pos as usize),
-                    ),
-                };
-                self.inside_braces_after(head)
-            }
-        };
-        self.close(inside.max(interface.name_pos as usize), b'}')
-    }
-
     // ───────────────────────────── statements ─────────────────────────────
 
     /// Past the `:` of a `case` or `default` clause. `None` if where it is written is not kept.
@@ -2186,11 +2165,6 @@ impl Checker<'_> {
     /// `node.End()` of a class.
     pub(super) fn end_of_class(&self, file: FileId, class: ClassId) -> u32 {
         self.spans(file).class(class) as u32
-    }
-
-    /// `node.End()` of an interface.
-    pub(super) fn end_of_interface(&self, file: FileId, interface: InterfaceId) -> u32 {
-        self.spans(file).interface(interface) as u32
     }
 
     /// `node.End()` of `Base<Args>` in the `extends` clause of a class (`ExpressionWithTypeArguments`). 0 if there is none.

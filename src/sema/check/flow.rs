@@ -1000,30 +1000,11 @@ impl<'p> Checker<'p> {
             .any(|&q| self.is_resolution(q))
     }
 
-    /// Whether `e`, whose `Query::Expr` is `stack[since]`, is the reference of a visible loop whose back edges are being analysed
-    /// since then. `getTypeOfExpression` checks such a reference again, and the new analysis ends at the loop.
-    pub(super) fn is_reference_of_loop_under_way(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        since: usize,
-    ) -> bool {
-        if self.flow_depth > 12 {
-            return false;
-        }
-        for i in (0..self.flow_loops.len()).rev() {
-            let depth = self.flow_loops[i].5;
-            if depth <= since || !self.is_flow_loop_visible(depth) {
-                break;
-            }
-            if self.flow_loops[i].1.file == file {
-                let reference = self.flow_loops[i].1.clone();
-                if self.matches(&reference, e) {
-                    return true;
-                }
-            }
-        }
-        false
+    /// How high `stack` was when the top of `flowLoopStack` was pushed, if that was after `stack[since]` was entered.
+    pub(super) fn flow_loop_pushed_since(&self, since: usize) -> Option<usize> {
+        let depth = self.flow_loops.last()?.5;
+        (self.flow_depth <= 12 && depth > since && self.is_flow_loop_visible(depth))
+            .then_some(depth)
     }
 
     /// Whether `e` is something `reference` goes through: `x` or `x.a` for `x.a.b`.
@@ -5724,9 +5705,9 @@ impl<'p> Checker<'p> {
                         if !self.is_union(declared) {
                             return Some(declared);
                         }
-                        // `getTypeOfExpression` checks an expression again while it is being checked, and ends at the loop. `enter` refuses
-                        // all but the reference itself, so a cycle through a value assigned on a back edge may not be one in TypeScript.
-                        // `mark_circle_from` tells which are.
+                        // `getTypeOfExpression` checks an expression again while it is being checked, and ends at the loop
+                        // (`recheck_in_flow_loop`). Past a resolution, which hides the loop, `enter` refuses, so a cycle through a value
+                        // assigned on a back edge may not be one in TypeScript. `mark_circle_from` tells which are.
                         let in_loop = !walk.loops.is_empty();
                         if in_loop {
                             self.eager.push(self.stack.len());

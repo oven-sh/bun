@@ -198,7 +198,7 @@ impl<'p> Checker<'p> {
             return ty;
         }
         if !self.flow_loops.is_empty()
-            && let Some(ty) = self.recheck_loop_reference(file, e)
+            && let Some(ty) = self.recheck_in_flow_loop(file, e)
         {
             return ty;
         }
@@ -231,6 +231,9 @@ impl<'p> Checker<'p> {
                 let ty = self.force(ty);
                 let uncertain = self.uncertain;
                 self.uncertain |= around;
+                if uncertain || afresh {
+                    self.drop_reported();
+                }
                 (ty, uncertain, self.leave())
             }
         };
@@ -315,17 +318,15 @@ impl<'p> Checker<'p> {
         Some(TypeId::ERROR)
     }
 
-    /// `getTypeOfExpression` has no guard against re-entry. A reference that a back edge of its own loop evaluates again is checked
-    /// again, and its flow analysis ends at the loop with the types collected so far (`flowLoopStack`, `getTypeAtFlowLoopLabel`).
-    /// `None` if `e` is not such a reference.
-    fn recheck_loop_reference(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+    /// `getTypeOfExpression` has no guard against re-entry. An expression that is being checked and that a back edge of a loop
+    /// evaluates again is checked again. It goes the same way, and the flow analysis that led to the loop ends there this time, with
+    /// the types collected so far (`flowLoopStack`, `getTypeAtFlowLoopLabel`). `None` if no loop was pushed since `e` was entered.
+    fn recheck_in_flow_loop(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let first = self
             .stack
             .iter()
             .rposition(|&q| q == Query::Expr(file, e))?;
-        if !self.is_reference_of_loop_under_way(file, e, first) {
-            return None;
-        }
+        let pushed_at = self.flow_loop_pushed_since(first)?;
         // Hide the first visit from `enter`, which still refuses when time, native stack or query depth run out.
         let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
         let entered = self.enter(Query::Expr(file, e));
@@ -333,8 +334,8 @@ impl<'p> Checker<'p> {
         if !entered {
             return Some(TypeId::UNRESOLVED);
         }
-        // The loop type is incomplete: cache neither this result nor anything computed since the first visit.
-        self.taint_from(first + 1);
+        // The loop type is incomplete: nothing computed since the loop was pushed is cached.
+        self.taint_from(pushed_at);
         let ty = self.type_of_expr_uncached(file, e);
         let ty = self.force(ty);
         self.leave();

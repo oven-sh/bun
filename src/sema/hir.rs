@@ -947,8 +947,8 @@ pub struct Interface {
     pub type_params: Span<TypeParamId>,
     pub extends: IdList<TypeNodeId>,
     pub members: Span<MemberId>,
-    /// Where its first token is, modifiers included.
-    pub start: u32,
+    /// The statement it is.
+    pub stmt: StmtId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -958,8 +958,8 @@ pub struct Alias {
     pub flags: Flags,
     pub type_params: Span<TypeParamId>,
     pub ty: TypeNodeId,
-    /// Where its first token is, modifiers included. The `@` of a `@typedef` or a `@callback`.
-    pub start: u32,
+    /// The statement it is.
+    pub stmt: StmtId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -968,8 +968,8 @@ pub struct Enum {
     pub name_pos: u32,
     pub flags: Flags,
     pub members: Span<EnumMemberId>,
-    /// Where its first token is, modifiers included.
-    pub start: u32,
+    /// The statement it is.
+    pub stmt: StmtId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -999,8 +999,8 @@ pub struct Module {
     pub body: IdList<StmtId>,
     /// `declare module "m";` has none.
     pub has_body: bool,
-    /// Where its first token is, modifiers included. The name of the `B` of `namespace A.B`.
-    pub start: u32,
+    /// The statement it is.
+    pub stmt: StmtId,
 }
 
 /// `core.ResolutionMode`. `None`: not said; it goes by the file and the syntax.
@@ -1075,8 +1075,8 @@ pub struct ImportEquals {
     pub name_pos: u32,
     pub target: ImportEqualsTarget,
     pub flags: Flags,
-    /// Where its first token is, modifiers included.
-    pub start: u32,
+    /// The statement it is.
+    pub stmt: StmtId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1525,13 +1525,27 @@ impl File {
     }
     #[inline]
     pub fn stmt(&mut self, kind: StmtKind, pos: u32) -> StmtId {
-        self.add_stmt_node(Stmt {
-            kind,
+        let stmt = self.add_stmt_node(Stmt {
+            kind: StmtKind::Empty,
             pos,
             start: pos,
             loc: TextRange::default(),
             modifiers: Span::EMPTY,
-        })
+        });
+        self.set_stmt_kind(stmt, kind);
+        stmt
+    }
+    /// Makes `stmt` a statement of `kind`, and tells what that declares.
+    pub fn set_stmt_kind(&mut self, stmt: StmtId, kind: StmtKind) {
+        self[stmt].kind = kind;
+        match kind {
+            StmtKind::Interface(interface) => self[interface].stmt = stmt,
+            StmtKind::TypeAlias(alias) => self[alias].stmt = stmt,
+            StmtKind::Enum(enumeration) => self[enumeration].stmt = stmt,
+            StmtKind::Module(module) => self[module].stmt = stmt,
+            StmtKind::ImportEquals(import) => self[import].stmt = stmt,
+            _ => {}
+        }
     }
     #[inline]
     pub fn modifier_list(&self, list: Span<ModifierId>) -> &[Modifier] {

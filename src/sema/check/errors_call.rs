@@ -1269,7 +1269,9 @@ impl Checker<'_> {
         let constructors: SmallVec<[FnId; 4]> = hir[written]
             .members
             .iter()
-            .filter(|&m| hir[m].kind == MemberKind::Constructor)
+            .filter(|&m| {
+                hir[m].kind == MemberKind::Constructor && !hir[m].flags.contains(Flags::STATIC)
+            })
             .map(|m| hir[m].func)
             .collect();
         if constructors.len() < 2 {

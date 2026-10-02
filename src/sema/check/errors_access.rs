@@ -1956,7 +1956,11 @@ impl Checker<'_> {
                 }
             }
             match code {
-                2339 | 2812 => c.never_intersection_line(containing).into_iter().collect(),
+                2339 | 2812 => {
+                    let chain =
+                        c.elaborate_never_intersection(None, (file, start, start), containing);
+                    super::explain::lines_of(chain.into_iter().collect())
+                }
                 _ => Vec::new(),
             }
         });
@@ -1974,15 +1978,22 @@ impl Checker<'_> {
         }
     }
 
-    /// `elaborateNeverIntersection`: why there is nothing that is a `ty`, if that is so. At level 1.
-    pub(super) fn never_intersection_line(&mut self, ty: TypeId) -> Option<Line> {
+    /// `elaborateNeverIntersection`
+    pub(super) fn elaborate_never_intersection(
+        &mut self,
+        chain: Option<Reported>,
+        at: (FileId, u32, u32),
+        ty: TypeId,
+    ) -> Option<Reported> {
         let TypeData::Intersection(parts) = self.data(ty) else {
-            return None;
+            return chain;
         };
         if !self.is_never_intersection(ty) {
-            return None;
+            return chain;
         }
-        let members = self.members(ty)?;
+        let Some(members) = self.members(ty) else {
+            return chain;
+        };
         let (mut discriminant, mut private) = (None, None);
         for prop in &members.shape().props {
             let PropSource::Intersected(_, of) = &prop.source else {
@@ -2020,18 +2031,16 @@ impl Checker<'_> {
         let (code, prop) = match (discriminant, private) {
             (Some(prop), _) => (18031, prop),
             (None, Some(prop)) => (18032, prop),
-            (None, None) => return None,
+            (None, None) => return chain,
         };
         // `TypeFormatFlagsNoTypeReduction`: the members as they are written down, and not `never`.
         let mut written = Vec::with_capacity(parts.len());
         for &part in parts.iter() {
             written.push(self.type_to_string(part));
         }
-        Some(Line {
-            code,
-            args: vec![written.join(" & "), self.prop_to_string(prop)],
-            level: 1,
-        })
+        let (written, prop) = (written.join(" & "), self.prop_to_string(prop));
+        let args = [Arg::Text(&written), Arg::Text(&prop)];
+        Some(self.new_diagnostic_chain(chain, at, code, &args))
     }
 
     /// The classes `e` is written in, from the inside out.

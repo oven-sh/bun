@@ -1471,7 +1471,7 @@ impl Checker<'_> {
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let (import, pos) = (hir[i], hir[s].pos);
-        cx.export_modifier(import.start, import.flags, around, out);
+        cx.export_modifier(hir[s].start, import.flags, around, out);
         let names = match import.target {
             ImportEqualsTarget::Require(spec) => {
                 if self.xm_is_in_place(cx, s, spec, false, around, out) {

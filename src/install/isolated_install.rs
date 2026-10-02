@@ -214,6 +214,18 @@ pub(crate) enum Timings {
     Quiet,
 }
 
+/// Whether an entry of this resolution is linked into `node_modules/.bun/node_modules`.
+fn links_into_hidden_node_modules(tag: ResolutionTag) -> bool {
+    matches!(
+        tag,
+        ResolutionTag::Npm
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+    )
+}
+
 /// Grants `node_modules/.bun/node_modules/<dep_name>` to the first dependency that asks for it.
 fn claim_hidden_hoist(
     manager: &PackageManager,
@@ -223,8 +235,16 @@ fn claim_hidden_hoist(
     if !manager.options.hoist {
         return Ok(false);
     }
-    // Not a package name, and `node_modules/.bun/node_modules/.bin` is on the `PATH` of every store package's scripts.
-    if dep_name.first() == Some(&b'.') {
+    // The directory holds one link per package name. A dependency name that is
+    // not one takes a path the linker needs: `.bin` is on the `PATH` of every
+    // store package's scripts, and a bare scope takes the directory that holds
+    // `<scope>/<name>`.
+    let is_package_name = match dep_name.first() {
+        Some(&b'.') => false,
+        Some(&b'@') => bun_core::strings::contains_char(dep_name, b'/'),
+        _ => true,
+    };
+    if !is_package_name {
         return Ok(false);
     }
     if let Some(hoist_pattern) = &manager.options.hoist_pattern {
@@ -956,8 +976,12 @@ pub(crate) fn build_store(
                     // dedupe! depend on the already created entry
 
                     // The entry keeps the name it was created under. A dependency that
-                    // reaches it under another name can hold that name too.
-                    if curr_dep_id != invalid_dependency_id && info.dep_id != invalid_dependency_id
+                    // reaches it under another name can hold that name too. An entry
+                    // that gets no link must not take a name here: the next dependency
+                    // with that name needs it.
+                    if curr_dep_id != invalid_dependency_id
+                        && info.dep_id != invalid_dependency_id
+                        && links_into_hidden_node_modules(pkg_resolutions[pkg_id as usize].tag)
                     {
                         let curr_dep = &dependencies[curr_dep_id as usize];
                         if curr_dep.name_hash != dependencies[info.dep_id as usize].name_hash
@@ -2180,14 +2204,7 @@ pub(crate) fn install_isolated_packages(
                     if dependencies[dep_id as usize].name_hash == pkg_name_hashes[pkg_id as usize] {
                         continue;
                     }
-                    if matches!(
-                        pkg_resolutions[pkg_id as usize].tag,
-                        ResolutionTag::Npm
-                            | ResolutionTag::Git
-                            | ResolutionTag::Github
-                            | ResolutionTag::LocalTarball
-                            | ResolutionTag::RemoteTarball
-                    ) {
+                    if links_into_hidden_node_modules(pkg_resolutions[pkg_id as usize].tag) {
                         installer.unlink_package_name_from_hidden_node_modules(
                             store::entry::Id::from(u32::try_from(entry_idx).expect("int cast")),
                         );

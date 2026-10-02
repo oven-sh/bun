@@ -3957,6 +3957,86 @@ describe("hoist", () => {
     );
   });
 
+  // A dependency name that is not a package name takes a path the linker
+  // needs. `.bin` is on the `PATH` of every store package's scripts, and a
+  // bare scope takes the directory that holds `<scope>/<name>`, so the link
+  // for `<scope>/<name>` would be written inside the package the bare scope
+  // points at.
+  test("a dependency name that is a bare scope gets no fallback link", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "carrier/package.json": JSON.stringify({
+          name: "carrier",
+          version: "1.0.0",
+          dependencies: { "@types": "npm:no-deps@1.0.0" },
+        }),
+      },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-bare-scope-key",
+        dependencies: {
+          carrier: "file:./carrier",
+          "@types/is-number": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      "@types/is-number": join("..", inStore("@types+is-number@1.0.0", join("@types", "is-number"))),
+    });
+
+    // the store entry the bare scope resolves to holds its own files only
+    expect(
+      await readdirSorted(join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps")),
+    ).toEqual(["index.js", "package.json"]);
+  });
+
+  // A store entry is the only thing linked into the fallback directory, so a
+  // workspace, `file:` or `link:` entry must not take a fallback name when a
+  // dependency joins it: a store package reached under that name deeper in
+  // the tree needs it.
+  test("a name a workspace package is reached under stays free for a store package", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "packages/lib/package.json": JSON.stringify({ name: "no-deps", version: "5.0.0" }),
+        "packages/one/package.json": JSON.stringify({
+          name: "one",
+          version: "1.0.0",
+          // uses-a-dep-3 depends on the registry's a-dep@1.0.3
+          dependencies: { "no-deps": "workspace:*", "uses-a-dep-3": "1.0.0" },
+        }),
+        "packages/two/package.json": JSON.stringify({
+          name: "two",
+          version: "1.0.0",
+          // reaches the workspace package under a second name
+          dependencies: { "a-dep": "npm:no-deps@*" },
+        }),
+      },
+    });
+
+    await write(packageJson, JSON.stringify({ name: "hoist-workspace-name", workspaces: ["packages/*"] }));
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await fallbackLinks(packageDir)).toEqual({
+      // the workspace package gets no link, and leaves `a-dep` to the store package
+      "a-dep": inStore("a-dep@1.0.3", "a-dep"),
+      "uses-a-dep-3": inStore("uses-a-dep-3@1.0.0", "uses-a-dep-3"),
+    });
+
+    // a store package that declares nothing resolves the store package
+    expect(requireFrom(packageDir, "uses-a-dep-3@1.0.0", "uses-a-dep-3").resolve("a-dep/package.json")).toEndWith(
+      join(".bun", "a-dep@1.0.3", "node_modules", "a-dep", "package.json"),
+    );
+  });
+
   test("a package installed under another package's name holds the fallback link for that name", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },

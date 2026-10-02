@@ -3095,10 +3095,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 // The task that called WorkerGlobalScope.close() has ended: stop the worker, as process.exit() does.
 extern "C" void WebWorker__close(void* bunVM);
 
-// The worker loop, between tasks: a close() from a handler it ran outside a checkpoint.
-extern "C" bool Zig__GlobalObject__takeWorkerCloseRequest(Zig::GlobalObject* globalObject)
+// The worker loop reads this flag between tasks, one load a read. Valid while the VM lives.
+extern "C" const bool* Zig__GlobalObject__workerCloseRequested(Zig::GlobalObject* globalObject)
 {
-    return std::exchange(WebCore::clientData(globalObject->vm())->workerCloseRequested, false);
+    return &WebCore::clientData(globalObject->vm())->workerCloseRequested;
 }
 
 uint8_t GlobalObject::drainMicrotasks()
@@ -3140,8 +3140,9 @@ uint8_t GlobalObject::drainMicrotasks()
     if (!vm.entryScope)
         m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
 
-    // The result of the checkpoint when an exception ends it.
-    auto endedByException = [&]() -> std::optional<uint8_t> {
+    // The result of the checkpoint when an exception ends it. Forced inline: the inliner outlines it for its
+    // use in the cold close() block, and then every call builds the capture block on the stack.
+    auto endedByException = [&]() ALWAYS_INLINE_LAMBDA -> std::optional<uint8_t> {
         auto* exception = scope.exception();
         if (!exception)
             return std::nullopt;

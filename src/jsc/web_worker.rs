@@ -165,8 +165,8 @@ unsafe extern "C" {
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
-    /// Takes a `close()` request a handler made outside a task's checkpoint.
-    safe fn Zig__GlobalObject__takeWorkerCloseRequest(global: &JSGlobalObject) -> bool;
+    /// The address of the VM's `close()` request flag, valid while the VM lives.
+    safe fn Zig__GlobalObject__workerCloseRequested(global: &JSGlobalObject) -> *const bool;
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
@@ -909,7 +909,9 @@ impl WebWorker {
             // would clobber a process.on('exit') change to process.exitCode.
             return self.shutdown();
         }
-        if self.stop_requested(vm) {
+        let close_requested = Zig__GlobalObject__workerCloseRequested(vm.global());
+        let stop_requested = |vm: &VirtualMachine| self.stop_requested(vm, close_requested);
+        if stop_requested(vm) {
             self.flush_logs(vm);
             return self.shutdown();
         }
@@ -943,9 +945,9 @@ impl WebWorker {
         vm.as_mut().tick();
         let mut stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
 
-        while !stopped_by_entry && !self.stop_requested(vm) && vm.is_event_loop_alive() {
+        while !stopped_by_entry && !stop_requested(vm) && vm.is_event_loop_alive() {
             vm.as_mut().tick();
-            if self.stop_requested(vm) {
+            if stop_requested(vm) {
                 break;
             }
             if let EntryOutcome::Stop = observe_entry(vm) {
@@ -953,7 +955,7 @@ impl WebWorker {
                 break;
             }
             vm.as_mut().auto_tick_active();
-            if self.stop_requested(vm) {
+            if stop_requested(vm) {
                 break;
             }
             if let EntryOutcome::Stop = observe_entry(vm) {
@@ -1110,10 +1112,12 @@ impl WebWorker {
         self.exit();
     }
 
-    /// A stop was requested, or a handler run outside a checkpoint (an 'unhandledRejection' listener) called `close()`.
-    fn stop_requested(&self, vm: &VirtualMachine) -> bool {
-        if Zig__GlobalObject__takeWorkerCloseRequest(vm.global()) {
-            self.close(vm);
+    /// A stop was requested. A `close()` that no checkpoint followed (an 'unhandledRejection' listener
+    /// runs after a turn's last one) gets its checkpoint here, and the checkpoint carries it out.
+    fn stop_requested(&self, vm: &VirtualMachine, close_requested: *const bool) -> bool {
+        // SAFETY: a field of the VM's client data, which lives as long as `vm`; this thread alone writes it.
+        if unsafe { close_requested.read() } {
+            vm.as_mut().drain_microtasks();
         }
         self.has_requested_terminate()
     }

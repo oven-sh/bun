@@ -435,81 +435,91 @@ describe("web worker", () => {
       expect(close.code).toBe(1);
     });
 
-    test("from a 'beforeExit' listener with the entry still pending, the close code is 0, not 13", async () => {
-      const { messages, code } = await messagesUntilClose(
-        workerFromSource(`
-          process.on("exit", code => postMessage("exit:" + code));
-          process.on("beforeExit", () => self.close());
-          await new Promise(() => {});
-        `),
-      );
-      expect(messages).toEqual(["exit:0"]);
-      expect(code).toBe(0);
-    });
+    // The worker chose to exit: the entry's unsettled top-level await is not the exit code 13.
+    for (const exit of ["self.close()", "process.exit(0)"]) {
+      test(`${exit} from a 'beforeExit' listener with the entry still pending gives close code 0, not 13`, async () => {
+        const { messages, code } = await messagesUntilClose(
+          workerFromSource(`
+            process.on("exit", code => postMessage("exit:" + code));
+            process.on("beforeExit", () => ${exit});
+            await new Promise(() => {});
+          `),
+        );
+        expect(messages).toEqual(["exit:0"]);
+        expect(code).toBe(0);
+      });
+    }
 
-    test("a promise the closing task rejects is still reported to the parent", async () => {
-      const worker = workerFromSource(`self.onmessage = async () => { self.close(); throw new Error("boom"); };`);
-      const messages: any[] = [];
-      worker.onerror = e => messages.push(e.message.includes("boom") ? "error:boom" : "error:" + e.message);
-      await once(worker, "open");
-      worker.postMessage("go");
-      await once(worker, "close");
-      expect(messages).toEqual(["error:boom"]);
-    });
-
-    test("a throw after close() is still reported to the parent, before the 'exit' listeners", async () => {
-      const worker = workerFromSource(`
-        process.on("exit", code => {
-          postMessage("exit:" + code);
-          process.exitCode = 5;
+    // The two tests below run in a child process: the test runner takes a worker's uncaught
+    // errors itself, so its process listeners do not run and its exit code stays 0.
+    const childProcessPrelude = `
+      const run = (src, post) =>
+        new Promise(resolve => {
+          const events = [];
+          const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+          worker.addEventListener("message", e => events.push(e.data));
+          // The message is the formatted error: a code frame, an "error: <message>" line, the stack.
+          worker.onerror = e => {
+            e.preventDefault();
+            events.push(e.message.split("\\n").find(line => line.startsWith("error: ")) ?? e.message);
+          };
+          worker.addEventListener("close", e => resolve({ events, code: e.code }));
+          if (post) worker.postMessage("go");
         });
-        self.close();
-        throw new Error("boom");
-      `);
-      const messages: any[] = [];
-      worker.addEventListener("message", e => messages.push(e.data));
-      worker.onerror = e => messages.push(e.message.includes("boom") ? "error:boom" : "error:" + e.message);
-      const [close] = await once(worker, "close");
-      // Under the test runner a worker's uncaught error does not set its exit code, so only the order
-      // and the code the listener set are asserted.
-      expect(messages.map(m => m.replace(/^exit:\d+$/, "exit"))).toEqual(["error:boom", "exit"]);
-      expect(close.code).toBe(5);
-    });
-
-    // The test runner routes a worker's unhandled rejections past process listeners, so this runs
-    // in a plain bun process.
-    test("from an 'unhandledRejection' listener, a later message is not delivered", async () => {
-      const workerSource = `
-        process.on("unhandledRejection", () => {
-          postMessage("rejection");
-          self.close();
-        });
-        self.onmessage = e => postMessage("message:" + e.data);
-        Promise.reject(new Error("x"));
-      `;
+    `;
+    async function runInChildProcess(script: string) {
       await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const worker = new Worker("data:text/javascript," + encodeURIComponent(${JSON.stringify(workerSource)}));
-           const messages = [];
-           worker.addEventListener("message", e => {
-             messages.push(e.data);
-             if (e.data === "rejection") worker.postMessage("late");
-           });
-           worker.onerror = e => messages.push("error:" + e.message);
-           worker.addEventListener("close", e => console.log(JSON.stringify({ messages, code: e.code })));`,
-        ],
+        cmd: [bunExe(), "-e", childProcessPrelude + script],
         env: bunEnv,
         stdout: "pipe",
-        stderr: "pipe",
+        stderr: "inherit",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: JSON.stringify({ messages: ["rejection"], code: 0 }) + "\n",
-        stderr: "",
-        exitCode: 0,
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { result: JSON.parse(stdout), exitCode };
+    }
+
+    test("what the closing task leaves uncaught is reported before the 'exit' listeners run", async () => {
+      const { result, exitCode } = await runInChildProcess(`
+        const onExit = 'process.on("exit", code => postMessage("exit:" + code));';
+        console.log(
+          JSON.stringify({
+            entryThrows: await run(onExit + 'self.close(); throw new Error("boom");'),
+            handlerRejects: await run('self.onmessage = async () => { self.close(); throw new Error("boom"); };', true),
+            exitListenerSetsCode: await run(
+              'process.on("exit", () => { process.exitCode = 5; }); self.close(); throw new Error("boom");',
+            ),
+          }),
+        );
+      `);
+      expect(result).toEqual({
+        entryThrows: { events: ["error: boom", "exit:1"], code: 1 },
+        handlerRejects: { events: ["error: boom"], code: 1 },
+        // As without close(): the code an 'exit' listener sets is the close code.
+        exitListenerSetsCode: { events: ["error: boom"], code: 5 },
       });
+      expect(exitCode).toBe(0);
+    });
+
+    // No checkpoint follows an 'unhandledRejection' listener, so the worker loop carries its close() out.
+    test("from an 'unhandledRejection' listener, no later task runs", async () => {
+      const { result, exitCode } = await runInChildProcess(`
+        console.log(
+          JSON.stringify(
+            await run(\`
+              process.on("unhandledRejection", () => {
+                postMessage("rejection");
+                setImmediate(() => postMessage("an immediate ran after close()"));
+                self.close();
+                queueMicrotask(() => postMessage("microtask of the listener"));
+              });
+              self.onmessage = () => {};
+              Promise.reject(new Error("boom"));
+            \`),
+          ),
+        );
+      `);
+      expect(result).toEqual({ events: ["rejection", "microtask of the listener"], code: 0 });
+      expect(exitCode).toBe(0);
     });
 
     test("a checkpoint beneath the calling script does not end its task", async () => {
@@ -524,6 +534,48 @@ describe("web worker", () => {
       expect(messages).toEqual(["microtask", "after the nested checkpoint"]);
       expect(code).toBe(0);
     });
+
+    test("a synchronous wait beneath the calling script does not end its task", async () => {
+      const { messages, code } = await messagesUntilClose(
+        workerFromSource(`
+          self.close();
+          const rewriter = new HTMLRewriter().on("p", {
+            async element(el) {
+              await null;
+              el.setInnerContent("rewritten");
+            },
+          });
+          postMessage(rewriter.transform("<p>original</p>"));
+        `),
+      );
+      expect(messages).toEqual(["<p>rewritten</p>"]);
+      expect(code).toBe(0);
+    });
+
+    for (const kind of ["Web", "node:worker_threads"] as const) {
+      test(`closing a ${kind} MessagePort from its own handler after close() does not cut the handler`, async () => {
+        const channel = kind === "Web" ? "new MessageChannel()" : `new (require("node:worker_threads").MessageChannel)()`;
+        const listen = kind === "Web" ? "port1.onmessage = e => handle(e.data)" : `port1.on("message", handle)`;
+        const { messages, code } = await messagesUntilClose(
+          workerFromSource(`
+            const { port1, port2 } = ${channel};
+            const handle = n => {
+              postMessage("message " + n);
+              if (n === 0) {
+                self.close();
+                port1.close();
+                postMessage("after port1.close()");
+              }
+            };
+            ${listen};
+            for (let i = 0; i < 3; i++) port2.postMessage(i);
+          `),
+        );
+        // port.close() inside a dispatch first delivers what that port had queued. Then the handler runs on.
+        expect(messages).toEqual(["message 0", "message 1", "message 2", "after port1.close()"]);
+        expect(code).toBe(0);
+      });
+    }
 
     for (const when of ["synchronously", "from a microtask"] as const) {
       test(`from a message handler ${when}, the rest of the batch is dropped`, async () => {

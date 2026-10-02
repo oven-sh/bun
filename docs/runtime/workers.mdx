@@ -229,12 +229,16 @@ A worker can terminate itself with `process.exit()`. This does not terminate the
 
 ### `self.close()`
 
-A worker can also stop itself with [`self.close()`](https://developer.mozilla.org/en-US/docs/Web/API/WorkerGlobalScope/close), as in browsers. The script that calls it runs to the end of its current task, so a `postMessage()` after `close()` still reaches the main thread. Pending timers and messages are discarded, and the `"close"` event fires with exit code 0. `self.close()` exists only in workers created with `new Worker()`, not in `node:worker_threads` workers.
+A worker can also stop itself with [`self.close()`](https://developer.mozilla.org/en-US/docs/Web/API/WorkerGlobalScope/close), as in browsers. `self.close()` exists only in workers created with `new Worker()`, not in `node:worker_threads` workers.
 
 ```ts worker.ts icon="/icons/typescript.svg"
 postMessage("done");
 self.close();
 ```
+
+The worker stops when the current task ends. The script that calls `close()` runs to its end, then its microtasks and `process.nextTick()` callbacks run, so a `postMessage()` after `close()` still reaches the main thread. Pending timers and messages are discarded. The `process` `"exit"` listeners run, and the `"close"` event gets `process.exitCode`, which is 0 by default. An error that the task throws after `close()`, or a promise that it rejects, is reported like any other uncaught error.
+
+Callbacks that Bun delivers in one batch with the callback that called `close()` can still run before the worker stops. Examples are the other `"line"` events of a `readline` chunk, the callbacks of `dns.lookup()` calls that resolve together, and WebSocket messages that arrive together with the handshake response. Use `process.exit()` to stop the worker at once.
 
 ### `"close"`
 

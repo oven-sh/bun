@@ -1800,6 +1800,23 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     pub fn put_assume_capacity(&mut self, key: &[u8], value: V) {
         let _ = self.put(key, value);
     }
+
+    pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        Ok(
+            match self
+                .inner
+                .raw_entry_mut()
+                .from_key_hashed_nocheck(hash, key)
+            {
+                RawEntryMut::Occupied(e) => e.into_mut(),
+                RawEntryMut::Vacant(e) => {
+                    e.insert_hashed_nocheck(hash, owned_key::<A>(key), value).1
+                }
+            },
+        )
+    }
 }
 
 /// `StringHashMap::get_or_put` result — `std::HashMap` cannot hand out
@@ -1832,23 +1849,6 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
                         .insert_hashed_nocheck(hash, owned_key::<A>(key), V::default())
                         .1,
                 },
-            },
-        )
-    }
-
-    pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
-        use hashbrown::hash_map::RawEntryMut;
-        let hash = self.hash_key(key);
-        Ok(
-            match self
-                .inner
-                .raw_entry_mut()
-                .from_key_hashed_nocheck(hash, key)
-            {
-                RawEntryMut::Occupied(e) => e.into_mut(),
-                RawEntryMut::Vacant(e) => {
-                    e.insert_hashed_nocheck(hash, owned_key::<A>(key), value).1
-                }
             },
         )
     }

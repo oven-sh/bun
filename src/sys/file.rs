@@ -5,7 +5,6 @@
 //! are safe to drop). Use [`File::into_raw`] to hand the fd off,
 //! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
 //! All methods preserve OS errno via [`crate::Maybe`].
-#![allow(clippy::module_inception)]
 
 use super::*;
 
@@ -143,9 +142,6 @@ impl File {
     // ── read / write ─────────────────────────────────────────────────────
     pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> {
         read(self.handle, buf)
-    }
-    pub fn write(&self, buf: &[u8]) -> Maybe<usize> {
-        write(self.handle, buf)
     }
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {

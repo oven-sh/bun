@@ -1,0 +1,11 @@
+# j0 = main's line, m1 = option first (H2), j1 = token test at the site first (H1)
+## j0 -> m1
+SAME            0       0   1201   1201   111   111  <p::P<false, false>>::parse_jsx_element
+SAME            0       0   1202   1202   111   111  <p::P<false, true>>::parse_jsx_element
+DIFF            0       0   1116   1128   102   104  <p::P<true, false>>::parse_jsx_element
+SAME            0       0   1117   1117   102   102  <p::P<true, true>>::parse_jsx_element
+## j0 -> j1
+SAME            0       0   1201   1201   111   111  <p::P<false, false>>::parse_jsx_element
+SAME            0       0   1202   1202   111   111  <p::P<false, true>>::parse_jsx_element
+DIFF            0       0   1116   1183   102   111  <p::P<true, false>>::parse_jsx_element
+DIFF            0       0   1117   1173   102   108  <p::P<true, true>>::parse_jsx_element

@@ -1,0 +1,62 @@
+all functions: a 3318 b 3321; identical 3296; different 22; only a 0; only b 3; text bytes a 0 b 0 (+0)
+           bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF            0       0     66     66     2     2  <p::P<false, false>>::code_syntax_error
+DIFF            0       0    664    664    71    71  <p::P<false, false>>::parse_path
+DIFF            0       0     66     66     2     2  <p::P<false, true>>::code_syntax_error
+DIFF            0       0    664    664    71    71  <p::P<false, true>>::parse_path
+DIFF            0       0     66     66     2     2  <p::P<true, false>>::code_syntax_error
+ONLY-B                  0           154          11  <p::P<true, false>>::lint_arrow_expression_body
+ONLY-B                  0            50          12  <p::P<true, false>>::lint_is_arrow_before_colon
+DIFF            0       0    323    310    31    26  <p::P<true, false>>::parse_arrow_body
+DIFF            0       0    322    196    31    20  <p::P<true, false>>::parse_arrow_body_for_lint
+ONLY-B                  0            57          12  <p::P<true, false>>::parse_arrow_expression_body_for_lint
+DIFF            0       0    654    654    44    44  <p::P<true, false>>::parse_async_prefix_expr
+DIFF            0       0    429    429    35    35  <p::P<true, false>>::parse_async_prefix_expr_for_lint
+DIFF            0       0    664    664    71    71  <p::P<true, false>>::parse_path
+DIFF            0       0    440    441    49    49  <p::P<true, false>>::parse_stmt_fallthrough
+DIFF            0       0    529    529    24    24  <p::P<true, false>>::parse_stmt_named_like_cast
+DIFF            0       0    524    525    70    70  <p::P<true, false>>::pfx_t_identifier
+DIFF            0       0   1255   1256   139   139  <p::P<true, false>>::t_export
+DIFF            0       0    114    114    14    14  <p::P<true, false>>::type_expected
+DIFF            0       0     66     66     2     2  <p::P<true, true>>::code_syntax_error
+DIFF            0       0    664    664    71    71  <p::P<true, true>>::parse_path
+DIFF            0       0    529    529    24    24  <p::P<true, true>>::parse_stmt_named_like_cast
+DIFF            0       0    114    114    14    14  <p::P<true, true>>::type_expected
+other functions that differ (3):
+       66 ->     66 insns,    1 ->    1 jcc  <p::StartsForParseOnly>::for_lint
+     1829 ->   1830 insns,  168 ->  168 jcc  <parse::parse_entry::Parser>::parse_only::<function_identities::FunctionIdentities, <function_identities::FunctionIdentities>::of_text::{closure#0}>
+       98 ->     98 insns,    1 ->    1 jcc  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<p::StartsForParseOnly>>>
+only in b (3):
+         0 bytes    154 insns   11 jcc  <p::P<true, false>>::lint_arrow_expression_body
+         0 bytes     50 insns   12 jcc  <p::P<true, false>>::lint_is_arrow_before_colon
+         0 bytes     57 insns   12 jcc  <p::P<true, false>>::parse_arrow_expression_body_for_lint
+--- <p::P<false, false>>::code_syntax_error
+    --- 
+    +++ 
+    @@ -7,5 +7,5 @@
+     testq	%r14, %r14
+     je	.L0
+    -cmpb	$0, 592(%r14)
+    +cmpb	$0, 600(%r14)
+     je	.L0
+     movl	16(%rbp), %r11d
+--- <p::P<false, false>>::parse_path
+    --- 
+    +++ 
+    @@ -88,5 +88,5 @@
+     testq	%rax, %rax
+     je	.L10
+    -cmpb	$0, 592(%rax)
+    +cmpb	$0, 600(%rax)
+     jne	.L11
+     .L10:
+--- <p::P<false, true>>::code_syntax_error
+    --- 
+    +++ 
+    @@ -7,5 +7,5 @@
+     testq	%r14, %r14
+     je	.L0
+    -cmpb	$0, 592(%r14)
+    +cmpb	$0, 600(%r14)
+     je	.L0
+     movl	16(%rbp), %r11d

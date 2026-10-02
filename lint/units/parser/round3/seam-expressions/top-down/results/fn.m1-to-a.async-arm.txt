@@ -1,0 +1,256 @@
+all functions: a 3313 b 3318; identical 3311; different 2; only a 0; only b 5; text bytes a 0 b 0 (+0)
+           bytesA  bytesB  insnA  insnB  jccA  jccB  function
+ONLY-B                  0            42           5  <p::P<true, false>>::lint_async_type_lists
+ONLY-B                  0           170           8  <p::P<true, false>>::lint_try_async_type_parameters
+ONLY-B                  0            91           7  <p::P<true, false>>::lint_type_arguments_before_paren
+DIFF            0       0    651    654    44    44  <p::P<true, false>>::parse_async_prefix_expr
+ONLY-B                  0           429          35  <p::P<true, false>>::parse_async_prefix_expr_for_lint
+DIFF            0       0    437    440    49    49  <p::P<true, false>>::parse_stmt_fallthrough
+only in b (5):
+         0 bytes     24 insns    1 jcc  <bun_alloc::mimalloc_arena::MimallocArena>::alloc_slice_fill_with::<bun_ast::g::Arg, <p::P<true, false>>::parse_async_prefix_expr_for_lint::{closure#1
+         0 bytes     42 insns    5 jcc  <p::P<true, false>>::lint_async_type_lists
+         0 bytes    170 insns    8 jcc  <p::P<true, false>>::lint_try_async_type_parameters
+         0 bytes     91 insns    7 jcc  <p::P<true, false>>::lint_type_arguments_before_paren
+         0 bytes    429 insns   35 jcc  <p::P<true, false>>::parse_async_prefix_expr_for_lint
+--- <p::P<true, false>>::parse_async_prefix_expr
+    --- 
+    +++ 
+    @@ -6,317 +6,275 @@
+     pushq	%r12
+     pushq	%rbx
+    -subq	$328, %rsp
+    -movl	%r9d, -96(%rbp)
+    -movl	%r8d, %r15d
+    -movq	%rsi, %r9
+    +subq	$344, %rsp
+     movq	%rdi, %rbx
+     movq	3296(%rsi), %r14
+     testq	%r14, %r14
+    -je	.L0
+    -movq	%rbx, -216(%rbp)
+    -movq	752(%r9), %rbx
+    -testq	$-2147483648, %rbx
+    -jne	.L1
+    -movq	%r9, %r12
+    -movl	%edx, %r13d
+    -movl	%edx, -208(%rbp)
+    -leaq	-208(%rbp), %rsi
+    +jne	.L0
+    +movzbl	836(%rsi), %ecx
+    +movzbl	849(%rsi), %eax
+    +cmpl	$88, %eax
+    +setne	%dil
+    +orb	%cl, %dil
+    +je	.L1
+    +cmpb	$22, %r8b
+    +setae	%dil
+    +orb	%cl, %dil
+    +je	.L2
+    +.L3:
+    +movq	2512(%rsi), %rax
+    +movq	8(%rax), %rdi
+    +cmpq	$.Ldata, %rdi
+    +ja	.L4
+    +movq	16(%rax), %rcx
+    +addq	%rdi, %rcx
+    +cmpq	$.Ldata+5, %rcx
+    +jae	.L5
+    +.L4:
+    +movl	2536(%rsi), %r14d
+     movq	%r14, %rdi
+    -callq	<bun_collections::zig_hash_map::HashMap<i32, i32>>::get_or_put_slot
+    -movq	40(%r14), %rsi
+    -testb	$1, %dl
+    -je	.L2
+    -cmpq	%rsi, %rax
+    -jae	.L3
+    -movq	32(%r14), %rcx
+    -leaq	(%rax,%rax,2), %rdx
+    -cmpb	$0, (%rcx,%rdx,4)
+    -movl	%r13d, %edx
+    -movq	%r12, %r9
+    -jne	.L4
+    -movl	$.Ldata, %edi
+    -callq	core::option::unwrap_failed
+    -.L2:
+    -cmpq	%rsi, %rax
+    -jae	.L3
+    -movq	32(%r14), %rcx
+    -leaq	(%rax,%rax,2), %rsi
+    -movl	$1, (%rcx,%rsi,4)
+    -movl	%r13d, %edx
+    -movl	%r13d, 4(%rcx,%rsi,4)
+    -movq	%r12, %r9
+    -.L4:
+    -leaq	(%rax,%rax,2), %rax
+    -movl	%ebx, 8(%rcx,%rax,4)
+    -movq	-216(%rbp), %rbx
+    -.L0:
+    -movzbl	836(%r9), %ecx
+    -movzbl	849(%r9), %eax
+    -cmpl	$88, %eax
+    -setne	%sil
+    -orb	%cl, %sil
+    -cmpb	$1, %sil
+    -jne	.L5
+    -cmpb	$22, %r15b
+    -setae	%sil
+    -orb	%cl, %sil
+    +movl	%r14d, %r8d
+    +cmpl	2540(%rsi), %r14d
+     je	.L6
+     .L7:
+    -movq	2512(%r9), %rax
+    -movq	8(%rax), %rsi
+    -cmpq	$.Ldata, %rsi
+    -ja	.L8
+    -movq	16(%rax), %rcx
+    -addq	%rsi, %rcx
+    -cmpq	$.Ldata+5, %rcx
+    -jae	.L9
+    -.L8:
+    -movl	2536(%r9), %r14d
+    -movq	%r14, %r8
+    -movl	%r14d, %esi
+    -cmpl	2540(%r9), %r14d
+    -je	.L10
+    -.L11:
+     movl	$2147483648, %ecx
+    -movq	2520(%r9), %rdi
+    -shlq	$4, %r8
+    -movq	$.Ldata, (%rdi,%r8)
+    -movq	$5, 8(%rdi,%r8)
+    -incl	%esi
+    -movl	%esi, 2536(%r9)
+    +movq	2520(%rsi), %r9
+    +shlq	$4, %rdi
+    +movq	$.Ldata, (%r9,%rdi)
+    +movq	$5, 8(%r9,%rdi)
+    +incl	%r8d
+    +movl	%r8d, 2536(%rsi)
+     movl	104(%rax), %eax
+     andl	$268435455, %r14d
+    -jmp	.L12
+    -.L5:
+    +jmp	.L8
+--- <p::P<true, false>>::parse_stmt_fallthrough
+    --- 
+    +++ 
+    @@ -40,5 +40,5 @@
+     jne	.L6
+     movaps	-176(%rbp), %xmm0
+    -movaps	%xmm0, -112(%rbp)
+    +movaps	%xmm0, -96(%rbp)
+     movl	%r12d, %r14d
+     jmp	.L7
+    @@ -96,5 +96,5 @@
+     jb	.L9
+     .L1:
+    -movq	%r13, -88(%rbp)
+    +movq	%r13, -104(%rbp)
+     movq	616(%r15), %rdx
+     movq	752(%r15), %r14
+    @@ -107,5 +107,5 @@
+     movl	%ecx, %r13d
+     cmpq	$5, %rax
+    -movq	%r9, -160(%rbp)
+    +movq	%r9, -152(%rbp)
+     jne	.L16
+     movq	608(%r15), %rax
+    @@ -139,9 +139,9 @@
+     movq	%r15, %rsi
+     movl	%r14d, %edx
+    -movq	-160(%rbp), %rcx
+    +movq	-152(%rbp), %rcx
+     callq	<bun_js_parser::p::P<true, false>>::parse_fn_stmt
+     jmp	.L20
+     .L16:
+    -movq	%r12, -120(%rbp)
+    +movq	%r12, -112(%rbp)
+     leaq	-80(%rbp), %rdi
+     movq	%r15, %rsi
+    @@ -159,10 +159,10 @@
+     jne	.L6
+     movaps	-176(%rbp), %xmm0
+    -movaps	%xmm0, -112(%rbp)
+    +movaps	%xmm0, -96(%rbp)
+     movl	%r12d, %r14d
+    -movq	-120(%rbp), %r12
+    +movq	-112(%rbp), %r12
+     .L21:
+    -cmpb	$21, -112(%rbp)
+    -movq	-160(%rbp), %rdx
+    +cmpb	$21, -96(%rbp)
+    +movq	-152(%rbp), %rdx
+     jne	.L7
+     cmpb	$21, 849(%r15)
+    @@ -178,5 +178,5 @@
+     .L25:
+     xorl	%eax, %eax
+    -movq	-88(%rbp), %rcx
+    +movq	-104(%rbp), %rcx
+     cmpl	$1701869940, (%rcx)
+     setne	%al
+    @@ -209,15 +209,17 @@
+     xorl	%r9d, %r9d
+     callq	<bun_js_parser::p::P<true, false>>::parse_async_prefix_expr
+    -movzbl	-80(%rbp), %eax
+    -cmpb	$-1, %al
+    +movzbl	-80(%rbp), %ecx
+    +movzbl	-79(%rbp), %eax
+    +cmpb	$-1, %cl
+     je	.L31
+    -movzwl	-79(%rbp), %ecx
+    -movq	-77(%rbp), %rdx
+    -movq	%rdx, -109(%rbp)
+    -movq	-72(%rbp), %rdx
+    -movq	%rdx, -104(%rbp)
+    -movb	%al, -112(%rbp)
+    -movw	%cx, -111(%rbp)
+    -leaq	-112(%rbp), %rsi
+    +movzbl	-78(%rbp), %edx
+    +movq	-77(%rbp), %rsi
+    +movq	%rsi, -93(%rbp)
+    +movq	-72(%rbp), %rsi
+    +movq	%rsi, -88(%rbp)
+    +movb	%cl, -96(%rbp)
+    +movb	%al, -95(%rbp)
+    +movb	%dl, -94(%rbp)
+    +leaq	-96(%rbp), %rsi
+     movq	%r15, %rdi
+     xorl	%edx, %edx
+    @@ -235,5 +237,5 @@
+     jmp	.L20
+     .L33:
+    -movq	-88(%rbp), %rsi
+    +movq	-104(%rbp), %rsi
+     movzwl	4(%rsi), %eax
+     movzbl	6(%rsi), %ecx
+    @@ -249,5 +251,5 @@
+     jmp	.L34
+     .L35:
+    -movq	-88(%rbp), %rcx
+    +movq	-104(%rbp), %rcx
+     movl	(%rcx), %eax
+     movzwl	4(%rcx), %edi
+    @@ -266,5 +268,5 @@
+     .L37:
+     movabsq	$8386654075301880417, %rax
+    -movq	-88(%rbp), %rcx
+    +movq	-104(%rbp), %rcx
+     cmpq	%rax, (%rcx)
+     jne	.L7
+    @@ -272,5 +274,5 @@
+     jmp	.L34
+     .L38:
+    -movq	-88(%rbp), %rax
+    +movq	-104(%rbp), %rax
+     movzbl	8(%rax), %r8d
+     movq	(%rax), %rsi
+    @@ -301,4 +303,5 @@
+     .L18:
+     movb	$4, 4(%rbx)
+    +.L43:
+     movb	%al, 5(%rbx)
+     movl	$-1, (%rbx)
+    @@ -308,10 +311,10 @@

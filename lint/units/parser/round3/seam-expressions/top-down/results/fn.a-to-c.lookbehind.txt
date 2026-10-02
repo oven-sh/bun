@@ -1,0 +1,25 @@
+all functions: a 3318 b 3319; identical 3299; different 19; only a 0; only b 1; text bytes a 0 b 0 (+0)
+           bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF            0       0     66     66     2     2  <p::P<false, false>>::code_syntax_error
+DIFF            0       0    664    664    71    71  <p::P<false, false>>::parse_path
+DIFF            0       0     66     66     2     2  <p::P<false, true>>::code_syntax_error
+DIFF            0       0    664    664    71    71  <p::P<false, true>>::parse_path
+DIFF            0       0     66     66     2     2  <p::P<true, false>>::code_syntax_error
+ONLY-B                  0           150          33  <p::P<true, false>>::lint_flags_of_arrow_body
+DIFF            0       0    322    337    31    33  <p::P<true, false>>::parse_arrow_body_for_lint
+DIFF            0       0    429    408    35    35  <p::P<true, false>>::parse_async_prefix_expr_for_lint
+DIFF            0       0    664    664    71    71  <p::P<true, false>>::parse_path
+DIFF            0       0    529    529    24    24  <p::P<true, false>>::parse_stmt_named_like_cast
+DIFF            0       0    361    377    20    22  <p::P<true, false>>::pfx_t_less_than_for_lint
+DIFF            0       0    173    177    13    13  <p::P<true, false>>::pfx_t_open_paren_for_lint
+DIFF            0       0    114    114    14    14  <p::P<true, false>>::type_expected
+DIFF            0       0     66     66     2     2  <p::P<true, true>>::code_syntax_error
+DIFF            0       0    664    664    71    71  <p::P<true, true>>::parse_path
+DIFF            0       0    529    529    24    24  <p::P<true, true>>::parse_stmt_named_like_cast
+DIFF            0       0    114    114    14    14  <p::P<true, true>>::type_expected
+other functions that differ (3):
+       66 ->     66 insns,    1 ->    1 jcc  <p::StartsForParseOnly>::for_lint
+     1829 ->   1830 insns,  168 ->  168 jcc  <parse::parse_entry::Parser>::parse_only::<function_identities::FunctionIdentities, <function_identities::FunctionIdentities>::of_text::{closure#0}>
+       98 ->     98 insns,    1 ->    1 jcc  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<p::StartsForParseOnly>>>
+only in b (1):
+         0 bytes    150 insns   33 jcc  <p::P<true, false>>::lint_flags_of_arrow_body

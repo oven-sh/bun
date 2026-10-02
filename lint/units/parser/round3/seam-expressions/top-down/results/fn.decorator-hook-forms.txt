@@ -1,0 +1,67 @@
+# parse_standard_decorator and its caller against k0 (no hook): f = gate nested in the '(' arm, g = record after with a saved loc, h = gate hoisted (token && option), q = gate hoisted (option && token), r = gate for the whole function at its top, n = no hook at '@(', s = gate at the caller + twin
+## k0 -> f
+DIFF            0       0    439    438    42    42  <p::P<false, false>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, false>>::parse_type_script_decorators
+DIFF            0       0    398    399    39    39  <p::P<false, true>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, true>>::parse_type_script_decorators
+DIFF            0       0    435    477    44    50  <p::P<true, false>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, false>>::parse_type_script_decorators
+DIFF            0       0    401    402    44    44  <p::P<true, true>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, true>>::parse_type_script_decorators
+## k0 -> g
+DIFF            0       0    439    443    42    43  <p::P<false, false>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, false>>::parse_type_script_decorators
+DIFF            0       0    398    402    39    40  <p::P<false, true>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, true>>::parse_type_script_decorators
+DIFF            0       0    435    495    44    52  <p::P<true, false>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, false>>::parse_type_script_decorators
+DIFF            0       0    401    405    44    45  <p::P<true, true>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, true>>::parse_type_script_decorators
+## k0 -> h
+SAME            0       0    439    439    42    42  <p::P<false, false>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, false>>::parse_type_script_decorators
+SAME            0       0    398    398    39    39  <p::P<false, true>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, true>>::parse_type_script_decorators
+DIFF            0       0    435    488    44    52  <p::P<true, false>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, false>>::parse_type_script_decorators
+SAME            0       0    401    401    44    44  <p::P<true, true>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, true>>::parse_type_script_decorators
+## k0 -> q
+SAME            0       0    439    439    42    42  <p::P<false, false>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, false>>::parse_type_script_decorators
+SAME            0       0    398    398    39    39  <p::P<false, true>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, true>>::parse_type_script_decorators
+DIFF            0       0    435    487    44    51  <p::P<true, false>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, false>>::parse_type_script_decorators
+SAME            0       0    401    401    44    44  <p::P<true, true>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, true>>::parse_type_script_decorators
+## k0 -> r
+SAME            0       0    439    439    42    42  <p::P<false, false>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, false>>::parse_type_script_decorators
+SAME            0       0    398    398    39    39  <p::P<false, true>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, true>>::parse_type_script_decorators
+DIFF            0       0    435    480    44    50  <p::P<true, false>>::parse_standard_decorator
+DIFF            0       0    153    142    13    11  <p::P<true, false>>::parse_type_script_decorators
+SAME            0       0    401    401    44    44  <p::P<true, true>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, true>>::parse_type_script_decorators
+         0 bytes     30 insns    3 jcc  <p::P<true, false>>::parse_standard_decorator_after_paren
+         0 bytes     38 insns    4 jcc  <p::P<true, false>>::parse_standard_decorator_for_lint
+## k0 -> n
+SAME            0       0    439    439    42    42  <p::P<false, false>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, false>>::parse_type_script_decorators
+SAME            0       0    398    398    39    39  <p::P<false, true>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, true>>::parse_type_script_decorators
+DIFF            0       0    435    475    44    49  <p::P<true, false>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, false>>::parse_type_script_decorators
+SAME            0       0    401    401    44    44  <p::P<true, true>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, true>>::parse_type_script_decorators
+## k0 -> s
+SAME            0       0    439    439    42    42  <p::P<false, false>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, false>>::parse_type_script_decorators
+SAME            0       0    398    398    39    39  <p::P<false, true>>::parse_standard_decorator
+SAME            0       0    154    154    12    12  <p::P<false, true>>::parse_type_script_decorators
+SAME            0       0    435    435    44    44  <p::P<true, false>>::parse_standard_decorator
+DIFF            0       0    153    185    13    16  <p::P<true, false>>::parse_type_script_decorators
+SAME            0       0    401    401    44    44  <p::P<true, true>>::parse_standard_decorator
+SAME            0       0    153    153    13    13  <p::P<true, true>>::parse_type_script_decorators
+         0 bytes    488 insns   50 jcc  <p::P<true, false>>::parse_standard_decorator_for_lint

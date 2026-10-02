@@ -1,0 +1,482 @@
+diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
+--- a/src/js_parser
++++ b/src/js_parser
+@@ -708,12 +708,9 @@
+ 
+         // Are these arguments to an arrow function?
+         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
+-        // "a ? -<T>(b) : c": an operand is no arrow function, so the ":" after it starts no return type
+         if is_arrow_fn
+             || opts.force_arrow_fn
+-            || (Self::IS_TYPESCRIPT_ENABLED
+-                && p.lexer.token == T::TColon
+-                && level.lte(Level::Assign))
++            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+         {
+             // Arrow functions are not allowed inside certain expressions
+             if level.gt(Level::Assign) {
+@@ -798,23 +795,7 @@
+                     }
+                 }
+                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
+-                // "a ? (b) => (c) : d => e": after parameters that could be an expression, the body is before the ":" too
+-                let is_body_before_colon = Self::IS_TYPESCRIPT_ENABLED
+-                    && opts.is_after_question_and_before_colon
+-                    && (p.paren_expr_has_type_parameters(loc, opts.is_async)
+-                        || Self::arrow_parameters_could_be_expr(
+-                            items,
+-                            spread_range,
+-                            type_colon_range,
+-                            &errors,
+-                        ));
+-                let body_flags = if is_body_before_colon {
+-                    EFlags::AfterQuestionAndBeforeColon
+-                } else {
+-                    EFlags::None
+-                };
+-                let mut arrow =
+-                    p.parse_arrow_body_with_flags(args_slice, &mut arrow_data, body_flags)?;
++                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+                 arrow.is_async = opts.is_async;
+                 arrow.has_rest_arg = spread_range.len > 0;
+                 p.pop_scope();
+@@ -1073,7 +1054,7 @@
+                     EFlags::None
+                 };
+                 let mut arrow =
+-                    p.parse_arrow_body_with_flags(args_slice, &mut arrow_data, body_flags)?;
++                    p.parse_arrow_body_for_lint(args_slice, &mut arrow_data, body_flags)?;
+                 arrow.is_async = opts.is_async;
+                 arrow.has_rest_arg = spread_range.len > 0;
+                 p.pop_scope();
+@@ -1245,7 +1226,7 @@
+     ) -> Result<(), Error> {
+         self.lexer.expect(T::TColon)?;
+         self.build_typescript_return_type()?;
+-        self.parse_arrow_body(&mut [], data)?;
++        self.parse_arrow_body_for_lint(&mut [], data, EFlags::None)?;
+         self.lexer.expect(T::TColon)?;
+         Ok(())
+     }
+@@ -2276,9 +2257,7 @@
+                             needs_async_loc: async_range.loc,
+                             ..Default::default()
+                         };
+-                        let body_flags = Self::arrow_body_flags(flags);
+-                        let arrow_body =
+-                            p.parse_arrow_body_with_flags(args, &mut data, body_flags)?;
++                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
+                         p.pop_scope();
+                         return Ok(p.new_expr(arrow_body, async_range.loc));
+                     }
+@@ -2315,10 +2294,8 @@
+                                 needs_async_loc: args[0].binding.loc,
+                                 ..Default::default()
+                             };
+-                            let body_flags = Self::arrow_body_flags(flags);
+-                            let parsed = p.parse_arrow_body_with_flags(args, &mut data, body_flags);
+                             // Pop the scope on the error path too.
+-                            let mut arrow_body = match parsed {
++                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+                                 Ok(body) => body,
+                                 Err(e) => {
+                                     p.pop_scope();
+@@ -2336,19 +2313,16 @@
+                 // "async () => {}"
+                 T::TOpenParen => {
+                     p.lexer.next()?;
+-                    let opts = ParenExprOpts {
+-                        is_async: true,
+-                        is_after_question_and_before_colon: flags
+-                            == EFlags::AfterQuestionAndBeforeColon,
+-                        ..Default::default()
+-                    };
+-                    if !SCAN_ONLY
+-                        && Self::IS_TYPESCRIPT_ENABLED
+-                        && p.starts_for_parse_only.is_some()
+-                    {
+-                        return p.parse_paren_expr_for_lint_cold(async_range.loc, level, opts);
+-                    }
+-                    return p.parse_paren_expr(async_range.loc, level, opts);
++                    return p.parse_paren_expr(
++                        async_range.loc,
++                        level,
++                        ParenExprOpts {
++                            is_async: true,
++                            is_after_question_and_before_colon: flags
++                                == EFlags::AfterQuestionAndBeforeColon,
++                            ..Default::default()
++                        },
++                    );
+                 }
+ 
+                 // "async<T>()"
+@@ -2357,37 +2331,22 @@
+                     if Self::IS_TYPESCRIPT_ENABLED
+                         && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
+                     {
+-                        let mut lint_type_lists = None;
+-                        let skipped = if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+-                            p.lint_try_async_type_parameters(&mut lint_type_lists)?
+-                        } else {
+-                            p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()
+-                        };
+-                        match skipped {
++                        match p
++                            .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
++                            ) {
+                             SkipTypeParameterResult::DidNotSkipAnything => {}
+                             result => {
+                                 p.lexer.next()?;
+-                                // In a JSX file these type parameters prove an arrow function, as in the reference
+-                                let is_before_colon = flags == EFlags::AfterQuestionAndBeforeColon
+-                                    && !p.is_jsx_enabled();
+-                                let opts = ParenExprOpts {
+-                                    is_async: true,
+-                                    force_arrow_fn: result
+-                                        == SkipTypeParameterResult::DefinitelyTypeParameters,
+-                                    is_after_question_and_before_colon: is_before_colon,
+-                                    ..Default::default()
+-                                };
+-                                if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+-                                    let value = p.parse_paren_expr_for_lint_cold(
+-                                        async_range.loc,
+-                                        level,
+-                                        opts,
+-                                    )?;
+-                                    let lists = lint_type_lists;
+-                                    p.lint_async_type_lists(async_range.loc, value, lists);
+-                                    return Ok(value);
+-                                }
+-                                return p.parse_paren_expr(async_range.loc, level, opts);
++                                return p.parse_paren_expr(
++                                    async_range.loc,
++                                    level,
++                                    ParenExprOpts {
++                                        is_async: true,
++                                        force_arrow_fn: result
++                                            == SkipTypeParameterResult::DefinitelyTypeParameters,
++                                        ..Default::default()
++                                    },
++                                );
+                             }
+                         }
+                     }
+diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
+--- a/src/js_parser
++++ b/src/js_parser
+@@ -640,11 +640,94 @@
+         args: &'a mut [G::Arg],
+         data: &mut FnOrArrowDataParse,
+     ) -> Result<E::Arrow, Error> {
+-        self.parse_arrow_body_with_flags(args, data, EFlags::None)
++        let p = self;
++        let arrow_loc = p.lexer.loc();
++
++        // Newlines are not allowed before "=>"
++        if p.lexer.has_newline_before {
++            p.log().add_range_error(
++                Some(p.source),
++                p.lexer.range(),
++                b"Unexpected newline before \"=>\"",
++            );
++            return Err(crate::Error::SyntaxError);
++        }
++
++        p.lexer.expect(T::TEqualsGreaterThan)?;
++
++        for arg in args.iter_mut() {
++            let opts = ParseStatementOptions::default();
++            p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg.binding, &opts)?;
++        }
++
++        // The ability to use "this" and "super()" is inherited by arrow functions
++        data.allow_super_call = p.fn_or_arrow_data_parse.allow_super_call;
++        data.allow_super_property = p.fn_or_arrow_data_parse.allow_super_property;
++        data.is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
++
++        let args_slice = bun_ast::StoreSlice::<G::Arg>::new_mut(args);
++
++        if p.lexer.token == T::TOpenBrace {
++            let body = p.parse_fn_body(data)?;
++            p.after_arrow_body_loc = p.lexer.loc();
++            let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
++                || p.lexer.has_react_hooks_block_suppression;
++            if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
++                p.lexer.has_react_hooks_suppression_before = false;
++            }
++            return Ok(E::Arrow {
++                args: args_slice,
++                body,
++                has_react_hooks_suppression,
++                ..Default::default()
++            });
++        }
++
++        if let Some(starts) = &mut p.starts_for_parse_only {
++            starts
++                .arrow_expression_bodies
++                .insert(arrow_loc.start, p.lexer.loc().start);
++        }
++        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, arrow_loc)?;
++        // `pop_scope` is called explicitly before each return below.
++
++        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
++
++        p.fn_or_arrow_data_parse = data.clone();
++        let expr = match p.parse_expr(Level::Comma) {
++            Ok(e) => e,
++            Err(err) => {
++                // The error path returns without restoring fn_or_arrow_data_parse;
++                // only the scope pop runs.
++                p.pop_scope();
++                return Err(err);
++            }
++        };
++        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
++
++        let ret_stmt = p.s(S::Return { value: Some(expr) }, expr.loc);
++        let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
++
++        p.pop_scope();
++        let has_react_hooks_suppression =
++            p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression;
++        if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
++            p.lexer.has_react_hooks_suppression_before = false;
++        }
++        Ok(E::Arrow {
++            args: args_slice,
++            prefer_expr: true,
++            body: G::FnBody {
++                loc: arrow_loc,
++                stmts: bun_ast::StoreSlice::new_mut(stmts),
++            },
++            has_react_hooks_suppression,
++            ..Default::default()
++        })
+     }
+ 
+-    /// `parse_arrow_body`, where a body that is an expression is read with `flags`.
+-    pub(crate) fn parse_arrow_body_with_flags(
++    /// `parse_arrow_body` of a lint parse, where a body that is an expression is read with `flags`.
++    pub(crate) fn parse_arrow_body_for_lint(
+         &mut self,
+         args: &'a mut [G::Arg],
+         data: &mut FnOrArrowDataParse,
+diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
+--- a/src/js_parser
++++ b/src/js_parser
+@@ -23,8 +23,8 @@
+         let tag = JSXTag::parse(p)?;
+ 
+         // The tag may have TypeScript type arguments: "<Foo<T>/>"
+-        if TYPESCRIPT && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan) {
+-            if p.starts_for_parse_only.is_some() {
++        if TYPESCRIPT {
++            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                 p.lint_jsx_type_arguments(loc)?;
+             } else {
+                 // Pass a flag to the type argument skipper because we need to call
+diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
+--- a/src/js_parser
++++ b/src/js_parser
+@@ -47,7 +47,7 @@
+         let loc = p.lexer.loc();
+         p.lexer.next()?;
+ 
+-        if !SCAN_ONLY && p.is_lint_parse() {
++        if Self::IS_TYPESCRIPT_ENABLED && !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+             return Self::pfx_t_open_paren_for_lint(p, loc, level, flags);
+         }
+ 
+@@ -104,12 +104,7 @@
+             is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
+             ..Default::default()
+         };
+-        // Only TypeScript has types after what may be parameters, which the one function drops.
+-        let value = if Self::IS_TYPESCRIPT_ENABLED {
+-            p.parse_paren_expr_for_lint(loc, level, opts)?
+-        } else {
+-            p.parse_paren_expr(loc, level, opts)?
+-        };
++        let value = p.parse_paren_expr_for_lint(loc, level, opts)?;
+         // An arrow function starts at the "(", and what parentheses hold starts after it.
+         if value.loc.start != loc.start
+             && let Some(starts) = &mut p.starts_for_parse_only
+@@ -322,9 +317,7 @@
+                 needs_async_loc: loc,
+                 ..Default::default()
+             };
+-            let body_flags = Self::arrow_body_flags(flags);
+-            let arrow_result =
+-                p.parse_arrow_body_with_flags(args, &mut fn_or_arrow_data, body_flags);
++            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+             p.pop_scope();
+             return Ok(p.new_expr(arrow_result?, loc));
+         }
+@@ -622,8 +615,8 @@
+         }
+ 
+         // Even anonymous classes can have TypeScript type parameters
+-        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+-            if p.starts_for_parse_only.is_some() {
++        if Self::IS_TYPESCRIPT_ENABLED {
++            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                 let owner = crate::parse::attached::Owner::class(class_keyword.loc);
+                 p.lint_type_parameters(Some(owner))?;
+             } else {
+@@ -690,8 +683,8 @@
+         }
+ 
+         // Even anonymous classes can have TypeScript type parameters
+-        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+-            if p.starts_for_parse_only.is_some() {
++        if Self::IS_TYPESCRIPT_ENABLED {
++            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                 let owner = crate::parse::attached::Owner::class(class_keyword.loc);
+                 p.lint_type_parameters(Some(owner))?;
+             } else {
+@@ -753,7 +746,7 @@
+         if Self::IS_TYPESCRIPT_ENABLED {
+             // Skip over TypeScript type arguments here if there are any
+             if p.lexer.token == T::TLessThan {
+-                if p.starts_for_parse_only.is_some() {
++                if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                     let _ = p.lint_type_arguments_in_expression(target);
+                 } else {
+                     let _ = p.try_skip_type_script_type_arguments_with_backtracking();
+@@ -994,23 +987,20 @@
+         //     <A = B>(x) => {}
+         if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
+             if p.is_ts_arrow_fn_jsx()? {
+-                if p.starts_for_parse_only.is_some() {
+-                    let owner = crate::parse::attached::Owner::arrow(loc);
+-                    p.lint_type_parameters(Some(owner))?;
+-                } else {
+-                    let _ = p.skip_type_script_type_parameters(
+-                        TypeParameterFlag::ALLOW_CONST_MODIFIER,
+-                    )?;
+-                }
+-                p.lexer.expect(T::TOpenParen)?;
+-                let opts = ParenExprOpts {
+-                    force_arrow_fn: true,
+-                    ..Default::default()
+-                };
+                 if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+-                    return p.parse_paren_expr_for_lint_cold(loc, level, opts);
++                    return Self::pfx_tsx_arrow_for_lint(p, loc, level);
+                 }
+-                return p.parse_paren_expr(loc, level, opts);
++                let _ =
++                    p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
++                p.lexer.expect(T::TOpenParen)?;
++                return p.parse_paren_expr(
++                    loc,
++                    level,
++                    ParenExprOpts {
++                        force_arrow_fn: true,
++                        ..Default::default()
++                    },
++                );
+             }
+         }
+ 
+@@ -1046,8 +1036,6 @@
+                         ParenExprOpts {
+                             force_arrow_fn: result
+                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
+-                            is_after_question_and_before_colon: flags
+-                                == EFlags::AfterQuestionAndBeforeColon,
+                             ..Default::default()
+                         },
+                     );
+@@ -1065,6 +1053,23 @@
+         Err(crate::Error::SyntaxError)
+     }
+ 
++    /// `<T,>(x) => {}` of a lint parse of a JSX file, at the `<`: the type parameters are built and recorded for the arrow function.
++    #[cold]
++    #[inline(never)]
++    fn pfx_tsx_arrow_for_lint(p: &mut Self, loc: bun_ast::Loc, level: Level) -> PResult<Expr> {
++        let owner = crate::parse::attached::Owner::arrow(loc);
++        p.lint_type_parameters(Some(owner))?;
++        p.lexer.expect(T::TOpenParen)?;
++        p.parse_paren_expr_for_lint(
++            loc,
++            level,
++            ParenExprOpts {
++                force_arrow_fn: true,
++                ..Default::default()
++            },
++        )
++    }
++
+     /// `<T>x`, `<T>(x)` and `<T>(x) => {}` of a lint parse, at the `<`: an assertion is recorded around its whole operand.
+     #[cold]
+     #[inline(never)]
+diff -ru --label a/src/js_parser --label b/src/js_parser a/src/js_parser b/src/js_parser
+--- a/src/js_parser
++++ b/src/js_parser
+@@ -68,6 +68,20 @@
+         Ok(ExprNodeList::from_bump_vec(decorators))
+     }
+ 
++    /// `@(expr)` of a lint parse of TypeScript, at the `(`: what the parentheses hold is recorded.
++    #[cold]
++    #[inline(never)]
++    fn lint_parenthesized_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
++        let open = self.lexer.loc();
++        self.lexer.next()?;
++        let expr = self.parse_expr(Level::Lowest)?;
++        if let Some(starts) = &mut self.starts_for_parse_only {
++            starts.wrappers.parenthesized(expr, open, self.lexer.loc());
++        }
++        self.lexer.expect(T::TCloseParen)?;
++        Ok(expr)
++    }
++
+     /// Parse a standard (TC39) decorator expression following the `@` token.
+     ///
+     /// DecoratorExpression:
+@@ -80,14 +94,11 @@
+ 
+         // @(Expression) — parenthesized, any expression allowed
+         if p.lexer.token == T::TOpenParen {
+-            let open = p.lexer.loc();
++            if Self::IS_TYPESCRIPT_ENABLED && !SCAN_ONLY && p.starts_for_parse_only.is_some() {
++                return p.lint_parenthesized_decorator();
++            }
+             p.lexer.next()?;
+             let expr = p.parse_expr(Level::Lowest)?;
+-            if let Some(starts) = &mut p.starts_for_parse_only
+-                && starts.is_lint
+-            {
+-                starts.wrappers.parenthesized(expr, open, p.lexer.loc());
+-            }
+             p.lexer.expect(T::TCloseParen)?;
+             return Ok(expr);
+         }
+@@ -199,15 +210,14 @@
+ 
+                 _ => {
+                     // "@x<y>" / "@x.y<z>"
+-                    if Self::IS_TYPESCRIPT_ENABLED
+-                        && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan)
+-                    {
+-                        let has_type_arguments = if p.starts_for_parse_only.is_some() {
+-                            let of = crate::parse::generics::TypeArgumentsOf::Expression;
+-                            p.lint_type_arguments_after(expr, of)?
+-                        } else {
+-                            p.skip_type_script_type_arguments::<false, false>()?
+-                        };
++                    if Self::IS_TYPESCRIPT_ENABLED {
++                        let has_type_arguments =
++                            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
++                                let of = crate::parse::generics::TypeArgumentsOf::Expression;
++                                p.lint_type_arguments_after(expr, of)?
++                            } else {
++                                p.skip_type_script_type_arguments::<false, false>()?
++                            };
+                         if has_type_arguments {
+                             continue;
+                         }

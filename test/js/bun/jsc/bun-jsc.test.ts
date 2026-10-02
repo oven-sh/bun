@@ -686,3 +686,25 @@ describe("JsRef::Weak liveness", () => {
     expect(kept.keep).toBe(true);
   });
 });
+
+for (const mode of ["main", "worker"]) {
+  // Worker VMs do not expose the --expose-gc global.
+  const kinds = mode === "main" ? ["bun", "global", "fullGC", "gcAndSweep"] : ["bun", "fullGC", "gcAndSweep"];
+  it.concurrent.each(kinds)(
+    `forced %s GC releases objects retained by concurrent JIT plans in a ${mode} VM`,
+    async kind => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--expose-gc", import.meta.dir + "/forced-gc-jit-worklist-fixture.mjs", kind, mode],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ iterations: 300, failures: 0, failureIterations: [] }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+}

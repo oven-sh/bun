@@ -645,8 +645,6 @@ mod _impl {
         pub(crate) fn close(&mut self) {
             // Idempotent: a handle that was never (successfully) initialized,
             // or that was already closed, has no CCtx/DCtx to free.
-            // No reset before the free: it frees the dictionary under a running worker job
-            // (https://github.com/oven-sh/bun/issues/44201).
             if self.state.is_some() {
                 self.deinit_state();
             }

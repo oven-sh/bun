@@ -12,7 +12,7 @@ import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 
-describeWithContainer("postgres", { image: "postgres_plain" }, container => {
+describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
   const url = () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
 
   // Before the fix: B's Parse is never sent. C's Bind+Execute is written

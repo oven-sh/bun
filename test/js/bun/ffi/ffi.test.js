@@ -735,11 +735,15 @@ describe("ptr() returns an address that stays valid", () => {
         BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
         BUN_JSC_thresholdForOptimizeSoon: "100",
       },
-      stderr: "inherit",
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual({ moved: false, value: 42.5 });
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '{"moved":false,"value":42.5}\n',
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

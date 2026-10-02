@@ -31,6 +31,10 @@ use crate::{Error, PackageManager};
 impl PackageManager {
     /// Queues a git task; it counts as pending from now on.
     pub(crate) fn enqueue_git_task(&mut self, task: NonNull<Task::Task<'static>>) {
+        debug_assert!(
+            !self.waits_without_event_loop(),
+            "a git child exits through this thread's event loop"
+        );
         self.increment_pending_tasks(1);
         self.git_tasks.push_back(task);
     }

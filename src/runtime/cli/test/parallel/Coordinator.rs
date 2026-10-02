@@ -17,7 +17,7 @@ use bun_ptr::Interned;
 
 use super::frame::{self, Frame};
 use super::worker::{Worker, WorkerPipe};
-use crate::test_command::CommandLineReporter;
+use crate::test_command::{CommandLineReporter, FileFailureRecord, TestFailure};
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
@@ -60,7 +60,6 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) files_done: u32,
     pub(crate) spawned_count: u32,
     pub(crate) live_workers: u32,
-    pub(crate) crashed_files: Vec<u32>,
     pub(crate) aborted: Option<u32>,
     pub(crate) stop_reason: Option<StopReason>,
     pub(crate) last_printed_dot: bool,
@@ -75,6 +74,8 @@ pub(crate) struct FileTestRecords {
     /// `TestDone` payloads past the formatted line; see `runner::decode_test_case`.
     pub(crate) tests: Vec<Box<[u8]>>,
     pub(crate) elapsed_ns: u64,
+    /// What the coordinator recorded for the file itself, replayed after `tests`.
+    pub(crate) failure: Option<Box<FileFailureRecord>>,
 }
 
 /// Consecutive pre-`.ready` exits a worker slot tolerates before the slot
@@ -737,12 +738,30 @@ impl<'a> Coordinator<'a> {
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
         self.files_done += 1;
+        self.record_file_failure(file_idx, b"(aborted)", reason);
     }
 
     fn mark_crashed(&mut self, file_idx: u32, elapsed_ms: i64) {
-        self.crashed_files.push(file_idx);
         if let Some(file) = self.test_records.get_mut(file_idx as usize) {
             file.elapsed_ns = u64::try_from(elapsed_ms).unwrap_or(0) * bun_core::time::NS_PER_MS;
+        }
+        self.record_file_failure(
+            file_idx,
+            b"(worker crashed)",
+            b"worker process crashed before reporting results",
+        );
+    }
+
+    /// The failed testcase a structured reporter gets for a file that the coordinator fails itself.
+    fn record_file_failure(&mut self, file_idx: u32, name: &'static [u8], message: &[u8]) {
+        if let Some(file) = self.test_records.get_mut(file_idx as usize) {
+            file.failure = Some(Box::new(FileFailureRecord {
+                name,
+                failure: Some(TestFailure {
+                    message: message.to_vec(),
+                    ..Default::default()
+                }),
+            }));
         }
     }
 

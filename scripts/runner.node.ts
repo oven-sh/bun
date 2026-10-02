@@ -62,6 +62,7 @@ import {
   getFileUrl,
   getPullRequestFiles,
   getSecret,
+  isAbortedFileSuite,
   isBuildkite,
   isCI,
   isGithubAction,
@@ -1221,7 +1222,7 @@ async function runTests(): Promise<TestResult[]> {
       if (!ok && suites.size) {
         for (const t of bucketFiles) {
           const suite = suites.get(join("test", t).replaceAll("\\", "/"));
-          if (suite === undefined) incomplete.add(t);
+          if (suite === undefined || isAbortedFileSuite(suite)) incomplete.add(t);
           else if (suite.failures > 0) failed.add(t);
         }
       } else if (!ok) {

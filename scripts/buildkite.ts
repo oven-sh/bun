@@ -556,6 +556,15 @@ export function parseJunitFileSuites(xml: string): Map<string, JunitFileSuite> {
   return files;
 }
 
+/**
+ * True for a file that was still running when another `--parallel` worker panicked and
+ * that has no failure of its own: its only failed testcase is the `(aborted)` one the
+ * coordinator records. The file did not finish, so it is run again.
+ */
+export function isAbortedFileSuite(suite: JunitFileSuite): boolean {
+  return suite.failures === 1 && suite.cases.length === 1 && suite.cases[0]!.name === "(aborted)";
+}
+
 function getTailscale(): string {
   if (isMacOS) {
     const tailscaleApp = "/Applications/Tailscale.app/Contents/MacOS/tailscale";

@@ -646,8 +646,362 @@ describe("junit reporter", () => {
     expect(missing.failure[0]._).toStartWith("ResolveMessage: Cannot find module './does-not-exist.js' from ");
     expect(exitCode).toBe(1);
   });
+
+  describe.concurrent("a failure that is not a finished test", () => {
+    it("is (load error) for a file that fails to load", async () => {
+      await using dir = tempDir("junit-load-error", {
+        "package.json": "{}",
+        "a-good.test.js": `
+          import { test, expect } from "bun:test";
+          test("good", () => expect(1).toBe(1));
+        `,
+        "b-throw.test.js": `throw new Error("top-level-throw");`,
+        "c-syntax.test.js": `const x = ;`,
+        "d-import.test.js": `import "./does-not-exist.js";`,
+      });
+
+      const { stderr, exitCode, root, suites, xml } = await runJunit(dir);
+
+      expect(suites).toEqual([
+        { name: "a-good.test.js", tests: 1, failures: 0, cases: ["good"] },
+        {
+          name: "b-throw.test.js",
+          tests: 1,
+          failures: 1,
+          cases: [{ name: "(load error)", type: "Error", message: "top-level-throw" }],
+        },
+        {
+          name: "c-syntax.test.js",
+          tests: 1,
+          failures: 1,
+          cases: [{ name: "(load error)", type: "BuildMessage", message: "Unexpected ;" }],
+        },
+        {
+          name: "d-import.test.js",
+          tests: 1,
+          failures: 1,
+          cases: [
+            {
+              name: "(load error)",
+              type: "ResolveMessage",
+              message: expect.stringContaining("Cannot find module './does-not-exist.js'"),
+            },
+          ],
+        },
+      ]);
+      expect(root).toEqual({ tests: 4, failures: 3 });
+      // The body of <failure> has the location, as for a failed test.
+      expect(xml).toContain("at b-throw.test.js:1:");
+      expect(xml).toContain("at c-syntax.test.js:1:11");
+      // The console counts do not change.
+      expect(stderr).toContain(" 1 pass\n 3 fail\n 3 errors\n");
+      expect(exitCode).toBe(1);
+    });
+
+    it("is (describe callback) in the suite of the describe whose callback throws", async () => {
+      await using dir = tempDir("junit-describe-callback", {
+        "package.json": "{}",
+        "m.test.js": `
+          import { describe, expect, test } from "bun:test";
+          describe("boom", () => {
+            throw new Error("describe-body-throw");
+          });
+          describe("outer", () => {
+            describe("inner", () => {
+              throw new Error("nested-describe-throw");
+            });
+            test("in outer", () => expect(1).toBe(1));
+          });
+          test("beside", () => expect(1).toBe(1));
+        `,
+      });
+
+      const { stderr, exitCode, root, suites } = await runJunit(dir);
+
+      expect(suites).toEqual([
+        {
+          name: "m.test.js",
+          tests: 4,
+          failures: 2,
+          cases: ["beside"],
+          suites: [
+            {
+              name: "boom",
+              line: 3,
+              tests: 1,
+              failures: 1,
+              cases: [{ name: "(describe callback)", type: "Error", message: "describe-body-throw", line: 3 }],
+            },
+            {
+              name: "outer",
+              line: 6,
+              tests: 2,
+              failures: 1,
+              cases: ["in outer"],
+              suites: [
+                {
+                  name: "inner",
+                  line: 7,
+                  tests: 1,
+                  failures: 1,
+                  cases: [{ name: "(describe callback)", type: "Error", message: "nested-describe-throw", line: 7 }],
+                },
+              ],
+            },
+          ],
+        },
+      ]);
+      expect(root).toEqual({ tests: 4, failures: 2 });
+      expect(stderr).toContain(" 2 pass\n 0 fail\n 2 errors\n");
+      expect(exitCode).toBe(1);
+    });
+
+    it("is (unhandled error) for an error that no running test owns", async () => {
+      await using dir = tempDir("junit-unhandled-error", {
+        "package.json": "{}",
+        // The rejection is reported while the module waits. The module fails after
+        // that, which is the load error of the file, and its tests do not run.
+        "a-late.test.js": `
+          import { test } from "bun:test";
+          test("does not run", () => {});
+          Promise.reject(new Error("floating-rejection"));
+          await Bun.sleep(1);
+          throw new Error("late-load-failure");
+        `,
+        // A rejection that a hook leaks belongs to no test. Its record is beside the test that
+        // runs, so the suite of the describe block stays in one piece.
+        "b-hook.test.js": `
+          import { beforeEach, describe, expect, test } from "bun:test";
+          describe("suite", () => {
+            beforeEach(async () => {
+              Promise.reject(new Error("leaked-by-beforeEach"));
+              await Bun.sleep(1);
+            });
+            test("one", () => expect(1).toBe(1));
+            test("two", () => expect(1).toBe(1));
+          });
+        `,
+        // With two tests running, the error is not one test's failure. Its record is in the suite of the file.
+        "c-concurrent.test.js": `
+          import { describe, test } from "bun:test";
+          describe("group", () => {
+            test.concurrent("leaks", async () => {
+              Promise.reject(new Error("leaked-in-group"));
+              await Bun.sleep(1);
+            });
+            test.concurrent("waits", async () => {
+              await Bun.sleep(1);
+            });
+          });
+        `,
+      });
+
+      const { stderr, exitCode, root, suites } = await runJunit(dir);
+
+      const unhandled = message => ({ name: "(unhandled error)", type: "Error", message });
+      expect(suites).toEqual([
+        {
+          name: "a-late.test.js",
+          tests: 2,
+          failures: 2,
+          cases: [
+            unhandled("floating-rejection"),
+            { name: "(load error)", type: "Error", message: "late-load-failure" },
+          ],
+        },
+        {
+          name: "b-hook.test.js",
+          tests: 4,
+          failures: 2,
+          cases: [],
+          suites: [
+            {
+              name: "suite",
+              line: 3,
+              tests: 4,
+              failures: 2,
+              cases: [unhandled("leaked-by-beforeEach"), "one", unhandled("leaked-by-beforeEach"), "two"],
+            },
+          ],
+        },
+        {
+          name: "c-concurrent.test.js",
+          tests: 3,
+          failures: 1,
+          cases: [unhandled("leaked-in-group")],
+          suites: [{ name: "group", line: 3, tests: 2, failures: 0, cases: ["leaks", "waits"] }],
+        },
+      ]);
+      expect(root).toEqual({ tests: 9, failures: 5 });
+      expect(stderr).toContain(" 4 pass\n 1 fail\n 5 errors\n");
+      expect(exitCode).toBe(1);
+    });
+
+    it("is in the report when every file fails to load", async () => {
+      await using dir = tempDir("junit-all-fail", {
+        "package.json": "{}",
+        "a.test.js": `throw new Error("a-fails");`,
+        "b.test.js": `const x = ;`,
+        // A report of an earlier run must not survive this one.
+        "junit.xml": "stale",
+      });
+
+      const { exitCode, root, suites } = await runJunit(dir);
+
+      expect(suites).toEqual([
+        {
+          name: "a.test.js",
+          tests: 1,
+          failures: 1,
+          cases: [{ name: "(load error)", type: "Error", message: "a-fails" }],
+        },
+        {
+          name: "b.test.js",
+          tests: 1,
+          failures: 1,
+          cases: [{ name: "(load error)", type: "BuildMessage", message: "Unexpected ;" }],
+        },
+      ]);
+      expect(root).toEqual({ tests: 2, failures: 2 });
+      expect(exitCode).toBe(1);
+    });
+
+    it("is in the report when --bail stops the run on it", async () => {
+      await using dir = tempDir("junit-bail-load-error", {
+        "package.json": "{}",
+        "a.test.js": `
+          import { test } from "bun:test";
+          test("a", () => {});
+        `,
+        "b.test.js": `throw new Error("b-fails");`,
+        "c.test.js": `
+          import { test } from "bun:test";
+          test("c", () => {});
+        `,
+      });
+
+      const { stderr, exitCode, root, suites } = await runJunit(dir, ["--bail"]);
+
+      expect(suites).toEqual([
+        { name: "a.test.js", tests: 1, failures: 0, cases: ["a"] },
+        {
+          name: "b.test.js",
+          tests: 1,
+          failures: 1,
+          cases: [{ name: "(load error)", type: "Error", message: "b-fails" }],
+        },
+      ]);
+      expect(root).toEqual({ tests: 2, failures: 1 });
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(exitCode).toBe(1);
+    });
+
+    it("is in the report once for each run of --rerun-each", async () => {
+      await using dir = tempDir("junit-rerun-each-errors", {
+        "package.json": "{}",
+        "a-describe.test.js": `
+          import { describe, expect, test } from "bun:test";
+          describe("boom", () => {
+            throw new Error("describe-body-throw");
+          });
+          test("ok", () => expect(1).toBe(1));
+        `,
+        "b-load.test.js": `throw new Error("top-level-throw");`,
+      });
+
+      const { stderr, exitCode, root, suites } = await runJunit(dir, ["--rerun-each=2"]);
+
+      const boom = {
+        name: "boom",
+        line: 3,
+        tests: 1,
+        failures: 1,
+        cases: [{ name: "(describe callback)", type: "Error", message: "describe-body-throw", line: 3 }],
+      };
+      expect(suites).toEqual([
+        { name: "a-describe.test.js", tests: 4, failures: 2, cases: ["ok", "ok"], suites: [boom, boom] },
+        {
+          name: "b-load.test.js",
+          tests: 1,
+          failures: 1,
+          cases: [{ name: "(load error)", type: "Error", message: "top-level-throw" }],
+        },
+      ]);
+      expect(root).toEqual({ tests: 5, failures: 3 });
+      expect(stderr).toContain(" 2 pass\n 1 fail\n 3 errors\n");
+      expect(exitCode).toBe(1);
+    });
+
+    it("is the load error of each file when --preload throws", async () => {
+      await using dir = tempDir("junit-preload-throw", {
+        "package.json": "{}",
+        "preload.js": `throw new Error("preload-throw");`,
+        "a.test.js": `
+          import { test } from "bun:test";
+          test("a", () => {});
+        `,
+        "b.test.js": `
+          import { test } from "bun:test";
+          test("b", () => {});
+        `,
+      });
+
+      const { exitCode, root, suites } = await runJunit(dir, ["--preload", "./preload.js"]);
+
+      const loadError = { name: "(load error)", type: "Error", message: "preload-throw" };
+      expect(suites).toEqual([
+        { name: "a.test.js", tests: 1, failures: 1, cases: [loadError] },
+        { name: "b.test.js", tests: 1, failures: 1, cases: [loadError] },
+      ]);
+      expect(root).toEqual({ tests: 2, failures: 2 });
+      expect(exitCode).toBe(1);
+    });
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {
   return xmlContent.replaceAll(/ (time|hostname)=".*?"/g, "");
+}
+
+// Runs `bun test --reporter=junit` in `dir` and reads the report back as one entry per file.
+async function runJunit(dir, args = []) {
+  const junitPath = join(String(dir), "junit.xml");
+  await using proc = spawn([bunExe(), "test", ...args, "--reporter=junit", "--reporter-outfile", junitPath], {
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const xml = await file(junitPath).text();
+  const { testsuites } = await new Promise((resolve, reject) => {
+    xml2js.parseString(xml, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+  });
+  return {
+    stderr,
+    exitCode,
+    xml,
+    root: { tests: Number(testsuites.$.tests), failures: Number(testsuites.$.failures) },
+    suites: (testsuites.testsuite ?? []).map(summarizeSuite),
+  };
+}
+
+// A <testsuite> as its counts, its testcases (a name, or the name with the <failure> attributes) and its nested suites.
+function summarizeSuite(suite) {
+  return {
+    name: suite.$.name,
+    ...(suite.$.line && { line: Number(suite.$.line) }),
+    tests: Number(suite.$.tests),
+    failures: Number(suite.$.failures),
+    cases: (suite.testcase ?? []).map(testcase =>
+      testcase.failure
+        ? {
+            name: testcase.$.name,
+            ...testcase.failure[0].$,
+            ...(testcase.$.line && { line: Number(testcase.$.line) }),
+          }
+        : testcase.$.name,
+    ),
+    ...(suite.testsuite && { suites: suite.testsuite.map(summarizeSuite) }),
+  };
 }

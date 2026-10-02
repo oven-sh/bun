@@ -11,7 +11,7 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
-use crate::cli::test_command::CommandLineReporter;
+use crate::cli::test_command::{CommandLineReporter, FailureSite, TestFailure};
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
@@ -1287,35 +1287,38 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
+        let unhandled = matches!(
+            handle_status,
+            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
+                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
+        );
+        let mut unhandled_detail: Option<TestFailure> = None;
+        let mut is_load_failure = false;
+
         let failure_ctx: *mut core::ffi::c_void = 'ctx: {
-            if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
-                break 'ctx core::ptr::null_mut();
-            }
             let Some(reporter) = self.reporter else {
                 break 'ctx core::ptr::null_mut();
             };
             // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
             let reporter = unsafe { &mut *reporter.as_ptr() };
-            if reporter.jest.test_options.reporters.junit {
-                core::ptr::from_mut(&mut reporter.test_failure).cast()
-            } else {
+            if !reporter.jest.test_options.reporters.junit {
                 core::ptr::null_mut()
+            } else if unhandled {
+                core::ptr::from_mut(&mut unhandled_detail).cast()
+            } else {
+                core::ptr::from_mut(&mut reporter.test_failure).cast()
             }
         };
 
         self.bun_test_root.on_before_print();
-        if matches!(
-            handle_status,
-            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
-                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
-        ) {
+        if unhandled {
             // SAFETY: reporter is Some (asserted by call sites that reach here);
             // `NonNull<CommandLineReporter>` carries write provenance from
             // `enter_file`'s `&mut`; single-threaded, no other borrow live.
-            unsafe {
-                (*self.reporter.unwrap().as_ptr()).jest.unhandled_errors_between_tests += 1;
-            }
+            let reporter = unsafe { &mut *self.reporter.unwrap().as_ptr() };
+            reporter.jest.unhandled_errors_between_tests += 1;
+            is_load_failure = core::mem::take(&mut reporter.load_failure_pending);
             bun_core::pretty_errorln!(
                 "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
             );
@@ -1334,15 +1337,46 @@ impl BunTest {
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
         }
 
-        if matches!(
-            handle_status,
-            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
-                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
-        ) {
+        if unhandled {
             bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
         }
 
         Output::flush();
+
+        // After the flush: a `--parallel` worker sends the record behind the text it belongs to.
+        if unhandled && !failure_ctx.is_null() {
+            // SAFETY: as for the count above.
+            let reporter = unsafe { &mut *self.reporter.unwrap().as_ptr() };
+            let file = reporter.jest.files.items_source()[self.file_id as usize].path.text;
+            let in_describe = handle_status == HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe;
+            let (name, site) = self.unhandled_error_record(file, is_load_failure, in_describe);
+            reporter.record_file_failure(name, site, unhandled_detail);
+        }
+    }
+
+    /// The testcase name and the place of the record of an error that no running test owns.
+    fn unhandled_error_record<'a>(
+        &'a mut self,
+        file: &'a [u8],
+        is_load_failure: bool,
+        in_describe: bool,
+    ) -> (&'static [u8], FailureSite<'a>) {
+        if is_load_failure {
+            return (b"(load error)", FailureSite::File(file));
+        }
+        if in_describe {
+            let scope = self.collection.active_scope();
+            if !core::ptr::eq(scope, &*self.collection.root_scope) {
+                return (b"(describe callback)", FailureSite::Describe(file, scope));
+            }
+        } else if self.phase == Phase::Execution
+            && let Some(sequence) = self.get_current_state_data().sequence(self)
+            && let Some(entry) = sequence.test_entry.or(sequence.first_entry)
+        {
+            // SAFETY: entries are owned by the collection tree, which lives as long as `self`.
+            return (b"(unhandled error)", FailureSite::BesideTest(file, unsafe { entry.as_ref() }));
+        }
+        (b"(unhandled error)", FailureSite::File(file))
     }
 }
 

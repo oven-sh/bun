@@ -8,7 +8,7 @@ use bun_sourcemap_jsc::code_coverage::Report;
 use super::coordinator::Coordinator;
 use super::frame::Reader;
 use super::runner;
-use crate::test_command::{TestCaseReport, TestFailure, junit_file_name, print_coverage_reports};
+use crate::test_command::{TestCaseReport, junit_file_name, print_coverage_reports};
 use crate::test_runner::execution::Result as TestResult;
 
 /// Feed every worker's per-test records through the coordinator's own
@@ -19,28 +19,25 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
     let Some(junit) = coord.reporter.reporters.junit.as_deref_mut() else {
         return;
     };
-    for (idx, file) in files.iter().enumerate() {
+    for (idx, file) in files.into_iter().enumerate() {
         let rel = junit_file_name(coord.files[idx].as_bytes());
         for payload in &file.tests {
             if let Some(test) = runner::decode_test_case(&mut Reader { p: payload }, rel) {
                 junit.record_test_case(&test).expect("oom");
             }
         }
-        if coord.crashed_files.contains(&(idx as u32)) {
-            let crashed = TestCaseReport {
+        if let Some(record) = file.failure {
+            let failed = TestCaseReport {
                 file: rel,
                 scopes: Vec::new(),
-                name: b"(worker crashed)",
+                name: record.name,
                 status: TestResult::Fail,
                 assertions: 0,
                 elapsed_ns: 0,
                 line_number: 0,
-                failure: Some(TestFailure {
-                    message: b"worker process crashed before reporting results".to_vec(),
-                    ..Default::default()
-                }),
+                failure: record.failure,
             };
-            junit.record_test_case(&crashed).expect("oom");
+            junit.record_test_case(&failed).expect("oom");
         }
         junit.end_file(Some(file.elapsed_ns)).expect("oom");
     }

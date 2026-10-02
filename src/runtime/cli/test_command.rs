@@ -185,6 +185,45 @@ pub(crate) struct TestCaseReport<'a> {
     pub failure: Option<TestFailure>,
 }
 
+/// The named `describe` blocks that hold `child`, outermost first: (name, line).
+#[inline(always)] // with two callers this loop would leave the per-test path of `test_case_report`
+pub(crate) fn describe_chain<'a>(child: &'a bun_test::BaseScope) -> Vec<(&'a [u8], u32)> {
+    // Innermost first while walking up; reversed below.
+    let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
+    let mut parent = child.parent.map(|p| p.cast_const());
+    while let Some(scope) = parent {
+        if scopes.len() == 64 {
+            break;
+        }
+        // SAFETY: a scope is owned by its parent, so the ancestors of `child` are live while it is.
+        let scope: &'a bun_test::DescribeScope = unsafe { &*scope };
+        if let Some(name) = scope.base.name.as_deref()
+            && !name.is_empty()
+        {
+            scopes.push((name, scope.base.line_no));
+        }
+        parent = scope.base.parent.map(|p| p.cast_const());
+    }
+    scopes.reverse();
+    scopes
+}
+
+/// Where the testcase of a failure that is not a finished test goes. Each variant starts with the file, which this process runs.
+pub(crate) enum FailureSite<'a> {
+    /// Under no `describe` block.
+    File(&'a [u8]),
+    /// In the suite of the `describe` block whose callback failed, at its line.
+    Describe(&'a [u8], &'a bun_test::DescribeScope),
+    /// Beside the one test that runs now, which keeps the suite of its `describe` block in one piece.
+    BesideTest(&'a [u8], &'a bun_test::ExecutionEntry),
+}
+
+/// The testcase the `--parallel` coordinator records for a file itself.
+pub(crate) struct FileFailureRecord {
+    pub name: &'static [u8],
+    pub failure: Option<TestFailure>,
+}
+
 /// Append `input` to `out`, dropping CSI sequences (`ESC '[' ... final`), so a
 /// matcher message built with colour does not reach the report as SGR residue.
 fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
@@ -966,6 +1005,8 @@ pub(crate) struct CommandLineReporter {
     /// that attaches them to the test case (JUnit) is on. Taken by
     /// `handle_test_completed`.
     pub(crate) test_failure: Option<TestFailure>,
+    /// Set while the rejection of the file's module is reported, so the unhandled-error path records it as the load failure.
+    pub(crate) load_failure_pending: bool,
 
     pub(crate) failures_to_repeat_buf: Vec<u8>,
     pub(crate) skips_to_repeat_buf: Vec<u8>,
@@ -1226,27 +1267,9 @@ impl CommandLineReporter {
         };
         let file = junit_file_name(file);
 
-        // Innermost first while walking up; reversed below.
-        let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
-        let mut parent = test_entry.base.parent.map(|p| p.cast_const());
-        while let Some(scope) = parent {
-            if scopes.len() == 64 {
-                break;
-            }
-            // SAFETY: describe scopes outlive the file's test run.
-            let scope: &'a bun_test::DescribeScope = unsafe { &*scope };
-            if let Some(name) = scope.base.name.as_deref()
-                && !name.is_empty()
-            {
-                scopes.push((name, scope.base.line_no));
-            }
-            parent = scope.base.parent.map(|p| p.cast_const());
-        }
-        scopes.reverse();
-
         TestCaseReport {
             file,
-            scopes,
+            scopes: describe_chain(&test_entry.base),
             name: test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
             status,
             assertions: sequence.expect_call_count,
@@ -1259,6 +1282,48 @@ impl CommandLineReporter {
     #[inline]
     pub(crate) fn summary(&mut self) -> &mut Summary {
         &mut self.jest.summary
+    }
+
+    /// Records a failure that is not a finished test as a failed testcase, when a structured reporter is on.
+    #[cold]
+    pub(crate) fn record_file_failure(
+        &mut self,
+        name: &'static [u8],
+        site: FailureSite<'_>,
+        failure: Option<TestFailure>,
+    ) {
+        if !self.jest.test_options.reporters.junit {
+            return;
+        }
+        let (file, scopes, line_number) = match site {
+            FailureSite::File(file) => (file, Vec::new(), 0),
+            FailureSite::Describe(file, scope) => {
+                let mut scopes = describe_chain(&scope.base);
+                if let Some(name) = scope.base.name.as_deref()
+                    && !name.is_empty()
+                    && scopes.len() < 64
+                {
+                    scopes.push((name, scope.base.line_no));
+                }
+                (file, scopes, scope.base.line_no)
+            }
+            FailureSite::BesideTest(file, entry) => (file, describe_chain(&entry.base), 0),
+        };
+        let record = TestCaseReport {
+            file: junit_file_name(file),
+            scopes,
+            name,
+            status: bun_test::Execution::Result::Fail,
+            assertions: 0,
+            elapsed_ns: 0,
+            line_number,
+            failure,
+        };
+        if let Some(idx) = self.worker_ipc_file_idx {
+            ParallelRunner::worker_emit_test_done(idx, b"", Some(&record));
+        } else if let Some(junit) = self.reporters.junit.as_mut() {
+            junit.record_test_case(&record).expect("oom");
+        }
     }
 
     pub(crate) fn handle_test_completed(
@@ -1877,6 +1942,7 @@ impl TestCommand {
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
             test_failure: None,
+            load_failure_pending: false,
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
@@ -2934,8 +3000,19 @@ impl TestCommand {
                     let global = vm.global();
                     let p = jsc::JSInternalPromise::opaque_mut(promise);
                     let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                    reporter.load_failure_pending = true;
                     vm.unhandled_rejection(global, result, promise_js);
                     reporter.summary().fail += 1;
+                    if core::mem::take(&mut reporter.load_failure_pending) {
+                        reporter.record_file_failure(
+                            b"(load error)",
+                            FailureSite::File(file_path),
+                            None,
+                        );
+                    }
+                    if let Some(junit) = reporter.reporters.junit.as_mut() {
+                        let _ = junit.end_file(None);
+                    }
 
                     if reporter.jest.bail == reporter.summary().fail {
                         reporter.print_summary();

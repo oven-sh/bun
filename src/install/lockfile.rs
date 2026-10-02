@@ -894,12 +894,8 @@ impl Lockfile {
     /// May the folder path of dependency `id` leave its package directory? Yes
     /// when a local package declares the dependency, or when a plain override or
     /// resolution supplies the path (those are only ever parsed from the root
-    /// package.json). Both are user authored, like a root `file:` dependency.
-    ///
-    /// The same two cases are the ones whose path is relative to the top-level
-    /// dir, so two dependencies with one path name one folder. An npm manifest's
-    /// path is relative to the declaring package, so the same path under two
-    /// packages names two folders.
+    /// package.json). Both are user authored and relative to the top-level dir,
+    /// like a root `file:` dependency.
     pub(crate) fn is_trusted_folder_dependency(&self, id: DependencyID) -> bool {
         if self.is_dependency_of_local_package(id) {
             return true;

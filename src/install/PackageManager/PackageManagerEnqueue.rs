@@ -2935,8 +2935,7 @@ fn get_or_put_resolved_package(
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
-                // One path under the top-level dir is one folder, so see if another
-                // declarer already loaded this package in-memory.
+                // One such path is one folder, so reuse the package another declarer loaded
                 if path_is_top_level_relative {
                     if let Some(existing_id) = this.lockfile.get_package_id(
                         name_hash,

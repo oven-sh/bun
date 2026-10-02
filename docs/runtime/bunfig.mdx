@@ -786,10 +786,12 @@ restricted. Default `false`.
 A nested `package.json` that asks for a plain semver range or a dist-tag
 names no source, so two resolutions of such a range are allowed. One is a
 local workspace copy that `install.linkWorkspacePackages` redirects it to.
-The other is a package that the root or a workspace depends on directly
-from a non-registry source, for example a plugin's peer dependency on a
-library that the project pins to a tarball or a fork. A lockfile entry that
-binds a plain range to any other non-registry package is refused.
+The other is a package for which the `package.json` of the root or of a
+workspace itself names a non-registry source, for example a plugin's peer
+dependency on a library that the project pins to a tarball or a fork. The
+lockfile is not the project's choice: an entry that binds a plain range to
+any other non-registry package is refused, also when the root asks for the
+same range.
 
 Root `overrides`/`resolutions` replace the nested specifier before the
 check runs: an override pointing a transitive dependency at a registry
@@ -797,7 +799,10 @@ version clears a block, while an override pointing one at a non-registry
 source is itself blocked. Bun looks up an override for a git or tarball
 dependency by the name in that package's own `package.json`. The error
 message prints that name when it differs from the dependency key.
-`catalog:` references are always allowed since the root defines the catalog.
+A `catalog:` reference that Bun resolves through the root's catalog is
+always allowed since the root defines the catalog. A package outside the
+project cannot use the catalog, so its `catalog:` peer dependency counts as
+a plain range.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]

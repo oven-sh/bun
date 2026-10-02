@@ -39,7 +39,6 @@ public:
     IsoSubspace* m_subspaceForImportMeta { nullptr };
     IsoSubspace* m_subspaceForBundlerPlugin { nullptr };
     IsoSubspace* m_subspaceForNodeVMGlobalObject { nullptr };
-    IsoSubspace* m_subspaceForNodeVMSpecialSandbox { nullptr };
     IsoSubspace* m_subspaceForNodeVMScript { nullptr };
     IsoSubspace* m_subspaceForNodeVMSourceTextModule { nullptr };
     IsoSubspace* m_subspaceForNodeVMSyntheticModule { nullptr };

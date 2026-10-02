@@ -113,11 +113,31 @@ function runInNewContext(code, context, options) {
   }
   if (typeof options === "string") {
     options = { filename: options };
-  } else {
-    options = { ...options };
   }
-  context = createContext(context, options);
+  context = createContext(context, getContextOptions(options));
+  options = { ...options };
   return createScript(code, options).runInNewContext(context, options);
+}
+
+// Mirrors Node's lib/vm.js getContextOptions, including the order it reads and validates in.
+function getContextOptions(options) {
+  if (!options) return {};
+  const name = options.contextName;
+  const origin = options.contextOrigin;
+  const microtaskMode = options.microtaskMode;
+  if (name !== undefined) validateString(name, "options.contextName");
+  if (origin !== undefined) validateString(origin, "options.contextOrigin");
+  let codeGeneration;
+  const contextCodeGeneration = options.contextCodeGeneration;
+  if (contextCodeGeneration !== undefined) {
+    validateObject(contextCodeGeneration, "options.contextCodeGeneration");
+    const { strings, wasm } = contextCodeGeneration;
+    if (strings !== undefined) validateBoolean(strings, "options.contextCodeGeneration.strings");
+    if (wasm !== undefined) validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+    codeGeneration = { strings, wasm };
+  }
+  if (microtaskMode !== undefined) validateString(microtaskMode, "options.microtaskMode");
+  return { name, origin, codeGeneration, microtaskMode };
 }
 
 function createScript(code, options) {

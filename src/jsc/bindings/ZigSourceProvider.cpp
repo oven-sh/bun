@@ -87,8 +87,7 @@ Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
     ResolvedSource& resolvedSource,
     JSC::SourceProviderSourceType sourceType,
-    bool isBuiltin,
-    bool isForModuleGraph)
+    bool isBuiltin)
 {
     // Use BunTranspiledModule when module_info is present.
     // This allows JSC to skip parsing during the analyze phase (uses pre-computed imports/exports).
@@ -120,7 +119,7 @@ Ref<SourceProvider> SourceProvider::create(
         auto origin = getSourceOrigin();
         if (resolvedSource.is_in_static_heap) {
             JSC::SourceProvider* made = nullptr;
-            void* place = isForModuleGraph ? nullptr : JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made);
+            void* place = JSC::StaticHeap::takePlaceForSourceProvider(globalObject->vm(), resolvedSource.bytecode_cache_entry_offset, sizeof(SourceProvider), made);
             if (made && !resolvedSource.module_info)
                 return Ref { *static_cast<SourceProvider*>(made) };
             auto provider = adoptRef(place

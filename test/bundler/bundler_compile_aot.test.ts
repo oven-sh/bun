@@ -416,17 +416,36 @@ test.skipIf(!supported)("--compile-aot requires --format=esm", async () => {
   ).toThrow("compile.aot requires format: 'esm'");
 });
 
-test.skipIf(!supported)(
-  "a Bun.ModuleGraph that loads a module first does not take the host's compiled code",
-  async () => {
+describe.skipIf(!supported)("Bun.ModuleGraph in an executable that was compiled ahead of time", () => {
+  async function run(entry: string) {
     using dir = tempDir("compile-aot-module-graph", {
       "entry.ts": `
-      const url = new URL("./app.js", import.meta.url).href;
-      const inGraph = await new Bun.ModuleGraph().import(url).then(() => "loaded", e => e.name + ": " + e.message.split(",")[0]);
-      console.log(inGraph);
-      console.log((await import(url)).count());
-    `,
-      "app.ts": `let n = 0; export function count() { return ++n; }`,
+        const url = new URL("./app.js", import.meta.url).href;
+        async function main() { ${entry} }
+        if (Bun.isMainThread && process.argv[2] === "worker") {
+          const worker = new Worker(import.meta.url);
+          worker.onmessage = e => { console.log(e.data); worker.terminate(); };
+        } else {
+          const result = JSON.stringify(await main());
+          if (Bun.isMainThread) console.log(result);
+          else postMessage(result);
+        }
+      `,
+      "app.ts": `
+        let n = 0;
+        export function count() { return ++n; }
+        export const viaClosure = () => () => count();
+        export function call(f: () => number) { return f() * 100 + count(); }
+        export function* each() { while (true) yield count(); }
+        export async function later() { await 1; return count(); }
+        export class Counter { get next() { return count(); } }
+        export function disposeAndGoOn(graph: { dispose(): void }) {
+          graph.dispose();
+          Bun.gc(true);
+          Bun.gc(true);
+          return [count(), [1, 2, 3].map(x => x + n).join()];
+        }
+      `,
     });
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.ts", "app.ts", "--outfile", "out"],
@@ -436,15 +455,102 @@ test.skipIf(!supported)(
       stderr: "pipe",
     });
     expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
-    await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "SyntaxError: This code was compiled ahead of time\n1\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  },
-);
+    const results = [];
+    for (const where of ["main", "worker"]) {
+      await using proc = Bun.spawn({
+        cmd: [join(String(dir), "out"), where],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      results.push({ where, stdout: stdout.trim(), stderr, exitCode });
+    }
+    return results;
+  }
+  const everywhere = (value: unknown) =>
+    ["main", "worker"].map(where => ({ where, stdout: JSON.stringify(value), stderr: "", exitCode: 0 }));
+
+  test.concurrent("each graph and the host have their own variables, whoever loads first", async () => {
+    expect(
+      await run(`
+        const a = await new Bun.ModuleGraph().import(url);
+        const host = await import(url);
+        const b = await new Bun.ModuleGraph().import(url);
+        return [a.count(), a.count(), a.count(), host.count(), b.count(), b.count(), a.count === b.count, a.count === host.count];
+      `),
+    ).toEqual(everywhere([1, 2, 3, 1, 1, 2, false, false]));
+  });
+
+  test.concurrent(
+    "functions of one graph called from another, and from the host, use their own variables",
+    async () => {
+      expect(
+        await run(`
+        const a = await new Bun.ModuleGraph().import(url);
+        const b = await new Bun.ModuleGraph().import(url);
+        const host = await import(url);
+        a.count();
+        return [
+          a.call(b.count), b.call(a.count), host.call(a.viaClosure()), a.call(host.count), a.call(() => 7),
+          a.each().next().value, await b.later(), new a.Counter().next, [0].map(b.count)[0], Reflect.apply(a.count, null, []),
+        ];
+      `),
+      ).toEqual(everywhere([102, 302, 401, 205, 706, 7, 3, 8, 4, 9]));
+    },
+  );
+
+  test.concurrent("a closure outlives its graph", async () => {
+    expect(
+      await run(`
+        let graph = new Bun.ModuleGraph();
+        const { count, viaClosure } = await graph.import(url);
+        const closure = viaClosure();
+        count();
+        graph.dispose();
+        graph = null;
+        for (let i = 0; i < 3; i++) { Bun.gc(true); await new Bun.ModuleGraph().import(url); }
+        return [count(), closure()];
+      `),
+    ).toEqual(everywhere([2, 3]));
+  });
+
+  test.concurrent("a graph that is disposed of by its own code goes on running it", async () => {
+    expect(
+      await run(`
+        const graph = new Bun.ModuleGraph();
+        return (await graph.import(url)).disposeAndGoOn(graph);
+      `),
+    ).toEqual(everywhere([1, "2,3,4"]));
+  });
+
+  test.concurrent("600 graphs at once", async () => {
+    expect(
+      await run(`
+        const all = [];
+        for (let i = 0; i < 600; i++) all.push(await new Bun.ModuleGraph().import(url));
+        all.forEach((each, i) => { for (let j = 0; j <= i % 3; j++) each.count(); });
+        return all.reduce((sum, each) => sum + each.count(), 0);
+      `),
+    ).toEqual(everywhere(1800));
+  });
+
+  test.concurrent("graphs that are let go of are collected", async () => {
+    expect(
+      await run(`
+        const registry = new FinalizationRegistry(() => collected++);
+        let collected = 0;
+        for (let i = 0; i < 40; i++) {
+          const graph = new Bun.ModuleGraph();
+          registry.register((await graph.import(url)).count, 0);
+          graph.dispose();
+        }
+        for (let i = 0; i < 5 && collected < 30; i++) { Bun.gc(true); await new Promise(done => setTimeout(done, 1)); }
+        return collected >= 30;
+      `),
+    ).toEqual(everywhere(true));
+  });
+});
 
 test.skipIf(!supported).each(["forEach", "map"])(
   "an uncaught error from the callback of %s is reported",

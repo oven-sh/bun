@@ -470,10 +470,6 @@ GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint3
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, methodTable);
-    // This has to happen before anything is allocated that only this object refers to, because a collection does not
-    // treat a pointer on the stack to a placed cell as a root.
-    if (JSC::StaticHeap::contains(ptr))
-        JSC::StaticHeap::didPlaceCell(vm, ptr);
     ptr->finishCreation(vm);
     return ptr;
 }

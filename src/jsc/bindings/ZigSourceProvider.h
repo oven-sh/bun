@@ -35,9 +35,7 @@ public:
         Zig::GlobalObject*,
         ResolvedSource& resolvedSource,
         JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module,
-        bool isBuiltIn = false,
-        // For a Bun.ModuleGraph: a further instance of the program.
-        bool isForModuleGraph = false);
+        bool isBuiltIn = false);
     ~SourceProvider();
     unsigned hash() const override;
     StringView source() const override;

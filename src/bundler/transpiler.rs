@@ -659,37 +659,6 @@ impl<'a> Transpiler<'a> {
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
     }
-
-    /// Print the loaded environment variables to stdout as 2-space-indented
-    /// JSON.
-    #[cold]
-    #[inline(never)]
-    pub fn dump_environment_variables(&self) {
-        use bun_js_printer::{Encoding, write_json_string};
-        // Dump `env.map.*` as 2-space-indented JSON. `bun_dotenv::Map` doesn't
-        // impl `serde::Serialize`, so iterate and emit the object by hand.
-        // Keys and values go through `write_json_string` (the same escaper the
-        // printer uses for metafile/HTML-manifest JSON) so `"` / `\` / control
-        // bytes are escaped as standard JSON requires.
-        bun_core::Output::flush();
-        let env = self.env_mut();
-        let w = bun_core::Output::writer();
-        let _ = w.write_all(b"{\n");
-        let mut first = true;
-        let mut it = env.map.iterator();
-        while let Some(pair) = it.next() {
-            if !first {
-                let _ = w.write_all(b",\n");
-            }
-            first = false;
-            let _ = w.write_all(b"  ");
-            let _ = write_json_string::<_, { Encoding::Utf8 }>(&**pair.key_ptr, w);
-            let _ = w.write_all(b": ");
-            let _ = write_json_string::<_, { Encoding::Utf8 }>(&*pair.value_ptr.value, w);
-        }
-        let _ = w.write_all(b"\n}\n");
-        bun_core::Output::flush();
-    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════

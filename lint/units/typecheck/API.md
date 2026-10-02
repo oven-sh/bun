@@ -1430,3 +1430,93 @@ checked are in PORT_STATUS.md, "Emit printer".
   `round2-layer6-printer/probe.rs` has a caller of a stand-in printer that rustc rejects for this reason. The answer
   would be the one `NodeFactory` got, a second lifetime for the borrows: a change of `printer/printer.rs`, not of its
   callers.
+
+## Checker: grammar checks (`checker/grammarchecks.rs`)
+
+Commit `6349fc8157` (written by the job that commits the worktree). The 76 functions of `grammarchecks.go` (layer
+G-GRAMMAR), in upstream order. PORT_STATUS.md has the row.
+
+NOT compiled by cargo: `checker/mod.rs` still names modules without a file, and rustc stops at the first of them.
+"Verified" below says what was checked instead.
+
+### How a caller writes the calls
+
+- The four helpers: `grammar_error_on_first_token(node, message, args)`, `grammar_error_at_pos(node_for_source_file,
+  start: i32, length: i32, message, args)`, `grammar_error_on_node(node, message, args)` and
+  `grammar_error_on_node_skipped_on_no_emit(node, message, args)`. `args` is `&[Arg<'_>]`, and each answers `bool`:
+  true when it reported.
+- A check takes the `NodeId` of the node that upstream takes as a cast (`check_grammar_decorator(decorator)`,
+  `check_grammar_heritage_clause(heritage_clause)`, `check_grammar_variable_declaration_list(list)`). A
+  `*ast.NodeList` is a `NodeListId` (`check_grammar_type_arguments(node, type_arguments)`,
+  `check_grammar_for_disallowed_trailing_comma(list, message)`, `check_grammar_parameter_list(parameters)`,
+  `check_grammar_type_parameter_list(type_parameters, file)`), and a `*ast.SourceFile` is the id of the SourceFile
+  node (`check_grammar_source_file(file)`, `check_grammar_arrow_function(node, file)`).
+- Every check answers `bool` but `check_grammar_numeric_literal(node)`, which answers nothing, as upstream.
+- These only read and take `&self`: `find_first_modifier_except`, `find_first_illegal_modifier`,
+  `find_first_illegal_decorator`, `does_accessor_have_correct_parameter_count`,
+  `container_allows_block_scoped_variable`. Every other method takes `&mut self`.
+- Free functions: `get_identifier_from_entity_name_expression(a, node)`,
+  `is_initializer_string_or_number_literal_expression(a, expr)`, `is_initializer_big_int_literal_expression(a, expr)`.
+
+### Differences from upstream
+
+- `checkGrammarRegularExpressionLiteral`. The scanner is made for the one check (the Checker has no `regExpScanner`
+  field), so `SetText("")` and `SetOnError(nil)` after the scan have no counterpart. The error callback borrows the
+  checker and `lastError` while the scanner lives. `re_scan_slash_token` has no pattern parser, so the function
+  records `regExpParser.run` in the stand-in log at each call: only `Unterminated regular expression literal` can
+  come out of it. The panic of `ResetTokenState` for a negative position is a fault, no scan, and the answer false.
+- The two switches on the module kind with `fallthrough` (1196-1214, 1691-1726) are a labeled block that holds the
+  three case bodies once each, in upstream's order: the node module kinds (the CommonJS test), then those and ES2022,
+  ESNext, Preserve and System (the target test), then the default.
+- Stack tests (`StackLimit`, false) are the first statement of the three recursive functions:
+  `check_grammar_for_es_module_marker_in_binding_name`, `check_grammar_name_in_let_or_const_declarations`,
+  `container_allows_block_scoped_variable`.
+- Panics and asserts are faults with a fallback: 263 (false), 637 (the nil node), 918 and 950 (the token as detail,
+  false), 977, 1105, 1885, 1896 and 1942 (the kind as detail, false), 1324 (false), 1787 (false, and TS1156 is not
+  reported). The asserts of 94 and 1222 record and go on. Two indexings that upstream does not guard are faults too:
+  `typeParameters.Nodes[0]` of 785 for an empty list (an arrow function `<>() => x` in a `.mts` or `.cts` file that
+  has parse diagnostics; false, and the line terminator test is not made) and `node.Parent.Members()[0]` of 1867
+  (false).
+- A nil `FunctionLikeData()` or `ClassLikeData()` (762, 896), which upstream dereferences, reads as the zero record:
+  nil lists, and the checks go on.
+- `checkGrammarClassDeclarationHeritageClauses` keeps the parameter `file` that upstream does not read (`_file`).
+- `checkGrammarObjectLiteralExpression`: the call `prop.ClassLikeData()` of 1079, whose result upstream drops, is not
+  carried over; `commonProp.PostfixToken` is `a.postfix_token(prop)`; `seen` is a `BTreeMap` by the effective name
+  (the function never ranges over it).
+- Values that upstream reads again and again are read once: `modifier.Flags&NodeFlagsReparsed` per modifier and the
+  kind and the parent of the node in `check_grammar_modifiers`, `NodeFlagsAwaitContext` in
+  `check_grammar_for_in_or_for_of_statement`.
+- `strings.ContainsRune(nodeText, '.')` is `bun_core::strings::contains_char`, and
+  `strings.ContainsFunc(text, stringutil.IsLineBreak)` walks the runes of the text with `utf8::range`. `len(",")`,
+  `len("<")`, `len(">")` and `len(";")` are the private `text_len`.
+- The three comments of upstream that ask a question or name work to do (784, 873, 2006) are not carried over.
+
+### Verified
+
+No compiler has seen the file, and nothing ran a function of it. What was checked, by scripts that read the file
+beside `grammarchecks.go` and beside the tree:
+
+- `rustfmt --check --edition 2024`: exit 0.
+- The 76 functions have upstream's names, in upstream's order.
+- The 273 places that name a diagnostic message name the same messages as upstream, in the same order, with the same
+  string arguments; the 187 constants are in the generated table. Two calls give one argument to a message without
+  a placeholder, as upstream does (1121, 1384).
+- The `ast.Kind*` names (232 upstream) and the names of `ModifierFlags`, `NodeFlags`, `TokenFlags` and
+  `FunctionFlags` (126) come in upstream's order, one fewer each where a value is read once
+  (`KindShorthandPropertyAssignment` of 1078, `NodeFlagsAwaitContext` of 1233), `NodeFlagsReparsed` aside.
+- Every imported name is defined by the module it is imported from and is used. No two comment lines are adjacent.
+  No `unwrap`, `expect`, `panic`, `unsafe` or index into a slice.
+- The signatures of the callees were read where the tree has them: `error`, `add_diagnostic`,
+  `add_error_or_suggestion`, `has_parse_diagnostics` (`c21`), `create_diagnostic_for_node`,
+  `get_symbol_of_declaration` (`c22`), `check_expression_cached`, `get_symbol_for_private_identifier_expression`
+  (`c14`), `new_diagnostic_for_node` and seven free functions of `utilities.rs`, `get_combined_node_flags_cached`,
+  `is_var_const_like`, `get_effective_property_name_for_property_name_node` (`c31`), `is_valid_index_key_type`,
+  `get_accessor_this_parameter`, `is_late_bindable_name` (`c33`), `get_type_from_type_node` (`c38`),
+  `is_generic_type` (`c40`), `some_type`, `every_type` (`c43`), `is_rest_parameter` (`c45`),
+  `get_verbatim_module_syntax_error_message` (`c10`), `visibility_to_string` (`relater.rs`), and the calls that
+  `c05` to `c11`, `c13`, `c14`, `c17` and `jsx.rs` make into the file.
+
+### What this file expects and the tree does not have
+
+- `is_in_parameter_initializer_before_containing_function(node) -> bool` (checker.go 12326, the range of `c18`),
+  called as a method at 1750 and 1765.

@@ -2110,32 +2110,17 @@ impl Function {
                         "  napi_env arg{} = (napi_env)&Bun__thisFFIModuleNapiEnv;\n  argsPtr++;\n",
                         i
                     )?;
-                } else if *arg == ABIType::NapiValue {
+                } else {
+                    let slot = if i + 1 < self.arg_types.len() {
+                        "*argsPtr++"
+                    } else {
+                        "*argsPtr"
+                    };
+                    // Not an initializer: TinyCC zero-fills an initialized aggregate with a memset() call.
                     writeln!(
                         writer,
-                        "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
-                        i
+                        "  EncodedJSValue arg{i};\n  arg{i}.asInt64 = {slot};"
                     )?;
-                } else if arg.needs_a_cast_in_c() {
-                    if i < self.arg_types.len() - 1 {
-                        writeln!(
-                            writer,
-                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
-                            i
-                        )?;
-                    } else {
-                        write!(
-                            writer,
-                            "  EncodedJSValue arg{};\n  arg{}.asInt64 = *argsPtr;\n",
-                            i, i
-                        )?;
-                    }
-                } else {
-                    if i < self.arg_types.len() - 1 {
-                        writeln!(writer, "  int64_t arg{} = *argsPtr++;", i)?;
-                    } else {
-                        writeln!(writer, "  int64_t arg{} = *argsPtr;", i)?;
-                    }
                 }
             }
         }
@@ -2159,11 +2144,7 @@ impl Function {
 
             let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
-            if arg.needs_a_cast_in_c() {
-                write!(writer, "{}", arg.to_c(arg_name))?;
-            } else {
-                writer.write_all(arg_name)?;
-            }
+            write!(writer, "{}", arg.to_c(arg_name))?;
         }
         writer.write_all(b");\n")?;
 

@@ -1505,7 +1505,8 @@ declare module "bun" {
        *
        * Each document of a stream is counted on its own. Exceeding the limit throws a `ReferenceError`.
        * Without this option a built-in limit, high enough for hand-written documents, stops exponential
-       * expansion with a `SyntaxError`.
+       * expansion with a `SyntaxError`. Whatever the option, that limit still holds for what the parser
+       * itself goes over again: the source of each merge key (`<<`) and a collection used as a mapping key.
        *
        * @example
        * ```ts

@@ -3302,13 +3302,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.count_merge(&value)?;
             match &value.data {
                 ast::ExprData::EObject(value_obj) => {
+                    self.charge_merge(value_obj.properties.slice().len())?;
                     props.merge(value_obj.properties.slice(), &mut self.merge_props_budget)?;
                     return Ok(());
                 }
                 ast::ExprData::EArray(value_arr) => {
+                    self.charge_merge(value_arr.items.slice().len())?;
                     for item in value_arr.items.slice() {
                         if let ast::ExprData::EObject(item_obj) = &item.data {
                             self.reject_open_merge_source(item)?;
+                            self.charge_merge(item_obj.properties.slice().len())?;
                             props
                                 .merge(item_obj.properties.slice(), &mut self.merge_props_budget)?;
                         }
@@ -3324,6 +3327,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             value: Some(value),
             ..Default::default()
         })?)
+    }
+
+    /// A merge goes over all of its source, which only under `AliasCheck::Budget` its alias has paid for.
+    fn charge_merge(&mut self, len: usize) -> Result<(), ParseError> {
+        if matches!(
+            self.alias_check,
+            AliasCheck::Count(_) | AliasCheck::Unlimited
+        ) {
+            self.alias_expansion_budget = self
+                .alias_expansion_budget
+                .checked_sub(len)
+                .ok_or(ParseError::ExcessiveAliasing)?;
+        }
+        Ok(())
     }
 
     /// Marks the aliases `value` merges from, then applies what `hold_merge_value` kept back.

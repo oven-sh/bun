@@ -159,7 +159,7 @@ Bun.YAML.parse(text, { maxAliasCount: 5 });
 // ReferenceError: Excessive alias count indicates a resource exhaustion attack
 ```
 
-Each document of a stream is counted on its own, and the source of a merge key (`<<: *a`) counts as an alias. That package's default is `100`; Bun's built-in limit is far higher, so pass a limit for input you do not trust.
+Each document of a stream is counted on its own, and the source of a merge key (`<<: *a`) counts as an alias. That package's default is `100`; Bun's built-in limit is far higher, so pass a limit for input you do not trust. Whatever the option, the built-in limit still holds for what the parser itself goes over again, the source of each merge key and a collection used as a mapping key, and exceeding it is a `SyntaxError`.
 
 Merge keys need no option of their own: with aliases rejected, a merge can only copy a mapping written in place. The value of a merge key counts towards `maxDepth` as written, before it is merged.
 

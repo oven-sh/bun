@@ -765,7 +765,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn close_internal(this: &T) {
+    fn close_internal(this: &T) {
         if this.write_in_progress().get() {
             this.pending_close().set(true);
             return;
@@ -873,6 +873,28 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         if this.pending_close().get() {
             Self::close_internal(this);
         }
+    }
+
+    /// Closes the handle before `onerror` runs, so user JS cannot drive a handle that has no context.
+    /// Throws `message`, or `err`'s own text when `None`.
+    pub(crate) fn init_failed(
+        this: &T,
+        global_this: &JSGlobalObject,
+        this_value: JSValue,
+        err: Error,
+        message: Option<&str>,
+    ) -> jsc::JsError {
+        Self::close_internal(this);
+        Self::emit_error(this, global_this, this_value, err);
+        // SAFETY: every caller passes an `is_error()` result, whose `msg` is a NUL-terminated C string.
+        let own_message = unsafe { bun_core::ffi::cstr(err.msg) }.to_bytes();
+        let message = message.map_or(own_message, str::as_bytes);
+        global_this
+            .err(
+                ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                format_args!("{}", bstr::BStr::new(message)),
+            )
+            .throw()
     }
 }
 

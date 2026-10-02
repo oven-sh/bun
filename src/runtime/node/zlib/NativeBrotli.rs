@@ -276,10 +276,18 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global_this),
             );
 
+            // node's `BrotliCompressionStream::Init` throws this text for every failure.
+            const MESSAGE: Option<&str> = Some("Initialization failed");
+
             let mut err = self.stream.with_mut(|s| s.init(dictionary));
             if err.is_error() {
-                CompressionStream::<Self>::emit_error(self, global_this, this_value, err);
-                return Ok(JSValue::FALSE);
+                return Err(CompressionStream::<Self>::init_failed(
+                    self,
+                    global_this,
+                    this_value,
+                    err,
+                    MESSAGE,
+                ));
             }
 
             let params_ = params_buf.as_u32();
@@ -293,15 +301,16 @@ mod _impl {
                     .stream
                     .with_mut(|s| s.set_params(u32::try_from(i).expect("int cast") as c_uint, d));
                 if err.is_error() {
-                    // impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
-                    self.stream.with_mut(|s| s.close());
-                    // The Context is torn down (`mode` is `NONE`); reject any
-                    // further operation the way `close()` does.
-                    self.closed.set(true);
-                    return Ok(JSValue::FALSE);
+                    return Err(CompressionStream::<Self>::init_failed(
+                        self,
+                        global_this,
+                        this_value,
+                        err,
+                        MESSAGE,
+                    ));
                 }
             }
-            Ok(JSValue::TRUE)
+            Ok(JSValue::UNDEFINED)
         }
 
         #[bun_jsc::host_fn(method)]

@@ -500,7 +500,6 @@ declare function $ERR_INSPECTOR_COMMAND(message: string): Error;
 declare function $ERR_WORKER_UNSUPPORTED_OPERATION(message: string): TypeError;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
 declare function $ERR_SOCKET_BAD_TYPE(): Error;
-declare function $ERR_ZLIB_INITIALIZATION_FAILED(): Error;
 declare function $ERR_IPC_ONE_PIPE(): Error;
 declare function $ERR_SOCKET_ALREADY_BOUND(): Error;
 declare function $ERR_SOCKET_BAD_BUFFER_SIZE(): Error;

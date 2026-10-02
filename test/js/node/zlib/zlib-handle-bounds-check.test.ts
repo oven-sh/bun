@@ -338,10 +338,10 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
       `const C = zlib.createBrotliCompress()._handle.constructor;
        const h = new C(8);
        const p = new Uint32Array(50).fill(0xffffffff); p[49] = 0;
-       const r = h.init(p, new Uint32Array(2), () => {});
-       try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled " + r); }
-       catch (e) { console.log("threw " + e.code + ": " + e.message + " " + r); }`,
-      "threw ERR_INVALID_STATE: zlib binding closed false",
+       try { h.init(p, new Uint32Array(2), () => {}); } catch {}
+       try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
     ],
     [
       "zstd: a handle whose init() parameters were rejected is closed",

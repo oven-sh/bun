@@ -171,10 +171,19 @@ declare module "bun" {
     type ContextCallback<T, SQL> = (sql: SQL) => Bun.MaybePromise<T>;
 
     interface SQLiteOptions extends BunSQLite.DatabaseOptions {
+      /**
+       * Selects the SQLite adapter. Optional when {@link filename} is set,
+       * because a `filename` selects SQLite too.
+       */
       adapter?: "sqlite";
 
       /**
        * Path to the database file
+       *
+       * A `filename` selects the SQLite adapter when `adapter` is not set.
+       * Bun reads the value as a path, or as a `sqlite:` or `file:` URL. A
+       * URL for another database, such as `postgres://localhost/db`, is a
+       * file name here. To connect with a URL, use `url`.
        *
        * Examples:
        *

@@ -181,8 +181,11 @@ const sql2 = new SQL({
   filename: "./data/app.db",
 });
 
-// For simple filenames, specify adapter explicitly
-const sql3 = new SQL("myapp.db", { adapter: "sqlite" });
+// `filename` selects SQLite, so `adapter` is optional in an options object
+const sql3 = new SQL({ filename: "./data/app.db" });
+
+// A connection string that is a plain filename needs the adapter
+const sql4 = new SQL("myapp.db", { adapter: "sqlite" });
 ```
 
 <Accordion title="SQLite Connection String Formats">
@@ -215,7 +218,7 @@ new SQL("sqlite://data.db?mode=rwc"); // Read-write-create mode (default)
 ```
 
     <Note>
-    Simple filenames without a protocol (like `"myapp.db"`) require explicitly specifying `{ adapter: "sqlite" }` to avoid ambiguity with PostgreSQL.
+    A connection string without a protocol (like `"myapp.db"`) needs `{ adapter: "sqlite" }`, because Bun reads it as a PostgreSQL host. The `filename` option does not need it: `new SQL({ filename: "myapp.db" })` opens the SQLite file.
     </Note>
 
 </Accordion>
@@ -514,11 +517,14 @@ Bun selects SQLite when the connection string matches these patterns:
 - `file://...` - File protocol URLs
 - `file:...` - File protocol without slashes
 
+Bun also selects SQLite for an options object that has a `filename` and no `adapter`. The value does not need a protocol.
+
 ```ts
 // These all use SQLite automatically (no adapter needed)
 const sql1 = new SQL(":memory:");
 const sql2 = new SQL("sqlite://app.db");
 const sql3 = new SQL("file://./database.db");
+const sql4 = new SQL({ filename: "./database.db" });
 
 // Works with DATABASE_URL environment variable
 DATABASE_URL=":memory:" bun run app.js
@@ -725,7 +731,7 @@ const sql = new SQL({
 import { SQL } from "bun";
 
 const sql = new SQL({
-  // Required for SQLite
+  // Selects SQLite. Optional when `filename` is set
   adapter: "sqlite",
   filename: "./data/app.db", // or ":memory:" for in-memory database
 

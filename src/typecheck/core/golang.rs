@@ -232,4 +232,62 @@ mod tests {
         // core.Same: two empty lists are the same, nil or not.
         assert!(nil.same(List::from_slice(&[])) && empty.same(nil));
     }
+
+    #[test]
+    fn live_list_shares_its_cells() {
+        let nil = LiveList::<u32>::NIL;
+        assert!(nil.is_nil() && LiveList::<u32>::default().is_nil() && nil.len() == 0);
+        assert!(!nil.set(0, 1) && nil.at(0) == 0 && nil.sub(0, 0).is_nil());
+        let cells = [Cell::new(1u32), Cell::new(2), Cell::new(3)];
+        let list = LiveList::from_cells(&cells);
+        let held = list;
+        // Every holder reads a write; a write outside the list is refused.
+        assert!(list.set(1, 9) && !list.set(3, 9) && !list.set(-1, 9));
+        assert_eq!(
+            (held.len(), held.at(1usize), held.at(3), held.at(-1)),
+            (3, 9, 0, 0)
+        );
+        // A loop reads each value at its step.
+        let mut seen = Vec::new();
+        for value in held.iter() {
+            seen.push(value);
+            assert!(list.set(2, 5));
+        }
+        assert_eq!(seen, [1, 9, 5]);
+        assert_eq!(held.to_vec(), [1, 9, 5]);
+        // A part shares the cells of its list.
+        let part = list.sub(1, 3);
+        assert!(part.set(0, 7) && list.at(1) == 7);
+        assert!(part.same(held.sub(1, 3)) && !part.same(list) && list.same(held));
+        let empty = list.sub(2, 1);
+        assert!(!empty.is_nil() && empty.len() == 0 && empty.same(nil));
+    }
+
+    #[test]
+    fn map_is_a_go_map() {
+        let mut nil: Map<u32, u32> = Map::default();
+        assert!(nil.is_nil() && nil.len() == 0);
+        assert_eq!((nil.get(&1), nil.get_ok(&1)), (0, None));
+        // A write to the nil map is refused, where Go panics.
+        assert!(!nil.set(1, 2) && nil.is_nil());
+        nil.delete(&1);
+        nil.clear();
+        assert!(nil.is_nil());
+        let mut m: Map<u32, u32> = Map::make();
+        assert!(!m.is_nil() && m.len() == 0);
+        assert!(m.set(1, 2) && m.set(3, 0) && m.set(1, 4));
+        assert_eq!((m.len(), m.get(&1), m.get(&3), m.get(&5)), (2, 4, 0, 0));
+        // The second answer tells a stored zero value from a key that is not there.
+        assert_eq!((m.get_ok(&3), m.get_ok(&5)), (Some(0), None));
+        m.delete(&1);
+        m.delete(&5);
+        assert_eq!((m.len(), m.get_ok(&1), m.get_ok(&3)), (1, None, Some(0)));
+        m.clear();
+        assert!(!m.is_nil() && m.len() == 0 && m.get_ok(&3).is_none());
+        // A key need not be `Copy`.
+        let (a, b) = (vec![1u8], vec![2u8]);
+        let mut by_bytes: Map<Vec<u8>, bool> = Map::make();
+        assert!(by_bytes.set(a.clone(), true));
+        assert!(by_bytes.get(&a) && !by_bytes.get(&b));
+    }
 }

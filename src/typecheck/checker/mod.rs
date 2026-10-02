@@ -80,6 +80,7 @@ pub use c09_check_classes_interfaces::*;
 pub use c10_check_enums_modules_imports::*;
 pub use c12_iteration_types::*;
 pub use c13_check_aliases_unused::*;
+pub use c14_expressions::*;
 pub use c21_resolved_symbols_diagnostics::*;
 pub use c22_symbols_merge::*;
 pub use c23_alias_targets::*;

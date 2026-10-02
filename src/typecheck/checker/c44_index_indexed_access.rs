@@ -21,7 +21,9 @@ use crate::checker::{
     is_numeric_literal_name, is_object_literal_type, is_this_property, is_tuple_type, is_type_any,
     is_type_usable_as_property_name, try_get_property_access_or_identifier_to_string,
 };
-use crate::core::{List, Text, Tristate, get_spelling_suggestion_with_max_candidate_count, or_else};
+use crate::core::{
+    List, Text, Tristate, get_spelling_suggestion_with_max_candidate_count, or_else,
+};
 use crate::diagnostics;
 use crate::evaluator::any_to_string;
 use crate::jsnum;
@@ -473,9 +475,7 @@ impl<'a> Checker<'a> {
         let mut access_flags = access_flags;
         // If the object type has a string index signature and no other members we know that the result will always be the type of that index signature and we can simplify accordingly.
         if self.is_string_index_signature_only_type(object_type)
-            && !self.types[index_type]
-                .flags
-                .intersects(TypeFlags::NULLABLE)
+            && !self.types[index_type].flags.intersects(TypeFlags::NULLABLE)
             && self.is_type_assignable_to_kind(index_type, TypeFlags::STRING | TypeFlags::NUMBER)
         {
             index_type = self.string_type;
@@ -610,11 +610,10 @@ impl<'a> Checker<'a> {
                     } else {
                         access_node
                     };
-                    let deprecated_entity = self.text(&prop_name);
                     self.add_deprecated_suggestion(
                         deprecated_node,
                         a.sym(prop).declarations,
-                        deprecated_entity,
+                        &prop_name,
                     );
                 }
                 if !access_expression.is_nil() {
@@ -772,8 +771,10 @@ impl<'a> Checker<'a> {
                 }
                 if !access_node.is_nil()
                     && key_type == self.string_type
-                    && !self
-                        .is_type_assignable_to_kind(index_type, TypeFlags::STRING | TypeFlags::NUMBER)
+                    && !self.is_type_assignable_to_kind(
+                        index_type,
+                        TypeFlags::STRING | TypeFlags::NUMBER,
+                    )
                 {
                     let index_node = get_index_node_for_access_expression(a, access_node);
                     let index_text = self.type_to_string_exported(index_type);
@@ -891,8 +892,8 @@ impl<'a> Checker<'a> {
                     } else {
                         let mut suggestion: Vec<u8> = Vec::new();
                         if has_prop_name {
-                            suggestion =
-                                self.get_suggestion_for_nonexistent_property(&prop_name, object_type);
+                            suggestion = self
+                                .get_suggestion_for_nonexistent_property(&prop_name, object_type);
                         }
                         if !suggestion.is_empty() {
                             let object_text = self.type_to_string_exported(object_type);
@@ -931,8 +932,8 @@ impl<'a> Checker<'a> {
                                     );
                                 } else if index_type_flags.intersects(TypeFlags::UNIQUE_ES_SYMBOL) {
                                     let index_symbol = self.types[index_type].symbol;
-                                    let symbol_name =
-                                        self.get_fully_qualified_name(index_symbol, access_expression);
+                                    let symbol_name = self
+                                        .get_fully_qualified_name(index_symbol, access_expression);
                                     let name = [b"[".as_slice(), &symbol_name, b"]"].concat();
                                     let object_text = self.type_to_string_exported(object_type);
                                     diagnostic = self.new_diagnostic_for_node(
@@ -940,9 +941,9 @@ impl<'a> Checker<'a> {
                                         diagnostics::PROPERTY_0_DOES_NOT_EXIST_ON_TYPE_1,
                                         &[Arg::Str(&name), Arg::Str(&object_text)],
                                     );
-                                } else if index_type_flags
-                                    .intersects(TypeFlags::STRING_LITERAL | TypeFlags::NUMBER_LITERAL)
-                                {
+                                } else if index_type_flags.intersects(
+                                    TypeFlags::STRING_LITERAL | TypeFlags::NUMBER_LITERAL,
+                                ) {
                                     // Upstream has one case for a string literal and one for a number literal, with the same body.
                                     let value =
                                         any_to_string(&self.as_literal_type(index_type).value);
@@ -990,7 +991,8 @@ impl<'a> Checker<'a> {
         if !access_node.is_nil() {
             let index_node = get_index_node_for_access_expression(a, access_node);
             if a.kind(index_node) != Kind::BigIntLiteral
-                && index_type_flags.intersects(TypeFlags::STRING_LITERAL | TypeFlags::NUMBER_LITERAL)
+                && index_type_flags
+                    .intersects(TypeFlags::STRING_LITERAL | TypeFlags::NUMBER_LITERAL)
             {
                 let value = any_to_string(&self.as_literal_type(index_type).value);
                 let object_text = self.type_to_string_exported(object_type);
@@ -1299,9 +1301,7 @@ impl<'a> Checker<'a> {
             && !self.is_generic_mapped_type(t)
             && self.get_properties_of_type(t).len() == 0
             && self.get_index_infos_of_type(t).len() == 1
-            && !self
-                .get_index_info_of_type(t, self.string_type)
-                .is_nil()
+            && !self.get_index_info_of_type(t, self.string_type).is_nil()
             || flags.intersects(TypeFlags::UNION_OR_INTERSECTION)
                 && self
                     .type_types(t)
@@ -1322,15 +1322,13 @@ impl<'a> Checker<'a> {
         }
         if !access_node.is_nil() && !is_indexed_access_type_node(a, access_node) {
             return self.is_generic_tuple_type(object_type) && {
-                let limit =
-                    get_total_fixed_element_count(self.type_target_tuple_type(object_type));
+                let limit = get_total_fixed_element_count(self.type_target_tuple_type(object_type));
                 !index_type_less_than(self, index_type, limit)
             };
         }
         self.is_generic_object_type(object_type)
             && !(is_tuple_type(self, object_type) && {
-                let limit =
-                    get_total_fixed_element_count(self.type_target_tuple_type(object_type));
+                let limit = get_total_fixed_element_count(self.type_target_tuple_type(object_type));
                 index_type_less_than(self, index_type, limit)
             })
             || self.is_generic_reducible_type(object_type)

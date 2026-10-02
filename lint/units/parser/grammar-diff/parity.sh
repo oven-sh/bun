@@ -473,7 +473,16 @@ corpus_pin() {
 # main at f4d755a9cf and main at bc7a813b10 give the same records: no commit between them is in the parser.
 golden() {
   case $1 in
-    __GOLDEN__) ;;
+    seams) echo 255aa6be3c2c722dba39f36a197391940ffe268a33eea4dc53dd4cbe2a1711f7 ;;
+    seams-bu) echo 549e63ad6fd951888c1dec97f5c7e6b0ff2887beb7513a655ca9825ff94ea057 ;;
+    testrows) echo 672f1e03d5b5f0145b5a7167568662580e6a1c007cada017d9ffa3b26b7873e8 ;;
+    comments) echo 13f998485d2a2c5624809047cb291ea9daa8a34fde56aa5bcb54082cbce2e638 ;;
+    targeted) echo 579fa4af21be4379b33eae28247bbac13e87c30a8528a1196c310c27e35b3152 ;;
+    small-sub) echo 08aaea3bb89bfe09f4de3f8f0b3a495b7cf49bca0b91e3b2afdd73afc87600ee ;;
+    check) echo 4120467680510265b2b5346dd612def70a53499a1c3282c0e6d0ca1dfa348af5 ;;
+    bench) echo 28db6ef12b8fa47f1c78a588e4d63f81119eb72445d9009ef6c47d2d4f256eb6 ;;
+    tscases) echo 52b0e193992ea0d3d9e5af3ff8a3222aac1ffd15f24a6a766cc2f5296f3c24d4 ;;
+    small) echo "$GOLDEN_SMALL" ;;
   esac
 }
 
@@ -710,8 +719,9 @@ parity() {
   TREE=${TREE:-/workspace/wt/parser}
   EXPECT=${EXPECT:-zero}
   JOBS=${JOBS:-4}
-  PIN_BENCH=
-  PIN_TSCASES=
+  PIN_BENCH=8e8640fec3fa7c9d2c7cdef9f5d46f5e1fff8e56a035cb39fc8d58e98e21ab99
+  PIN_TSCASES=cdddef44e6e6a317e29581949261b4dca3679420e6f4df4fa34a008f00cc5d78
+  GOLDEN_SMALL=
   MUST_SEE=${MUST_SEE:-seams seams-bu testrows comments targeted small-sub check tscases small files runtime.seams runtime.seams-bu runtime.testrows bundle.seams bundle.seams-bu bundle.testrows pmdiff.seams pmdiff.testrows}
   RUNTIME_CORPORA=${RUNTIME_CORPORA:-seams seams-bu testrows comments targeted small-sub bench}
   BUNDLE_CORPORA=${BUNDLE_CORPORA:-seams seams-bu testrows comments targeted}

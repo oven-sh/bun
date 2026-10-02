@@ -256,3 +256,14 @@
 10-02_15:12:22 anon=1116MB pids=65 load=288.46 top=cachegrind-amd6:334MB
 10-02_15:12:52 anon=367MB pids=67 load=274.21 top=cachegrind-amd6:312MB
 10-02_15:13:23 anon=1392MB pids=116 load=281.34 top=cachegrind-amd6:284MB
+10-02_15:13:53 anon=1227MB pids=129 load=275.19 top=cachegrind-amd6:326MB
+10-02_15:14:23 anon=797MB pids=104 load=267.52 top=cachegrind-amd6:311MB
+10-02_15:14:54 anon=25MB pids=63 load=288.47 top=bun.bc7a813b1:48MB
+10-02_15:15:25 anon=326MB pids=56 load=292.68 top=bun.f4d755a9c:246MB
+10-02_15:15:55 anon=1661MB pids=105 load=278.00 top=bun.bc7a813b1:470MB
+10-02_15:16:28 anon=2404MB pids=56 load=354.18 top=bun.f4d755a9c:2563MB
+10-02_15:17:01 anon=198MB pids=70 load=402.64 top=bun.bc7a813b1:128MB
+10-02_15:17:32 anon=476MB pids=105 load=395.30 top=bun.bc7a813b1:135MB
+10-02_15:18:02 anon=902MB pids=92 load=384.69 top=bun.bc7a813b1:224MB
+10-02_15:18:33 anon=911MB pids=86 load=363.24 top=bun.bc7a813b1:238MB
+10-02_15:19:04 anon=884MB pids=94 load=341.05 top=bun.bc7a813b1:240MB

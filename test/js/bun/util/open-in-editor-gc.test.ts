@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { chmodSync, existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -151,4 +151,188 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
   });
 
   await Promise.all(runs);
+});
+
+// `[debug] editor` in bunfig.toml picks the editor Bun.openInEditor() uses when
+// no `editor` option is passed. It used to be parsed but never read, and an
+// absolute path used to be spawned without checking that it exists, which
+// silently did nothing. Linux-only like the tests above: PATH holds only the
+// fake editors, so nothing real can be detected (macOS also probes /Applications).
+describe.skipIf(!isLinux)("Bun.openInEditor reads [debug] editor from bunfig.toml", () => {
+  // Records its own name and its arguments. Shell builtins only, since PATH
+  // has nothing else on it; the trailing "done" line marks the record complete.
+  const fakeEditor = ({ root }: { root: string }) => `#!/bin/sh
+printf '%s\\n' "\${0##*/}" "$@" done > "${join(root, "argv.txt")}"
+`;
+
+  // Polls with a fresh BunFile each time, since a BunFile keeps the size it
+  // first saw. Bun.file and console.write are used instead of node:fs and
+  // process.stdout because those are noticeably slower to load in a debug build.
+  const readRecord = `
+    let record = "";
+    while (!record.endsWith("\\ndone\\n")) {
+      await Bun.sleep(5);
+      const argv = Bun.file("argv.txt");
+      if (await argv.exists()) record = await argv.text();
+    }
+  `;
+
+  // Prints the editor's record when a call is expected to open something, and
+  // otherwise just how the call ended, so a call that wrongly opens nothing
+  // fails instead of waiting for a record that never comes.
+  const fixture = `
+    const [file, expectation, editor] = process.argv.slice(2);
+    let outcome = "returned";
+    try {
+      if (editor) Bun.openInEditor(file, { editor });
+      else Bun.openInEditor(file);
+    } catch (e) {
+      outcome = "threw: " + e.message;
+    }
+    if (outcome !== "returned" || expectation !== "opens") {
+      console.log(outcome);
+    } else {
+      ${readRecord}
+      console.write(record);
+    }
+  `;
+
+  const bunfigMyEditor = ({ root }: { root: string }) => `[debug]\neditor = "${join(root, "my-editor")}"\n`;
+  const bunfigMovedCode = ({ root }: { root: string }) => `[debug]\neditor = "${join(root, "gone", "code")}"\n`;
+
+  // `code` is first on the built-in preference list, so a case that installs
+  // both `code` and `subl` and sets EDITOR=subl can tell the three sources apart:
+  // the bunfig entry, $EDITOR, and the built-in list would each pick differently.
+  test.concurrent.each([
+    {
+      name: "an absolute path is used as the editor",
+      bunfig: bunfigMyEditor,
+      editors: ["my-editor"],
+      opens: "my-editor",
+    },
+    {
+      name: "an editor name is looked up on PATH and beats $EDITOR",
+      bunfig: `[debug]\neditor = "code"\n`,
+      editors: ["code", "subl"],
+      EDITOR: "subl",
+      opens: "code",
+    },
+    {
+      name: "an editor name that is not installed falls back to $EDITOR",
+      bunfig: `[debug]\neditor = "webstorm"\n`,
+      editors: ["code", "subl"],
+      EDITOR: "subl",
+      opens: "subl",
+    },
+    {
+      name: "an absolute path that does not exist falls back to $EDITOR",
+      bunfig: bunfigMyEditor,
+      editors: ["code", "subl"],
+      EDITOR: "subl",
+      opens: "subl",
+    },
+    {
+      name: "an absolute path that does not exist is looked up on PATH by name first",
+      bunfig: bunfigMovedCode,
+      editors: ["code", "subl"],
+      EDITOR: "subl",
+      opens: "code",
+    },
+    {
+      name: "an absolute path that does not exist throws when nothing else is found",
+      bunfig: bunfigMyEditor,
+      editors: [],
+      throws: () => "Failed to auto-detect editor",
+    },
+    {
+      name: "the editor option beats bunfig",
+      bunfig: bunfigMyEditor,
+      editors: ["my-editor", "other-editor"],
+      option: "other-editor",
+      opens: "other-editor",
+    },
+    {
+      name: "an editor option whose path does not exist throws instead of opening nothing",
+      bunfig: bunfigMyEditor,
+      editors: ["my-editor"],
+      option: "missing-editor",
+      throws: (dir: string) => `Could not find editor "${join(dir, "missing-editor")}"`,
+    },
+  ])("$name", async ({ bunfig, editors, EDITOR, option, opens, throws }) => {
+    using dir = tempDir("open-in-editor-bunfig", {
+      "bunfig.toml": bunfig,
+      "run.js": fixture,
+      ...Object.fromEntries(editors.map(name => [name, fakeEditor])),
+    });
+    for (const name of editors) chmodSync(join(String(dir), name), 0o755);
+    const file = join(String(dir), "opened.ts");
+
+    const cmd = [bunExe(), "run.js", file, opens ? "opens" : "throws"];
+    if (option) cmd.push(join(String(dir), option));
+
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, PATH: String(dir), EDITOR, VISUAL: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toEqual(throws ? [`threw: ${throws(String(dir))}`, ""] : [opens, file, "done", ""]);
+    expect(exitCode).toBe(0);
+  });
+
+  // An `editor` option equal to the current name reuses the cached editor. A
+  // bunfig editor that auto-detection failed to find must not be reused that
+  // way: the explicit request gets its own lookup, and succeeds once the editor
+  // is installed.
+  test.concurrent("an editor option is looked up again after the bunfig editor was not found", async () => {
+    using dir = tempDir("open-in-editor-bunfig-retry", {
+      "bunfig.toml": `[debug]\neditor = "code"\n`,
+      "bin/.keep": "",
+      "code": fakeEditor,
+      "run.js": `
+        import { renameSync } from "node:fs";
+        const file = process.argv[2];
+        const attempt = options => {
+          try {
+            Bun.openInEditor(file, options);
+            return "opened";
+          } catch (e) {
+            return e.message;
+          }
+        };
+        const outcomes = [attempt(), attempt({ editor: "code" })];
+        renameSync("code", "bin/code");
+        outcomes.push(attempt({ editor: "code" }));
+        ${readRecord}
+        console.write(outcomes.join("\\n") + "\\n" + record);
+      `,
+    });
+    chmodSync(join(String(dir), "code"), 0o755);
+    const file = join(String(dir), "opened.ts");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js", file],
+      env: { ...bunEnv, PATH: join(String(dir), "bin"), EDITOR: undefined, VISUAL: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toEqual([
+      "Failed to auto-detect editor",
+      'Could not find editor "code"',
+      "opened",
+      "code",
+      file,
+      "done",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });

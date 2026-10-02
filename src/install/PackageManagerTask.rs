@@ -134,8 +134,7 @@ impl Id {
         Id(hasher.final_())
     }
 
-    // These cannot change:
-    // We persist them to the filesystem.
+    /// Not persisted: the bare clone's folder is named by `cached_git_clone_folder_name_print`.
     pub(crate) fn for_git_clone(url: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(url);
@@ -576,9 +575,8 @@ pub struct GitCloneRequest {
 }
 
 pub struct GitCommitRequest {
-    /// The clone task whose bare repository is searched.
-    pub(crate) clone_id: Id,
     pub(crate) name: StringOrTinyString,
+    /// Names the bare repository that is searched.
     pub(crate) url: StringOrTinyString,
     pub(crate) committish: StringOrTinyString,
 }

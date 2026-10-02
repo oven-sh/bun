@@ -289,7 +289,7 @@ pub fn enqueue_git_for_checkout(
         let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
             .behavior
             .is_required();
-        if offline_git_miss(this, clone_id, alias, is_required) {
+        if offline_git_miss(this, clone_id, url, alias, is_required) {
             return GitEnqueueResult::OfflineMiss;
         }
     }
@@ -374,24 +374,17 @@ fn offline_tarball_miss(
 fn offline_git_miss(
     this: &mut PackageManager,
     clone_id: Task::Id,
+    url: &[u8],
     name: &[u8],
     is_required: bool,
 ) -> bool {
     if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
         return false;
     }
-    let mut folder = Vec::with_capacity(24);
-    {
-        use std::io::Write;
-        let _ = write!(
-            folder,
-            "{}.git",
-            bun_core::fmt::hex_int_lower::<16>(clone_id.get())
-        );
-    }
+    let mut folder_buf = [0u8; 64];
+    let folder = package_manager_real::cached_git_clone_folder_name_print(&mut folder_buf, url);
     let cache_dir = package_manager_real::get_cache_directory(this);
-    let cached = bun_sys::directory_exists_at(cache_dir, &bun_core::ZBox::from_bytes(&folder))
-        .unwrap_or(false);
+    let cached = bun_sys::directory_exists_at(cache_dir, folder).unwrap_or(false);
     if cached {
         return false;
     }
@@ -1429,9 +1422,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     return Ok(());
                                 }
 
-                                let task = enqueue_git_commit(
-                                    this, commit_id, clone_id, alias, url, committish,
-                                );
+                                let task =
+                                    enqueue_git_commit(this, commit_id, alias, url, committish);
                                 this.enqueue_git_task(task);
                                 return Ok(());
                             }
@@ -1500,7 +1492,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 if this.has_created_network_task(clone_id, dependency.behavior.is_required()) {
                     return Ok(());
                 }
-                if offline_git_miss(this, clone_id, alias, dependency.behavior.is_required()) {
+                if offline_git_miss(
+                    this,
+                    clone_id,
+                    url,
+                    alias,
+                    dependency.behavior.is_required(),
+                ) {
                     return Ok(());
                 }
 
@@ -1992,11 +1990,10 @@ fn enqueue_git_clone(
     this.preallocated_resolve_tasks.get_init(value)
 }
 
-/// `git log`: resolves `committish` in the bare repository of `clone_id`.
+/// `git log`: resolves `committish` in the bare repository of `url`.
 fn enqueue_git_commit(
     this: &mut PackageManager,
     task_id: Task::Id,
-    clone_id: Task::Id,
     name: &[u8],
     url: &[u8],
     committish: &[u8],
@@ -2007,7 +2004,6 @@ fn enqueue_git_commit(
         tag: crate::package_manager_task::Tag::GitCommit,
         request: crate::package_manager_task::Request {
             git_commit: ManuallyDrop::new(crate::package_manager_task::GitCommitRequest {
-                clone_id,
                 name: StringOrTinyString::init_append_if_needed(
                     name,
                     &mut crate::network_task::filename_store_appender(),

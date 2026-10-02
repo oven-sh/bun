@@ -488,10 +488,13 @@ impl<'a> ByteCursor<'a> {
         self.put(bun_fmt::u64_hex_var_lower(&mut tmp, n));
     }
 
-    /// Two lower-hex digits per byte.
+    /// The first 16 bytes of `sha256(url)` as 32 lower-hex digits; collision-resistant on purpose.
     #[inline(always)]
-    fn put_hex_lower(&mut self, bytes: &[u8]) {
-        self.at += bun_fmt::bytes_to_hex_lower(bytes, &mut self.buf[self.at..]);
+    fn put_url_digest(&mut self, url: &[u8]) {
+        use bun_sha_hmac::sha::hashers::SHA256;
+        let mut digest = [0u8; SHA256::DIGEST];
+        SHA256::hash(url, &mut digest);
+        self.at += bun_fmt::bytes_to_hex_lower(&digest[..16], &mut self.buf[self.at..]);
     }
 
     /// `@@@{d}` when set.
@@ -530,6 +533,14 @@ pub fn cached_git_folder_name_print<'a>(
     w.put(b"@G@");
     w.put(resolved);
     w.put_patch_hash(patch_hash);
+    w.finish_z()
+}
+
+/// `<url digest>.git`: the bare clone of the repository at `url`.
+pub fn cached_git_clone_folder_name_print<'a>(buf: &'a mut [u8], url: &[u8]) -> &'a ZStr {
+    let mut w = ByteCursor::new(buf);
+    w.put_url_digest(url);
+    w.put(b".git");
     w.finish_z()
 }
 
@@ -732,18 +743,15 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-/// `@T@<first 16 bytes of sha256(url), hex>@@@<cache version>`; collision-resistant on purpose.
+/// `@T@<url digest>@@@<cache version>`: the extracted tarball fetched from `url`.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     url: &[u8],
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
-    use bun_sha_hmac::sha::hashers::SHA256;
-    let mut digest = [0u8; SHA256::DIGEST];
-    SHA256::hash(url, &mut digest);
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
-    w.put_hex_lower(&digest[..16]);
+    w.put_url_digest(url);
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()

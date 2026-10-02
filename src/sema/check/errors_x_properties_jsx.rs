@@ -1791,7 +1791,7 @@ fn is_word_outside_parentheses(text: &[u8], pos: u32) -> bool {
 
 /// Where the name of the member `m` starts. That of a computed name is its bracket, where the member may be said to be where the
 /// expression in the brackets is: between the two there are only parentheses, type assertions and comments.
-fn start_of_member_name(hir: &File, m: MemberId) -> u32 {
+pub(super) fn start_of_member_name(hir: &File, m: MemberId) -> u32 {
     let text = &hir.text[..];
     let pos = hir[m].pos;
     if text.get(pos as usize) == Some(&b'[') {

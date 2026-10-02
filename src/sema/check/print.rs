@@ -60,6 +60,15 @@ impl Checker<'_> {
         type_to_string_with(self, ty, NO_TRUNCATION | ALLOW_UNIQUE_ES_SYMBOL_TYPE)
     }
 
+    /// The same with `TypeFormatFlagsInTypeAlias`.
+    pub fn type_to_string_for_baseline_in_type_alias(&mut self, ty: TypeId) -> String {
+        type_to_string_with(
+            self,
+            ty,
+            NO_TRUNCATION | ALLOW_UNIQUE_ES_SYMBOL_TYPE | WRITTEN_OUT,
+        )
+    }
+
     /// `getTypeNameForErrorDisplay`
     pub fn type_to_string_fully_qualified(&mut self, ty: TypeId) -> String {
         type_to_string_with(self, ty, USE_FULLY_QUALIFIED_TYPE)

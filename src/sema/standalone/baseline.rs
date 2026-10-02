@@ -1199,8 +1199,8 @@ fn run_one(
             let line = starts.partition_point(|&s| s <= start) - 1;
             let source = String::from_utf8_lossy(&text[start..end]).replace(['\r', '\n'], "");
             lines.push_str(&format!(
-                "{unit}\t{line}\t{start}\t{source}\t{}\n",
-                found.type_text
+                "{unit}\t{line}\t{start}\t{source}\t{}\t{}\n",
+                found.type_text, found.kind
             ));
         }
         types.lock().unwrap().push_str(&lines);

@@ -2281,10 +2281,7 @@ impl Lockfile {
         resolution: &Resolution,
     ) -> Option<PackageID> {
         // Highest version first (`get_or_put_id`).
-        let ids: &[PackageID] = match self.package_index.get(&name_hash)? {
-            PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-            PackageIndexEntry::Ids(ids) => ids.as_slice(),
-        };
+        let ids = self.package_index.get(&name_hash)?.as_slice();
         let resolutions: &[Resolution] = self.packages.items_resolution();
         debug_assert!(ids.iter().all(|&id| (id as usize) < resolutions.len()));
         let buf = self.buffers.string_bytes.as_slice();

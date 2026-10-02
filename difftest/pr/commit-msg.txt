@@ -1,0 +1,24 @@
+archive: refuse symlinks in the destination with openat2(RESOLVE_NO_SYMLINKS) and O_NOFOLLOW_ANY
+
+Bun.Archive#extract() and bun create gave each entry's whole path to one
+openat, mkdirat or symlinkat call. The kernel resolved a symlink that was
+already in the destination, so an entry could land outside it.
+
+ContainedDir creates the entries of a caller-provided destination. The
+open that each file entry already makes now refuses symlinks in the kernel:
+openat2 with RESOLVE_NO_SYMLINKS on Linux, O_NOFOLLOW_ANY on macOS. A
+directory or a symlink entry opens its parent the same way and is created
+as one name in it. Missing parents are made one name at a time. Where the
+kernel has no such open (Linux before 5.6, seccomp, Android, FreeBSD), the
+parent is opened one component at a time with O_NOFOLLOW and those
+directories stay open.
+
+A symlink under the name of a file entry is replaced. A symlink in place
+of a parent directory rejects with ELOOP and the path of the entry, in
+both extractors. The glob extractor now creates symlink entries last, as
+the default extractor does.
+
+bun install and the --compile download extract into a directory they
+made. They pass DestinationKind::PrivateFresh and keep their calls.
+
+Co-authored-by: Alistair Smith <hi@alistair.sh>

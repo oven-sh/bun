@@ -407,24 +407,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let chunk = &mut chunks[index];
             chunk.template.placeholder.hash = Some(hashes[index]);
 
-            let mut rel_path: Vec<u8> = Vec::new();
-            // Use the byte-writer (`PathTemplate::print`) directly —
-            // routing through `Display`/`write!` goes via `from_utf8_lossy`,
-            // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
-            // the output path.
             // Disk output sanitizes leading `..`; `--compile` keeps it so
             // runtime bunfs references to out-of-root entrypoints resolve.
-            chunk
+            let rel_path = chunk
                 .template
-                .print(&mut rel_path, !c.options.compile_mode.is_executable())
-                .expect("write to Vec<u8>");
-            path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
-
-            // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
-            // which importers of the chunk would copy verbatim.
-            while let Some(i) = strings::index_of(&rel_path, b"/./") {
-                rel_path.drain(i..i + 2);
-            }
+                .rel_path(!c.options.compile_mode.is_executable());
 
             let claimed = path_names_map.get_or_put(&rel_path)?;
             if claimed.found_existing {

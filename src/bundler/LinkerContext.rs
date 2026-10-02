@@ -70,6 +70,26 @@ pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 
+/// The path of an external module that counts from the directory of the chunk that holds the import. It is printed as written.
+pub(crate) fn is_relative_external(record: &ImportRecord) -> bool {
+    let path = record.path.text;
+    !record.source_index.is_valid()
+        && !record.path.is_disabled
+        && !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
+        && (path.starts_with(b"./") || path.starts_with(b"../") || path == b"." || path == b"..")
+}
+
+/// A chunk that took the fold in place of a pinned entry point's chunk. The walk of the entry point lays it out.
+#[derive(Clone, Copy)]
+pub(crate) struct EntryImportsInParent {
+    pub(crate) entry_id: u32,
+    /// The chunk also runs what the `import` statements in these parts of the entry point's file run.
+    pub(crate) parts_begin: u32,
+    pub(crate) parts_end: u32,
+    /// A file of the chunk.
+    pub(crate) parent_file: u32,
+}
+
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
@@ -139,6 +159,14 @@ pub struct LinkerContext<'a> {
     /// `merge_small_chunks` proved to be no-ops where it moved them: a chunk
     /// their chunk imports makes the same calls first.
     pub(crate) inits_already_done: Option<AutoBitSet>,
+    /// The files that run something in a chunk that took the fold in place of a pinned entry point's chunk. Its rank among imports is that of the last one, not the first.
+    pub(crate) ranks_chunk_again: Option<AutoBitSet>,
+    /// By entry point id, then by part.
+    pub(crate) entry_imports_in_parent: Vec<EntryImportsInParent>,
+    /// Per file (or empty): which of the chunks with its entry bits holds it. `merge_small_chunks` cuts that chunk where the chunk of another entry point loads between two of its files.
+    pub(crate) segment_of_file: Vec<u32>,
+    /// The chunks that took the fold in place of the chunk of an entry point that only its name pins: the entry point id, and a file of the chunk.
+    pub(crate) parents_of_pinned_entries: Vec<(u32, u32)>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
@@ -180,6 +208,10 @@ impl<'a> Default for LinkerContext<'a> {
             renamer_rows: None,
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
+            ranks_chunk_again: None,
+            entry_imports_in_parent: Vec::new(),
+            segment_of_file: Vec::new(),
+            parents_of_pinned_entries: Vec::new(),
             entry_point_part_indices: Vec::new(),
         }
     }
@@ -445,6 +477,48 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// What the `import` statements in live parts `parts` of an unwrapped file run, by part and import record: `init_x()` / `require_x()` of wrapped file `Some(x)`, or (`None`) the load of an external module.
+    pub(crate) fn for_each_import_that_runs(
+        &self,
+        source_index: u32,
+        parts: core::ops::Range<u32>,
+        each: &mut dyn FnMut(u32, u32, Option<u32>),
+    ) {
+        use bun_ast::ImportRecordFlags as Flags;
+        let flags = self.graph.meta.items_flags();
+        let records = &self.graph.ast.items_import_records()[source_index as usize];
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        let all_parts = self.graph.ast.items_parts()[source_index as usize].as_slice();
+        for part_index in parts {
+            if !parts_live.is_set(part_index as usize) {
+                continue;
+            }
+            for &i in all_parts[part_index as usize].import_record_indices.iter() {
+                let record = &records[i as usize];
+                if record.kind != ImportKind::Stmt || record.flags.contains(Flags::IS_UNUSED) {
+                    continue;
+                }
+                if !record.source_index.is_valid() {
+                    if !record.path.is_disabled
+                        && !record.flags.intersects(
+                            Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS | Flags::PHASE_DEFER,
+                        )
+                    {
+                        each(part_index, i, None);
+                    }
+                    continue;
+                }
+                let other = record.source_index.get();
+                if other != source_index
+                    && flags[other as usize].wrap != WrapKind::None
+                    && self.graph.files_live.is_set(other as usize)
+                {
+                    each(part_index, i, Some(other));
+                }
+            }
+        }
+    }
+
     /// `"sideEffects": false` (or the resolver's equivalent), unless
     /// `--ignore-dce-annotations` says not to trust it.
     pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {
@@ -567,6 +641,10 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
+        self.ranks_chunk_again = None;
+        self.entry_imports_in_parent = Vec::new();
+        self.segment_of_file = Vec::new();
+        self.parents_of_pinned_entries = Vec::new();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -2373,6 +2451,7 @@ impl<'a> LinkerContext<'a> {
         writer: &mut js_printer::BufferWriter,
         out_stmts: &mut [Stmt],
         ast: &JSAst<'_>,
+        import_records: &[ImportRecord],
         flags: crate::js_meta::Flags,
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
@@ -2514,7 +2593,7 @@ impl<'a> LinkerContext<'a> {
                 &printer_ast,
                 source,
                 print_options,
-                ast.import_records.as_slice(),
+                import_records,
                 parts_to_print,
                 r,
             )
@@ -2526,7 +2605,7 @@ impl<'a> LinkerContext<'a> {
                 &printer_ast,
                 source,
                 print_options,
-                ast.import_records.as_slice(),
+                import_records,
                 parts_to_print,
                 r,
             )

@@ -2,6 +2,7 @@ use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
+use crate::linker_context::compute_chunks::{chunk_key, segment_of};
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
 use crate::options::Loader;
 use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk, js_meta::Wrap};
@@ -27,7 +28,12 @@ pub(crate) fn find_all_imported_parts_in_js_order(
                 continue;
             }
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
-                if !this.loading_file_has_no_side_effects(source_index) {
+                if !this.loading_file_has_no_side_effects(source_index)
+                    || this
+                        .ranks_chunk_again
+                        .as_ref()
+                        .is_some_and(|files| files.is_set(source_index as usize))
+                {
                     chunk_of_file[source_index as usize] = chunk_index as u32;
                 }
             }
@@ -131,6 +137,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         files: Vec::with_capacity(chunk.files_with_parts_in_chunk.count()),
         part_ranges: Vec::new(),
         parts_prefix: Vec::new(),
+        repeats_imports_of: None,
         chunk_index,
         // The one column written through a shared `&LinkerContext` (see `place`).
         entry_point_chunk_indices: this.graph.files.slice().split_raw().entry_point_chunk_index,
@@ -143,6 +150,7 @@ pub(crate) fn find_imported_parts_in_js_order(
             source_index: runtime,
             begin: 0,
             end: u32::MAX,
+            imports_only: false,
         });
     }
     for &run in runs {
@@ -155,6 +163,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         files,
         part_ranges,
         parts_prefix,
+        repeats_imports_of,
         ..
     } = layout;
     let mut parts_in_chunk_order: Vec<PartRange> =
@@ -172,6 +181,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         chunk::Content::Javascript(js) => {
             js.files_in_chunk_order = files.into_boxed_slice();
             js.parts_in_chunk_in_order = parts_in_chunk_order.into_boxed_slice();
+            js.repeats_imports_of = repeats_imports_of;
             js.reached_chunks_in_order = reached_chunks.into_boxed_slice();
         }
         // Caller only invokes this for `.javascript` chunks (see
@@ -188,6 +198,8 @@ struct PartRun {
     begin: u32,
     /// `u32::MAX`: the rest of the file. The walk leaves the file here.
     end: u32,
+    /// See `JavaScriptChunk::repeats_imports_of`.
+    imports_only: bool,
 }
 
 /// What the walks recorded.
@@ -244,10 +256,15 @@ impl WalkPlan {
             let file_entry_bits = c.graph.files.items_entry_bits();
             let css = c.graph.ast.items_css();
             let mut chunk_of_key: StringHashMap<u32> = StringHashMap::default();
+            let mut key_buffer: Vec<u8> = Vec::new();
             for (chunk_index, chunk) in chunks.iter().enumerate() {
-                if matches!(chunk.content, chunk::Content::Javascript(_)) {
+                if let chunk::Content::Javascript(js) = &chunk.content {
                     bun_core::handle_oom(chunk_of_key.put(
-                        chunk.entry_bits().bytes(entry_points.len()),
+                        chunk_key(
+                            &mut key_buffer,
+                            chunk.entry_bits().bytes(entry_points.len()),
+                            js.segment,
+                        ),
                         chunk_index as u32,
                     ));
                 }
@@ -257,8 +274,11 @@ impl WalkPlan {
                 let file = source_index.get() as usize;
                 if c.graph.files_live.is_set(file)
                     && css[file].is_none()
-                    && let Some(&chunk_index) =
-                        chunk_of_key.get(file_entry_bits[file].bytes(entry_points.len()))
+                    && let Some(&chunk_index) = chunk_of_key.get(chunk_key(
+                        &mut key_buffer,
+                        file_entry_bits[file].bytes(entry_points.len()),
+                        segment_of(&c.segment_of_file, file as u32),
+                    ))
                 {
                     plan.chunk_of_file[file] = chunk_index;
                 }
@@ -277,13 +297,22 @@ impl WalkPlan {
             }
             rank = load_rank(c, &plan.entry_id_of_file);
         }
+        // An entry point loads the parent of its class before the `import()` targets in the key of that chunk. `load_rank` can say otherwise once `--min-chunk-size` moved a file with such an `import()` into a chunk of an earlier entry point.
+        for repeated in c.entry_imports_in_parent.iter() {
+            let parent = plan.chunk_of_file[repeated.parent_file as usize];
+            if parent != u32::MAX {
+                plan.owner_of_chunk[parent as usize] = repeated.entry_id;
+            }
+        }
         let mut walk_of_entry = vec![u32::MAX; entry_points.len()];
         let mut walks: Vec<EntryWalk> = Vec::new();
         for (chunk_index, chunk) in chunks.iter().enumerate() {
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 continue;
             }
-            let owner = if code_splitting {
+            let owner = if plan.owner_of_chunk[chunk_index] != u32::MAX {
+                plan.owner_of_chunk[chunk_index]
+            } else if code_splitting {
                 let mut bits = chunk.entry_bits().iterator::<true, true>();
                 let mut owner = u32::MAX;
                 while let Some(entry_id) = bits.next() {
@@ -320,7 +349,7 @@ impl WalkPlan {
 }
 
 #[derive(Clone, Copy)]
-enum Edge {
+pub(crate) enum Edge {
     /// `file` runs here, under the same load.
     Import(IndexInt),
     /// A split `require()` in a part that runs at load: the chunk of `file` runs here.
@@ -330,7 +359,7 @@ enum Edge {
 }
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
-fn for_each_edge(
+pub(crate) fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
     runs: bool,
@@ -578,6 +607,35 @@ impl EntryWalk {
                 .then(|| plan.slot_of_chunk[chunk_index as usize])
         };
 
+        let entry_file = c.graph.entry_points.items_source_index()[entry_id as usize];
+        // A parent whose files print nothing has no chunk. Any other parent is a chunk of this walk (`WalkPlan::new`).
+        let parents = &c.entry_imports_in_parent[c
+            .entry_imports_in_parent
+            .partition_point(|repeated| repeated.entry_id < entry_id)..];
+        let parents = &parents[..parents.partition_point(|repeated| repeated.entry_id == entry_id)];
+        let repeated = |source_index: IndexInt, begin: u32, end: u32| {
+            let parents = if source_index == entry_file {
+                parents
+            } else {
+                &[]
+            };
+            parents.iter().filter_map(move |repeated| {
+                let begin = begin
+                    .max(bun_ast::NAMESPACE_EXPORT_PART_INDEX + 1)
+                    .max(repeated.parts_begin);
+                let end = end.min(repeated.parts_end);
+                Some(WalkFrame::Place {
+                    run: PartRun {
+                        source_index,
+                        begin,
+                        end,
+                        imports_only: true,
+                    },
+                    slot: slot_of(repeated.parent_file).filter(|_| begin < end)?,
+                })
+            })
+        };
+
         debug_assert!(stack.is_empty());
         stack.push(WalkFrame::Enter {
             source_index: root,
@@ -596,6 +654,7 @@ impl EntryWalk {
                             source_index,
                             begin: 0,
                             end: u32::MAX,
+                            imports_only: false,
                         });
                     }
                     continue;
@@ -656,9 +715,11 @@ impl EntryWalk {
                             source_index,
                             begin,
                             end,
+                            imports_only: false,
                         },
                         slot,
                     });
+                    stack.extend(repeated(source_index, begin, end));
                     begin = end;
                 }
                 stack.push(match slot {
@@ -686,9 +747,11 @@ impl EntryWalk {
                         source_index,
                         begin,
                         end: u32::MAX,
+                        imports_only: false,
                     },
                     slot,
                 });
+                stack.extend(repeated(source_index, begin, u32::MAX));
             }
             stack[mark..].reverse();
         }
@@ -700,6 +763,7 @@ struct ChunkLayout<'a, 'ctx> {
     files: Vec<IndexInt>,
     part_ranges: Vec<PartRange>,
     parts_prefix: Vec<PartRange>,
+    repeats_imports_of: Option<IndexInt>,
     chunk_index: u32,
     /// Raw `entry_point_chunk_index` column, for the one write in `place`.
     entry_point_chunk_indices: *mut [u32],
@@ -745,6 +809,9 @@ impl ChunkLayout<'_, '_> {
     fn place(&mut self, run: PartRun) {
         let source_index = run.source_index;
         let parts = self.c.graph.ast.items_parts()[source_index as usize].as_slice();
+        if run.imports_only {
+            self.repeats_imports_of = Some(source_index);
+        }
         let leaves = run.end == u32::MAX;
         // Wrapped files can't be split because they are all inside the wrapper
         let can_be_split =
@@ -826,6 +893,7 @@ fn reached_chunks_in_order(
     }
 
     let entry_bits = chunk.entry_bits();
+    let segment = chunk.content.javascript().segment;
     let file_entry_bits = c.graph.files.items_entry_bits();
     let css = c.graph.ast.items_css();
     let parts = c.graph.ast.items_parts();
@@ -847,10 +915,14 @@ fn reached_chunks_in_order(
                 Frame::Leave(source_index) => {
                     // Post-order: when the unbundled program would have run this file.
                     let other = chunk_of_file[source_index as usize];
-                    if other != u32::MAX
-                        && other != chunk_index
-                        && !reached_set.is_set(other as usize)
-                    {
+                    if other == u32::MAX || other == chunk_index {
+                        continue;
+                    }
+                    let ranks_again = c
+                        .ranks_chunk_again
+                        .as_ref()
+                        .is_some_and(|files| files.is_set(source_index as usize));
+                    if ranks_again || !reached_set.is_set(other as usize) {
                         reached_set.set(other as usize);
                         reached.push(other);
                     }
@@ -868,6 +940,7 @@ fn reached_chunks_in_order(
 
             let is_file_in_chunk = if css[source_index as usize].is_none() {
                 entry_bits.eql(&file_entry_bits[source_index as usize])
+                    && segment_of(&c.segment_of_file, source_index) == segment
             } else {
                 entry_bits.has_intersection(&file_entry_bits[source_index as usize])
             };
@@ -894,5 +967,13 @@ fn reached_chunks_in_order(
             stack[mark..].reverse();
         }
     }
+    // `ranks_chunk_again`: the last mention counts.
+    reached.reverse();
+    reached.retain(|&other| {
+        let first = reached_set.is_set(other as usize);
+        reached_set.unset(other as usize);
+        first
+    });
+    reached.reverse();
     Ok(reached)
 }

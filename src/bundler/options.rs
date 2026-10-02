@@ -2474,6 +2474,20 @@ impl PathTemplate {
             sanitize_parent_dirs,
         )
     }
+
+    /// The path of the output file from the output directory, with `/` separators.
+    pub(crate) fn rel_path(&self, sanitize_parent_dirs: bool) -> Vec<u8> {
+        let mut rel_path: Vec<u8> = Vec::new();
+        // Not `Display`: `from_utf8_lossy` would replace non-UTF-8 bytes of `[dir]` with U+FFFD.
+        self.print(&mut rel_path, sanitize_parent_dirs)
+            .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
+        // `./[dir]/…` with `[dir] == "."` gives `././x.js`, which importers of the chunk would copy.
+        while let Some(i) = strings::index_of(&rel_path, b"/./") {
+            rel_path.drain(i..i + 2);
+        }
+        rel_path
+    }
 }
 
 #[derive(Debug, Clone, Default)]

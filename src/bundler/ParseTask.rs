@@ -442,9 +442,10 @@ export var __require = /* @__PURE__ */ (x =>
 // imports — and each split `import()` of chunk `id` first `__preload`s it:
 // a `<link rel=modulepreload>` for every chunk it statically imports, so the
 // whole graph downloads in parallel instead of one module depth per round trip.
+// A chunk that the entry chunk imports runs first; an `id` that no graph has yet waits in `__chunkEarly`.
 // Globals go through `globalThis` so bundling does not reserve their names.
 const RUNTIME_PRELOAD_BROWSER: &str = "
-var __chunkGraphs, __chunkSeen, __chunkNonce;
+var __chunkGraphs, __chunkSeen, __chunkNonce, __chunkEarly;
 export var __preload = (id, seenOnly) => {
   for (var [base, graph, ids] of __chunkGraphs || [])
     for (var stack = [id], g = globalThis, d = g.document, head, j, node, k, link; (j = stack.pop()); )
@@ -462,12 +463,16 @@ export var __preload = (id, seenOnly) => {
           head.appendChild(link);
         }
       }
+  (__chunkSeen || 0)[id] || (__chunkEarly ||= []).push(id);
 };
 export var __chunks = (base, ids, nodes, entry) => {
   for (var graph = {}, i = 0; i < ids.length; i++) graph[ids[i]] = nodes[i];
   (__chunkGraphs ||= []).push([base, graph, ids]);
   __chunkSeen ||= {};
   __preload(ids[entry], 1);
+  var early = __chunkEarly || [];
+  __chunkEarly = 0;
+  for (i of early) __preload(i);
 };
 ";
 

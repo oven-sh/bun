@@ -9381,16 +9381,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
+        let mut only_declares = false;
         let wrapper_ref: Ref = 'brk: {
             if self.options.features.hot_module_reloading {
                 break 'brk self.hmr_api_ref;
             }
+            only_declares = self.options.bundle && !self.needs_wrapper_ref(parts.as_slice());
 
             // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
             // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
-            if self.options.bundle
-                && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice()))
-            {
+            if self.options.bundle && (self.options.code_splitting || !only_declares) {
                 use core::fmt::Write as _;
                 let mut buf = bun_alloc::ArenaString::new_in(arena);
                 let _ = write!(&mut buf, "require_{}", self.source.fmt_identifier());
@@ -9536,6 +9536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             //    the six actually-defaulted scalars avoids that temporary's
             //    construct/drop entirely. ──
             has_lazy_export: false,
+            only_declares,
             redirect_import_record_index: None,
             target: js_ast::Target::Browser,
         }))

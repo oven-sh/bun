@@ -9,7 +9,7 @@ use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::generic_path_with_pretty_initialized;
-use crate::linker_context_mod::{StmtList, StmtListWhich};
+use crate::linker_context_mod::{StmtList, StmtListWhich, is_relative_external};
 use crate::options::Format as OutputFormat;
 use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
 
@@ -222,6 +222,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 writer,
                 &mut stmts.all_stmts[main_stmts_len..],
                 &ast,
+                ast.import_records.as_slice(),
                 flags,
                 Ref::NONE,
                 Ref::NONE,
@@ -238,6 +239,72 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let namespace_export_part_index = bun_ast::NAMESPACE_EXPORT_PART_INDEX;
 
     stmts.reset();
+
+    if chunk.content.javascript().repeats_imports_of == Some(source_index as u32) {
+        // The bindings stay with the file, so an external module gets a record of its own, for a bare `import`.
+        let mut external_records = bun_ast::import_record::List::new_in(temp_arena);
+        let wrapper_refs = c.graph.ast.items_wrapper_ref();
+        c.for_each_import_that_runs(
+            source_index as u32,
+            part_range.part_index_begin..part_range.part_index_end,
+            &mut |_, record_index, wrapped| {
+                let record = &ast.import_records[record_index as usize];
+                let loc = record.range.loc;
+                stmts.all_stmts.push(if let Some(wrapped) = wrapped {
+                    Stmt::alloc(
+                        S::SExpr {
+                            value: Expr::init(
+                                E::Call {
+                                    target: Expr::init_identifier(
+                                        wrapper_refs[wrapped as usize],
+                                        loc,
+                                    ),
+                                    ..Default::default()
+                                },
+                                loc,
+                            ),
+                            ..Default::default()
+                        },
+                        loc,
+                    )
+                } else {
+                    external_records.push(bun_ast::ImportRecord {
+                        flags: record.flags - bun_ast::ImportRecordFlags::CONTAINS_IMPORT_STAR,
+                        ..*record
+                    });
+                    Stmt::alloc(
+                        S::Import {
+                            import_record_index: external_records.len() as u32 - 1,
+                            ..Default::default()
+                        },
+                        loc,
+                    )
+                });
+            },
+        );
+        if stmts.all_stmts.is_empty() {
+            return PrintResult::Result(PrintResultSuccess {
+                code: Box::new([]),
+                source_map: None,
+            });
+        }
+        let source: &bun_ast::Source = c.get_source(source_index as u32);
+        return c.print_code_for_file_in_chunk_js(
+            r,
+            arena,
+            writer,
+            stmts.all_stmts.as_mut_slice(),
+            &ast,
+            import_records_for_chunk(chunk, external_records.as_slice(), temp_arena),
+            flags,
+            to_esm_ref,
+            to_common_js_ref,
+            runtime_require_ref,
+            part_range.source_index,
+            source,
+            module_info,
+        );
+    }
 
     let part_index_for_lazy_default_export: u32 = 'brk: {
         if ast.flags.contains(AstFlags::HAS_LAZY_EXPORT) {
@@ -983,6 +1050,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         writer,
         out_stmts,
         &ast,
+        import_records_for_chunk(chunk, ast.import_records.as_slice(), temp_arena),
         flags,
         to_esm_ref,
         to_common_js_ref,
@@ -991,6 +1059,32 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         source,
         module_info,
     )
+}
+
+/// `records`, with the relative paths of external modules as `JavaScriptChunk::relative_imports_from` asks.
+fn import_records_for_chunk<'a>(
+    chunk: &Chunk,
+    records: &'a [bun_ast::ImportRecord],
+    arena: &'a Bump,
+) -> &'a [bun_ast::ImportRecord] {
+    let from = &*chunk.content.javascript().relative_imports_from;
+    if from.is_empty() || !records.iter().any(is_relative_external) {
+        return records;
+    }
+    arena.alloc_slice_fill_iter(records.iter().map(|record| {
+        let text = record.path.text;
+        if !is_relative_external(record) {
+            return bun_ast::ImportRecord { ..*record };
+        }
+        let text = [from, text.strip_prefix(b"./").unwrap_or(text)].concat();
+        bun_ast::ImportRecord {
+            path: bun_paths::fs::Path {
+                text: bun_ast::StoreStr::new(arena.alloc_slice_copy(&text)).slice(),
+                ..record.path
+            },
+            ..*record
+        }
+    }))
 }
 
 fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {

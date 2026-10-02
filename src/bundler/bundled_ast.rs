@@ -157,6 +157,8 @@ bitflags::bitflags! {
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
+        /// See `Ast::only_declares`.
+        const ONLY_DECLARES = 1 << 10;
         // _padding: u6 fills the rest
     }
 }
@@ -263,6 +265,7 @@ impl<'arena> BundledAst<'arena> {
             force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
             commonjs_lifted_to_esm: self.flags.contains(Flags::COMMONJS_LIFTED_TO_ESM),
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
+            only_declares: self.flags.contains(Flags::ONLY_DECLARES),
             commonjs_module_exports_assigned_deoptimized: self
                 .flags
                 .contains(Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
@@ -288,6 +291,7 @@ impl<'arena> BundledAst<'arena> {
         flags.set(Flags::FORCE_CJS_TO_ESM, ast.force_cjs_to_esm);
         flags.set(Flags::COMMONJS_LIFTED_TO_ESM, ast.commonjs_lifted_to_esm);
         flags.set(Flags::HAS_LAZY_EXPORT, ast.has_lazy_export);
+        flags.set(Flags::ONLY_DECLARES, ast.only_declares);
         flags.set(
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
             ast.commonjs_module_exports_assigned_deoptimized,

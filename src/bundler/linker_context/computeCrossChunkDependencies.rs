@@ -80,6 +80,30 @@ pub(crate) fn compute_cross_chunk_dependencies(
         }
     }
 
+    let wrapper_refs = c.graph.ast.items_wrapper_ref();
+    for (chunk, chunk_meta) in chunks.iter().zip(chunk_metas.iter_mut()) {
+        let chunk::Content::Javascript(js) = &chunk.content else {
+            continue;
+        };
+        let Some(entry_file) = js.repeats_imports_of else {
+            continue;
+        };
+        for range in js.parts_in_chunk_in_order.iter() {
+            if range.source_index.get() != entry_file {
+                continue;
+            }
+            c.for_each_import_that_runs(
+                entry_file,
+                range.part_index_begin..range.part_index_end,
+                &mut |_, _, wrapped| {
+                    if let Some(wrapped) = wrapped {
+                        let _ = chunk_meta.imports.put(wrapper_refs[wrapped as usize], ()); // OOM-only Result
+                    }
+                },
+            );
+        }
+    }
+
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
 }
 

@@ -31,6 +31,29 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
     f
 }
 
+/// `LinkerContext::segment_of_file` of a file.
+pub(crate) fn segment_of(segment_of_file: &[u32], source_index: IndexInt) -> u32 {
+    segment_of_file
+        .get(source_index as usize)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// The files of one JS chunk have the same entry bits and the same segment.
+pub(crate) fn chunk_key<'a>(
+    buffer: &'a mut Vec<u8>,
+    entry_bits: &'a [u8],
+    segment: u32,
+) -> &'a [u8] {
+    if segment == 0 {
+        return entry_bits;
+    }
+    buffer.clear();
+    buffer.extend_from_slice(entry_bits);
+    buffer.extend_from_slice(&segment.to_le_bytes());
+    buffer
+}
+
 #[inline(never)]
 pub(crate) fn compute_chunks(
     this: &mut LinkerContext,
@@ -312,6 +335,7 @@ pub(crate) fn compute_chunks(
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
     let css_reprs = this.graph.ast.items_css();
+    let mut key_buffer: Vec<u8> = Vec::new();
 
     // Figure out which JS files are in which chunk
     if js_chunks.count() > 0 {
@@ -327,8 +351,12 @@ pub(crate) fn compute_chunks(
                         if !contributes_code.is_set(source_index.get() as usize) {
                             continue;
                         }
-                        let js_chunk_key =
-                            temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
+                        let segment = segment_of(&this.segment_of_file, source_index.get());
+                        let js_chunk_key = temp.alloc_slice_copy(chunk_key(
+                            &mut key_buffer,
+                            entry_bits.bytes(this.graph.entry_points.len()),
+                            segment,
+                        ));
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
 
                         if !js_chunk_entry.found_existing {
@@ -341,9 +369,10 @@ pub(crate) fn compute_chunks(
                                     source_index.get(),
                                     0,
                                 ),
-                                content: chunk::Content::Javascript(
-                                    chunk::JavaScriptChunk::default(),
-                                ),
+                                content: chunk::Content::Javascript(chunk::JavaScriptChunk {
+                                    segment,
+                                    ..Default::default()
+                                }),
                                 output_source_map: SourceMapPieces::init(),
                                 flags: make_flags(false, is_browser_chunk_from_server_build),
                                 ..Default::default()
@@ -406,6 +435,18 @@ pub(crate) fn compute_chunks(
                     }
                 }
             }
+        }
+    }
+
+    for &(entry_id, parent_file) in this.parents_of_pinned_entries.iter() {
+        let key: &[u8] = temp.alloc_slice_copy(chunk_key(
+            &mut key_buffer,
+            file_entry_bits[parent_file as usize].bytes(this.graph.entry_points.len()),
+            segment_of(&this.segment_of_file, parent_file),
+        ));
+        if let Some(parent) = js_chunks.get_mut(&key) {
+            parent.content.javascript_mut().took_fold_of =
+                Some(this.graph.entry_points.items_source_index()[entry_id as usize]);
         }
     }
 
@@ -727,6 +768,41 @@ pub(crate) fn compute_chunks(
 
             let root_dir = &this.resolver().opts.root_dir;
             chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
+        }
+    }
+
+    // With the fold, a relative path of an external module counted from the entry point's chunk.
+    let sanitize_parent_dirs = !this.options.compile_mode.is_executable();
+    for chunk_id in 0..chunks.len() {
+        let chunk::Content::Javascript(js) = &chunks[chunk_id].content else {
+            continue;
+        };
+        let Some(entry_file) = js.took_fold_of else {
+            continue;
+        };
+        let entry_chunk = this.graph.files.items_entry_point_chunk_index()[entry_file as usize];
+        let to = chunks[entry_chunk as usize]
+            .template
+            .rel_path(sanitize_parent_dirs);
+        // The directory can hold `[hash]`. Its text does not matter: the way out of it is `..`.
+        let mut template = chunks[chunk_id].template.clone();
+        template.placeholder.hash = Some(template.content_hash(0));
+        let from = template.rel_path(sanitize_parent_dirs);
+        let from_dir = resolve_path::dirname::<bun_paths::platform::Posix>(&from);
+        let [dot, path] = bun_core::cheap_prefix_normalizer(
+            b"",
+            if from_dir == b"." {
+                &to
+            } else {
+                resolve_path::relative_platform::<bun_paths::platform::Posix, false>(from_dir, &to)
+            },
+        );
+        let dir = &path[..strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1)];
+        if !(dot == b"./" && dir.is_empty()) {
+            chunks[chunk_id]
+                .content
+                .javascript_mut()
+                .relative_imports_from = [dot, dir].concat().into_boxed_slice();
         }
     }
 

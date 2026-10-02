@@ -52,7 +52,14 @@
 #include "JSMlDsaParams.h"
 #include "JSX25519Params.h"
 #include "AsymmetricKeyValue.h"
+#include "CryptoAlgorithmAeadParams.h"
+#include "CryptoAlgorithmAesKeyParams.h"
+#include "CryptoAlgorithmChaCha20Poly1305.h"
+#include "CryptoAlgorithmEcKeyParams.h"
+#include "CryptoAlgorithmEcdhKeyDeriveParams.h"
+#include "CryptoAlgorithmHmacKeyParams.h"
 #include "CryptoAlgorithmMLDSA.h"
+#include "CryptoAlgorithmPbkdf2Params.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
 #include "CryptoKeyRSA.h"
@@ -647,6 +654,33 @@ static std::optional<Vector<uint8_t>> copyToVector(BufferSource&& data, Ref<Defe
     return Vector<uint8_t> { std::span { data.data(), data.length() } };
 }
 
+// exportKey normalizes with no algorithm-specific members, so a bare name like
+// "RSA-PSS" resolves even though RsaHashedImportParams would require a hash.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/webcrypto.js#L1969-L1981
+static std::optional<CryptoAlgorithmIdentifier> resolveAlgorithmName(JSGlobalObject& state, const SubtleCrypto::AlgorithmIdentifier& algorithmIdentifier)
+{
+    VM& vm = state.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String name;
+    if (std::holds_alternative<String>(algorithmIdentifier))
+        name = std::get<String>(algorithmIdentifier);
+    else {
+        auto& value = std::get<JSC::Strong<JSC::JSObject>>(algorithmIdentifier);
+        auto params = convertDictionary<CryptoAlgorithmParameters>(state, value.get());
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return std::nullopt;
+        }
+        name = params.name;
+    }
+
+    auto identifier = CryptoAlgorithmRegistry::singleton().identifier(name);
+    if (!identifier)
+        return std::nullopt;
+    return *identifier;
+}
+
 static bool isSupportedExportKey(CryptoAlgorithmIdentifier identifier)
 {
     switch (identifier) {
@@ -727,6 +761,32 @@ static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params,
         return false;
     rejectWithCause(WTF::move(promise), OperationError, "The operation failed for an operation-specific reason"_s, [](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
         return Bun::createError(&globalObject, Bun::ErrorCode::ERR_OUT_OF_RANGE, "context string must be at most 255 bytes"_s);
+    });
+    return true;
+}
+
+// Node validates RSA-PSS saltLength against the key before starting the job and
+// rejects with an OperationError whose cause is ERR_OUT_OF_RANGE.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/rsa.js#L286-L299
+static bool rejectIfRsaPssSaltLengthOutOfRange(const CryptoAlgorithmParameters& params, const CryptoKey& key, Ref<DeferredPromise>&& promise)
+{
+    auto* pssParams = dynamicDowncast<CryptoAlgorithmRsaPssParams>(params);
+    auto* rsaKey = dynamicDowncast<CryptoKeyRSA>(key);
+    if (!pssParams || !rsaKey)
+        return false;
+
+    const EVP_MD* md = digestAlgorithm(rsaKey->hashAlgorithmIdentifier());
+    if (!md)
+        return false;
+
+    // ceil((modulusLength - 1) / 8) - hLen - 2
+    int64_t maxSaltLength = static_cast<int64_t>((rsaKey->keySizeInBits() + 6) / 8) - EVP_MD_size(md) - 2;
+    if (static_cast<int64_t>(pssParams->saltLength) <= maxSaltLength)
+        return false;
+
+    auto message = makeString("The value of \"algorithm.saltLength\" is out of range. It must be >= 0 && <= "_s, maxSaltLength, ". Received "_s, static_cast<uint64_t>(pssParams->saltLength));
+    rejectWithCause(WTF::move(promise), OperationError, "The operation failed for an operation-specific reason"_s, [message = WTF::move(message)](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+        return Bun::createError(&globalObject, Bun::ErrorCode::ERR_OUT_OF_RANGE, message);
     });
     return true;
 }
@@ -878,6 +938,9 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
     if (rejectIfMlDsaContextTooLong(*params, WTF::move(promise)))
         return;
 
+    if (rejectIfRsaPssSaltLengthOutOfRange(*params, key, WTF::move(promise)))
+        return;
+
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
     auto index = promise.ptr();
@@ -926,6 +989,9 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     }
 
     if (rejectIfMlDsaContextTooLong(*params, WTF::move(promise)))
+        return;
+
+    if (rejectIfRsaPssSaltLengthOutOfRange(*params, key, WTF::move(promise)))
         return;
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
@@ -1979,7 +2045,8 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         switch (params.identifier) {
         case CryptoAlgorithmIdentifier::HKDF:
         case CryptoAlgorithmIdentifier::PBKDF2:
-            return length && *length && !(*length % 8);
+            // A null length is rejected; zero is not.
+            return length && !(*length % 8);
         case CryptoAlgorithmIdentifier::X25519:
             return !length || *length <= 256;
         case CryptoAlgorithmIdentifier::ECDH: {
@@ -1990,6 +2057,74 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
             unsigned maxLength = namedCurve == "P-256"_s ? 256 : namedCurve == "P-384"_s ? 384
                                                                                          : 528;
             return !length || *length <= maxLength;
+        }
+        default:
+            return true;
+        }
+    };
+
+    // Node's normalizeAlgorithm rejects these before an operation ever starts, so
+    // `supports` reports false for them. Bun's algorithm implementations reject
+    // the same inputs at execution time; this keeps the prediction in step.
+    auto acceptsParameters = [&](Operations op, const CryptoAlgorithmParameters& params) -> bool {
+        switch (params.identifier) {
+        case CryptoAlgorithmIdentifier::HMAC: {
+            std::optional<size_t> keyLength;
+            if (auto* hmacParams = dynamicDowncast<CryptoAlgorithmHmacKeyParams>(params))
+                keyLength = hmacParams->length;
+            // An explicit length must be a non-zero multiple of 8.
+            return !keyLength || (*keyLength && !(*keyLength % 8));
+        }
+        case CryptoAlgorithmIdentifier::AES_CTR:
+        case CryptoAlgorithmIdentifier::AES_CBC:
+        case CryptoAlgorithmIdentifier::AES_GCM:
+        case CryptoAlgorithmIdentifier::AES_CFB:
+        case CryptoAlgorithmIdentifier::AES_KW: {
+            auto* aesParams = dynamicDowncast<CryptoAlgorithmAesKeyParams>(params);
+            if (!aesParams)
+                return true;
+            return aesParams->length == 128 || aesParams->length == 192 || aesParams->length == 256;
+        }
+        case CryptoAlgorithmIdentifier::ECDSA: {
+            auto* ecParams = dynamicDowncast<CryptoAlgorithmEcKeyParams>(params);
+            if (!ecParams)
+                return true;
+            return ecParams->namedCurve == "P-256"_s || ecParams->namedCurve == "P-384"_s || ecParams->namedCurve == "P-521"_s;
+        }
+        case CryptoAlgorithmIdentifier::ECDH: {
+            if (op == Operations::DeriveBits) {
+                // `public` must be a public EC CryptoKey; a plain object or a
+                // private key fails normalization in Node.
+                auto* deriveParams = dynamicDowncast<CryptoAlgorithmEcdhKeyDeriveParams>(params);
+                return deriveParams && is<CryptoKeyEC>(deriveParams->publicKey.get())
+                    && deriveParams->publicKey->type() == CryptoKeyType::Public;
+            }
+            auto* ecParams = dynamicDowncast<CryptoAlgorithmEcKeyParams>(params);
+            if (!ecParams)
+                return true;
+            return ecParams->namedCurve == "P-256"_s || ecParams->namedCurve == "P-384"_s || ecParams->namedCurve == "P-521"_s;
+        }
+        case CryptoAlgorithmIdentifier::X25519: {
+            if (op != Operations::DeriveBits)
+                return true;
+            auto* deriveParams = dynamicDowncast<CryptoAlgorithmX25519Params>(params);
+            return deriveParams && deriveParams->publicKey
+                && deriveParams->publicKey->type() == CryptoKeyType::Public;
+        }
+        case CryptoAlgorithmIdentifier::PBKDF2: {
+            if (op != Operations::DeriveBits)
+                return true;
+            auto* pbkdf2Params = dynamicDowncast<CryptoAlgorithmPbkdf2Params>(params);
+            return !pbkdf2Params || pbkdf2Params->iterations;
+        }
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305: {
+            if (op != Operations::Encrypt && op != Operations::Decrypt)
+                return true;
+            auto* aeadParams = dynamicDowncast<CryptoAlgorithmAeadParams>(params);
+            if (!aeadParams)
+                return true;
+            return aeadParams->ivVector().size() == CryptoAlgorithmChaCha20Poly1305::s_ivLength
+                && (!aeadParams->tagLength || *aeadParams->tagLength == CryptoAlgorithmChaCha20Poly1305::s_tagLengthBits);
         }
         default:
             return true;
@@ -2022,8 +2157,8 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         else if (op == "decapsulate"_s)
             operationKind = Operations::Decapsulate;
         else if (op == "exportKey"_s) {
-            auto params = normalize(algorithm, Operations::ImportKey);
-            return params && isSupportedExportKey(params->identifier);
+            auto identifier = resolveAlgorithmName(state, algorithm);
+            return identifier && isSupportedExportKey(*identifier);
         } else
             return false;
 
@@ -2036,6 +2171,9 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
                 return check("decrypt"_s, algorithm, std::nullopt);
             return false;
         }
+
+        if (!acceptsParameters(operationKind, *params))
+            return false;
 
         if (op == "deriveBits"_s)
             return checkDeriveBitsLength(*params, length);
@@ -2083,10 +2221,12 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
             length = converted;
         }
     } else if (op == "getPublicKey"_s) {
-        auto params = normalize(algorithmIdentifier, Operations::ImportKey);
-        if (!params)
+        // getPublicKey normalizes for exportKey, which takes no members, so a
+        // bare algorithm name resolves.
+        auto identifier = resolveAlgorithmName(state, algorithmIdentifier);
+        if (!identifier)
             return false;
-        switch (params->identifier) {
+        switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP:

@@ -12,9 +12,6 @@ const {
   kWaitForProxyTunnel,
   kPerRequestCheckServerIdentity,
   getMaxHTTPHeaderSize,
-  appendHeadChunk,
-  indexOfHeadEnd,
-  firstLineOfHead,
 } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
@@ -122,6 +119,7 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
 
 function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
   const { proxyTunnelPayload, maxHeaderSize } = tunnelConfig;
+  const { appendHeadChunk, indexOfHeadEnd, firstLineOfHead } = require("internal/http/proxy_response_head");
   // By default, the socket is in paused mode. Read to look for the 200
   // connection established response.
   function read() {

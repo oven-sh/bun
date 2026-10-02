@@ -58,6 +58,8 @@ export const cares: Dependency = {
     commit: CARES_COMMIT,
   }),
 
+  patches: ["patches/cares/keep-servers-when-config-has-none.patch"],
+
   build: cfg => ({
     kind: "direct",
     pic: true,

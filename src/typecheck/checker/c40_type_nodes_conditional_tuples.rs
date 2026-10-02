@@ -281,15 +281,14 @@ impl<'a> Checker<'a> {
             let check_type = self.get_type_from_type_node(data.check_type);
             let alias = self.get_alias_for_type_node(node);
             let all_outer_type_parameters = self.get_outer_type_parameters(node, true);
-            let outer_type_parameters = if !alias.is_nil()
-                && self.type_aliases[alias].type_arguments.len() != 0
-            {
-                all_outer_type_parameters
-            } else {
-                self.filter(all_outer_type_parameters, |c, tp| {
-                    c.is_type_parameter_possibly_referenced(tp, node)
-                })
-            };
+            let outer_type_parameters =
+                if !alias.is_nil() && self.type_aliases[alias].type_arguments.len() != 0 {
+                    all_outer_type_parameters
+                } else {
+                    self.filter(all_outer_type_parameters, |c, tp| {
+                        c.is_type_parameter_possibly_referenced(tp, node)
+                    })
+                };
             let extends_type = self.get_type_from_type_node(data.extends_type);
             let is_distributive = self.types[check_type]
                 .flags

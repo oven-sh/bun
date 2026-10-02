@@ -1,3 +1,4 @@
+use crate::bun_fs::FileSystem;
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
@@ -40,6 +41,9 @@ pub struct Options {
 
     pub(crate) registries: Npm::registry::Map,
     pub(crate) cache_directory: &'static [u8],
+    /// `bun add --bunx-install-dir`: the directory project config was read from. Paths that
+    /// config names resolve against it, not against the install directory. Empty otherwise.
+    pub(crate) config_root: &'static [u8],
     pub enable: Enable,
     pub do_: Do,
     pub positionals: &'static [&'static [u8]],
@@ -130,6 +134,7 @@ impl Default for Options {
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
             cache_directory: b"",
+            config_root: b"",
             enable: Enable::default(),
             do_: Do::default(),
             positionals: &[],
@@ -421,6 +426,15 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
 }
 
 impl Options {
+    /// The directory that paths named in project config resolve against.
+    pub(crate) fn config_dir(&self) -> &'static [u8] {
+        if self.config_root.is_empty() {
+            FileSystem::instance().top_level_dir()
+        } else {
+            self.config_root
+        }
+    }
+
     pub(crate) fn load(
         &mut self,
         log: &mut bun_ast::Log,
@@ -927,6 +941,12 @@ impl Options {
             };
             // SAFETY: main-thread CLI option load — single writer.
             super::PackageManager::set_verbose_install(false);
+        }
+
+        // A bunx install adds one package to a root that starts as `{}`, so a frozen
+        // lockfile from the project's or the user's config can never be satisfied.
+        if !self.config_root.is_empty() {
+            self.enable.set(Enable::FROZEN_LOCKFILE, false);
         }
 
         // If the lockfile is frozen, don't save it to disk.

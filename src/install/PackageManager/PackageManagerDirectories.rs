@@ -386,7 +386,11 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
     if let Some(opts) = options {
         if !opts.cache_directory.is_empty() {
             return CacheDir {
-                path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(),
+                path: path::resolve_path::join_abs_string::<path::platform::Loose>(
+                    opts.config_dir(),
+                    &[opts.cache_directory],
+                )
+                .to_vec(),
             };
         }
     }

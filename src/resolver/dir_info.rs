@@ -281,7 +281,7 @@ impl DirInfo {
     }
 
     #[inline]
-    pub(crate) fn get_parent(&self) -> Option<DirInfoRef> {
+    pub fn get_parent(&self) -> Option<DirInfoRef> {
         ref_at_index(self.parent)
     }
 

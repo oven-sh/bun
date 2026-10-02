@@ -281,6 +281,7 @@ pub(crate) static ADD_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--catalog <STR>?                Add the resolved version to the root package.json catalog and depend on it as \"catalog:\" (use --catalog=NAME for a named catalog)"
         ),
+        clap::param!("--bunx-install-dir <STR>"),
         clap::param!(
             "<POS> ...                         \"name\" or \"name@version\" of package(s) to install"
         ),
@@ -589,6 +590,9 @@ pub struct CommandLineArguments {
     pub diff_raw: bool,
     /// The subcommand only needs registry configuration; a missing package.json is not an error.
     pub no_project_ok: bool,
+    /// `bunx`: install into this directory. Project config (bunfig.toml, .npmrc, .env) still
+    /// comes from the root `bun add` would pick for the cwd, and nothing there is written.
+    pub(crate) bunx_install_dir: Option<&'static [u8]>,
     pub diff_unminify: bool,
     pub diff_minify: bool,
     pub diff_ignore_space: bool,
@@ -687,6 +691,7 @@ impl Default for CommandLineArguments {
             diff_name_only: false,
             diff_raw: false,
             no_project_ok: false,
+            bunx_install_dir: None,
             diff_unminify: false,
             diff_minify: false,
             diff_ignore_space: false,
@@ -1728,6 +1733,20 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         if cli.add_catalog.is_some() && cli.global {
             Output::err_generic("--catalog cannot be used with --global\n", ());
             Global::crash();
+        }
+
+        if subcommand == Subcommand::Add {
+            if let Some(dir) = args.option(b"--bunx-install-dir") {
+                if cli.global {
+                    Output::err_generic("--bunx-install-dir cannot be used with --global\n", ());
+                    Global::crash();
+                }
+                if !bun_paths::is_absolute(dir) {
+                    Output::err_generic("--bunx-install-dir must be an absolute path\n", ());
+                    Global::crash();
+                }
+                cli.bunx_install_dir = Some(dir);
+            }
         }
 
         if cli.global

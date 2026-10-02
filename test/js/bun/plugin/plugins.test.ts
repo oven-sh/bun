@@ -2,7 +2,6 @@
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { totalmem } from "node:os";
 import { resolve } from "path";
 
 declare global {
@@ -200,6 +199,7 @@ plugin({
 
 // This is to test that it works when imported from a separate file
 import { tempDir } from "harness";
+import { totalmem } from "node:os";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";

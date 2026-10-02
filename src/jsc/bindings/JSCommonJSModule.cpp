@@ -1176,10 +1176,6 @@ void populateESMExports(
                     if (property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()) [[unlikely]]
                         continue;
 
-                    // ignore constructor
-                    if (property == vm.propertyNames->constructor)
-                        continue;
-
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                     auto has = exports->getPropertySlot(globalObject, property, slot);
                     RETURN_IF_EXCEPTION(scope, );
@@ -1229,10 +1225,6 @@ void populateESMExports(
 
             for (auto property : properties) {
                 if (property.isEmpty() || property.isNull() || property == vm.propertyNames->defaultKeyword || property.isPrivateName() || property.isSymbol()) [[unlikely]]
-                    continue;
-
-                // ignore constructor
-                if (property == vm.propertyNames->constructor)
                     continue;
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);

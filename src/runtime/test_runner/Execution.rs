@@ -628,6 +628,45 @@ impl Execution {
         }
     }
 
+    /// The process exits now. Ends each sequence of the active group that has failed and still runs its hooks, so that
+    /// `advance_sequence` reports it: the `(fail)` line, the counts and the JUnit test case. The hooks that remain do
+    /// not run, and a failed attempt is not retried.
+    #[cold]
+    pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
+        let (group, range) = {
+            // SAFETY: `buntest` is the live active file. This borrow of its `execution` ends with the block.
+            let bun_test = unsafe { &mut *buntest.as_ptr() };
+            if bun_test.phase != super::bun_test::Phase::Execution {
+                return;
+            }
+            let Some(group) = bun_test.execution.active_group() else {
+                return;
+            };
+            let range = group.sequence_start..group.sequence_end;
+            (NonNull::from(group), range)
+        };
+        for index in range {
+            // SAFETY: as in `advance_sequence`: one element of `buntest.execution.sequences`, disjoint from `groups`.
+            let sequence = unsafe { &mut (*buntest.as_ptr()).execution.sequences[index] };
+            let Some(mut last) = sequence.active_entry else {
+                continue;
+            };
+            if !sequence.result.is_fail() {
+                continue;
+            }
+            // SAFETY: arena-owned entries, alive for the lifetime of the `BunTest`.
+            while let Some(next) = nn(unsafe { last.as_ref() }.next) {
+                last = next;
+            }
+            // `advance_sequence` steps past the last entry and finds the sequence complete.
+            sequence.active_entry = Some(last);
+            sequence.maybe_skip = false;
+            sequence.executing = true;
+            sequence.remaining_retry_count = 0;
+            Execution::advance_sequence(buntest, NonNull::from(sequence), group);
+        }
+    }
+
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0

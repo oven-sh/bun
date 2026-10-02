@@ -741,6 +741,7 @@ The renamed symbols are then used during final code generation to produce output
 - Computes, per `import()` entry point, which other entry points are guaranteed to be loaded already whenever it loads
 - Reduces each chunk key (`File.entry_bits`) to its load-condition class by dropping such redundant dynamic entries
 - Rewrites the entry bits of files to those of the class's parent chunk (the chunk keyed by the reduced set, else the largest member) before `computeChunks()` groups files
+- Leaves an entry point's own chunk alone when the entry point has exports, with `--compile`, and for an entry point without `[hash]` in its name (its host can load it as `entry.js?v=1`, so no chunk may import it)
 - Keeps a chunk out of the fold when it can be in the middle of being evaluated while an entry of its class loads (it, or a file that statically imports its way to it, `require()`s a split ES module): the entry's chunk reads the other members then
 - With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is, no static import cycle between chunks results, and every CommonJS/ESM wrapper the moved code initializes at the top level is already initialized by a chunk the target imports
 
@@ -761,10 +762,11 @@ The renamed symbols are then used during final code generation to produce output
 
 **Key functions**:
 
-- Orders files by distance from entry point
-- Handles part dependencies within chunks
-- Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
-- Ensures proper evaluation order
+- Walks the import graph in evaluation order (`EntryWalk`): depth first along every `import` statement, also through files that tree shaking dropped, so a file prints after the files it imports
+- One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
+- Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
+- Collects the live parts of each run into part ranges
+- Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 
 #### `findImportedCSSFilesInJSOrder.rs`
 

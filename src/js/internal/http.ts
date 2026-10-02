@@ -1,6 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
+const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
   "createNodeHTTPInternalBinding",
 ) as {
@@ -20,6 +20,7 @@ const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
     lenientHttpFlags: number,
     httpAllowHalfOpen: boolean,
   ) => void;
+  setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
   drainMicrotasks: () => void;
 };
 
@@ -29,16 +30,18 @@ const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+const kOnReadParsed = Symbol("kOnReadParsed");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
 const tlsSymbol = Symbol("tls");
-const typeSymbol = Symbol("type");
 const kAbortController = Symbol.for("kAbortController");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+// Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
+const kHandoffResponse = Symbol("kHandoffResponse");
 const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -49,8 +52,10 @@ const http1ServerPipeline: {
   queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
   advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
   abortQueuedPipelinedResponses?: (socket: unknown) => void;
+  lastPipelinedResponse?: (socket: unknown) => { _last: boolean } | undefined;
   maybePauseFallbackReads?: (socket: unknown) => void;
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
+  finishDrainedResponse?: (res: unknown) => void;
   kMustCloseConnection?: symbol;
 } = {};
 
@@ -58,17 +63,15 @@ export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
   timeout = 2,
-}
-export const enum NodeHTTPIncomingRequestType {
-  FetchRequest,
-  FetchResponse,
-  NodeHTTPResponse,
+  readParsed = 3,
 }
 export const enum NodeHTTPBodyReadState {
   none,
   pending = 1 << 1,
+  /** The last chunk arrived, or a WebSocket took the connection. */
   done = 1 << 2,
-  hasBufferedDataDuringPause = 1 << 3,
+  /** The connection closed before the last chunk. */
+  aborted = 1 << 3,
 }
 
 // Must be kept in sync with NodeHTTPResponse.Flags
@@ -77,6 +80,7 @@ export const enum NodeHTTPResponseFlags {
   request_has_completed = 1 << 1,
   ended = 1 << 2,
   upgraded = 1 << 3,
+  dispatch_threw_while_queued = 1 << 9,
 
   closed_or_completed = socket_closed | request_has_completed,
 }
@@ -131,15 +135,8 @@ function emitEOFIncomingMessageOuter(self) {
   if (self[kHandle] !== undefined && !self[noBodySymbol]) {
     // The lenient (insecureHTTPParser) value bytes must match what the parser
     // accepted on the wire, or a CTL byte in a trailer value would vanish here.
-    let rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
+    const rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
     if (rawTrailers !== undefined) {
-      // Apply server.maxHeadersCount to trailers like Node's parserOnHeaders
-      // does (the same maxHeaderPairs limit covers both). The parser hard-caps
-      // at 199 fields; Node's C++ imposes no count limit, only this JS clamp.
-      const maxHeadersCount = self.socket?.server?.maxHeadersCount;
-      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && rawTrailers.length > maxHeadersCount * 2) {
-        rawTrailers.length = maxHeadersCount * 2;
-      }
       self._addHeaderLines(rawTrailers, rawTrailers.length);
     }
   }
@@ -166,6 +163,15 @@ function emitEOFIncomingMessage(self) {
 }
 
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
+  if (aborted === NodeHTTPResponseAbortEvent.readParsed) {
+    const socket = this.socket;
+    const onReadParsed = socket?.[kOnReadParsed];
+    if (onReadParsed) {
+      socket[kOnReadParsed] = undefined;
+      onReadParsed(socket);
+    }
+    return;
+  }
   if (aborted === NodeHTTPResponseAbortEvent.abort) {
     // The request is aborted from the socket's #onClose (like Node.js's
     // socketOnClose → abortIncoming), which the native close path always
@@ -186,7 +192,11 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
       // Upgrade-with-body routes through its own handle so the socket's flow
       // state stays with the upgrade listener; _read() balances it.
       if (this.upgrade) this[kHandle]?.pause();
-      else if (socket && !socket.writableEnded) socket.pause();
+      else if (socket && !socket.writableEnded) {
+        socket.pause();
+        // For a pipelined request the socket's current response is an earlier one, and an ended response does not pause.
+        this[kHandle]?.pause();
+      }
     }
   }
 
@@ -196,14 +206,6 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
   }
-}
-
-function validateMsecs(numberlike: any, field: string) {
-  if (typeof numberlike !== "number" || numberlike < 0) {
-    throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
-  }
-
-  return numberlike;
 }
 
 const METHODS = [
@@ -310,10 +312,11 @@ const STATUS_CODES = {
   511: "Network Authentication Required",
 };
 
-function hasServerResponseFinished(self, chunk, callback) {
+function hasServerResponseFinished(self, chunk, callback, fromEnd) {
   const finished = self.finished;
 
-  if (chunk) {
+  // Only end() takes "" for no chunk. To Node.js's write_() it is a write: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L943-L957
+  if (chunk || (!fromEnd && chunk === "")) {
     const destroyed = self.destroyed;
 
     if (finished || destroyed) {
@@ -326,7 +329,8 @@ function hasServerResponseFinished(self, chunk, callback) {
 
       if (!destroyed) {
         process.nextTick(emitErrorNt, self, err, callback);
-      } else if ($isCallable(callback)) {
+      } else if (!fromEnd && $isCallable(callback)) {
+        // Node.js's end() never gives this error to its callback: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1086-L1098
         process.nextTick(callback, err);
       }
 
@@ -386,6 +390,15 @@ function ipToInt(ip) {
   return result >>> 0;
 }
 
+// Node prints these raw (nodejs/node@3e9954a88b lib/internal/http.js#L114). An unescaped "/" in a password ends the authority early, so cut at the last "@".
+function redactInvalidProxyUrl(proxyUrl) {
+  proxyUrl = `${proxyUrl}`;
+  const userinfoEnd = proxyUrl.lastIndexOf("@");
+  if (userinfoEnd === -1) return proxyUrl;
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i.exec(proxyUrl);
+  return (scheme === null ? "" : scheme[0]) + proxyUrl.slice(userinfoEnd + 1);
+}
+
 class ProxyConfig {
   href;
   protocol;
@@ -398,11 +411,18 @@ class ProxyConfig {
     try {
       parsedURL = new URL(proxyUrl);
     } catch {
-      throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
+      throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${redactInvalidProxyUrl(proxyUrl)}`);
     }
     const { hostname, port, protocol, username, password } = parsedURL;
 
-    this.href = proxyUrl;
+    // `href` ends up in ERR_PROXY_TUNNEL messages, so it must not carry the credentials.
+    if (username || password) {
+      parsedURL.username = "";
+      parsedURL.password = "";
+      this.href = parsedURL.href;
+    } else {
+      this.href = proxyUrl;
+    }
     this.protocol = protocol;
 
     if (username || password) {
@@ -478,7 +498,7 @@ function parseProxyUrl(env, protocol) {
   }
 
   if (proxyUrl.includes("\r") || proxyUrl.includes("\n")) {
-    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
+    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${redactInvalidProxyUrl(proxyUrl)}`);
   }
 
   return proxyUrl;
@@ -521,8 +541,10 @@ export {
   kAbortController,
   kCloseCallback,
   kHandle,
+  kHandoffResponse,
   kInternalSocketData,
   kNeedDrain,
+  kOnReadParsed,
   kOutHeaders,
   kPendingCallbacks,
   kPerRequestCheckServerIdentity,
@@ -535,12 +557,12 @@ export {
   optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,
+  redactInvalidProxyUrl,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,
+  setServerMaxHeadersCount,
   tlsSymbol,
-  typeSymbol,
   utcDate,
-  validateMsecs,
 };

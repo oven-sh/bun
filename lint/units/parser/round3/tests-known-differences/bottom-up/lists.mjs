@@ -211,8 +211,12 @@ for (const [cause, text] of extra) {
   emit(`- ${list.length} sources that main rejects and round 1 accepted, with no case of their own: ${text}. Example: \`${list[0].src.replace(/\n/g, "\\n")}\` is \`${list[0].msg[0]}\`.`);
 }
 const both = corpus.valid["ROUND 1 REJECTS TOO"] ?? [];
-emit(`- ${both.length} sources that tsc takes by the rule above and that main and round 1 both reject. No case named them and no grammar of this`);
-emit("  work reads them: a lint parse rejects them too until its grammar is widened. Examples: `typeof import('x').a<>` (`Unexpected >`),");
+// Codes that say a name, a module or a type is missing in a source that stands alone (causes.mjs of round 2).
+const NOISE = new Set([2304, 2307, 2314, 2315, 2318, 2322, 2339, 2345, 2355, 2365, 2367, 2391, 2503, 2552, 2564, 2583, 2584, 2693, 2695, 2711, 2749, 2882, 7005, 7006, 7008, 7010, 7019, 7031, 7034]);
+const clean = both.filter(e => e.oth.every(c => NOISE.has(c))).length;
+emit(`- ${both.length} sources that tsc takes by the rule above and that main and round 1 both reject; for ${clean} of them tsc reports nothing else about the form`);
+emit("  (for the others mostly TS1228, TS1141, TS2371, TS2369, TS2499, TS2500). No case named them and the grammar of round 1 does not read them");
+emit("  without lint; whether a lint parse reads them was not run. Examples: `typeof import('x').a<>` (`Unexpected >`),");
 emit("  `typeof a.<C>` (`Expected identifier but found \"<\"`), `A extends  extends ? 1 : 2` (`Unexpected extends`), `declare {};`, `export { type if };`,");
 emit("  `try {} catch (e: any = 1) {}`, `enum E { [a] = 1 }` (tsc: TS1164).");
 const same = corpus.meta["ROUND 1 HAS THE SAME VALUE"] ?? [];

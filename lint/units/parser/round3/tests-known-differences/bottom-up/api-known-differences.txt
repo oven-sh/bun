@@ -524,8 +524,9 @@ round 2 at `e3566be889` without a difference, and the tables of `diff.mjs` again
 - 52 sources that main rejects and round 1 accepted, with no case of their own: `asserts is T`: the assertion about a parameter named `is` (the checker of tsc: TS1225 when no parameter has the name). Example: `class C { @d m(): asserts is A { return x; } }` is `Expected ";" but found "A"`.
 - 29 sources that main rejects and round 1 accepted, with no case of their own: `[function]`, `[...if]`: a reserved word as an element of a tuple; `import('x').#a`; `{ [+1]: A }`, `{ get #a(): A }`. Example: `type X = [function];` is `Expected ":" but found "]"`.
 - 2 sources that main rejects and round 1 accepted, with no case of their own: `implements [delete A]` (tsc: TS1102 from its binder). Example: `class C implements [delete A] {}` is `Unexpected delete`.
-- 653 sources that tsc takes by the rule above and that main and round 1 both reject. No case named them and no grammar of this
-  work reads them: a lint parse rejects them too until its grammar is widened. Examples: `typeof import('x').a<>` (`Unexpected >`),
+- 653 sources that tsc takes by the rule above and that main and round 1 both reject; for 134 of them tsc reports nothing else about the form
+  (for the others mostly TS1228, TS1141, TS2371, TS2369, TS2499, TS2500). No case named them and the grammar of round 1 does not read them
+  without lint; whether a lint parse reads them was not run. Examples: `typeof import('x').a<>` (`Unexpected >`),
   `typeof a.<C>` (`Expected identifier but found "<"`), `A extends  extends ? 1 : 2` (`Unexpected extends`), `declare {};`, `export { type if };`,
   `try {} catch (e: any = 1) {}`, `enum E { [a] = 1 }` (tsc: TS1164).
 - 205 sources whose metadata differs from tsc in main and in round 1 alike. They need what no parse has (the declaration of the name:

@@ -11,12 +11,32 @@ const cut = line => line.replace(/ keyword=\w+/, "").replace(/ default=\S+ star=
 function cases(file) {
   const text = readFileSync(file, "utf8");
   const out = [];
-  const re = /Case \{\s*name: "([^"]*)",\s*path: b"([^"]*)",\s*(?:loader: Loader::(\w+),\s*)?text: b"((?:[^"\\]|\\.)*)",\s*(?:kept: (\d+),\s*)?records: &\[((?:[^\]]|\](?!,\s*\}))*)\]/g;
-  for (let m; (m = re.exec(text)); ) {
+  // A string literal that starts at `at`: its value and the offset after its closing quote.
+  const literal = at => {
+    let i = at + 1, value = "";
+    for (; text[i] !== '"'; i++) {
+      if (text[i] === "\\") { i++; value += text[i] === "n" ? "\n" : text[i] === "t" ? "\t" : text[i]; }
+      else value += text[i];
+    }
+    return [value, i + 1];
+  };
+  for (let at = text.indexOf("Case {\n"); at >= 0; at = text.indexOf("Case {\n", at + 1)) {
+    const field = name => { const i = text.indexOf(name, at); return i < 0 ? -1 : i + name.length; };
+    const [name] = literal(field("name: "));
+    const [path] = literal(field("path: b") );
+    const [source] = literal(field("text: b"));
+    const keptAt = text.indexOf("kept: ", at);
+    const recordsAt = field("records: &[");
+    const kept = keptAt >= 0 && keptAt < recordsAt ? Number(/\d+/.exec(text.slice(keptAt))[0]) : null;
     const records = [];
-    const rr = /"((?:[^"\\]|\\.)*)"/g;
-    for (let x; (x = rr.exec(m[5])); ) records.push(unescape(x[1]));
-    out.push({ name: m[1], path: unescape(m[2]), text: unescape(m[4]), kept: m[3 + 2] === undefined ? null : Number(m[5 - 0] && m[0].match(/kept: (\d+)/)?.[1]), records });
+    for (let i = recordsAt; ; ) {
+      while (/[\s,]/.test(text[i])) i++;
+      if (text[i] !== '"') break;
+      const [value, next] = literal(i);
+      records.push(value);
+      i = next;
+    }
+    out.push({ name, path, text: source, kept, records });
   }
   return out;
 }

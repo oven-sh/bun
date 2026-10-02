@@ -3087,3 +3087,334 @@ describe("no JS entry after a worker's termination has been thrown", () => {
     });
   }
 });
+
+// terminate() called by user code that the parent-side exit handler of a Worker runs. A 'message'
+// that the exit handler delivers comes before the exit state is stored: the promise resolves with
+// the exit code, after 'exit'. The stdio EOF comes after it: the promise resolves with undefined.
+// node v26.3.0 prints the same log for the stdout and stderr fixtures. It delivers a 'message'
+// from its exit handler when the parent is held after `new Worker()`, and prints the same log for
+// that state. A comment names each difference.
+describe("terminate() inside the Worker's exit handler", () => {
+  // A fixture prints its log when the process exits by itself, so a promise that never settles
+  // shows as a missing line.
+  const prelude = `
+    const { Worker, MessagePort } = require("node:worker_threads");
+    const log = [], warnings = [];
+    process.on("warning", warning => warnings.push(warning.code));
+    process.on("uncaughtException", error => log.push("uncaught " + error.message));
+    process.on("exit", () => console.log(JSON.stringify({ log, warnings })));
+    let w, id;
+    const state = () => " threadId=" + (w.threadId === id ? "live" : w.threadId) + " threadName=" + w.threadName;
+  `;
+  const construct = (source: string, options: string) => `
+    w = new Worker(${JSON.stringify(source)}, { eval: true, name: "name"${options} });
+    id = w.threadId;
+    w.on("exit", code => log.push("exit " + code + state()));
+  `;
+  const start = (source: string, options = "") => prelude + construct(source, options);
+  // Bun only. A 'message' listener starts a port. Without one the public port of the Worker never
+  // starts, and only the exit handler can deliver what the worker posted. A parent that loses the
+  // CPU inside `new Worker()` until the worker has ended reaches the same state.
+  const startWithoutPorts = (source: string, options = "") => `${prelude}
+    const { addEventListener } = EventTarget.prototype;
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      if (type === "message" && this instanceof MessagePort) return;
+      return addEventListener.call(this, type, listener, options);
+    };
+    try {
+      ${construct(source, options)}
+    } finally {
+      EventTarget.prototype.addEventListener = addEventListener;
+    }
+  `;
+  const postsAndEnds = `require("node:worker_threads").parentPort.postMessage(1);`;
+  // Answers "ready", then stays alive until terminate().
+  const idle = `const { parentPort } = require("node:worker_threads"); parentPort.on("message", () => {}); parentPort.postMessage("ready");`;
+  // Ends without a return to its event loop after the parent wrote to its stdin, so it cannot
+  // answer the write.
+  const endsAfterTheWrite = `
+    const gate = require("node:worker_threads").workerData;
+    Atomics.store(gate, 0, 1);
+    Atomics.notify(gate, 0);
+    Atomics.wait(gate, 0, 1);
+    process.exit(0);`;
+
+  const windows = {
+    // The microtask runs after 'exit': the exit handler delivered the message, not the port.
+    message: (call: string) => `${startWithoutPorts(postsAndEnds)}
+      w.on("message", message => {
+        log.push("message " + message + state());
+        queueMicrotask(() => log.push("microtask"));
+        ${call}
+      });`,
+    stdout: (call: string) => `${start("", ", stdout: true")}
+      w.stdout.on("readable", () => {
+        if (w.stdout.read() !== null) return;
+        log.push("stdout EOF" + state());
+        ${call}
+      });`,
+    stderr: (call: string) => `${start("", ", stderr: true")}
+      w.stderr.on("readable", () => {
+        if (w.stderr.read() !== null) return;
+        log.push("stderr EOF" + state());
+        ${call}
+      });`,
+    // node does not run this callback: its exit handler does not destroy stdin.
+    stdin: (call: string) => `
+      const gate = new Int32Array(new SharedArrayBuffer(4));
+      ${start(endsAfterTheWrite, ", stdin: true, workerData: gate")}
+      Atomics.wait(gate, 0, 0);
+      w.stdin.write("x", error => {
+        log.push("write callback " + error + state());
+        ${call}
+      });
+      Atomics.store(gate, 0, 2);
+      Atomics.notify(gate, 0);`,
+  };
+  const forms = {
+    promise: `w.terminate().then(value => log.push("promise " + value));`,
+    callback: `w.terminate((error, code) => log.push("callback " + error + " " + code)).then(value => log.push("promise " + value));`,
+    asyncDispose: `w[Symbol.asyncDispose]().then(value => log.push("asyncDispose " + value));`,
+  };
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      printed: stdout.startsWith("{") ? JSON.parse(stdout) : stdout,
+      // On success stderr has the DEP0132 text, and debug builds add lines to it.
+      stderr: exitCode === 0 ? "" : stderr,
+      exitCode,
+      signalCode: proc.signalCode,
+    };
+  }
+  const printed = (log: readonly string[], warnings: readonly string[] = []) => ({
+    printed: { log, warnings },
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+
+  const live = " threadId=live threadName=name";
+  const exited = " threadId=-1 threadName=null";
+  test.concurrent.each([
+    ["message", "promise", ["message 1" + live, "exit 0" + exited, "microtask", "promise 0"], []],
+    // node v26.3.0 ignores the callback and prints no warning. node v22 calls it here.
+    [
+      "message",
+      "callback",
+      ["message 1" + live, "exit 0" + exited, "callback null 0", "microtask", "promise 0"],
+      ["DEP0132"],
+    ],
+    ["message", "asyncDispose", ["message 1" + live, "exit 0" + exited, "microtask", "asyncDispose undefined"], []],
+    ["stdout", "promise", ["stdout EOF" + exited, "exit 0" + exited, "promise undefined"], []],
+    ["stdout", "callback", ["stdout EOF" + exited, "exit 0" + exited, "promise undefined"], ["DEP0132"]],
+    ["stdout", "asyncDispose", ["stdout EOF" + exited, "exit 0" + exited, "asyncDispose undefined"], []],
+    ["stderr", "promise", ["stderr EOF" + exited, "exit 0" + exited, "promise undefined"], []],
+    ["stderr", "callback", ["stderr EOF" + exited, "exit 0" + exited, "promise undefined"], ["DEP0132"]],
+    ["stderr", "asyncDispose", ["stderr EOF" + exited, "exit 0" + exited, "asyncDispose undefined"], []],
+    ["stdin", "promise", ["write callback null" + exited, "exit 0" + exited, "promise undefined"], []],
+    ["stdin", "callback", ["write callback null" + exited, "exit 0" + exited, "promise undefined"], ["DEP0132"]],
+    ["stdin", "asyncDispose", ["write callback null" + exited, "exit 0" + exited, "asyncDispose undefined"], []],
+  ] as const)("from %s, %s form", async (window, form, log, warnings) => {
+    expect(await run(windows[window](forms[form]))).toEqual(printed(log, warnings));
+  });
+
+  test.concurrent("from message: the exit code, one promise for two calls, a call from 'exit'", async () => {
+    const script = `${startWithoutPorts(postsAndEnds + " process.exit(7);")}
+      w.on("exit", () => w.terminate().then(value => log.push("from 'exit' " + value)));
+      w.on("message", () => {
+        queueMicrotask(() => log.push("microtask"));
+        const promise = w.terminate();
+        // node makes a promise for each call.
+        log.push("one promise " + (promise === w.terminate()));
+        promise.then(value => log.push("promise " + value));
+      });`;
+    expect(await run(script)).toEqual(
+      printed(["one promise true", "exit 7" + exited, "microtask", "from 'exit' undefined", "promise 7"]),
+    );
+  });
+
+  test.concurrent("from message: the Worker reads as one that runs, but its thread has ended", async () => {
+    const script = `${startWithoutPorts(postsAndEnds, ", stdin: true")}
+      w.on("message", message => {
+        log.push("message " + message + state());
+        log.push("stdin destroyed " + w.stdin.destroyed);
+        try {
+          w.postMessage(Symbol());
+        } catch (error) {
+          log.push("postMessage " + error.name);
+        }
+        w.startHeapProfile().catch(error => log.push("startHeapProfile " + error.code));
+      });`;
+    expect(await run(script)).toEqual(
+      printed([
+        "message 1" + live,
+        "stdin destroyed false",
+        "postMessage DataCloneError",
+        "exit 0" + exited,
+        "startHeapProfile ERR_WORKER_NOT_RUNNING",
+      ]),
+    );
+  });
+
+  // node reports the three errors after 'exit'.
+  test.concurrent("from message: a listener that throws does not stop the exit handler", async () => {
+    const posts3 = `const { parentPort } = require("node:worker_threads"); for (let i = 1; i <= 3; i++) parentPort.postMessage(i);`;
+    const script = `${startWithoutPorts(posts3)}
+      w.on("message", message => {
+        log.push("message " + message);
+        if (message === 1) {
+          w.terminate().then(value => log.push("promise " + value));
+          // Only the public port keeps this process alive, and an exit handler that stops at
+          // the throw does not close the port.
+          w.unref();
+        }
+        throw new Error("from message " + message);
+      });`;
+    expect(await run(script)).toEqual(
+      printed([
+        "message 1",
+        "uncaught from message 1",
+        "message 2",
+        "uncaught from message 2",
+        "message 3",
+        "uncaught from message 3",
+        "exit 0" + exited,
+        "promise 0",
+      ]),
+    );
+  });
+
+  // node does the same, but it does not settle the promise.
+  test.concurrent.each(["stdout", "stderr"] as const)(
+    "from %s EOF: a listener that throws ends the exit handler, and terminate() settles",
+    async stream => {
+      const script = `${start(idle, `, ${stream}: true`)}
+        w.${stream}.on("readable", () => {
+          if (w.${stream}.read() !== null) return;
+          log.push("${stream} EOF");
+          throw new Error("from ${stream} EOF");
+        });
+        w.on("message", () => w.terminate().then(value => log.push("promise " + value)));`;
+      expect(await run(script)).toEqual(printed([`${stream} EOF`, `uncaught from ${stream} EOF`, "promise 1"]));
+    },
+  );
+
+  test.concurrent("from stdout EOF: an error that nothing handles ends the process with code 1", async () => {
+    const { printed, stderr, exitCode, signalCode } = await run(`
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker("", { eval: true, stdout: true });
+      w.on("exit", code => {
+        console.log("exit " + code);
+        process.exit(code);
+      });
+      w.stdout.on("readable", () => {
+        if (w.stdout.read() === null) throw new Error("from stdout EOF");
+      });`);
+    expect({ printed, exitCode, signalCode }).toEqual({ printed: "", exitCode: 1, signalCode: null });
+    expect(stderr).toContain("error: from stdout EOF");
+  });
+
+  test.concurrent("a terminate() before the exit, then one from stdout EOF", async () => {
+    const script = `${start(idle, ", stdout: true")}
+      w.stdout.on("readable", () => {
+        if (w.stdout.read() !== null) return;
+        log.push("stdout EOF");
+        w.terminate().then(value => log.push("from stdout EOF " + value));
+      });
+      w.on("message", () => w.terminate().then(value => log.push("promise " + value)));`;
+    expect(await run(script)).toEqual(
+      printed(["stdout EOF", "exit 1" + exited, "from stdout EOF undefined", "promise 1"]),
+    );
+  });
+
+  test.concurrent("terminate() adds no listener to the native Worker", async () => {
+    const script = `${start(idle)}
+      const { addEventListener } = EventTarget.prototype;
+      EventTarget.prototype.addEventListener = function (type, listener, options) {
+        if (type !== "close") return addEventListener.call(this, type, listener, options);
+      };
+      w.on("message", () => w.terminate().then(value => log.push("promise " + value)));`;
+    expect(await run(script)).toEqual(printed(["exit 1" + exited, "promise 1"]));
+  });
+
+  test.concurrent("an exit handler that a throw ended before the exit state: terminate() settles", async () => {
+    const script = `${start(idle)}
+      URL.revokeObjectURL = () => {
+        throw new Error("from revokeObjectURL");
+      };
+      w.on("message", async () => {
+        log.push("promise " + (await w.terminate()));
+        log.push("after the exit " + (await w.terminate()));
+      });`;
+    expect(await run(script)).toEqual(
+      printed(["uncaught from revokeObjectURL", "promise 1", "after the exit undefined"]),
+    );
+  });
+
+  // The native dispatch does not call the exit handler of a Worker of a disposed Bun.ModuleGraph.
+  test.concurrent("threadId reads -1 when the thread of a disposed graph's Worker has ended", async () => {
+    const script = `${prelude}
+      (async () => {
+        const graph = new Bun.ModuleGraph({});
+        w = graph.run(() => new Worker(${JSON.stringify(idle)}, { eval: true }));
+        await new Promise(resolve => w.once("message", resolve));
+        graph.dispose();
+        while (w.threadId !== -1) await new Promise(resolve => setImmediate(resolve));
+        log.push("threadId " + w.threadId);
+      })();`;
+    expect(await run(script)).toEqual(printed(["threadId -1"]));
+  });
+
+  // What terminate() does on a Worker that runs. node v26.3.0 differs in each of these: it
+  // ignores the callback, it makes a promise and an 'exit' listener for each call, and it loses
+  // the promise when an 'exit' listener throws or when the listeners are removed.
+  describe("on a Worker that runs", () => {
+    test.concurrent("terminate(callback): DEP0132, the callback after 'exit', then the promise", async () => {
+      const script = `${start(idle)}
+        w.on("message", () => {
+          const listeners = w.listenerCount("exit");
+          const promise = w.terminate((error, code) => log.push("callback " + error + " " + code));
+          log.push("one promise " + (promise === w.terminate()));
+          log.push("new 'exit' listeners " + (w.listenerCount("exit") - listeners));
+          promise.then(value => log.push("promise " + value));
+        });`;
+      expect(await run(script)).toEqual(
+        printed(
+          ["one promise true", "new 'exit' listeners 0", "exit 1" + exited, "callback null 1", "promise 1"],
+          ["DEP0132"],
+        ),
+      );
+    });
+
+    test.concurrent("an 'exit' listener and a callback that throw do not lose the rest", async () => {
+      const script = `${start(idle)}
+        w.on("exit", () => { throw new Error("from 'exit'"); });
+        w.on("message", () => {
+          w.terminate(() => { throw new Error("from callback"); });
+          w.terminate((error, code) => log.push("callback " + error + " " + code)).then(value => log.push("promise " + value));
+        });`;
+      expect(await run(script)).toEqual(
+        printed(
+          ["exit 1" + exited, "uncaught from 'exit'", "uncaught from callback", "callback null 1", "promise 1"],
+          ["DEP0132", "DEP0132"],
+        ),
+      );
+    });
+
+    test.concurrent("removeAllListeners() does not lose the promise", async () => {
+      const script = `${start(idle)}
+        w.on("message", () => {
+          w.terminate().then(value => log.push("promise " + value));
+          w.removeAllListeners();
+        });`;
+      expect(await run(script)).toEqual(printed(["promise 1"]));
+    });
+  });
+});

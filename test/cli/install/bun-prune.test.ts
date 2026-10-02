@@ -1787,6 +1787,28 @@ test.concurrent(
   },
 );
 
+// The unselected root reaches the workspace through its optional peer, a second row with the workspace's name.
+test.concurrent(
+  "isolated: --production --filter keeps the store entry when the unselected root names the workspace as an optional peer",
+  async () => {
+    const dir = await setupWorkspaces("isolated", {
+      root: { peerDependencies: { selected: "*" }, peerDependenciesMeta: { selected: { optional: true } } },
+      packages: { selected: { dependencies: { "no-deps": "1.0.0" }, devDependencies: { "a-dep": "1.0.1" } } },
+    });
+    const storeEntry = join(dir, "node_modules", ".bun", "a-dep@1.0.1");
+
+    const { stdout, exitCode } = await prune(dir, "--production", "--filter", "selected", "--linker", "isolated");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - a-dep@1.0.1 (packages/selected/node_modules)
+      1 package removed (checked 4 installed packages)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(existsSync(storeEntry)).toBeTrue();
+  },
+);
+
 test.concurrent.each(linkers)(
   "%s: --filter limits extraneous entries to the selected workspaces' own folders; name, path and glob selectors",
   async linker => {

@@ -2335,7 +2335,7 @@ mod spawn_process_body {
             Inherit,
             Ignore,
             Buffer,
-            /// The caller's fd, which it keeps open and closes.
+            /// For `stdin` only: the caller's fd, which it keeps open and closes.
             Fd(Fd),
         }
 
@@ -2406,6 +2406,12 @@ mod spawn_process_body {
 
         impl Options {
             pub(crate) fn to_spawn_options(&self, new_process_group: bool) -> SpawnOptions {
+                // The wait drains and closes the fds of these two as its own.
+                debug_assert!(
+                    !matches!(self.stdout, SyncStdio::Fd(_))
+                        && !matches!(self.stderr, SyncStdio::Fd(_)),
+                    "SyncStdio::Fd is for stdin"
+                );
                 SpawnOptions {
                     stdin: self.stdin.to_stdio(),
                     stdout: self.stdout.to_stdio(),

@@ -92,9 +92,6 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
         registeredListener->setAbortSignal(WeakPtr { *options.signal }, algorithmIdentifier);
     }
 
-    // if (listenerCreatedFromScript)
-    //     InspectorInstrumentation::didAddEventListener(*this, eventType, listener.get(), options.capture);
-
     // if (eventNames().isWheelEventType(eventType))
     // invalidateEventListenerRegions();
 
@@ -130,8 +127,6 @@ bool EventTarget::removeEventListener(const AtomString& eventType, EventListener
     auto* data = eventTargetData();
     if (!data)
         return false;
-
-    // InspectorInstrumentation::willRemoveEventListener(*this, eventType, listener, options.capture);
 
     if (data->eventListenerMap.remove(eventType, listener, options.capture)) {
         if (eventNames().isWheelEventType(eventType))
@@ -309,11 +304,6 @@ const EventListenerVector& EventTarget::eventListeners(const AtomString& eventTy
 
 void EventTarget::removeAllEventListeners()
 {
-    // auto& threadData = threadGlobalData();
-    // RELEASE_ASSERT(!threadData.isInRemoveAllEventListeners());
-
-    // threadData.setIsInRemoveAllEventListeners(true);
-
     auto* data = eventTargetData();
     if (data && !data->eventListenerMap.isEmpty()) {
         // if (data->eventListenerMap.contains(eventNames().wheelEvent) || data->eventListenerMap.contains(eventNames().mousewheelEvent))
@@ -327,8 +317,6 @@ void EventTarget::removeAllEventListeners()
         data->eventListenerMap.clear();
         eventListenersDidChange();
     }
-
-    // threadData.setIsInRemoveAllEventListeners(false);
 }
 
 void EventTarget::invalidateEventListenerRegions()

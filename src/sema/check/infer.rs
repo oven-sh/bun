@@ -55,7 +55,7 @@ pub(super) struct Candidate {
 
 /// `InferenceContext` and `InferenceState` in one.
 #[derive(Clone)]
-pub struct Inference {
+pub(super) struct Inference {
     pub(super) params: SmallVec<[TypeId; 4]>,
     pub(super) candidates: SmallVec<[Candidate; 2]>,
     /// The signature the parameters belong to, for looking at where they occur in its return type.
@@ -159,6 +159,12 @@ impl Inference {
 }
 
 impl<'p> Checker<'p> {
+    /// `ObjectFlagsNonInferrableType`: there is a hole in it.
+    pub(super) fn is_non_inferrable_type(&self, ty: TypeId) -> bool {
+        let flags = self.p.types.object_flags(ty);
+        flags.contains(ObjectFlags::HAS_UNRESOLVED)
+    }
+
     /// What `params` are if `source` is to fit `target`. For `infer` in conditional types.
     pub fn infer_from_types(
         &mut self,
@@ -2061,7 +2067,7 @@ impl<'p> Checker<'p> {
         self.reverse_mapped_source_stack.pop();
         self.reverse_mapped_target_stack.pop();
         self.reverse_expanding = saved;
-        if self.what_only_holds_for_now() == before && result.is_none_or(|ty| self.is_known(ty)) {
+        if self.what_only_holds_for_now() == before {
             self.p
                 .reverse_mapped_cache
                 .insert((source, target, of), result);

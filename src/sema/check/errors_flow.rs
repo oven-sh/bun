@@ -138,7 +138,7 @@ impl Checker<'_> {
             return;
         }
         let ty = self.type_from_node(file, node);
-        if self.is_known(ty) && self.contextual_call_signature(file, func, ty).is_none() {
+        if self.contextual_call_signature(file, func, ty).is_none() {
             let start = start_of_return_type(hir, node);
             let end = self.end_of_type_node_from(file, node, start);
             self.error_at((file, start, end), 8030, &[]);
@@ -153,7 +153,7 @@ impl Checker<'_> {
         returned: TypeId,
     ) -> bool {
         let t = self.unwrap_return_type(file, func, returned);
-        !self.is_known(t) || self.maybe_void(t) || self.is_any(t) || t.is_undefined()
+        self.maybe_void(t) || self.is_any(t) || t.is_undefined()
     }
 
     /// `checkAllCodePathsInNonVoidFunctionReturnOrThrow`
@@ -185,9 +185,6 @@ impl Checker<'_> {
             self.return_type_of_full_signature(file, func)
         };
         let declared = if let Some(declared) = annotated {
-            if !self.is_known(declared) {
-                return;
-            }
             Some(self.unwrap_return_type(file, func, declared))
         } else if f.kind == FnKind::Getter {
             // `checkAccessorDeclaration` hands over `getTypeOfAccessors`: what the setter says it takes, or else what the body gives.
@@ -198,7 +195,7 @@ impl Checker<'_> {
             return;
         };
         if let Some(t) = declared
-            && (!self.is_known(t) || self.maybe_void(t) || self.is_any(t) || t.is_undefined())
+            && (self.maybe_void(t) || self.is_any(t) || t.is_undefined())
         {
             return;
         }
@@ -256,13 +253,13 @@ impl Checker<'_> {
     pub(super) fn check_generator_return_annotation(&mut self, file: FileId, func: FnId) {
         let hir = self.hir(file);
         let f = &hir[func];
-        let has_body = has_body(&f);
+        let has_body = has_body(f);
         if !f.flags.contains(Flags::GENERATOR) || f.ret.is_none() || !has_body {
             return;
         }
         let declared = self.type_from_node(file, f.ret);
         // A `void` annotation gets 2505 instead.
-        if !self.is_known(declared) || declared == TypeId::VOID {
+        if declared == TypeId::VOID {
             return;
         }
         let is_async = f.flags.contains(Flags::ASYNC);

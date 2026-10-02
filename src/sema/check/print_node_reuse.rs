@@ -204,7 +204,7 @@ impl<'p> Printer<'_, 'p> {
                 let annotated = list
                     .iter()
                     .find(|&&e| hir.jsdoc_type(JsDocTypeOwner::Assign(e)).is_some());
-                let &declaration = annotated.or(list.first())?;
+                let &declaration = annotated.or_else(|| list.first())?;
                 Some((*file, SyntaxNode::Expr(declaration)))
             }
             PropSource::Mapped(..) if depth < 8 => {

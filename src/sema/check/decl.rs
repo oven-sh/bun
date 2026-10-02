@@ -369,7 +369,7 @@ impl<'p> Checker<'p> {
         if scope.is_none() {
             return Arc::from([]);
         }
-        self.kept_outer_type_params(file, scope).clone()
+        Arc::clone(self.kept_outer_type_params(file, scope))
     }
 
     /// The same, for whoever only looks at them.
@@ -784,10 +784,10 @@ impl<'p> Checker<'p> {
         mut node: TypeNodeId,
         out: &mut Mentioned,
     ) {
-        let parents = self.type_parents(file);
-        while let Some(&parent) = parents.get(node.idx())
-            && parent.is_some()
-        {
+        if !self.has_conditional_or_mapped_type(file) {
+            return;
+        }
+        while let Some(parent) = Self::type_node_parent(self.hir(file), node).some() {
             if let TypeNodeKind::Cond { extends, .. } = self.hir(file)[parent].kind {
                 self.collect_mentions(file, extends, out);
             }
@@ -1275,9 +1275,6 @@ impl<'p> Checker<'p> {
         around: MapperId,
         constraint: Option<TypeId>,
     ) -> bool {
-        if constraint.is_some_and(|constraint| !self.is_known(constraint)) {
-            return false;
-        }
         if around != MapperId::IDENTITY {
             let declared = self.type_param(file, tp);
             return self.p.type_param_constraints.get(&declared).is_some();
@@ -1605,10 +1602,7 @@ impl<'p> Checker<'p> {
         };
         let before = self.what_only_holds_for_now();
         let (default, is_settled) = self.resolve_default_of_type_param(file, tp, around);
-        if is_settled
-            && self.what_only_holds_for_now() == before
-            && default.is_none_or(|default| self.is_known(default))
-        {
+        if is_settled && self.what_only_holds_for_now() == before {
             self.p.type_param_defaults.insert(param, default);
         }
         default
@@ -2543,11 +2537,7 @@ impl<'p> Checker<'p> {
                         match property {
                             Some(next) => at = Err(next),
                             None => {
-                                return if self.is_known(ty) {
-                                    TypeId::ERROR
-                                } else {
-                                    TypeId::UNRESOLVED
-                                };
+                                return TypeId::ERROR;
                             }
                         }
                     }
@@ -3505,7 +3495,7 @@ impl<'p> Checker<'p> {
         }
         let before = self.what_only_holds_for_now();
         let params = self.sig_params_of_declaration(file, func, mapper);
-        if self.what_only_holds_for_now() == before && params.iter().all(|p| self.is_known(p.ty)) {
+        if self.what_only_holds_for_now() == before {
             let kept = self.p.sig_params.insert_ref(sig, params.into()).1;
             return self.kept_sig_params(sig, kept);
         }

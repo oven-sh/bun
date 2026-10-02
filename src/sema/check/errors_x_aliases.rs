@@ -25,15 +25,6 @@ const ALL_MEANINGS: SymFlags = SymFlags::VALUE
     .union(SymFlags::TYPE)
     .union(SymFlags::NAMESPACE);
 
-/// A declaration of an alias in the file that is checked.
-#[derive(Copy, Clone)]
-struct AliasNode {
-    decl: Decl,
-    /// Where an error about it goes.
-    start: u32,
-    stmt: StmtId,
-}
-
 /// What `resolveExternalModule` asks of `location`.
 #[derive(Copy, Clone, Default)]
 pub(super) struct SpecifierSite {
@@ -101,76 +92,17 @@ impl Checker<'_> {
             )
     }
 
-    /// The end of `GetErrorRangeForNode` of the declaration `node` of an alias. 0: it is one token.
-    fn xa_alias_node_end(&self, file: FileId, node: &AliasNode) -> u32 {
-        let hir = self.hir(file);
-        match node.decl {
-            Decl::ImportDefault(x) => self
-                .xa_specifier_pos(file, hir[node.stmt].start, hir[x].spec)
-                .map_or(0, |at| {
-                    super::errors_x_modules::import_clause_end(&hir.text, at)
-                }),
-            Decl::ImportSpec(s) => self.end_of_import_spec(file, s),
-            Decl::ExportSpec(s) => self.end_of_export_spec(file, s),
-            // `* as ns`
-            Decl::ExportStarAs(s) => match hir[s].kind {
-                StmtKind::ExportStar { alias_pos, .. } => self.end_of_name_at(file, alias_pos),
-                _ => 0,
-            },
-            Decl::ImportEquals(_) | Decl::ExportExpr(_) | Decl::UmdGlobal(_) => {
-                self.end_of_stmt(file, node.stmt)
-            }
-            _ => 0,
-        }
-    }
-
-    /// The start of `GetErrorRangeForNode` of the declaration `decl` of an alias: the name of `* as ns` in an import, and where each of
-    /// the others starts.
-    fn xa_alias_node_start(&self, file: FileId, decl: Decl) -> u32 {
-        match decl {
-            Decl::ImportNamespace(import) => self.hir(file)[import].namespace_pos,
-            _ => self.files().start_of_declaration(file, decl),
-        }
-    }
-
     /// `GetErrorRangeForNode` of the declaration `decl` of the alias `sym`, in the file of `sym`. `None`: it declares no alias.
     pub(super) fn place_of_alias_declaration(
         &self,
         sym: Sym,
         decl: Decl,
     ) -> Option<(FileId, u32, u32)> {
-        let file = sym.file;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let stmt = match decl {
-            Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => s,
-            _ => {
-                let holds_it = |s: &Stmt| match (s.kind, decl) {
-                    (StmtKind::Import(x), Decl::ImportDefault(of) | Decl::ImportNamespace(of)) => {
-                        x == of
-                    }
-                    (StmtKind::Import(x), Decl::ImportSpec(spec)) => x == hir[spec].import,
-                    (StmtKind::ImportEquals(x), Decl::ImportEquals(of)) => x == of,
-                    (StmtKind::ExportNamed(x), Decl::ExportSpec(spec)) => x == hir[spec].export,
-                    _ => false,
-                };
-                let s = (0..hir.stmts.len()).find(|&s| {
-                    holds_it(&hir.stmts[s]) && !matches!(bound.stmt_parent[s], Parent::None)
-                })?;
-                StmtId(s as u32)
-            }
-        };
-        let start = self.xa_alias_node_start(file, decl);
-        let node = AliasNode { decl, start, stmt };
-        Some(self.xa_place_of_alias_node(file, &node))
-    }
-
-    /// `GetErrorRangeForNode`
-    fn xa_place_of_alias_node(&self, file: FileId, node: &AliasNode) -> (FileId, u32, u32) {
-        let end = match self.xa_alias_node_end(file, node) {
-            0 => self.end_of_token_at(file, node.start),
-            end => end,
-        };
-        (file, node.start, end)
+        let (file, files) = (sym.file, self.files());
+        files.is_alias_symbol_declaration(file, decl).then(|| {
+            let (start, end) = self.get_error_range_for_node(file, self.hir(file).node(decl));
+            (file, start, end)
+        })
     }
 
     /// `GetErrorRangeForNode` of an `export *`.
@@ -354,12 +286,11 @@ impl Checker<'_> {
             .extend(related);
     }
 
-    /// `checkAliasSymbol`, of the declaration `decl` in the statement `stmt`. `is_ambient`: `node.Flags&NodeFlagsAmbient`.
+    /// `checkAliasSymbol`, of the declaration `decl`. `is_ambient`: `node.Flags&NodeFlagsAmbient`.
     pub(super) fn check_alias_symbol(
         &mut self,
         file: FileId,
         aliases: &FxHashMap<Decl, Sym>,
-        stmt: StmtId,
         decl: Decl,
         is_ambient: bool,
     ) {
@@ -390,11 +321,13 @@ impl Checker<'_> {
         let Some(target_flags) = self.flags_of_alias_target(sym) else {
             return;
         };
-        let start = match decl {
-            Decl::Require(pat) => hir[pat].pos,
-            _ => self.xa_alias_node_start(file, decl),
+        // The name is what is pointed at, and to get at it takes no `parent`.
+        let node = match decl {
+            Decl::Require(name) => hir.node(name),
+            _ => hir.node(decl),
         };
-        let node = AliasNode { decl, start, stmt };
+        let (start, end) = self.get_error_range_for_node(file, node);
+        let at = (file, start, end);
         let is_type = !target_flags.intersects(SymFlags::VALUE);
         let is_type_only = files.is_type_only_import_or_export_declaration(file, decl);
         let is_export_specifier = matches!(decl, Decl::ExportSpec(_));
@@ -486,7 +419,6 @@ impl Checker<'_> {
                 excluded |= meaning;
             }
         }
-        let at = self.xa_place_of_alias_node(file, &node);
         if target_flags.intersects(excluded) {
             let code = if is_export_specifier { 2484 } else { 2440 };
             self.error_at(at, code, &[Arg::Sym(symbol)]);
@@ -711,7 +643,7 @@ impl Checker<'_> {
         };
         let signature = |f: FnId, types: &mut Vec<TypeNodeId>| {
             types.push(hir[f].this_ty(hir));
-            types.extend(hir[f].params.iter().map(|p| type_of_parameter(p)));
+            types.extend(hir[f].params.iter().map(&type_of_parameter));
             types.push(hir[f].ret);
         };
         // `getAnnotatedAccessorTypeNode`
@@ -773,7 +705,7 @@ impl Checker<'_> {
                                     && hir[o].flags.contains(Flags::STATIC)
                                         == hir[m].flags.contains(Flags::STATIC)
                             });
-                            ty = other.map_or(TypeNodeId::NONE, |o| type_of_accessor(o));
+                            ty = other.map_or(TypeNodeId::NONE, &type_of_accessor);
                         }
                         types.push(ty);
                     }
@@ -810,11 +742,7 @@ impl Checker<'_> {
             if !files.flags(root).contains(SymFlags::ALIAS) {
                 continue;
             }
-            // `symbolIsValue`: not by way of what says `type`. An alias that leads nowhere is everything.
-            let is_value = files.flags(root).intersects(SymFlags::VALUE)
-                || files.alias_links(root).type_only_declaration.is_none()
-                    && files.symbol_flags(root).intersects(SymFlags::VALUE);
-            if is_value
+            if self.symbol_is_value(root)
                 || files
                     .symbol(root)
                     .decls
@@ -1148,9 +1076,6 @@ impl Checker<'_> {
                     return;
                 }
                 let ty = self.type_of_expr(file, argument);
-                if !self.is_known(ty) {
-                    return;
-                }
                 if ty.is_undefined() || ty.is_null() || !self.is_assignable(ty, TypeId::STRING) {
                     let start = self.start_of(file, argument);
                     let end = self.end_of_expr(file, argument);
@@ -1283,7 +1208,7 @@ impl Checker<'_> {
             }
             let e = ExprId(i as u32);
             let ty = self.type_at(file, e);
-            if !self.is_known(ty) {
+            if self.is_non_inferrable_type(ty) {
                 return false;
             }
         }
@@ -1292,7 +1217,7 @@ impl Checker<'_> {
                 continue;
             }
             let ty = self.type_from_node(file, TypeNodeId(i as u32));
-            if !self.is_known(ty) {
+            if self.is_non_inferrable_type(ty) {
                 return false;
             }
         }

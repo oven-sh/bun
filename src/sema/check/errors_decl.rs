@@ -49,28 +49,8 @@ impl Checker<'_> {
     /// parameter, and what the function declares after it, are there.
     fn check_parameter_references(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Only what is written in one of these is in the default or in the pattern of a parameter: told by its position, no walk.
-        let has_more_than_a_name =
-            |p: &&Param| p.default.is_some() || !matches!(hir[p.pat].kind, PatKind::Ident(_));
-        let parameters = Places::new(
-            hir.params
-                .iter()
-                .filter(has_more_than_a_name)
-                .map(|p| p.loc),
-        );
-        let index = self.exprs_by_kind(file);
-        for &id in index.of(ExprTag::Ident) {
+        for &(id, within, func) in bound.identifiers_in_parameters.iter() {
             let i = id.idx();
-            if !parameters.contain(hir.exprs[i].pos) {
-                continue;
-            }
-            let associated = Self::associated_declaration(hir, hir.node(id));
-            let (NodeData::Pat(within), NodeData::Param(param)) = (
-                hir.data(hir.name(associated)),
-                hir.data(hir.get_root_declaration(associated)),
-            ) else {
-                continue;
-            };
             let ExprKind::Ident(name) = hir.exprs[i].kind else {
                 continue;
             };
@@ -83,10 +63,11 @@ impl Checker<'_> {
                 Some(&Decl::Param(p)) => (p, hir[p].pos),
                 Some(&Decl::Var(p)) => (PatId::NONE, hir[p].pos),
                 Some(&Decl::Fn(f)) => (PatId::NONE, hir[f].start),
+                Some(&Decl::Module(m)) => (PatId::NONE, hir[m].name_pos),
                 _ => continue,
             };
             // `root.Parent.Locals()`: a local of the function whose parameter it is.
-            let scope = bound.fns[bound.param_fn[param.idx()].idx()].scope;
+            let scope = bound.fns[func.idx()].scope;
             if bound.lookup(
                 bound.scopes[scope.idx()].locals,
                 bound.symbols[local.idx()].name,
@@ -97,73 +78,11 @@ impl Checker<'_> {
             if declared == within {
                 self.error_at((file, hir.exprs[i].pos, 0), 2372, &[Arg::Atom(name)]);
             } else if declared_pos > hir[within].pos {
-                {
-                    let end = self.end_of_pat(file, within);
-                    self.error_at(
-                        (file, hir.exprs[i].pos, 0),
-                        2373,
-                        &[
-                            Arg::Text(&self.source_text(file, hir[within].pos, end)),
-                            Arg::Atom(name),
-                        ],
-                    );
-                }
+                let written = hir[within].pos as usize..self.end_of_pat(file, within) as usize;
+                let args = [Arg::Bytes(&hir.text[written]), Arg::Atom(name)];
+                self.error_at((file, hir.exprs[i].pos, 0), 2373, &args);
             }
         }
-    }
-
-    /// `associatedDeclarationForContainingInitializerOrBindingName`, as `Resolve` has it when it gets from `usage` to the function whose
-    /// parameter that is. `NONE`: there is none, or `withinDeferredContext`.
-    fn associated_declaration(hir: &File, usage: Node) -> Node {
-        let (mut last, mut location) = (Node::NONE, usage);
-        while location.is_some() {
-            let kind = hir.kind(location);
-            let is_name = || last.is_some() && last == hir.name(location);
-            // `getIsDeferredContext`
-            let is_deferred = match kind {
-                Kind::ArrowFunction | Kind::FunctionExpression => {
-                    !is_name()
-                        && (hir
-                            .flags(location)
-                            .intersects(Flags::ASYNC | Flags::GENERATOR)
-                            || hir
-                                .get_immediately_invoked_function_expression(location)
-                                .is_none())
-                }
-                Kind::TypeQuery => true,
-                Kind::PropertyDeclaration => !hir.is_static(location) && !is_name(),
-                _ => kind.is_function_like_declaration() && !is_name(),
-            };
-            if is_deferred {
-                return Node::NONE;
-            }
-            match kind {
-                Kind::Decorator => {
-                    if hir.kind(hir.parent(location)) == Kind::Parameter {
-                        location = hir.parent(location);
-                    }
-                    let parent = hir.kind(hir.parent(location));
-                    if parent.is_class_element() || parent == Kind::ClassDeclaration {
-                        location = hir.parent(location);
-                    }
-                }
-                Kind::Parameter | Kind::BindingElement
-                    if last.is_some()
-                        && (last == hir.initializer(location)
-                            || is_name()
-                                && matches!(
-                                    hir.kind(last),
-                                    Kind::ObjectBindingPattern | Kind::ArrayBindingPattern
-                                ))
-                        && hir.kind(hir.get_root_declaration(location)) == Kind::Parameter =>
-                {
-                    return location;
-                }
-                _ => {}
-            }
-            (last, location) = (location, hir.parent(location));
-        }
-        Node::NONE
     }
 
     /// What several declarations make together: 2428 2374.
@@ -243,10 +162,7 @@ impl Checker<'_> {
                         && let Some(wanted) = wanted
                     {
                         let own = self.type_from_node(f, node);
-                        if self.is_known(own)
-                            && self.is_known(wanted)
-                            && !self.is_identical(own, wanted)
-                        {
+                        if !self.is_identical(own, wanted) {
                             identical = false;
                             break 'all;
                         }
@@ -291,7 +207,7 @@ impl Checker<'_> {
             Decl::Member(m) => {
                 let ty = self.type_of_member_declaration(file, m);
                 let flags = self.hir(file)[m].flags;
-                if !flags.contains(Flags::OPTIONAL) || !self.is_known(ty) {
+                if !flags.contains(Flags::OPTIONAL) {
                     ty
                 } else if flags.contains(Flags::ACCESSOR) {
                     self.optional(ty)
@@ -338,12 +254,11 @@ impl Checker<'_> {
         } else {
             self.type_of_member_declarations(&accessors)
         };
-        if !self.is_known(of_symbol) || self.is_error_type(of_symbol) {
+        if self.is_error_type(of_symbol) {
             return;
         }
         let again = self.type_of_declared_member((file, declaration));
-        if !self.is_known(again) || self.is_error_type(again) || self.is_identical(of_symbol, again)
-        {
+        if self.is_error_type(again) || self.is_identical(of_symbol, again) {
             return;
         }
         // As sure as with variables: see 2403.
@@ -473,9 +388,6 @@ impl Checker<'_> {
             }
             let keys = self.type_from_node(file, hir[p].ty);
             for &key in self.parts(keys) {
-                if !self.is_known(key) {
-                    continue;
-                }
                 match seen.iter_mut().find(|s| s.0 == key) {
                     Some(entry) => entry.1.push((file, m)),
                     None => seen.push((key, vec![(file, m)])),

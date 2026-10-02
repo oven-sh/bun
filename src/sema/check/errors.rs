@@ -6,7 +6,6 @@
 
 use super::errors_modules::fully_qualified_name;
 use super::errors_x_operators::has_empty_object_intersection;
-use super::errors_x_statements::{is_said_by_the_binder, is_said_by_the_parser};
 use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
@@ -194,7 +193,6 @@ impl Checker<'_> {
         self.check_modifiers_of_merged_declarations(file);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
         self.take_back_what_is_never_checked(file);
-        self.take_back_export_assignments_in_namespaces(file);
         // These name a type, which is not asked for before everything has been checked.
         for &(start, code) in &hir.early_errors {
             if matches!(code, 17019 | 17020) {
@@ -471,30 +469,6 @@ impl Checker<'_> {
         {
             let arg0 = word_at(self, file, start);
             self.error_at((file, start, 0), code, &[Arg::Text(&arg0)]);
-        }
-    }
-
-    /// `checkExportAssignment` is done with an `export =` or an `export default` in a namespace (1063 1319) before it gets to the
-    /// expression. All that is said of that is what the parser and the binder say.
-    fn take_back_export_assignments_in_namespaces(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, s) in hir.stmts.iter().enumerate() {
-            let (StmtKind::ExportAssign(e) | StmtKind::ExportDefault(e)) = s.kind else {
-                continue;
-            };
-            if e.is_none()
-                || !matches!(bound.stmt_parent[i], Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
-            {
-                continue;
-            }
-            let (from, to) = (self.start_of(file, e), s.loc.end);
-            self.never_checked.borrow_mut().push((from, to));
-            self.reported.retain(|d| {
-                !(from..to).contains(&d.start)
-                    || is_said_by_the_binder(d.code)
-                    || is_said_by_the_parser(d.code)
-                        && hir.early_errors.contains(&(d.start, d.code))
-            });
         }
     }
 
@@ -1173,11 +1147,6 @@ impl Checker<'_> {
                     let PropKey::Computed(k) = member.key else {
                         continue;
                     };
-                    // What it is only matters where there is a constructor to go through.
-                    let written = self.type_of_expr(file, k);
-                    if constructor.is_some() && !self.is_known(written) {
-                        continue;
-                    }
                     (
                         self.access_key(file, k),
                         self.type_of_member_declaration(file, m),
@@ -1784,9 +1753,6 @@ impl Checker<'_> {
                         Some(ty) => ty,
                         None => self.type_of_symbol(sym),
                     };
-                    if !self.is_known(of) {
-                        return;
-                    }
                     ty = if self.has_any_flag(of) {
                         None
                     } else {
@@ -2439,15 +2405,6 @@ fn explain_early_error(c: &mut Checker<'_>, file: FileId, start: u32, code: u32)
 // ───────────────────────────── operators ─────────────────────────────
 
 impl Checker<'_> {
-    /// Whether the resolver worked `ty` out, all of it. Nothing is said about what it did not.
-    pub(super) fn is_known(&self, ty: TypeId) -> bool {
-        !self
-            .p
-            .types
-            .object_flags(ty)
-            .contains(ObjectFlags::HAS_UNRESOLVED)
-    }
-
     /// `isGlobalNaN`
     fn is_global_nan(&self, file: FileId, e: ExprId) -> bool {
         let ExprKind::Ident(name) = self.hir(file)[e].kind else {
@@ -2459,20 +2416,18 @@ impl Checker<'_> {
         }
     }
 
-    /// The types of the two operands of an operator whose result does not go by them, looked at left to right, and whether both
-    /// were found out: if not, nothing is said of the two.
+    /// The types of the two operands of an operator whose result does not go by them, looked at left to right.
     pub(super) fn check_operands(
         &mut self,
         file: FileId,
         left: ExprId,
         right: ExprId,
-    ) -> (TypeId, TypeId, bool) {
+    ) -> (TypeId, TypeId) {
         let (l, r) = (
             self.type_of_expr(file, left),
             self.type_of_expr(file, right),
         );
-        let is_sure = self.is_known(l) && self.is_known(r);
-        (l, r, is_sure)
+        (l, r)
     }
 
     /// `checkInExpression`
@@ -2752,8 +2707,8 @@ impl Checker<'_> {
         } else {
             None
         };
-        let maybe_missing_await = awaited
-            .is_some_and(|awaited| self.is_known(awaited) && self.is_assignable(awaited, numeric));
+        let maybe_missing_await =
+            awaited.is_some_and(|awaited| self.is_assignable(awaited, numeric));
         let at = self.place_of_written_expr(file, operand);
         self.error_and_maybe_suggest_await(at, maybe_missing_await, code, &[]);
         false
@@ -3068,7 +3023,7 @@ impl<'p> Checker<'p> {
     ) -> Option<&'p Prop> {
         self.write_kind(file, e)?;
         let ty = self.type_of_expr(file, obj);
-        if !self.is_known(ty) || self.is_any(ty) {
+        if self.is_any(ty) {
             return None;
         }
         let ty = self.non_nullable(ty);

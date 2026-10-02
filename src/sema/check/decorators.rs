@@ -511,13 +511,7 @@ impl<'p> Checker<'p> {
             is_parenthesized,
         } = written;
         let function = self.type_of_expr(file, e);
-        if !self.is_known(function) {
-            return;
-        }
         let apparent = self.apparent_type(function);
-        if !self.is_known(apparent) {
-            return;
-        }
         // `resolveErrorCall`
         if self.is_error_type(apparent) {
             return;
@@ -560,10 +554,6 @@ impl<'p> Checker<'p> {
         let Some(expected) = self.decorator_call_signature(file, owner) else {
             return;
         };
-        let given = self.sig_params(expected);
-        if given.iter().any(|p| !self.is_known(p.ty)) {
-            return;
-        }
         let node = CallLike::Decorator(owner);
         let args = self.effective_call_arguments(file, e, node);
         let this_arg = self.this_argument_of_call(file, e, node);

@@ -2638,12 +2638,12 @@ impl Files {
         self.make_global_this_symbol();
         // `initializeChecker`: file by file, what scripts declare and the names modules go by globally; then what modules add to the
         // global scope.
-        let passes = self
-            .order
-            .iter()
-            .map(|&id| (id, false))
-            .chain(self.order.iter().map(|&id| (id, true)));
-        for (id, augmentations) in passes.collect::<Vec<_>>() {
+        let count = self.order.len();
+        let passes = (0..count)
+            .map(|at| (at, false))
+            .chain((0..count).map(|at| (at, true)));
+        for (at, augmentations) in passes {
+            let id = self.order[at];
             let file = id.idx();
             let module = &self.modules[file];
             let mut additions: Vec<(Atom, Sym)> = Vec::new();
@@ -4564,7 +4564,7 @@ impl Files {
     }
 
     /// `IsAliasSymbolDeclaration`
-    fn is_alias_symbol_declaration(&self, file: FileId, decl: Decl) -> bool {
+    pub fn is_alias_symbol_declaration(&self, file: FileId, decl: Decl) -> bool {
         let hir = self.hir(file);
         let e = match decl {
             Decl::ImportDefault(_)

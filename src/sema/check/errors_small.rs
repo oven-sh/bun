@@ -227,9 +227,6 @@ impl Checker<'_> {
         // Only a right operand is judged by its own type: anything else by that of the whole condition.
         let judged_by = if location == test { whole } else { location };
         let ty = self.type_of_expr(file, judged_by);
-        if !self.is_known(ty) {
-            return;
-        }
         let start = self.start_inside_parentheses(file, location);
         // A member of an enum is what it is.
         if let (TypeData::EnumLit { value, .. }, ExprKind::Dot { obj, .. }) =
@@ -262,7 +259,7 @@ impl Checker<'_> {
         let is_promise = self
             .thenable_value(ty)
             .and_then(|promised| self.awaited_or_none(promised))
-            .is_some_and(|awaited| self.is_known(awaited));
+            .is_some();
         if self.signatures(ty, false).is_empty() && !is_promise {
             return;
         }
@@ -532,9 +529,6 @@ impl Checker<'_> {
             return;
         }
         let ty = self.type_of_expr(file, prop.value);
-        if !self.is_known(ty) {
-            return;
-        }
         let ty = self.reduced(ty);
         if self.is_valid_spread_type(ty) {
             return;

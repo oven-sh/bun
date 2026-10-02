@@ -50,7 +50,7 @@ impl Checker<'_> {
     pub(super) fn is_check_js(&self, file: FileId) -> bool {
         self.hir(file)
             .check_directive
-            .unwrap_or(self.files().options.check_js == Some(true))
+            .unwrap_or_else(|| self.files().options.check_js == Some(true))
     }
 
     /// `IsPlainJSFile`: JavaScript of which nobody has said whether it is to be checked.

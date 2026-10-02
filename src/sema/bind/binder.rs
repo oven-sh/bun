@@ -81,64 +81,69 @@ pub(super) struct Binder<'f> {
     type_literal_depth: u32,
     /// The function whose parameters are being gone through, with nothing in between that `requiresScopeChangeWorker` does not enter.
     scope_change_of: FnId,
+    /// `associatedDeclarationForContainingInitializerOrBindingName`, kept on the way down: its name, and the function whose parameter
+    /// it is or is part of. No name: there is none, or `withinDeferredContext`.
+    associated_declaration: (PatId, FnId),
 }
 
 impl<'f> Binder<'f> {
     pub(super) fn run(f: &'f File, options: BindOptions, atoms: &'f Interner) -> Bound {
-        let mut b = Bound::default();
-        b.expr_symbol = vec![SymbolId::NONE; f.exprs.len()];
-        b.expr_parent = vec![Parent::None; f.exprs.len()];
-        b.expr_flow = vec![UNREACHABLE; f.exprs.len()];
-        b.stmt_parent = vec![Parent::None; f.stmts.len()];
-        b.stmt_scope = vec![ScopeId::NONE; f.stmts.len()];
-        b.stmt_flow = vec![UNREACHABLE; f.stmts.len()];
-        b.case_fallthrough = vec![FlowId::NONE; f.cases.len()];
-        b.type_scope = vec![ScopeId::NONE; f.types.len()];
-        b.type_by_alias = vec![false; f.types.len()];
-        b.pat_parent = vec![PatParent::None; f.pats.len()];
-        b.pat_symbol = vec![SymbolId::NONE; f.pats.len()];
-        b.prop_owner = vec![ExprId::NONE; f.props.len()];
-        b.member_owner = vec![MemberOwner::None; f.members.len()];
-        b.member_symbol = vec![SymbolId::NONE; f.members.len()];
-        b.member_scope = vec![ScopeId::NONE; f.members.len()];
-        b.param_fn = vec![FnId::NONE; f.params.len()];
-        b.type_param_symbol = vec![SymbolId::NONE; f.type_params.len()];
-        b.type_param_scope = vec![ScopeId::NONE; f.type_params.len()];
-        b.fns = vec![
-            FnInfo {
-                owner: FnOwner::None,
-                scope: ScopeId::NONE,
-                enclosing: FnId::NONE,
-                returns: IdList::EMPTY,
-                yields: IdList::EMPTY,
-                end: UNREACHABLE,
-                exit: FlowId::NONE,
-                contains_this: false,
-            };
-            f.fns.len()
-        ];
-        b.requires_scope_change = vec![false; f.fns.len()];
-        b.fn_symbol = vec![SymbolId::NONE; f.fns.len()];
-        b.class_symbol = vec![SymbolId::NONE; f.classes.len()];
-        b.class_owner = vec![ClassOwner::Stmt(StmtId::NONE); f.classes.len()];
-        b.class_scope = vec![ScopeId::NONE; f.classes.len()];
-        b.interface_symbol = vec![SymbolId::NONE; f.interfaces.len()];
-        b.interface_scope = vec![ScopeId::NONE; f.interfaces.len()];
-        b.enum_scope = vec![ScopeId::NONE; f.enums.len()].into();
-        b.module_scope = vec![ScopeId::NONE; f.modules.len()].into();
-        b.alias_symbol = vec![SymbolId::NONE; f.aliases.len()];
-        b.alias_scope = vec![ScopeId::NONE; f.aliases.len()];
-        b.enum_symbol = vec![SymbolId::NONE; f.enums.len()].into();
-        b.enum_member_symbol = vec![SymbolId::NONE; f.enum_members.len()].into();
-        b.enum_member_owner = vec![EnumId::NONE; f.enum_members.len()].into();
-        b.module_symbol = vec![SymbolId::NONE; f.modules.len()].into();
-        b.module_instance_state =
-            vec![ModuleInstanceState::NonInstantiated; f.modules.len()].into();
-        b.var_stmt = vec![StmtId::NONE; f.var_decls.len()];
-        b.case_stmt = vec![StmtId::NONE; f.cases.len()];
-        b.import_scope = vec![ScopeId::NONE; f.imports.len()];
-        b.import_equals_scope = vec![ScopeId::NONE; f.import_equals.len()].into();
-        b.export_scope = vec![ScopeId::NONE; f.exports.len()];
+        let mut b = Bound {
+            expr_symbol: vec![SymbolId::NONE; f.exprs.len()],
+            expr_parent: vec![Parent::None; f.exprs.len()],
+            expr_flow: vec![UNREACHABLE; f.exprs.len()],
+            stmt_parent: vec![Parent::None; f.stmts.len()],
+            stmt_scope: vec![ScopeId::NONE; f.stmts.len()],
+            stmt_flow: vec![UNREACHABLE; f.stmts.len()],
+            case_fallthrough: vec![FlowId::NONE; f.cases.len()],
+            type_scope: vec![ScopeId::NONE; f.types.len()],
+            type_by_alias: vec![false; f.types.len()],
+            pat_parent: vec![PatParent::None; f.pats.len()],
+            pat_symbol: vec![SymbolId::NONE; f.pats.len()],
+            prop_owner: vec![ExprId::NONE; f.props.len()],
+            member_owner: vec![MemberOwner::None; f.members.len()],
+            member_symbol: vec![SymbolId::NONE; f.members.len()],
+            member_scope: vec![ScopeId::NONE; f.members.len()],
+            param_fn: vec![FnId::NONE; f.params.len()],
+            type_param_symbol: vec![SymbolId::NONE; f.type_params.len()],
+            type_param_scope: vec![ScopeId::NONE; f.type_params.len()],
+            fns: vec![
+                FnInfo {
+                    owner: FnOwner::None,
+                    scope: ScopeId::NONE,
+                    enclosing: FnId::NONE,
+                    returns: IdList::EMPTY,
+                    yields: IdList::EMPTY,
+                    end: UNREACHABLE,
+                    exit: FlowId::NONE,
+                    contains_this: false,
+                };
+                f.fns.len()
+            ],
+            requires_scope_change: vec![false; f.fns.len()],
+            fn_symbol: vec![SymbolId::NONE; f.fns.len()],
+            class_symbol: vec![SymbolId::NONE; f.classes.len()],
+            class_owner: vec![ClassOwner::Stmt(StmtId::NONE); f.classes.len()],
+            class_scope: vec![ScopeId::NONE; f.classes.len()],
+            interface_symbol: vec![SymbolId::NONE; f.interfaces.len()],
+            interface_scope: vec![ScopeId::NONE; f.interfaces.len()],
+            enum_scope: vec![ScopeId::NONE; f.enums.len()].into(),
+            module_scope: vec![ScopeId::NONE; f.modules.len()].into(),
+            alias_symbol: vec![SymbolId::NONE; f.aliases.len()],
+            alias_scope: vec![ScopeId::NONE; f.aliases.len()],
+            enum_symbol: vec![SymbolId::NONE; f.enums.len()].into(),
+            enum_member_symbol: vec![SymbolId::NONE; f.enum_members.len()].into(),
+            enum_member_owner: vec![EnumId::NONE; f.enum_members.len()].into(),
+            module_symbol: vec![SymbolId::NONE; f.modules.len()].into(),
+            module_instance_state: vec![ModuleInstanceState::NonInstantiated; f.modules.len()]
+                .into(),
+            var_stmt: vec![StmtId::NONE; f.var_decls.len()],
+            case_stmt: vec![StmtId::NONE; f.cases.len()],
+            import_scope: vec![ScopeId::NONE; f.imports.len()],
+            import_equals_scope: vec![ScopeId::NONE; f.import_equals.len()].into(),
+            export_scope: vec![ScopeId::NONE; f.exports.len()],
+            ..Default::default()
+        };
         b.flow.push(Flow::Unreachable);
 
         let mut this = Binder {
@@ -182,6 +187,7 @@ impl<'f> Binder<'f> {
             by_alias: false,
             type_literal_depth: 0,
             scope_change_of: FnId::NONE,
+            associated_declaration: (PatId::NONE, FnId::NONE),
         };
         this.file();
         this.finish()
@@ -2554,20 +2560,30 @@ impl<'f> Binder<'f> {
                         self.expr(key, Parent::PatKey(p));
                     }
                     // `bindBindingElementFlow`: the default is worked out before what it is the default of.
+                    let associated = self.associated_declaration.0;
+                    if flags.contains(SymFlags::PARAMETER) {
+                        self.associated_declaration.0 = prop.value;
+                    }
                     if prop.default.is_some() {
                         self.conditional_default(prop.default, Parent::PatPropDefault(p));
                     }
                     self.pat(prop.value, PatParent::Prop(pat, p), flags);
+                    self.associated_declaration.0 = associated;
                     self.scope_change_of = scope_change_of;
                 }
             }
             PatKind::Array(elems) => {
                 for e in elems.iter() {
                     let elem = &self.f[e];
+                    let associated = self.associated_declaration.0;
+                    if flags.contains(SymFlags::PARAMETER) {
+                        self.associated_declaration.0 = elem.pat;
+                    }
                     if elem.default.is_some() {
                         self.conditional_default(elem.default, Parent::PatElemDefault(e));
                     }
                     self.pat(elem.pat, PatParent::Elem(pat, e), flags);
+                    self.associated_declaration.0 = associated;
                 }
             }
         }
@@ -2720,6 +2736,12 @@ impl<'f> Binder<'f> {
         // `isImmediatelyInvoked` of `bindContainer`: nothing starts here, the flow of control around goes on through it.
         let runs_in_place = f.kind == FnKind::StaticBlock
             || is_invoked && !f.flags.intersects(Flags::ASYNC | Flags::GENERATOR);
+        // `getIsDeferredContext`
+        let outer_associated = self.associated_declaration;
+        if !runs_in_place {
+            self.associated_declaration.0 = PatId::NONE;
+        }
+        let associated = self.associated_declaration;
         let arrow = f.kind == FnKind::Arrow;
         let after_name = std::mem::replace(&mut self.flow_after_name, FlowId::NONE);
         if after_name.is_some() {
@@ -2785,6 +2807,7 @@ impl<'f> Binder<'f> {
             }
             // `requiresScopeChange` looks at the name and the initializer. `bindParameterFlow`: the initializer comes first.
             self.scope_change_of = id;
+            self.associated_declaration = (param.pat, id);
             if param.default.is_some() {
                 self.conditional_default(param.default, Parent::ParamDefault(p));
             }
@@ -2802,6 +2825,7 @@ impl<'f> Binder<'f> {
                 self.declare_symbol(members, class, property, flags, excludes);
             }
             self.scope_change_of = FnId::NONE;
+            self.associated_declaration = associated;
         }
         if has_param_scope {
             self.pop_scope();
@@ -2878,6 +2902,7 @@ impl<'f> Binder<'f> {
         self.cur_member = outer_member;
         self.this_member = outer_this;
         self.scope_change_of = outer_scope_change;
+        self.associated_declaration = outer_associated;
         (
             self.flow,
             self.break_target,
@@ -3200,6 +3225,11 @@ impl<'f> Binder<'f> {
             }
             if member.init.is_some() {
                 let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
+                // `getIsDeferredContext`
+                let associated = self.associated_declaration.0;
+                if !is_static {
+                    self.associated_declaration.0 = PatId::NONE;
+                }
                 if constructor.is_some() {
                     self.push_scope(
                         ScopeKind::PropertyDeclaration(m, constructor),
@@ -3211,6 +3241,7 @@ impl<'f> Binder<'f> {
                     self.pop_scope();
                 }
                 self.scope_change_of = scope_change_of;
+                self.associated_declaration.0 = associated;
                 (self.flow, self.exception_target) = saved;
                 // `GetContainerFlags`: a property with an initializer is a container of its own, name and type and all.
                 if member.kind == MemberKind::Property && matches!(owner, MemberOwner::Class(_)) {
@@ -3643,6 +3674,10 @@ impl<'f> Binder<'f> {
             ExprKind::Ident(_) => {
                 self.b.expr_flow[id.idx()] = self.flow;
                 self.idents.push((id, self.scope));
+                let (name, func) = self.associated_declaration;
+                if name.is_some() {
+                    self.b.identifiers_in_parameters.push((id, name, func));
+                }
             }
             ExprKind::This => {
                 self.seen_this = true;

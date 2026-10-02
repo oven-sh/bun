@@ -137,6 +137,7 @@ impl<'p> Checker<'p> {
         match members[..] {
             [] => return (TypeId::NEVER, true),
             // What is not known, `any` and `unknown`, in this order, leave nothing of the others. Theirs are the lowest numbers.
+            [TypeId::UNRESOLVED, TypeId::ANY, ..] => return (TypeId::ANY, true),
             [first, ..] if first <= TypeId::UNKNOWN => return (first, true),
             [only] => return (only, true),
             _ => {}

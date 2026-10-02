@@ -836,6 +836,9 @@ pub struct Bound {
     pub alias_idents: Vec<(ExprId, ScopeId)>,
     /// The identifiers `arguments` that mean the arguments of a function around them. Sorted.
     pub arguments_objects: Few<ExprId>,
+    /// The identifiers that have an `associatedDeclarationForContainingInitializerOrBindingName` and are not `withinDeferredContext`:
+    /// with its name, and the function whose parameter it is or is part of.
+    pub identifiers_in_parameters: Few<(ExprId, PatId, FnId)>,
     /// `checkUnmatchedJSDocParameters`: the `@param` tags that match no parameter, as start and code.
     pub jsdoc_param_errors: Few<(u32, u32)>,
 

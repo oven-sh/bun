@@ -256,8 +256,7 @@ pub struct Program {
     global_types: ByKey<(Atom, u8), Option<Sym>>,
     /// `global_type_symbol`, of the names known from the start.
     global_type_symbols: ById<Atom, Option<Sym>>,
-    /// The parent type node of each type node, per file. See `type_parents`.
-    type_parents: ByIdKept<FileId, Arc<Vec<TypeNodeId>>>,
+    has_conditional_or_mapped_type: ByIdKept<FileId, bool>,
     /// `String`, `Number` and the like, as `apparent_type` has them for the primitives, by name.
     wrapper_types: ById<Atom, TypeId>,
 }
@@ -365,7 +364,7 @@ impl Program {
             mapped_param_constraints: ByNode::new(&type_nodes),
             global_types: Default::default(),
             global_type_symbols: Default::default(),
-            type_parents: Default::default(),
+            has_conditional_or_mapped_type: Default::default(),
             wrapper_types: Default::default(),
             files,
         }
@@ -436,8 +435,11 @@ impl Program {
             late_bound_members: FxHashMap::default(),
             reporting_nonexistent: Vec::new(),
             serialization_level: 0,
+            discarded: None,
             non_existent_properties: Default::default(),
             printing_closes_circles: false,
+            reprinting: false,
+            printing_floors: Vec::new(),
             context_free_level: usize::MAX,
             came_full_circle: false,
             left_a_circle: false,
@@ -503,6 +505,8 @@ impl Program {
             awaiting: Vec::new(),
             last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
             undefined_properties: FxHashMap::default(),
+            widening_contexts: Vec::new(),
+            widened_types: FxHashMap::default(),
             iife_resolving: Vec::new(),
             flow_loops: Vec::new(),
             reverse_mapped_source_stack: Vec::new(),
@@ -523,6 +527,7 @@ impl Program {
             reported_unreachable_nodes: Vec::new(),
             call_resolution_errors: None,
             context_checking: Vec::new(),
+            resolved_signatures: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
             restrictive_operands: Vec::new(),
@@ -695,10 +700,17 @@ pub struct Checker<'p> {
     reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
     /// `c.serializationLevel`: how many `TypeToString` are under way, of those whose resolutions are made at once.
     serialization_level: u32,
+    /// Where `add_diagnostic` puts what it discards.
+    discarded: Option<sink::Reported>,
     /// `NodeCheckFlagsTypeChecked` on the name of a property access: its 2339 has been made. `true`: and discarded.
     non_existent_properties: crate::util::FxHashMap<(FileId, ExprId), bool>,
     /// The next `with_printer` is no barrier to circles: it prints when and what tsgo prints.
     printing_closes_circles: bool,
+    /// A message is made again that was dropped with an answer that was not kept: its types are printed behind the barrier, and
+    /// count no level. tsgo makes it once.
+    reprinting: bool,
+    /// How high `stack` was when each `typeToStringEx` under way began.
+    printing_floors: Vec<usize>,
     /// How high `inference_contexts` is while `getContextFreeTypeOfExpression` checks something afresh: what is reported then stands.
     context_free_level: usize,
     /// How deep the stack was wherever something was asked that TypeScript would not have asked at that point, or not yet.
@@ -828,6 +840,10 @@ pub struct Checker<'p> {
     /// type of an exported variable is kept in the shared memo by whoever asks first, with the table of that checker, so the ORDER of
     /// its printed properties can vary with more than one thread. If that is flagged, the table is for what is not kept there.
     undefined_properties: FxHashMap<Atom, Prop>,
+    /// Those of the unions being widened. A `*WideningContext` is a place in it.
+    widening_contexts: Vec<symbols::WideningContext<'p>>,
+    /// `cachedTypes[CachedTypeKindWidened]`
+    widened_types: FxHashMap<TypeId, TypeId>,
     /// The calls of functions written on the spot whose arguments are being looked at to type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
     /// The loops being worked out, by whichever walk (`flowLoopStack`): the loop, what is narrowed, its declared and its initial
@@ -873,6 +889,10 @@ pub struct Checker<'p> {
     /// The next target to be related to is a member of an intersection.
     /// What `resolveCall` has just reported. `resolved_signature` takes it, and stores it only together with the entry of `calls`.
     call_resolution_errors: Option<Vec<Reported>>,
+    /// `links.resolvedSignature != nil`, as tsgo's checker has it: the calls THIS checker has had resolved. Whether a call is put off
+    /// under `CheckModeSkipGenericFunctions` goes by it. By `Program::calls` it went by how far another thread had got, which changed
+    /// between the inference of a round and its applicability test.
+    resolved_signatures: crate::util::FxHashSet<(FileId, ExprId)>,
     /// The functions whose first look is under way, see `context_checked`. They are in `Program::context_checked`, for every thread,
     /// once what the first look works out is: whoever found the one without the other would go on without a first look of its own.
     context_checking: Vec<((FileId, crate::hir::FnId), Option<SigId>)>,
@@ -1004,25 +1024,19 @@ impl<'p> Checker<'p> {
         self.files
     }
 
-    /// `node.Parent` for each type node of `file`, as `getConditionalFlowTypeOfType` walks it. Empty for a file without a
-    /// conditional or a mapped type.
-    pub(super) fn type_parents(&self, file: FileId) -> Arc<Vec<TypeNodeId>> {
-        if let Some(cached) = self.p.type_parents.get(&file) {
-            return cached;
+    /// Whether a conditional or a mapped type is written in `file`: in any other, `getConditionalFlowTypeOfType` finds nothing on its way up.
+    pub(super) fn has_conditional_or_mapped_type(&self, file: FileId) -> bool {
+        if let Some(kept) = self.p.has_conditional_or_mapped_type.get(&file) {
+            return kept;
         }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let has_conditional = hir.types.iter().any(|node| {
+        let is_one = |node: &TypeNode| {
             matches!(
                 node.kind,
                 TypeNodeKind::Cond { .. } | TypeNodeKind::Mapped(_)
             )
-        });
-        let parents = if has_conditional {
-            Self::type_node_parents(hir, bound)
-        } else {
-            Vec::new()
         };
-        self.p.type_parents.insert(file, Arc::new(parents))
+        let has_one = self.hir(file).types.iter().any(is_one);
+        self.p.has_conditional_or_mapped_type.insert(file, has_one)
     }
 
     // ───────────────────────────── questions in progress ─────────────────────────────
@@ -1146,7 +1160,11 @@ impl<'p> Checker<'p> {
         // same way once more, and the first resolution on that way is the one to come back to itself.
         // A call that is asked what it expects of an argument while it is being resolved is another matter
         // (`resolvingSignature`): whoever asks goes without an answer, and nothing is wrong. So are members that are in place.
-        let marked = !self.has_members_in_place(q) && self.mark_circle_from(i);
+        // Nor does it go the same way once more through a printing: the next is a level up, and the last asks nothing.
+        let is_through_printing = self.printing_floors.last().is_some_and(|&floor| floor > i);
+        let marked = !self.has_members_in_place(q)
+            && (self.is_resolution(q) || !is_through_printing)
+            && self.mark_circle_from(i);
         self.came_full_circle = marked && self.is_resolution(q);
         if marked && self.is_runaway(i) {
             self.last_enter = EnterOutcome::Runaway;
@@ -1647,7 +1665,7 @@ impl<'p> Checker<'p> {
     /// The computation counts as a frame on top of those open when it began. A cycle among queries that were opened and closed
     /// meanwhile taints only frames above that one: those queries have their final answers, and so has the computation.
     #[inline]
-    fn end_taint_scope(&mut self, scope: TaintScope) -> bool {
+    fn end_taint_scope(&mut self, scope: &TaintScope) -> bool {
         let lowest = self.lowest_taint;
         self.lowest_taint = lowest.min(scope.outer);
         lowest <= scope.depth
@@ -1665,10 +1683,10 @@ impl<'p> Checker<'p> {
     /// together once for a file. The handle borrows nothing: `let index = self.exprs_by_kind(file); for &e in index.of(ExprTag::Call)`.
     pub(crate) fn exprs_by_kind(&mut self, file: FileId) -> std::rc::Rc<hir::ExprsByKind> {
         match &self.exprs_by_kind {
-            Some((of, index)) if *of == file => index.clone(),
+            Some((of, index)) if *of == file => std::rc::Rc::clone(index),
             _ => {
                 let index = std::rc::Rc::new(hir::ExprsByKind::new(self.hir(file)));
-                self.exprs_by_kind = Some((file, index.clone()));
+                self.exprs_by_kind = Some((file, std::rc::Rc::clone(&index)));
                 index
             }
         }

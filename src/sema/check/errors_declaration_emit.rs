@@ -1353,7 +1353,7 @@ impl<'p> Checker<'p> {
     /// `resolveAlias`
     fn resolve_alias_or_unknown(&mut self, alias: Sym) -> Option<Sym> {
         let target = self.resolve_alias(alias).symbol();
-        Some(target.unwrap_or(self.files().unknown_symbol))
+        Some(target.unwrap_or_else(|| self.files().unknown_symbol))
     }
 
     /// `getCandidateListForSymbol`
@@ -2897,7 +2897,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             let Some(members) = self.c.members(holder) else {
                 continue;
             };
-            let (infos, mapper) = (members.shape().index.to_vec(), members.mapper);
+            let (infos, mapper) = (members.shape().index.clone(), members.mapper);
             for info in infos {
                 if info.declaration.is_some() {
                     continue;
@@ -3994,9 +3994,9 @@ impl<'p> Checker<'p> {
                 return Ending::Minimal;
             }
             let mut telling = specifiers.iter().copied().filter(is_telling);
-            if telling.clone().any(|text| has_ts_extension(text)) {
+            if telling.clone().any(&has_ts_extension) {
                 Ending::Ts
-            } else if telling.any(|text| has_js_extension(text)) {
+            } else if telling.any(&has_js_extension) {
                 Ending::Js
             } else {
                 Ending::Minimal

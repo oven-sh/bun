@@ -811,13 +811,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether it is the program that is in error where nothing was found in `receiver`: all of it is known,
-    /// and no question has gone unanswered since `cycles_before`.
-    fn is_certainly_missing(&mut self, receiver: TypeId, cycles_before: u64) -> bool {
-        let apparent = self.apparent_type(receiver);
-        self.cycles == cycles_before && self.is_known(receiver) && self.is_known(apparent)
-    }
-
     /// `leftType` of `checkPropertyAccessExpressionOrQualifiedName`: what the property of `obj.name` is looked up in, and whether the
     /// chain may stop before. `Err`: `isAnyLike`, and the type of the access.
     pub(super) fn left_type_of_property_access(
@@ -900,7 +893,7 @@ impl<'p> Checker<'p> {
             Ok(left) => left,
             // `isAnyLike`. A `#b` that no class around declares is looked for all the same.
             Err(any) => {
-                if !is_private || lexical.is_some() || !self.is_known(any) {
+                if !is_private || lexical.is_some() {
                     return (any, stops);
                 }
                 if self.classes_around_private_name(file, e).is_empty() {
@@ -923,9 +916,9 @@ impl<'p> Checker<'p> {
             );
         }
         let is_super = matches!(hir[obj].kind, ExprKind::Super);
-        let found = if is_private && !self.is_private_name_in_reach(file, e, left, name) {
-            None
-        } else if self.is_apparently_unknown(receiver) {
+        let found = if is_private && !self.is_private_name_in_reach(file, e, left, name)
+            || self.is_apparently_unknown(receiver)
+        {
             None
         } else if is_super {
             self.type_of_super_property(file, obj, receiver, name)
@@ -948,7 +941,7 @@ impl<'p> Checker<'p> {
         };
         let apparent = self.reduced_apparent_type(receiver);
         let Some((declared, how)) = found else {
-            if !self.is_certainly_missing(receiver, cycles_before) {
+            if self.cycles != cycles_before {
                 return (TypeId::UNRESOLVED, stops);
             }
             if is_private {
@@ -1121,7 +1114,7 @@ impl<'p> Checker<'p> {
         // `getFlowTypeOfProperty`
         let (class, _) = self.class_of_member_fn(file, container)?;
         let inherited = self.type_of_property_in_base_class(file, class, name);
-        Some(inherited.unwrap_or(self.undefined_as_declared()))
+        Some(inherited.unwrap_or_else(|| self.undefined_as_declared()))
     }
 
     /// `lookupSymbolForPrivateIdentifierDeclaration`, `getPrivateIdentifierPropertyOfType`: the `#name` of `e` is that of the
@@ -1167,83 +1160,6 @@ impl<'p> Checker<'p> {
             .then(|| self.type_of_symbol(export))
     }
 
-    /// Resolves the types that printing `ty` resolves, which `reportNonexistentProperty` does for its message: for an anonymous
-    /// object type, the parameter and return types of its signatures and the types of its properties, recursively. That can close
-    /// a circularity. tsgo truncates the text after about 160 characters, which the limit on `depth` approximates. `visited` holds
-    /// the object types expanded so far, each with the depth it was expanded at.
-    pub(super) fn resolve_as_printed(
-        &mut self,
-        ty: TypeId,
-        depth: u32,
-        visited: &mut Vec<(TypeId, u32)>,
-    ) {
-        if depth > 3 {
-            return;
-        }
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                for &part in parts.iter() {
-                    self.resolve_as_printed(part, depth + 1, visited);
-                }
-            }
-            // What an alias stands for is printed by the name of the alias.
-            TypeData::Anon {
-                origin: Origin::TypeLiteral(file, node),
-                ..
-            } if self
-                .hir(*file)
-                .aliases
-                .iter()
-                .any(|alias| alias.ty == *node) => {}
-            // `shouldEmitTypeOfSymbol`: a function merged with a namespace, a class or an enum is printed as `typeof f`.
-            TypeData::Anon {
-                origin: Origin::Function(sym),
-                ..
-            } if self
-                .files()
-                .flags(*sym)
-                .intersects(SymFlags::VALUE_MODULE | SymFlags::ENUM | SymFlags::CLASS) => {}
-            TypeData::Anon {
-                origin:
-                    Origin::ObjectLiteral(..)
-                    | Origin::WidenedLiteral(..)
-                    | Origin::TypeLiteral(..)
-                    | Origin::Function(..),
-                ..
-            }
-            | TypeData::Synth(_)
-            | TypeData::Fns { .. } => {
-                // Expanding a type again resolves nothing new, unless the first expansion was cut off earlier.
-                if visited.iter().any(|&(seen, at)| seen == ty && at <= depth) {
-                    return;
-                }
-                visited.push((ty, depth));
-                for construct in [false, true] {
-                    for sig in self.signatures(ty, construct) {
-                        // `signatureToSignatureDeclarationHelper` prints the parameters before the return type.
-                        if let Some((declared_in, func, mapper)) = self.sig_decl(sig) {
-                            for p in self.hir(declared_in)[func].params.iter() {
-                                let param = self.type_of_param(declared_in, p);
-                                let param = self.instantiate(param, mapper);
-                                self.resolve_as_printed(param, depth + 1, visited);
-                            }
-                        }
-                        let returned = self.sig_return(sig);
-                        self.resolve_as_printed(returned, depth + 1, visited);
-                    }
-                }
-                let Some(members) = self.members(ty) else {
-                    return;
-                };
-                for prop in &members.shape().props {
-                    let ty = self.type_of_prop(prop, members.mapper);
-                    self.resolve_as_printed(ty, depth + 1, visited);
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// `checkSatisfiesExpression` reports 1360 as soon as the expression is checked, and the message prints both types. Inside a
     /// function whose return type is being inferred that can close a circularity.
     fn print_unsatisfied_types(&mut self, file: FileId, source: TypeId, ty: TypeNodeId) {
@@ -1255,10 +1171,9 @@ impl<'p> Checker<'p> {
             return;
         }
         let target = self.type_from_node(file, ty);
-        if self.is_known(source) && self.is_known(target) && !self.is_assignable(source, target) {
-            let mut visited = Vec::new();
-            self.resolve_as_printed(source, 0, &mut visited);
-            self.resolve_as_printed(target, 0, &mut visited);
+        if !self.is_assignable(source, target) {
+            self.resolve_by_printing(source);
+            self.resolve_by_printing(target);
         }
     }
 
@@ -1353,9 +1268,7 @@ impl<'p> Checker<'p> {
         let declared = match found {
             Some(found) => found,
             // `core.OrElse(c.getIndexedAccessTypeOrUndefined(..), c.errorType)`
-            None if self.is_known(key) && self.is_certainly_missing(receiver, cycles_before) => {
-                TypeId::ERROR
-            }
+            None if self.cycles == cycles_before => TypeId::ERROR,
             None => TypeId::UNRESOLVED,
         };
         // `getResolvedSymbolOrNil(node)`: what `getPropertyTypeForIndexType` found for a key that is a name.
@@ -1450,11 +1363,11 @@ impl<'p> Checker<'p> {
             ExprKind::Call(c) => {
                 // `resolveCallExpression` under `CheckModeSkipGenericFunctions` defers a call of a generic function that returns a
                 // function: `resolvingSignature`, of which `checkCallExpression` makes `silentNeverType`. `getResolvedSignature`
-                // returns a signature that is cached first.
+                // returns a signature that is cached first: by this checker, see `resolved_signatures`.
                 if self
                     .check_mode()
                     .contains(CheckMode::SKIP_GENERIC_FUNCTIONS)
-                    && self.p.calls.get(&(file, e)).is_none()
+                    && !self.resolved_signatures.contains(&(file, e))
                     && self.is_call_of_generic_function_returning_function(file, e)
                 {
                     // `skippedGenericFunction`
@@ -1467,6 +1380,7 @@ impl<'p> Checker<'p> {
                     return (TypeId::SILENT_NEVER, false);
                 }
                 let resolved = self.resolved_signature(file, e);
+                self.resolved_signatures.insert((file, e));
                 let resolved = self.with_return_type(resolved);
                 let call = &hir[c];
                 let stops = match call.chain {
@@ -1770,7 +1684,7 @@ impl<'p> Checker<'p> {
         };
         // What `export =` gives, if it says that.
         let mut ty = self.type_of_symbol(files.module_value(module));
-        if self.is_known(ty) && !self.is_any(ty) {
+        if !self.is_any(ty) {
             // `createDefaultPropertyWrapperForModule`
             let default = Prop {
                 name: known::default,
@@ -2211,19 +2125,11 @@ impl<'p> Checker<'p> {
             if !self.p.files.options.no_implicit_this {
                 return TypeId::ANY;
             }
-            // What is expected of it has no say in the default of a parameter.
-            if let Some(function) = hir.function_of(container).some()
-                && let FnOwner::Expr(owner) = self.bound(file).fns[function.idx()].owner
-                && !hir.is_in_parameter_initializer_before_containing_function(this)
-                && !self.is_context_known(file, owner)
-            {
-                return TypeId::ANY;
-            }
             // `tryGetThisTypeAt(container)`
             let outside = hir.get_this_container(container, false, false);
             let is_shadowed = self
                 .try_get_this_type_at_ex(file, container, outside)
-                .is_some_and(|t| self.is_known(t) && !is_global_this(self, t));
+                .is_some_and(|t| !is_global_this(self, t));
             let (from, to) = self.get_error_range_for_node(file, container);
             let shadowed = is_shadowed.then(|| self.new_diagnostic((file, from, to), 2738, &[]));
             let diagnostic = self.error_at(node, 2683, &[]);
@@ -2345,10 +2251,6 @@ impl<'p> Checker<'p> {
             && !(hir.is_js && !self.is_check_js(file))
             && !self.is_private_within_ambient(file, func)
             && self.full_signature(file, func).is_none()
-            && match self.bound(file).fns[func.idx()].owner {
-                FnOwner::Expr(owner) => self.is_context_known(file, owner),
-                _ => true,
-            }
         {
             let start = hir[this.pat].pos;
             let args = [Arg::Text("this"), Arg::Type(TypeId::ANY)];
@@ -2759,19 +2661,7 @@ impl<'p> Checker<'p> {
         }
         let is_static = hir.is_static(container);
         let Some(base) = self.base_types(sym).first().copied() else {
-            let sigs = self.super_constructor_sigs(sym);
-            let instance = match sigs.first() {
-                Some(&sig) => self.sig_return(sig),
-                None => TypeId::NEVER,
-            };
-            if self.is_known(constructor) && self.is_known(instance) {
-                return TypeId::ERROR;
-            }
-            return if is_static || is_call_expression {
-                constructor
-            } else {
-                TypeId::UNRESOLVED
-            };
+            return TypeId::ERROR;
         };
         // `isInConstructorArgumentInitializer`
         let is_argument = |n: Node| match hir.kind(n) {
@@ -2830,13 +2720,11 @@ impl<'p> Checker<'p> {
                 ExprKind::Spread(inner) => {
                     let spread = self.type_of_expr(file, inner);
                     // What is like an array stands for its elements, which are spelled out once it is known what is made of them.
-                    if self.is_array_or_tuple(spread)
-                        || self.is_known(spread) && self.is_array_like(spread)
-                    {
+                    if self.is_array_or_tuple(spread) || self.is_array_like(spread) {
                         types.push(spread);
                         flags.push(ElemFlags::VARIADIC);
                     } else {
-                        types.push(if in_pattern && self.is_known(spread) {
+                        types.push(if in_pattern {
                             self.rest_element_of_target(spread)
                         } else {
                             self.checked_iterated_type(spread, false)
@@ -3140,7 +3028,7 @@ impl<'p> Checker<'p> {
                 let spread = self.type_of_expr(file, prop.value);
                 let spread = self.reduced(spread);
                 // 2698 and `spread = c.errorType`
-                if self.is_known(spread) && !self.is_valid_spread_type(spread) {
+                if !self.is_valid_spread_type(spread) {
                     result = TypeId::ERROR;
                     continue;
                 }
@@ -3646,10 +3534,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             let key = self.type_of_expr(file, k);
-            if !self.is_known(key) {
-                // Nothing is known of the key: with any string for one, nothing will be found missing.
-                wanted[0] = true;
-            } else if self.is_assignable(key, TypeId::NUMBER) {
+            if self.is_assignable(key, TypeId::NUMBER) {
                 wanted[1] = true;
             } else if self.is_assignable(key, TypeId::SYMBOL) {
                 wanted[2] = true;
@@ -3687,14 +3572,10 @@ impl<'p> Checker<'p> {
                         continue;
                     };
                     let key = self.type_of_expr(file, k);
-                    if self.is_known(key) {
-                        (
-                            self.is_assignable(key, TypeId::SYMBOL),
-                            self.is_assignable(key, TypeId::NUMBER),
-                        )
-                    } else {
-                        (false, false)
-                    }
+                    (
+                        self.is_assignable(key, TypeId::SYMBOL),
+                        self.is_assignable(key, TypeId::NUMBER),
+                    )
                 }
             };
             let first = self.bound(file).declarations_of_literal_member(p)[0];
@@ -4120,17 +4001,13 @@ impl<'p> Checker<'p> {
         let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
         // `&&=`, `||=`, `??=`: whatever comes of the two, what is on the right is put where the left is.
         if is_assignment && matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
-            let (l, r, is_sure) = self.check_operands(file, left, right);
-            if is_sure {
-                self.check_assignment_operator(file, op, left, right, l, r);
-            }
+            let (l, r) = self.check_operands(file, left, right);
+            self.check_assignment_operator(file, op, left, right, l, r);
         }
         match op {
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                let (l, r, is_sure) = self.check_operands(file, left, right);
-                if is_sure
-                    && self.check_for_disallowed_es_symbol_operand(file, e, op, left, right, l, r)
-                {
+                let (l, r) = self.check_operands(file, left, right);
+                if self.check_for_disallowed_es_symbol_operand(file, e, op, left, right, l, r) {
                     let l = self.check_non_null_type(file, left, l);
                     let r = self.check_non_null_type(file, right, r);
                     let (l, r) = (self.base_for_comparison(l), self.base_for_comparison(r));
@@ -4140,8 +4017,8 @@ impl<'p> Checker<'p> {
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                 // `CheckModeTypeOnly`: while a loop is under way the operands may be narrower than they are.
-                let (l, r, is_sure) = self.check_operands(file, left, right);
-                if is_sure && self.flow_loops.is_empty() {
+                let (l, r) = self.check_operands(file, left, right);
+                if self.flow_loops.is_empty() {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.
@@ -4159,11 +4036,11 @@ impl<'p> Checker<'p> {
             }
             // `checkInExpression`, `checkInstanceOfExpression`
             BinOp::In | BinOp::Instanceof => {
-                let (l, r, is_sure) = self.check_operands(file, left, right);
+                let (l, r) = self.check_operands(file, left, right);
                 if l == TypeId::SILENT_NEVER || r == TypeId::SILENT_NEVER {
                     return TypeId::SILENT_NEVER;
                 }
-                if is_sure && op == BinOp::In {
+                if op == BinOp::In {
                     self.check_in_expression(file, left, right, l, r);
                 }
                 TypeId::BOOLEAN

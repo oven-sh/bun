@@ -269,9 +269,6 @@ impl Checker<'_> {
                 }
                 ExprKind::Index { obj, index, .. } => {
                     let key = self.type_of_expr(file, index);
-                    if !self.is_known(key) {
-                        u.reads_unknown_members = true;
-                    }
                     // `shouldDeferIndexedAccessType`: nothing is looked up under a key that waits for a type parameter.
                     if self.is_generic(key) {
                         continue;
@@ -537,7 +534,7 @@ impl Checker<'_> {
                 self.type_of_prop(a, a_mapper),
                 self.type_of_prop(b, b_mapper),
             );
-            a == b || !self.is_known(a) || !self.is_known(b)
+            a == b
         }
     }
 
@@ -1614,7 +1611,7 @@ impl Checker<'_> {
             } else {
                 before.iter().rposition(|&c| c == b'<')
             };
-            let start = open.map_or(first.saturating_sub(1), |at| at as u32);
+            let start = open.map_or_else(|| first.saturating_sub(1), |at| at as u32);
             let last = self.end_of_type_param(file, params.at(params.len() - 1));
             let mut close = skip_trivia(&hir.text, last as usize);
             if hir.text.get(close) == Some(&b',') {

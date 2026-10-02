@@ -85,9 +85,6 @@ impl Checker<'_> {
         } else {
             self.chain_receiver(file, data.callee, data.chain).0
         };
-        if !self.is_known(called) {
-            return;
-        }
         let from = self.reported.len();
         let called = self.check_non_null_type(file, data.callee, called);
         for i in from..self.reported.len() {
@@ -107,9 +104,6 @@ impl Checker<'_> {
             }
         }
         let apparent = self.apparent_type(called);
-        if !self.is_known(apparent) {
-            return;
-        }
         // `resolveErrorCall`
         if self.is_error_type(apparent) {
             return;
@@ -246,10 +240,7 @@ impl Checker<'_> {
                 }
             } else if let Some(sig) = sig {
                 let returned = self.sig_return(sig);
-                if self.is_known(returned)
-                    && returned != TypeId::VOID
-                    && has_declaration == Some(true)
-                {
+                if returned != TypeId::VOID && has_declaration == Some(true) {
                     self.error_at(
                         (file, node_start, self.end_inside_parentheses(file, e)),
                         2350,
@@ -295,7 +286,7 @@ impl Checker<'_> {
         // `invocationErrorDetails`
         if let Some(awaited) = self.awaited_or_none(apparent) {
             let awaited = self.reduced_apparent_type(awaited);
-            if self.is_known(awaited) && !self.signatures(awaited, construct).is_empty() {
+            if !self.signatures(awaited, construct).is_empty() {
                 related.push(here(2773));
             }
         }
@@ -514,29 +505,15 @@ impl Checker<'_> {
             return;
         }
         self.resolved_signature(file, e);
-        // Whether the class has a base type depends on the return type of the first base constructor (`resolveBaseTypesOfClass`),
-        // which has to be known.
-        let sym = self.class_sym(file, class);
-        if self.base_types(sym).is_empty()
-            && let Some(&first) = self.super_constructor_sigs(sym).first()
-        {
-            let instance = self.sig_return(first);
-            if !self.is_known(instance) {
-                return;
-            }
-        }
         // In a class without a base type `super` is in error too, and its type is `any`.
         let callee = hir[c].callee;
         let called = self.type_of_expr(file, callee);
-        if !self.is_known(called) || self.is_any(called) {
+        if self.is_any(called) {
             return;
         }
         // `getInstantiatedConstructorsForTypeArguments`: the constructors of the base that take as many type arguments as the
         // `extends` clause gives, given them.
         let given = self.types_from_nodes(file, hir[class].extends_args);
-        if given.iter().any(|&t| !self.is_known(t)) {
-            return;
-        }
         let mut sigs = Vec::new();
         for sig in self.signatures(called, true) {
             let type_params = self.sig_type_params(sig);
@@ -564,13 +541,7 @@ impl Checker<'_> {
         let data = hir[c];
         self.resolved_signature(file, e);
         let tag = self.type_of_expr(file, data.callee);
-        if !self.is_known(tag) {
-            return;
-        }
         let apparent = self.apparent_type(tag);
-        if !self.is_known(apparent) {
-            return;
-        }
         // `resolveErrorCall`
         if self.is_error_type(apparent) {
             return;
@@ -995,9 +966,6 @@ impl Checker<'_> {
             };
             let constraint = self.filled_in_around(type_params[i], constraint, outer);
             let constraint = self.instantiate(constraint, mapper);
-            if !self.is_known(constraint) || !self.is_known(filled[i]) {
-                return Err(());
-            }
             if !self.is_assignable(filled[i], constraint) {
                 return Ok(Some((i, filled[i], constraint)));
             }
@@ -1014,7 +982,6 @@ impl Checker<'_> {
         check_mode: CheckMode,
         report: bool,
     ) -> bool {
-        let in_doubt = relation != Relation::Subtype;
         if let CallLike::Jsx(_) = s.node {
             return self.check_applicable_signature_for_jsx_call_like_element(
                 s.file,
@@ -1039,9 +1006,6 @@ impl Checker<'_> {
             && self.checks_this_argument(file, e, node)
         {
             let given = self.this_argument_type(file, this_arg);
-            if !self.is_known(given) || !self.is_known(wanted) {
-                return in_doubt;
-            }
             if !self.related(given, wanted, relation) {
                 if report {
                     let (start, end) = match (this_arg, decorator) {
@@ -1077,9 +1041,6 @@ impl Checker<'_> {
                 }
                 _ => self.arg_type_under(file, arg, wanted, check_mode),
             };
-            if !self.is_known(given) || !self.is_known(wanted) {
-                return in_doubt;
-            }
             // `getRegularTypeOfObjectLiteral`: properties there are too many of do not count before everything is looked at.
             let given = if check_mode.contains(CheckMode::SKIP_CONTEXT_SENSITIVE) {
                 self.regular_type_of_object_literal(given)
@@ -1121,13 +1082,7 @@ impl Checker<'_> {
             return false;
         }
         if let Some(rest) = rest {
-            if !self.is_known(rest) {
-                return in_doubt;
-            }
             let given = self.spread_argument_type(file, args, count, rest, None, check_mode);
-            if !self.is_known(given) {
-                return in_doubt;
-            }
             if !self.related(given, rest, relation) {
                 if report {
                     let (at, end) = match decorator {
@@ -1185,7 +1140,7 @@ impl Checker<'_> {
         let Some(awaited) = awaited_of_promise(self, source) else {
             return;
         };
-        if self.is_known(awaited) && self.is_assignable(awaited, target) {
+        if self.is_assignable(awaited, target) {
             self.relate(d.0, d.1, |_| vec![Reported::bare(place, 2773)]);
         }
     }

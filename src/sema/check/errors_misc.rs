@@ -57,9 +57,6 @@ impl Checker<'_> {
     /// `checkSwitchStatement`, of one `case test:` of a `switch (expr)`: 2678.
     pub(super) fn check_case_clause(&mut self, file: FileId, expr: ExprId, test: ExprId) {
         let (subject, case) = (self.type_of_expr(file, expr), self.type_of_expr(file, test));
-        if !self.is_known(subject) || !self.is_known(case) {
-            return;
-        }
         // `isTypeEqualityComparableTo`, then the other way round.
         let is_nullable = case.is_null() || case.is_undefined();
         if !is_nullable && !self.is_comparable(subject, case) {
@@ -320,14 +317,7 @@ impl Checker<'_> {
             // `getPropertyNameFromIndex`: the one name that the type of what is in the brackets stands for.
             ExprKind::Index { obj, index, .. } => {
                 let key = self.type_of_expr(file, index);
-                (
-                    obj,
-                    if self.is_known(key) {
-                        self.property_name_of_type(key)
-                    } else {
-                        None
-                    },
-                )
+                (obj, self.property_name_of_type(key))
             }
             // A missing operand is an identifier without text, which is no access expression either.
             _ => {
@@ -340,7 +330,7 @@ impl Checker<'_> {
             self.error_at((file, start, end), 18011, &[]);
         }
         let object = self.type_of_expr(file, obj);
-        if !self.is_known(object) || self.is_any(object) {
+        if self.is_any(object) {
             return;
         }
         let object = self.non_nullable(object);
@@ -378,7 +368,6 @@ impl Checker<'_> {
         // `checkDeleteExpressionMustBeOptional`
         let ty = self.union(&types);
         if !self.p.files.options.strict_null_checks
-            || !self.is_known(ty)
             || self.is_any(ty)
             || ty == TypeId::UNKNOWN
             || ty.is_never()

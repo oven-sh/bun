@@ -125,7 +125,7 @@ pub(super) fn is_with_statement(hir: &File, s: StmtId) -> bool {
 
 /// What binder.go says. It goes through everything, whether or not the checker does. Not 1184: the binder only says it of
 /// `export as namespace`, and everywhere it is said here it is the checker's (`reportObviousModifierErrors`).
-pub(super) fn is_said_by_the_binder(code: u32) -> bool {
+fn is_said_by_the_binder(code: u32) -> bool {
     matches!(
         code,
         1100 | 1101 | 1102 | 1210 | 1212..=1215 | 1250..=1252 | 1262 | 1314..=1316 | 1344 | 1359 | 2300 | 2451 | 2528 | 2567 | 2668 | 5061 | 18012
@@ -134,7 +134,7 @@ pub(super) fn is_said_by_the_binder(code: u32) -> bool {
 
 /// What parser.go and scanner.go say while a file is parsed, among what `early_errors` keeps: the rest of that is the binder's
 /// and the checker's. 1359 is left out, which is only noted there for `await` as a name, and that is the binder's.
-pub(super) fn is_said_by_the_parser(code: u32) -> bool {
+fn is_said_by_the_parser(code: u32) -> bool {
     matches!(
         code,
         1002 | 1003 | 1005 | 1007 | 1010..=1012 | 1034 | 1068 | 1069 | 1084 | 1109 | 1110 | 1121 | 1124..=1132 | 1134..=1140
@@ -522,7 +522,7 @@ impl Checker<'_> {
         let caught = &hir[param];
         if caught.ty.is_some() {
             let ty = self.type_from_node(file, caught.ty);
-            if self.is_known(ty) && !self.has_any_flag(ty) && ty != TypeId::UNKNOWN {
+            if !self.has_any_flag(ty) && ty != TypeId::UNKNOWN {
                 self.grammar_error_at((file, hir[caught.ty].pos, 0), 1196, &[]);
             }
             return;
@@ -722,17 +722,14 @@ impl Checker<'_> {
         // `widenTypeForVariableLikeDeclaration`: an object literal may well have more than it takes.
         let source = self.type_of_expr(file, decl.init);
         let source = self.regular_object(source);
-        if !self.is_known(source) || self.is_assignable(source, target) {
-            return;
-        }
         let at = self.error_start_of(file, decl.init);
         // A function without a name of its own goes by the name of the variable.
-        let end = if at == hir[decl.pat].pos {
-            0
+        let at = if at == hir[decl.pat].pos {
+            self.place_of_token(file, at)
         } else {
-            self.error_end_of(file, decl.init)
+            (file, at, self.error_end_of(file, decl.init))
         };
-        self.report_not_assignable_with_end(source, target, at, end, 2850 + u32::from(is_await));
+        self.check_type_assignable_to(source, target, Some(at), Some(2850 + u32::from(is_await)));
     }
 
     /// What the passes say where `checkSourceFile` never comes is taken back. The parser's and the binder's stays. After all the passes.

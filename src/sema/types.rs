@@ -872,6 +872,8 @@ bitflags::bitflags! {
         const HAS_MARKER = 4;
         /// What a binding pattern implies counts too.
         const CONTAINS_OBJECT_OR_ARRAY_LITERAL = 8;
+        /// It only counts without strictNullChecks. An object literal does not say it of its members.
+        const CONTAINS_WIDENING_TYPE = 16;
     }
 }
 
@@ -1506,6 +1508,10 @@ impl TypeStore {
         };
         match data {
             TypeData::Intrinsic(Intrinsic::Unresolved) => ObjectFlags::HAS_UNRESOLVED,
+            // `createWideningType`
+            TypeData::Intrinsic(Intrinsic::Null | Intrinsic::Undefined) => {
+                ObjectFlags::CONTAINS_WIDENING_TYPE
+            }
             // One whose constraint rests on something unknown says so. A marker in there does not show:
             // `reportUnreliableMapper` is asked about the parameter, not about what is in its mapper.
             TypeData::TypeParam(_, _, around) => {
@@ -1526,10 +1532,12 @@ impl TypeStore {
                 TypeArguments::Given(given) => all(given),
                 // `couldContainTypeVariables`: `t.AsTypeReference().node != nil`. `createDeferredTypeReference` sets no propagating
                 // flags.
-                TypeArguments::Deferred(deferred) => self
-                    .mapper_record(deferred.mapper)
-                    .1
-                    .difference(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL),
+                TypeArguments::Deferred(deferred) => {
+                    self.mapper_record(deferred.mapper).1.difference(
+                        ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL
+                            | ObjectFlags::CONTAINS_WIDENING_TYPE,
+                    )
+                }
             },
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(..),

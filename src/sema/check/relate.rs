@@ -1003,7 +1003,7 @@ impl<'p> Checker<'p> {
         source: TypeId,
         target: TypeId,
         relation: Relation,
-        mut error_reporter: Option<&mut Relater>,
+        error_reporter: Option<&mut Relater>,
     ) -> bool {
         let (s, t) = (self.flags(source), self.flags(target));
         if t & tf::ANY != 0
@@ -1040,7 +1040,7 @@ impl<'p> Checker<'p> {
             )
             && (s & t & tf::ENUM != 0 && self.files().symbol(a).name == self.files().symbol(b).name
                 || s & t & tf::ENUM_LITERAL != 0 && (s & t & tf::UNION != 0 || is_same_value))
-            && self.is_enum_type_related_to(a, b, error_reporter.as_deref_mut())
+            && self.is_enum_type_related_to(a, b, error_reporter)
         {
             return true;
         }
@@ -2197,7 +2197,7 @@ impl<'p> Checker<'p> {
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
         let variances: Arc<[u8]> = variances.into();
-        let is_tainted = self.end_taint_scope(taint_scope);
+        let is_tainted = self.end_taint_scope(&taint_scope);
         if !is_tainted {
             self.p.variances.insert(sym, variances)
         } else {
@@ -2457,48 +2457,31 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── object literals and types that ask for nothing ─────────────────────────────
 
-    /// `isImplementationCompatibleWithOverload`. `None`: it cannot be told.
+    /// `isImplementationCompatibleWithOverload`
     pub(super) fn is_implementation_compatible_with_overload(
         &mut self,
         implementation: SigId,
         overload: SigId,
-    ) -> Option<bool> {
+    ) -> bool {
         let (source, target) = (self.erased_sig(implementation), self.erased_sig(overload));
         let (source_return, target_return) = (self.sig_return(source), self.sig_return(target));
-        let is_known = |c: &Self, t: TypeId| {
-            !c.p.types
-                .object_flags(t)
-                .contains(ObjectFlags::HAS_UNRESOLVED)
-        };
-        if !is_known(self, source_return)
-            || !is_known(self, target_return)
-            || self
-                .sig_params(source)
-                .iter()
-                .chain(self.sig_params(target).iter())
-                .any(|p| !is_known(self, p.ty))
-        {
-            return None;
-        }
         // What they return has to do with each other, one way or the other.
         if target_return != TypeId::VOID
             && !self.is_assignable(target_return, source_return)
             && !self.is_assignable(source_return, target_return)
         {
-            return Some(false);
+            return false;
         }
         let mut r = Relater::new(Relation::Assignable, self.cycles);
-        Some(
-            self.compare_signatures_related::<false>(
-                &mut r,
-                source,
-                target,
-                (implementation, overload),
-                IGNORE_RETURN_TYPES,
-                0,
-            )
-            .holds(),
+        self.compare_signatures_related::<false>(
+            &mut r,
+            source,
+            target,
+            (implementation, overload),
+            IGNORE_RETURN_TYPES,
+            0,
         )
+        .holds()
     }
 
     /// `findMatchingDiscriminantType`, asked from outside a relation.
@@ -3030,7 +3013,8 @@ impl<'p> Checker<'p> {
             0..0
         };
         let count = targets.len() - skipped.len();
-        let corresponds = count > 1 && sources.len() >= count && sources.len() % count == 0;
+        let corresponds =
+            count > 1 && sources.len() >= count && sources.len().is_multiple_of(count);
         for (i, &t) in sources.iter().enumerate() {
             // Many unions are mappings of one another: the members at the same place fit.
             if corresponds {
@@ -3438,7 +3422,7 @@ impl<'p> Checker<'p> {
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
-        let is_tainted = self.end_taint_scope(taint_scope);
+        let is_tainted = self.end_taint_scope(&taint_scope);
         let propagating = self.reliability;
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
@@ -6128,7 +6112,7 @@ impl<'p> Checker<'p> {
             let required = flags
                 .iter()
                 .position(|f| !f.contains(ElemFlags::REQUIRED))
-                .unwrap_or(Self::fixed_length(flags));
+                .unwrap_or_else(|| Self::fixed_length(flags));
             if required > 0 {
                 count = Some(params.len() - 1 + required);
             }

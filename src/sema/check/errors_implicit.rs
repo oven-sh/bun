@@ -137,16 +137,8 @@ impl Checker<'_> {
             },
             _ => return None,
         };
-        match key {
-            PropKey::None => return None,
-            // `hasBindableName`: a name that is worked out and is no literal or unique symbol makes a property of its own.
-            PropKey::Computed(k) if self.member_name(file, key).is_none() => {
-                let ty = self.type_of_expr(file, k);
-                if !self.is_known(ty) {
-                    return None;
-                }
-            }
-            _ => {}
+        if key == PropKey::None {
+            return None;
         }
         Some(pos)
     }
@@ -195,79 +187,5 @@ impl Checker<'_> {
             && symbol.is_some()
             && bound.symbols[symbol.idx()].decls.len() == 1
             && !bound.expr_symbol.contains(&symbol)
-    }
-
-    /// Whether it can be told what is expected of `e`, so that nothing being expected means just that.
-    pub(super) fn is_context_known(&mut self, file: FileId, mut e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        loop {
-            match bound.expr_parent[e.idx()] {
-                Parent::Prop(p) => e = bound.prop_owner[p.idx()],
-                Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee != e => {
-                        if matches!(hir[hir[c].callee].kind, ExprKind::Fn(_)) {
-                            return true;
-                        }
-                        let callee = self.type_of_expr(file, hir[c].callee);
-                        return self.is_known(callee);
-                    }
-                    ExprKind::Object(_)
-                    | ExprKind::Array(_)
-                    | ExprKind::Cond { .. }
-                    | ExprKind::Spread(_)
-                    | ExprKind::NonNull(_)
-                    | ExprKind::AsConst(_)
-                    | ExprKind::Satisfies { .. }
-                    | ExprKind::Binary {
-                        op: BinOp::Or | BinOp::And | BinOp::Nullish | BinOp::Comma,
-                        ..
-                    } => e = parent,
-                    // `getContextualTypeForAssignmentExpression`: nothing, where the assignment declares its target.
-                    ExprKind::Assign { .. } => {
-                        return self
-                            .contextual_type(file, e, ContextFlags::empty())
-                            .is_none_or(|ty| self.is_known(ty));
-                    }
-                    ExprKind::Jsx(j) => {
-                        // `getContextualTypeForChildJsxExpression`: nothing is expected of a child of a fragment, nor where children go
-                        // by no name.
-                        let tag = hir[j].tag;
-                        if tag.is_none()
-                            || !matches!(
-                                self.jsx_children_property_name(file),
-                                super::jsx::JsxName::Name(_)
-                            )
-                        {
-                            return true;
-                        }
-                        // Otherwise it is the `children` of what the tag takes, which is looked up by name for `<div>`.
-                        if self.jsx_intrinsic_tag_name(file, tag).is_none() {
-                            let component = self.type_of_expr(file, tag);
-                            if !self.is_known(component) {
-                                return false;
-                            }
-                        }
-                        return self
-                            .contextual_jsx_element_attributes_type(file, parent)
-                            .is_none_or(|props| self.is_known(props));
-                    }
-                    _ => return true,
-                },
-                Parent::VarInit(d) => {
-                    return hir[d].ty.is_none() || {
-                        let ty = self.type_from_node(file, hir[d].ty);
-                        self.is_known(ty)
-                    };
-                }
-                Parent::Stmt(_) | Parent::FnBody(_) => {
-                    // What is returned is expected to be what the function around returns.
-                    return match self.contextual_type(file, e, ContextFlags::empty()) {
-                        Some(ty) => self.is_known(ty),
-                        None => true,
-                    };
-                }
-                _ => return true,
-            }
-        }
     }
 }

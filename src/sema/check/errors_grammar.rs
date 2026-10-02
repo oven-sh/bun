@@ -32,10 +32,6 @@ impl Checker<'_> {
 
     pub(super) fn check_grammar(&mut self, file: FileId) {
         let hir = self.hir(file);
-        // A JSON file has no statements of its own: its `export =` is the binder's.
-        if hir.has_errors || hir.kind == FileKind::Json {
-            return;
-        }
         // `grammarErrorOnNode` and its like say nothing of a file the parser objected to, nor does `checkContextualIdentifier`.
         let parses = !has_parse_diagnostics(hir);
         if parses {

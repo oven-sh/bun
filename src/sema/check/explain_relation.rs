@@ -43,7 +43,7 @@ impl Relater {
 
     /// `restoreErrorState`
     pub(super) fn restore_error_state(&mut self, saved: &ErrorState) {
-        self.error_chain = saved.chain.clone();
+        self.error_chain.clone_from(&saved.chain);
         self.related_info.truncate(saved.related);
     }
 
@@ -322,9 +322,6 @@ impl<'p> Checker<'p> {
         relation: Relation,
         is_trial: bool,
     ) -> Option<bool> {
-        if !self.is_known(source) || !self.is_known(target) {
-            return Some(true);
-        }
         let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
         let too_complex_before = std::mem::replace(&mut self.relation_too_complex, false);
         self.is_trial_comparison = is_trial;
@@ -425,7 +422,8 @@ impl<'p> Checker<'p> {
         self.report_error_results(r, original_source, original_target, source, target, head);
     }
 
-    /// The same, and the `relatedInfo` that error is given.
+    /// All the lines of the error `checkTypeRelatedToEx(source, target, relation, node, head)` reports, the first at `level`, and its
+    /// `relatedInfo`. `head`: the code of `headMessage`. Nothing if the two are related, or if the comparison is cut short.
     pub(super) fn relation_lines_with_related(
         &mut self,
         source: TypeId,

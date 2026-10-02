@@ -20,8 +20,9 @@ use bun_sema::messages;
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{Host, Phase, join};
 use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sema::verify::verify_project_references;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Runs `work(i)` for every `i` below `count` on the threads everything else in Bun runs on, no more than `threads` of them at a time. They take
@@ -119,12 +120,12 @@ pub fn compiler_option_from_flag(
 }
 
 /// `noEmit`, since nothing is ever written, after what the command line says.
-fn overriding_options(request: &Request) -> Vec<(Vec<u8>, Json)> {
+fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)> {
     request
         .compiler_options
         .iter()
         .map(|option| (option.0.clone(), option.1.clone()))
-        .chain([(b"noEmit".to_vec(), Json::Bool(true))])
+        .chain((!is_build).then(|| (b"noEmit".to_vec(), Json::Bool(true))))
         .collect()
 }
 
@@ -359,12 +360,6 @@ fn roots_of_paths(
     roots
 }
 
-/// From how many bytes on a file is checked before the others.
-const BIG_FILE: u32 = 64 << 10;
-
-/// What is long for a file that is not big.
-const SLOW: Duration = Duration::from_millis(40);
-
 pub fn check(request: &Request) -> Report {
     let mut report = check_what_is_asked(request);
     if cfg!(windows) {
@@ -420,9 +415,11 @@ fn check_what_is_asked(request: &Request) -> Report {
             .or_else(|| config::find_config(&disk, &cwd)),
     };
     let mut project = match &config_path {
-        // Nothing is written, whatever the project says: this is `tsc --noEmit`. What is only wrong with where output would go is not
-        // looked into.
-        Some(path) => config::load_overriding(&disk, path, overriding_options(request)),
+        // Nothing is written, whatever the project says. Without `references` this is `tsc --noEmit`: what is only wrong with where
+        // output would go is not looked into. With them it is `tsc -b`, which has no `--noEmit`.
+        Some(path) => config::load_overriding(&disk, path, &|has_references| {
+            overriding_options(request, has_references && request.paths.is_empty())
+        }),
         None => {
             let mut options = default_compiler_options();
             if let Json::Object(options) = &mut options {
@@ -478,54 +475,55 @@ struct ReferencedProject {
     references: Vec<usize>,
 }
 
-/// Appends `project` after the projects it references, transitively, so that dependencies come first. Each config file is loaded
-/// once. Returns the index of `project`, or `None` if it is already being visited (TS6202).
-fn collect_referenced_projects(
-    host: &dyn Host,
-    project: config::Project,
-    overrides: &[(Vec<u8>, Json)],
-    projects: &mut Vec<ReferencedProject>,
-    index_of: &mut FxHashMap<Vec<u8>, Option<usize>>,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Option<usize> {
-    index_of.insert(project.config_path.clone(), None);
-    let dir = dirname::<Posix>(&project.config_path).to_vec();
-    let mut references = Vec::new();
-    for reference in &project.references {
-        // `resolveProjectReferencePath`
-        let path = join(&dir, reference);
-        let path = if path.ends_with(b".json") {
-            path
-        } else {
-            join(&path, b"tsconfig.json")
-        };
-        match index_of.get(&path) {
-            Some(Some(index)) => references.push(*index),
-            Some(None) => diagnostics.push(global(
-                6202,
-                &[[&project.config_path[..], b"\n", &path].concat()],
-            )),
-            None if !host.is_file(&path) => diagnostics.push(global(6053, &[path])),
-            None => {
-                let referenced = config::load_overriding(host, &path, overrides.to_vec());
-                references.extend(collect_referenced_projects(
-                    host,
-                    referenced,
-                    overrides,
-                    projects,
-                    index_of,
-                    diagnostics,
-                ));
+/// `Orchestrator`, as far as `GenerateGraph` goes.
+struct Graph<'h> {
+    host: &'h dyn Host,
+    overrides: Vec<(Vec<u8>, Json)>,
+    /// `order`: dependencies first.
+    projects: Vec<ReferencedProject>,
+    /// By configuration file, each of which is loaded once. `completed`: where it is in `projects`. `analyzing`: `None`.
+    index_of: FxHashMap<Vec<u8>, Option<usize>>,
+    circularity_stack: Vec<Vec<u8>>,
+    /// `errors`: TS6202. With one of these nothing is built.
+    errors: Vec<Diagnostic>,
+    /// `upToDateStatusTypeConfigFileNotFound`, which a task says when it is run.
+    not_found: Vec<Diagnostic>,
+}
+
+impl Graph<'_> {
+    /// `setupBuildTask`: where `project` is in `projects`.
+    fn setup_build_task(&mut self, project: config::Project, in_circular_context: bool) -> usize {
+        self.index_of.insert(project.config_path.clone(), None);
+        self.circularity_stack.push(project.config_path.clone());
+        let mut references = Vec::new();
+        for reference in &project.references {
+            let path = config::resolve_config_file_name_of_project_reference(&reference.path);
+            let in_circular_context = in_circular_context || reference.circular;
+            match self.index_of.get(&path) {
+                Some(Some(index)) => references.push(*index),
+                Some(None) if in_circular_context => {}
+                Some(None) => {
+                    let stack = self.circularity_stack.join(&b'\n');
+                    self.errors.push(global(6202, &[stack]));
+                }
+                None if !self.host.is_file(&path) => self.not_found.push(global(6053, &[path])),
+                None => {
+                    let over = |_: bool| self.overrides.clone();
+                    let referenced = config::load_overriding(self.host, &path, &over);
+                    references.push(self.setup_build_task(referenced, in_circular_context));
+                }
             }
         }
+        self.circularity_stack.pop();
+        let index = self.projects.len();
+        self.index_of
+            .insert(project.config_path.clone(), Some(index));
+        self.projects.push(ReferencedProject {
+            project,
+            references,
+        });
+        index
     }
-    let index = projects.len();
-    index_of.insert(project.config_path.clone(), Some(index));
-    projects.push(ReferencedProject {
-        project,
-        references,
-    });
-    Some(index)
 }
 
 /// What `tsc -b` checks: `root` and every project it references, each with its own options. Nothing has to be built first: an
@@ -537,15 +535,38 @@ fn check_with_references(
     mut report: Report,
     started: Instant,
 ) -> Report {
-    let mut projects = Vec::new();
-    collect_referenced_projects(
+    let mut graph = Graph {
         host,
-        root,
-        &overriding_options(request),
-        &mut projects,
-        &mut FxHashMap::default(),
-        &mut report.diagnostics,
-    );
+        overrides: overriding_options(request, true),
+        projects: Vec::new(),
+        index_of: FxHashMap::default(),
+        circularity_stack: Vec::new(),
+        errors: Vec::new(),
+        not_found: Vec::new(),
+    };
+    graph.setup_build_task(root, false);
+    let Graph {
+        projects,
+        index_of,
+        mut errors,
+        mut not_found,
+        ..
+    } = graph;
+    // `buildOrClean`: "Circularity errors prevent any project from being built".
+    if !errors.is_empty() {
+        report.diagnostics.append(&mut errors);
+        report.load_time = started.elapsed();
+        return report;
+    }
+    report.diagnostics.append(&mut not_found);
+    let resolved = |path: &[u8]| Some(&projects[(*index_of.get(path)?)?].project);
+    let mut about_references: Vec<Vec<ConfigError>> = (projects.iter())
+        .map(|p| {
+            (verify_project_references(&p.project, &resolved).iter())
+                .map(|(config_path, problem)| ConfigError::of_problem(host, config_path, problem))
+                .collect()
+        })
+        .collect();
     // A file that belongs to a referenced project is checked there, with that project's options.
     let roots: Vec<Vec<Vec<u8>>> = projects.iter().map(|p| p.project.files.clone()).collect();
     // Where each project's declaration files would go, and the directory they mirror. `None`: next to the sources.
@@ -571,14 +592,14 @@ fn check_with_references(
     let last = projects.len() - 1;
     for (index, referenced) in projects.into_iter().enumerate() {
         let mut project = referenced.project;
-        if project.files.is_empty() {
-            // A solution file: `"files": []` or `"include": []` with references only.
-            project
-                .errors
-                .retain(|e| e.code != 18003 && e.code != 18002);
+        if project.files.is_empty() && !project.references.is_empty() {
+            // `upToDateStatusTypeSolution`: there is no program. `GetConfigFileParsingDiagnostics` are said all the same.
+            project.errors.retain(|e| !e.is_about_options);
             if project.errors.is_empty() {
                 continue;
             }
+        } else {
+            project.errors.append(&mut about_references[index]);
         }
         let mut is_referenced = vec![false; roots.len()];
         let mut pending = references[index].clone();
@@ -801,21 +822,10 @@ fn check_what_is_named(
     if let Some(only) = request.only {
         to_check.retain(|&f| program.files.modules[f.idx()].path.contains_str(only));
     }
-    // The biggest first, so that none of them is what everybody waits for at the end. Among the rest, how long a file takes has little to do
-    // with how long it is: a few lines can ask a lot of the types they use. In order of size all of those would come last. In no
-    // particular order, which is the same each time, one is as likely to come early.
+    // `program.files`: what is imported comes before what imports it, so a file's own walk is the first to come to what it declares.
+    // Who asks first is a fact of the program: neither the name of a directory nor a clock has a say.
+    to_check.sort_by_key(|&f| program.files.rank_of_file(f));
     let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
-    to_check.sort_by_key(|&f| std::cmp::Reverse(size(f)));
-    let big = to_check.partition_point(|&f| size(f) >= BIG_FILE);
-    to_check[big..].sort_by_cached_key(|&f| {
-        // As `str` is hashed, which the paths were: a few answers still depend on the order (vue-core's vModel.ts), and this is the one
-        // they were accepted in.
-        use std::hash::Hasher;
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        hasher.write(&program.files.modules[f.idx()].path);
-        hasher.write_u8(0xff);
-        hasher.finish()
-    });
     report.files_checked = to_check.len();
     if let Some(progress) = request.progress {
         let bytes = to_check
@@ -828,15 +838,6 @@ fn check_what_is_named(
     let found: Mutex<Vec<Diagnostic>> = Mutex::new(Vec::new());
     let incomplete: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
-    // Files that ask a lot of the same types tend to be next to each other. When a small file turns out to take long, what else is in its
-    // directory goes first, so that none of it is left for the end.
-    let mut neighbors: FxHashMap<&[u8], Vec<usize>> = Default::default();
-    for (i, &file) in to_check.iter().enumerate().skip(big) {
-        let path = &program.files.modules[file.idx()].path[..];
-        neighbors.entry(dirname::<Posix>(path)).or_default().push(i);
-    }
-    let is_taken: Vec<AtomicBool> = to_check.iter().map(|_| AtomicBool::new(false)).collect();
-    let goes_first: Mutex<Vec<usize>> = Mutex::new(Vec::new());
     // The text of the default library is not kept.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
@@ -950,34 +951,12 @@ fn check_what_is_named(
         });
     };
     let take = |i: usize| {
-        if is_taken[i].swap(true, Ordering::Relaxed) {
-            return;
-        }
-        let began = Instant::now();
         check_file(to_check[i], false);
         if let Some(progress) = request.progress {
             progress.checked.fetch_add(1, Ordering::Relaxed);
             progress
                 .bytes_checked
                 .fetch_add(size(to_check[i]) as usize, Ordering::Relaxed);
-        }
-        if i >= big && began.elapsed() >= SLOW {
-            let path = &program.files.modules[to_check[i].idx()].path[..];
-            let next_to_it = &neighbors[dirname::<Posix>(path)];
-            goes_first.lock().unwrap().extend(
-                next_to_it
-                    .iter()
-                    .filter(|&&j| !is_taken[j].load(Ordering::Relaxed)),
-            );
-        }
-    };
-    let take_what_goes_first = || {
-        loop {
-            let next = goes_first.lock().unwrap().pop();
-            match next {
-                Some(i) => take(i),
-                None => break,
-            }
         }
     };
     let global_errors = || -> Vec<Diagnostic> {
@@ -1016,12 +995,7 @@ fn check_what_is_named(
                 break 'stages;
             }
         }
-        for_each_parallel(threads, to_check.len(), &|i| {
-            take_what_goes_first();
-            take(i);
-            // Whoever finds out at the very end is the only one left to act on it.
-            take_what_goes_first();
-        });
+        for_each_parallel(threads, to_check.len(), &take);
         finish_files();
         report.diagnostics.append(&mut found.lock().unwrap());
         report.diagnostics.extend(global_errors());

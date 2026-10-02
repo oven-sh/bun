@@ -236,11 +236,6 @@ impl Checker<'_> {
                 if elem.optional && self.p.files.options.strict_null_checks {
                     ty = self.union(&[ty, TypeId::NULL]);
                 }
-                // What a type parameter can be spread as goes by what it extends.
-                let apparent = self.apparent_type(ty);
-                if !self.is_known(ty) || !self.is_known(apparent) {
-                    break;
-                }
                 let fits = self.answer_if_sure(|c| c.can_be_spread_in_a_tuple(ty));
                 if fits != Some(true) {
                     if fits == Some(false) {
@@ -488,9 +483,6 @@ impl Checker<'_> {
             return;
         }
         let keys = self.type_from_node(file, param.ty);
-        if !self.is_known(keys) {
-            return;
-        }
         // `TypeFlagsStringOrNumberLiteralOrUnique`. An enum is the union of its members, whatever else is in it.
         let mut is_literal = false;
         for &t in self.parts(keys) {
@@ -803,18 +795,9 @@ impl Checker<'_> {
     /// `checkIndexedAccessIndexType`, of the type `object[keys]` that waits for its type parameters: why `keys` cannot be used to
     /// look into `object`, 4105 or 2536. `None`: it can, or it cannot be told.
     pub(super) fn why_not_a_key_of(&mut self, object: TypeId, keys: TypeId) -> Option<u32> {
-        if !self.is_known(object) || !self.is_known(keys) {
-            return None;
-        }
         // Of type parameters the answer goes by what they extend.
-        let (apparent, key_bound) = (
-            self.apparent_type(object),
-            self.constraint_for_operator(keys),
-        );
+        let apparent = self.apparent_type(object);
         let object_keys = self.keys_to_look_into(object);
-        if !self.is_known(apparent) || !self.is_known(key_bound) || !self.is_known(object_keys) {
-            return None;
-        }
         let has_number_index = self.index_type_of_type(object, TypeId::NUMBER).is_some();
         let fits = self.answer_if_sure(|c| {
             c.parts(keys).iter().all(|&key| {

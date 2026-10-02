@@ -115,6 +115,12 @@ impl Checker<'_> {
         to_valid_utf8(out)
     }
 
+    /// `typeToStringEx` when and where tsgo prints `ty` for a message, for what that resolves: it counts a level, and circles close
+    /// through it.
+    pub(super) fn resolve_by_printing(&mut self, ty: TypeId) {
+        self.type_to_string(ty);
+    }
+
     /// `typeToString`
     pub fn type_to_string(&mut self, ty: TypeId) -> String {
         self.printed(|c, out| c.write_type(out, ty, TYPE_TO_STRING))
@@ -404,15 +410,24 @@ fn type_to_string_with(
     enclosing_declaration: Option<Enclosing>,
     flags: u32,
 ) -> Vec<u8> {
+    let counts = !checker.reprinting;
+    if counts && checker.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
+        return b"?".to_vec();
+    }
     let no_truncation = checker.files().options.no_error_truncation;
     let flags = if no_truncation {
         flags | NO_TRUNCATION
     } else {
         flags
     } | IGNORE_ERRORS;
+    checker.serialization_level += u32::from(counts);
+    checker.printing_closes_circles = counts;
+    checker.printing_floors.push(checker.stack.len());
     let text = with_printer(checker, enclosing_declaration, None, flags, |printer| {
         printer.type_to_node(ty).text
     });
+    checker.printing_floors.pop();
+    checker.serialization_level -= u32::from(counts);
     let maximum = 2 * if no_truncation {
         NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH
     } else {
@@ -1191,14 +1206,14 @@ impl<'p> Printer<'_, 'p> {
             TypeData::Template { texts, types } => self.template_to_node(texts, types),
             TypeData::StringMapping { kind, ty: of } => {
                 let of = self.type_to_node(*of);
-                self.intrinsic_alias_to_node(string_mapping_name(*kind), of)
+                self.intrinsic_alias_to_node(string_mapping_name(*kind), &of)
             }
             TypeData::Substitution { base, constraint } => {
                 let base = self.type_to_node(*base);
                 if *constraint != TypeId::UNKNOWN {
                     return base;
                 }
-                self.intrinsic_alias_to_node(b"NoInfer", base)
+                self.intrinsic_alias_to_node(b"NoInfer", &base)
             }
             TypeData::IndexedAccess { obj, index, .. } => {
                 let object = self.type_to_node(*obj);
@@ -1283,7 +1298,7 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `symbolToTypeNode` of `Uppercase`, `NoInfer` and the like, with one type argument.
-    fn intrinsic_alias_to_node(&mut self, name: &[u8], argument: Node) -> Node {
+    fn intrinsic_alias_to_node(&mut self, name: &[u8], argument: &Node) -> Node {
         self.approximate_length += 2 * (name.len() + 1);
         Node::simple(cat!(name, b"<", argument.text, b">"))
     }
@@ -1941,7 +1956,7 @@ impl<'p> Printer<'_, 'p> {
         self.symbol_chain_to_type_node(
             symbol,
             starts_with_global_this,
-            chain,
+            &chain,
             is_type_of,
             type_arguments,
         )
@@ -1959,7 +1974,7 @@ impl<'p> Printer<'_, 'p> {
         let (starts_with_global_this, chain) =
             self.c
                 .lookup_symbol_chain_of_module_clone_at(originating_import, yields_module, at);
-        self.symbol_chain_to_type_node(module, starts_with_global_this, chain, true, Vec::new())
+        self.symbol_chain_to_type_node(module, starts_with_global_this, &chain, true, Vec::new())
     }
 
     /// `symbolToTypeNode`, from where it has the chain of `lookupSymbolChain`.
@@ -1967,7 +1982,7 @@ impl<'p> Printer<'_, 'p> {
         &mut self,
         symbol: Sym,
         starts_with_global_this: bool,
-        chain: Vec<Sym>,
+        chain: &[Sym],
         is_type_of: bool,
         type_arguments: Vec<Node>,
     ) -> Node {
@@ -3805,11 +3820,10 @@ impl<'p> Printer<'_, 'p> {
             None => self.property_name(prop),
         };
         self.approximate_length += self.c.written_name(prop.name).len() + 1;
-        if prop.flags.contains(PropFlags::ACCESSOR) && self.c.is_known(property_type) {
+        if prop.flags.contains(PropFlags::ACCESSOR) {
             let write_type = self.c.write_type_of_prop(prop, mapper);
             let (in_class, is_field) = self.accessor_declaration(prop);
-            if self.c.is_known(write_type)
-                && !self.c.is_error_type(property_type)
+            if !self.c.is_error_type(property_type)
                 && !self.c.is_error_type(write_type)
                 && (property_type != write_type || in_class)
             {
@@ -4051,9 +4065,7 @@ impl<'p> Printer<'_, 'p> {
                 let written = self.c.type_from_node(file, parameter.ty);
                 // `declaredParameterTypeContainsUndefined`
                 let says_undefined = parameter.ty.is_some()
-                    && (!self.c.is_known(written)
-                        || self.c.is_error_type(written)
-                        || self.c.contains_undefined(written));
+                    && (self.c.is_error_type(written) || self.c.contains_undefined(written));
                 if !says_undefined {
                     ty = self.c.optional(ty);
                 }

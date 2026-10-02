@@ -106,11 +106,11 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
             && (node.start == node.end || self.written.insert((node.start, node.end)))
         {
             let scope = self.c.enclosing_scope_of_visited_node(self.file, node.kind);
-            self.write_node(node.start, node.end, scope, found);
+            self.write_node(node.start, node.end, scope, &found);
         }
     }
 
-    fn write_node(&mut self, start: u32, end: u32, scope: ScopeId, found: Found) {
+    fn write_node(&mut self, start: u32, end: u32, scope: ScopeId, found: &Found) {
         let hir = self.c.hir(self.file);
         // `NodeFlagsInWithStatement`, `NodeFlagsReparsed`
         if hir.is_in_with(start) || hir.is_in_jsdoc(start) {
@@ -118,7 +118,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         }
         // The scope of the file stands in for a scope the binder did not record.
         let scope = if scope.is_some() { scope } else { ScopeId(0) };
-        let (name, declarations) = match &found {
+        let (name, declarations) = match found {
             Found::Symbol(symbol) => self.describe_symbol(*symbol, scope),
             Found::Property(prop) => self.describe_property(prop, scope),
             Found::Properties(props) => self.describe_properties(props, scope),

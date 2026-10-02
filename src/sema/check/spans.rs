@@ -765,9 +765,7 @@ fn try_close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> Opti
         .is_none_or(|b| b.is_ascii_whitespace() || b"([{},;:=!&|?+-*%<>~^".contains(b));
     loop {
         at = skip_trivia(text, at);
-        let Some(&c) = text.get(at) else {
-            return None;
-        };
+        let &c = text.get(at)?;
         match c {
             b'(' | b'[' | b'{' => {
                 open.push(match c {

@@ -42,7 +42,7 @@ impl Checker<'_> {
                 continue;
             }
             let ty = self.type_of_expr(file, e);
-            if !self.is_known(ty) || self.is_any(ty) {
+            if self.is_any(ty) {
                 continue;
             }
             // `TypeFlagsNullable`: every kind of `undefined` and `null`, widening or declared.
@@ -75,7 +75,7 @@ impl Checker<'_> {
             return true;
         }
         let parent_type = self.type_for_binding_element_parent(file, prop.value, pattern);
-        !self.is_known(parent_type) || self.is_any(parent_type)
+        self.is_any(parent_type)
     }
 
     /// `resolveQualifiedName`: each name after the first has to be exported by what the names before it come to.
@@ -207,27 +207,10 @@ impl Checker<'_> {
         };
         let mut ty = self.type_of_symbol(first);
         for &name in &names[1..] {
-            // `getPropertyOfType`: of the apparent type, with what every function and every object has. `any` has no properties, and
-            // what an index signature covers is none.
-            let reduced = self.reduced(ty);
-            let apparent = self.apparent_type(reduced);
-            if !self.is_known(ty) || !self.is_known(apparent) {
-                return None;
-            }
-            ty = if self.is_union(apparent) {
-                let Some(found) = self.type_of_property(apparent, name) else {
-                    return Some(false);
-                };
-                found
-            } else {
-                let Some(members) = self.members(apparent) else {
-                    return Some(false);
-                };
-                let Some((prop, mapper)) = self.property_of_type(&members, name) else {
-                    return Some(false);
-                };
-                self.type_of_prop(&prop, mapper)
+            let Some((prop, mapper)) = self.get_property_of_type(ty, name) else {
+                return Some(false);
             };
+            ty = self.type_of_prop(prop, mapper);
         }
         Some(true)
     }
@@ -311,21 +294,20 @@ impl Checker<'_> {
     /// `checkExternalModuleExports`: `export =` stands alone among values, and with types next to it it names no namespace that has types.
     fn check_export_equals_alone(&mut self, file: FileId, module: Sym) {
         let files = self.files();
-        // The first there is, which for a module declared in several places may be written in another file.
-        let Some(equals) = files
-            .export(module, known::export_equals)
-            .filter(|equals| equals.file == file)
-        else {
+        let Some(equals) = files.export(module, known::export_equals) else {
             return;
         };
-        // `module.exports = e` is one too.
-        let written = files.symbol(equals).decls.iter().find_map(|d| match *d {
-            Decl::ExportExpr(statement) => Some((self.hir(file)[statement].start, *d)),
-            Decl::ModuleExports(e) => Some((self.start_of(file, e), *d)),
-            _ => None,
-        });
-        let Some((start, declaration)) = written else {
-            return;
+        // For a module declared in several places it may be written in another file.
+        let declaration = files
+            .declaration_of_alias_symbol(equals)
+            .or_else(|| files.value_declaration(equals))
+            .filter(|declaration| declaration.0 == file);
+        let (start, end) = match declaration {
+            Some((_, Decl::ExportExpr(s))) => (self.hir(file)[s].start, self.end_of_stmt(file, s)),
+            Some((_, Decl::ModuleExports(e))) => {
+                (self.start_of(file, e), self.end_of_expr(file, e))
+            }
+            _ => return,
         };
         let others = |of: Sym| {
             files
@@ -350,11 +332,6 @@ impl Checker<'_> {
                 })
         };
         if exports_values || shadows_a_namespace() {
-            let end = match declaration {
-                Decl::ExportExpr(statement) => self.end_of_stmt(file, statement),
-                Decl::ModuleExports(e) => self.end_of_expr(file, e),
-                _ => 0,
-            };
             self.error_at((file, start, end), 2309, &[]);
         }
     }

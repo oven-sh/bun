@@ -277,6 +277,7 @@ impl Checker<'_> {
         if p != hir[func].this_param {
             self.check_binding_name(file, node.pat);
             self.check_expression(file, node.default);
+            self.check_parameter_initializer(file, p);
         }
         // `NodeIsPresent(fn.Body())`: written, whether or not it is kept.
         let has_body = has_body(&hir[func]);
@@ -339,16 +340,12 @@ impl Checker<'_> {
             && f.type_params.is_empty()
             && matches!(f.kind, FnKind::Expr | FnKind::Arrow | FnKind::Method)
             && matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))
-            && self.is_known(ty)
         {
             ty = self.optional(ty);
         }
         let ty = self.reduced(ty);
         let list = self.readonly_array_of(TypeId::ANY);
-        if self.is_known(ty)
-            && !matches!(self.data(ty), TypeData::Cond { .. })
-            && !self.is_assignable(ty, list)
-        {
+        if !matches!(self.data(ty), TypeData::Cond { .. }) && !self.is_assignable(ty, list) {
             self.error(file, p, 2370, &[]);
         }
     }
@@ -422,6 +419,7 @@ impl Checker<'_> {
                     self.check_binding_element_accessibility(file, pat, hir[p].value);
                     self.check_binding_name(file, hir[p].value);
                     self.check_expression(file, hir[p].default);
+                    self.check_binding_element_initializer(file, hir[p].value, hir[p].default);
                 }
             }
             PatKind::Array(elems) => {
@@ -441,6 +439,7 @@ impl Checker<'_> {
                     self.check_binding_element_accessibility(file, pat, hir[e].pat);
                     self.check_binding_name(file, hir[e].pat);
                     self.check_expression(file, hir[e].default);
+                    self.check_binding_element_initializer(file, hir[e].pat, hir[e].default);
                 }
             }
         }
@@ -528,6 +527,7 @@ impl Checker<'_> {
         self.check_type_node(file, decl.ty);
         self.check_binding_name(file, decl.pat);
         self.check_expression(file, decl.init);
+        self.check_variable_initializer(file, d);
         if matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing) {
             self.check_initializer_of_using_declaration(file, d);
         }
@@ -663,6 +663,7 @@ impl Checker<'_> {
                 self.check_super_call_in_constructor(file, m);
             }
             self.check_expression(file, member.init);
+            self.check_property_initializer(file, m);
             if member
                 .flags
                 .intersects(Flags::ABSTRACT | Flags::PRIVATE | Flags::PROTECTED)
@@ -905,6 +906,8 @@ impl Checker<'_> {
                     if matches!(hir[s].kind, StmtKind::ExportAssign(_)) {
                         self.check_grammar_export_equals(file, s);
                     }
+                } else if e.is_some() && matches!(bound.stmt_parent[s.idx()], Parent::Module(_)) {
+                    self.never_check(self.start_of(file, e), hir[s].loc.end);
                 }
                 if matches!(hir[s].kind, StmtKind::ExportAssign(_))
                     && matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))

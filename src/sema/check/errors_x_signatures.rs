@@ -54,9 +54,9 @@ fn name_of_type_parameter_owner(hir: &hir::File, tp: TypeParamId) -> Option<u32>
         .find(|f| has(f.type_params) && f.kind == FnKind::Decl && f.name.is_some());
     alias
         .map(|a| a.name_pos)
-        .or(class.map(|c| c.name_pos))
-        .or(interface.map(|i| i.name_pos))
-        .or(function.map(|f| f.name_pos))
+        .or_else(|| class.map(|c| c.name_pos))
+        .or_else(|| interface.map(|i| i.name_pos))
+        .or_else(|| function.map(|f| f.name_pos))
 }
 
 // ───────────────────────────── the grammar of signatures ─────────────────────────────
@@ -64,9 +64,6 @@ fn name_of_type_parameter_owner(hir: &hir::File, tp: TypeParamId) -> Option<u32>
 impl Checker<'_> {
     pub(super) fn check_x_signatures(&mut self, file: FileId) {
         let hir = self.hir(file);
-        if hir.has_errors || hir.kind == FileKind::Json {
-            return;
-        }
         self.check_type_parameter_declarations(file);
         // 2730 is the parser's to say. It is said of all of the parameter.
         for &(start, code) in hir.checker_errors.iter() {
@@ -246,9 +243,6 @@ impl Checker<'_> {
         }
         let sym = self.files().sym(file, symbol);
         let declared = self.declared_type(sym);
-        if !self.is_known(declared) {
-            return;
-        }
         // A reference to a class or an interface takes the outer type parameters first.
         let all = if is_alias {
             self.type_params_of_symbol(sym)
@@ -433,7 +427,7 @@ impl Checker<'_> {
             return;
         }
         let ret = self.type_from_node(file, func.ret);
-        if !self.is_known(ret) || self.is_error_type(ret) {
+        if self.is_error_type(ret) {
             return;
         }
         if self.global_type_symbol(known::Promise).is_some()

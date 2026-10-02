@@ -13,8 +13,9 @@ use bun_sema::hir::Flags;
 use super::TypeSyntax;
 use crate::Error;
 use crate::lexer::{
-    LexerSnapshot, PropertyModifierKeyword, T, is_identifier_continue, is_identifier_start,
-    peek_unicode_escape,
+    CodePoint, LexerSnapshot, PropertyModifierKeyword, T, char_and_size, end_of_run,
+    is_identifier_continue, is_identifier_start, is_white_space_single_line, last_char,
+    peek_unicode_escape, starts_with_line_break,
 };
 use crate::p::P;
 use crate::parse::lists::ListKind;
@@ -348,29 +349,15 @@ fn name_at_token(p: &P<'_, true, false>) -> Name {
     }
 }
 
-/// `IsWhiteSpaceSingleLine`, in ASCII.
-fn is_blank(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | 0x0B | 0x0C)
-}
-
-/// `IsIdentifierStart`. What is not ASCII is taken for a letter.
-fn is_word_start(c: u8) -> bool {
-    c.is_ascii_alphabetic() || matches!(c, b'_' | b'$') || c >= 0x80
-}
-
-fn is_word_part(c: u8) -> bool {
-    is_word_start(c) || c.is_ascii_digit()
-}
-
 /// `scanIdentifierParts`: where the identifier that goes on at `at` ends.
 fn end_of_word_parts(text: &[u8], mut at: usize) -> usize {
     loop {
-        match text.get(at) {
-            Some(&c) if is_word_part(c) => at += 1,
-            Some(b'\\') => match peek_unicode_escape(text, at) {
-                Some((c, len)) if is_identifier_continue(c) => at += len,
-                _ => return at,
-            },
+        at = end_of_run(text, at, is_identifier_continue);
+        if text.get(at) != Some(&b'\\') {
+            return at;
+        }
+        match peek_unicode_escape(text, at) {
+            Some((c, len)) if is_identifier_continue(c) => at += len,
             _ => return at,
         }
     }
@@ -654,10 +641,8 @@ impl<'p, 'a> Reader<'p, 'a> {
         };
         let mut end = pos + 1;
         self.token = match c {
-            _ if is_blank(c) => {
-                while text.get(end).is_some_and(|&c| is_blank(c)) {
-                    end += 1;
-                }
+            b' ' | b'\t' | 0x0B | 0x0C => {
+                end = end_of_run(text, end, is_white_space_single_line);
                 Token::Whitespace
             }
             b'\r' | b'\n' => {
@@ -686,16 +671,20 @@ impl<'p, 'a> Reader<'p, 'a> {
                 }
                 _ => Token::Unknown,
             },
-            _ if is_word_start(c) => {
-                while text.get(end).is_some_and(|&c| is_word_part(c) || c == b'-') {
-                    end += 1;
+            _ => {
+                let (c, size) = char_and_size(text, pos);
+                end = pos + size;
+                if is_identifier_start(c) {
+                    let is_part = |c| is_identifier_continue(c) || c == b'-' as CodePoint;
+                    end = end_of_run(text, end, is_part);
+                    if text.get(end) == Some(&b'\\') {
+                        end = end_of_word_parts(text, end);
+                    }
+                    Token::Word
+                } else {
+                    Token::Unknown
                 }
-                if text.get(end) == Some(&b'\\') {
-                    end = end_of_word_parts(text, end);
-                }
-                Token::Word
             }
-            _ => Token::Unknown,
         };
         self.end = end;
         self.token
@@ -707,7 +696,9 @@ impl<'p, 'a> Reader<'p, 'a> {
         let pos = self.end;
         let mut end = pos;
         while let Some(&c) = text.get(end) {
-            if matches!(c, b'\n' | b'\r' | b'`') {
+            if matches!(c, b'\n' | b'\r' | b'`')
+                || c == 0xE2 && starts_with_line_break(&text[end..])
+            {
                 break;
             }
             if !in_backticks {
@@ -716,9 +707,8 @@ impl<'p, 'a> Reader<'p, 'a> {
                 }
                 // Elsewhere `@` only starts a tag after whitespace and before an identifier.
                 if c == b'@'
-                    && end > 0
-                    && is_blank(text[end - 1])
-                    && text.get(end + 1).is_some_and(|&next| is_word_start(next))
+                    && is_white_space_single_line(last_char(&text[..end]).0)
+                    && is_identifier_start(char_and_size(text, end + 1).0)
                 {
                     break;
                 }
@@ -739,10 +729,11 @@ impl<'p, 'a> Reader<'p, 'a> {
 
     /// `CanFollowJSDocAt`
     fn can_follow_at(&self) -> bool {
-        match self.text.get(self.end) {
-            None => true,
-            Some(&c) => is_word_start(c) || is_blank(c) || matches!(c, b'\n' | b'\r'),
-        }
+        let (c, size) = char_and_size(self.text, self.end);
+        size == 0
+            || is_identifier_start(c)
+            || is_white_space_single_line(c)
+            || starts_with_line_break(&self.text[self.end..])
     }
 
     /// Takes over the token the lexer of the parser is at. `result`: what came of getting there.

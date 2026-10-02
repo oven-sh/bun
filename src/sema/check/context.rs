@@ -1127,8 +1127,7 @@ impl<'p> Checker<'p> {
         {
             return contextual_type;
         }
-        let says_something =
-            |c: &Self, ty: TypeId| !c.is_any(ty) && ty != TypeId::UNKNOWN && c.is_known(ty);
+        let says_something = |c: &Self, ty: TypeId| !c.is_any(ty) && ty != TypeId::UNKNOWN;
         self.get_inference_context(file, e)
             .and_then(|level| {
                 self.with_inference_context(level, |c, n| {
@@ -2092,14 +2091,7 @@ impl<'p> Checker<'p> {
                     )
                     .holds()
             {
-                // What could not be found out is not known to differ.
-                let mut is_known = true;
-                for s in [first, sig] {
-                    is_known &= self.sig_params(s).iter().all(|p| self.is_known(p.ty));
-                }
-                if is_known {
-                    return None;
-                }
+                return None;
             }
             found.push(sig);
         }

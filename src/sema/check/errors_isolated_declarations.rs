@@ -340,7 +340,7 @@ impl<'p> Checker<'p> {
 
     /// What the type node `t` is written directly in. It is looked for: only an error asks.
     fn iso_holder_of_type(&self, file: FileId, t: TypeNodeId) -> Option<Node> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let hir = self.hir(file);
         if let Some(p) = hir.params.iter().position(|p| p.ty == t) {
             return Some(Node::Param(ParamId(p as u32)));
         }
@@ -360,11 +360,7 @@ impl<'p> Checker<'p> {
         if let Some(e) = hir.exprs.iter().position(asserts) {
             return Some(Node::Expr(ExprId(e as u32)));
         }
-        Self::type_node_parents(hir, bound)
-            .get(t.idx())
-            .copied()
-            .and_then(TypeNodeId::some)
-            .map(Node::Type)
+        Self::type_node_parent(hir, t).some().map(Node::Type)
     }
 
     /// `IsPrimitiveLiteralValue`, of `e` itself, whatever parentheses it is in.
@@ -1752,9 +1748,7 @@ impl<'p> Checker<'p> {
             return true;
         }
         let declared = self.type_from_node(file, param.ty);
-        self.is_known(declared)
-            && !self.is_error_type(declared)
-            && !self.contains_undefined(declared)
+        !self.is_error_type(declared) && !self.contains_undefined(declared)
     }
 
     // ───────────────────────────── held against the checker (`pseudotypenodebuilder.go`) ─────────────────────────────
@@ -1870,7 +1864,7 @@ impl<'p> Checker<'p> {
         reports: bool,
     ) -> bool {
         let file = tx.file;
-        if !self.is_known(ty) || self.is_error_type(ty) {
+        if self.is_error_type(ty) {
             return true;
         }
         let from = self.iso_type_of_pseudo(file, pt);

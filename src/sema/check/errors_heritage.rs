@@ -41,14 +41,10 @@ impl Checker<'_> {
         let class = &hir[c];
         let sym = self.class_sym(file, c);
         let class_type = self.declared_type(sym);
-        if !self.is_known(class_type) {
-            return;
-        }
         let name_or_node = class.name_pos;
         let this = self.intern(TypeData::ThisParam(sym));
         if class.extends.is_some()
             && let Some(&base) = self.base_types(sym).first()
-            && self.is_known(base)
         {
             match self.unrelated_with_this_argument(class_type, base, this) {
                 Some(with_this) => self.issue_member_specific_error(file, c, with_this, 2415),
@@ -57,9 +53,7 @@ impl Checker<'_> {
                     let static_type = self.type_of_symbol(sym);
                     let base_constructor = self.base_constructor_type_of_class(sym);
                     let static_base = self.apparent_type(base_constructor);
-                    if self.is_known(static_type)
-                        && self.is_known(static_base)
-                        && let Some(properties) = self.type_without_signatures(static_base)
+                    if let Some(properties) = self.type_without_signatures(static_base)
                         && !self.is_assignable(static_type, properties)
                     {
                         // `properties` goes by the name of what it is made from.
@@ -106,7 +100,7 @@ impl Checker<'_> {
             }
             let implemented = self.type_from_node(file, node);
             let implemented = self.reduced(implemented);
-            if !self.is_known(implemented) || self.is_any(implemented) {
+            if self.is_any(implemented) {
                 continue;
             }
             // `isValidBaseType`: what cannot be implemented is not compared with. That it cannot is said with the other checks of classes.
@@ -573,9 +567,6 @@ impl Checker<'_> {
         });
         let is_first = first == Some((file, i));
         let ty = self.declared_type(sym);
-        if !self.is_known(ty) {
-            return;
-        }
         let name_pos = self.hir(file)[i].name_pos;
         let bases = self.base_types(sym);
         if is_first {
@@ -586,7 +577,7 @@ impl Checker<'_> {
             let this = self.intern(TypeData::ThisParam(sym));
             for &base in bases.iter() {
                 // `resolveBaseTypesOfInterface`: what cannot be extended is no base type.
-                if !self.is_known(base) || !self.is_valid_base_type(base) {
+                if !self.is_valid_base_type(base) {
                     continue;
                 }
                 if let Some([type_with_this, base_with_this]) =
@@ -685,9 +676,7 @@ impl Checker<'_> {
                         if flags & access == prop.flags & access
                             && (!flags.intersects(access) || source.as_ref() == Some(&prop.source))
                             && flags & same == prop.flags & same
-                            && (!self.is_known(prop_type)
-                                || !self.is_known(other)
-                                || self.is_identical(other, prop_type))
+                            && (self.is_identical(other, prop_type))
                         {
                             continue;
                         }
@@ -779,14 +768,7 @@ impl Checker<'_> {
                     mapper: MapperId::IDENTITY,
                 };
                 let prop_type = self.type_of_prop_as_read(&prop, members.mapper);
-                if self.is_known(name_type) {
-                    self.check_index_constraint_for_property(
-                        &cx,
-                        &prop,
-                        Some(name_type),
-                        prop_type,
-                    );
-                }
+                self.check_index_constraint_for_property(&cx, &prop, Some(name_type), prop_type);
             }
         }
         if infos.len() > 1 {
@@ -805,7 +787,7 @@ impl Checker<'_> {
         prop_type: TypeId,
     ) {
         let is_private = name_type.is_none() && self.is_private_name(prop.name);
-        if is_private || !self.is_known(prop_type) {
+        if is_private {
             return;
         }
         let declarations = self.declarations_of_prop(prop);
@@ -824,7 +806,7 @@ impl Checker<'_> {
                 Some(name_type) => self.is_applicable_index_type(name_type, info.key),
                 None => self.is_name_applicable_to_index(prop.name, info.key),
             };
-            if !applies || !self.is_known(info.value) {
+            if !applies {
                 continue;
             }
             let mut error_node = local_prop.or_else(|| cx.local_index(self, info));
@@ -900,8 +882,6 @@ impl Checker<'_> {
                 error_node = Some((cx.file, interface));
             }
             if let Some((_, error_node)) = error_node.filter(|at| at.0 == cx.file)
-                && self.is_known(check.value)
-                && self.is_known(info.value)
                 && !self.is_assignable(check.value, info.value)
             {
                 let (checked, applicable) = (Arg::Type(check.value), Arg::Type(info.value));

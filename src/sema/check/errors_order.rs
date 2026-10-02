@@ -520,9 +520,6 @@ impl Checker<'_> {
         {
             return;
         }
-        if !self.is_known(object) {
-            return;
-        }
         let object = self.apparent_type(object);
         let Some((prop, _)) = self.prop_ref(object, name) else {
             return;

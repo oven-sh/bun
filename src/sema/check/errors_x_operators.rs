@@ -9,7 +9,7 @@
 //! To be called after `check_assignments`: 2412 takes the place of the 2322 that is said there.
 
 use super::*;
-use crate::bind::{FnOwner, Parent};
+use crate::bind::Parent;
 use crate::resolve::ScriptTarget;
 
 impl Checker<'_> {
@@ -133,7 +133,7 @@ fn operand_types(
     right: ExprId,
 ) -> Option<(TypeId, TypeId)> {
     let (l, r) = (c.type_of_expr(file, left), c.type_of_expr(file, right));
-    (c.is_known(l) && c.is_known(r)).then_some((l, r))
+    Some((l, r))
 }
 
 // ───────────────────────────── binary operators ─────────────────────────────
@@ -285,7 +285,7 @@ pub(super) fn check_satisfies(
 ) {
     let source = c.type_of_expr(file, expr);
     let target = c.type_from_node(file, ty);
-    if !c.is_known(source) || !c.is_known(target) || c.is_assignable(source, target) {
+    if c.is_assignable(source, target) {
         return;
     }
     let at = c.error_start_inside_parentheses(file, node);
@@ -306,9 +306,7 @@ pub(super) fn check_satisfies(
 pub(super) fn check_template_spans(c: &mut Checker<'_>, file: FileId, spans: IdList<ExprId>) {
     for span in c.hir(file).ids(spans) {
         let ty = c.type_of_expr(file, span);
-        if c.is_known(ty)
-            && c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like)
-        {
+        if c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like) {
             c.error(file, c.hir(file).child(span), 2731, &[]);
         }
     }
@@ -319,13 +317,7 @@ pub(super) fn check_tagged_template(c: &mut Checker<'_>, file: FileId, e: ExprId
     let hir = c.hir(file);
     let data = hir[call];
     let tag = c.type_of_expr(file, data.callee);
-    if !c.is_known(tag) {
-        return;
-    }
     let apparent = c.apparent_type(tag);
-    if !c.is_known(apparent) {
-        return;
-    }
     let has_call_signatures = !c.signatures(apparent, false).is_empty();
     // `isUntypedFunctionCall`
     let is_untyped = c.is_any(tag)
@@ -364,10 +356,10 @@ pub(super) fn check_instance_of_expression(
     right: ExprId,
 ) {
     let (l, r) = (c.type_of_expr(file, left), c.type_of_expr(file, right));
-    if c.is_known(l) && !c.is_any(l) && c.is_all_assignable_to_primitives(l) {
+    if !c.is_any(l) && c.is_all_assignable_to_primitives(l) {
         c.error(file, c.hir(file).child(left), 2358, &[]);
     }
-    if !c.is_known(r) || c.is_any(r) {
+    if c.is_any(r) {
         return;
     }
     let Some(method) = c.symbol_has_instance_method_of_object_type(r) else {
@@ -382,14 +374,11 @@ pub(super) fn check_instance_of_expression(
     };
     // What a type parameter extends may not have been found out.
     let apparent_right = c.apparent_type(r);
-    if !c.is_known(apparent_right) || c.is_any(apparent_right) {
+    if c.is_any(apparent_right) {
         return;
     }
     let apparent = c.apparent_type(method);
-    if !c.is_known(method) || !c.is_known(apparent) || c.is_any(method) {
-        return;
-    }
-    if !c.is_known(l) {
+    if c.is_any(method) {
         return;
     }
     let signatures = c.signatures(apparent, false);
@@ -481,16 +470,10 @@ pub(super) fn check_yield_result(c: &mut Checker<'_>, file: FileId, e: ExprId) {
         return;
     }
     // `getContextualIterationType`
-    if let FnOwner::Expr(owner) = bound.fns[func.idx()].owner
-        && !c.is_context_known(file, owner)
-    {
-        return;
-    }
     if let Some(expected) = c.declared_or_contextual_return_type(file, func, ContextFlags::empty())
-        && (!c.is_known(expected)
-            || !c.is_any(expected)
-                && c.iteration_types(expected, f.flags.contains(Flags::ASYNC))
-                    .is_some())
+        && (!c.is_any(expected)
+            && c.iteration_types(expected, f.flags.contains(Flags::ASYNC))
+                .is_some())
     {
         return;
     }
@@ -506,7 +489,6 @@ pub(super) fn check_yield_result(c: &mut Checker<'_>, file: FileId, e: ExprId) {
         // `isTypeAny`
         Some(expected) if c.has_any_flag(expected) => {}
         Some(_) => return,
-        None if !c.is_context_known(file, e) => return,
         None => {}
     }
     c.error_at((file, hir[e].pos, 0), 7057, &[]);

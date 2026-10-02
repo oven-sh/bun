@@ -236,9 +236,8 @@ impl Checker<'_> {
                 continue;
             }
             let signature = self.sig_of_fn(declaration.0, function);
-            match self.is_implementation_compatible_with_overload(body_signature, signature) {
-                Some(true) => {}
-                Some(false) => {
+            if !self.is_implementation_compatible_with_overload(body_signature, signature) {
+                {
                     let (file, decl) = body_declaration;
                     let related = self.error_range_of_declaration(file, decl);
                     let related = related
@@ -248,7 +247,6 @@ impl Checker<'_> {
                     }
                     break;
                 }
-                None => break,
             }
         }
     }

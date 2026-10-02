@@ -151,9 +151,6 @@ impl<'p> Checker<'p> {
             return Some(vec![self.jsx_intrinsic_signature(file, attributes)]);
         }
         let apparent = self.apparent_type(element_type);
-        if !self.is_known(apparent) {
-            return None;
-        }
         // "Resolve the signatures, preferring constructor"
         let mut signatures = self.signatures(apparent, true);
         if signatures.is_empty() {
@@ -236,9 +233,6 @@ impl<'p> Checker<'p> {
         let Some(elements) = self.jsx_type(file, known::IntrinsicElements) else {
             return Err(());
         };
-        if !self.is_known(elements) {
-            return Err(());
-        }
         // `getPropertyOfType`: what every object has counts.
         let object = self.global_ref(known::Object, &[]);
         for holder in [elements, object] {

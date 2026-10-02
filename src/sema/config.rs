@@ -7,7 +7,7 @@ use crate::resolve::{Host, Options, contains_path, join, to_file_name_lower_case
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_paths::resolve_path::{dirname, relative_normalized};
 
 /// What is wrong with a configuration file: the code of TypeScript's message, and what goes into it.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -54,6 +54,13 @@ impl ConfigError {
     }
 }
 
+/// `core.ProjectReference`
+pub struct ProjectReference {
+    /// The directory or the configuration file of the project referred to.
+    pub path: Vec<u8>,
+    pub circular: bool,
+}
+
 /// `ParsedCommandLine`
 pub struct Project {
     /// The configuration file. Empty if there is none.
@@ -61,11 +68,46 @@ pub struct Project {
     pub options: Options,
     /// The root files, in TypeScript's order: what `files` names, then what `include` finds.
     pub files: Vec<Vec<u8>>,
-    /// `references`: the directory or the configuration file of each project this one refers to.
-    pub references: Vec<Vec<u8>>,
+    pub references: Vec<ProjectReference>,
     pub errors: Vec<ConfigError>,
     /// `compilerOptions` as it comes out of all that was read, which `options` is made of.
     pub compiler_options_as_written: Vec<(Vec<u8>, Json)>,
+}
+
+impl Project {
+    /// `GetBuildInfoFileName` under `tsc -b` (`options.Build`), where every project has one, incremental or not.
+    pub fn get_build_info_file_name(&self) -> Vec<u8> {
+        let said = (self.compiler_options_as_written.iter())
+            .find(|(name, _)| name == b"tsBuildInfoFile")
+            .and_then(|(_, said)| said.as_str());
+        if let Some(said) = said.filter(|said| !said.is_empty()) {
+            return said.to_vec();
+        }
+        if self.config_path.is_empty() {
+            return Vec::new();
+        }
+        let config = (self.config_path.strip_suffix(b".json")).unwrap_or(&self.config_path);
+        let options = &self.options;
+        let mut name = if options.out_dir.is_empty() {
+            config.to_vec()
+        } else if options.root_dir.is_empty() {
+            join(&options.out_dir, bun_paths::basename_posix(config))
+        } else {
+            let relative = relative_normalized::<Posix, true>(&options.root_dir, config);
+            join(&options.out_dir, relative)
+        };
+        name.extend_from_slice(b".tsbuildinfo");
+        name
+    }
+}
+
+/// `ResolveConfigFileNameOfProjectReference`
+pub fn resolve_config_file_name_of_project_reference(path: &[u8]) -> Vec<u8> {
+    if path.ends_with(b".json") {
+        path.to_vec()
+    } else {
+        join(path, b"tsconfig.json")
+    }
 }
 
 const CONFIG_DIR_TEMPLATE: &[u8] = b"${configDir}";
@@ -97,7 +139,7 @@ struct Raw {
     files: Option<Vec<Vec<u8>>>,
     include: Option<Vec<Vec<u8>>>,
     exclude: Option<Vec<Vec<u8>>>,
-    references: Option<Vec<Vec<u8>>>,
+    references: Option<Vec<ProjectReference>>,
     has_extends: bool,
 }
 
@@ -346,8 +388,14 @@ fn parse_config(
         .and_then(Json::as_array)
         .map(|list| {
             list.iter()
-                .filter_map(|r| r.get(b"path").and_then(Json::as_str))
-                .map(|p| join(base, p))
+                .filter_map(|r| {
+                    let path = r.get(b"path").and_then(Json::as_str)?;
+                    let circular = r.get(b"circular").and_then(Json::as_bool) == Some(true);
+                    (!path.is_empty()).then(|| ProjectReference {
+                        path: join(base, path),
+                        circular,
+                    })
+                })
                 .collect()
         });
     let extends: Vec<(usize, Vec<u8>)> = match json.get(b"extends") {
@@ -506,11 +554,17 @@ fn validate_specs(
         .collect()
 }
 
-/// The same, with `over` said after all the configuration file says: what a command line adds to it.
-pub fn load_overriding(host: &dyn Host, path: &[u8], over: Vec<(Vec<u8>, Json)>) -> Project {
+/// The same, with `over` said after all the configuration file says: what a command line adds to it, which may go by whether the file
+/// has `references`.
+pub fn load_overriding(
+    host: &dyn Host,
+    path: &[u8],
+    over: &dyn Fn(bool) -> Vec<(Vec<u8>, Json)>,
+) -> Project {
     let mut errors = Vec::new();
     let mut raw = parse_config(host, path, &mut Vec::new(), &mut errors, false).unwrap_or_default();
-    merge_compiler_options(&mut raw.compiler, over);
+    let has_references = raw.references.as_ref().is_some_and(|list| !list.is_empty());
+    merge_compiler_options(&mut raw.compiler, over(has_references));
     project_from_raw(host, path, dirname::<Posix>(path), raw, errors)
 }
 

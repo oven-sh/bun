@@ -52,10 +52,6 @@ impl Checker<'_> {
     /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses, and `checkClassNameCollisionWithObject`.
     pub(super) fn report_class_like_declaration(&mut self, file: FileId, c: ClassId, sym: Sym) {
         let hir = self.hir(file);
-        // Of a file that could not be made sense of only parts are there: what is missing from them may well be written.
-        if hir.has_errors {
-            return;
-        }
         let class = &hir[c];
         let base = self.base_of_class(file, c, sym);
         if let ClassBase::Is { constructor, base } = base {
@@ -88,14 +84,12 @@ impl Checker<'_> {
                 for sig in self.super_constructor_sigs(sym) {
                     returns.push(self.sig_return(sig));
                 }
-                let are_known = returns.iter().all(|&returned| self.is_known(returned));
                 let all_the_same = self.answer_if_sure(|checker| {
                     returns
                         .iter()
                         .all(|&returned| checker.is_identical(returned, base))
                 });
-                if are_known
-                    && all_the_same == Some(false)
+                if all_the_same == Some(false)
                     && let Some(at) = self.place_to_report_base_at(file, c)
                 {
                     self.error_at(at, 2510, &[]);
@@ -124,21 +118,14 @@ impl Checker<'_> {
             return ClassBase::Nothing;
         }
         let constructor = self.base_constructor_type_of_class(sym);
-        if !self.is_error_type(constructor) && (!self.is_known(constructor)) {
-            return ClassBase::Unknown;
-        }
         if let Some(&base) = self.base_types(sym).first() {
             return ClassBase::Is { constructor, base };
         }
-        // No base type is made of what could not be worked out.
-        let args = self.types_from_nodes(file, class.extends_args);
         let returned = match self.super_constructor_sigs(sym).first() {
             Some(&sig) => self.sig_return(sig),
             None => TypeId::ERROR,
         };
-        if args.iter().all(|&arg| self.is_known(arg))
-            && (self.is_error_type(returned) || self.is_settled_base(returned))
-        {
+        if self.is_error_type(returned) || self.is_settled_base(returned) {
             ClassBase::Nothing
         } else {
             ClassBase::Unknown
@@ -203,14 +190,11 @@ impl Checker<'_> {
 
     /// Whether `ty` was worked out for good: all of it is known, and it does not wait for type parameters that are not there.
     pub(super) fn is_settled_base(&self, ty: TypeId) -> bool {
-        self.is_known(ty) && (self.has_type_variables(ty) || !self.is_deferred(ty))
+        self.has_type_variables(ty) || !self.is_deferred(ty)
     }
 
     /// `isValidBaseType`: `any`, an object type whose members can be told, or an intersection of such. What is not known passes.
     pub(super) fn is_valid_base_type(&mut self, ty: TypeId) -> bool {
-        if !self.is_known(ty) {
-            return true;
-        }
         if matches!(
             self.data(ty),
             TypeData::TypeParam(..) | TypeData::ThisParam(_)
@@ -464,9 +448,6 @@ impl Checker<'_> {
             return Some(false);
         }
         let ty = self.type_of_expr(file, e);
-        if !self.is_known(ty) {
-            return None;
-        }
         // `isValidESSymbolDeclaration`: `static readonly k = Symbol()` holds a symbol of its own, where here it is any symbol.
         if ty == TypeId::SYMBOL
             && let ExprKind::Dot { obj, name, .. } = hir[e].kind

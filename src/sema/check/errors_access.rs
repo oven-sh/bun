@@ -826,14 +826,7 @@ impl Checker<'_> {
             .collect();
         // Printing is behind a barrier that no circle passes (`with_printer`). In tsgo it closes them: so does this one, the first
         // time. The error is made again where it was dropped with an answer that was not kept, which tsgo has no need of.
-        if made.is_none() {
-            self.serialization_level += 1;
-            self.printing_closes_circles = true;
-            let printed = self.reduced(containing);
-            self.type_to_string(printed);
-            self.printing_closes_circles = false;
-            self.serialization_level -= 1;
-        }
+        let reprinting = std::mem::replace(&mut self.reprinting, made.is_some());
         let at = self.place_of_token(file, start);
         let missing = self.declaration_name_at(file, start);
         // The static side and what is promised are asked for a `#x` by its text, which is the name of no property.
@@ -897,6 +890,7 @@ impl Checker<'_> {
             self.new_diagnostic_chain(chain, at, code, &args)
         };
         self.reporting_nonexistent.pop();
+        self.reprinting = reprinting;
         // What the making of the message comes back to is no reason to take the message back.
         for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
             frame.drops_reported = dropped;
@@ -1296,7 +1290,7 @@ impl Checker<'_> {
             };
             if !is_static
                 && parts.iter().any(|p| match &p.source {
-                    PropSource::Members(declared) => declared.iter().any(|d| is_field(d)),
+                    PropSource::Members(declared) => declared.iter().any(&is_field),
                     PropSource::Assigned(f, declared) => {
                         declared.iter().any(|&e| is_assigned_field(*f, e))
                     }

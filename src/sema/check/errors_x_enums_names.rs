@@ -199,7 +199,7 @@ impl Checker<'_> {
             return false;
         };
         let ty = self.declared_type(symbol);
-        if !self.is_known(ty) || !self.is_union(ty) {
+        if !self.is_union(ty) {
             return false;
         }
         // `allTypesAssignableToKindEx(t, TypeFlagsStringOrNumberLiteral, strict)`. Strict mode rejects `any`, `unknown`, `void`,

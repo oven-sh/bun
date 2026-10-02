@@ -93,8 +93,10 @@ impl Checker<'_> {
             };
             let is_fragment =
                 |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
-            first = reached.0.or(elements.first().copied());
-            first_fragment = reached.1.or(elements.iter().copied().find(is_fragment));
+            first = reached.0.or_else(|| elements.first().copied());
+            first_fragment = reached
+                .1
+                .or_else(|| elements.iter().copied().find(is_fragment));
         }
         for e in elements {
             let ExprKind::Jsx(j) = hir[e].kind else {
@@ -206,10 +208,7 @@ impl Checker<'_> {
                     None if no_implicit_any => {
                         self.error_at(at, 7026, &[Arg::Bytes(b"IntrinsicElements")]);
                     }
-                    Some(elements)
-                        if self.is_known(elements)
-                            && self.type_of_property(elements, name).is_none() =>
-                    {
+                    Some(elements) if self.type_of_property(elements, name).is_none() => {
                         self.error_at(
                             at,
                             2339,
@@ -288,8 +287,7 @@ impl Checker<'_> {
         };
         self.check_grammar_jsx_expression(file, spread);
         let ty = self.type_of_expr(file, spread);
-        if self.is_known(ty)
-            && ty != TypeId::ANY
+        if ty != TypeId::ANY
             && !self.is_array(ty)
             && let Some((brace, end)) = jsx_expression_around(hir, child)
         {
@@ -606,9 +604,6 @@ impl Checker<'_> {
         let ExprKind::Jsx(j) = hir[e].kind else {
             return true;
         };
-        if !self.is_known(source) || !self.is_known(target) {
-            return relation != Relation::Subtype;
-        }
         if self.related(source, target, relation) {
             return true;
         }
@@ -678,9 +673,6 @@ impl Checker<'_> {
         for sig in self.signatures(factory_type, false) {
             let params = self.sig_params(sig);
             let first = self.param_type_at(&params, 0).unwrap_or(TypeId::ANY);
-            if !self.is_known(first) {
-                return None;
-            }
             for taken in self.signatures(first, false) {
                 let params = self.sig_params(taken);
                 if self.has_effective_rest_parameter(&params) {
@@ -763,9 +755,6 @@ impl Checker<'_> {
         let Some(wanted) = self.type_of_property(target, name) else {
             return reported;
         };
-        if !self.is_known(wanted) {
-            return reported;
-        }
         // Where there is no `Iterable`, a list is what is like an array or a tuple.
         let has_iterable = self.global_type_symbol(known::Iterable).is_some();
         let any_iterable = self.global_ref(
@@ -885,8 +874,7 @@ impl Checker<'_> {
                 (Some(a), None) | (None, Some(a)) => a,
                 (None, None) => continue,
             };
-            if !self.is_known(wanted) || !self.is_known(given) || self.is_assignable(given, wanted)
-            {
+            if self.is_assignable(given, wanted) {
                 continue;
             }
             reported_error = true;
@@ -943,7 +931,7 @@ impl Checker<'_> {
             }
             let ty = self.type_of_expr(file, prop.value);
             let ty = self.reduced(ty);
-            if !self.is_known(ty) || self.is_any(ty) || !self.is_valid_spread_type(ty) {
+            if self.is_any(ty) || !self.is_valid_spread_type(ty) {
                 continue;
             }
             // `tryMergeUnionOfObjectTypeAndEmptyObject`

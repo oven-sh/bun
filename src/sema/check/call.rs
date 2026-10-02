@@ -298,8 +298,7 @@ impl<'p> Checker<'p> {
                 // the operand is only taken to be.
                 let element = match self.iterated_type_if_any(ty, false) {
                     Some(element) => element,
-                    None if self.is_known(ty) => TypeId::ANY,
-                    None => TypeId::UNRESOLVED,
+                    None => TypeId::ANY,
                 };
                 push(Arg::Spread(element, ty, Atom::NONE, a));
             }
@@ -501,12 +500,6 @@ impl<'p> Checker<'p> {
             }
             let sigs = self.signatures(callee, false);
             if sigs.is_empty() {
-                if !self.is_known(callee) {
-                    return ResolvedCall {
-                        sig: None,
-                        ret: TypeId::UNRESOLVED,
-                    };
-                }
                 let constructs = self.signatures(callee, true).len();
                 return if self.is_untyped_function_call(callee, apparent, 0, constructs) {
                     self.resolve_untyped_call(file, exprs)
@@ -712,12 +705,6 @@ impl<'p> Checker<'p> {
             sigs = self.signatures(callee, false);
         }
         if sigs.is_empty() {
-            if !self.is_known(callee) {
-                return ResolvedCall {
-                    sig: None,
-                    ret: TypeId::UNRESOLVED,
-                };
-            }
             let is_untyped = !is_new && {
                 let constructs = self.signatures(callee, true).len();
                 self.is_untyped_function_call(callee, apparent, 0, constructs)
@@ -829,8 +816,7 @@ impl<'p> Checker<'p> {
             }
         }
         let method = self.union(&methods);
-        // A method type that is not known is returned as it is: nothing is made of it.
-        (!self.is_known(method) || !self.signatures(method, false).is_empty()).then_some(method)
+        (!self.signatures(method, false).is_empty()).then_some(method)
     }
 
     /// `someSignature(constructSignatures, abstract)`: what is made for a union is abstract if what one of its members has is.
@@ -1395,7 +1381,7 @@ impl<'p> Checker<'p> {
     pub(super) fn implementation_signature(&mut self, failed: SigId) -> Option<SigId> {
         let (file, func, _) = self.sig_decl(self.p.types.sig_origin(failed))?;
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let has_body = |f: &Func| has_body(&f);
+        let has_body = |f: &Func| has_body(f);
         match bound.fns[func.idx()].owner {
             FnOwner::Stmt(_) => {
                 let symbol = bound.fn_symbol[func.idx()];
@@ -1579,7 +1565,7 @@ impl<'p> Checker<'p> {
                 } else {
                     list.last().filter(|p| p.rest)
                 };
-                source = source.or(named.copied());
+                source = source.or_else(|| named.copied());
                 // `tryGetTypeAtPosition`
                 if (i < self.parameter_count(list) || self.has_effective_rest_parameter(list))
                     && let Some(ty) = self.param_type_at(list, i)
@@ -1625,11 +1611,7 @@ impl<'p> Checker<'p> {
             Some(self.union_reduced(&these))
         };
         let returns: Vec<TypeId> = sigs.iter().map(|&sig| self.sig_return(sig)).collect();
-        let ret = if returns.iter().all(|&ty| self.is_known(ty)) {
-            self.intersection(&returns)
-        } else {
-            TypeId::UNRESOLVED
-        };
+        let ret = self.intersection(&returns);
         // It is declared where the first of them is.
         self.p.types.intern_sig(SigData::Synth {
             type_params: Box::new([]),

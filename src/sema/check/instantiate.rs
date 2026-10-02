@@ -511,7 +511,6 @@ impl<'p> Checker<'p> {
         if !flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)) {
             return self.tuple(elems, flags, readonly);
         }
-        // An alias is what it stands for.
         let is_spread = |i: usize| flags[i].contains(ElemFlags::VARIADIC);
         // `[A, ...(X | Y)]` is `[A, ...X] | [A, ...Y]`, and `[A, ...never]` is `never`.
         if let Some(i) = (0..elems.len())
@@ -583,7 +582,6 @@ impl<'p> Checker<'p> {
             // Anything else is taken for an array.
             let element = match self.array_element(elem) {
                 Some(element) => element,
-                None if !self.is_known(elem) => TypeId::UNRESOLVED,
                 None => {
                     // `isArrayLikeType`, `getIndexTypeOfType(t, numberType)`. What is not like an array is an error.
                     let found = if self.is_array_like(elem) {
@@ -741,7 +739,7 @@ impl<'p> Checker<'p> {
                     .iter()
                     .map(|p| SigParam {
                         ty: self.instantiate(p.ty, mapper),
-                        ..p.clone()
+                        ..*p
                     })
                     .collect();
                 SigData::Synth {

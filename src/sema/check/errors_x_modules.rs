@@ -132,7 +132,7 @@ impl Checker<'_> {
         for (&decl, &sym) in &cx.aliases {
             // `checkVariableLikeDeclaration`
             if matches!(decl, Decl::Require(_)) {
-                self.check_alias_symbol(file, &cx.aliases, StmtId::NONE, decl, false);
+                self.check_alias_symbol(file, &cx.aliases, decl, false);
             }
             // `resolveAlias`: at `getDeclarationOfAliasSymbol`
             if can_be_circular
@@ -731,14 +731,12 @@ impl Checker<'_> {
                 self.check_alias_symbol(
                     cx.file,
                     &cx.aliases,
-                    s,
                     Decl::ImportDefault(i),
                     around.is_ambient,
                 );
                 self.check_alias_symbol(
                     cx.file,
                     &cx.aliases,
-                    s,
                     Decl::ImportNamespace(i),
                     around.is_ambient,
                 );
@@ -746,7 +744,6 @@ impl Checker<'_> {
                     self.check_alias_symbol(
                         cx.file,
                         &cx.aliases,
-                        s,
                         Decl::ImportSpec(named),
                         around.is_ambient,
                     );
@@ -815,7 +812,6 @@ impl Checker<'_> {
                     self.check_alias_symbol(
                         cx.file,
                         &cx.aliases,
-                        s,
                         Decl::ImportEquals(i),
                         is_ambient,
                     );
@@ -834,7 +830,7 @@ impl Checker<'_> {
             ImportEqualsTarget::Entity(names) => names,
         };
         self.check_collisions_for_declaration_name(cx.file, s, import.name);
-        self.check_alias_symbol(cx.file, &cx.aliases, s, Decl::ImportEquals(i), is_ambient);
+        self.check_alias_symbol(cx.file, &cx.aliases, Decl::ImportEquals(i), is_ambient);
         let scope = bound.import_equals_scope[i.idx()];
         if scope.is_none() || names.is_empty() {
             return;
@@ -907,28 +903,8 @@ impl Checker<'_> {
                 self.error_at((cx.file, first.pos(), 0), 2437, &[Arg::Atom(first.text)]);
             }
         }
-        // `checkTypeNameIsReserved`
-        if flags.intersects(SymFlags::TYPE)
-            && matches!(
-                files.atoms.bytes(import.name),
-                b"any"
-                    | b"unknown"
-                    | b"never"
-                    | b"number"
-                    | b"bigint"
-                    | b"boolean"
-                    | b"string"
-                    | b"symbol"
-                    | b"void"
-                    | b"object"
-                    | b"undefined"
-            )
-        {
-            self.error_at(
-                (cx.file, import.name_pos, 0),
-                2438,
-                &[Arg::Atom(import.name)],
-            );
+        if flags.intersects(SymFlags::TYPE) {
+            self.check_type_name_is_reserved(cx.file, s, import.name, 2438);
         }
     }
 
@@ -971,7 +947,6 @@ impl Checker<'_> {
                 self.check_alias_symbol(
                     cx.file,
                     &cx.aliases,
-                    s,
                     Decl::ExportSpec(item),
                     around.is_ambient,
                 );
@@ -1080,7 +1055,6 @@ impl Checker<'_> {
                     self.check_alias_symbol(
                         cx.file,
                         &cx.aliases,
-                        s,
                         Decl::ExportStarAs(s),
                         around.is_ambient,
                     );
@@ -1354,9 +1328,6 @@ impl Checker<'_> {
         for attribute in attributes.iter() {
             let (name, value) = (hir[attribute].key.name()?, hir[attribute].value);
             let ty = self.type_of_expr(file, value);
-            if !self.is_known(ty) {
-                return None;
-            }
             let ty = self.regular(ty);
             // `members[member.Name] = member`: the last attribute with a given name wins.
             props.retain(|p| p.name != name);
@@ -1543,17 +1514,6 @@ pub(super) fn isolated_modules_like_flag_name(files: &Files) -> &'static [u8] {
     } else {
         b"isolatedModules"
     }
-}
-
-/// `node.End()` of the import clause of the declaration whose module specifier is at `spec_pos`: where what comes before the `from`
-/// ends. 0 if there is no `from`.
-pub(super) fn import_clause_end(text: &[u8], spec_pos: u32) -> u32 {
-    let end = skip_trivia_back(text, spec_pos as usize);
-    let from = word_start(text, end);
-    if &text[from..end] != b"from" {
-        return 0;
-    }
-    skip_trivia_back(text, from) as u32
 }
 
 // ───────────────────────────── import attributes, as they are written ─────────────────────────────

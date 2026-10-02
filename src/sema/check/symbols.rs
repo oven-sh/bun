@@ -6,6 +6,17 @@ use super::related::Place;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, UNREACHABLE};
 use smallvec::SmallVec;
+use std::rc::Rc;
+
+/// `WideningContext`
+pub(super) struct WideningContext<'p> {
+    parent: Option<usize>,
+    property_name: Atom,
+    siblings: Option<Rc<[TypeId]>>,
+    resolved_properties: Option<Rc<[&'p Prop]>>,
+    child_contexts: FxHashMap<Atom, usize>,
+    widened_types: FxHashMap<TypeId, TypeId>,
+}
 
 /// What `resolveAlias` gives.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -59,7 +70,7 @@ pub(super) struct Iter3 {
 }
 
 impl Iter3 {
-    pub fn has_types(&self) -> bool {
+    pub(super) fn has_types(&self) -> bool {
         self.y.is_some() || self.r.is_some() || self.n.is_some()
     }
 
@@ -227,9 +238,7 @@ impl<'p> Checker<'p> {
         let flags = self.files().flags(sym);
         // `getTypeOfAlias`
         if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE) {
-            return resolved
-                .filter(|&ty| self.is_known(ty))
-                .unwrap_or(TypeId::ERROR);
+            return resolved.unwrap_or(TypeId::ERROR);
         }
         // `symbol.ValueDeclaration.Type()`
         for (file, decl) in declarations_of(self.files(), sym) {
@@ -421,7 +430,7 @@ impl<'p> Checker<'p> {
         }
         let value_declaration = self
             .commonjs_value_declaration(self.files().symbol(sym))
-            .or(exports.first().copied())?;
+            .or_else(|| exports.first().copied())?;
         Some(self.get_widened_type_for_assignment_declaration(
             sym.file,
             name,
@@ -656,9 +665,6 @@ impl<'p> Checker<'p> {
             .module_of_specifier_as(file, import.spec, mode)?;
         let value = self.files().module_value(module);
         let ty = self.type_of_symbol(value);
-        if !self.is_known(ty) {
-            return None;
-        }
         let files = self.files();
         // To Node, what an ECMAScript module imports from a file.
         let is_file_to_node = files
@@ -978,11 +984,6 @@ impl<'p> Checker<'p> {
             return;
         }
         let f = &self.hir(file)[func];
-        if let FnOwner::Expr(e) = self.bound(file).fns[func.idx()].owner
-            && !self.is_context_known(file, e)
-        {
-            return;
-        }
         // `shouldReportErrorsFromWideningWithContextualSignature`
         if let Some(signature) = self.contextual_signature(file, func) {
             let returned = self.sig_return(signature);
@@ -1034,12 +1035,6 @@ impl<'p> Checker<'p> {
         if let PatParent::Param(root) = root_declaration(bound, pat) {
             let func = bound.param_fn[root.idx()];
             if self.is_private_within_ambient(file, func) {
-                return;
-            }
-            // Nothing is expected of it, as far as can be told.
-            if let FnOwner::Expr(e) = bound.fns[func.idx()].owner
-                && !self.is_context_known(file, e)
-            {
                 return;
             }
         }
@@ -1135,94 +1130,92 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `false`: there is none anywhere in `ty`. `true`: there may be one where `contains_object_literal` does not look.
-    #[inline]
-    fn may_hold_object_literal(&self, ty: TypeId) -> bool {
+    /// `t.ObjectFlags() & ObjectFlagsRequiresWidening`
+    pub(super) fn requires_widening(&mut self, ty: TypeId) -> bool {
         self.p
             .types
             .object_flags(ty)
             .contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL)
+            || self.regular_object(ty) != ty
     }
 
-    fn contains_object_literal(&self, ty: TypeId, depth: u32) -> bool {
-        if depth > 6 || !self.may_hold_object_literal(ty) {
-            return false;
-        }
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => parts
-                .iter()
-                .any(|&p| self.contains_object_literal(p, depth + 1)),
-            // `createDeferredTypeReference` sets no propagating flags.
-            TypeData::Tuple {
-                elems: TypeArguments::Given(elems),
-                ..
-            } => elems
-                .iter()
-                .any(|&e| self.contains_object_literal(e, depth + 1)),
-            TypeData::Ref {
-                args: TypeArguments::Given(args),
-                ..
-            } => {
-                !args.is_empty()
-                    && self.is_array(ty)
-                    && args
-                        .iter()
-                        .any(|&a| self.contains_object_literal(a, depth + 1))
-            }
-            TypeData::Anon {
-                origin: Origin::ObjectLiteral(..),
-                ..
-            } => true,
-            // What a pattern implies is widened like a literal, into a type that `patternForType` does not know.
-            TypeData::Synth(shape) => {
-                shape.literal.is_of_expression()
-                    || matches!(
-                        shape.literal,
-                        Literalness::Pattern | Literalness::PatternWithComputedNames
-                    )
-            }
-            _ => false,
-        }
-    }
-
-    /// `t.ObjectFlags() & ObjectFlagsRequiresWidening`
-    pub(super) fn requires_widening(&mut self, ty: TypeId) -> bool {
-        self.may_hold_object_literal(ty) || self.regular_object(ty) != ty
-    }
-
-    /// The type a variable, a result or a type argument gets from an expression of type `ty`: object literals in it become
-    /// ordinary object types, and those that are alternatives to one another get each other's properties as `p?: undefined`.
+    /// `getWidenedType`
     #[inline]
     pub fn regular_object(&mut self, ty: TypeId) -> TypeId {
-        let ty = if self.may_hold_object_literal(ty) {
-            self.widen_objects(ty, None)
+        if self.may_require_widening(ty) {
+            self.get_widened_type_with_context(ty, None)
         } else {
             ty
-        };
-        if self.p.files.options.strict_null_checks {
-            ty
-        } else {
-            self.widen_nullish(ty, 0)
         }
     }
 
-    /// Without strictNullChecks, `null` and `undefined` say nothing about what a location is for: it can hold anything. That is for
-    /// those that expressions give (`undefinedWideningType`, `nullWideningType`). The ones that are declared stay.
-    /// `getWidenedType`, less the object literals.
-    fn widen_nullish(&mut self, ty: TypeId, depth: u32) -> TypeId {
-        if ty == TypeId::NULL || ty == TypeId::UNDEFINED {
-            return TypeId::ANY;
-        }
-        if depth > 6 {
+    /// `false`: `t.objectFlags&ObjectFlagsRequiresWidening == 0`. Our flags come from more places than
+    /// `getPropagatingFlagsOfTypes` takes them from.
+    #[inline]
+    fn may_require_widening(&self, ty: TypeId) -> bool {
+        let flags = self.p.types.object_flags(ty);
+        flags.contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL)
+            || flags.contains(ObjectFlags::CONTAINS_WIDENING_TYPE)
+                && !self.p.files.options.strict_null_checks
+    }
+
+    /// `getWidenedTypeWithContext`. What stays the same all through is left as it is, for what our flags say too much.
+    fn get_widened_type_with_context(&mut self, ty: TypeId, context: Option<usize>) -> TypeId {
+        if !self.may_require_widening(ty) {
             return ty;
         }
         match self.data(ty) {
-            // No union has `null` or `undefined` in it here.
-            TypeData::Union(parts) => match self.widen_nullish_each(parts, depth) {
-                Some(widened) => self.union(&widened),
-                None => ty,
-            },
-            TypeData::Intersection(parts) => match self.widen_nullish_each(parts, depth) {
+            TypeData::Intrinsic(_) => return TypeId::ANY,
+            // Without a context it is interned, which is a cache.
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(..),
+                ..
+            } => return self.get_widened_type_of_object_literal(ty, context),
+            // What a pattern implies is widened like a literal, into a type that `patternForType` does not know.
+            TypeData::Synth(shape)
+                if shape.literal.is_of_expression()
+                    || matches!(
+                        shape.literal,
+                        Literalness::Pattern | Literalness::PatternWithComputedNames
+                    ) =>
+            {
+                return self.get_widened_type_of_object_literal(ty, context);
+            }
+            _ => {}
+        }
+        if context.is_none()
+            && let Some(&cached) = self.widened_types.get(&ty)
+        {
+            return cached;
+        }
+        let before = self.what_only_holds_for_now();
+        let result = match self.data(ty) {
+            TypeData::Union(types) => {
+                let union_context = context.unwrap_or_else(|| {
+                    self.new_widening_context(None, Atom::NONE, Some(Rc::from(&types[..])))
+                });
+                let widened_types: SmallVec<[TypeId; 8]> = types
+                    .iter()
+                    .map(|&t| {
+                        if self.is_nullish(t) {
+                            t
+                        } else {
+                            self.get_widened_type_with_context(t, Some(union_context))
+                        }
+                    })
+                    .collect();
+                if context.is_none() {
+                    self.widening_contexts.truncate(union_context);
+                }
+                if widened_types[..] == types[..] {
+                    ty
+                } else if widened_types.iter().any(|&t| self.is_empty_object_type(t)) {
+                    self.union_reduced(&widened_types)
+                } else {
+                    self.union(&widened_types)
+                }
+            }
+            TypeData::Intersection(types) => match self.get_widened_types(types) {
                 Some(widened) => self.intersection(&widened),
                 None => ty,
             },
@@ -1230,86 +1223,50 @@ impl<'p> Checker<'p> {
                 elems: TypeArguments::Given(elems),
                 flags,
                 readonly,
-            } => match self.widen_nullish_each(elems, depth) {
+            } => match self.get_widened_types(elems) {
                 Some(widened) => self.tuple(&widened, flags, *readonly),
                 None => ty,
             },
             TypeData::Ref {
                 target,
                 args: TypeArguments::Given(args),
-            } if self.is_array(ty) => match self.widen_nullish_each(args, depth) {
+            } if self.is_array(ty) => match self.get_widened_types(args) {
                 Some(widened) => self.intern(TypeData::Ref {
                     target: *target,
-                    args: widened.into(),
+                    args: widened.to_vec().into(),
                 }),
                 None => ty,
             },
-            _ => ty,
+            _ => return ty,
+        };
+        if context.is_none() && before == self.what_only_holds_for_now() {
+            self.widened_types.insert(ty, result);
         }
+        result
     }
 
-    /// `widen_nullish` of each of `types`. `None`: they all stay as they are.
-    fn widen_nullish_each(&mut self, types: &[TypeId], depth: u32) -> Option<Vec<TypeId>> {
-        let mut widened: Option<Vec<TypeId>> = None;
-        for (i, &ty) in types.iter().enumerate() {
-            let wide = self.widen_nullish(ty, depth + 1);
-            if wide != ty {
-                widened.get_or_insert_with(|| types.to_vec())[i] = wide;
-            }
-        }
-        widened
+    /// `core.SameMap(types, c.getWidenedType)`. `None`: the same.
+    fn get_widened_types(&mut self, types: &[TypeId]) -> Option<SmallVec<[TypeId; 8]>> {
+        let widened: SmallVec<[TypeId; 8]> =
+            types.iter().map(|&t| self.regular_object(t)).collect();
+        (widened[..] != *types).then_some(widened)
     }
 
-    fn widen_objects(&mut self, ty: TypeId, siblings: Option<&[TypeId]>) -> TypeId {
-        if !self.contains_object_literal(ty, 0) {
-            return ty;
-        }
-        match self.data(ty) {
-            TypeData::Union(parts) => {
-                let siblings = siblings.unwrap_or(&parts[..]);
-                let widened: SmallVec<[TypeId; 8]> = parts
-                    .iter()
-                    .map(|&p| {
-                        if self.is_nullish(p) {
-                            p
-                        } else {
-                            self.widen_objects(p, Some(siblings))
-                        }
-                    })
-                    .collect();
-                // `{}` goes from having nothing to allowing anything.
-                if widened.iter().any(|&w| self.is_empty_object_type(w)) {
-                    self.union_reduced(&widened)
-                } else {
-                    self.union(&widened)
-                }
-            }
-            TypeData::Intersection(parts) => {
-                let widened: SmallVec<[TypeId; 8]> =
-                    parts.iter().map(|&p| self.widen_objects(p, None)).collect();
-                self.intersection(&widened)
-            }
-            TypeData::Tuple {
-                elems: TypeArguments::Given(elems),
-                flags,
-                readonly,
-            } => {
-                let widened: SmallVec<[TypeId; 8]> =
-                    elems.iter().map(|&e| self.widen_objects(e, None)).collect();
-                self.tuple(&widened, flags, *readonly)
-            }
-            TypeData::Ref {
-                target,
-                args: TypeArguments::Given(args),
-            } => {
-                let args: Vec<TypeId> = args.iter().map(|&a| self.widen_objects(a, None)).collect();
-                self.intern(TypeData::Ref {
-                    target: *target,
-                    args: args.into(),
-                })
-            }
-            _ => self.widen_object_literal(ty, siblings),
-        }
+    fn new_widening_context(
+        &mut self,
+        parent: Option<usize>,
+        property_name: Atom,
+        siblings: Option<Rc<[TypeId]>>,
+    ) -> usize {
+        self.widening_contexts.push(WideningContext {
+            parent,
+            property_name,
+            siblings,
+            resolved_properties: None,
+            child_contexts: FxHashMap::default(),
+            widened_types: FxHashMap::default(),
+        });
+        self.widening_contexts.len() - 1
     }
 
     /// `undefinedType`: the `undefined` that is not widened. Without strictNullChecks that is not the one expressions give.
@@ -1354,27 +1311,30 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `getWidenedTypeOfObjectLiteral`: every property is widened, and so is what is found under any key.
-    fn widen_object_literal(&mut self, ty: TypeId, siblings: Option<&[TypeId]>) -> TypeId {
-        let others: SmallVec<[TypeId; 8]> = siblings
-            .unwrap_or(&[])
-            .iter()
-            .copied()
-            .filter(|&s| s != ty && self.is_object_literal_type(s))
-            .collect();
-        // `getWidenedProperty`: what is no plain property stays as it is.
-        let as_they_are = PropFlags::METHOD | PropFlags::ACCESSOR;
-        if others.is_empty() {
-            match self.data(ty) {
+    /// `getWidenedTypeOfObjectLiteral`
+    fn get_widened_type_of_object_literal(&mut self, ty: TypeId, context: Option<usize>) -> TypeId {
+        if let Some(context) = context
+            && let Some(&cached) = self.widening_contexts[context].widened_types.get(&ty)
+        {
+            return cached;
+        }
+        // With no other literal beside it, no context down from here has anything to add.
+        let context = context.filter(|&context| {
+            let siblings = self.get_siblings_of_context(context);
+            siblings
+                .iter()
+                .any(|&t| t != ty && self.is_object_literal_type(t))
+        });
+        let Some(context) = context else {
+            // Each property is widened when it is asked for.
+            return match self.data(ty) {
                 TypeData::Anon {
                     origin: Origin::ObjectLiteral(file, e, is_js_literal, of_declaration, _),
                     mapper,
-                } => {
-                    return self.intern(TypeData::Anon {
-                        origin: Origin::WidenedLiteral(*file, *e, *is_js_literal, *of_declaration),
-                        mapper: *mapper,
-                    });
-                }
+                } => self.intern(TypeData::Anon {
+                    origin: Origin::WidenedLiteral(*file, *e, *is_js_literal, *of_declaration),
+                    mapper: *mapper,
+                }),
                 TypeData::Synth(shape) => {
                     let mut shape = Shape::clone(shape);
                     (shape.literal, shape.is_regular) = match shape.literal {
@@ -1385,71 +1345,34 @@ impl<'p> Checker<'p> {
                     shape.contains_widening_type = false;
                     for prop in &mut shape.props {
                         prop.flags.remove(PropFlags::REGULAR);
-                        if !prop.flags.intersects(as_they_are) {
+                        if !prop
+                            .flags
+                            .intersects(PropFlags::METHOD | PropFlags::ACCESSOR)
+                        {
                             prop.flags |= PropFlags::WIDEN;
                         }
                     }
                     for info in &mut shape.index {
                         info.value = self.regular_object(info.value);
                     }
-                    return self.synth(shape);
+                    self.synth(shape)
                 }
-                _ => return ty,
-            }
-        }
+                _ => ty,
+            };
+        };
         let Some(members) = self.members(ty) else {
             return ty;
         };
         let mut shape = Shape::default();
         for prop in &members.shape().props {
-            let mut prop_ty = self.type_of_prop(prop, members.mapper);
-            if !prop.flags.intersects(as_they_are) {
-                if self.contains_object_literal(prop_ty, 0) {
-                    // What the alternatives have under the same name are the alternatives to this.
-                    let mut alternatives: Vec<TypeId> = self.parts(prop_ty).to_vec();
-                    for &other in &others {
-                        if let Some((p, mapper)) = self.prop_ref(other, prop.name) {
-                            let t = self.type_of_prop(p, mapper);
-                            alternatives.extend_from_slice(self.parts(t));
-                        }
-                    }
-                    prop_ty = self.widen_objects(prop_ty, Some(&alternatives));
-                }
-                if !self.p.files.options.strict_null_checks {
-                    prop_ty = self.widen_nullish(prop_ty, 0);
-                }
-            }
-            shape.props.push(Prop {
-                name: prop.name,
-                flags: prop.flags,
-                source: Self::copy_of(prop_ty, &[prop], true),
-                mapper: MapperId::IDENTITY,
-            });
+            let widened = self.get_widened_property(prop, members.mapper, context);
+            shape.props.push(widened);
         }
-        // `getPropertiesOfContext`, less what `ty` has: the names in the order they are met, and the last there is of each.
-        let mut of_context: Vec<&Prop> = Vec::new();
-        for &other in &others {
-            if !self.is_closed_object_literal_type(other)
-                && !matches!(self.data(other), TypeData::Synth(shape) if shape.literal == Literalness::Partial)
-            {
-                continue;
+        for &prop in self.get_properties_of_context(context).iter() {
+            if !shape.props.iter().any(|p| p.name == prop.name) {
+                let undefined = self.get_undefined_property(prop);
+                shape.props.push(undefined);
             }
-            let Some(theirs) = self.members(other) else {
-                continue;
-            };
-            for prop in &theirs.shape().props {
-                if shape.props.iter().any(|p| p.name == prop.name) {
-                    continue;
-                }
-                match of_context.iter().position(|p| p.name == prop.name) {
-                    None => of_context.push(prop),
-                    Some(met) => of_context[met] = prop,
-                }
-            }
-        }
-        for prop in of_context {
-            let undefined = self.get_undefined_property(prop);
-            shape.props.push(undefined);
         }
         self.get_named_members(&mut shape.props, |_| true, &[]);
         for info in &members.shape().index {
@@ -1464,9 +1387,103 @@ impl<'p> Checker<'p> {
                 (shape.literal, shape.is_regular) = (Literalness::Partial, true);
             }
         }
-        // "Retain js literal flag through widening"
         shape.is_js_literal = self.has_js_literal_flag(ty);
-        self.synth(shape)
+        let result = self.synth(shape);
+        if self.widening_contexts[context].parent.is_some() {
+            self.widening_contexts[context]
+                .widened_types
+                .insert(ty, result);
+        }
+        result
+    }
+
+    /// `getWidenedProperty`
+    fn get_widened_property(&mut self, prop: &Prop, mapper: MapperId, context: usize) -> Prop {
+        let original = self.type_of_prop(prop, mapper);
+        let stays = prop
+            .flags
+            .intersects(PropFlags::METHOD | PropFlags::ACCESSOR);
+        let widened = if stays || !self.may_require_widening(original) {
+            original
+        } else {
+            let prop_context = self.get_child_context(context, prop.name);
+            self.get_widened_type_with_context(original, Some(prop_context))
+        };
+        Prop {
+            name: prop.name,
+            flags: prop.flags,
+            source: Self::copy_of(widened, &[prop], true),
+            mapper: MapperId::IDENTITY,
+        }
+    }
+
+    /// `WideningContext.getChildContext`
+    fn get_child_context(&mut self, context: usize, property_name: Atom) -> usize {
+        if let Some(&cached) = self.widening_contexts[context]
+            .child_contexts
+            .get(&property_name)
+        {
+            return cached;
+        }
+        let result = self.new_widening_context(Some(context), property_name, None);
+        self.widening_contexts[context]
+            .child_contexts
+            .insert(property_name, result);
+        result
+    }
+
+    /// `getPropertiesOfContext`
+    fn get_properties_of_context(&mut self, context: usize) -> Rc<[&'p Prop]> {
+        if let Some(resolved) = &self.widening_contexts[context].resolved_properties {
+            return Rc::clone(resolved);
+        }
+        let mut names: Vec<&'p Prop> = Vec::new();
+        let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
+        for &t in self.get_siblings_of_context(context).iter() {
+            if !self.is_closed_object_literal_type(t)
+                && !matches!(self.data(t), TypeData::Synth(shape) if shape.literal == Literalness::Partial)
+            {
+                continue;
+            }
+            let Some(members) = self.members(t) else {
+                continue;
+            };
+            for prop in &members.shape().props {
+                let place = *places.entry(prop.name).or_insert(names.len());
+                match names.get_mut(place) {
+                    Some(set) => *set = prop,
+                    None => names.push(prop),
+                }
+            }
+        }
+        let resolved: Rc<[&'p Prop]> = names.into();
+        self.widening_contexts[context].resolved_properties = Some(Rc::clone(&resolved));
+        resolved
+    }
+
+    /// `getSiblingsOfContext`
+    fn get_siblings_of_context(&mut self, context: usize) -> Rc<[TypeId]> {
+        let WideningContext {
+            parent,
+            property_name,
+            ref siblings,
+            ..
+        } = self.widening_contexts[context];
+        let (None, Some(parent)) = (siblings, parent) else {
+            return siblings.clone().unwrap_or_default();
+        };
+        let mut siblings: Vec<TypeId> = Vec::new();
+        for &t in self.get_siblings_of_context(parent).iter() {
+            if self.is_object_literal_type(t)
+                && let Some((prop, mapper)) = self.prop_ref(t, property_name)
+            {
+                let of_prop = self.type_of_prop(prop, mapper);
+                siblings.extend_from_slice(self.parts(of_prop));
+            }
+        }
+        let siblings: Rc<[TypeId]> = siblings.into();
+        self.widening_contexts[context].siblings = Some(Rc::clone(&siblings));
+        siblings
     }
 
     // ───────────────────────────── bindings ─────────────────────────────
@@ -1701,7 +1718,7 @@ impl<'p> Checker<'p> {
             PatParent::Elem(_, elem) => hir[elem].is_rest,
             _ => false,
         };
-        let ty = match bound.pat_parent[parent.idx()] {
+        match bound.pat_parent[parent.idx()] {
             // Without the `undefined` that `?` adds. One that is written stays.
             PatParent::Param(p)
                 if hir[p].ty.is_some() && hir[p].flags.contains(Flags::OPTIONAL) =>
@@ -1726,12 +1743,11 @@ impl<'p> Checker<'p> {
             PatParent::Var(d) if is_rest && hir[d].ty.is_none() && hir[d].init.is_some() => {
                 match self.type_of_reference_for_rest(file, hir[d].init) {
                     Some(ty) => ty,
-                    None => return self.type_of_pat(file, parent),
+                    None => self.type_of_pat(file, parent),
                 }
             }
-            _ => return self.type_of_pat(file, parent),
-        };
-        ty
+            _ => self.type_of_pat(file, parent),
+        }
     }
 
     /// The head of `getBindingElementTypeFromParentType`: what `pattern` takes apart, given that what it stands for is a `ty`. Where
@@ -1995,9 +2011,6 @@ impl<'p> Checker<'p> {
     /// `getBindingElementTypeFromParentType`: whether no `...rest` can be taken out of a `parent_ty`, which is 2700: it is `unknown`,
     /// or not `isValidSpreadType`.
     pub(super) fn is_rest_of_invalid_type(&mut self, parent_ty: TypeId) -> bool {
-        if !self.is_known(parent_ty) {
-            return false;
-        }
         let reduced = self.reduced(parent_ty);
         reduced == TypeId::UNKNOWN || !self.is_valid_spread_type(reduced)
     }
@@ -2028,9 +2041,6 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         if self.is_any(ty) {
             return ty;
-        }
-        if !self.is_known(omitted_keys) {
-            return TypeId::UNRESOLVED;
         }
         let ty = self.filter(ty, |_, m| !m.is_null() && !m.is_undefined());
         if ty.is_never() {
@@ -2346,7 +2356,7 @@ impl<'p> Checker<'p> {
                 self.eager.push(self.stack.len());
                 let given = self.type_of_declaration_initializer(file, param.default);
                 let given = self.padded_for_pattern(file, param.pat, given);
-                if self.is_known(given) && self.is_known(ty) && !self.is_assignable(given, ty) {
+                if !self.is_assignable(given, ty) {
                     let widened = self.widen_literal(given);
                     if self.is_assignable(ty, widened) {
                         ty = widened;
@@ -3171,7 +3181,6 @@ impl<'p> Checker<'p> {
                 || self.relation_too_complex
                 || !self.relations_too_deep.is_empty())
             && self.reliability == 0
-            && awaited.is_none_or(|awaited| self.is_known(awaited))
         {
             self.p.awaited_types.insert(ty, awaited);
         }
@@ -3412,8 +3421,7 @@ impl<'p> Checker<'p> {
     pub fn iterated_type(&mut self, ty: TypeId, is_async: bool) -> TypeId {
         match self.iterated_type_if_any(ty, is_async) {
             Some(element) => element,
-            None if self.is_known(ty) => TypeId::ANY,
-            None => TypeId::UNRESOLVED,
+            None => TypeId::ANY,
         }
     }
 
@@ -3521,7 +3529,7 @@ impl<'p> Checker<'p> {
         let mut suggests_await = self
             .thenable_value(ty)
             .and_then(|promised| self.awaited_or_none(promised))
-            .is_some_and(|awaited| self.is_known(awaited));
+            .is_some();
         if !suggests_await
             && !allows_async
             && is_of_for_of

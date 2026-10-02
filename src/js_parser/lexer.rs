@@ -4721,6 +4721,41 @@ pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
         || strings::is_unicode_space_separator(codepoint as u32)
 }
 
+/// `IsWhiteSpaceSingleLine`: two more than ECMAScript's WhiteSpace.
+pub(crate) fn is_white_space_single_line(codepoint: CodePoint) -> bool {
+    is_whitespace(codepoint) || matches!(codepoint, 0x85 | 0x200B)
+}
+
+/// `charAndSize`: the character at `at` and how many bytes it takes, none at the end.
+#[inline]
+pub(crate) fn char_and_size(text: &[u8], at: usize) -> (CodePoint, usize) {
+    match text.get(at) {
+        None => (-1, 0),
+        Some(&first) if first < 0x80 => (first as CodePoint, 1),
+        Some(&first) => {
+            let mut end = at;
+            let c = strings::lexer_step::next_codepoint_multibyte(text, &mut end, first);
+            (c, end.min(text.len()) - at)
+        }
+    }
+}
+
+/// `DecodeLastRuneInString`, and where it starts.
+pub(crate) fn last_char(text: &[u8]) -> (CodePoint, usize) {
+    let start = text.iter().rposition(|&c| c & 0xC0 != 0x80).unwrap_or(0);
+    (char_and_size(text, start).0, start)
+}
+
+/// Where the characters from `at` on that `is` holds of end.
+pub(crate) fn end_of_run(text: &[u8], mut at: usize, is: impl Fn(CodePoint) -> bool) -> usize {
+    loop {
+        match char_and_size(text, at) {
+            (c, size @ 1..) if is(c) => at += size,
+            _ => return at,
+        }
+    }
+}
+
 /// `EncodeJSStringRune`: UTF-8, with a lone surrogate as the three bytes UTF-8 would have for it if it had any. The type checker
 /// tells such strings apart.
 #[cold]
@@ -4759,27 +4794,11 @@ pub(crate) fn starts_with_line_break(text: &[u8]) -> bool {
 fn trailing_whitespace_len(text: &[u8]) -> usize {
     let mut end = text.len();
     while end > 0 {
-        if text[end - 1] < 0x80 {
-            if !matches!(text[end - 1], b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C) {
-                break;
-            }
-            end -= 1;
-            continue;
-        }
-        // Whitespace outside ASCII takes two or three bytes.
-        let Some(len) = (2..=3).find(|&len| end >= len && text[end - len] >= 0xC0) else {
-            break;
-        };
-        let last = core::str::from_utf8(&text[end - len..end])
-            .ok()
-            .and_then(|s| s.chars().next());
-        let is_space = last.is_some_and(|c| {
-            is_whitespace(c as CodePoint) || matches!(c as u32, 0x85 | 0x200B | 0x2028 | 0x2029)
-        });
-        if !is_space {
+        let (c, start) = last_char(&text[..end]);
+        if !is_white_space_single_line(c) && !starts_with_line_break(&text[start..end]) {
             break;
         }
-        end -= len;
+        end = start;
     }
     text.len() - end
 }

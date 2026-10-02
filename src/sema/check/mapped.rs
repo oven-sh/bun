@@ -146,7 +146,7 @@ impl<'p> Checker<'p> {
         );
         let no_index_signatures = index_flags.contains(IndexFlags::NO_INDEX_SIGNATURES);
         // "no mapping and no filtering required, just quickly bail to returning the constraint in the common case"
-        if decl.name_ty.is_none() && !no_index_signatures || !self.is_known(constraint) {
+        if decl.name_ty.is_none() && !no_index_signatures {
             return constraint;
         }
         let keys = if self.is_generic_index_type(constraint) {
@@ -1822,7 +1822,7 @@ impl<'p> Checker<'p> {
         let mut keys: Vec<TypeId> = (0..fixed)
             .map(|i| self.string_literal(self.number_name(i as f64), false))
             .collect();
-        let read_only = Some(known::ReadonlyArray).filter(|_| readonly);
+        let read_only = readonly.then_some(known::ReadonlyArray);
         let array = read_only
             .and_then(|name| self.global_type_of_arity(name, 1))
             .or_else(|| self.global_type_of_arity(known::Array, 1));

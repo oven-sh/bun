@@ -147,9 +147,6 @@ impl Checker<'_> {
     /// `getIndexTypeOrString`: the string keys of `ty`, or `string` if it has none.
     pub(super) fn index_type_or_string(&mut self, ty: TypeId) -> TypeId {
         let keys = self.keyof(ty);
-        if !self.is_known(keys) {
-            return keys;
-        }
         // `getExtractStringType`: `Extract<keys, string>`. Only generic keys need the conditional type.
         let strings = if self.is_generic(keys)
             && let Some(name) = self.files().atoms.lookup(b"Extract")
@@ -201,7 +198,7 @@ impl Checker<'_> {
         let asks = matches!(self.hir(file)[parent].kind, ExprKind::Array(_))
             || !self.is_array_or_tuple(given)
                 && self.is_spread_left_to_rest_parameter(file, parent, spread);
-        asks && self.is_known(given) && self.is_array_like(given)
+        asks && self.is_array_like(given)
     }
 
     /// `getSignatureApplicabilityError`, `inferTypeArguments`: whether the argument `spread` of `call` is one of those that are not
@@ -251,16 +248,12 @@ impl Checker<'_> {
         sent: TypeId,
         error_node: (FileId, u32, u32),
     ) -> Option<TypeId> {
-        if !self.is_known(given) {
-            return None;
-        }
         if self.is_any(given) {
             return Some(given);
         }
         let iterated = self.iterated_type_or_element_type(usage, given, sent, Some(error_node))?;
         // Without `Iterable` what comes out is not looked into.
-        (self.is_known(iterated) && self.global_type_of_arity(known::Iterable, 3).is_some())
-            .then_some(iterated)
+        (self.global_type_of_arity(known::Iterable, 3).is_some()).then_some(iterated)
     }
 
     /// `checkDestructuringAssignment`

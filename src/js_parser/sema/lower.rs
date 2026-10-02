@@ -1495,8 +1495,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             extends_args = type_args;
         }
         self.check_js_type_arguments(extends_args);
-        for clause in self.notes(keyword, Mark::ImplementsClause).chunks_exact(2) {
-            self.b.js_error_at_range((clause[0], clause[1]), 8005, b"");
+        for &[start, end] in self
+            .notes(keyword, Mark::ImplementsClause)
+            .as_chunks::<2>()
+            .0
+        {
+            self.b.js_error_at_range((start, end), 8005, b"");
         }
         let other_extends: Vec<ExprId> = self
             .notes(keyword, Mark::OtherExtends)

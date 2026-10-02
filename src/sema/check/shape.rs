@@ -324,7 +324,7 @@ impl<'p> Checker<'p> {
                 TypeData::Tuple { flags, .. } => flags.len(),
                 _ => 0,
             };
-            return self.type_arguments_for_now(ty, vec![TypeId::ERROR; count]);
+            return self.type_arguments_for_now(ty, &vec![TypeId::ERROR; count]);
         }
         let declared = self.type_arguments_from_node(ty, file, node);
         let holds = self.leave();
@@ -352,14 +352,14 @@ impl<'p> Checker<'p> {
         if holds && self.what_only_holds_for_now() == before {
             self.p.types.resolve_deferred(ty, instantiated.into())
         } else {
-            self.type_arguments_for_now(ty, instantiated)
+            self.type_arguments_for_now(ty, &instantiated)
         }
     }
 
     /// `arguments`, for an answer about `ty` that does not hold whoever asks: kept as those of
     /// `createTypeReference(ty.Target(), arguments)`.
-    fn type_arguments_for_now(&mut self, ty: TypeId, arguments: Vec<TypeId>) -> &'p [TypeId] {
-        let reference = self.create_type_reference(ty, &arguments);
+    fn type_arguments_for_now(&mut self, ty: TypeId, arguments: &[TypeId]) -> &'p [TypeId] {
+        let reference = self.create_type_reference(ty, arguments);
         self.p
             .types
             .resolved_type_arguments(reference)
@@ -924,8 +924,7 @@ impl<'p> Checker<'p> {
                         TypeId::ANY
                     };
                     for &key in self.parts(keys) {
-                        // What is not known is let through.
-                        if self.is_known(key) && !self.is_valid_index_key_type(key) {
+                        if !self.is_valid_index_key_type(key) {
                             continue;
                         }
                         let info = IndexInfo {
@@ -1164,7 +1163,7 @@ impl<'p> Checker<'p> {
                 continue;
             }
             let key = self.type_of_expr(file, e);
-            if !self.is_known(key) || b.shape.index.iter().any(|i| i.key == key) {
+            if b.shape.index.iter().any(|i| i.key == key) {
                 continue;
             }
             // A key that is neither a number nor a symbol for sure counts as a string.
@@ -1660,10 +1659,7 @@ impl<'p> Checker<'p> {
             || constructor.is_null() && self.p.files.options.strict_null_checks
         {
             TypeId::NULL
-        } else if !self.is_known(constructor)
-            || self.has_any_flag(constructor)
-            || self.is_constructor_type(constructor)
-        {
+        } else if self.has_any_flag(constructor) || self.is_constructor_type(constructor) {
             constructor
         } else {
             if holds && let Some(at) = self.place_to_report_base_at(file, c) {
@@ -1919,10 +1915,7 @@ impl<'p> Checker<'p> {
         }
         let base = self.reduced(base);
         // `is_valid_base_type` lets pass what could not be worked out. Only an object type with such a part is listed.
-        let is_worked_out = self.is_known(base)
-            || self.is_object_type(base)
-            || matches!(self.data(base), TypeData::Intersection(_));
-        if !is_worked_out || self.is_error_type(base) {
+        if self.is_error_type(base) {
             return None;
         }
         if self.is_valid_base_type(base) {
@@ -1992,13 +1985,11 @@ impl<'p> Checker<'p> {
             None => {
                 let apparent = self.apparent_type(constructor);
                 if (self.is_object_type(apparent) || self.is_intersection(apparent))
-                    && self.is_known(apparent)
-                    && args.iter().all(|&arg| self.is_known(arg))
                     && let Some(at) = self.place_to_report_base_at(file, c)
                 {
                     self.error_at(at, 2508, &[]);
                 }
-                TypeId::UNRESOLVED
+                TypeId::ERROR
             }
         }
     }
@@ -2234,8 +2225,8 @@ impl<'p> Checker<'p> {
                     // TypeScript has the members in place by now, so nothing asked here comes back to this type.
                     self.eager.push(self.stack.len());
                     let mut others: Vec<(Atom, TypeId)> = Vec::new();
-                    for prop in b.shape.props[own..].to_vec() {
-                        let ty = self.type_of_prop(&prop, MapperId::IDENTITY);
+                    for prop in &b.shape.props[own..] {
+                        let ty = self.type_of_prop(prop, MapperId::IDENTITY);
                         others.push((prop.name, ty));
                     }
                     self.eager.pop();
@@ -2418,7 +2409,7 @@ impl<'p> Checker<'p> {
     /// `symbolIsValue`: a value itself, or an alias with a value on the way to what it stands for and no step before that value
     /// that is only about types (`getSymbolFlagsEx`, `excludeTypeOnlyMeanings`). An alias that stands for nothing is in error, and
     /// what is in error can be anything, a value too.
-    fn symbol_is_value(&self, sym: Sym) -> bool {
+    pub(super) fn symbol_is_value(&self, sym: Sym) -> bool {
         self.files()
             .symbol_flags_ex(sym, true, false)
             .intersects(SymFlags::VALUE)
@@ -3530,7 +3521,7 @@ impl<'p> Checker<'p> {
             }
             ThisAssignmentDeclaration::Constructor(func) => {
                 // `getFlowTypeOfProperty`: the walk starts from the inherited type, or from `undefinedType`.
-                let initial = inherited(self).unwrap_or(self.undefined_as_declared());
+                let initial = inherited(self).unwrap_or_else(|| self.undefined_as_declared());
                 let first = UntypedProperty::Assignment(value_declaration);
                 self.flow_type_in_constructor_from(file, func, name, initial, first)
             }
@@ -4134,7 +4125,7 @@ impl<'p> Checker<'p> {
                         None
                     };
                     // `getFlowTypeOfProperty`: the walk starts from the inherited type, or from `undefinedType`.
-                    let initial = inherited.unwrap_or(self.undefined_as_declared());
+                    let initial = inherited.unwrap_or_else(|| self.undefined_as_declared());
                     let mut has_flow_container = false;
                     if !member.flags.contains(Flags::STATIC) {
                         if let Some(constructor) = hir[c].members.iter().find(|&m| {
@@ -5672,8 +5663,7 @@ impl<'p> Checker<'p> {
                 for (a, b) in bounds {
                     let a = self.instantiate(a.unwrap_or(TypeId::UNKNOWN), source_mapper);
                     let b = self.instantiate(b.unwrap_or(TypeId::UNKNOWN), target_mapper);
-                    // What is not known makes no difference.
-                    if self.is_known(a) && self.is_known(b) && !compare_types(self, a, b).holds() {
+                    if !compare_types(self, a, b).holds() {
                         return Ternary::FALSE;
                     }
                 }
@@ -5797,8 +5787,7 @@ impl<'p> Checker<'p> {
                     renaming
                 },
             );
-            // What is not known makes no difference.
-            if self.is_known(sc) && self.is_known(tc) && !self.is_identical(sc, tc) {
+            if !self.is_identical(sc, tc) {
                 return false;
             }
         }

@@ -622,8 +622,7 @@ impl<'p> Checker<'p> {
             || self.is_intersection(ty)
             || self.is_instantiable(ty) && self.has_type_variables(ty)
         {
-            let constraint = self.base_constraint_of(ty).unwrap_or(TypeId::UNKNOWN);
-            constraint
+            self.base_constraint_of(ty).unwrap_or(TypeId::UNKNOWN)
         } else {
             ty
         };
@@ -2517,9 +2516,6 @@ impl<'p> Checker<'p> {
             return ty;
         }
         let constructor = self.type_of_expr(file, identifier);
-        if !self.is_known(constructor) {
-            return ty;
-        }
         // `isFunctionType`, `isConstructorType`
         let is_function =
             self.is_object_type(constructor) && !self.signatures(constructor, false).is_empty();
@@ -3122,9 +3118,6 @@ impl<'p> Checker<'p> {
             } else {
                 self.declared_type(sym)
             };
-            if !self.is_known(target) {
-                return ty;
-            }
             return self.narrowed_to(ty, target, sense, true);
         }
         // `"a" in x` says of `x.a` whether it is there, where its type says that it may not be (`containsMissingType`).
@@ -4057,11 +4050,11 @@ impl<'p> Checker<'p> {
             return None;
         }
         let ordinary = self.type_of_expr(file, e);
-        if !self.is_known(ordinary) || self.is_any(ordinary) {
+        if self.is_any(ordinary) {
             return None;
         }
         let ty = self.check_expression_cached_ex(file, e, CheckMode::REST_BINDING_ELEMENT);
-        (ty != ordinary && self.is_known(ty)).then_some(ty)
+        (ty != ordinary).then_some(ty)
     }
 
     /// Whether `e` is the `x` of `x!`. Not of `(x)!`: what is written right around it is what counts.
@@ -5374,11 +5367,7 @@ impl<'p> Checker<'p> {
                     let result = FlowType::new(self.union_or_evolving(&types, walk), incomplete);
                     walk.remember(flow, result);
                     // What rests on a trial, a guess or a walk that gave up is nobody else's answer.
-                    if !incomplete
-                        && !walk.too_deep
-                        && walk.steps < MAX_STEPS
-                        && self.is_known(result.ty)
-                    {
+                    if !incomplete && !walk.too_deep && walk.steps < MAX_STEPS {
                         self.flow_memo
                             .flow_loop_cache
                             .entry(key)
@@ -6573,7 +6562,7 @@ impl<'p> Checker<'p> {
             }
             let declared = self.type_of_param(file, p);
             // `x is true` is of no use to anybody.
-            if !self.is_known(declared) || self.is_boolean(declared) {
+            if self.is_boolean(declared) {
                 continue;
             }
             // `checkIfExpressionRefinesParameter`

@@ -232,6 +232,10 @@ impl Checker<'_> {
 
     /// `c.addDiagnostic`
     pub(super) fn add_diagnostic(&mut self, diagnostic: Reported) -> &mut Reported {
+        // "Discard diagnostics created while at the maximum number of recursive TypeToString invocations."
+        if self.serialization_level >= MAX_SERIALIZATION_LEVEL {
+            return self.discarded.insert(diagnostic);
+        }
         self.reported.push(diagnostic);
         self.reported.last_mut().unwrap()
     }

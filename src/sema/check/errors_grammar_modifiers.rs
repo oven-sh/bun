@@ -82,7 +82,7 @@ impl Checker<'_> {
             _ => 0,
         };
         let takes_none = GrammarError::some(statement.start, 0, takes_none, ["", ""]);
-        if let Some(error) = error.or(takes_none.filter(|error| error.code != 0)) {
+        if let Some(error) = error.or_else(|| takes_none.filter(|error| error.code != 0)) {
             self.report_grammar_error(file, error);
         }
     }

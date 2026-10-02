@@ -3,10 +3,13 @@
 //!
 //! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths.
 
-use crate::config::starts_with_config_dir_template;
+use crate::config::{
+    Project, resolve_config_file_name_of_project_reference, starts_with_config_dir_template,
+};
 use crate::json::Json;
 use crate::json_places::{self, Value};
 use crate::resolve::{JsxEmit, ModuleKind, Options, path_is_relative};
+use crate::util::FxHashSet;
 use bstr::ByteSlice;
 use bun_core::strings::without_trailing_slash;
 use bun_paths::platform::Posix;
@@ -82,6 +85,8 @@ pub enum Place {
     Top(&'static [u8]),
     /// `GetTsConfigPropArrayElementValue`: at the string in that list. Nowhere if it is not in this file.
     TopElement(&'static [u8], Vec<u8>),
+    /// `CreateDiagnosticAtReferenceSyntax`: at one of `references`. Nowhere if there are not that many.
+    Reference(usize),
 }
 
 /// Something wrong with the options.
@@ -118,6 +123,13 @@ impl Problem {
         }
         let root = json_places::parse(text)?;
         let of = |value: &Value| (value.from, value.to);
+        if let Place::Reference(index) = self.at {
+            return root
+                .member(b"references", b"")?
+                .value
+                .element(index)
+                .map(of);
+        }
         if let Place::Top(name) | Place::TopElement(name, _) = &self.at {
             let list = &root.member(name, b"")?.value;
             let (Place::TopElement(_, said), json_places::Written::Array(elements)) =
@@ -133,7 +145,11 @@ impl Problem {
         let options = root.member(b"compilerOptions", b"")?;
         let paths = || options.value.member(b"paths", b"");
         let found = match &self.at {
-            Place::Nowhere | Place::CompilerOptions | Place::Top(_) | Place::TopElement(..) => None,
+            Place::Nowhere
+            | Place::CompilerOptions
+            | Place::Top(_)
+            | Place::TopElement(..)
+            | Place::Reference(_) => None,
             Place::Key(name, other) => options
                 .value
                 .member(name, other)
@@ -163,6 +179,57 @@ pub(crate) fn relative_from_file(from: &[u8], to: &[u8]) -> Vec<u8> {
     } else {
         [b"./", relative].concat()
     }
+}
+
+/// `verifyProjectReferences`: what is wrong with the projects `root` refers to, directly or not, each with the configuration file that
+/// refers to it. `resolved`: the project of a configuration file, if there is such a file.
+pub fn verify_project_references<'a>(
+    root: &'a Project,
+    resolved: &dyn Fn(&[u8]) -> Option<&'a Project>,
+) -> Vec<(&'a [u8], Problem)> {
+    let build_info_file_name = if root.options.suppress_output_path_check {
+        Vec::new()
+    } else {
+        root.get_build_info_file_name()
+    };
+    let mut out = Vec::new();
+    // `rangeResolvedReferenceWorker`: a project, and which of its references comes next.
+    let mut seen = FxHashSet::from_iter([root.config_path.clone()]);
+    let mut pending = vec![(root, 0)];
+    while let Some((parent, index)) = pending.pop() {
+        let Some(reference) = parent.references.get(index).map(|r| r.path.as_slice()) else {
+            continue;
+        };
+        pending.push((parent, index + 1));
+        let path = resolve_config_file_name_of_project_reference(reference);
+        let config = resolved(&path);
+        if !seen.insert(path) {
+            continue;
+        }
+        let mut say = |code, args: &[&[u8]]| {
+            let problem = Problem::new(code, args, Place::Reference(index));
+            out.push((parent.config_path.as_slice(), problem));
+        };
+        let Some(config) = config else {
+            say(6053, &[reference]);
+            continue;
+        };
+        if !parent.files.is_empty() {
+            if !config.options.composite {
+                say(6306, &[reference]);
+            }
+            if config.options.no_emit {
+                say(6310, &[reference]);
+            }
+        }
+        if !build_info_file_name.is_empty()
+            && build_info_file_name == config.get_build_info_file_name()
+        {
+            say(6377, &[&build_info_file_name, reference]);
+        }
+        pending.push((config, 0));
+    }
+    out
 }
 
 /// `options` is what has been made of `compiler`, the `compilerOptions` as they are written, in the configuration file at `config_path`,

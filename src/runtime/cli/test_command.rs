@@ -1002,7 +1002,9 @@ pub(crate) fn on_process_exit(vm: &mut VirtualMachine) {
         Some(error) => error.get(),
         // `process.reallyExit(0)`, or an 'exit' listener that stored 0 after a `process.exit()` with another code.
         None => vm.global().create_error_instance(format_args!(
-            "The process was told to exit with code 0, but this test run has failed. The exit code is 1."
+            "The process was told to exit with code 0{}, but this test run has failed. The exit code is 1.",
+            // SAFETY: see above.
+            unsafe { (*runner.as_ptr()).exit_caller() }
         )),
     };
     // SAFETY: `exec` publishes `RUNNER` as `&raw mut reporter.jest`, so the pointer is valid for the whole reporter.
@@ -1448,17 +1450,7 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    pretty_error!("\n");
-                    this.print_counts(false);
-                    this.print_summary();
-                    pretty_error!(
-                        "\nBailed out after {} failure{}<r>\n",
-                        this.jest.bail,
-                        if this.jest.bail == 1 { "" } else { "s" }
-                    );
-                    Output::flush();
-                    this.write_junit_report_if_needed();
-                    this.write_timings_if_needed();
+                    this.write_early_end_report(true);
                     Global::exit(1);
                 }
             }
@@ -1620,14 +1612,28 @@ impl CommandLineReporter {
                     core::ptr::NonNull::new_unchecked(file.as_ptr()),
                 );
             }
-            pretty_error!("\n");
-            (*this).print_counts(false);
-            (*this).print_summary();
-            pretty_error!("\n");
-            Output::flush();
-            (*this).write_junit_report_if_needed();
-            (*this).write_timings_if_needed();
+            (*this).write_early_end_report(false);
         }
+    }
+
+    /// What a run writes when it ends before the tail of `exec`: the counts, the summary line, and the JUnit and
+    /// timings files. `bailed` adds the `--bail` line.
+    fn write_early_end_report(&mut self, bailed: bool) {
+        pretty_error!("\n");
+        self.print_counts(false);
+        self.print_summary();
+        if bailed {
+            pretty_error!(
+                "\nBailed out after {} failure{}<r>\n",
+                self.jest.bail,
+                if self.jest.bail == 1 { "" } else { "s" }
+            );
+        } else {
+            pretty_error!("\n");
+        }
+        Output::flush();
+        self.write_junit_report_if_needed();
+        self.write_timings_if_needed();
     }
 
     pub(crate) fn print_summary(&mut self) {
@@ -3052,16 +3058,7 @@ impl TestCommand {
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
-                        pretty_error!("\n");
-                        reporter.print_counts(false);
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
+                        reporter.write_early_end_report(true);
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;

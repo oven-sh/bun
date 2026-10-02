@@ -159,11 +159,30 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
+/// See [`TestRunner::exit_caller`]. Displays as a phrase that follows "was called".
+pub(crate) enum ExitCaller<'a> {
+    Test(&'a [u8]),
+    HookOfTest(&'a [u8]),
+    Hook,
+    Unknown,
+}
+
+impl core::fmt::Display for ExitCaller<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ExitCaller::Test(name) => write!(f, " by the test \"{}\"", bstr::BStr::new(name)),
+            ExitCaller::HookOfTest(name) => {
+                write!(f, " by a hook of the test \"{}\"", bstr::BStr::new(name))
+            }
+            ExitCaller::Hook => f.write_str(" by a hook"),
+            ExitCaller::Unknown => Ok(()),
+        }
+    }
+}
+
 impl<'a> TestRunner<'a> {
-    /// Whether the run in this process has failed: a failed test or hook, an error thrown between tests, or a failed
-    /// verdict at the end of the run. A sequence that has failed and still runs its hooks counts, before
-    /// `handle_test_completed` adds it to `summary.fail`. A `--parallel` worker answers false: its coordinator reports
-    /// the file of a worker that exits.
+    /// Whether the run in this process has failed. A sequence that has failed and still runs its hooks counts, before
+    /// `handle_test_completed` adds it to `summary.fail`. False in a `--parallel` worker: its coordinator reports its exit.
     pub(crate) fn has_observed_failure(&self) -> bool {
         if self.test_options.test_worker {
             return false;
@@ -181,6 +200,31 @@ impl<'a> TestRunner<'a> {
                     .iter()
                     .any(|sequence| sequence.result.is_fail())
             })
+    }
+
+    /// The test or hook whose callback is on the stack. A call in tail position (`() => process.exit(0)`) leaves no
+    /// stack frame of its caller, so the message about the call names the caller.
+    pub(crate) fn exit_caller(&self) -> ExitCaller<'_> {
+        let Some(file) = self.bun_test_root.active_file.as_deref() else {
+            return ExitCaller::Unknown;
+        };
+        let execution = &file.execution;
+        let (Some(data), Some(group)) = (execution.on_stack_entry_data.get(), execution.active_group_ref()) else {
+            return ExitCaller::Unknown;
+        };
+        let Some(sequence) = group.sequences_const(execution).get(data.sequence_index) else {
+            return ExitCaller::Unknown;
+        };
+        let Some(test) = sequence.test_entry else {
+            return ExitCaller::Hook;
+        };
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+        let name = unsafe { test.as_ref() }.base.name.as_deref().unwrap_or(b"(unnamed)");
+        if core::ptr::eq(test.as_ptr().cast_const().cast::<()>(), data.entry) {
+            ExitCaller::Test(name)
+        } else {
+            ExitCaller::HookOfTest(name)
+        }
     }
 
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
@@ -374,7 +418,8 @@ pub(crate) mod Jest {
             if request.is_none() {
                 let call = if argless { "process.exit()" } else { "process.exit(0)" };
                 let error = global.create_error_instance(format_args!(
-                    "{call} was called, but this test run has failed. The exit code is 1."
+                    "{call} was called{}, but this test run has failed. The exit code is 1.",
+                    (*runner.as_ptr()).exit_caller()
                 ));
                 *request = Some(jsc::Strong::create(error, global));
             }

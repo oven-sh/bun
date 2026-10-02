@@ -254,7 +254,9 @@ import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach,
 - `0`: All tests passed, no unhandled errors
 - `1`: Test failures or unhandled errors occurred
 
-A call to `process.exit()` in a test file ends the run with the code it is given. There is one exception. If a test has already failed and the code is `0`, `bun test` prints the call site and the summary, writes the JUnit report, and exits with code `1`. A non-zero code stays as it is. A run with no failure also keeps its code, and tests and files that did not run yet are not reported.
+A call to `process.exit()` in a test file ends the run with the code it is given. There is one exception. If the run has already failed and the code is `0`, `bun test` prints the summary, writes the JUnit report, and exits with code `1`. An `'exit'` listener cannot set the exit code of a failed run to `0` either. A non-zero code stays as it is. A run with no failure also keeps its code, and the tests and files that did not run yet are not reported.
+
+A failure counts from the moment `bun test` records it. A `node:test` test records the failures of its subtests and hooks when the top-level test ends.
 
 Node.js differs here: `node --test --test-isolation=none` exits with code `0` after a failed test when a later test calls `process.exit(0)`.
 

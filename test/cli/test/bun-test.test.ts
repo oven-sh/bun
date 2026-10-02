@@ -1834,15 +1834,13 @@ describe("bun test", () => {
       import { test } from "bun:test";
       test("exits", () => { process.exit(0); });
     `;
-    const calledButFailed = "was called, but this test run has failed. The exit code is 1.";
+    const butFailed = "but this test run has failed. The exit code is 1.";
+    const byTheTest = `by the test "exits", ${butFailed}`;
 
     test.each([
-      ["process.exit(0)", `error: process.exit(0) ${calledButFailed}`],
-      ["process.exit()", `error: process.exit() ${calledButFailed}`],
-      [
-        "process.reallyExit(0)",
-        "error: The process was told to exit with code 0, but this test run has failed. The exit code is 1.",
-      ],
+      ["process.exit(0)", `error: process.exit(0) was called ${byTheTest}`],
+      ["process.exit()", `error: process.exit() was called ${byTheTest}`],
+      ["process.reallyExit(0)", `error: The process was told to exit with code 0 ${byTheTest}`],
     ])("%s prints the call site and the summary, and exits 1", async (call, message) => {
       const { stderr, exitCode } = await runFiles(
         {
@@ -1868,9 +1866,10 @@ test("never runs", () => {});
         runFiles({ "a.test.ts": failingFile, "b.test.ts": `process.exit(0);` }, "./a.test.ts", "./b.test.ts"),
       ]);
       for (const { stderr } of [inTest, atTopLevel]) {
-        expect(stderr).toContain(`error: process.exit(0) ${calledButFailed}`);
         expect(stderr).toContain(" 1 fail\n 1 expect() calls\nRan 1 test across 2 files.");
       }
+      expect(inTest.stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
+      expect(atTopLevel.stderr).toContain(`error: process.exit(0) was called, ${butFailed}`);
       expect(atTopLevel.stderr).toMatch(/at .*b\.test\.ts:1:\d+/);
       expect({ inTest: inTest.exitCode, atTopLevel: atTopLevel.exitCode }).toEqual({ inTest: 1, atTopLevel: 1 });
     });
@@ -1886,10 +1885,39 @@ test("never runs", () => {});
         },
         "./hook.test.ts",
       );
-      expect(stderr).toContain(`error: process.exit(0) ${calledButFailed}`);
+      expect(stderr).toContain(`error: process.exit(0) was called by a hook of the test "fails", ${butFailed}`);
       expect(stderr).toContain("(fail) fails");
       expect(stderr).toContain(" 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 1 file.");
       expect(exitCode).toBe(1);
+    });
+
+    // A call in tail position has no stack frame of its caller, so the message names the caller.
+    test("names the caller when process.exit(0) is the whole body of an arrow function", async () => {
+      const [inTest, inHook] = await Promise.all([
+        runFiles(
+          {
+            "tail.test.ts": `
+              import { test, expect } from "bun:test";
+              test("fails", () => { expect(1).toBe(2); });
+              test("exits", () => process.exit(0));
+            `,
+          },
+          "./tail.test.ts",
+        ),
+        runFiles(
+          {
+            "tail.test.ts": `
+              import { test, expect, afterAll } from "bun:test";
+              afterAll(() => process.exit(0));
+              test("fails", () => { expect(1).toBe(2); });
+            `,
+          },
+          "./tail.test.ts",
+        ),
+      ]);
+      expect(inTest.stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
+      expect(inHook.stderr).toContain(`error: process.exit(0) was called by a hook, ${butFailed}`);
+      expect({ inTest: inTest.exitCode, inHook: inHook.exitCode }).toEqual({ inTest: 1, inHook: 1 });
     });
 
     test("an error thrown between tests counts", async () => {
@@ -1906,7 +1934,7 @@ test("never runs", () => {});
         "./b.test.ts",
       );
       expect(stderr).toContain("thrown outside a test");
-      expect(stderr).toContain(`error: process.exit(0) ${calledButFailed}`);
+      expect(stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
       expect(stderr).toContain(" 1 error\n");
       expect(exitCode).toBe(1);
     });
@@ -1938,7 +1966,7 @@ test("never runs", () => {});
         "./a.test.ts",
         "./b.test.ts",
       );
-      expect(stderr).toContain(`error: process.exit(0) ${calledButFailed}`);
+      expect(stderr).toContain(`error: process.exit(0) was called, ${butFailed}`);
       expect(stderr).toContain(" 1 pass\n 1 fail\n");
       expect(exitCode).toBe(1);
     });
@@ -1971,7 +1999,7 @@ test("exits", () => { process.exit(0); });
         },
         "./wrapped.test.ts",
       );
-      expect(stderr).toContain(`error: process.exit(0) ${calledButFailed}\n      at <anonymous> (`);
+      expect(stderr).toContain(`error: process.exit(0) was called ${byTheTest}\n      at <anonymous> (`);
       expect(stderr).toMatch(/has failed\. The exit code is 1\.\n\s+at <anonymous> \(.*wrapped\.test\.ts:5:\d+\)/);
       expect(exitCode).toBe(1);
     });
@@ -2015,7 +2043,7 @@ test("exits", () => { process.exit(0); });
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain(`error: process.exit(0) ${calledButFailed}`);
+      expect(stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
       const xml = await Bun.file(join(String(dir), "junit.xml")).text();
       expect(xml).toContain(`<testcase name="fails"`);
       expect(xml.match(/<\/testsuites>/g)).toHaveLength(1);
@@ -2052,7 +2080,9 @@ test("exits", () => { process.exit(0); });
       ]);
       expect(bail.stderr).toContain(" 1 pass\n 1 fail\n 1 expect() calls\nRan 2 tests across 1 file.");
       expect(bail.stderr).toContain("Bailed out after 1 failure");
-      expect(bailAtExit.stderr).toContain(`error: process.exit(0) ${calledButFailed}`);
+      expect(bailAtExit.stderr).toContain(
+        `error: process.exit(0) was called by a hook of the test "fails", ${butFailed}`,
+      );
       expect(bailAtExit.stderr).toContain(" 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 1 file.");
       expect(bailAtExit.stderr).toContain("Bailed out after 1 failure");
       expect({ bail: bail.exitCode, bailAtExit: bailAtExit.exitCode }).toEqual({ bail: 1, bailAtExit: 1 });

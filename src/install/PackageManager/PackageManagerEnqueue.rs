@@ -758,6 +758,115 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
+/// A cached manifest can predate a version that was published moments ago:
+/// within the cache-control window no request is made at all, and after the
+/// window a stale registry edge can answer 304 to the conditional
+/// revalidation. When resolution fails on a manifest the network did not
+/// deliver in full this run, refetch it once without conditional headers
+/// before reporting the failure. Returns true when a refetch is pending and
+/// `id` is queued on its completion callback.
+fn refetch_manifest_for_missing_version(
+    this: &mut PackageManager,
+    name: SemverString,
+    dependency: &Dependency,
+    id: DependencyID,
+    is_root: bool,
+) -> crate::Result<bool> {
+    if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        return Ok(false);
+    }
+
+    let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
+    let task_id = Task::Id::for_manifest(&name_str);
+
+    let gpe = this.network_dedupe_map.get_or_put(task_id)?;
+    if gpe.value_ptr.manifest_fetched {
+        // The registry already answered with a full manifest this run; the
+        // missing version is authoritative.
+        return Ok(false);
+    }
+    gpe.value_ptr.is_required = gpe.value_ptr.is_required || dependency.behavior.is_required();
+    let already_forced = gpe.value_ptr.manifest_refetch_forced;
+    gpe.value_ptr.manifest_refetch_forced = true;
+
+    if !already_forced {
+        if verbose_install() {
+            bun_core::pretty_errorln!(
+                "Re-fetching package manifest without revalidation headers: {}",
+                bstr::BStr::new(&name_str)
+            );
+        }
+
+        // `loaded_manifest: None` keeps `If-None-Match` / `If-Modified-Since`
+        // out of the request so a stale 304 cannot re-stamp the old manifest.
+        let needs_extended_manifest = this.options.minimum_release_age_ms.is_some();
+        enqueue_manifest_network_task(
+            this,
+            task_id,
+            &name_str,
+            None,
+            dependency.behavior.is_optional(),
+            needs_extended_manifest,
+        )?;
+    }
+
+    queue_dependency_on_task(this, task_id, id, is_root)?;
+    Ok(true)
+}
+
+/// Vends a network-task slot for the manifest of `name` and enqueues it.
+/// `loaded_manifest` supplies the etag / last-modified for a conditional
+/// request; `None` sends an unconditional one.
+fn enqueue_manifest_network_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    name: &[u8],
+    loaded_manifest: Option<&Npm::PackageManifest>,
+    is_optional: bool,
+    needs_extended_manifest: bool,
+) -> crate::Result<()> {
+    let this_ptr: *mut PackageManager = this;
+    let network_task = this.get_network_task();
+    // SAFETY: `network_task` is the unique handle to a freshly-vended pool
+    // slot. `write_init` resets every defaulted field (callback is
+    // uninitialized and overwritten by `for_manifest`).
+    unsafe {
+        NetworkTask::write_init(network_task, task_id, this_ptr, None);
+    }
+    let scope = this.scope_for_package_name(name);
+    // SAFETY: `network_task` points to a valid initialized NetworkTask slot.
+    unsafe {
+        (*network_task).for_manifest(
+            name,
+            scope,
+            loaded_manifest,
+            is_optional,
+            needs_extended_manifest,
+        )?;
+    }
+    enqueue_network_task(this, network_task);
+    Ok(())
+}
+
+/// Re-enqueues dependency `id` when the task `task_id` completes.
+fn queue_dependency_on_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    id: DependencyID,
+    is_root: bool,
+) -> crate::Result<()> {
+    let manifest_entry_parse = this.task_queue.get_or_put_context(task_id, ())?;
+    if !manifest_entry_parse.found_existing {
+        *manifest_entry_parse.value_ptr = TaskCallbackList::default();
+    }
+    manifest_entry_parse.value_ptr.push(if is_root {
+        TaskCallbackContext::RootDependency(id)
+    } else {
+        TaskCallbackContext::Dependency(id)
+    });
+    Ok(())
+}
+
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
 pub fn enqueue_dependency_with_main_and_success_fn(
@@ -918,6 +1027,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
+                            // Not for peers: an unmet peer only warns, and bun-lock.test.ts pins zero requests for it.
+                            if matches!(
+                                err,
+                                crate::Error::DistTagNotFound | crate::Error::NoMatchingVersion
+                            ) && matches!(
+                                version.tag,
+                                dependency::version::Tag::Npm | dependency::version::Tag::DistTag
+                            ) && !dependency.behavior.is_peer()
+                                && refetch_manifest_for_missing_version(
+                                    this, name, dependency, id, is_root,
+                                )?
+                            {
+                                return Ok(());
+                            }
                             if err == crate::Error::DistTagNotFound {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
@@ -1297,49 +1420,21 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     );
                                 }
 
-                                // `get_network_task` touches only the
-                                // preallocated pool, not `string_bytes`;
-                                // `name_str` is an owned copy, so `this` is
-                                // free to reborrow `&mut`.
-                                let network_task = this.get_network_task();
-                                // SAFETY: `network_task` is the unique handle to a
-                                // freshly-vended pool slot. `write_init` resets every
-                                // defaulted field (callback is uninitialized and
-                                // overwritten by `for_manifest`).
-                                unsafe {
-                                    NetworkTask::write_init(network_task, task_id, this_ptr, None);
-                                }
-
-                                let scope = this.scope_for_package_name(&name_str);
-                                // SAFETY: network_task points to a valid initialized NetworkTask slot
-                                unsafe {
-                                    (*network_task).for_manifest(
-                                        &name_str,
-                                        scope,
-                                        loaded_manifest.as_ref(),
-                                        dependency.behavior.is_optional(),
-                                        needs_extended_manifest,
-                                    )?;
-                                }
-                                enqueue_network_task(this, network_task);
+                                enqueue_manifest_network_task(
+                                    this,
+                                    task_id,
+                                    &name_str,
+                                    loaded_manifest.as_ref(),
+                                    dependency.behavior.is_optional(),
+                                    needs_extended_manifest,
+                                )?;
                             }
                         } else {
                             this.peer_dependencies.write_item(id)?;
                             return Ok(());
                         }
 
-                        let manifest_entry_parse =
-                            this.task_queue.get_or_put_context(task_id, ())?;
-                        if !manifest_entry_parse.found_existing {
-                            *manifest_entry_parse.value_ptr = TaskCallbackList::default();
-                        }
-
-                        let ctx = if is_root {
-                            TaskCallbackContext::RootDependency(id)
-                        } else {
-                            TaskCallbackContext::Dependency(id)
-                        };
-                        manifest_entry_parse.value_ptr.push(ctx);
+                        queue_dependency_on_task(this, task_id, id, is_root)?;
                     }
                     return Ok(());
                 }

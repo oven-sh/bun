@@ -7,11 +7,13 @@ const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
-const { UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
+const { UV_EEXIST, UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 
 let child_process;
 let RoundRobinHandle;
 let SharedHandle;
+let validateFd;
+let isFdOfDgramSocket;
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
@@ -45,7 +47,7 @@ const SCHED_RR = 2;
 
 export default cluster;
 
-const handles = new Map();
+const handles = new Map<string, any>();
 cluster.isWorker = false;
 cluster.isMaster = true; // Deprecated alias. Must be same as isPrimary.
 cluster.isPrimary = true;
@@ -240,6 +242,21 @@ function exitedAfterDisconnect(worker, message) {
   send(worker, { ack: message.seq });
 }
 
+// A handle closes its descriptor when its last worker leaves, so a second handle for a held descriptor closes it under the holder. Looked up by number: `udp4` and `udp6` are two keys for one descriptor.
+function errnoOfFdQuery(message) {
+  const fd = message.fd;
+  const isUdp = message.addressType === "udp4" || message.addressType === "udp6";
+  let held = isUdp && (isFdOfDgramSocket ??= $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1))(fd);
+  if (!held) {
+    handles.$forEach(handle => {
+      if (handle.fd === fd) held = true;
+    });
+  }
+  if (!held) return 0;
+  // The kind comes before the holder, as in node. Not as in node v26.3.0: EEXIST also under SCHED_NONE and for udp4 then udp6, where its worker dies on an assertion (nodejs/node#64869) or node serves and closes the number two times.
+  return (validateFd ??= $newRustFunction("node_cluster_binding.rs", "clusterValidateFd", 2))(fd, isUdp) || UV_EEXIST;
+}
+
 function queryServer(worker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
@@ -293,6 +310,13 @@ function queryServer(worker, message) {
       error.syscall = "write";
       worker.emit("error", error);
       return;
+    }
+    if (typeof message.fd === "number" && message.fd >= 0) {
+      const errno = errnoOfFdQuery(message);
+      if (errno !== 0) {
+        send(worker, { errno, key, ack: message.seq, data: cachedHandle ? cachedHandle.data : message.data }, null);
+        return;
+      }
     }
     if (
       schedulingPolicy !== SCHED_RR ||

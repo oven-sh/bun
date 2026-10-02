@@ -731,6 +731,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
     }
 }
 
+/// `(fd, wantDgram)` → 0 when `fd` can serve a query of that kind (datagram, else stream), or a negative errno.
 #[bun_jsc::host_fn]
 pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _ = global;
@@ -741,12 +742,21 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
     #[cfg(not(windows))]
     {
         let fd = value.to_int32();
+        // `fd: 3.5` is not descriptor 3: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1904-L1911
+        if f64::from(fd) != value.as_number() {
+            return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
+        }
         if fd < 0 {
             return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::BADF));
         }
+        let wanted = if frame.argument(1).to_boolean() {
+            libc::SOCK_DGRAM
+        } else {
+            libc::SOCK_STREAM
+        };
         let mut ty: libc::c_int = 0;
         let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
-        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are
+        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are live locals, and `len` is the size of `ty`.
         let rc = unsafe {
             libc::getsockopt(
                 fd,
@@ -756,8 +766,8 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
                 &raw mut len,
             )
         };
-        // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
-        if rc != 0 || (ty != libc::SOCK_STREAM && ty != libc::SOCK_DGRAM) {
+        // A descriptor of another kind is EINVAL before node opens it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1904-L1911 and https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dgram.js#L67-L70
+        if rc != 0 || ty != wanted {
             return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
         }
         if ty == libc::SOCK_STREAM {
@@ -769,6 +779,21 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
                 libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
             };
             if connected {
+                return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
+            }
+        } else {
+            // SAFETY: sockaddr_storage is plain data; getsockname only writes within `name_len`.
+            let family = unsafe {
+                let mut name: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
+                let mut name_len =
+                    core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+                if libc::getsockname(fd, (&raw mut name).cast(), &raw mut name_len) != 0 {
+                    return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
+                }
+                libc::c_int::from(name.ss_family)
+            };
+            // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tty.c#L458-L460
+            if family != libc::AF_INET && family != libc::AF_INET6 {
                 return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
             }
         }

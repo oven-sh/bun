@@ -1,6 +1,6 @@
 const clusterRawBind = $newRustFunction("node_cluster_binding.rs", "clusterRawBind", 4);
 const closeRawHandle = $newRustFunction("node_cluster_binding.rs", "clusterCloseHandle", 1);
-const validateFd = $newRustFunction("node_cluster_binding.rs", "clusterValidateFd", 1);
+const validateFd = $newRustFunction("node_cluster_binding.rs", "clusterValidateFd", 2);
 
 export default class SharedHandle {
   key;
@@ -19,7 +19,7 @@ export default class SharedHandle {
     this.sharedOnly = sharedOnly === true;
 
     if (typeof fd === "number" && fd >= 0) {
-      const err = validateFd(fd);
+      const err = validateFd(fd, addressType === "udp4" || addressType === "udp6");
       if (err !== 0) {
         this.errno = err;
       } else {
@@ -45,6 +45,12 @@ export default class SharedHandle {
 
   has(worker) {
     return this.workers.has(worker.id);
+  }
+
+  // The descriptor that remove() closes: the number a worker named, or the socket that clusterRawBind made.
+  get fd() {
+    const handle = this.handle;
+    return handle ? handle.fd : -1;
   }
 
   remove(worker) {

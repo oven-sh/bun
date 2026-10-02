@@ -1,15 +1,18 @@
-// checker.go:22214-22911 (layer T-INSTANTIATE): the functions of 22214-22597, 22632-22636 and 22856-22911: instantiation of types with the caches of the active mappers, the test for type variables, instantiation of object types, anonymous types, reverse mapped types and type aliases, and instantiation of lists.
+// checker.go:22214-22911 (layers T-INSTANTIATE, K-COND, T-MAPPED): instantiation of types with the caches of the active mappers, the test for type variables, instantiation of object types, anonymous types, conditional types, mapped types, reverse mapped types and type aliases, the type parameter, constraint, name and template of a mapped type, and instantiation of lists.
 use crate::ast::{
     FindAncestorResult, Kind, NodeId, SymbolFlags, SymbolId, find_ancestor_or_quit,
     get_declaration_of_kind, get_first_identifier, is_block, is_conditional_type_node,
-    is_this_identifier, is_type_parameter_declaration,
+    is_this_identifier, is_type_operator_node, is_type_parameter_declaration,
 };
 use crate::checker::{
-    CacheHashKey, Checker, IndexInfoId, IntersectionFlags, KeyBuilder, ListItem, ObjectFlags,
-    SignatureId, TypeAlias, TypeAliasId, TypeFlags, TypeId, TypeMapperId, UnionReduction,
-    get_type_instantiation_key, is_node_descendant_of, new_simple_type_mapper, new_type_mapper,
+    CacheHashKey, Checker, ElementFlags, IndexInfoId, IntersectionFlags, KeyBuilder, ListItem,
+    MappedTypeModifiers, ObjectFlags, SignatureId, TupleElementInfo, TypeAlias, TypeAliasId,
+    TypeFlags, TypeId, TypeMapperId, TypeSystemEntity, TypeSystemPropertyName, UnionReduction,
+    append_type_mapping, every_type, get_conditional_type_key, get_mapped_type_modifiers,
+    get_type_instantiation_key, is_node_descendant_of, is_tuple_type, new_simple_type_mapper,
+    new_type_mapper, prepend_type_mapping,
 };
-use crate::core::{List, Map, same};
+use crate::core::{List, Map, or_else, same};
 use crate::diagnostics;
 
 impl<'a> Checker<'a> {

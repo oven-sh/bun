@@ -353,36 +353,57 @@ test("rejects empty-valued Content-Length followed by smuggled Content-Length", 
   expect(seen).not.toContain("GET /admin");
 });
 
-test("frames a Content-Length with leading zeros by its digits", async () => {
-  // RFC 9110 8.6: Content-Length = 1*DIGIT, so leading zeros are valid. This
-  // 19-byte value is 5: the body is "hello" and the pipelined GET is served.
+// RFC 9110 8.6: Content-Length = 1*DIGIT. This 19-byte value is 5.
+const zeroPaddedPost = "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 0000000000000000005\r\n\r\nhello";
+
+test("Bun.serve rejects a Content-Length longer than 18 bytes", async () => {
   const seen: string[] = [];
   await using server = Bun.serve({
     port: 0,
-    async fetch(req) {
-      seen.push(`${req.method} ${new URL(req.url).pathname} body=${await req.text()}`);
+    fetch(req) {
+      seen.push(new URL(req.url).pathname);
       return new Response("OK");
     },
   });
 
   const { promise, resolve, reject } = Promise.withResolvers<string>();
-  const client = net.connect(server.port, "127.0.0.1", () => {
-    client.write(
-      "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 0000000000000000005\r\n\r\nhello" +
-        "GET /b HTTP/1.1\r\nHost: x\r\n\r\n",
-    );
+  const client = net.connect(server.port, "127.0.0.1", () => client.write(zeroPaddedPost));
+  let raw = "";
+  client.on("data", data => (raw += data));
+  client.on("error", reject);
+  client.on("close", () => resolve(raw));
+
+  expect(await promise).toStartWith("HTTP/1.1 400");
+  expect(seen).toEqual([]);
+});
+
+test("node:http frames a zero-padded Content-Length by its digits (llhttp parity)", async () => {
+  const hits: { url: string; body: string }[] = [];
+  await using server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => (body += d));
+    req.on("end", () => {
+      hits.push({ url: req.url!, body });
+      res.end("ok");
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as net.AddressInfo).port;
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const client = net.connect(port, "127.0.0.1", () => {
+    client.write(zeroPaddedPost + "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
   });
   let raw = "";
-  client.on("data", data => {
-    raw += data;
-    if (raw.match(/HTTP\/1\.1 200/g)?.length === 2) resolve(raw);
-  });
+  client.on("data", data => (raw += data));
   client.on("error", reject);
   client.on("close", () => resolve(raw));
   const response = await promise;
-  client.destroy();
 
-  expect(seen.sort()).toEqual(["GET /b body=", "POST /a body=hello"]);
+  expect(hits.sort((a, b) => a.url.localeCompare(b.url))).toEqual([
+    { url: "/a", body: "hello" },
+    { url: "/b", body: "" },
+  ]);
   expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
 });
 

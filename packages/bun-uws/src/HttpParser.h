@@ -74,8 +74,7 @@ struct HttpResponseData;
     enum HttpParserError: uint8_t {
         HTTP_PARSER_ERROR_NONE = 0,
         HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
-        /* A Content-Length value has a byte that is not a digit (llhttp's
-         * HPE_INVALID_CONTENT_LENGTH "Invalid character in Content-Length"). */
+        /* A non-digit byte in a Content-Length value (llhttp "Invalid character in Content-Length"). */
         HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH = 2,
         HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING = 3,
         HTTP_PARSER_ERROR_MISSING_HOST_HEADER = 4,
@@ -108,15 +107,9 @@ struct HttpResponseData;
          * body. llhttp reports HPE_INVALID_CONTENT_LENGTH ("Content-Length can't
          * be present with Transfer-Encoding"). node:http compat only. */
         HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
-        /* A Content-Length field has an empty value (llhttp's
-         * HPE_INVALID_CONTENT_LENGTH "Empty Content-Length"). */
         HTTP_PARSER_ERROR_EMPTY_CONTENT_LENGTH = 18,
-        /* A Content-Length value is too large to frame a body (llhttp's
-         * HPE_INVALID_CONTENT_LENGTH "Content-Length overflow"). */
         HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW = 19,
-        /* A second Content-Length field has a different value. llhttp reports
-         * every second field as HPE_UNEXPECTED_CONTENT_LENGTH "Duplicate
-         * Content-Length". This parser accepts a second field with the same value. */
+        /* A second Content-Length with a different value. The same value is accepted; llhttp rejects both. */
         HTTP_PARSER_ERROR_DUPLICATE_CONTENT_LENGTH = 20,
     };
 
@@ -747,20 +740,31 @@ struct HttpResponseData;
          * personality so a client cannot stream unbounded extension bytes. */
         static const uint64_t MAX_CHUNK_EXTENSION_SIZE = 16 * 1024;
 
-        /* Parses a non-empty Content-Length value (RFC 9110 8.6: 1*DIGIT) into value.
-         * Like llhttp, the first byte that is not a digit is an invalid character and
-         * a value that grows past the limit is an overflow. The limit is STATE_SIZE_MASK,
-         * not UINT64_MAX: remainingStreamingBytes holds either this byte count or the
-         * ChunkedEncoding state word, and isParsingChunkedEncoding() tells them apart
-         * by the flag bits above STATE_SIZE_MASK. */
-        static HttpParserError parseContentLength(std::string_view str, uint64_t &value) {
+        /* The limit is STATE_SIZE_MASK, not UINT64_MAX: remainingStreamingBytes shares its top bits with the chunked state flags. */
+        static HttpParserError parseContentLength(std::string_view str, uint64_t &value, bool acceptLong) {
             uint64_t result = 0;
-            for (char c : str) {
-                if (c < '0' || c > '9') {
-                    return HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH;
+            if (str.length() > 18) [[unlikely]] {
+                /* Only leading zeros keep a longer value at or below the limit. llhttp accepts them. */
+                if (!acceptLong) {
+                    return HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW;
                 }
-                /* result <= STATE_SIZE_MASK (2^59 - 1) here, so result * 10 + 9 stays below 2^63. */
-                result = result * 10ull + ((unsigned int) c - (unsigned int) '0');
+                for (char c : str) {
+                    if (c < '0' || c > '9') {
+                        return HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH;
+                    }
+                    result = result * 10ull + ((unsigned int) c - (unsigned int) '0');
+                    if (result > STATE_SIZE_MASK) {
+                        return HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW;
+                    }
+                }
+            } else {
+                /* 18 digits stay below 2^63, so one check after the loop is enough. */
+                for (char c : str) {
+                    if (c < '0' || c > '9') {
+                        return HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH;
+                    }
+                    result = result * 10ull + ((unsigned int) c - (unsigned int) '0');
+                }
                 if (result > STATE_SIZE_MASK) {
                     return HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW;
                 }
@@ -1307,16 +1311,13 @@ struct HttpResponseData;
             * the Transfer-Encoding overrides the Content-Length. Such a message might indicate an attempt
             * to perform request smuggling (Section 11.2) or response splitting (Section 11.1) and
             * ought to be handled as an error. */
-            /* RFC 9110 8.6 + RFC 9112 6.3: locate the Content-Length header and parse its
-             * value. An empty, non-numeric or oversized value, or a second field with a
-             * different value, is ambiguous and must be rejected to prevent request
-             * smuggling. A second field with the same value is accepted (RFC 9110 8.6
-             * allows that, llhttp rejects it). The fields are checked in wire order, so the
-             * first bad field decides the error, as in llhttp. A bad value is reported
-             * before the Transfer-Encoding and Host checks below. llhttp does the same when
-             * Content-Length comes first. When Transfer-Encoding comes first, llhttp rejects
-             * the Content-Length field by its name. The bloom filter short-circuits the
-             * common "no Content-Length" case. */
+            /* RFC 9110 8.6 + RFC 9112 6.3: locate the Content-Length header and, in the
+             * same pass, verify every Content-Length header carries the same non-empty
+             * value. A single empty value or multiple differing values are ambiguous and
+             * must be rejected to prevent request smuggling. The value is parsed here, in
+             * wire order and before the Transfer-Encoding and Host checks, like llhttp when
+             * Content-Length comes first. The bloom filter short-circuits the common "no
+             * Content-Length" case. */
             std::string_view contentLengthString;
             uint64_t contentLength = 0;
             if (req->bf.mightHave("content-length")) {
@@ -1326,7 +1327,7 @@ struct HttpResponseData;
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_EMPTY_CONTENT_LENGTH);
                         }
                         if (contentLengthString.data() == nullptr) {
-                            if (HttpParserError contentLengthError = parseContentLength(h->value, contentLength)) [[unlikely]] {
+                            if (HttpParserError contentLengthError = parseContentLength(h->value, contentLength, IsNodeHttp)) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, contentLengthError);
                             }
                             contentLengthString = h->value;
@@ -1437,8 +1438,7 @@ struct HttpResponseData;
             const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
             req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
 
-            /* Set before calling requestHandler. parseContentLength() already kept the
-             * value at or below STATE_SIZE_MASK, so it cannot reach a chunked flag bit. */
+            /* parseContentLength() kept this at or below STATE_SIZE_MASK, so it cannot reach a chunked flag bit. */
             if(contentLengthStringLen) {
                 remainingStreamingBytes = contentLength;
             }

@@ -1351,10 +1351,7 @@ function onServerClientError(
     return;
   }
 
-  // Node sets err.reason to the llhttp reason string and the message to
-  // "Parse Error: <reason>". The Content-Length arms set reason. Each of their
-  // parser errors stands for exactly one llhttp code and reason, so the reason
-  // is right for every input. The other arms leave reason unset.
+  // err.reason is set where the parser error maps to exactly one llhttp reason.
   let err, reason;
   switch (errorCode) {
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING:
@@ -1387,7 +1384,8 @@ function onServerClientError(
       err = $HPE_INVALID_CONSTANT("Parse Error: Expected HTTP/");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_EOF:
-      err = $HPE_INVALID_EOF_STATE("Parse Error: Invalid EOF state");
+      reason = "Invalid EOF state";
+      err = $HPE_INVALID_EOF_STATE(`Parse Error: ${reason}`);
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_METHOD:
       err = $HPE_INVALID_METHOD("Parse Error: Invalid method encountered");
@@ -1398,24 +1396,29 @@ function onServerClientError(
       break;
     case HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:
     case HttpParserError.HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE:
-      err = $HPE_HEADER_OVERFLOW("Parse Error: Header overflow");
+      reason = "Header overflow";
+      err = $HPE_HEADER_OVERFLOW(`Parse Error: ${reason}`);
       err.bytesParsed = rawPacket.byteLength;
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_HTTP_VERSION:
       err = $HPE_INVALID_VERSION("Parse Error: Invalid HTTP version");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_LF_EXPECTED:
-      err = $HPE_LF_EXPECTED("Parse Error: Missing expected LF after header value");
+      reason = "Missing expected LF after header value";
+      err = $HPE_LF_EXPECTED(`Parse Error: ${reason}`);
       break;
     case HttpParserError.HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW:
-      err = $HPE_CHUNK_EXTENSIONS_OVERFLOW("Parse Error: Chunk extensions overflow");
+      reason = "Chunk extensions overflow";
+      err = $HPE_CHUNK_EXTENSIONS_OVERFLOW(`Parse Error: ${reason}`);
       break;
     case HttpParserError.HTTP_PARSER_ERROR_PAUSED_H2_UPGRADE:
-      err = $HPE_PAUSED_H2_UPGRADE("Parse Error: Pause on PRI/Upgrade");
+      reason = "Pause on PRI/Upgrade";
+      err = $HPE_PAUSED_H2_UPGRADE(`Parse Error: ${reason}`);
       err.bytesParsed = 24;
       break;
     case HttpParserError.HTTP_PARSER_ERROR_CLOSED_CONNECTION:
-      err = $HPE_CLOSED_CONNECTION("Parse Error: Data after `Connection: close`");
+      reason = "Data after `Connection: close`";
+      err = $HPE_CLOSED_CONNECTION(`Parse Error: ${reason}`);
       break;
     case HttpParserError.HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED:
       err = $HPE_STRICT("Parse Error: Expected LF after chunk data");

@@ -25,6 +25,4 @@ const client = connect(server.address().port, () => {
 });
 
 const err = (await promise) as Error;
-// Node reports a non-numeric value as HPE_INVALID_CONTENT_LENGTH. Only a second
-// Content-Length field is HPE_UNEXPECTED_CONTENT_LENGTH.
 expect(err.code).toBe("HPE_INVALID_CONTENT_LENGTH");

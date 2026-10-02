@@ -1574,6 +1574,119 @@ server.stop(true);
   );
 }
 
+// A client that leaves in the middle of a file body must not leave the file
+// open, and the close must not hit the fd of another response. On Windows the
+// read runs on the libuv threadpool, so the reader closes the fd after a read
+// that is in flight when the client leaves. This test has no pipe, so it runs
+// on every platform. The file is 4.25 MiB, more than a socket takes at once.
+test.concurrent(
+  "Bun.file responses that a client leaves mid-body close their file and leave later responses intact",
+  async () => {
+    using dir = tempDir("serve-file-abort-close", {
+      "fixture.ts": `
+import { closeSync, openSync, readFileSync } from "node:fs";
+
+const [path, count] = process.argv.slice(2);
+const N = Number(count);
+const payload = readFileSync(path);
+
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  idleTimeout: 0,
+  routes: { "/route": Bun.file(path) },
+  fetch: () => new Response(Bun.file(path)),
+});
+
+// Counts the open fds of this process without /proc, which Windows does not
+// have. Fds are handed out lowest first, so the probes fill every hole and then
+// extend past the highest fd in use: each slot below the highest probe that is
+// not a probe is an open fd.
+function openFds() {
+  const probes = [];
+  for (let i = 0; i < 64; i++) probes.push(openSync(path, "r"));
+  for (const fd of probes) closeSync(fd);
+  return Math.max(...probes) + 1 - probes.length;
+}
+
+// The close of an fd is asynchronous. Waits, with a bound, until at most
+// \`target\` fds are open.
+async function settledFds(target) {
+  let fds = openFds();
+  for (let i = 0; i < 100 && fds > target; i++) {
+    await Bun.sleep(10);
+    fds = openFds();
+  }
+  return fds;
+}
+
+// Requests the file and leaves in the middle of the body, after a different
+// amount each time, so the disconnect lands at different points of the
+// server's read and write cycle.
+async function requestAndDisconnect(i) {
+  const { promise, resolve } = Promise.withResolvers();
+  let received = 0;
+  const socket = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.write("GET /" + (i % 2 ? "route" : "fetch") + " HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+      },
+      data(socket, chunk) {
+        received += chunk.length;
+        if (received > (i % 3) * 65536) resolve();
+      },
+      close: resolve,
+      error: resolve,
+    },
+  });
+  await promise;
+  socket.terminate();
+}
+
+async function disconnectMany(n) {
+  for (let i = 0; i < n; i += 8) {
+    await Promise.all(Array.from({ length: Math.min(8, n - i) }, (_, k) => requestAndDisconnect(i + k)));
+  }
+}
+
+const idle = openFds();
+// The first responses can open fds that stay for the life of the process.
+await disconnectMany(8);
+const baseline = Math.max(idle, await settledFds(idle));
+
+await disconnectMany(N);
+const leaked = Math.max(0, (await settledFds(baseline)) - baseline);
+
+// A close that lands on the wrong fd breaks a response that is being served.
+const intact = [];
+for (const route of ["fetch", "route"]) {
+  const body = Buffer.from(await (await fetch(server.url + route)).arrayBuffer());
+  intact.push(body.equals(payload));
+}
+console.log(JSON.stringify({ leaked, intact }));
+// No process.exit(): a stream that still holds its file keeps the process alive.
+server.stop(true);
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", join(import.meta.dir, "../../web/encoding/utf8-encoding-fixture.bin"), "32"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ leaked: 0, intact: [true, true] });
+    expect(exitCode).toBe(0);
+  },
+);
+
 // A FIFO's stat size is 0, but the body length is unknown until EOF. Writing
 // Content-Length from the stat size and then streaming the pipe to EOF puts
 // body bytes on the wire past the declared length; on a keep-alive connection

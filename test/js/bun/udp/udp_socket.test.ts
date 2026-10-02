@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  bunRun,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
   isIPv6,
@@ -14,6 +15,8 @@ import {
 import { closeSync, openSync } from "node:fs";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
+
+const recvBudgetFixture = path.join(import.meta.dir, "udp-recv-budget-fixture.ts");
 
 describe("udpSocket()", () => {
   test.each(["setTTL", "setMulticastTTL"])(
@@ -671,6 +674,28 @@ describe("udpSocket()", () => {
     // Exactly one data event, observed while the socket was still open.
     expect(stdout.trim()).toBe('["data:false"]');
     expect(exitCode).toBe(0);
+  });
+
+  // One readable event hands over at most 32 datagrams, the count libuv uses,
+  // and the rest waits in the kernel for the next iteration of the event loop.
+  // Without a bound a peer that keeps the queue non-empty keeps the loop inside
+  // that one event, and no timer, immediate or other socket runs. Each scenario
+  // of the fixture queues its backlog before the loop polls and reports the
+  // datagrams of every iteration.
+  describe.concurrent("a readable event hands over at most 32 datagrams", () => {
+    test("of a backlog of 100", async () => {
+      const result = await bunRun([recvBudgetFixture, "backlog"]);
+      expect(result).toSpawn();
+      expect(JSON.parse(result.stdout)).toMatchObject({ finished: true, total: 100, max: 32 });
+    });
+
+    // The first batch of the event is short, so the last one has to ask for
+    // what is left of the 32 and not for a full batch.
+    test("when the data handler queues more on its own socket", async () => {
+      const result = await bunRun([recvBudgetFixture, "refill"]);
+      expect(result).toSpawn();
+      expect(JSON.parse(result.stdout)).toMatchObject({ finished: true, total: 107, max: 32 });
+    });
   });
 
   // sendMany() iterates the input array and may run user JS (array index

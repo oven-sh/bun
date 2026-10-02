@@ -2919,11 +2919,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         key
     }
 
-    /// `anchor` is the [200] block collection's own anchor; an anchor on
-    /// `first_key` has already been bound by the caller.
+    /// `anchor` is the [200] block collection's own anchor; `key_anchor` is
+    /// that of a scalar `first_key`, a collection's being bound already.
     fn parse_block_mapping(
         &mut self,
         anchor: Option<PendingAnchor>,
+        key_anchor: Option<PendingAnchor>,
         first_key: Expr,
         mapping_start: Pos,
         mapping_indent: Indent,
@@ -2940,6 +2941,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 && let Some(start) = counter.starts.last_mut()
             {
                 *start = counter.closed_start;
+            }
+            if let Some(key_anchor) = key_anchor {
+                p.bind_anchor(key_anchor, first_key)?;
             }
             p.parse_block_mapping_entries(
                 first_key,
@@ -3526,7 +3530,7 @@ struct AnchorCount {
     visited: bool,
     /// `has_own_leaf` of `node`, once an alias has asked.
     own_leaf: Option<bool>,
-    /// The `events` inside the node.
+    /// The `events` inside the node. Until it is complete, `start` is its `Define`.
     start: usize,
     end: usize,
 }
@@ -3606,12 +3610,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let is_collection = collection_id(&node).is_some();
         if let AliasCheck::Count(counter) = &mut self.alias_check {
             let end = counter.events.len();
-            counter.anchors[id].end = end;
-            counter.anchors[id].start = if is_collection {
-                counter.closed_start
+            let anchor = &mut counter.anchors[id];
+            anchor.end = end;
+            if is_collection {
+                // Its `Define` belongs to what contains the node.
+                let defined_at = core::mem::replace(&mut anchor.start, counter.closed_start);
+                counter.closed_start = counter.closed_start.min(defined_at);
             } else {
-                end
-            };
+                anchor.start = end;
+            }
         }
         let height = if is_collection {
             self.closed_deepest.saturating_sub(self.depth)
@@ -3635,7 +3642,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             alias_count: 0.0,
             visited: true,
             own_leaf: None,
-            start: 0,
+            start: counter.events.len(),
             end: 0,
         });
         counter.events.push(AliasEvent::Define(id));
@@ -4486,6 +4493,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(alias_line)?,
+                            None,
                             copy,
                             alias_start,
                             alias_indent,
@@ -4544,6 +4552,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(sequence_line)?,
+                            None,
                             seq,
                             sequence_start,
                             sequence_indent,
@@ -4625,6 +4634,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let parent_map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(mapping_line)?,
+                            None,
                             map,
                             mapping_start,
                             mapping_indent,
@@ -4713,12 +4723,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let first_key = key_tag.resolve_null(self.token.start.loc());
 
                     let anchors = node_props.take_implicit_key_anchors(colon_line)?;
-                    if let Some(key_anchor) = anchors.key_anchor {
-                        self.bind_anchor(key_anchor, first_key)?;
-                    }
 
                     let mapping = self.parse_block_mapping(
                         anchors.mapping_anchor,
+                        anchors.key_anchor,
                         first_key,
                         self.token.start,
                         self.token.indent,
@@ -4821,12 +4829,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
 
                         let anchors = node_props.take_implicit_key_anchors(scalar_line)?;
-                        if let Some(key_anchor) = anchors.key_anchor {
-                            self.bind_anchor(key_anchor, implicit_key)?;
-                        }
 
                         let mapping = self.parse_block_mapping(
                             anchors.mapping_anchor,
+                            anchors.key_anchor,
                             implicit_key,
                             scalar_start,
                             scalar_indent,

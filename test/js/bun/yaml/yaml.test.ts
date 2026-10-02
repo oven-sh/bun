@@ -769,6 +769,8 @@ root: &root
             "a: &x 1\nm: &m {k: *x, j: *x}\nn: &n {i: *x}\nc: {<<: [*m, *n]}",
             12,
           ],
+          ["an anchored first key anew in a merge source", "m: &m\n  &x k: v\na: *x\nb: *x\nc: {<<: *m}\nd: *x", 3],
+          ["an anchored first key that is a collection", "m: &m\n  &x [k]: v\na: *x\nb: *x\nc: {<<: *m}\nd: *x", 3],
           ["a mapping that contains the alias", "&a {k: *a}", 2],
           ["what follows a cyclic alias in its collection", "&a [*a, 1]", 2],
           ["each document on its own", "---\na: &x 1\nb: *x\n---\na: &x 1\nb: *x\nc: *x", 3],

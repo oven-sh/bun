@@ -327,6 +327,9 @@ pub struct Files {
     pub undefined_symbol: Sym,
     /// `unknownSymbol`: what an alias that leads nowhere resolves to. It is in no table.
     pub unknown_symbol: Sym,
+    /// `prototypeSymbol` of `bindClassLikeDeclaration`: the property `symbol.Exports["prototype"]` of a class, which nothing declares.
+    /// One for all classes.
+    pub prototype_symbol: Sym,
     ambient_modules: FxHashMap<Atom, Sym>,
     /// `declare module "*.svg"`
     ambient_patterns: Vec<(String, String, Sym)>,
@@ -1600,7 +1603,9 @@ impl Files {
         };
 
         let mut starts: Vec<FileId> = Vec::new();
-        for lib in &options.libs {
+        // `processAllProgramFiles`: without root files there are no libraries and no automatic type directives.
+        let has_root_files = !roots.is_empty();
+        for lib in options.libs.iter().filter(|_| has_root_files) {
             let lib = lib_file_stem(host, &options, lib);
             let (path, is_lib) = lib_path(&resolver, &options, lib);
             starts.push(add(
@@ -1632,7 +1637,12 @@ impl Files {
                 }
             }
         }
-        for name in &automatic_type_directives(host, &options) {
+        let directives = if has_root_files {
+            automatic_type_directives(host, &options)
+        } else {
+            Vec::new()
+        };
+        for name in &directives {
             match resolver.resolve_type_reference(
                 name,
                 &options.base_dir,
@@ -1910,6 +1920,10 @@ impl Files {
                 id: SymbolId::NONE,
             },
             unknown_symbol: Sym {
+                file: FileId(0),
+                id: SymbolId::NONE,
+            },
+            prototype_symbol: Sym {
                 file: FileId(0),
                 id: SymbolId::NONE,
             },
@@ -2432,7 +2446,9 @@ impl Files {
             && module.hir.has_module_syntax
             && module.bound.global_augmentations.is_empty()
             && module.bound.ambient_modules.is_empty()
-            && module.bound.umd_globals.is_empty();
+            && module.bound.umd_globals.is_empty()
+            // `make_module_clones`: it adds a symbol to the file of what it imports.
+            && !(module.hir.imports.iter()).any(|import| import.namespace.is_some());
         // All the trees of a big program at once are several times what is ever needed afterwards.
         if may_drop && module.adds_nothing && looks_like_a_leaf(path, &module.bound) {
             module.hir = stub_of(&mut module.hir, true);
@@ -2866,6 +2882,7 @@ impl Files {
             return;
         }
         self.unknown_symbol = self.new_symbol(SymFlags::PROPERTY, known::unknown);
+        self.prototype_symbol = self.new_symbol(SymFlags::PROPERTY, known::prototype);
         self.undefined_symbol = self.new_symbol(SymFlags::PROPERTY, known::undefined);
         self.global_this_symbol =
             self.new_symbol(SymFlags::MODULE | SymFlags::MERGED, known::globalThis);

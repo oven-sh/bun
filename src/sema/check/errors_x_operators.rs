@@ -645,7 +645,7 @@ fn note_assignment_pattern(
                 let is_pattern = prop.value.is_some() && is_nested_pattern(hir, prop.value);
                 if prop.kind == PropKind::Spread {
                     if is_pattern {
-                        let rest = c.rest_of_object(source, &named, TypeId::NEVER);
+                        let rest = c.rest_of_object(source, &named, TypeId::NEVER, None);
                         note_assignment_pattern(c, file, prop.value, rest, sites);
                     }
                     continue;

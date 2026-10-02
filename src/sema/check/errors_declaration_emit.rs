@@ -1207,6 +1207,13 @@ impl<'p> EmitResolver<'_, 'p> {
                 let found = parameters.iter().find(|parameter| parameter.0 == name);
                 found.map(|parameter| parameter.1)
             }
+            // `bindClassLikeDeclaration`: `symbol.Exports[prototypeSymbol.Name] = prototypeSymbol`, and `mergeSymbol` lets no value of
+            // a namespace in beside it.
+            Table::Exports(symbol)
+                if name == known::prototype && files.flags(symbol).contains(SymFlags::CLASS) =>
+            {
+                Some(files.prototype_symbol)
+            }
             Table::Exports(symbol) => files.export_in_table(symbol, name),
             Table::ResolvedExports(symbol) if symbol != files.global_this_symbol => self
                 .exports_of_symbol(symbol)

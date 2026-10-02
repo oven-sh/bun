@@ -415,6 +415,7 @@ fn with_printer<'p, T>(
             infer_type_parameters: Vec::new(),
             reverse_mapped_stack: Vec::new(),
             mapper: MapperId::IDENTITY,
+            enclosing_symbol_types: Vec::new(),
             depth: 0,
             enclosing_declaration,
             tracker: tracker.map(|tracker| tracker as &mut dyn SymbolTracker<'p>),
@@ -648,6 +649,8 @@ struct Printer<'c, 'p> {
     reverse_mapped_stack: Vec<ReverseMappedProperty>,
     /// The mapper of the innermost instantiated signature being written.
     mapper: MapperId,
+    /// `enclosingSymbolTypes`, of the declarations of signatures: what each returns, while that is written from its syntax.
+    enclosing_symbol_types: Vec<((FileId, FnId), TypeId)>,
     depth: u32,
     /// `enclosingDeclaration`: the scope names are looked up from. `None` in error messages.
     enclosing_declaration: Option<Enclosing>,
@@ -1147,6 +1150,12 @@ impl<'p> Printer<'_, 'p> {
                 } else {
                     self.type_to_node(forced)
                 }
+            }
+            // `t.AsTypeReference().node != nil`. Which node is not known, so its depth is not counted.
+            TypeData::Ref { target, args } if self.c.p.deferred_references.get(&ty).is_some() => {
+                self.visit_and_transform_type(ty, None, |printer, ty| {
+                    printer.type_reference_to_node(ty, *target, args)
+                })
             }
             TypeData::Ref { target, args } => self.type_reference_to_node(ty, *target, args),
             TypeData::Tuple {
@@ -2946,7 +2955,14 @@ impl<'p> Printer<'_, 'p> {
                     }
                     return self.symbol_to_type_node(symbol, true, Vec::new());
                 }
-                Identity::Origin(origin)
+                // An object literal is one symbol, fresh, regular or widened.
+                Identity::Origin(match origin {
+                    Origin::ObjectLiteral(file, literal, ..)
+                    | Origin::WidenedLiteral(file, literal, ..) => {
+                        Origin::WidenedLiteral(file, literal, false, false)
+                    }
+                    _ => origin,
+                })
             }
             TypeData::Fns { decls, .. } => match decls.first() {
                 Some(&(file, func)) => Identity::Function(file, func),
@@ -4256,12 +4272,30 @@ impl<'p> Printer<'_, 'p> {
         parameters: &[Parameter],
         try_reuse: bool,
     ) -> String {
-        if try_reuse && let Some(reused) = self.try_reuse_return_type_of_signature(signature) {
-            return reused;
+        let declaration = self.c.sig_decl(signature).map(|of| (of.0, of.1));
+        let enclosing = self.enclosing_symbol_types.iter().rev();
+        let enclosing = enclosing
+            .map(|entry| (Some(entry.0), entry.1))
+            .find(|entry| entry.0 == declaration);
+        let returned = match (enclosing, declaration) {
+            (Some((_, returned)), _) => returned,
+            (None, Some(_)) => {
+                let returned = self.c.sig_return(signature);
+                self.c.instantiate(returned, self.mapper)
+            }
+            (None, None) => self.c.sig_return(signature),
+        };
+        if try_reuse && let Some(declaration) = declaration {
+            // `addSymbolTypeToContext`
+            self.enclosing_symbol_types.push((declaration, returned));
+            let reused = self.try_reuse_return_type_of_signature(signature, returned);
+            self.enclosing_symbol_types.pop();
+            if let Some(reused) = reused {
+                return reused;
+            }
         }
         // `serializeInferredReturnTypeForSignature`
         let Some(predicate) = self.c.sig_predicate(signature) else {
-            let returned = self.c.sig_return(signature);
             return self.type_to_node_without_inference_fallback(returned).text;
         };
         let mut text = String::new();
@@ -4277,6 +4311,7 @@ impl<'p> Printer<'_, 'p> {
             None => text.push_str("this"),
         }
         if let Some(ty) = predicate.ty {
+            let ty = self.c.instantiate(ty, self.mapper);
             text.push_str(" is ");
             text.push_str(&self.type_to_node_without_inference_fallback(ty).text);
         }

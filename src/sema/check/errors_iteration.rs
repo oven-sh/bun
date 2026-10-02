@@ -728,7 +728,7 @@ impl Checker<'_> {
                         if i + 1 == props.len() && prop.value.is_some() {
                             // `getRestType`
                             let omitted = self.union(&keys);
-                            let rest = self.rest_of_object(source, &named, omitted);
+                            let rest = self.rest_of_object(source, &named, omitted, None);
                             self.check_destructuring_assignment(file, prop.value, rest, out);
                         }
                         continue;

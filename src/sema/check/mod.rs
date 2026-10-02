@@ -469,6 +469,9 @@ impl Program {
 
     /// `GetGlobalDiagnostics`: what has been found wrong that is in no file, once all files have been checked. In order, each once.
     pub fn global_errors(&self) -> Vec<(u32, Vec<String>)> {
+        if self.files.modules.is_empty() {
+            return Vec::new();
+        }
         // `initializeChecker`: these there have to be, whether or not anything uses them.
         let mut needed = vec![
             "IArguments",

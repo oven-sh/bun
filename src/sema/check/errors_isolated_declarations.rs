@@ -2789,14 +2789,17 @@ impl<'p> Checker<'p> {
         let Some(target) = target.filter(|&target| target != file) else {
             return;
         };
-        let is_required =
-            files
-                .exports_of_module(files.file_symbol(file))
-                .iter()
-                .any(|&(_, export)| {
-                    files.flags(export).contains(SymFlags::MERGED)
-                        && files.decls_of(export).iter().any(|&(of, _)| of == target)
-                });
+        // `file.Symbol` is the symbol the binder made. What an `export *` adds comes out of the table of a merged module, which has the
+        // merged symbols themselves.
+        let bound = self.bound(file);
+        let is_required = bound
+            .table(bound.symbols[bound.file_symbol.idx()].exports)
+            .iter()
+            .any(|&(_, id)| {
+                let merged = files.sym(file, id);
+                merged != (Sym { file, id })
+                    && files.decls_of(merged).iter().any(|&(of, _)| of == target)
+            });
         if is_required {
             let said = self.iso_said(file, Node::Stmt(s), 9026);
             tx.said.push(said);

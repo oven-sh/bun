@@ -120,10 +120,11 @@ impl<'p> Printer<'_, 'p> {
         self.type_to_node(ty)
     }
 
-    /// `serializeReturnTypeForSignature`, as far as it goes by the syntax. `None`: the checker is asked.
+    /// `serializeReturnTypeForSignature`, as far as it goes by the syntax. `returned`: `returnType`. `None`: the checker is asked.
     pub(super) fn try_reuse_return_type_of_signature(
         &mut self,
         signature: SigId,
+        returned: TypeId,
     ) -> Option<String> {
         let (file, func, _) = self.c.sig_decl(signature)?;
         if !self.reuses_nodes_of(file) {
@@ -131,7 +132,6 @@ impl<'p> Printer<'_, 'p> {
         }
         let tx = Emit::without_reports(file);
         let pt = self.c.iso_pseudo_of_return(&tx, func);
-        let returned = self.c.sig_return(signature);
         // `getReturnTypeOfSignature`: an annotation that comes back to itself is given up for `anyType`, which is not what it says.
         if self.c.p.circular_returns.get(&(file, func)).is_some() {
             return None;
@@ -561,7 +561,6 @@ impl<'p> Printer<'_, 'p> {
     /// `serializeReturnTypeForSignature(getSignatureFromDeclaration(func), false)`
     fn inferred_return_type_to_node(&mut self, file: FileId, func: FnId) -> Node {
         let signature = self.c.sig_of_fn(file, func);
-        let signature = self.c.instantiate_sig(signature, self.mapper);
         let declared = self.signature_parameters(signature);
         Node::new(
             self.return_type_text(signature, &declared, false),

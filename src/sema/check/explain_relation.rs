@@ -421,7 +421,7 @@ impl<'p> Checker<'p> {
             named_otherwise: is_named_otherwise.then(|| (self.force(source), self.force(target))),
             chain: None,
             related: Vec::new(),
-            budget: 2000,
+            budget: 20_000,
         };
         // These two are never a `headMessage`: they are what `reportRelationError` says for lack of one.
         let head = head.filter(|&code| code != 2322 && code != 2678);

@@ -561,7 +561,8 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                         _ => None,
                     };
                 }
-                let ty = self.c.type_of_expr(file, e);
+                // `c.checkExpression(node).symbol`, which is not memoised.
+                let ty = self.c.get_type_of_expression(file, e);
                 self.symbol_of_type(ty)
             }
             // The `meta` of `import.meta` is the member of `getGlobalImportMetaExpressionType`.
@@ -1002,6 +1003,14 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 let symbol = self.c.bound(file).type_param_symbol[parameter.idx()];
                 symbol.is_some().then(|| self.c.files().sym(file, symbol))
             }
+            // `getRestType`: the symbol of the binding element.
+            TypeData::Synth(ref shape) => shape.symbol_declared_at.and_then(|(of, pos)| {
+                let mut pats = self.c.hir(of).pats.iter();
+                let pat =
+                    pats.position(|it| it.pos == pos && matches!(it.kind, PatKind::Ident(_)))?;
+                let symbol = self.c.bound(of).pat_symbol[pat];
+                symbol.is_some().then(|| self.c.files().sym(of, symbol))
+            }),
             _ => None,
         };
         Some(Found::IndexSignature {

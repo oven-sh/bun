@@ -322,7 +322,8 @@ impl<'p> Checker<'p> {
     /// The literal type that names the property `name`, as far as the name alone tells. `None` for private names.
     pub(super) fn key_type_of_name(&mut self, name: Atom) -> Option<TypeId> {
         let text = self.files().atoms.bytes(name);
-        if text.starts_with(b"#") {
+        // A string that starts with `#` is a string like another: it is the renaming that tells (`rename_private_names`).
+        if text.starts_with(b"#") && text.contains(&b'@') {
             return None;
         }
         if let Some(rest) = text.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {

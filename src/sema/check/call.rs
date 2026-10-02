@@ -3427,10 +3427,13 @@ impl<'p> Checker<'p> {
                         // first the function is `anyFunctionType`.
                         // So does whether the parameters it annotates take what they are given. `params` lack what the deferred calls
                         // contribute.
+                        let declared = self.context_of_arg_at(&lists[k], i, Some(args.len()));
                         let fits = is_rejected_in_second_round
                             || self.is_guard_if_expected(file, e, param)
                                 && (is_deferred.contains(&true)
-                                    || self.do_annotated_parameters_fit(file, e, param, relation));
+                                    || self.do_annotated_parameters_fit(
+                                        file, e, param, declared, relation,
+                                    ));
                         if !fits {
                             is_rejected_in_second_round = true;
                             // The second round goes from left to right, and may not get past another function.
@@ -3708,11 +3711,14 @@ impl<'p> Checker<'p> {
     }
 
     /// Of a function whose type is not known yet, the parameters it types itself are: whether they take what `param` would give them.
+    /// `param` is as the first round left it. `declared`: as the candidate declares it. Where that mentions a type parameter the
+    /// second round infers from the annotation itself (`inferFromAnnotatedParametersAndReturn`), so nothing can be told yet.
     fn do_annotated_parameters_fit(
         &mut self,
         file: FileId,
         arg: ExprId,
         param: TypeId,
+        declared: Option<TypeId>,
         relation: Relation,
     ) -> bool {
         let hir = self.hir(file);
@@ -3732,6 +3738,10 @@ impl<'p> Checker<'p> {
             return true;
         }
         let given = self.sig_params(expected);
+        let declared = declared
+            .map(|declared| self.non_nullable(declared))
+            .and_then(|declared| self.single_call_signature(declared, false))
+            .map(|declared| self.sig_params(declared));
         for (i, p) in hir[func]
             .params
             .iter()
@@ -3744,6 +3754,13 @@ impl<'p> Checker<'p> {
             let Some(from) = self.param_type_at(&given, i) else {
                 break;
             };
+            if let Some(declared) = &declared
+                && self
+                    .param_type_at(declared, i)
+                    .is_some_and(|declared| self.has_type_variables(declared))
+            {
+                continue;
+            }
             let to = self.type_of_param(file, p);
             if !self.is_known(from) || !self.is_known(to) || self.has_type_variables(from) {
                 continue;
@@ -5238,8 +5255,13 @@ impl<'p> Checker<'p> {
                     );
                     continue;
                 }
-                let depends_on_context =
-                    matches!(arg, Arg::Expr(e) if self.depends_on_context(file, e));
+                let depends_on_context = match arg {
+                    Arg::Expr(e) => {
+                        self.depends_on_context(file, e)
+                            || self.is_literal_that_depends_on_context(file, e)
+                    }
+                    _ => false,
+                };
                 // What the argument is expected to be is settled before it is looked at, and stays: what is inferred
                 // from the argument cannot be what is expected of it.
                 if let Arg::Expr(e) = arg
@@ -5832,6 +5854,12 @@ impl<'p> Checker<'p> {
             }
             ExprKind::NonNull(x) | ExprKind::Satisfies { expr: x, .. } => {
                 self.is_literal_that_depends_on_context(file, x)
+            }
+            // `getContextualType` goes through a const assertion, `isContextSensitive` has no case for one: the functions under it
+            // that wait are checked with it, and go by the inference, not by what is pushed.
+            ExprKind::AsConst(x) => {
+                self.is_literal_that_depends_on_context(file, x)
+                    && !self.is_context_sensitive(file, x)
             }
             _ => false,
         }
@@ -7315,9 +7343,10 @@ impl<'p> Checker<'p> {
                 self.resolve_return_types_in(file, left);
                 self.resolve_return_types_in(file, right);
             }
-            ExprKind::Spread(x) | ExprKind::NonNull(x) | ExprKind::Satisfies { expr: x, .. } => {
-                self.resolve_return_types_in(file, x)
-            }
+            ExprKind::Spread(x)
+            | ExprKind::NonNull(x)
+            | ExprKind::AsConst(x)
+            | ExprKind::Satisfies { expr: x, .. } => self.resolve_return_types_in(file, x),
             _ => {}
         }
     }

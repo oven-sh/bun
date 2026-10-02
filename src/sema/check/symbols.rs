@@ -1895,7 +1895,10 @@ impl<'p> Checker<'p> {
                         }
                     }
                     let keys = self.union(&keys);
-                    let ty = self.rest_of_object(parent_ty, &omitted, keys);
+                    // `declaration.Symbol()`
+                    let symbol =
+                        matches!(hir[pat].kind, PatKind::Ident(_)).then(|| (file, hir[pat].pos));
+                    let ty = self.rest_of_object(parent_ty, &omitted, keys, symbol);
                     return self.with_default(file, pat, ty, prop.default);
                 }
                 // `AccessFlagsAllowMissing`: with a default, what an object literal does not mention is `undefined`.
@@ -2076,8 +2079,14 @@ impl<'p> Checker<'p> {
 
     /// `getRestType`, what `...rest` gets: `ty` without the properties `omitted` and without those whose name is an `omitted_keys`,
     /// the types of the names that are left out by type: the computed ones that are not the name of one property, and those that
-    /// read as numbers (`never`: there are none).
-    pub fn rest_of_object(&mut self, ty: TypeId, omitted: &[Atom], omitted_keys: TypeId) -> TypeId {
+    /// read as numbers (`never`: there are none). `symbol`: where the first declaration of the symbol the type gets is.
+    pub fn rest_of_object(
+        &mut self,
+        ty: TypeId,
+        omitted: &[Atom],
+        omitted_keys: TypeId,
+        symbol: Option<(FileId, u32)>,
+    ) -> TypeId {
         let ty = self.force(ty);
         if self.is_any(ty) {
             return ty;
@@ -2090,7 +2099,9 @@ impl<'p> Checker<'p> {
             return TypeId::EMPTY_OBJECT;
         }
         if self.is_union(ty) {
-            return self.map_type(ty, |c, m| c.rest_of_object(m, omitted, omitted_keys));
+            return self.map_type(ty, |c, m| {
+                c.rest_of_object(m, omitted, omitted_keys, symbol)
+            });
         }
         // `getPropertiesOfType`: a type parameter has what it extends has.
         let apparent = self.apparent_type(ty);
@@ -2173,6 +2184,8 @@ impl<'p> Checker<'p> {
         for info in &members.shape().index {
             let value = self.instantiate(info.value, members.mapper);
             shape.index.push(IndexInfo { value, ..*info });
+            // `getApplicableIndexSymbol` is who asks: `symbol.Parent = t.symbol`.
+            shape.symbol_declared_at = symbol;
         }
         self.synth(shape)
     }

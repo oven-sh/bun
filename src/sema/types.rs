@@ -461,8 +461,9 @@ pub enum InstantiationExpression {
 /// What is in an object type.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Shape {
-    /// `symbol.Declarations[0]` of a made-up type that keeps the symbol of an object literal (`getWidenedTypeOfObjectLiteral`): the
-    /// file and the position. `CompareTypes` orders by it.
+    /// `symbol.Declarations[0]` of a made-up type that keeps the symbol of an object literal (`getWidenedTypeOfObjectLiteral`), or has
+    /// that of a binding element (`getRestType`, where there is an index signature): the file and the position. `CompareTypes`
+    /// orders by it.
     pub symbol_declared_at: Option<(FileId, u32)>,
     /// In declaration order, own before inherited.
     pub props: Vec<Prop>,

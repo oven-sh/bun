@@ -260,7 +260,7 @@ impl<'p> Checker<'p> {
         match members[..] {
             [] => TypeId::NEVER,
             [only] => only,
-            _ => self.intern(TypeData::Union(Box::from(&members[..]))),
+            _ => self.union_of_named_unions(types, &members),
         }
     }
 

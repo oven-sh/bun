@@ -1237,7 +1237,7 @@ describe.each([
     ["empty ArrayBuffer", () => new ArrayBuffer(0), { binary: false }, TEXT, ""],
     ["empty Blob", () => new Blob([]), { binary: false }, TEXT, ""],
     // npm ws does not validate what it sends. Bytes that are not UTF-8 go into the text frame as they are, and a
-    // peer that validates text frames then fails the connection with 1007.
+    // peer that validates text frames then fails the connection.
     ["Buffer that is not UTF-8", () => Buffer.from([0xff, 0x68]), { binary: false }, TEXT, "ff68"],
     ["Float64Array that is not UTF-8", () => new Float64Array([1]), { binary: false }, TEXT, "000000000000f03f"],
     ["Buffer that ends inside a character", () => utf8.subarray(0, 6), { binary: false }, TEXT, hex.slice(0, 12)],
@@ -1475,6 +1475,64 @@ describe.each([
       peer.resume();
       const callbacksRun = await Promise.race([done.promise, connection.failure]);
       expect({ frames, callbacksRun }).toEqual({ frames: expected, callbacksRun: sent + 1 });
+    } finally {
+      connection.close();
+    }
+  });
+
+  // Not as npm ws, on purpose. npm ws copies the options with `{ ...options }`, which leaves out a property that is
+  // not enumerable. The built-in module reads an own `binary` of either kind: isBinaryFrame() in
+  // src/js/thirdparty/ws.js gives the cost of the exact rule.
+  it("reads a `binary` that is not enumerable in the built-in module only", async () => {
+    const [ofBytes, ofString] = implementation === "built-in" ? [TEXT, BINARY] : [BINARY, TEXT];
+    const rows: Row[] = [
+      ["Buffer, not enumerable false", bytes, hidden(false), ofBytes, hex],
+      ["ArrayBuffer, not enumerable 0", arrayBuffer, hidden(0), ofBytes, hex],
+      ["string, not enumerable true", () => text, hidden(true), ofString, hex],
+    ];
+    expect((await sendRows("server", false, rows)).frames).toEqual(onTheWire(rows));
+  });
+
+  // What send() of the built-in module does not do yet. The npm half runs each test, so each expectation is the
+  // output of npm ws.
+  const notYet = implementation === "built-in";
+
+  // npm ws sends data with `fin: false` as a fragment of a message. The first frame has the frame type, each frame
+  // after it is a continuation frame, and the first send() with no `fin: false` ends the message. The built-in
+  // module sends each one as a whole message.
+  it.todoIf(notYet)("sends data with `fin: false` as a fragment", async () => {
+    const frames: WireFrame[] = [];
+    const all = Promise.withResolvers<void>();
+    const connection = await openToRawPeer("server", false, frame => {
+      if (frames.push(frame) === 3) all.resolve();
+    });
+    try {
+      connection.ws.send(Buffer.from("a"), { binary: false, fin: false });
+      connection.ws.send("b", { fin: false });
+      connection.ws.send("c");
+      await Promise.race([all.promise, connection.failure]);
+      expect(frames).toEqual([
+        { fin: false, opcode: TEXT, payload: "61" },
+        { fin: false, opcode: 0, payload: "62" },
+        { fin: true, opcode: 0, payload: "63" },
+      ]);
+    } finally {
+      connection.close();
+    }
+  });
+
+  // npm ws makes a Buffer over the memory of an ArrayBuffer, and of a view that is not a Buffer. That throws when
+  // the memory is detached. The built-in module sends an empty frame.
+  it.todoIf(notYet)("throws for a detached ArrayBuffer and for a detached view", async () => {
+    const connection = await openToRawPeer("server", false, () => {});
+    try {
+      const detached = () => {
+        const view = new Uint8Array(4);
+        structuredClone(view.buffer, { transfer: [view.buffer] });
+        return view;
+      };
+      expect(() => connection.ws.send(detached().buffer)).toThrow(TypeError);
+      expect(() => connection.ws.send(detached(), { binary: false })).toThrow(TypeError);
     } finally {
       connection.close();
     }

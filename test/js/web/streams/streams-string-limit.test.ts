@@ -371,6 +371,46 @@ describe.skipIf(!isASAN)("a direct stream's text sink throws when its text canno
     `);
     expect(result).toEqual({ stdout: { rejected: outOfMemory, thrown: outOfMemory }, exitCode: 0 });
   });
+
+  // The builder of the sink can keep the buffer that it could not grow. The sink has no use for
+  // that text after the refused write, so it gives it back then, and not when the stream ends.
+  // Here the cap is 256 MiB: 100 MiB of Latin-1 are in a buffer of 128 MiB, and the 16-bit
+  // buffer for one more character is 512 MiB. Without the quarantine a freed buffer leaves the RSS.
+  test.concurrent("the sink gives back the text that a refused write lost", async () => {
+    const { stdout, exitCode } = await run(
+      `
+      const megabyte = Buffer.alloc(${MIB}, "x").toString("latin1");
+      let refused = null, heldMiB;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 100; i++) controller.write(megabyte);
+          try {
+            controller.write("\\u20AC");
+          } catch (e) {
+            refused = e.name + ": " + e.message;
+          }
+          // The stream is still open here.
+          heldMiB = (process.memoryUsage.rss() - before) / ${MIB};
+          controller.end();
+        },
+      });
+      await stream.text().catch(() => {});
+      console.log(JSON.stringify({ refused, heldLessThan48MiB: heldMiB < 48 }));
+      `,
+      {
+        ...env,
+        ASAN_OPTIONS:
+          env.ASAN_OPTIONS.replace("max_allocation_size_mb=4", "max_allocation_size_mb=256") +
+          ":quarantine_size_mb=0:thread_local_quarantine_size_kb=0",
+      },
+    );
+    expect({ stdout: JSON.parse(stdout || "null"), exitCode }).toEqual({
+      stdout: { refused: outOfMemory, heldLessThan48MiB: true },
+      exitCode: 0,
+    });
+  });
 });
 
 // The text would be longer than a string can be, or its buffer cannot grow to hold it.
@@ -483,41 +523,6 @@ test.skipIf(!enoughMemory)("new Response(async generator).text() with a 16-bit c
     stderr: "",
     exitCode: 0,
   });
-});
-
-// The builder of the sink can keep the buffer that it could not grow. The sink has no use for
-// that text after the refused write, so it gives it back then, and not when the stream ends.
-// The allocator of a debug build returns memory to the system a moment later, so the child polls.
-test.skipIf(!enoughMemory)("a direct stream's text sink does not keep the text that a refused write lost", async () => {
-  await expectRssDeltaBelow(
-    [
-      "-e",
-      `
-      const megabyte = Buffer.alloc(2 ** 20, "x").toString("latin1");
-      let deltaMiB;
-      const stream = new ReadableStream({
-        type: "direct",
-        async pull(controller) {
-          const before = process.memoryUsage.rss();
-          for (let i = 0; i < 513; i++) controller.write(megabyte);
-          try {
-            controller.write("\\u20AC");
-          } catch {}
-          // The stream is still open here.
-          for (let polls = 0; polls < 60; polls++) {
-            deltaMiB = (process.memoryUsage.rss() - before) / 2 ** 20;
-            if (deltaMiB < 64) break;
-            await Bun.sleep(50);
-          }
-        },
-      });
-      await stream.text().catch(() => {});
-      console.log(JSON.stringify({ deltaMiB }));
-      `,
-    ],
-    // A sink that keeps the text holds 513 MiB.
-    { release: 128, debug: 192 },
-  );
 });
 
 // A text consumer of a stream that has bytes and strings rejects when a chunk cannot be a part of

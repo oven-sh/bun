@@ -5,23 +5,12 @@
 //! Only the subset Bun uses is ported (`wait`/`post`); `timedWait` is omitted
 //! because no Rust caller needs it and it would pull in a monotonic timer.
 
-use core::cell::UnsafeCell;
-
-use crate::{Condition, Mutex};
+use crate::{Condition, Guarded};
 
 pub struct Semaphore {
-    mutex: Mutex,
+    permits: Guarded<usize>,
     cond: Condition,
-    /// Guarded by `mutex`. `UnsafeCell` because `wait`/`post` take `&self`.
-    permits: UnsafeCell<usize>,
 }
-
-// SAFETY: `permits` is only read/written while `mutex` is held; `Mutex` and
-// `Condition` are themselves `Sync`/`Send`.
-unsafe impl Sync for Semaphore {}
-// SAFETY: `Mutex`, `Condition`, and `UnsafeCell<usize>` are all `Send`; the
-// semaphore holds no thread-affine state.
-unsafe impl Send for Semaphore {}
 
 impl Default for Semaphore {
     fn default() -> Self {
@@ -33,37 +22,30 @@ impl Semaphore {
     /// Const-init with zero permits.
     pub(crate) const fn new() -> Self {
         Self {
-            mutex: Mutex::new(),
+            permits: Guarded::new(0),
             cond: Condition::new(),
-            permits: UnsafeCell::new(0),
         }
     }
 
     /// Blocks until a permit is available, then consumes one.
     pub fn wait(&self) {
-        self.mutex.lock();
-        scopeguard::defer! { self.mutex.unlock(); }
+        let mut permits = self.permits.lock();
 
-        // SAFETY: `mutex` is held for every access to `permits` below.
-        while unsafe { *self.permits.get() } == 0 {
-            self.cond.wait(&self.mutex);
+        while *permits == 0 {
+            self.cond.wait_guarded(&mut permits);
         }
 
-        // SAFETY: `mutex` is still held (released only by the scopeguard on return).
-        unsafe { *self.permits.get() -= 1 };
-        // SAFETY: `mutex` is still held; this is the sole accessor of `permits`.
-        if unsafe { *self.permits.get() } > 0 {
+        *permits -= 1;
+        if *permits > 0 {
             self.cond.signal();
         }
     }
 
     /// Adds one permit and wakes one waiter.
     pub fn post(&self) {
-        self.mutex.lock();
-        scopeguard::defer! { self.mutex.unlock(); }
+        let mut permits = self.permits.lock();
 
-        // SAFETY: `mutex` is held.
-        unsafe { *self.permits.get() += 1 };
+        *permits += 1;
         self.cond.signal();
     }
 }

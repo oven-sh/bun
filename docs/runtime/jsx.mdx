@@ -38,6 +38,15 @@ How Bun transforms JSX constructs into vanilla JavaScript internally. The follow
 | `json<br/>{<br/>  "jsx": "react-jsxdev"<br/>}<br/>` | `tsx<br/>import { jsxDEV } from "react/jsx-dev-runtime";<br/>jsxDEV(<br/>  Box,<br/>  { width: 5, children: "Hello" },<br/>  undefined,<br/>  false,<br/>  undefined,<br/>  this,<br/>);<br/>`<br/><br/>The `jsxDEV` variable name is a React convention. The `DEV` suffix marks code intended for development. The development version of React is slower and includes additional validity checks & debugging tools. |
 | `json<br/>{<br/>  "jsx": "preserve"<br/>}<br/>`     | `tsx<br/>// JSX is not transpiled<br/>// "preserve" is not supported by Bun currently<br/><Box width={5}>Hello</Box><br/>`                                                                                                                                                                                                                                                                                            |
 
+<Note>
+  `"react-jsx"` selects the production automatic runtime (`jsx`/`jsxs` from `<source>/jsx-runtime`) and `"react-jsxdev"`
+  selects the development runtime (`jsxDEV` from `<source>/jsx-dev-runtime`), matching TypeScript and esbuild. Use
+  `"react-jsxdev"` during development if you want the `jsxDEV` entry point.
+
+Prior to Bun 1.4, `"react-jsx"` behaved like `"react-jsxdev"` and emitted the development runtime.
+
+</Note>
+
 ### [`jsxFactory`](https://www.typescriptlang.org/tsconfig#jsxFactory)
 
 <Note>Only applicable when `jsx` is `react`.</Note>

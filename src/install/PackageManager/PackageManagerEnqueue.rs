@@ -2309,8 +2309,6 @@ fn get_or_put_resolved_package_with_find_result(
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
-    // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = this.to_update
         && if !this.update_requests.is_empty() {
             // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
@@ -2320,21 +2318,10 @@ fn get_or_put_resolved_package_with_find_result(
                     && this.is_update_request(name_hash, name.slice(string_buf))))
                 && crate::update_scope::UpdateScope::of(&*this)
                     .contains_dependency(&this.lockfile, dependency_id)
-        } else if let Some(targets) = this.update_target_workspaces.as_deref() {
-            // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
-            dependency.version.tag == dependency::version::Tag::Catalog
-                || this
-                    .lockfile
-                    .is_dependency_of_workspace_in(targets, dependency_id)
         } else {
-            // Bare `bun update`: direct deps of the cwd workspace; catalogs are root-scoped.
-            let this_ptr: *mut PackageManager = this;
-            // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
-            // `manager.workspace_package_json_cache` only — disjoint from
-            // `manager.lockfile`.
+            // Bare `bun update`: the rows the targeted workspaces declare; catalogs are root-scoped.
             dependency.version.tag == dependency::version::Tag::Catalog
-                || unsafe { &*(*this_ptr).lockfile }
-                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+                || update_target_declares(this, dependency_id)
         };
 
     // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it, and so does --latest.
@@ -3118,40 +3105,55 @@ fn version_pick(
             return VersionPick::Declared;
         }
     }
-    let targeted = match this.update_target_workspaces.as_deref() {
-        Some(targets) => this
-            .lockfile
-            .is_dependency_of_workspace_in(targets, dependency_id),
-        None => invoking_workspace_declares(this, dependency_id),
-    };
-    if targeted {
+    if update_target_declares(this, dependency_id) {
         VersionPick::LatestTag
     } else {
         VersionPick::Declared
     }
 }
 
-/// Is `dependency_id` a row of the package.json `bun update` runs in? A member that is new to the lockfile has no package until its workspace row resolves.
-fn invoking_workspace_declares(this: &mut PackageManager, dependency_id: DependencyID) -> bool {
-    let in_member = this.workspace_name_hash.is_some();
-    let id = match this.root_package_id.id {
-        Some(id) if id != 0 || !in_member => id,
-        _ => {
-            let id = this
-                .lockfile
-                .get_workspace_package_id(this.workspace_name_hash);
-            if id == 0 && in_member {
-                return false;
-            }
-            this.root_package_id.id = Some(id);
-            id
-        }
+/// Does the package.json of a workspace `bun update` targets declare the row? The targets are the `-r` / `--filter` selection, else the workspace the command runs in. A member that is new to the lockfile has no package until its workspace row resolves.
+fn update_target_declares(this: &mut PackageManager, dependency_id: DependencyID) -> bool {
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    let rows = lockfile.packages.items_dependencies();
+    let declares = |id: PackageID| {
+        rows.get(id as usize)
+            .is_some_and(|rows| rows.contains(dependency_id))
     };
-    this.lockfile
-        .packages
-        .items_dependencies()
-        .get(id as usize)
-        .is_some_and(|rows| rows.contains(dependency_id))
+    let Some(targets) = this.update_target_workspaces.as_deref() else {
+        let in_member = this.workspace_name_hash.is_some();
+        let id = match this.root_package_id.id {
+            Some(id) if id != 0 || !in_member => id,
+            _ => {
+                let id = lockfile.get_workspace_package_id(this.workspace_name_hash);
+                if id == 0 && in_member {
+                    return false;
+                }
+                this.root_package_id.id = Some(id);
+                id
+            }
+        };
+        return declares(id);
+    };
+    let ids = &mut this.update_target_ids;
+    if ids.len() < targets.len() {
+        ids.clear();
+        let resolutions = lockfile.packages.items_resolution();
+        let name_hashes = lockfile.packages.items_name_hash();
+        let names = lockfile.packages.items_name();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        for (id, resolution) in resolutions.iter().enumerate() {
+            let is_root = resolution.tag == ResolutionTag::Root;
+            if (is_root || resolution.tag == ResolutionTag::Workspace)
+                && targets
+                    .iter()
+                    .any(|target| target.matches(is_root, name_hashes[id], names[id].slice(buf)))
+            {
+                ids.push(id as PackageID);
+            }
+        }
+    }
+    ids.iter().any(|&id| declares(id))
 }
 
 /// The row still carries its package.json range, so its locked version is the lockfile-loaded instance that range accepts (`package_index` lists highest first); dist-tag rows follow the tag.

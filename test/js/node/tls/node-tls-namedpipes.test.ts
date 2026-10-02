@@ -140,6 +140,64 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
   },
 );
 
+describe("a peer that ends the handshake with close_notify over a named pipe", () => {
+  // Same contract as the Duplex transport tests in node-tls-duplex-end-verify.test.ts and node-tls-connect.test.ts.
+  // The peer keeps the pipe open behind the alert, so only the alert says that no session will come.
+  const closeNotify = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
+
+  it.if(isWindows)("fails the client's connection with ECONNRESET", async () => {
+    const peer = net.createServer(socket => {
+      socket.on("error", () => {});
+      // The alert is the answer to the ClientHello.
+      socket.once("data", () => socket.write(closeNotify));
+    });
+    let client: ReturnType<typeof connect> | null = null;
+    try {
+      const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+      peer.listen(pipeName);
+      await once(peer, "listening");
+
+      const socket = connect({ path: pipeName, rejectUnauthorized: false });
+      client = socket;
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      socket.on("secureConnect", () => events.push("secureConnect"));
+      socket.on("end", () => events.push("end"));
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      socket.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        closed.resolve();
+      });
+      await closed.promise;
+      expect(events).toEqual(["end", "error ECONNRESET", "close true"]);
+    } finally {
+      client?.destroy();
+      peer.close();
+    }
+  });
+
+  it.if(isWindows)("is reported by a tls.Server as 'tlsClientError'", async () => {
+    const server = createServer(tls);
+    const reported = once(server, "tlsClientError");
+    let client: ReturnType<typeof net.connect> | null = null;
+    try {
+      const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+      server.listen(pipeName);
+      await once(server, "listening");
+
+      // The alert is the first record. No ClientHello comes.
+      const socket = net.connect(pipeName, () => socket.write(closeNotify));
+      client = socket;
+      socket.on("error", () => {});
+      const [err] = await reported;
+      expect({ code: err.code, message: err.message }).toEqual({ code: "ECONNRESET", message: "socket hang up" });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
 it.if(isWindows)("setSecureContext() rotates the certificate of a server listening on a named pipe", async () => {
   const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
   const agent1 = { key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") };

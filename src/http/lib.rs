@@ -1456,7 +1456,7 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 /// than the certificate (`packages/bun-usockets/src/crypto/openssl.c`) when the
 /// peer went away. The other one, -71, is a fatal protocol error such as a peer
 /// that does not speak TLS. Certificate problems are the positive `X509_V_ERR_*`.
-const US_HANDSHAKE_ECONNRESET: i32 = -46;
+const US_HANDSHAKE_ECONNRESET: i32 = uws::us_bun_verify_error_t::PEER_DISCONNECTED;
 
 /// Why a TLS handshake that reported failure failed.
 pub(crate) fn handshake_failure(error_no: i32) -> crate::Error {

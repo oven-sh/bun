@@ -2118,6 +2118,81 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
   });
 });
 
+describe("a TLS server wrap over a Duplex transport whose peer ends the handshake with close_notify", () => {
+  // The peer keeps the transport open, so only the alert says that no handshake will come. BoringSSL reads the
+  // alert as the peer's close at every point of the handshake, so the wrap reports what it reports for a peer
+  // that disconnects. Node's OpenSSL refuses an alert ahead of the ClientHello (ERR_SSL_UNEXPECTED_MESSAGE) and
+  // reads one behind it as a plain end of the stream. The client side of this case runs on both runtimes in
+  // node-tls-duplex-end-verify.test.ts.
+  const closeNotify = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
+  const hangUp = { code: "ECONNRESET", message: "socket hang up" };
+  const serverContext = (options: tls.SecureContextOptions = {}) => ({
+    isServer: true,
+    secureContext: tls.createSecureContext({ ...COMMON_CERT_, ...options }),
+  });
+  // `onWrite` gets each chunk that the TLS socket writes to the transport.
+  const makeTransport = (onWrite: (chunk: Buffer) => void = () => {}) =>
+    new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        callback();
+        onWrite(chunk);
+      },
+    });
+  const firstError = async (socket: TLSSocket) => {
+    const [err] = await once(socket, "error");
+    return { code: err.code, message: err.message };
+  };
+
+  it("the alert is the first record", async () => {
+    const transport = makeTransport();
+    const wrapped = new TLSSocket(transport, serverContext());
+    const failed = firstError(wrapped);
+    setImmediate(() => transport.push(closeNotify));
+    expect(await failed).toEqual(hangUp);
+    expect(wrapped.destroyed).toBe(true);
+    transport.destroy();
+  });
+
+  it("the alert follows a ClientHello", async () => {
+    // A client that is thrown away writes the ClientHello.
+    const hello = Promise.withResolvers<Buffer>();
+    const donor = tls.connect({ socket: makeTransport(hello.resolve), rejectUnauthorized: false });
+    donor.on("error", () => {});
+    const clientHello = await hello.promise;
+    donor.destroy();
+
+    // The wrap answers the ClientHello with its first flight. The alert is the answer to that flight. In TLS 1.2
+    // the client's next records are still plaintext, so the plaintext alert is one that the wrap can read.
+    let answered = false;
+    const transport: Duplex = makeTransport(() => {
+      if (answered) return;
+      answered = true;
+      setImmediate(() => transport.push(closeNotify));
+    });
+    const wrapped = new TLSSocket(transport, serverContext({ maxVersion: "TLSv1.2" }));
+    const failed = firstError(wrapped);
+    setImmediate(() => transport.push(clientHello));
+    expect(await failed).toEqual(hangUp);
+    expect({ answered, destroyed: wrapped.destroyed }).toEqual({ answered: true, destroyed: true });
+    transport.destroy();
+  });
+
+  it("a tls.Server reports it as 'tlsClientError'", async () => {
+    const server = tls.createServer(COMMON_CERT_);
+    const transport = makeTransport();
+    const reported = once(server, "tlsClientError");
+    server.emit("connection", transport);
+    setImmediate(() => transport.push(closeNotify));
+    const [err, socket] = await reported;
+    expect({ code: err.code, message: err.message, destroyed: socket.destroyed }).toEqual({
+      ...hangUp,
+      destroyed: true,
+    });
+    transport.destroy();
+  });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

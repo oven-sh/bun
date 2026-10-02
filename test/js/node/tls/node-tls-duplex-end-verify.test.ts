@@ -981,3 +981,150 @@ test("a bad record behind the client's Finished does not make a server accept an
   // Node reports the bad record. Its code depends on the cipher, so only the class of the error is fixed.
   assert.match(events[0], isBun ? /^tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT$/ : /^tlsClientError ERR_SSL_/);
 });
+
+// A handshake that the peer ends with a close_notify alert. The peer keeps the transport open, so only the alert tells
+// this side that no session will come.
+const CLOSE_NOTIFY = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
+
+// A transport with no file descriptor. `peer(chunk, transport)` gets each chunk that the TLS socket writes to it.
+function transportWithPeer(peer = () => {}) {
+  const transport = new Duplex({
+    read() {},
+    write(chunk, encoding, callback) {
+      callback();
+      peer(chunk, transport);
+    },
+  });
+  return transport;
+}
+
+// A peer that calls `answer(transport)` once: on a later turn of the event loop than the first flight of the TLS
+// socket, or inside the write() of that flight with `inWrite`.
+function answerFirstFlight(answer, inWrite = false) {
+  let answered = false;
+  return (chunk, transport) => {
+    if (answered) return;
+    answered = true;
+    if (inWrite) answer(transport);
+    else setImmediate(answer, transport);
+  };
+}
+
+// The events of `socket` in order. Resolves at 'close'.
+function eventsUntilClose(socket) {
+  const events = [];
+  const { promise, resolve } = Promise.withResolvers();
+  socket.on("secureConnect", () => events.push("secureConnect"));
+  socket.on("end", () => events.push("end"));
+  socket.on("error", err => events.push(`error ${err.code}: ${err.message}`));
+  socket.on("close", hadError => {
+    events.push(`close ${hadError}`);
+    resolve(events);
+  });
+  return promise;
+}
+
+const DISCONNECTED_IN_HANDSHAKE = [
+  "end",
+  "error ECONNRESET: Client network socket disconnected before secure TLS connection was established",
+  "close true",
+];
+
+for (const rejectUnauthorized of [true, false]) {
+  test(`over a Duplex: a close_notify in answer to the ClientHello fails the connection, rejectUnauthorized ${rejectUnauthorized}`, async () => {
+    const transport = transportWithPeer(answerFirstFlight(transport => transport.push(CLOSE_NOTIFY)));
+    const client = tls.connect({ socket: transport, servername: "agent1", rejectUnauthorized });
+    assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+  });
+}
+
+test("over a Duplex: a close_notify that the transport delivers inside its write() fails the connection", async () => {
+  const transport = transportWithPeer(answerFirstFlight(transport => transport.push(CLOSE_NOTIFY), true));
+  const client = tls.connect({ socket: transport, servername: "agent1" });
+  assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+});
+
+test("over a Duplex: a close_notify that is readable before tls.connect() fails the connection", async () => {
+  const transport = transportWithPeer();
+  transport.push(CLOSE_NOTIFY);
+  const client = tls.connect({ socket: transport, servername: "agent1" });
+  assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+});
+
+test("over a Duplex: a close_notify that arrives in two reads fails the connection", async () => {
+  const transport = transportWithPeer(
+    answerFirstFlight(transport => {
+      transport.push(CLOSE_NOTIFY.subarray(0, 3));
+      setImmediate(() => transport.push(CLOSE_NOTIFY.subarray(3)));
+    }),
+  );
+  const client = tls.connect({ socket: transport, servername: "agent1" });
+  assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+});
+
+test("over a Duplex: a close_notify and then the end of the transport report one failure", async () => {
+  const transport = transportWithPeer(
+    answerFirstFlight(transport => {
+      transport.push(CLOSE_NOTIFY);
+      transport.push(null);
+    }),
+  );
+  const client = tls.connect({ socket: transport, servername: "agent1" });
+  assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+});
+
+test("over a Duplex: a close_notify after this side called end() fails the connection", async () => {
+  const transport = transportWithPeer(
+    answerFirstFlight(transport => {
+      client.end();
+      setImmediate(() => transport.push(CLOSE_NOTIFY));
+    }),
+  );
+  const client = tls.connect({ socket: transport, servername: "agent1" });
+  assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+});
+
+test("over a Duplex: a close_notify in place of the server's last TLS 1.2 flight fails the connection", async () => {
+  // A real server answers the ClientHello, so the client has checked a trusted certificate when the alert arrives.
+  let clientWrites = 0;
+  const serverTransport = transportWithPeer(chunk => {
+    if (clientWrites < 2) clientTransport.push(chunk);
+  });
+  const clientTransport = transportWithPeer((chunk, transport) => {
+    clientWrites++;
+    if (clientWrites === 1) serverTransport.push(chunk);
+    // The client sent its last flight. It now waits for the server's ChangeCipherSpec.
+    else if (clientWrites === 2) setImmediate(() => transport.push(CLOSE_NOTIFY));
+  });
+  const server = new tls.TLSSocket(serverTransport, {
+    isServer: true,
+    secureContext: tls.createSecureContext({ key, cert, maxVersion: "TLSv1.2" }),
+  });
+  server.on("error", () => {});
+  try {
+    const client = tls.connect({ socket: clientTransport, servername: "agent1", ca: serverCA });
+    assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+  } finally {
+    server.destroy();
+    serverTransport.destroy();
+  }
+});
+
+test("over a TLS socket: a close_notify in answer to the inner ClientHello fails the inner connection", async () => {
+  // The outer session carries the inner handshake. The outer server answers the inner ClientHello itself.
+  const server = tls.createServer({ key, cert }, socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => socket.write(CLOSE_NOTIFY));
+  });
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const outer = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+  outer.on("error", () => {});
+  try {
+    await new Promise(secured => outer.once("secureConnect", secured));
+    const inner = tls.connect({ socket: outer, servername: "agent1" });
+    assert.deepStrictEqual(await eventsUntilClose(inner), DISCONNECTED_IN_HANDSHAKE);
+  } finally {
+    outer.destroy();
+    server.close();
+  }
+});

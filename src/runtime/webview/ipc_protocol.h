@@ -250,28 +250,6 @@ struct Reader {
         p += 4;
         return v;
     }
-    uint16_t u16()
-    {
-        if (remaining() < 2) [[unlikely]] {
-            p = end;
-            return 0;
-        }
-        uint16_t v;
-        __builtin_memcpy(&v, p, 2);
-        p += 2;
-        return v;
-    }
-    float f32()
-    {
-        if (remaining() < 4) [[unlikely]] {
-            p = end;
-            return 0;
-        }
-        float v;
-        __builtin_memcpy(&v, p, 4);
-        p += 4;
-        return v;
-    }
     uint8_t u8()
     {
         if (p >= end) [[unlikely]]

@@ -13,15 +13,21 @@ import {
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
+  pgBind,
   pgCommandComplete,
   pgCopyData,
   pgCopyDone,
   pgCopyOutResponse,
   pgDataRow,
+  pgDescribe,
   pgErrorResponse,
+  pgExecute,
+  pgFlush,
   pgMinimalReadyServer,
+  pgParse,
   pgReadyForQuery,
   pgRowDescription,
+  pgSync,
 } from "./wire-frames";
 
 test("mysqlLenencInt encodes per page_protocol_basic_dt_integers.html", () => {
@@ -38,6 +44,36 @@ test("pgErrorResponse encodes per §55.7", () => {
   expect(pgErrorResponse({ S: "FATAL", C: "57P03", M: "x" })).toEqual(
     Buffer.from("E\x00\x00\x00\x16SFATAL\x00C57P03\x00Mx\x00\x00", "binary"),
   );
+});
+
+test("frontend message builders encode per §55.7", () => {
+  expect(pgParse("s1", "select $1", [23])).toEqual(
+    Buffer.from("P\x00\x00\x00\x17s1\x00select $1\x00\x00\x01\x00\x00\x00\x17", "binary"),
+  );
+  expect(pgDescribe("S", "s1")).toEqual(Buffer.from("D\x00\x00\x00\x08Ss1\x00", "binary"));
+  expect(
+    pgBind({
+      statement: "s1",
+      paramFormats: [1, 0],
+      params: [Buffer.from([0, 0, 0, 42]), null],
+      resultFormats: [1],
+    }),
+  ).toEqual(
+    Buffer.from(
+      "B\x00\x00\x00\x20" + // length: 4 + 28 bytes of body
+        "\x00" + // portal ""
+        "s1\x00" +
+        "\x00\x02\x00\x01\x00\x00" + // two parameter format codes: binary, text
+        "\x00\x02" + // two parameter values
+        "\x00\x00\x00\x04\x00\x00\x00\x2a" + // 4 bytes
+        "\xff\xff\xff\xff" + // NULL
+        "\x00\x01\x00\x01", // one result format code: binary
+      "binary",
+    ),
+  );
+  expect(pgExecute()).toEqual(Buffer.from("E\x00\x00\x00\x09\x00\x00\x00\x00\x00", "binary"));
+  expect(pgFlush()).toEqual(Buffer.from("H\x00\x00\x00\x04", "binary"));
+  expect(pgSync()).toEqual(Buffer.from("S\x00\x00\x00\x04", "binary"));
 });
 
 test("postgres: pgAuthenticationOk + pgReadyForQuery are accepted by Bun's parser", async () => {

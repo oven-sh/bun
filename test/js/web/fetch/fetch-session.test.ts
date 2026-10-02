@@ -329,6 +329,9 @@ describe("Bun.FetchSession", () => {
     expect(construct({ keepAlive: { maxIdleSockets: 0 } })).toThrow(
       'The value of "keepAlive.maxIdleSockets" is out of range. It must be >= 1 and <= 65535. Received 0',
     );
+    expect(construct({ keepAlive: { maxIdleSockets: NaN } })).toThrow(
+      'The value of "keepAlive.maxIdleSockets" is out of range. It must be >= 1 and <= 65535. Received NaN',
+    );
     expect(construct({ proxy: "not a url" })).toThrow("fetch() proxy URL is invalid");
     expect(construct({ proxy: { url: "http://p", respectNoProxy: 1 } })).toThrow(
       'The "respectNoProxy" property must be of type boolean',
@@ -337,6 +340,86 @@ describe("Bun.FetchSession", () => {
       "FetchSession: cannot use a proxy with a unix socket",
     );
     expect(construct({ unix: 1 })).toThrow("FetchSession: 'unix' must be a non-empty string");
+  });
+
+  test("rejects a proxy that names no proxy, which fetch() reads as absent", async () => {
+    const outcome = (proxy: unknown) => {
+      try {
+        new Bun.FetchSession({ proxy } as any);
+        return "constructs";
+      } catch (e: any) {
+        return e.code;
+      }
+    };
+    expect({
+      number: outcome(8080),
+      NaN: outcome(NaN),
+      bigint: outcome(1n),
+      symbol: outcome(Symbol("proxy")),
+      function: outcome(() => "http://proxy.invalid:8080"),
+      promise: outcome(Promise.resolve("http://proxy.invalid:8080")),
+      array: outcome(["http://proxy.invalid:8080"]),
+      "object without url": outcome({ href: "http://proxy.invalid:8080" }),
+      "url: undefined": outcome({ url: undefined }),
+      "url: null": outcome({ url: null }),
+      undefined: outcome(undefined),
+      null: outcome(null),
+      "empty string": outcome(""),
+    }).toEqual({
+      number: "ERR_INVALID_ARG_TYPE",
+      NaN: "ERR_INVALID_ARG_TYPE",
+      bigint: "ERR_INVALID_ARG_TYPE",
+      symbol: "ERR_INVALID_ARG_TYPE",
+      function: "ERR_INVALID_ARG_TYPE",
+      promise: "ERR_INVALID_ARG_TYPE",
+      array: "ERR_INVALID_ARG_TYPE",
+      "object without url": "ERR_INVALID_ARG_TYPE",
+      "url: undefined": "ERR_INVALID_ARG_TYPE",
+      "url: null": "ERR_INVALID_ARG_TYPE",
+      undefined: "constructs",
+      null: "constructs",
+      "empty string": "constructs",
+    });
+    expect(() => new Bun.FetchSession({ proxy: 8080 } as any)).toThrow(
+      'The "proxy" argument must be a string, a URL, an object with a "url", or false. Received type number (8080)',
+    );
+
+    // fetch() still ignores such a `proxy` on a request (#25414), so the
+    // session's proxy applies.
+    using proxy = Bun.serve({ port: 0, fetch: req => new Response("proxy " + req.url) });
+    using session = new Bun.FetchSession({ proxy: `http://127.0.0.1:${proxy.port}` });
+    const text = (init: any) => session.fetch("http://origin.invalid/x", init).then(r => r.text());
+    expect(await text({ proxy: 8080 })).toBe("proxy http://origin.invalid/x");
+    expect(await text({ proxy: { href: "http://proxy.invalid:8080" } })).toBe("proxy http://origin.invalid/x");
+  });
+
+  test("rejects a tls.checkServerIdentity that is not a function", () => {
+    const outcome = (checkServerIdentity: unknown) => {
+      try {
+        new Bun.FetchSession({ tls: { checkServerIdentity } as any });
+        return "constructs";
+      } catch (e: any) {
+        return `${e.code}: ${e.message}`;
+      }
+    };
+    const message = 'ERR_INVALID_ARG_TYPE: The "tls.checkServerIdentity" property must be of type function.';
+    expect({
+      boolean: outcome(true),
+      number: outcome(1),
+      string: outcome("yes"),
+      object: outcome({}),
+      function: outcome(() => undefined),
+      null: outcome(null),
+      undefined: outcome(undefined),
+    }).toEqual({
+      boolean: `${message} Received boolean`,
+      number: `${message} Received number`,
+      string: `${message} Received string`,
+      object: `${message} Received object`,
+      function: "constructs",
+      null: "constructs",
+      undefined: "constructs",
+    });
   });
 
   test("null means absent for every option", async () => {

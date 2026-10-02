@@ -30,7 +30,6 @@ namespace WebCore {
 class JSBroadcastChannel : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = BroadcastChannel;
     static JSBroadcastChannel* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<BroadcastChannel>&& impl)
     {
         JSBroadcastChannel* ptr = new (NotNull, JSC::allocateCell<JSBroadcastChannel>(globalObject->vm())) JSBroadcastChannel(structure, *globalObject, WTF::move(impl));

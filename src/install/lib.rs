@@ -1090,7 +1090,19 @@ pub enum TaskCallbackContext {
     IsolatedPackageInstallContext(isolated_install::EntryId),
     RootDependency(DependencyID),
     RootRequestId(PackageID),
+    /// Waits on a git clone in the install phase: the package to check out
+    /// once the repository is there. `dependency_id` is the dependency the
+    /// linker placed the package under. It gives the alias and whether the
+    /// package is required, and can resolve to a different package (a peer
+    /// dependency in the isolated store).
+    GitCheckout {
+        dependency_id: DependencyID,
+        package_id: PackageID,
+    },
 }
+
+// One per waiter in `task_queue`.
+const _: () = assert!(core::mem::size_of::<TaskCallbackContext>() == 32);
 
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:

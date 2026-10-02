@@ -2465,8 +2465,8 @@ pub(crate) fn install_isolated_packages(
                         ResolutionTag::Git => {
                             if installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
+                                pkg_id,
                                 dep.name.slice(string_buf),
-                                &pkg_res,
                                 ctx,
                                 patch_info.name_and_version_hash(),
                             ) == crate::package_manager::GitEnqueueResult::OfflineMiss

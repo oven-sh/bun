@@ -1331,62 +1331,34 @@ fn run_tasks_erased(
                     } else if cb.has_on_package_download_error && cb.is_store_installer {
                         // The isolated installer queued its entry contexts
                         // under `checkout_id`, not `clone_id`. A failed clone
-                        // never reaches checkout, so drain every waiting
-                        // checkout for this repo or the install loop blocks
-                        // forever on the entry's pending-task slot.
-                        let mut drained_any = false;
+                        // never reaches checkout, so fail the checkout of
+                        // every waiter or the install loop blocks forever on
+                        // the entry's pending-task slot.
                         if let Some(waiters) = manager.task_queue.remove(&task.id) {
-                            let pkg_resolutions = manager.lockfile.packages.items_resolution();
                             for waiter in waiters.iter() {
-                                let dep_id = match waiter {
-                                    bun_install::TaskCallbackContext::Dependency(id) => *id,
-                                    _ => continue,
+                                let &bun_install::TaskCallbackContext::GitCheckout {
+                                    package_id,
+                                    ..
+                                } = waiter
+                                else {
+                                    continue;
                                 };
-                                let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                                if pkg_id == INVALID_PACKAGE_ID {
-                                    continue;
-                                }
-                                let res = &pkg_resolutions[pkg_id as usize];
-                                if res.tag != bun_install::ResolutionTag::Git {
-                                    continue;
-                                }
-                                // SAFETY: `res.tag == Git` checked just above —
-                                // `value.git` is the active union arm.
-                                let res_git = res.git();
+                                let res = manager.lockfile.packages.items_resolution()
+                                    [package_id as usize];
+                                let git = res.git();
                                 let checkout_id = Task::Id::for_git_checkout(
-                                    manager.lockfile.str(&res_git.repo),
-                                    manager.lockfile.str(&res_git.resolved),
+                                    manager.lockfile.str(&git.repo),
+                                    manager.lockfile.str(&git.resolved),
                                 );
-                                drained_any = true;
                                 (cb.on_package_download_error_store)(
                                     extract_ctx,
                                     checkout_id,
                                     name,
-                                    res,
+                                    &res,
                                     err,
                                     url,
                                 );
                             }
-                        }
-                        if !drained_any {
-                            // No clone waiters recorded (or all were skipped
-                            // above) — fall back to the clone task's own
-                            // resolution so the originating entry is still
-                            // released.
-                            // SAFETY: `clone.res.tag == Git` — git-clone tasks are
-                            // only enqueued for git resolutions; `value.git` is
-                            // the active union arm.
-                            let resolved = &clone.res.git().resolved;
-                            let checkout_id =
-                                Task::Id::for_git_checkout(url, manager.lockfile.str(resolved));
-                            (cb.on_package_download_error_store)(
-                                extract_ctx,
-                                checkout_id,
-                                name,
-                                &clone.res,
-                                err,
-                                url,
-                            );
                         }
                     } else if log_level != Options::LogLevel::Silent {
                         bun_ast::add_error_pretty!(
@@ -1403,16 +1375,21 @@ fn run_tasks_erased(
 
                 manager.git_repositories.insert(task.id, repo_fd);
 
-                if cb.has_on_extract && cb.is_package_installer {
-                    // Installing! The clone task is shared by every dependency on
-                    // this repo URL; enqueue a checkout per waiter, not just one.
+                if cb.has_on_extract {
+                    // Installing! The clone task is shared by every package of
+                    // this repo URL; enqueue the checkout of each waiter. The
+                    // waiter names its package: the dependency it was placed
+                    // under can resolve to another one.
                     let Some(waiters) = manager.task_queue.remove(&task.id) else {
                         continue;
                     };
                     for waiter in waiters.iter() {
-                        let dep_id = match waiter {
-                            bun_install::TaskCallbackContext::Dependency(id) => *id,
-                            _ => continue,
+                        let &bun_install::TaskCallbackContext::GitCheckout {
+                            dependency_id: dep_id,
+                            package_id,
+                        } = waiter
+                        else {
+                            continue;
                         };
                         // reshaped for borrowck — copy the small `String` handles
                         // so the `&manager.lockfile` borrow doesn't extend across
@@ -1421,16 +1398,7 @@ fn run_tasks_erased(
                             let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
                             (dep.name, dep.behavior.is_required())
                         };
-                        let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                        if pkg_id == INVALID_PACKAGE_ID {
-                            continue;
-                        }
-                        let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
-                        if res.tag != bun_install::ResolutionTag::Git {
-                            continue;
-                        }
-                        // SAFETY: `res.tag == Git` checked just above —
-                        // `value.git` is the active union arm.
+                        let res = manager.lockfile.packages.items_resolution()[package_id as usize];
                         let git = *res.git();
                         // SAFETY: `string_bytes` lives as long as `manager.lockfile`
                         // and is not reallocated while resolve tasks are draining.

@@ -261,17 +261,21 @@ pub enum GitEnqueueResult {
     OfflineMiss,
 }
 
+/// Install phase: fetches the git package `package_id` into the cache, then
+/// runs `task_context`. `dependency_id` is the dependency the linker placed the
+/// package under; it need not resolve to `package_id` (see
+/// `TaskCallbackContext::GitCheckout`).
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
+    package_id: PackageID,
     alias: &[u8],
-    resolution: &Resolution,
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
 ) -> GitEnqueueResult {
-    // SAFETY: caller passes `resolution.tag == Git`; the `git` arm is the
-    // active union field. Copy out so the value no longer borrows
-    // `*resolution` while `*this` is mutably reborrowed below.
+    // The caller passes a package whose `resolution.tag == Git`. Copy out so
+    // the value does not borrow `*this` while it is mutably reborrowed below.
+    let resolution: Resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     let repository: Repository = *resolution.git();
     // reshaped for borrowck — `url`/`resolved` borrow
     // `this.lockfile.buffers.string_bytes`; detach the slice lifetimes so the
@@ -314,7 +318,7 @@ pub fn enqueue_git_for_checkout(
             repo_fd,
             dependency_id,
             alias,
-            resolution,
+            &resolution,
             resolved,
             patch_name_and_version_hash,
         );
@@ -327,14 +331,17 @@ pub fn enqueue_git_for_checkout(
 
         clone_queue
             .value_ptr
-            .push(TaskCallbackContext::Dependency(dependency_id));
+            .push(TaskCallbackContext::GitCheckout {
+                dependency_id,
+                package_id,
+            });
 
         if clone_queue.found_existing {
             return GitEnqueueResult::Queued;
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
-        let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
+        let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, None);
         this.enqueue_git_task(task);
     }
     GitEnqueueResult::Queued
@@ -1504,7 +1511,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
 
-                let task = enqueue_git_clone(this, clone_id, alias, &dep, dependency, &res, None);
+                let task = enqueue_git_clone(this, clone_id, alias, &dep, dependency, None);
                 this.enqueue_git_task(task);
             }
             Ok(())
@@ -1924,7 +1931,6 @@ fn enqueue_git_clone(
     name: &[u8],
     repository: &Repository,
     dependency: &Dependency,
-    res: &Resolution,
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
 ) -> NonNull<Task::Task<'static>> {
@@ -1966,7 +1972,6 @@ fn enqueue_git_clone(
                     &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
-                res: *res,
             }),
         },
         id: task_id,
@@ -3235,16 +3240,16 @@ impl PackageManager {
     pub(crate) fn enqueue_git_for_checkout(
         &mut self,
         dependency_id: DependencyID,
+        package_id: PackageID,
         alias: &[u8],
-        resolution: &Resolution,
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
     ) -> GitEnqueueResult {
         enqueue_git_for_checkout(
             self,
             dependency_id,
+            package_id,
             alias,
-            resolution,
             task_context,
             patch_name_and_version_hash,
         )

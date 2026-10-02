@@ -395,6 +395,11 @@ impl PackageManager {
                     }
                 }
             }
+            // Only a linker parks this, and its `run_tasks` starts the
+            // checkout when the clone ends. Here it would be dropped.
+            TaskCallbackContext::GitCheckout { .. } => {
+                debug_assert!(false, "git checkout waiter outside the install phase");
+            }
             _ => {}
         }
         Ok(())

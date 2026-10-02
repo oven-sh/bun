@@ -2164,7 +2164,10 @@ function parseOptions(
     }
   }
 
-  if (sslMode !== SSLMode.disable && !(tls as Exclude<typeof tls, boolean>)?.serverName) {
+  // An inherited serverName does not survive the own-property copies below, so it must not suppress the host name.
+  const ownServerName = $isObject(tls) && ObjectPrototypeHasOwnProperty.$call(tls, "serverName") && tls.serverName;
+
+  if (sslMode !== SSLMode.disable && !ownServerName) {
     if (hostname) {
       tls = { ...(tls as Exclude<typeof tls, boolean>), serverName: hostname };
     } else if (tls) {

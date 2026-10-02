@@ -23,7 +23,14 @@ import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgSSLResponse } f
 const fixture = /* js */ `
   import { SQL } from "bun";
   const options = { max: 1, connectionTimeout: 5 };
-  if (process.env.SQL_TEST_CA_FILE) options.tls = { caFile: process.env.SQL_TEST_CA_FILE };
+  const caFile = process.env.SQL_TEST_CA_FILE;
+  const serverName = process.env.SQL_TEST_SERVER_NAME;
+  const inheritedServerName = process.env.SQL_TEST_INHERITED_SERVER_NAME;
+  if (caFile) {
+    options.tls = Object.create(inheritedServerName ? { serverName: inheritedServerName } : Object.prototype);
+    options.tls.caFile = caFile;
+    if (serverName) options.tls.serverName = serverName;
+  }
   const sql = new SQL(options);
   try {
     await sql.connect();
@@ -209,6 +216,35 @@ test.concurrent.each([
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
         PGHOST: "localhost",
         SQL_TEST_CA_FILE: join(import.meta.dir, caFile),
+      }),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(expected);
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+// verify-full checks an own tls.serverName, or else the host. The certificate names localhost.
+test.concurrent.each([
+  ["an inherited tls.serverName is ignored", { SQL_TEST_INHERITED_SERVER_NAME: "wrong.example" }, "CONNECTED"],
+  [
+    "an own tls.serverName is the verified name",
+    { SQL_TEST_SERVER_NAME: "wrong.example" },
+    "ERROR:ERR_TLS_CERT_ALTNAME_INVALID",
+  ],
+] as const)("verify-full: %s", async (_, extra, expected) => {
+  const { server, port } = await selfSignedTlsServer();
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: pgEnv(port, {
+        PGHOST: "localhost",
+        SQL_TEST_CA_FILE: join(import.meta.dir, "docker-tls", "server.crt"),
+        ...extra,
       }),
       stderr: "pipe",
     });

@@ -608,6 +608,20 @@ describe("SQL adapter environment variable precedence", () => {
       }
     });
 
+    test("an inherited tls.serverName does not replace the host name", () => {
+      const inherited = (own: object) => Object.assign(Object.create({ serverName: "inherited.example" }), own);
+
+      const verify = new SQL("postgres://u@h:5432/db", { tls: inherited({ ca: "x" }) });
+      expect(verify.options.sslMode).toBe(4);
+      expect(verify.options.tls).toEqual({ ca: "x", serverName: "h", rejectUnauthorized: true });
+
+      const require = new SQL("postgres://u@h:5432/db?sslmode=require", { tls: inherited({}) });
+      expect(require.options.tls).toEqual({ serverName: "h" });
+
+      const own = new SQL("postgres://u@h:5432/db", { tls: { ca: "x", serverName: "own.example" } });
+      expect(own.options.tls).toEqual({ ca: "x", serverName: "own.example", rejectUnauthorized: true });
+    });
+
     test("a polluted Object.prototype does not supply the CA of a verify mode", () => {
       (Object.prototype as any).ca = "polluted";
       (Object.prototype as any).caFile = "polluted";

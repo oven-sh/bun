@@ -1,0 +1,15 @@
+        ts   R>A                     "function f(public a) {}"
+        tsx  R>A                     "function f(public a) {}"
+        ts   R>A                     "function f(private a: A, protected b?: B, readonly c = 1, override d) {}"
+        tsx  R>A                     "function f(private a: A, protected b?: B, readonly c = 1, override d) {}"
+        ts   R>A                     "function f(public readonly a: A) {}"
+        tsx  R>A                     "function f(public readonly a: A) {}"
+        js   R>A                                     23
+        js   R>R                                     7
+        ts   A>A output                              6
+        ts   R>A                                     401
+        ts   R>R                                     57
+        tsx  A>A output                              6
+        tsx  R>A                                     331
+        tsx  R>R                                     43
+3267 bundles compared, 874 differ

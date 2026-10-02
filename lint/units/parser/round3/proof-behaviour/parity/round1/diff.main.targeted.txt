@@ -1,0 +1,33 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (3952 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (3952 sources)
+59280 records compared, 2423 differ, in 180 sources
+!!       55  A>A          unexplained  
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.exp         "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.deco        "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+!!     1715  R>A          unexplained  
+              t.ts.plain       "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+              t.ts.exp         "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+              t.ts.deco        "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+!!      653  R>R          unexplained  
+              t.ts.exp         "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20,6,19,"error",[]]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27,1,26,"error",[]],["Expected identifier but found \":\"",1,28,1,27,"error",[]]]]
+              t.ts.deco        "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20,6,19,"error",[]]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27,1,26,"error",[]],["Expected identifier but found \":\"",1,28,1,27,"error",[]]]]
+              t.tsx.exp        "class C { accessor static a: A }"
+                base ["e",[["Expected \";\" but found \"static\"",1,20,6,19,"error",[]]]]
+                next ["e",[["Expected \";\" but found \"a\"",1,27,1,26,"error",[]],["Expected identifier but found \":\"",1,28,1,27,"error",[]]]]

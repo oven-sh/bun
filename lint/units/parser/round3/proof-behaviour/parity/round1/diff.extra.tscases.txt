@@ -1,0 +1,23 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (13539 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (13539 sources)
+94773 records compared, 235 differ, in 95 sources
+!!      195  R>A          unexplained  
+              t.ts.min.ids     "// @target: es2015\r\nclass C {\r\n   set Foo(public a: number) { }\r\n}"
+                base ["e",[["Expected \")\" but found \"a\"",3,19,1,49,"error",[]],["Expected \";\" but found \")\"",3,28,1,58,"error",[]],["Expected identifier but found \"{\"",3,30,1,60,"error",[]]]]
+                next ["o","class s {\n  set Foo(a) {}\n}\n"]
+              t.tsx.min.ids    "// @target: es2015\r\nclass C {\r\n   set Foo(public a: number) { }\r\n}"
+                base ["e",[["Expected \")\" but found \"a\"",3,19,1,49,"error",[]],["Expected \";\" but found \")\"",3,28,1,58,"error",[]],["Expected identifier but found \"{\"",3,30,1,60,"error",[]]]]
+                next ["o","class s {\n  set Foo(a) {}\n}\n"]
+              t.ts.min.all     "// @target: es2015\r\nclass C {\r\n   set Foo(public a: number) { }\r\n}"
+                base ["e",[["Expected \")\" but found \"a\"",3,19,1,49,"error",[]],["Expected \";\" but found \")\"",3,28,1,58,"error",[]],["Expected identifier but found \"{\"",3,30,1,60,"error",[]]]]
+                next ["o","class s{set Foo(a){}}"]
+!!       40  R>R          unexplained  
+              t.ts.min.ids     "\r\ninterface G {\r\n    2n: string;\r\n}\r\ninterface H {\r\n    \"3n\": string;\r\n}\r\nclass K {\r\n    4n = 0;\r\n}\r\n \r\nclass L {\r\n    \"5n\" = 0;\r\n}\r\n\r\nconst g : G = { 2n: \"propertyNameError2\" };\r\nconst g2 : G = { \"2n\": \"ok2\" };\r\ng[2n];\r\ng2[2n];\r\n\r\nconst h : H = { 3n: \"propertyNameErrorAndMissingProperty3\" };\r\nconst h2 : H = { \"3n\": \"ok3\" };\r\nh[3n];\r\nh2[3n];\r\n\r\nconst k : K = { 4n: \"propertyNameError4\" };\r\nconst k2 : K = { \"4n\": \"ok4\" };\r\nk[4n];\r\nk2[4n];\r\n\r\nconst l : L = { 5n: \"propertyNameErrorAndMissingProperty5\" };\r\nconst l2 : L = { \"5n\": \"ok4\" };\r\nl[5n];\r\nl2[5n];\r\n\r\ng.2n; // not valid JS\r"
+                base ["e",[["Unexpected 2n",3,5,2,21,"error",[]]]]
+                next ["e",[["Syntax Error",36,2,0,560,"error",[]]]]
+              t.tsx.min.ids    "\r\ninterface G {\r\n    2n: string;\r\n}\r\ninterface H {\r\n    \"3n\": string;\r\n}\r\nclass K {\r\n    4n = 0;\r\n}\r\n \r\nclass L {\r\n    \"5n\" = 0;\r\n}\r\n\r\nconst g : G = { 2n: \"propertyNameError2\" };\r\nconst g2 : G = { \"2n\": \"ok2\" };\r\ng[2n];\r\ng2[2n];\r\n\r\nconst h : H = { 3n: \"propertyNameErrorAndMissingProperty3\" };\r\nconst h2 : H = { \"3n\": \"ok3\" };\r\nh[3n];\r\nh2[3n];\r\n\r\nconst k : K = { 4n: \"propertyNameError4\" };\r\nconst k2 : K = { \"4n\": \"ok4\" };\r\nk[4n];\r\nk2[4n];\r\n\r\nconst l : L = { 5n: \"propertyNameErrorAndMissingProperty5\" };\r\nconst l2 : L = { \"5n\": \"ok4\" };\r\nl[5n];\r\nl2[5n];\r\n\r\ng.2n; // not valid JS\r"
+                base ["e",[["Unexpected 2n",3,5,2,21,"error",[]]]]
+                next ["e",[["Syntax Error",36,2,0,560,"error",[]]]]
+              t.ts.min.all     "\r\ninterface G {\r\n    2n: string;\r\n}\r\ninterface H {\r\n    \"3n\": string;\r\n}\r\nclass K {\r\n    4n = 0;\r\n}\r\n \r\nclass L {\r\n    \"5n\" = 0;\r\n}\r\n\r\nconst g : G = { 2n: \"propertyNameError2\" };\r\nconst g2 : G = { \"2n\": \"ok2\" };\r\ng[2n];\r\ng2[2n];\r\n\r\nconst h : H = { 3n: \"propertyNameErrorAndMissingProperty3\" };\r\nconst h2 : H = { \"3n\": \"ok3\" };\r\nh[3n];\r\nh2[3n];\r\n\r\nconst k : K = { 4n: \"propertyNameError4\" };\r\nconst k2 : K = { \"4n\": \"ok4\" };\r\nk[4n];\r\nk2[4n];\r\n\r\nconst l : L = { 5n: \"propertyNameErrorAndMissingProperty5\" };\r\nconst l2 : L = { \"5n\": \"ok4\" };\r\nl[5n];\r\nl2[5n];\r\n\r\ng.2n; // not valid JS\r"
+                base ["e",[["Unexpected 2n",3,5,2,21,"error",[]]]]
+                next ["e",[["Syntax Error",36,2,0,560,"error",[]]]]

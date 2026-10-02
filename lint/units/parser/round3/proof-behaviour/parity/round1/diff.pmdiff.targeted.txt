@@ -1,0 +1,18 @@
+        s0.ts        not parsed  |    "type as = 1;"
+        s0.tsx       not parsed  |    "type as = 1;"
+        s1191.ts     not parsed  | formatting only   "enum E { ['a'] = 1 }"
+        s1191.tsx    not parsed  | formatting only   "enum E { ['a'] = 1 }"
+        s13.ts       not parsed  |    "type satisfies = 1;"
+        s13.tsx      not parsed  |    "type satisfies = 1;"
+        s1428.ts     not parsed  |    "interface I extends A, {}"
+        s1428.tsx    not parsed  |    "interface I extends A, {}"
+        s1441.ts     not parsed  |    "interface I extends {}"
+        s1441.tsx    not parsed  |    "interface I extends {}"
+        s1449.ts     not parsed  |    "interface I extends a() {}"
+        s1449.tsx    not parsed  |    "interface I extends a() {}"
+        js   R>A     2
+        ts   A>A     1
+        ts   R>A     120
+        tsx  A>A     1
+        tsx  R>A     117
+11856 files compared, 241 differ

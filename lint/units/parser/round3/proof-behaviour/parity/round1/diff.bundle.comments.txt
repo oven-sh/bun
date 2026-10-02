@@ -1,0 +1,9 @@
+        ts   R>A                     "type Cc = { [1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ + 2]: number }; export function g(){ let longNa
+        tsx  R>A                     "type Cc = { [1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ + 2]: number }; export function g(){ let longNa
+        ts   R>A                     "class X3 { [key: string = \"a\" /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */]: number } export function g()
+        tsx  R>A                     "class X3 { [key: string = \"a\" /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */]: number } export function g()
+        ts   R>A                     "let g1: (a = 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */) => void; export function g(){ let longName = 1
+        tsx  R>A                     "let g1: (a = 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */) => void; export function g(){ let longName = 1
+        ts   R>A                                     16
+        tsx  R>A                                     16
+366 bundles compared, 32 differ

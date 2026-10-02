@@ -1,0 +1,13 @@
+        ts   R>A                     "type as = 1;"
+        tsx  R>A                     "type as = 1;"
+        ts   R>A                     "type satisfies = 1;"
+        tsx  R>A                     "type satisfies = 1;"
+        ts   R>A                     "interface as {}"
+        tsx  R>A                     "interface as {}"
+        ts   A>A output                              1
+        ts   R>A                                     108
+        ts   R>R                                     42
+        tsx  A>A output                              1
+        tsx  R>A                                     105
+        tsx  R>R                                     38
+11856 bundles compared, 295 differ

@@ -1,0 +1,12 @@
+        ts   R>A                     "let x: if;"
+        tsx  R>A                     "let x: if;"
+        ts   R>A                     "let x: class;"
+        tsx  R>A                     "let x: class;"
+        ts   R>A                     "let x: function;"
+        tsx  R>A                     "let x: function;"
+        js   R>A                                     6
+        ts   A>A output                              10
+        ts   R>A                                     222
+        tsx  A>A output                              10
+        tsx  R>A                                     186
+903 bundles compared, 434 differ

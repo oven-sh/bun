@@ -1,0 +1,33 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (18390 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (18390 sources)
+128730 records compared, 23568 differ, in 8017 sources
+!!        3  A>A          unexplained  
+              t.ts.min.ids     "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.tsx.min.ids    "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.min.all     "namespace as {}"
+                base ["o","namespace;"]
+                next ["o",""]
+!!     6125  R>A          unexplained  
+              t.ts.min.ids     "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+              t.tsx.min.ids    "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+              t.ts.min.all     "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+!!    17440  R>R          unexplained  
+              i.js.plain       "class C { accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20,1,19,"error",[]],["Expected identifier but found \":\"",1,21,1,20,"error",[]]]]
+                next ["e",[["Expected \";\" but found \":\"",1,21,1,20,"error",[]]]]
+              i.js.plain       "class C { static accessor a: A = 1 }"
+                base ["e",[["Expected \";\" but found \"a\"",1,27,1,26,"error",[]],["Expected identifier but found \":\"",1,28,1,27,"error",[]]]]
+                next ["e",[["Expected \";\" but found \":\"",1,28,1,27,"error",[]]]]
+              i.js.plain       "class C { accessor 'a': A }"
+                base ["e",[["Expected \";\" but found \"'a'\"",1,20,3,19,"error",[]],["Expected identifier but found \":\"",1,23,1,22,"error",[]]]]
+                next ["e",[["Expected \";\" but found \":\"",1,23,1,22,"error",[]]]]

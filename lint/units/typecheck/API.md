@@ -2384,10 +2384,10 @@ NOT compiled by cargo when this was written: it does not reach the file while a 
 
 ## Checker: the symbol and the type at a location (`checker/c52_symbol_at_location.rs`)
 
-Commit `2de76025ed`, written by the job that commits the worktree. The file holds checker.go 31704-32296 whole and in
-upstream order (layer Z-SERVICES), 16 functions, and after them `is_arguments_symbol` of `services.go` 229, which
-`containsArgumentsReference` calls and which no module holds (`services.go` has none). No function is a stand-in.
-PORT_STATUS.md has the row.
+Commits `2de76025ed` and `ed705371ac`, written by the job that commits the worktree. The file holds checker.go
+31704-32296 whole and in upstream order (layer Z-SERVICES), 16 functions, and after them `is_arguments_symbol` of
+`services.go` 229, which `containsArgumentsReference` calls and which no module holds (`services.go` has none). No
+function is a stand-in. PORT_STATUS.md has the row.
 
 NOT compiled by cargo when this was written: it does not reach the file while a module of `checker/mod.rs` has no file
 (`c16`, `c18`, `c19` and `emitresolver` at `a582ea9efb`). "Verified" below says what was checked instead.
@@ -2438,8 +2438,8 @@ NOT compiled by cargo when this was written: it does not reach the file while a 
 
 ### Verified
 
-- `sh round2-layer7-checker/c52-probe.sh` on the tree of `a582ea9efb`: exit 0, "probe ok". It runs `rustc` and
-  `clippy-driver` alone, no cargo. (1) One crate holds the real `c52_symbol_at_location.rs`, `checker/types.rs` and
+- `sh round2-layer7-checker/c52-probe.sh` on the trees of `a582ea9efb` and `f5d129e53c`: exit 0, "probe ok". It runs
+  `rustc` and `clippy-driver` alone, no cargo. (1) One crate holds the real `c52_symbol_at_location.rs`, `checker/types.rs` and
   `checker/c01_data.rs`, the leaf files they stand on, and a stand-in for every other name. `c52-probe-gen.py` reads
   the signature of a stand-in from the file of the tree that defines it: 23 methods of `Ast`, 54 free functions of
   `ast/`, 50 methods of the checker, the 8 free functions of `utilities.rs`, `append_if_unique` and `first_or_nil` of

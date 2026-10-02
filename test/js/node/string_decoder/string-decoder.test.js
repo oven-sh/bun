@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, wasmGCStructRefSource, withoutAggressiveGC } from "harness";
 import vm from "node:vm";
 
 const RealStringDecoder = require("string_decoder").StringDecoder;
@@ -307,6 +307,70 @@ describe("StringDecoder called without new", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
+
+  // A plain extensible receiver takes a direct store, every other receiver its own [[DefineOwnProperty]].
+  it("every kind of extensible receiver gets the same encoding property and a working decoder", () => {
+    const receivers = [{}, Object.create(null), { encoding: "own" }, [], function () {}, new Date(0), new Map()];
+    for (const receiver of receivers) {
+      expect(RealStringDecoder.call(receiver, "latin1")).toBe(receiver);
+      expect(Object.getOwnPropertyDescriptor(receiver, "encoding")).toEqual({
+        value: "latin1",
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+      expect(RealStringDecoder.prototype.write.call(receiver, Buffer.from([0xe9]))).toBe("é");
+    }
+  });
+
+  it("a receiver that is not extensible rejects the decoder state", () => {
+    for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
+      const receiver = lock({});
+      expect(() => RealStringDecoder.call(receiver, "latin1")).toThrow(TypeError);
+      expect(Reflect.ownKeys(receiver)).toEqual([]);
+      // Also false when only the private decoder slot was added.
+      expect(Object.isFrozen(receiver)).toBe(true);
+    }
+  });
+
+  it("a Proxy receiver gets its defineProperty trap called", () => {
+    const calls = [];
+    const target = {};
+    const proxy = new Proxy(target, {
+      defineProperty(target, key, descriptor) {
+        calls.push([key, descriptor.value]);
+        return Reflect.defineProperty(target, key, descriptor);
+      },
+    });
+    expect(RealStringDecoder.call(proxy, "latin1")).toBe(proxy);
+    expect(calls).toEqual([["encoding", "latin1"]]);
+    expect(target.encoding).toBe("latin1");
+
+    const refusing = new Proxy({}, { defineProperty: () => false });
+    expect(() => RealStringDecoder.call(refusing, "latin1")).toThrow(TypeError);
+  });
+
+  // In a subprocess because the failure is an abort of the process.
+  it("a WebAssembly GC reference as the receiver throws a TypeError", async () => {
+    const src = `
+      const ref = ${wasmGCStructRefSource};
+      const { StringDecoder } = require("node:string_decoder");
+      try {
+        StringDecoder.call(ref, "utf8");
+        console.log("no error");
+      } catch (e) {
+        console.log(e.constructor.name);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "TypeError\n", stderr: "", exitCode: 0 });
   });
 });
 

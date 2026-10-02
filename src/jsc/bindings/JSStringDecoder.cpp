@@ -11,6 +11,7 @@
 #include "JSBufferEncodingType.h"
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include "BunClientData.h"
+#include "ObjectBindings.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/unicode/CharacterNames.h"
@@ -613,8 +614,10 @@ JSC::EncodedJSValue JSStringDecoderConstructor::call(JSC::JSGlobalObject* lexica
         auto clientData = WebCore::clientData(vm);
         JSObject* thisObject = asObject(thisValue);
 
-        thisObject->putDirect(vm, clientData->builtinNames().decodePrivateName(), jsObject, JSC::PropertyAttribute::DontEnum | 0);
-        thisObject->putDirect(vm, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
+        Bun::defineOwnDataProperty(lexicalGlobalObject, thisObject, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        Bun::defineOwnDataProperty(lexicalGlobalObject, thisObject, clientData->builtinNames().decodePrivateName(), jsObject, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSC::JSValue::encode(thisObject);
     }
 

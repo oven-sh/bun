@@ -356,17 +356,6 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     emitter.emit(event, arguments);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSValue::decode(thisValue));
-    if (value)
-        thisObject->putDirect(vm, propertyName, JSValue::decode(value), 0);
-
-    return true;
-}
-
 extern "C" BunString Bun__resolveEmbeddedNodeFile(const BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
@@ -3144,19 +3133,8 @@ JSC_DEFINE_CUSTOM_GETTER(processPpid, (JSC::JSGlobalObject * globalObject, JSC::
 #endif
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setProcessPpid, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
-{
-    // Match Node.js: writing to process.ppid replaces the live
-    // accessor with the written value on this object, so
-    // subsequent reads return what was written.
-    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSValue::decode(thisValue));
-    if (!thisObject) {
-        return false;
-    }
-    auto& vm = JSC::getVM(globalObject);
-    thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
-    return true;
-}
+// The setter that processObjectTable names for `ppid`. With none, JSC stores an assigned value as it does for a data property.
+static constexpr std::nullptr_t setProcessPpid = nullptr;
 
 static JSValue constructArgv0(VM& vm, JSObject* processObject)
 {
@@ -5065,7 +5043,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
-  ppid                             processPpid                                         CustomAccessor
+  ppid                             processPpid                                         CustomValue
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback

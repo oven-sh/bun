@@ -69,6 +69,7 @@ public:
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
 
+    static constexpr unsigned defaultMaxListeners = 10;
     unsigned getMaxListeners() const { return m_maxListeners; };
 
     void setMaxListeners(unsigned count);
@@ -105,7 +106,7 @@ private:
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
 
     EventEmitterData m_eventTargetData;
-    unsigned m_maxListeners { 10 };
+    unsigned m_maxListeners { defaultMaxListeners };
 
     mutable JSC::Weak<JSC::JSObject> m_thisObject { nullptr };
 };

@@ -16,6 +16,7 @@
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "BunClientData.h"
+#include "ObjectBindings.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -32,22 +33,9 @@ EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
     return nullptr;
 }
 
-JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
+JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* thisObject, DefineEvents defineEvents)
 {
-    if (!thisValue.isCell()) [[unlikely]] {
-        return nullptr;
-    }
-
-    JSCell* thisCell = thisValue.asCell();
-    if (!thisCell->isObject()) [[unlikely]] {
-        return nullptr;
-    }
-
-    auto* thisObject = asObject(thisCell);
-
-    if (thisObject->inherits<JSEventEmitter>())
-        return uncheckedDowncast<JSEventEmitter>(thisObject);
-
+    ASSERT(!thisObject->inherits<JSEventEmitter>());
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
     auto name = clientData->builtinNames()._eventsPublicName();
@@ -57,6 +45,9 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
         return uncheckedDowncast<JSEventEmitter>(asObject(_events));
     }
 
+    if (defineEvents == DefineEvents::No)
+        return nullptr;
+
     auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto impl = EventEmitter::create(*globalObject->currentScriptExecutionContext());
     impl->setThisObject(thisObject);
@@ -64,7 +55,8 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(impl));
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    thisObject->putDirect(vm, name, result, 0);
+    Bun::defineOwnDataProperty(lexicalGlobalObject, thisObject, name, result, 0);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     return uncheckedDowncast<JSEventEmitter>(asObject(result));
 }

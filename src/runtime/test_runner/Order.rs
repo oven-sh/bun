@@ -240,6 +240,43 @@ impl Order {
             .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
         Ok(())
     }
+
+    /// Every sequence a failing hook skips over must belong to the scope that declared the hook.
+    pub(crate) fn assert_skip_ranges_stay_in_scope(&self) {
+        if !bun_core::Environment::CI_ASSERT {
+            return;
+        }
+        for (index, group) in self.groups.iter().enumerate() {
+            if group.failure_skip_to <= index + 1 {
+                continue; // a test group, or a hook with nothing to skip
+            }
+            // only hook groups skip further than the next group, and each of them holds a single hook
+            debug_assert_eq!(group.sequence_end - group.sequence_start, 1);
+            let Some(hook) = self.sequences[group.sequence_start].first_entry else {
+                continue;
+            };
+            // SAFETY: entries and the describe tree their `base.parent` chains point into are owned
+            // by the collection, which outlives the `Order` built from it.
+            let owner = unsafe { hook.as_ref() }.base.parent;
+            for skipped in &self.groups[index + 1..group.failure_skip_to] {
+                for sequence in &self.sequences[skipped.sequence_start..skipped.sequence_end] {
+                    let Some(entry) = sequence.test_entry.or(sequence.first_entry) else {
+                        continue;
+                    };
+                    // SAFETY: see above.
+                    let mut scope = unsafe { entry.as_ref() }.base.parent;
+                    while let Some(current) = scope {
+                        if Some(current) == owner {
+                            break;
+                        }
+                        // SAFETY: see above.
+                        scope = unsafe { (*current).base.parent };
+                    }
+                    debug_assert!(scope.is_some(), "a failing hook would skip an entry outside of its scope");
+                }
+            }
+        }
+    }
 }
 
 pub(crate) struct AllOrderResult {
@@ -251,13 +288,15 @@ impl AllOrderResult {
     pub(crate) const EMPTY: AllOrderResult = AllOrderResult { start: 0, end: 0 };
 
     pub(crate) fn set_failure_skip_to(&self, this: &mut Order) {
-        if self.start == 0 && self.end == 0 {
+        if self.start == self.end {
             return;
         }
         let skip_to = this.groups.len();
         for group in &mut this.groups[self.start..self.end] {
             group.failure_skip_to = skip_to;
         }
+        // seal the last skipped group; a concurrent test scheduled next must not extend it
+        this.previous_group_was_concurrent = false;
     }
 }
 

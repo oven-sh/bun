@@ -1,15 +1,4 @@
 #!/usr/bin/env bun
-// Where an executable that was compiled ahead of time spends its time, from the output of macOS's `sample`.
-//
-//   sample <pid> <seconds> -file <file>
-//   bun scripts/aot/sample-report.ts <file> --map <map of the image> --code-at <address> [--top 30] [--thread <substring of its name>]
-//
-// The address is where that process has the code, which it prints when it starts with BUN_AOT_VERBOSE=1 ("of code at 0x...").
-//
-// `sample` cannot name anything in the image. This gives each sample in it to a compiled function, a stub or the code
-// of a regular expression. See map.ts for the map.
-//
-// For a function: `own` is time in its code, `stubs` in stubs it called, `native` in the runtime underneath it.
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { type CompiledFunction, ImageMap, nameOf, type Place } from "./map.ts";
@@ -33,11 +22,10 @@ const map = new ImageMap(args.map, args["code-at"]);
 
 function placeOf(frame: string): Place | undefined {
   const address = frame.match(/\[(0x[0-9a-f]+)\]/)?.[1];
-  const offset = Number(address) - map.addressOfCode;
-  return offset >= 0 && offset < map.sizeOfCode ? map.at(offset) : undefined;
+  const offset = Number(address) - map.codeAddress;
+  return offset >= 0 && offset < map.codeSizeInBytes ? map.at(offset) : undefined;
 }
 
-// The call graph is a tree in text: the depth is the width of what precedes the count.
 const text = readFileSync(positionals[0], "utf8");
 const graph = text.slice(text.indexOf("Call graph:"), text.indexOf("Total number in stack"));
 type Node = { depth: number; count: number; self: number; frame: string };
@@ -67,7 +55,6 @@ for (const node of nodes) {
   if (stack.length === 1 && args.thread) inThread = node.frame.includes(args.thread);
   if (!inThread || node.self <= 0 || waiting.test(node.frame)) continue;
 
-  // The innermost compiled function on the stack.
   let caller: CompiledFunction | undefined;
   for (let at = stack.length - 1; at >= 0 && !caller; at--) {
     const above = placeOf(stack[at].frame);

@@ -209,7 +209,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
         }
 
-        // (Until it is visited, the `Ref` of an identifier says where in the source it is: this is that very one.)
         let is_call_target = matches!(p.call_target.tag(), Tag::EIdentifier)
             && e_.ref_.eql(
                 p.call_target
@@ -217,13 +216,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("infallible: variant checked")
                     .ref_,
             );
-        p.next_use_leaves_the_value_alone = is_call_target;
+        p.next_use_preserves_value = is_call_target;
         let result = p.find_symbol(expr.loc, name);
-        p.next_use_leaves_the_value_alone = false;
+        p.next_use_preserves_value = false;
         let result = result.expect("unreachable");
-        // In `with (o) { f() }`, a compiler cannot tell whether this `f` is the one that is called.
         if is_call_target && result.is_inside_with_scope {
-            p.note_use_of_value(result.r#ref);
+            p.record_value_use(result.r#ref);
         }
 
         // Order matters: assigning a fresh `Ref` clears the packed user-bit
@@ -2107,7 +2105,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `import.meta.resolve(specifier)` resolves from this source file, wherever the call ends up.
         if p.options.inline_import_meta_paths && e_.args.len_u32() == 1 {
             if let Data::EDot(dot) = e_.target.data {
                 let first = e_.args.slice()[0];
@@ -2537,9 +2534,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
-        // (Before import.meta.url is replaced by what it says.)
         if p.options.inline_import_meta_paths && !p.is_control_flow_dead {
-            Self::add_entry_point_of_worker(p, &e_);
+            Self::add_worker_entry_point(p, &e_);
         }
         p.visit_expr(&mut e_.target);
 
@@ -2561,10 +2557,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `new Worker("./worker.ts")` and `new Worker(new URL("./worker.ts", import.meta.url))`, with or without `.href`: the
-    /// file is part of the program too. The expression stays as it is. Whether `Worker` is the global or
-    /// node:worker_threads' makes no difference, and if it is something else, there is an entry point that nothing starts.
-    fn add_entry_point_of_worker(p: &mut Self, e_: &E::New) {
+    fn add_worker_entry_point(p: &mut Self, e_: &E::New) {
         let is_named = |p: &Self, target: &Expr, name: &[u8]| match target.data {
             Data::EIdentifier(identifier) => p.load_name_from_ref(identifier.ref_) == name,
             _ => false,
@@ -2585,7 +2578,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     | bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
             );
         };
-        // A path is relative to the working directory, as it is on the command line.
         if let Data::EString(path) = url.data {
             if let Ok(text) = path.string(p.arena)
                 && is_path(text)
@@ -2615,7 +2607,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Ok(mut text) = path_string.string(p.arena) else {
             return;
         };
-        // In a URL "worker.ts" is relative too. Not another URL, though.
         if !is_path(text) {
             if text.contains(&b':') {
                 return;

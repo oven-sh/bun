@@ -1,16 +1,3 @@
-// A sampling profiler that records the link register, for executables that were compiled ahead of time. macOS, ARM64.
-//
-// A stub pushes no frame, so a profiler that walks frames (`sample`) gives the time in a stub to the wrong caller, or to none. The
-// link register is the only record of which place called it. This is a library to insert into the process: a thread signals the
-// main thread once a millisecond, and the handler records pc, lr, x0, x1 and x2 of what it interrupted.
-//
-//   clang -O2 -dynamiclib -o lr-probe.dylib scripts/aot/lr-probe.c
-//   DYLD_INSERT_LIBRARIES=$PWD/lr-probe.dylib LRPROBE_NAME=<how the name of the process starts> LRPROBE_OUT=<file> \
-//       LRPROBE_START=<file> <executable> ...
-//   bun scripts/aot/lr-report.ts <file> --map <map of the image>
-//
-// Nothing is recorded until the file LRPROBE_START exists: create it when what is to be measured begins. The samples are text,
-// one line each. Processes that this one starts are left alone.
 #define _XOPEN_SOURCE 700
 #define _DARWIN_C_SOURCE
 #include <fcntl.h>
@@ -28,7 +15,7 @@
 
 enum { capacity = 1 << 16 };
 static struct { uint64_t pc, lr, x0, x1, x2; } samples[capacity];
-static _Atomic uint64_t written; // By the handler.
+static _Atomic uint64_t written;
 static _Atomic int recording;
 static pthread_t mainThread;
 static const char* out;
@@ -81,7 +68,6 @@ __attribute__((constructor)) static void initialize(void)
     const char* name = getenv("LRPROBE_NAME");
     out = getenv("LRPROBE_OUT");
     start = getenv("LRPROBE_START");
-    // Not in the processes that this one starts.
     unsetenv("DYLD_INSERT_LIBRARIES");
     if (!name || !out || !start || strncmp(getprogname(), name, strlen(name)))
         return;

@@ -10,7 +10,6 @@ function five(this: any, a: any, b: any, c: any, d: any, e: any) { return [this?
 function none(this: any) { return this?.k; }
 const o = { k: "o" };
 
-// ---- so many bound, so many passed
 for (let bound = 0; bound <= 6; bound++) {
   const args = Array.from({ length: bound }, (_, i) => "b" + i);
   const fs = [show, counts, five, none].map(f => (f as any).bind(o, ...args));
@@ -24,18 +23,15 @@ for (let bound = 0; bound <= 6; bound++) {
 say("many bound", () => (show as any).bind(o, ...Array.from({ length: 200 }, (_, i) => i))(1, 2).length);
 say("many passed", () => show.bind(o, "b")(...Array.from({ length: 300 }, (_, i) => i)).length);
 
-// ---- this
 say("this", () => [show.bind(undefined)(), show.bind(null)(), show.bind(5)(), show.bind("s")(), show.bind(o)(), show.bind(true)()].join(" / "));
 say("this is not what it is called on", () => { const h = { k: "h", f: show.bind(o) }; return h.f() + " / " + h.f.call({ k: "c" }) + " / " + h.f.apply({ k: "a" }, [1]) + " / " + Reflect.apply(h.f, { k: "r" }, [1, 2]); });
 say("arrow", () => { const a = (() => (x: any) => x + 1)(); return a.bind(o)(1) + "," + a.bind(o, 5)(); });
 say("method", () => { class C { k = "c"; m(a: any) { return this.k + a; } } const c = new C(); const m = c.m.bind(c); return m(1) + [1, 2].map(m).join(); });
 
-// ---- bound again
 say("bound twice", () => show.bind(o, 1).bind({ k: "x" }, 2)(3));
 say("bound five times", () => { let f: any = show; for (let i = 0; i < 5; i++) f = f.bind({ k: "k" + i }, i); return f("z"); });
 say("bound often", () => { let f: any = counts; for (let i = 0; i < 300; i++) f = f.bind(o); return f(1, 2); });
 
-// ---- other targets
 say("native", () => [Math.max.bind(null, 3)(1, 7), Array.prototype.join.bind([1, 2], "-")(), String.prototype.slice.bind("hello", 1)(3), Object.prototype.hasOwnProperty.bind(o)("k")].join());
 say("Function.prototype.call", () => Function.prototype.call.bind(show)(o, 1, 2));
 say("Function.prototype.apply", () => Function.prototype.apply.bind(show)(o, [1, 2]));
@@ -53,7 +49,6 @@ const asyncResults: Promise<string>[] = [];
 say("eval'd", () => (0, eval)("(function (a, b) { return this.k + a + b })").bind(o, 1)(2));
 say("new Function", () => new Function("a", "b", "return this.k + a + b").bind(o, 1)(2));
 
-// ---- called by native code, and in tail position
 say("map", () => [1, 2, 3].map(show.bind(o, "b")).join(" / "));
 say("forEach, sort, reduce", () => { const r: any[] = []; [3, 1].forEach(((x: any) => r.push(x)).bind(null)); return r + "|" + [3, 1, 2].sort(((a: number, b: number) => a - b).bind(null)) + "|" + [1, 2].reduce(((k: number, a: number, x: number) => a + x * k).bind(null, 10), 0); });
 say("replace", () => "a1b2".replace(/\d/g, ((p: string, m: string) => p + m).bind(null, "#")));
@@ -65,11 +60,8 @@ function tail(a: any) { return boundShow(a); }
 function tailTwice(a: any) { return tail(a); }
 say("tail", () => tail(1) + " / " + tailTwice(2));
 const boundCount: any = (function count(n: number, acc: number): any { return n ? boundCount(n - 1, acc + 1) : acc; }).bind(null);
-// (Whether that many calls fit on the stack depends on whether the call through the bound function reuses the caller's frame. With the JIT,
-// that depends on how soon the function is compiled by a tier that does so. Both outcomes are correct. A crash is not.)
 say("deep, in tail position", () => { try { return boundCount(200_000, 0) === 200_000 ? "all of them, or too many" : "wrong"; } catch (e: any) { return e.name === "RangeError" ? "all of them, or too many" : e.name; } });
 
-// ---- errors
 function thrower(this: any, a: any) { throw new RangeError("from " + this.k + a); }
 say("throws", () => thrower.bind(o, 1)());
 say("caught and called again", () => { const b = thrower.bind(o); let n = 0; for (let i = 0; i < 5; i++) { try { b(i); } catch { n++; } } return n; });
@@ -81,7 +73,6 @@ say("no room, then fine", () => { try { forever(0); } catch {} return show.bind(
 say("no room, many arguments", () => { const wide: any = (function w(this: any, ...xs: any[]): number { return 1 + wide(...xs); }).bind(o, ...Array.from({ length: 50 }, (_, i) => i)); try { return wide(1, 2, 3); } catch (e: any) { return e.name; } });
 say("not a function", () => (Function.prototype.bind as any).call({}, o));
 
-// ---- collected in the middle
 say("gc", () => { function g(this: any, a: any, b: any) { Bun.gc(true); return this.k + a.v + b.v; } return g.bind({ k: "fresh" }, { v: 1 })({ v: 2 }); });
 say("gc, many", () => { function g(this: any, ...xs: any[]) { Bun.gc(true); return xs.map(x => x.v).join(""); } return (g as any).bind(o, ...[1, 2, 3, 4, 5, 6].map(v => ({ v })))({ v: 7 }); });
 say("hot", () => { const b = counts.bind(o, 1); let s = 0; for (let i = 0; i < 300_000; i++) s += b(i).length; return s; });
@@ -91,7 +82,6 @@ await new Promise<void>(r => setTimeout(((a: string) => { out.push("timer = " + 
 queueMicrotask((() => out.push("microtask")).bind(null));
 await null;
 console.log(out.join("\n"));
-// A function that the program never constructs, constructed from native code: checks the stack trace in that case.
 {
   const lines = (e: unknown) => String((e as Error).stack).split("\n").slice(0, 4).map(l => l.trim().replace(/\(?[^ ()]*[\\/]/, "").replace(/\)$/, "")).join(" < ");
   function Plain(this: any, x: number) { this.x = x; this.where = lines(new Error("made in Plain")); }
@@ -106,11 +96,9 @@ console.log(out.join("\n"));
   await (async () => { await null; console.log("in an async function:", attempt(() => Reflect.construct(Outer, [5]))); })();
   await (async () => { await null; console.log("throws in an async function:", attempt(() => [1].map(() => Reflect.construct(Thrower, [6])))); })();
   await new Promise<void>(r => setTimeout(() => { console.log("in a timer:", attempt(() => Reflect.construct(Outer, [7]))); r(); }, 0));
-  // Ones that make nothing of `this`, which are compiled to be called and that is all.
   const plainly = (t: string) => t.replace(/at new /g, "at ");
   function NoThis(x: number) { return { x, where: lines(new Error("made in NoThis")) }; }
   function ThrowsNoThis(x: number) { if (x) throw new RangeError("thrown in ThrowsNoThis"); return {}; }
-  // (Not `return Reflect.construct(...)`: compiled to be called, that is a tail call, and the frame would not be in the stack trace.)
   function Deep(x: number): object { const made = x ? Reflect.construct(Deep, [x - 1]) : Reflect.construct(ThrowsNoThis, [1]); return made; }
   console.log("nothing of this:", plainly(attempt(() => Reflect.construct(NoThis, [1]))));
   console.log("nothing of this, throws:", plainly(attempt(() => Reflect.construct(ThrowsNoThis, [1]))));

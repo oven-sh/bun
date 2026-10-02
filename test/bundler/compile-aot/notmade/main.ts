@@ -1,9 +1,7 @@
-// Objects whose allocation can be eliminated, and look-alikes that have to be allocated. The output must match the interpreter's.
 const say = (what: string, got: unknown) => console.log(what + ": " + (typeof got === "string" ? got : JSON.stringify(got) ?? String(got)));
 const log: string[] = []; const noted = <T,>(what: string, v: T): T => { log.push(what); return v; };
 const opaque = <T,>(v: T): T => (log.length > 1e9 ? (undefined as T) : v); const keep: unknown[] = [];
 type P = { x: number; y: number }; type R = { lo: number; hi: number; name: string }; type K = { kind: string; n: number };
-// ---- Only read.
 function onTheSpot(x: number, y: number) { const { p, q } = { p: x + 1, q: y * 2 }; return p + q; }
 function later(n: number) { const o: R = { lo: n, hi: n + 10, name: "r" + n }; let s = 0; for (let i = o.lo; i < o.hi; i++) s += i; return o.name + s + (o.hi > 5 ? o.lo : o.hi); }
 const pair = (a: number, b: string) => ({ first: a, second: b });
@@ -15,10 +13,9 @@ function asItWas() { let v = 1; const o = { v }; v = 2; const w = o.v; v = 3; re
 function numbers(i: number) { const o: P = { x: i, y: i + 0.5 }; return [o.x + 1, o.y * 2, o.x / 2, (o.x | 0) === o.x]; }
 function strings() { const o: K = { kind: "te" + ["xt"].join(""), n: 1 }; return [o.kind === "text", o.kind !== "text", o.kind.length]; }
 function defaults() { const { a = 5, b = 6, c = 7 } = { a: undefined, b: null, c: 0 } as { a?: number; b?: number | null; c?: number }; return [a, b, c]; }
-function notThere() { const { a } = { a: undefined as number | undefined }; return a === undefined; }
+function absentCases() { const { a } = { a: undefined as number | undefined }; return a === undefined; }
 function twice(x: number) { const o = { a: x }; return o.a + o.a + o.a; }
-say("only read", [onTheSpot(1, 2), later(3), fromAHelper(), nested(4), oneOfMany(5), inOrder(), asItWas(), numbers(7), strings(), defaults(), notThere(), twice(2)]);
-// ---- Has to be made: each of these does something to it that shows.
+say("only read", [onTheSpot(1, 2), later(3), fromAHelper(), nested(4), oneOfMany(5), inOrder(), asItWas(), numbers(7), strings(), defaults(), absentCases(), twice(2)]);
 say("returned", ((x: number) => { const o = { a: x }; return o; })(1));
 say("passed", ((x: number) => { const o = { a: x }; return [opaque(o).a, o.a]; })(2));
 say("kept", ((x: number) => { const o = { a: x }; keep.push(o); return o.a; })(3) + " " + JSON.stringify(keep));
@@ -52,6 +49,5 @@ say("frozen", ((x: number) => { const o = Object.freeze({ a: x }); return [o.a, 
 say("printed", ((x: number) => { const o = { a: x }; return `${JSON.stringify(o)} ${o.a}`; })(31));
 say("awaited", "see below"); (async (x: number) => { const o = { a: x }; await null; return o.a; })(32).then(v => say("after an await", v));
 say("yielded past", [...(function* (x: number) { const o = { a: x }; yield o.a; yield o.a + 1; })(33)]);
-// ---- Over and over.
 { let s = 0; for (let i = 0; i < 20000; i++) { const { p, q } = { p: i, q: i + 1 }; const r = pair(p, "x"); s += p + q + r.first; } say("many times", s); }
 export {};

@@ -1,26 +1,10 @@
-//! Sound types: TypeScript annotations lowered to `$$t(value, mask)` runtime
-//! tag checks.
-//!
-//! A mask over-approximates the set of runtime tags a TypeScript type allows.
-//! A mask that is too wide only loses a check; a mask that is too narrow
-//! throws in a correct program, so everything unknown resolves to [`mask::TOP`]
-//! and no check is emitted for it.
-//!
-//! The parser turns each annotation into a [`SoundType`] while it skips it. A
-//! name can be declared after its use or in another module, so a `SoundType`
-//! is either a mask or an index into [`ModuleTypes::nodes`], and [`Resolver`]
-//! evaluates it during the visit pass. `ModuleTypes` owns all of its data so
-//! that one module's table can be shared with the parsers of its importers.
 
 use std::sync::Arc;
 
 use bun_collections::{HashMap, StringHashMap};
 
-/// The callee of every emitted check.
 pub const CHECK_FN_NAME: &[u8] = b"$$t";
 
-/// A total partition of JavaScript values.
-/// A set of tags. Every value has exactly one.
 pub type Mask = u32;
 
 pub mod mask {
@@ -33,14 +17,9 @@ pub mod mask {
     pub const STRING: Mask = 16;
     pub const SYMBOL: Mask = 32;
     pub const BIGINT: Mask = 64;
-    /// Callable objects.
     pub const FUNCTION: Mask = 128;
-    /// Real JavaScript arrays.
     pub const ARRAY: Mask = 256;
-    /// Objects that are none of the other kinds.
     pub const PLAIN_OBJECT: Mask = 512;
-    /// One tag for each type of typed array, in the engine's order:
-    /// `typed_array(0)` is `Int8Array`.
     pub const TYPED_ARRAY_KINDS: u32 = 12;
     const FIRST_TYPED_ARRAY_BIT: u32 = 10;
     pub const TYPED_ARRAYS: Mask = ((1 << TYPED_ARRAY_KINDS) - 1) << FIRST_TYPED_ARRAY_BIT;
@@ -48,8 +27,6 @@ pub mod mask {
     pub const fn typed_array(kind: u32) -> Mask {
         1 << (FIRST_TYPED_ARRAY_BIT + kind)
     }
-    /// One tag for each of the other kinds of object that the engine can identify
-    /// by its cell type, in the order it numbers them after the typed arrays.
     const FIRST_KIND_BIT: u32 = FIRST_TYPED_ARRAY_BIT + TYPED_ARRAY_KINDS;
     pub const MAP: Mask = 1 << FIRST_KIND_BIT;
     pub const SET: Mask = 1 << (FIRST_KIND_BIT + 1);
@@ -60,36 +37,26 @@ pub mod mask {
     pub const DATE: Mask = 1 << (FIRST_KIND_BIT + 6);
     pub const ERROR: Mask = 1 << (FIRST_KIND_BIT + 7);
     const KINDS: u32 = 8;
-    pub const KINDS_OF_OBJECT: Mask = ((1 << KINDS) - 1) << FIRST_KIND_BIT;
-    /// Objects that are neither callable nor arrays.
-    pub const OTHER_OBJECT: Mask = PLAIN_OBJECT | TYPED_ARRAYS | KINDS_OF_OBJECT;
+    pub const OBJECT_KINDS: Mask = ((1 << KINDS) - 1) << FIRST_KIND_BIT;
+    pub const OTHER_OBJECT: Mask = PLAIN_OBJECT | TYPED_ARRAYS | OBJECT_KINDS;
 
-    /// Every value. Never emitted.
     pub const TOP: Mask = (1 << (FIRST_KIND_BIT + KINDS)) - 1;
-    /// Nothing that `to_wire` gives is this or more.
     pub const WIRE_END: u32 = (TYPED_ARRAY_KINDS + KINDS + 1) << FIRST_TYPED_ARRAY_BIT;
     pub const OBJECT: Mask = FUNCTION | ARRAY | OTHER_OBJECT;
     pub const NON_NULLISH: Mask = TOP & !(UNDEFINED | NULL);
     pub const PROPERTY_KEY: Mask = STRING | NUMBER | SYMBOL;
-    /// Primitives that stay assignable to an intersection with an object type
-    /// (`string & { __brand: "x" }`).
     pub const BRANDABLE: Mask = BOOLEAN | NUMBER | STRING | SYMBOL | BIGINT;
 
-    /// What `$$t` is passed. The engine has one tag for the objects that are
-    /// neither callable nor arrays and, above the tags, room to say that they
-    /// are typed arrays of one type: one more than which. `None` if every value
-    /// gets past what this comes to.
     pub const fn to_wire(m: Mask) -> Option<u32> {
         const WIRE_TOP: u32 = (1 << FIRST_TYPED_ARRAY_BIT) - 1;
         let tags = m & (WIRE_TOP & !PLAIN_OBJECT);
-        let typed = m & (TYPED_ARRAYS | KINDS_OF_OBJECT);
+        let typed = m & (TYPED_ARRAYS | OBJECT_KINDS);
         let wire = if m & OTHER_OBJECT == 0 {
             tags
         } else if m & PLAIN_OBJECT == 0 && typed.is_power_of_two() {
             tags | PLAIN_OBJECT
                 | (typed.trailing_zeros() - FIRST_TYPED_ARRAY_BIT + 1) << FIRST_TYPED_ARRAY_BIT
         } else {
-            // Some of them: there is no saying which.
             tags | PLAIN_OBJECT
         };
         if wire == WIRE_TOP { None } else { Some(wire) }
@@ -115,7 +82,6 @@ pub mod mask {
 
     pub const fn intersect(a: Mask, b: Mask) -> Mask {
         if a == TOP || b == TOP {
-            // The unknown side may be a primitive that the other side brands.
             let known = if a == TOP { b } else { a };
             return if known & OBJECT == 0 { known } else { TOP };
         }
@@ -135,13 +101,8 @@ pub mod mask {
 pub enum Level {
     #[default]
     Off = 0,
-    /// Parameters, returns, typed variables, casts, typed stores.
     Basic = 1,
-    /// Also `e!`, reads of typed `this` fields, and calls of same-file functions.
     Full = 2,
-    /// Also reads of members and elements, and calls of methods, whose static
-    /// type is a primitive. The static type of the object is inferred, and
-    /// only decides where a check goes.
     Infer = 3,
 }
 
@@ -151,7 +112,6 @@ impl Level {
         self != Level::Off
     }
 
-    /// The value of `--sound-types=<value>`, `soundTypes: <value>` and `BUN_SOUND_TYPES`.
     pub fn from_option_value(value: &[u8]) -> Option<Level> {
         Some(match value {
             b"" | b"1" | b"true" | b"basic" => Level::Basic,
@@ -162,8 +122,6 @@ impl Level {
         })
     }
 
-    /// `self`, or the level `BUN_SOUND_TYPES` asks for if that is higher. Only for a build that
-    /// makes an executable: a build script's other bundles ship as text that runs elsewhere.
     pub fn or_from_env(self, makes_executable: bool) -> Level {
         if !makes_executable {
             return self;
@@ -173,8 +131,7 @@ impl Level {
             .map_or(self, |env| self.max(env))
     }
 
-    /// `self`, or `Off` if `BUN_SOUND_TYPES_EXCLUDE` names `path`.
-    pub fn unless_excluded_by_env(self, path: &[u8]) -> Level {
+    pub fn unless_env_excluded(self, path: &[u8]) -> Level {
         if self.is_enabled()
             && let Some(excluded) = bun_core::env_var::BUN_SOUND_TYPES_EXCLUDE::get()
             && bun_core::strings::split(excluded, b",")
@@ -186,15 +143,11 @@ impl Level {
     }
 }
 
-/// A type as far as the parse pass knows it.
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub struct SoundType(u32);
 
 impl SoundType {
-    /// No annotation, or one that allows every value.
     pub const TOP: SoundType = SoundType(0);
-    /// A literal `any` or `unknown`. Same as `TOP` except that a cast to it
-    /// opts the operand out of the check of the enclosing annotation.
     pub const ANY: SoundType = SoundType(1 << 30);
     const NODE_BIT: u32 = 1 << 31;
 
@@ -213,7 +166,6 @@ impl SoundType {
         self.0 == 0 || self.0 == Self::ANY.0
     }
 
-    /// `None` when the type has to be resolved.
     #[inline]
     pub const fn as_mask(self) -> Option<Mask> {
         if self.is_top() {
@@ -236,38 +188,27 @@ pub struct NameId(u32);
 
 #[derive(Copy, Clone)]
 pub enum Node {
-    /// `Name` or `Name<Arg0, ...>`. `arg0` is only evaluated for the utility
-    /// types in [`takes_first_type_argument`].
     Ref {
         name: NameId,
         arg0: SoundType,
     },
-    /// `Base.Member`
     Qualified {
         base: NameId,
         member: NameId,
     },
     Union(SoundType, SoundType),
     Intersect(SoundType, SoundType),
-    /// An instance of a class whose `extends` clause names this type.
     InstanceOfSubclass(SoundType),
-    /// `Element[]`
     Array(SoundType),
-    /// A type literal, an interface or the instances of a class. `base` says
-    /// which tags it allows, and has the members that `members`, an index into
-    /// [`ModuleTypes::member_lists`], does not.
     Object {
         base: SoundType,
         members: u32,
     },
-    /// Something callable that returns this.
     Function(SoundType),
 }
 
-/// A type and the module whose table it indexes.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Located {
-    /// 0 for the module being parsed, else 1 + an index into `Resolver::keep_alive`.
     module: u32,
     pub ty: SoundType,
 }
@@ -278,7 +219,6 @@ impl Located {
         ty: SoundType::TOP,
     };
 
-    /// A type of the module being parsed.
     #[inline]
     pub const fn own(ty: SoundType) -> Located {
         Located { module: 0, ty }
@@ -317,16 +257,12 @@ enum Decl {
     ImportStar {
         specifier: u32,
     },
-    /// Declared in a way this table does not model: in a nested scope, twice
-    /// with different meanings, or as a value that shadows a global type.
     Opaque,
 }
 
 struct Name {
     text: Box<[u8]>,
     decl: Decl,
-    /// Some declaration in the file has a type parameter with this name.
-    /// Type parameter scopes are not tracked, so the name is unknown everywhere.
     is_type_parameter: bool,
 }
 
@@ -337,10 +273,8 @@ enum Export {
     Namespace,
 }
 
-/// The type namespace of one module.
 #[derive(Default)]
 pub struct ModuleTypes {
-    /// Absolute path of the module, for resolving its import specifiers.
     pub path: Box<[u8]>,
     names: Vec<Name>,
     name_ids: StringHashMap<u32>,
@@ -400,8 +334,6 @@ impl ModuleTypes {
         self.specifiers.len() as u32 - 1
     }
 
-    // ── Types ────────────────────────────────────────────────────────────
-
     pub fn reference(&mut self, name: &[u8], arg0: SoundType) -> SoundType {
         let name = self.intern(name);
         self.add_node(Node::Ref { name, arg0 })
@@ -452,7 +384,6 @@ impl ModuleTypes {
         self.add_node(Node::Function(returns))
     }
 
-    /// `base`, refined with the known types of its members.
     pub fn object(&mut self, base: SoundType, members: Vec<(NameId, SoundType)>) -> SoundType {
         if members.is_empty() || base.is_top() {
             return base;
@@ -465,25 +396,20 @@ impl ModuleTypes {
         })
     }
 
-    // ── Declarations ─────────────────────────────────────────────────────
-
     pub fn declare_type_parameter(&mut self, name: &[u8]) {
         let id = self.intern(name);
         self.names[id.0 as usize].is_type_parameter = true;
     }
 
-    /// A name whose meaning as a type this table cannot answer for.
     pub fn declare_opaque(&mut self, name: &[u8]) {
         let id = self.intern(name);
         self.names[id.0 as usize].decl = Decl::Opaque;
     }
 
-    /// A type, interface, class or enum declared in the module scope.
     pub fn declare(&mut self, name: &[u8], kind: DeclKind, ty: SoundType) {
         let id = self.intern(name);
         let merged = match self.names[id.0 as usize].decl {
             Decl::None => Decl::Type { kind, ty },
-            // Declaration merging: a value of the merged type satisfies both.
             Decl::Type {
                 kind: prev_kind,
                 ty: prev_ty,
@@ -510,8 +436,6 @@ impl ModuleTypes {
         };
     }
 
-    /// `import { imported as local } from specifier`; `imported` is `default`
-    /// for a default import.
     pub fn declare_import_item(&mut self, local: &[u8], specifier: &[u8], imported: &[u8]) {
         let specifier = self.add_specifier(specifier);
         let imported = self.intern(imported);
@@ -524,20 +448,17 @@ impl ModuleTypes {
         );
     }
 
-    /// `import * as local from specifier`
     pub fn declare_import_star(&mut self, local: &[u8], specifier: &[u8]) {
         let specifier = self.add_specifier(specifier);
         self.declare_import(local, Decl::ImportStar { specifier });
     }
 
-    /// `export { local as exported }`, or an exported declaration.
     pub fn export_local(&mut self, exported: &[u8], local: &[u8]) {
         let exported = self.intern(exported);
         let local = self.intern(local);
         self.exports.insert(exported, Export::Local(local));
     }
 
-    /// `export { imported as exported } from specifier`
     pub fn export_from(&mut self, exported: &[u8], specifier: &[u8], imported: &[u8]) {
         let specifier = self.add_specifier(specifier);
         let exported = self.intern(exported);
@@ -551,20 +472,16 @@ impl ModuleTypes {
         );
     }
 
-    /// `export * from specifier`
     pub fn export_star(&mut self, specifier: &[u8]) {
         let specifier = self.add_specifier(specifier);
         self.export_stars.push(specifier);
     }
 
-    /// `export * as exported from specifier`
     pub fn export_star_as(&mut self, exported: &[u8]) {
         let exported = self.intern(exported);
         self.exports.insert(exported, Export::Namespace);
     }
 
-    /// Run once after the parse pass. A module-scope value with the name of a
-    /// global type (`const Map = ...`) makes that name opaque.
     pub fn finish(&mut self, is_declared_in_module_scope: impl Fn(&[u8]) -> bool) {
         for name in &mut self.names {
             if matches!(name.decl, Decl::None) && is_declared_in_module_scope(&name.text) {
@@ -574,9 +491,7 @@ impl ModuleTypes {
     }
 }
 
-/// Finds the type tables of other modules.
 pub trait ModuleTypesHost {
-    /// The table of the module that `specifier` resolves to from `importer`.
     fn module_types(&self, importer: &[u8], specifier: &[u8]) -> Option<Arc<ModuleTypes>>;
 }
 
@@ -607,17 +522,13 @@ fn module_key(m: &ModuleTypes) -> ModuleKey {
     core::ptr::from_ref(m) as usize
 }
 
-/// Evaluates [`SoundType`]s. One per parsed file.
 #[derive(Default)]
 pub struct Resolver<'h> {
     host: Option<&'h dyn ModuleTypesHost>,
     memo: HashMap<(ModuleKey, NameId), Resolved>,
     in_progress: Vec<(ModuleKey, NameId)>,
-    /// `memo` and `modules` key other modules by address.
     keep_alive: Vec<Arc<ModuleTypes>>,
     modules: HashMap<(ModuleKey, u32), Option<usize>>,
-    /// With `BUN_SOUND_TYPES_STATS`: a `<how it is declared>\t<name>` line for
-    /// each use of a name that allows every value.
     unresolved: Option<Vec<u8>>,
 }
 
@@ -632,7 +543,6 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    // TEMPORARY-ANNOTATION-STATS: how the last name that came to nothing is declared.
     pub fn last_unresolved_kind(&self, since: usize) -> String {
         match &self.unresolved {
             Some(lines) if lines.len() > since => {
@@ -651,7 +561,6 @@ impl<'h> Resolver<'h> {
         self.unresolved.as_mut().map(core::mem::take)
     }
 
-    /// Never returns 0.
     pub fn resolve(&mut self, m: &ModuleTypes, ty: SoundType) -> Mask {
         if let Some(mask) = ty.as_mask() {
             return mask;
@@ -701,11 +610,6 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    // ── Structure ────────────────────────────────────────────────────────
-    //
-    // The queries below return the type that TypeScript assigns to an expression,
-    // not its run-time type. Nothing here is verified until a check is emitted.
-
     fn with_module<R>(
         &mut self,
         own: &ModuleTypes,
@@ -727,17 +631,14 @@ impl<'h> Resolver<'h> {
         self.with_module(own, t.module, |this, m| this.resolve(m, t.ty))
     }
 
-    /// The type of `<t>.<name>`.
     pub fn member(&mut self, own: &ModuleTypes, t: Located, name: &[u8]) -> Located {
         self.query(own, t, Query::Member(name))
     }
 
-    /// The type of `<t>[<number>]`, assuming that the element exists.
     pub fn element(&mut self, own: &ModuleTypes, t: Located) -> Located {
         self.query(own, t, Query::Element)
     }
 
-    /// The type of `<t>(...)`.
     pub fn returns(&mut self, own: &ModuleTypes, t: Located) -> Located {
         self.query(own, t, Query::Returns)
     }
@@ -750,7 +651,6 @@ impl<'h> Resolver<'h> {
             .unwrap_or(Located::TOP)
     }
 
-    /// `None` when `ty` says nothing about `q`.
     fn query_in(
         &mut self,
         m: &ModuleTypes,
@@ -776,7 +676,6 @@ impl<'h> Resolver<'h> {
             Node::Ref { name, arg0 } => self.query_name(m, module, name, arg0, q, depth + 1),
             Node::Qualified { .. } => None,
             Node::Union(a, b) => {
-                // A member of `T | null` is read where the value is a `T`.
                 let is_nullish = |t: SoundType| {
                     t.as_mask()
                         .is_some_and(|bits| bits & !(mask::NULL | mask::UNDEFINED) == 0)
@@ -792,8 +691,6 @@ impl<'h> Resolver<'h> {
                 if a == b {
                     return Some(a);
                 }
-                // The tags survive, the structure does not. (A type of module 0
-                // that is not a mask can only have been found in module 0: `m`.)
                 let bits = self.mask_of(m, a) | self.mask_of(m, b);
                 (mask::normalize(bits) != mask::TOP).then(|| Located::from_mask(bits))
             }
@@ -951,7 +848,6 @@ impl<'h> Resolver<'h> {
             return mask::TOP;
         }
         match name.decl {
-            // `Enum.Member`
             Decl::Type { .. } | Decl::Import { .. } => {
                 let resolved = self.resolve_name(m, base, SoundType::TOP);
                 if resolved.is_enum {
@@ -960,7 +856,6 @@ impl<'h> Resolver<'h> {
                     mask::TOP
                 }
             }
-            // `ns.Type`
             Decl::ImportStar { specifier } => {
                 if self.in_progress.len() >= MAX_DEPTH {
                     return mask::TOP;
@@ -968,7 +863,6 @@ impl<'h> Resolver<'h> {
                 let Some(other) = self.module(m, specifier) else {
                     return mask::TOP;
                 };
-                // Bounds `import * as self` cycles; not a key `resolve_name` uses.
                 self.in_progress.push((module_key(m), base));
                 let resolved = self.resolve_export(&other, &m.name(member).text, &mut Vec::new());
                 self.in_progress.pop();
@@ -978,7 +872,6 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    /// `None` when `m` has no export called `exported`.
     fn resolve_export(
         &mut self,
         m: &ModuleTypes,
@@ -1057,16 +950,12 @@ impl<'h> Resolver<'h> {
 #[derive(Copy, Clone)]
 enum GlobalType {
     Mask(Mask),
-    /// Every value of `Name<T, ...>` is a value of `T`, or has the tags of one.
     SubsetOfArg0,
     NonNullableArg0,
-    /// `Name<Element>`
     ArrayOfArg0,
-    /// Which (see [`mask::typed_array`]), and the tags of its elements.
     TypedArray(u32, Mask),
 }
 
-/// Whether the parser has to evaluate `T` in `name<T, ...>`.
 #[inline]
 pub fn takes_first_type_argument(name: &[u8]) -> bool {
     matches!(
@@ -1142,9 +1031,6 @@ bun_core::comptime_string_map! {
 }
 
 bun_core::comptime_string_set! {
-    /// Properties every string, number, boolean, symbol or bigint has. An
-    /// object type with only these members accepts primitives:
-    /// `const x: { length: number } = "abc"`.
     static PRIMITIVE_MEMBERS = {
         b"constructor",
         b"toString",
@@ -1196,14 +1082,10 @@ bun_core::comptime_string_set! {
     };
 }
 
-/// What the parser learns about `{ ... }` in a type position while skipping it.
 pub struct ObjectTypeShape {
-    /// The members whose types say something.
     pub members: Vec<(NameId, SoundType)>,
     pub has_call_signature: bool,
-    /// No member rules out a primitive. True for `{}`.
     pub accepts_primitives: bool,
-    /// `{ [K in keyof T]: ... }`, which is `T` itself when `T` is a primitive.
     pub is_homomorphic_mapped_type: bool,
 }
 
@@ -1236,7 +1118,6 @@ impl ObjectTypeShape {
         }
     }
 
-    /// An interface can merge with or extend declarations this shape has not seen.
     pub fn interface_mask(&self) -> Mask {
         if self.accepts_primitives && !self.has_call_signature {
             mask::NON_NULLISH
@@ -1246,7 +1127,6 @@ impl ObjectTypeShape {
     }
 }
 
-/// Why a check exists. Indexes [`Stats::by_rule`].
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Rule {
@@ -1260,9 +1140,7 @@ pub enum Rule {
     FieldStore,
     FieldRead,
     Call,
-    /// A member or an element of something that is not `this`.
     Read,
-    /// What a `for`-`of` goes through.
     Iterated,
 }
 
@@ -1284,12 +1162,6 @@ impl Rule {
     ];
 }
 
-/// Process-wide counts of emitted checks, for measuring a build.
-/// EXPERIMENT (`BUN_SOUND_TYPES_ORACLE`): what a full type checker says of the
-/// expressions of the program, for finding out what it would be worth to have
-/// one. A table made ahead of time (`~/code/tmp/aot/tsoracle/FORMAT.md`) goes
-/// from a byte offset that is peculiar to the expression (its anchor) to a mask.
-/// It is consulted only where this front end has nothing to say.
 pub mod oracle {
     use super::{Mask, mask};
     use std::collections::HashMap;
@@ -1310,9 +1182,6 @@ pub mod oracle {
     }
 
     static TABLE: OnceLock<Option<Table>> = OnceLock::new();
-    /// The types at positions in the sources, which the printer emits as type tags
-    /// (`js_printer::Options::type_tags`): a map from an anchor to a type number. For now the table is generated
-    /// ahead of time (`BUN_SOUND_TYPES_TAGS`). A type checker that runs after the linker will produce it later.
     static TAGS: OnceLock<Option<Table>> = OnceLock::new();
 
     fn load() -> Option<Table> {
@@ -1334,8 +1203,6 @@ pub mod oracle {
         Some(file?.entries.as_slice())
     }
 
-    /// TEMPORARY: logs each file that tags were requested for, and the outcome (BUN_SOUND_TYPES_TAGS_LOG=<file>), and dumps
-    /// the text of the files that have changed since the table was generated (BUN_SOUND_TYPES_TAGS_DUMP=<directory>).
     fn note_lookup(table: &Table, path: &[u8], contents: &[u8], what: &str) {
         use std::io::Write;
         static SEEN: std::sync::Mutex<Option<std::collections::HashSet<Vec<u8>>>> = std::sync::Mutex::new(None);
@@ -1418,7 +1285,6 @@ pub mod oracle {
         h
     }
 
-    /// The table's entries for the file, if its contents still match the ones the table was generated from.
     pub fn entries_for(path: &[u8], contents: &[u8]) -> Option<Entries> {
         let table: &'static Table = TABLE.get_or_init(load).as_ref()?;
         let file = table.files.get(path.strip_prefix(table.root.as_slice())?)?;
@@ -1428,20 +1294,15 @@ pub mod oracle {
         Some(file.entries.as_slice())
     }
 
-    /// Whether to emit checks that a value is an object, which this front end
-    /// omits by default.
     pub fn keeps_objects() -> bool {
         TABLE.get_or_init(load).as_ref().is_some_and(|t| t.keeps_objects)
     }
 
-    /// Whether a value typed as, for example, Map is checked to be a Map, rather than
-    /// just an object. (TypeScript accepts anything that is structurally compatible.)
     pub fn keeps_kinds() -> bool {
         static KEEPS: OnceLock<bool> = OnceLock::new();
         *KEEPS.get_or_init(|| std::env::var_os("BUN_SOUND_TYPES_ORACLE_KINDS").is_some())
     }
 
-    /// Returns `TOP` if the table has no entry.
     pub fn mask_at(entries: Entries, anchor: i32) -> Mask {
         let Ok(anchor) = u32::try_from(anchor) else {
             return mask::TOP;
@@ -1451,7 +1312,7 @@ pub mod oracle {
         };
         let raw = entries[i].1 & !(3 << 30);
         let mut m = raw;
-        if m & mask::PLAIN_OBJECT != 0 || (m & mask::KINDS_OF_OBJECT != 0 && !keeps_kinds()) {
+        if m & mask::PLAIN_OBJECT != 0 || (m & mask::OBJECT_KINDS != 0 && !keeps_kinds()) {
             m |= mask::OTHER_OBJECT;
         }
         mask::normalize(m)
@@ -1463,7 +1324,6 @@ pub mod stats {
 
     use super::{Rule, mask};
 
-    /// By what `$$t` is passed, of which there are far fewer than there are masks.
     static COUNTS: [[AtomicU32; mask::WIRE_END as usize]; Rule::COUNT] =
         [const { [const { AtomicU32::new(0) }; mask::WIRE_END as usize] }; Rule::COUNT];
 
@@ -1475,7 +1335,6 @@ pub mod stats {
         }
     }
 
-    // TEMPORARY-ANNOTATION-STATS
     static NAMED: std::sync::Mutex<Option<std::collections::HashMap<String, u32>>> =
         std::sync::Mutex::new(None);
 
@@ -1492,7 +1351,6 @@ pub mod stats {
             .or_insert(0) += 1;
     }
 
-    /// Appends to `${BUN_SOUND_TYPES_STATS}.unresolved`.
     pub fn append_unresolved(lines: &[u8]) {
         let Some(path) = bun_core::env_var::BUN_SOUND_TYPES_STATS::get() else {
             return;
@@ -1510,7 +1368,6 @@ pub mod stats {
         .and_then(|file| file.write_all(lines));
     }
 
-    /// Honors `BUN_SOUND_TYPES_STATS`.
     pub fn write_if_requested() {
         if let Some(path) = bun_core::env_var::BUN_SOUND_TYPES_STATS::get() {
             let _ = bun_sys::File::create(bun_sys::Fd::cwd(), path, true)
@@ -1527,7 +1384,6 @@ pub mod stats {
         }
     }
 
-    /// `{"<rule>": {"<mask>": count, ...}, ...}`
     fn to_json() -> Vec<u8> {
         use std::io::Write as _;
         let mut out = Vec::new();

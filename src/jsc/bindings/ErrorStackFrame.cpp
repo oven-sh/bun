@@ -31,9 +31,7 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
             return;
         }
 
-        // The expression started on an earlier line, and the executable was built without the text that says which. It stays
-        // where JSC put it.
-        if (provider->hasNoText()) {
+        if (provider->hasNoSourceText()) {
             pos.column_zero_based = pos.column_zero_based + amount;
             return;
         }
@@ -72,11 +70,9 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
-    // Code that was compiled ahead of time may record its position in the executable's original sources, in which case none
-    // of what follows is needed.
 #if ENABLE(AOT)
     if (auto function = JSC::AOT::FunctionRef::of(code)) {
-        if (auto position = function.reportedPositionFor(bc, JSC::AOT::FunctionRef::OfConstruction::WhereItStarts)) {
+        if (auto position = function.reportedPositionFor(bc, JSC::AOT::FunctionRef::ConstructPosition::AtStart)) {
             return ZigStackFramePosition {
                 .line_zero_based = OrdinalNumber::fromOneBasedInt(position->lineColumn.line).zeroBasedInt(),
                 .column_zero_based = OrdinalNumber::fromOneBasedInt(position->lineColumn.column).zeroBasedInt(),
@@ -103,7 +99,6 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
 
     bool constructs = false;
 #if ENABLE(AOT)
-    // Code that was compiled ahead of time may have no instructions to look at.
     if (auto function = JSC::AOT::FunctionRef::of(code))
         constructs = function.constructsAt(bc);
     else
@@ -120,9 +115,6 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
             break;
         }
     }
-    // The divot by default is pointing at the `(` or the end of the class name.
-    // We want to point at the `new` keyword, which is conveniently at the
-    // expression start.
     if (constructs)
         adjustPositionBackwards(pos, expr.startOffset, code);
 

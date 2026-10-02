@@ -286,8 +286,8 @@ extern "C" void Bun__ensureICUDefaultLocale();
 
 extern "C" bool Bun__hasStandaloneModuleGraph();
 
-extern "C" void Bun__installCompilers(); // BunCompilers.cpp, or BunCompilersRegExpOnly.cpp
-extern "C" void Bun__AOT__setCodecOfImages(); // ZigSourceProvider.cpp
+extern "C" void Bun__installCompilers();
+extern "C" void Bun__AOT__setImageCodec();
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool useAOT)
 {
@@ -308,12 +308,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
 #if OS(DARWIN)
-        // If this is left unset, JSC assumes that a process without the JIT is sandboxed and has no Mach exception
-        // handlers either, and disables the features that need them, such as SharedArrayBuffer.
         JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 #endif
         Bun__installCompilers();
-        Bun__AOT__setCodecOfImages();
+        Bun__AOT__setImageCodec();
         JSC::initialize([&] {
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
@@ -341,13 +339,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useAOT() = useAOT;
-            // For experiments: a comma-separated list of engine options, as name=value. Unlike a BUN_JSC_ variable, it
-            // does not stop a Bun that does not know the option from starting, because such a Bun ignores it.
             if (const char* value = getenv("BUN_AOT_OPTIONS")) {
                 for (auto option : WTF::StringView::fromLatin1(value).split(',')) {
                     auto text = option.utf8();
                     if (!JSC::Options::setOption(byteCast<char>(text.data()))) {
-                        // Fatal, so that a misspelled or renamed option cannot silently change what is being tested.
                         WTFLogAlways("BUN_AOT_OPTIONS: %s is not an option", byteCast<char>(text.data()));
                         exit(1);
                     }
@@ -4304,7 +4299,6 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 {
     Zig::ImportMetaObject* importMeta = nullptr;
     if (key.isString()) {
-        // `bun run --aot`: an entry point sees the path of its source file.
         auto name = asString(key)->value(globalObject);
         size_t length = 0;
         if (name->is8Bit()) {

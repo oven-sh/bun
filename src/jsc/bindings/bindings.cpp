@@ -5783,9 +5783,9 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__createRopeString(JSC::EncodedJSValu
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsString(globalObject, str0, str1)));
 }
 
-extern "C" bool JSC__VM__isPastUsualFirstCollection(JSC::VM* vm)
+extern "C" bool JSC__VM__isPastTypicalFirstCollection(JSC::VM* vm)
 {
-    return vm->heap.isPastUsualFirstCollection();
+    return vm->heap.isPastTypicalFirstCollection();
 }
 
 extern "C" size_t JSC__VM__blockBytesAllocated(JSC::VM* vm)

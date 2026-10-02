@@ -529,7 +529,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts
         .all_stmts
         .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
-    // "await init_foo();" at the top level of the chunk. The file need not have an `await` of its own.
     if stmts.inside_wrapper_prefix.has_async_dependency && flags.wrap == WrapKind::None {
         if let Some(mi) = module_info.as_deref_mut() {
             mi.flags.has_tla = true;

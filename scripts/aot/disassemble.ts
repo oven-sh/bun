@@ -1,15 +1,4 @@
 #!/usr/bin/env bun
-// The machine code of functions that were compiled ahead of time, out of the executable. Does not run it.
-//
-//   bun scripts/aot/disassemble.ts <executable> --map <map>                                  lists the functions
-//   bun scripts/aot/disassemble.ts <executable> --map <map> <name or index>...               the code of those functions
-//   bun scripts/aot/disassemble.ts <executable> [--map <map>] --offset <offset> --size <n>   the code at an offset
-//
-// --samples <samples of lr-probe.c>: before each instruction, the samples at it, and the samples in the stub whose call returns
-// to it.
-//
-// See map.ts for the map. Offsets are in the image's code, as in the map and in a crash's trace (decode-trace.ts).
-// Needs clang and llvm-objdump.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,7 +34,6 @@ if (!wanted.length && !values.offset) {
   process.exit(0);
 }
 
-// AOT::ImageHeader. The image is aligned to a page in the executable.
 const file = readFileSync(executable);
 let image = -1;
 for (let at = 0; at + 40 <= file.length && image < 0; at += 16384) {
@@ -56,7 +44,7 @@ if (image < 0) {
   process.exit(1);
 }
 const code = image + Number(file.readBigUInt64LE(image + 24));
-const sizeOfCode = Number(file.readBigUInt64LE(image + 32));
+const codeSizeInBytes = Number(file.readBigUInt64LE(image + 32));
 
 const directory = mkdtempSync(join(tmpdir(), "aot-disassemble-"));
 function run(command: string, args: string[]) {
@@ -67,13 +55,12 @@ function run(command: string, args: string[]) {
 }
 
 function disassemble(offset: number, size: number) {
-  if (!(offset >= 0 && size > 0 && offset + size <= sizeOfCode)) {
+  if (!(offset >= 0 && size > 0 && offset + size <= codeSizeInBytes)) {
     console.error(`${hex(offset)} + ${size} is outside of the code`);
     process.exitCode = 1;
     return;
   }
   writeFileSync(join(directory, "code.bin"), file.subarray(code + offset, code + offset + size));
-  // A Mach-O object, on any host: in an ELF object what .incbin brings in is marked as data, and is not disassembled.
   writeFileSync(join(directory, "code.s"), `.text\n.incbin "${join(directory, "code.bin")}"\n`);
   run(process.env.CC ?? "clang", [
     "-c",
@@ -90,7 +77,6 @@ function disassemble(offset: number, size: number) {
   for (const line of listing.split("\n")) {
     const [, address, instruction] = line.match(/^\s*([0-9a-f]+):\s*(.*)$/) ?? [];
     if (!address) continue;
-    // The listing starts at zero. Addresses and the targets of branches are given as offsets in the image's code.
     const text = instruction.replace(/\s+/g, " ").replace(/0x([0-9a-f]+) <ltmp0\+0x[0-9a-f]+>/, (_, target) => {
       const to = offset + Number(BigInt.asIntN(64, BigInt("0x" + target)));
       return hex(to) + (map && !(to >= offset && to < offset + size) ? ` ; ${map.describe(to)}` : "");

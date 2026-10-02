@@ -248,7 +248,6 @@ pub(crate) mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
-        /// `compile.aot`: see `BundleOptions::aot`.
         pub(crate) aot: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
         pub(crate) jit_policy: f32,
@@ -1386,7 +1385,6 @@ pub(crate) mod js_bundler {
                 }
             }
 
-            // Ahead-of-time compilation takes the linked bytecode as its input, so it implies `bytecode`.
             if let Some(compile) = this.compile.as_ref().filter(|compile| compile.aot) {
                 if let Some(why) = crate::cli::aot::why_unsupported(&compile.compile_target) {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.aot: {why}")));

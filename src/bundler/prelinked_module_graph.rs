@@ -29,22 +29,16 @@ mod module_flags {
     pub(super) const ALL_REQUESTS_IN_GRAPH: u32 = 1 << 4;
 }
 
-/// `PrelinkedModuleGraph::Binding`: what the linker knows of a variable at the top of a chunk.
 pub mod binding_flags {
-    /// `symbol::Kind`, as far as it matters: `KIND_*`.
     pub const KIND_MASK: u32 = 0xf;
     pub const KIND_FUNCTION: u32 = 2;
     pub const KIND_GENERATOR_OR_ASYNC_FUNCTION: u32 = 3;
     pub const KIND_CLASS: u32 = 4;
     pub const KIND_CONST: u32 = 5;
-    /// Something assigns it other than its own declaration (`Symbol::has_been_assigned_to`).
     pub const IS_ASSIGNED: u32 = 1 << 4;
-    /// `Symbol::escapes`.
     pub const ESCAPES: u32 = 1 << 5;
-    /// `Symbol::call_ignores_this`.
     pub const CALL_IGNORES_THIS: u32 = 1 << 6;
-    /// `Symbol::is_visible_from_outside`.
-    pub const IS_VISIBLE_FROM_OUTSIDE: u32 = 1 << 7;
+    pub const IS_EXTERNALLY_VISIBLE: u32 = 1 << 7;
 }
 
 /// `PrelinkedModuleGraph::Request::phaseDeferBit`.
@@ -124,7 +118,6 @@ struct Module {
     exports: Vec<Export>,
     /// Request indices, source order.
     star_exports: Vec<u32>,
-    /// (name, `binding_flags`).
     bindings: Vec<(u32, u32)>,
     export_by_name: bun_collections::HashMap<u32, u32>,
 }

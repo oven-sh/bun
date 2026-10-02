@@ -103,7 +103,7 @@ describe.skipIf(!supported)("compile.aot", () => {
       const result = await run(name, {
         BUN_AOT: "0",
         BUN_JSC_useImmutableIntrinsics: "1",
-        BUN_JSC_hideTextOfFunctionsForTesting: "1",
+        BUN_JSC_hideFunctionSourceForTesting: "1",
       });
       reference.resolve(result);
       expect(result.stderr).not.toContain("[aot] image: ");
@@ -115,7 +115,7 @@ describe.skipIf(!supported)("compile.aot", () => {
       ["AoT, validated", "validateAOTInferredTypes=1,validateGraphAtEachPhase=1"],
       ["AoT, multiple stub copies", "numberOfAOTStubCopiesForTesting=3"],
       ["AoT, forced veneers", "forceAOTVeneers=1"],
-      ["AoT, small function-number limit", "largestAOTFunctionNumberInTypesForTesting=3,validateAOTInferredTypes=1"],
+      ["AoT, small function-number limit", "maxAOTFunctionNumberInTypesForTesting=3,validateAOTInferredTypes=1"],
     ]) {
       it(`${name}: ${label}`, async () => {
         const [expected, actual] = await Promise.all([
@@ -141,7 +141,7 @@ describe.skipIf(!supported)("compile.aot", () => {
             String(dir),
             "reference",
             { BUN_AOT: "0" },
-            { BUN_JSC_useImmutableIntrinsics: "1", BUN_JSC_hideTextOfFunctionsForTesting: "1" },
+            { BUN_JSC_useImmutableIntrinsics: "1", BUN_JSC_hideFunctionSourceForTesting: "1" },
           ),
           runWrapped(String(dir), "compiled", {}, {}),
         ]);

@@ -1,4 +1,3 @@
-// GENERATED. Every type-correct way for an object to flow into a type that does not mention one of its properties.
 type Box<T> = { it: T };
 function identity<T>(x: T): T { return x; }
 interface HasV<T> { get(): T }

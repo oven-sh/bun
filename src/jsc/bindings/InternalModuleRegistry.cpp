@@ -114,8 +114,7 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
     size_t cachedSize = 0;
     uint32_t cachedEntryOffset = 0;
     bool hasBytecode = Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset);
-    // What the executable's build made ahead of time may have the function itself, with nothing left to decode.
-    auto* program = hasBytecode ? JSC::AOT::ProgramOfVM::of(vm) : nullptr;
+    auto* program = hasBytecode ? JSC::AOT::VMProgram::of(vm) : nullptr;
     FunctionExecutable* linked = program
         ? program->builtinFunctionFor(cachedEntryOffset, bun_internal_modules_header.sourceStamp, internalModuleSource(id), SourceOrigin(WTF::URL(internalModuleString(m.urlOffset, m.urlLength))), moduleName)
         : nullptr;
@@ -274,7 +273,6 @@ static UnlinkedFunctionExecutable* generateInternalModuleCode(JSC::VM& vm, const
     Zig::ensureBuiltinNamesForBytecodeCache(vm);
     UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
     ParserError error;
-    // (Compiled ahead of time, a captured variable is only a load if the optimizer has recorded where each name is declared.)
     auto optimize = vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically ? JSC::OptimizeBytecode::Yes : JSC::OptimizeBytecode::No;
     JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth, optimize);
     return error.isValid() ? nullptr : executable;

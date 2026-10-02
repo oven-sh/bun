@@ -3,15 +3,10 @@ import { readdirSync } from "fs";
 import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// `bun run --aot`: compiles the program ahead of time, as `bun build --compile --compile-aot` does, then replaces
-// itself with the result.
-// The compiler only targets arm64 so far.
 const supported = isArm64 && !isWindows;
 
 type Options = { args?: string[]; env?: Record<string, string>; stdin?: string; flags?: string[]; builds?: boolean };
 
-// A run that did not use its compiled code would still work, from the bytecode, and nothing else here would notice. So
-// each run logs what it uses, which is checked and then removed from the output.
 function expectToHaveUsedImage(stderr: string) {
   expect(stderr).toContain("[aot] program data: ");
   expect(stderr).toContain("[aot] image: ");
@@ -37,8 +32,6 @@ async function run(
   return { stdout, stderr: aot && builds ? expectToHaveUsedImage(stderr) : stderr, exitCode };
 }
 
-// `bun run` provides the expected output. The program is started from its parent directory, so that nothing is found
-// only because it is in the working directory.
 async function expectSameAsBunRun(files: Record<string, string>, entry: string, options?: Options) {
   using dir = tempDir(
     "run-aot",
@@ -103,7 +96,6 @@ describe.skipIf(!supported)("bun run --aot", () => {
 
   const thrower = {
     "sub/thrower.ts": `
-      // The error must not be on the first line.
       export function inner(): never {
         throw new Error("from the other module");
       }
@@ -122,16 +114,14 @@ describe.skipIf(!supported)("bun run --aot", () => {
       },
       "entry.ts",
     );
-    expect(stdout).toContain(join("sub", "thrower.ts") + ":4:");
+    expect(stdout).toContain(join("sub", "thrower.ts") + ":3:");
   });
 
-  // Not compared with `bun run`: for an uncaught error, bundled code with a source map reports a different column, with
-  // or without ahead-of-time compilation.
   test.concurrent("an error that nothing catches", async () => {
     using dir = tempDir("run-aot", { "entry.ts": `import { inner } from "./sub/thrower"; inner();`, ...thrower });
     const { stderr, exitCode } = await run(String(dir), true, "entry.ts");
     expect(stderr).toContain("error: from the other module");
-    expect(stderr).toContain(join(String(dir), "sub", "thrower.ts") + ":4:");
+    expect(stderr).toContain(join(String(dir), "sub", "thrower.ts") + ":3:");
     expect(stderr).toContain(join(String(dir), "entry.ts") + ":1:");
     expect(exitCode).toBe(1);
   });
@@ -216,8 +206,6 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(stdout).toContain(`"fib":6765`);
   });
 
-  // A file that a Worker starts with is part of the build if the build can tell which it is. A build that leaves out the
-  // text of what it compiled shows which functions those are.
   test.concurrent("the file of a Worker is compiled too", async () => {
     using dir = tempDir("run-aot", {
       "app/entry.ts": `
@@ -234,8 +222,8 @@ describe.skipIf(!supported)("bun run --aot", () => {
           listen("computed", new Worker(new URL(name + ".ts", import.meta.url))),
           viaNode().then(data => { said.node = data; }),
         ]);
-        function neverCalled() { return new Worker(new URL("./missing.ts", import.meta.url)); }
-        console.log(JSON.stringify({ ...said, entry: String(neverCalled).endsWith("{ [native code] }") }));
+        function isNeverCalled() { return new Worker(new URL("./missing.ts", import.meta.url)); }
+        console.log(JSON.stringify({ ...said, entry: String(isNeverCalled).endsWith("{ [native code] }") }));
       `,
       "app/shared.ts": `
         export function answer(path: string) { return [String(answer).endsWith("{ [native code] }"), path.split("/").slice(-2).join("/")]; }
@@ -260,7 +248,6 @@ describe.skipIf(!supported)("bun run --aot", () => {
         parentPort!.postMessage(answer(import.meta.path));
       `,
     });
-    // (Started from the parent directory: a path is relative to that, a URL to the file.)
     const { stdout, stderr, exitCode } = await run(String(dir), true, "app/entry.ts");
     expect({ said: JSON.parse(stdout), stderr, exitCode }).toEqual({
       said: {
@@ -277,8 +264,6 @@ describe.skipIf(!supported)("bun run --aot", () => {
     });
   });
 
-  // The build cannot tell which file this worker starts with, so it is interpreted. The built-in functions it calls are
-  // compiled.
   test.concurrent("a Worker that loads nothing that was compiled calls built-in functions that were", async () => {
     const { stdout } = await expectSameAsBunRun(
       {
@@ -365,7 +350,6 @@ describe.skipIf(!supported)("bun run --aot", () => {
     using dir = tempDir("run-aot", { "entry.ts": `import "./does-not-exist"; console.log("ran");` });
     const { stdout, stderr, exitCode } = await run(String(dir), true, "entry.ts", { builds: false });
     expect(stdout).toBe("");
-    // The bundler's error message.
     expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
     expect(exitCode).toBe(1);
   });

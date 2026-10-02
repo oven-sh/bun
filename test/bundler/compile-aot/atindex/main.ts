@@ -1,4 +1,3 @@
-// Element reads and writes with an index that the compiler keeps as an unboxed integer (a loop counter bounded by an array's length), on every kind of base that the stubs have no fast path for.
 const say = (what: string, got: unknown) => console.log(what + ": " + String(got));
 function readAll(a: any, from: number, to: number): string { let s = ""; for (let i = from; i < to; i++) s += "|" + String(a[i]); return s; }
 function readByLength(a: any, more: number): string { let s = ""; for (let i = 0; i < a.length + more; i++) s += "|" + String(a[i]); return s; }
@@ -29,7 +28,6 @@ say("a number", readAll(5, 0, 2)); say("a function", readAll(readAll, 0, 2));
 { say("frozen", (() => { try { writeAll(frozen, 0, 1, "x"); return "no error"; } catch (e) { return (e as Error).constructor.name; } })() + " " + frozen.join()); }
 { const a = [1, 2, 3]; Object.defineProperty(a, 1, { get() { return "got"; }, set(v) { say("setter", v); } }); say("an accessor", readByLength(a, 0)); writeByLength(a, 0, "v"); say("after", readByLength(a, 0)); }
 { const cow = () => [1, 2, 3]; const a = cow(); writeAll(a, 0, 1, 9); say("copy on write", a.join() + " " + cow().join()); }
-// `index in base`, in loops. The built-in methods of arrays ask this for each element, to skip holes.
 function hasAll(a: any, from: number, to: number): string { let s = ""; for (let i = from; i < to; i++) s += i in a ? "1" : "0"; return s; }
 function hasByLength(a: any, more: number): string { let s = ""; for (let i = 0; i < a.length + more; i++) s += i in a ? "1" : "0"; return s; }
 for (const [name, a] of Object.entries({ holes, doubles, ints, mixed, frozen, u8: new Uint8Array([1, 2, 3]), f64: new Float64Array([1.5, NaN]), args: args("p", "q"), like, withProto, empty: [], text: new String("héllo"), fn: hasAll })) {

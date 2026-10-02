@@ -181,10 +181,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.options.features.replace_exports.count() > 0 {
             for i in 0..items_len {
                 let name = p.load_name_from_ref(items[i].name.ref_);
-                // (Uses by importers are recorded at the import sites.)
-                p.next_use_leaves_the_value_alone = true;
+                p.next_use_preserves_value = true;
                 let symbol = p.find_symbol(items[i].alias_loc, name);
-                p.next_use_leaves_the_value_alone = false;
+                p.next_use_preserves_value = false;
                 let symbol = symbol?;
                 let ref_ = symbol.r#ref;
 
@@ -226,10 +225,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             for i in 0..items_len {
                 let name = p.load_name_from_ref(items[i].name.ref_);
-                // (Uses by importers are recorded at the import sites.)
-                p.next_use_leaves_the_value_alone = true;
+                p.next_use_preserves_value = true;
                 let symbol = p.find_symbol(items[i].alias_loc, name);
-                p.next_use_leaves_the_value_alone = false;
+                p.next_use_preserves_value = false;
                 let symbol = symbol?;
                 let ref_ = symbol.r#ref;
 

@@ -57,7 +57,6 @@ show("exec describe", [ordinary, arrowFn, asyncFn, genFn, Klass2, Sub2, Klass2.s
 show("exec getter", describe(Object.getOwnPropertyDescriptor(Klass2.prototype, "g")!.get!));
 show("exec calls", ordinary(1), ordinary(1, 5, 6, 7), viaCallbacks(), outer(1)(2)(), new Klass2().p(), new Klass2().field(), new Sub2().m(4), ordinary.call(null, 1), ordinary.apply(null, [1, 2, 3]), ordinary.bind(null, 5)(), Reflect.apply(arrowFn, null, [1]));
 if (!process.env.NO_LATE_CODE) show("exec new", JSON.stringify(new (noThis as any)(1)), JSON.stringify(new (usesThis as any)(2)), new (noThis as any)(3) instanceof noThis, new (usesThis as any)(3) instanceof usesThis, JSON.stringify(Reflect.construct(noThis, [4])), JSON.stringify(new (outer(1) as any)(2)) === undefined);
-// (Code that the build did not generate is generated on demand and stored in objects that the build created, which one test mode does not allow.)
 for (const f of [...(process.env.NO_LATE_CODE ? [] : [() => (Klass2 as any)()]), () => new (arrowFn as any)(), () => new (asyncFn as any)(), () => new (Klass2.prototype.m as any)()]) { try { f(); show("exec no error"); } catch (e: any) { show("exec error", e.constructor.name); } }
 show("exec template", template() === template(), template().raw.join(), Object.isFrozen(template()));
 show("exec stack", whoCalled());
@@ -66,7 +65,7 @@ setTimeout(arrowFn, 0, 1); queueMicrotask(() => show("exec microtask", arrowFn(1
 show("noobj basics", no.plain(1, 2), no.fewer(1), no.fewer(1, 2), no.fewer(1, 2, 4), (no.more as any)(1, 2, 3), no.makesClosure(1)(), no.bump(), no.makesClosure(1)(), no.callsOthers(5), no.arrow(2), no.usesArrow(3));
 show("noobj errors", no.catches(), no.callsTrims(), no.callsAnonymousTrims(), no.catchesOverflow());
 show("noobj sites", no.callsSites());
-show("noobj misc", no.deep(1000), no.asValue(), (no.usesArguments as any)(1, 2), no.selfReference(), no.tail(10), [...no.generatorOne(1)].join(), no.early(), no.beforeInit, no.beforeInitNew, no.beforeInitMessage, typeof new no.NotYetClass(), no.notYet(5), no.withThis(), no.gc(), no.imports());
+show("noobj misc", no.deep(1000), no.asValue(), (no.usesArguments as any)(1, 2), no.selfReference(), no.tail(10), [...no.generatorOne(1)].join(), no.early(), no.beforeInit, no.beforeInitNew, no.beforeInitMessage, typeof new no.NotYetClass(), no.notReachedYet(5), no.withThis(), no.gc(), no.imports());
 no.asyncOne(1).then(v => show("noobj async", v));
 Bun.gc(true); show("after gc", plain(1, 2), new Derived(1).get(), even(4));
 import("./nofunctions").then(m => show("no functions", m.justData.join(), m.more.a));

@@ -531,8 +531,8 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
                 if (auto* object = callee->getObject()) {
                     globalObjectForFrame = object->globalObject();
                 }
-            } else if (auto* globalObjectOfCode = stackFrame.globalObjectOfCode()) {
-                globalObjectForFrame = globalObjectOfCode;
+            } else if (auto* codeGlobalObject = stackFrame.codeGlobalObject()) {
+                globalObjectForFrame = codeGlobalObject;
             }
         }
 

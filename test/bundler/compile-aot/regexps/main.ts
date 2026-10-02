@@ -1,5 +1,3 @@
-// Regular expressions are compiled ahead of time in two variants, for 8-bit and for 16-bit subjects. Every feature here is matched
-// against both kinds of subject. The output must match the interpreter's.
 const any = (x: unknown): any => x;
 function show(v: unknown): string {
   if (v === null) return "null";
@@ -20,7 +18,6 @@ function say(what: string, f: () => unknown) {
   try { r = show(f()); } catch (e) { r = "throws " + any(e).constructor.name + ": " + any(e).message; }
   console.log(what + ": " + r);
 }
-// The same text as an 8-bit string and as a 16-bit string: the second has had a character outside Latin-1 removed from it.
 const wide = (s: string) => (s + "一").slice(0, -1);
 function both(what: string, re: RegExp, ...subjects: string[]) {
   for (const s of subjects) {
@@ -29,7 +26,6 @@ function both(what: string, re: RegExp, ...subjects: string[]) {
   }
 }
 
-// ---- without the unicode flag
 both("literal", /abc/, "xxabcxx", "ab", "");
 both("class", /[a-c]+[^a-c]/, "xxabcabz", "abc");
 both("escapes", /\d+\s\w+\b\W/, "a 12 ab! ", "12ab");
@@ -56,7 +52,6 @@ both("latin-1", /[\xe0-\xff]+/, "caf\xe9s", "cafes");
 both("backtracking", /^(a+)+b$/, "aaaaaaaaaaaab", "aaaaaaaaaaaaaaaaaac");
 both("long alternation", /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/, "it is eleven", "elevens");
 
-// ---- 16-bit subjects that really have wide characters
 say("wide literal", () => /一二/.exec("x一二y"));
 say("wide class", () => /[一-鿿]+/.exec("ab一二三cd"));
 say("wide negated class", () => /[^一-鿿]+/.exec("一ab二"));
@@ -65,7 +60,6 @@ say("wide backreference", () => /(一+)x\1/.exec("一一x一一一"));
 say("wide backreference, ignoring case", () => /(σ+)x\1/i.exec("σΣxΣσ"));
 say("a pair is two characters", () => [/^.$/.test("\u{1f600}"), /^..$/.test("\u{1f600}"), /\ud83d/.exec("\u{1f600}")]);
 
-// ---- the unicode flag: a surrogate pair is one character
 both("u literal", /a\u{62}c/u, "xabc", "ab");
 both("u class", /[a-c\u{1f600}-\u{1f64f}]+/u, "xxabz", "z");
 both("u property", /\p{Lu}\p{Ll}+/u, "say Hello", "hello");
@@ -89,7 +83,6 @@ say("u backreference, ignoring case", () => /(\u{10400})-\1/iu.exec("\u{10400}-\
 say("u lookbehind over pairs", () => [/(?<=\u{1f600})b/u.exec(pairs), /(?<=^.{3})./u.exec(pairs), /(?<!\u{1f64f})\u{1f600}/u.exec(pairs)]);
 say("u word boundary", () => /\b\w+\b/u.exec("\u{1f600}ab\u{1f600}"));
 
-// ---- surrogates that are not part of a pair
 const lead = "\ud83d", trail = "\ude00";
 say("u lone lead at the end", () => [/.$/u.exec("a" + lead), /^.$/u.test(lead), /\ud83d/u.exec("a" + lead)]);
 say("u lone trail at the start", () => [/^./u.exec(trail + "a"), /^.$/u.test(trail), /\ude00/u.exec(trail + "a")]);
@@ -104,14 +97,12 @@ say("u sticky trail inside a pair", () => { const re = /\ude00/uy; re.lastIndex 
 say("u empty matches step over pairs", () => "\u{1f600}a\u{1f600}".replace(/(?:)/gu, "-"));
 say("empty matches do not", () => "\u{1f600}a".replace(/(?:)/g, "-"));
 
-// ---- the unicode sets flag
 both("v class", /[\p{L}--[a-c]]+/v, "abcdef", "abc");
 both("v intersection", /[\p{L}&&\p{ASCII}]+/v, "\xe9ab\xe9", "\xe9");
 say("v strings", () => /^[\q{abc|d}x]$/v.exec("abc"));
 say("v pairs", () => /[\p{Emoji_Presentation}--\u{1f600}]+/v.exec("\u{1f600}\u{1f601}\u{1f602}a"));
 say("v emoji sequences", () => "\u{1f1fa}\u{1f1f8} 1️⃣".match(/\p{RGI_Emoji}/gv));
 
-// ---- the methods, on both kinds of subject
 for (const [name, s] of [["8", "a1b22c333"], ["16", wide("a1b22c333")], ["pairs", "a1\u{1f600}22\u{1f600}333"]] as const) {
   say("match all " + name, () => [...s.matchAll(/\d+/g)].map(m => m[0] + "@" + m.index));
   say("match all u " + name, () => [...s.matchAll(/\P{N}+/gu)].map(m => m[0] + "@" + m.index));
@@ -124,11 +115,9 @@ for (const [name, s] of [["8", "a1b22c333"], ["16", wide("a1b22c333")], ["pairs"
   say("sticky " + name, () => { const re = /\D\d+/uy; const r = []; let m; while ((m = re.exec(s))) r.push(m[0]); return [r, re.lastIndex]; });
 }
 
-// ---- the same pattern from a string has the same code
 say("constructed", () => [new RegExp("\\p{Lu}\\p{Ll}+", "u").exec("say Hello"), new RegExp("^.$", "u").test("\u{1f600}"), new RegExp("[a-c]+[^a-c]").exec(wide("xxabcabz"))]);
 say("constructed, not in the program", () => [new RegExp("\\p{Ll}" + "{3}", "u").exec("ABcdeF"), new RegExp("^" + ".." + "$", "u").test("\u{1f600}\u{1f600}")]);
 
-// ---- often enough for anything that counts
 say("many times", () => {
   let n = 0;
   const subjects = ["plain", wide("plain"), "with \u{1f600}", "一二", lead, ""];

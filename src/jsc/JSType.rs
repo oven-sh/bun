@@ -177,7 +177,6 @@ impl JSType {
     /// ```
     pub const FunctionExecutable: JSType = JSType(12);
 
-    /// A `FunctionExecutable` too, of a function that was compiled ahead of time and has no other code.
     pub const ShortFunctionExecutable: JSType = JSType(13);
 
     pub const UnlinkedFunctionExecutable: JSType = JSType(14);

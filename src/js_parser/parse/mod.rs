@@ -428,7 +428,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
-        // Parallel to `items_list`; stays empty unless sound types are enabled.
         let mut sound_item_types: smallvec::SmallVec<[SoundType; 4]> = smallvec::SmallVec::new();
 
         // Push a scope assuming this is an arrow function. It may not be, in which
@@ -476,7 +475,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 if p.sound_types_enabled() {
                     let mut ty = p.skip_type_script_type_sound(Level::Lowest, None)?;
-                    // "(a?: b) => {}"
                     let is_optional = errors.invalid_expr_after_question.map(|r| r.loc.start)
                         != question_before.map(|r| r.loc.start);
                     if is_optional {
@@ -607,7 +605,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         arrow_data.sound_return = p.sound().arrow_return;
                     }
                 }
-                // The annotation of an async arrow describes the promise.
                 if opts.is_async {
                     arrow_data.sound_return = SoundType::TOP;
                 }

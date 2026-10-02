@@ -1,24 +1,4 @@
 #!/usr/bin/env bun
-// Runs WebKit's JSTests/stress through `bun build --compile --compile-aot`, and compares each test with itself in the same
-// build without ahead-of-time compilation (BUN_AOT=0).
-//
-//   bun scripts/aot/stress.ts --bun <bun> --tests <WebKit>/JSTests/stress --out <directory>
-//       [--runtime <bun-slim>] [--jobs 6] [--batch 50] [--limit <n>] [--only <regex of file names>]
-//
-// Tests are built in batches, one executable for each batch and configuration. A batch that cannot be built is halved
-// until the test that is at fault is alone. A test counts only if it passes in the reference.
-//
-// Writes <out>/results.tsv: test, verdict, detail. A run that is interrupted goes on from there. Verdicts:
-//   excluded, unbuildable-reference   not a test of ahead-of-time compilation
-//   same-*                            the same exit code and output
-//   BUILD-CRASH-*                     the compiler crashed
-//   DIFFERS-*                         and then one of:
-//     CRASH                           alone in its bundle, it ends with a signal that a program gets for a fault
-//     only-in-a-batch                 the same once the test is alone in its bundle, in the reference too. What a test
-//                                     sees of its bundle depends on the other tests in it: the bundler renames what
-//                                     collides, and an error that is printed has line numbers. The reference of a batch
-//                                     may have been built from more tests, or from fewer
-//     REAL                            a bug
 import { spawn } from "node:child_process";
 import {
   appendFileSync,
@@ -55,7 +35,6 @@ const out = resolve(args.out);
 const results = join(out, "results.tsv");
 mkdirSync(out, { recursive: true });
 
-// What only the jsc shell can run.
 const needsShell = new RegExp(
   // prettier-ignore
   [
@@ -79,7 +58,7 @@ type Kind = "reference" | "aot" | "validated";
 const kinds: Record<Kind, { build: Record<string, string>; run: Record<string, string> }> = {
   "reference": {
     build: { BUN_AOT: "0" },
-    run: { BUN_JSC_useImmutableIntrinsics: "1", BUN_JSC_hideTextOfFunctionsForTesting: "1" },
+    run: { BUN_JSC_useImmutableIntrinsics: "1", BUN_JSC_hideFunctionSourceForTesting: "1" },
   },
   "aot": { build: {}, run: {} },
   "validated": { build: { BUN_AOT_OPTIONS: "validateAOTInferredTypes=1" }, run: {} },
@@ -88,10 +67,8 @@ const kinds: Record<Kind, { build: Record<string, string>; run: Record<string, s
 const environment = { ...process.env, BUN_ENABLE_CRASH_REPORTING: "0", NO_COLOR: "1" } as Record<string, string>;
 
 type Outcome = { code: number; stdout: string; stderr: string };
-// Nothing runs without a memory cap: a compiler bug can allocate until the machine swaps.
 function run(command: string[], env: Record<string, string>, seconds: number): Promise<Outcome> {
   return new Promise(done => {
-    // `env` is for the command alone: the Bun that runs capped.ts may not know a BUN_JSC_ option, and would not start.
     const assignments = Object.entries(env).map(([name, value]) => `${name}=${value}`);
     const child = spawn(
       process.execPath,
@@ -100,7 +77,6 @@ function run(command: string[], env: Record<string, string>, seconds: number): P
     );
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    // One test prints a string of 2 GB. What is past the limit is dropped, and the run counts as failed.
     let room = 16 * 2 ** 20;
     const keepIn = (chunks: Buffer[]) => (chunk: Buffer) => void ((room -= chunk.length) >= 0 && chunks.push(chunk));
     child.stdout.on("data", keepIn(stdout));
@@ -153,7 +129,6 @@ async function build(batch: string[], kind: Kind, directory: string) {
   );
   if (built.code !== 0 || !existsSync(executable)) return { why: built };
   if (kind === "reference") {
-    // One test with an early error that the bundler lets through keeps the whole bundle from loading.
     const loaded = await run([executable, "--none--"], kinds[kind].run, 60);
     if (!loaded.stderr.includes("no such test")) return { why: { ...loaded, code: 1 } };
   }
@@ -214,7 +189,6 @@ async function runBatch(number: number, batch: string[]) {
         rmSync(executable);
       }
     }
-    // From here on each test is alone in its bundle, in the reference too.
     for (const test of [...differing].sort()) {
       const alone = async (kind: Kind) => {
         const [built] = await buildable([test], kind, join(directory, `${kind}-alone`));
@@ -231,7 +205,6 @@ async function runBatch(number: number, batch: string[]) {
         record(test, "only-in-a-batch");
         continue;
       }
-      // SIGILL, SIGTRAP, SIGABRT, SIGBUS, SIGSEGV. (137 is the memory cap or the time limit.)
       if (compiled && [132, 133, 134, 138, 139].includes(compiled.code)) {
         record(test, "CRASH", `exit=${compiled.code} | ${compiled.stderr.slice(-600)}`);
         continue;

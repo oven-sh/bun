@@ -1,4 +1,3 @@
-// Two property names that no type has together may share one slot. An object with one of them can legally flow into a type that has the other. Reading the other name must then give undefined.
 type L = { a: number; n?: string };
 type V = { a: number; m?: string };
 type W = { a: number; k?: string; m?: string };
@@ -22,13 +21,11 @@ say("n of an L that m was written to", readN(l));
 say("m of an L that m was written to", readM(l));
 say("keys of it", Object.keys(l).join());
 say("as JSON", JSON.stringify(l));
-// and in a loop over a mixture
 const all: V[] = [];
 for (let i = 0; i < 6; i++) all.push(i % 3 === 0 ? makeL(i) : i % 3 === 1 ? makeV(i) : makeW(i));
 let seen = "";
 for (const x of all) seen += (x.m === undefined ? "-" : "m");
 say("which of the mixture have m", seen);
-// A type with more fields than the first eight slots hold. Some objects have all of them, some have a few, and some come from outside the program.
 type Wide = { f0: number; f1?: string; f2?: number; f3?: string; f4?: number; f5?: string; f6?: number; f7?: string; f8?: number; f9?: string; f10?: number; f11?: string; f12?: number; f13?: string };
 function makeWide(i: number): Wide { return { f0: i, f1: "one", f2: 2, f3: "three", f4: 4, f5: "five", f6: 6, f7: "seven", f8: 8, f9: "nine", f10: 10, f11: "eleven", f12: 12, f13: "thirteen" }; }
 function makeSparse(i: number): Wide { return { f0: i, f9: "only nine", f12: 120 }; }

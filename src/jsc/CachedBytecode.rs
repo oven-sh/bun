@@ -113,7 +113,7 @@ unsafe extern "C" {
         blob_size: usize,
         string_slots: *const u32,
         string_slot_count: usize,
-        graph_module_of_each_add: *const u32,
+        graph_module_indices: *const u32,
         add_count: usize,
     );
     fn Bun__BytecodeLinkEncoder__finish(
@@ -128,7 +128,6 @@ unsafe extern "C" {
         placed_hot_functions: *mut u32,
         functions_without_name: *mut u32,
     ) -> bool;
-    /// The image that the last `finish` on this thread compiled (AOT builds only). Valid until `freeAOTImage`.
     fn Bun__BytecodeLinkEncoder__aotImage(size: *mut usize) -> *const u8;
     safe fn Bun__BytecodeLinkEncoder__freeAOTImage();
 }
@@ -436,17 +435,13 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
     }
 }
 
-/// The module linkage (`bun_bundler::prelinked_module_graph`) that ahead-of-time compilation needs: the graph, the slot of
-/// each of its strings, and the graph module that each successful `add_*` call so far was for (`u32::MAX`: none). `blob`
-/// and `string_slots` are read by `finish`.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_set_prelinked_module_graph(
     encoder: NonNull<BytecodeLinkEncoder>,
     blob: &[u8],
     string_slots: &[u32],
-    graph_module_of_each_add: &[u32],
+    graph_module_indices: &[u32],
 ) {
-    // SAFETY: `encoder` is live; the slices are valid for their lengths, and the caller keeps the first two until `finish`.
     unsafe {
         Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(
             encoder.as_ptr(),
@@ -454,8 +449,8 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_set_prelinked_module_graph(
             blob.len(),
             string_slots.as_ptr(),
             string_slots.len(),
-            graph_module_of_each_add.as_ptr(),
-            graph_module_of_each_add.len(),
+            graph_module_indices.as_ptr(),
+            graph_module_indices.len(),
         )
     }
 }
@@ -501,12 +496,10 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
     payload.extend_from_slice(unsafe { core::slice::from_raw_parts(bytes.as_ptr(), size) });
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
     let mut aot_image_size = 0usize;
-    // SAFETY: the out-param is an initialized local.
     let aot_image_bytes = unsafe { Bun__BytecodeLinkEncoder__aotImage(&raw mut aot_image_size) };
     let aot_image = if aot_image_size == 0 {
         Vec::new()
     } else {
-        // SAFETY: C++ keeps `aot_image_bytes[..aot_image_size]` until the free below.
         unsafe { core::slice::from_raw_parts(aot_image_bytes, aot_image_size) }.to_vec()
     };
     Bun__BytecodeLinkEncoder__freeAOTImage();
@@ -541,13 +534,9 @@ pub(crate) fn __bun_jsc_encoder_string_table_take(
     bytes
 }
 
-/// Builds the static heap (`JSC::AOT::ProgramData`), which is placed after the image of the program's code. Returns an empty
-/// buffer on failure. Must be called on the thread that owns the bytecode VM.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_build_program_data(
     strings: &[u8],
-    // Maps the offset of a module's cache entry in the linked payload, and a line and column in its text (counting from
-    // one), to the name of the original source and the line and column there.
     original_position: &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>,
 ) -> Vec<u8> {
     type Find = extern "C" fn(
@@ -580,7 +569,6 @@ pub(crate) fn __bun_jsc_build_program_data(
         line_in_source: *mut u32,
         column_in_source: *mut u32,
     ) -> bool {
-        // SAFETY: `ctx` is the reference below, which outlives the call; the rest are C++ locals.
         unsafe {
             let original_position =
                 *ctx.cast::<&dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>>();
@@ -598,13 +586,11 @@ pub(crate) fn __bun_jsc_build_program_data(
         if size == 0 {
             return;
         }
-        // SAFETY: `ctx` is the `Vec` below, and C++ hands over `size` readable bytes for the length of the call.
         unsafe {
             (*ctx.cast::<Vec<u8>>()).extend_from_slice(core::slice::from_raw_parts(bytes, size))
         };
     }
     let mut out: Vec<u8> = Vec::new();
-    // SAFETY: `strings` is valid for its length; `out` outlives the call.
     unsafe {
         Bun__AOT__buildProgramData(
             strings.as_ptr(),

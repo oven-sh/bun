@@ -139,7 +139,6 @@ pub struct Options<'a> {
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
-    /// `import.meta.dir`, `.path`, `.url` and the like become the values they have for this source file.
     pub inline_import_meta_paths: bool,
 
     /// When using react fast refresh or server components, the framework is
@@ -160,7 +159,6 @@ pub struct Options<'a> {
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
 
-    /// Where sound types finds the types a module imports.
     pub sound_types_host: Option<&'a dyn bun_ast::sound_types::ModuleTypesHost>,
 }
 
@@ -476,9 +474,6 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// Parses a TypeScript module, visits nothing, and returns what it declares
-    /// in the type namespace. `options.features.sound_types` must be enabled.
-    /// `Ok(None)`: the module opted out of sound types.
     #[cold]
     pub(crate) fn parse_module_types(
         mut self,
@@ -495,7 +490,6 @@ impl<'a> Parser<'a> {
         let options = core::mem::take(&mut self.options);
         let mut __p = init_p!(Pi<'_>;
             self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
         if !p.sound_types_enabled() {
             return Ok(None);

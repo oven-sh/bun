@@ -516,7 +516,6 @@ impl ModuleInfoSlotTableBuilder {
     pub fn count(&self) -> u32 {
         self.slots.len() as u32
     }
-    /// The slot of each string, by table id.
     pub fn slots(&self) -> &[u32] {
         &self.slots
     }

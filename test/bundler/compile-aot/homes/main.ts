@@ -1,5 +1,3 @@
-// What a handler finds in the variables of the function it is in, wherever it was that something was thrown: and what the code that
-// comes after finds, in registers that have been put to other uses since.
 const out: string[] = [];
 const say = (name: string, f: () => unknown) => {
   let text: string;
@@ -9,11 +7,9 @@ const say = (name: string, f: () => unknown) => {
 let countdown = -1;
 class Boom extends Error { constructor(public at: number) { super("boom " + at); this.name = "Boom"; } }
 let ticks = 0;
-// Throws the n-th time it is called, counting from when `countdown` was set.
 function tick<T>(x: T): T { ticks++; if (countdown-- === 0) throw new Boom(ticks); return x; }
 function pair(a: unknown, b: unknown) { return a + "/" + b; }
 function three(a: unknown, b: unknown, c: unknown) { return a + "/" + b + "/" + c; }
-// Throws from each possible place in turn, until nothing throws any more.
 function everywhere(name: string, f: () => unknown) {
   for (let n = 0; n < 40; n++) {
     countdown = n; ticks = 0;

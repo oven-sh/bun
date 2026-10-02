@@ -1,4 +1,3 @@
-// What errors say, and what functions print as: everything here that depends on the text of the program.
 const cases: Record<string, () => unknown> = {
   readOfUndefined: () => { const a: any = { b: undefined }; return a.b.c; },
   readOfNull: () => { const a: any = null; return a.name; },

@@ -1,10 +1,4 @@
 #!/usr/bin/env bun
-// Runs a command, and kills it and its process group as soon as it uses too much memory or takes too long.
-//
-//   bun scripts/aot/capped.ts <GB> <seconds> <command...>
-//
-// For stress tests and fuzzing, where a compiler bug can allocate until the machine swaps. macOS does not enforce
-// RLIMIT_AS or RLIMIT_DATA, so this polls. Exits with the command's exit code, or 137 if it killed it.
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -22,7 +16,6 @@ if (process.platform === "darwin") {
   const { symbols } = dlopen("/usr/lib/libproc.dylib", {
     proc_pid_rusage: { args: [FFIType.i32, FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
   });
-  // rusage_info_v0: a 16-byte uuid, then 64-bit fields. ri_phys_footprint is the eighth.
   const usage = new BigUint64Array(2 + 10);
   footprint = pid => (symbols.proc_pid_rusage(pid, 0, ptr(usage)) === 0 ? Number(usage[2 + 7]) : 0);
 } else {

@@ -251,11 +251,6 @@ describe("bundler", () => {
       stdout: "value: 99",
     },
     {
-      // The entry point has no `await` of its own. Its dependency is also imported
-      // dynamically and depends on a module with top-level await, so it is wrapped in an
-      // async initializer, and the linker puts `await init_dep()` at the top level of
-      // the chunk. The chunk's module record must say that it is an async module, or
-      // nothing after that statement ever runs.
       name: "AwaitOfWrappedAsyncDependency",
       files: {
         "/entry.ts": `

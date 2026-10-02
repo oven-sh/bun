@@ -4,8 +4,6 @@ import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
-// `compile.aot` / `--compile-aot`: the executable carries machine code for its functions, compiled when it is built.
-// The compiler only targets arm64 so far.
 const supported = isArm64 && !isWindows;
 
 const usesImage = (stdout: string): BundlerTestInput["run"] => ({
@@ -17,7 +15,6 @@ const usesImage = (stdout: string): BundlerTestInput["run"] => ({
   },
 });
 
-// Plain `describe`, as in bundler_compile.test.ts: each build rewrites a whole executable.
 describe.skipIf(!supported)("bundler", () => {
   for (const backend of ["cli", "api"] as const) {
     const itBundled = (id: string, opts: BundlerTestInput) =>
@@ -52,7 +49,6 @@ describe.skipIf(!supported)("bundler", () => {
       run: usesImage('{"x":499500,"y":1000} 42 1,2 2\n2,4,6 ABC a\n'),
     });
 
-    // Code that the build cannot see is interpreted.
     itBundled("EvalAndNewFunction", {
       files: {
         "/entry.ts": /* js */ `
@@ -64,7 +60,6 @@ describe.skipIf(!supported)("bundler", () => {
       run: usesImage("3 15\n"),
     });
 
-    // A variable is live into a handler if the code after it can throw into another handler that reads the variable.
     itBundled("VariableLiveAcrossTwoHandlers", {
       files: {
         "/entry.ts": /* js */ `
@@ -80,7 +75,6 @@ describe.skipIf(!supported)("bundler", () => {
       run: usesImage("kept kept keptstring\n"),
     });
 
-    // Knowing the callee says nothing about \`this\`.
     itBundled("BuiltinCalledOnWrongReceiver", {
       files: {
         "/entry.ts": /* js */ `
@@ -98,7 +92,6 @@ describe.skipIf(!supported)("bundler", () => {
       run: usesImage("TypeError a-b 123 TypeError TypeError 5\n"),
     });
 
-    // Native code that throws on behalf of its caller finds the caller's realm by walking the stack.
     itBundled("ErrorsThrownByNativeCode", {
       files: {
         "/entry.ts": /* js */ `
@@ -113,7 +106,6 @@ describe.skipIf(!supported)("bundler", () => {
       run: usesImage("TypeError TypeError RangeError RangeError\n"),
     });
 
-    // Functions that are only referenced from a large array literal are still reachable.
     itBundled("LargeArrayLiteral", {
       files: {
         "/entry.ts":
@@ -137,7 +129,6 @@ describe.skipIf(!supported)("bundler", () => {
       run: usesImage("300000 300000\n"),
     });
 
-    // The compiler assumes that built-in objects are immutable.
     itBundled("BuiltinsAreImmutable", {
       files: {
         "/entry.ts": /* js */ `
@@ -151,10 +142,8 @@ describe.skipIf(!supported)("bundler", () => {
             attempt(() => { delete (Array.prototype as any).map; }),
             Array.prototype.push === push, Math.random === random, "added" in {}, typeof [].map,
           );
-          // Also in a separate realm, and in code that the build did not see.
           console.log(new Function("'use strict'; try { Math.max = 1; return 'ok'; } catch (e) { return e.name; }")());
           console.log(require("node:vm").runInNewContext("Object.isFrozen(Object.prototype)"));
-          // Objects that the program defines stay mutable.
           class A { m() { return 1; } }
           A.prototype.m = () => 2;
           class List extends Array<number> { sum() { return this.reduce((a, b) => a + b, 0); } }
@@ -182,7 +171,6 @@ describe.skipIf(!supported)("bundler", () => {
       run: usesImage("main 610 worker 987\n"),
     });
 
-    // Its code is not part of the build, so it is interpreted. The built-in functions it calls are the compiled ones.
     itBundled("WorkerFromBlobURL", {
       files: {
         "/entry.ts": /* js */ `
@@ -198,7 +186,6 @@ describe.skipIf(!supported)("bundler", () => {
       run: usesImage("610 1,2,3\n"),
     });
 
-    // CommonJS modules, bundled into the ES module output of the build.
     itBundled("CommonJS", {
       files: {
         "/entry.ts": /* js */ `
@@ -250,12 +237,10 @@ describe.skipIf(!supported)("bundler", () => {
     }
   }
 
-  // The same executable can run without its image, from the bytecode that it also carries.
   test("compile/aot/BuildDoesNotDisturbTheCaller", async () => {
     using dir = tempDir("compile-aot-caller", {
       "app.ts": `console.log("from the executable");`,
       "build.ts": `
-        // Each of these is compiled differently for an executable that is built with \`aot\`.
         function work() {
           const literal = { a: 1, get b() { return 2; }, c: [1, 2, 3] };
           class K { x = 1; y = this.x + 1; }
@@ -263,17 +248,13 @@ describe.skipIf(!supported)("bundler", () => {
           for (let i = 0; i < 100000; i++) s += literal.a + literal.b + literal.c.length + new K().y;
           return s;
         }
-        // The build compiles $$t(value, mask) to a type check. In the caller it must stay an ordinary call to a
-        // function with that name. The text differs each time, so that it is compiled each time.
         const callsItsOwnFunction = (n: number) =>
           new Function("function $$t(v, m) { return 'called' + m; } return $$t(1, 1); // " + n)() === "called1";
         const before = work();
         const own = callsItsOwnFunction(1);
-        // The built-in objects of the build's realms are immutable. Those of a realm that the caller creates are not.
         const newRealmIsMutable = () => !require("node:vm").runInNewContext("Object.isFrozen(Object.prototype)");
         const mutable = newRealmIsMutable();
         const result = await Bun.build({ entrypoints: ["./app.ts"], compile: { aot: true, outfile: "./app" } });
-        // Code that is first compiled after the build.
         const after = new Function("return (" + work.toString() + ")()")();
         Math.max = Math.max;
         console.log(result.success, before === work(), before === after, own, callsItsOwnFunction(2), mutable, newRealmIsMutable());
@@ -281,7 +262,6 @@ describe.skipIf(!supported)("bundler", () => {
     });
     await using build = Bun.spawn({
       cmd: [bunExe(), "build.ts"],
-      // The build has sound types on.
       env: { ...bunEnv, BUN_SOUND_TYPES: "infer" },
       cwd: String(dir),
       stdout: "pipe",
@@ -304,8 +284,6 @@ describe.skipIf(!supported)("bundler", () => {
   });
 });
 
-// The compiler and the static heap builder have process-wide state, so concurrent builds are serialized on the
-// bundler's single thread.
 test.skipIf(!supported)("compile.aot: concurrent builds from several threads", async () => {
   const apps = [1, 2, 3, 4];
   using dir = tempDir("compile-aot-at-once", {
@@ -364,8 +342,6 @@ test.skipIf(!supported)("compile.aot: concurrent builds from several threads", a
   );
 });
 
-// The compiler emits code for the machine that it runs on. The error is reported before a runtime for the target is
-// downloaded.
 const otherTarget = process.platform === "linux" ? "bun-darwin-x64" : "bun-linux-x64";
 const whyNot = supported
   ? "ahead-of-time compilation cannot target another platform or version of Bun"
@@ -684,11 +660,6 @@ test.skipIf(!supported)("image and program data are used", async () => {
   });
 });
 
-// The compiler must not depend on the JIT of the process that runs the build. It used to link regular expressions in
-// JIT memory. Without a JIT the executable silently had no code for them, and matched them with the interpreter, ten
-// times slower.
-// BUN_AOT=1 requests an ahead-of-time build from a script that cannot pass the option. It does not imply the other two
-// options.
 test.skipIf(!supported).each([
   ["without a JIT", { BUN_JSC_useJIT: "0" }, ["--compile-aot"]],
   ["with BUN_AOT=1", { BUN_AOT: "1" }, ["--bytecode", "--format=esm"]],
@@ -720,8 +691,6 @@ test.skipIf(!supported).each([
   expect(actual).toBe(expected);
 });
 
-// Ahead-of-time compiled programs run without a JIT, so a pattern that has no code in the image is matched by the interpreter, which is
-// about ten times slower. The output is the same either way, so this counts the patterns that have code.
 test.skipIf(!supported)("compiles RegExps with the u and v flags", async () => {
   using dir = tempDir("compile-aot-regexps", {
     "none.ts": `console.log("none");`,
@@ -759,9 +728,6 @@ test.skipIf(!supported)("compiles RegExps with the u and v flags", async () => {
   expect(await numberOfRegExps("some.ts", "true,true,true,true\n")).toBe(none + 4);
 });
 
-// The build has not seen a pattern that is put together at run time, so there is no code for it in the image. Although the program
-// runs without the JIT, such a pattern is compiled once it has done enough work in the interpreter to pay for that. The output is
-// the same either way, so this asks the engine what it did with each pattern.
 test.skipIf(!supported)("hot run-time RegExps are compiled", async () => {
   using dir = tempDir("compile-aot-regexp-at-run-time", {
     "entry.ts": `
@@ -807,8 +773,6 @@ test.skipIf(!supported)("hot run-time RegExps are compiled", async () => {
   expect(exitCode).toBe(0);
 });
 
-// The loader knows nothing about the machine code that the executable carries, so the crash handler asks the engine where a
-// frame in it is, and reports an offset in an object called "aot". The map that a build can write resolves that to a function.
 test.skipIf(!supported)("crash reports symbolicate compiled frames", async () => {
   using dir = tempDir("compile-aot-crash", {
     "entry.ts": `
@@ -837,8 +801,6 @@ test.skipIf(!supported)("crash reports symbolicate compiled frames", async () =>
   });
   const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
 
-  // In the trace string, a frame that is not in Bun itself is: 1, the length of the object's name, the name, the offset. The
-  // numbers are base64 VLQs.
   function decodeVLQ(text: string) {
     let value = 0;
     for (let i = 0; ; i++) {
@@ -848,7 +810,6 @@ test.skipIf(!supported)("crash reports symbolicate compiled frames", async () =>
     }
   }
   const offsets = stderr.split("CGaot").slice(1).map(decodeVLQ);
-  // One line for each function: F, its index, the offset of its code, the size of its code, ...
   const functions = (await Bun.file(map).text())
     .split("\n")
     .filter(line => line.startsWith("F\t"))
@@ -860,9 +821,6 @@ test.skipIf(!supported)("crash reports symbolicate compiled frames", async () =>
   expect(exitCode).not.toBe(0);
 });
 
-// The interpreter and the JIT tell the engine which frame is running whenever they call a C or C++ function. Compiled code leaves
-// that to the function, and one like sin() does not do it. The profiler used to charge the time in those to the last host function
-// that the program had called, which had returned long ago.
 test.skipIf(!supported)("--cpu-prof attributes native time to the calling function", async () => {
   using dir = tempDir("compile-aot-cpu-prof", {
     "entry.ts": `
@@ -874,7 +832,6 @@ test.skipIf(!supported)("--cpu-prof attributes native time to the calling functi
         }
         return total;
       }
-      // (Twice, so that it is not inlined.)
       console.log(busy(600, 1) + busy(600, 2) !== 0);
     `,
   });
@@ -920,7 +877,6 @@ test.skipIf(!supported)("image size limit is a build error", async () => {
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });
 
-// The compiler analyzes the whole program, so it needs the bytecode of every function.
 test.skipIf(!supported)("--compile-aot with --bytecode-depth is an error", async () => {
   using dir = tempDir("compile-aot-depth", {
     "entry.ts": `function a() { return function b() { return function c() { return 1; }; }; } console.log(a()()());`,
@@ -938,7 +894,6 @@ test.skipIf(!supported)("--compile-aot with --bytecode-depth is an error", async
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });
 
-// A build script that sets BUN_AOT=1 for its executable may also bundle other things.
 test.skipIf(!supported).each([
   ["that is not an executable", ["--target=bun", "--outfile", "out.js"]],
   ["without bytecode", ["--compile", "--outfile", "out"]],
@@ -955,7 +910,6 @@ test.skipIf(!supported).each([
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 
-  // The same variable does apply to a build that can be compiled ahead of time.
   await using build = Bun.spawn({
     cmd: [bunExe(), "build", "entry.ts", "--compile", "--bytecode", "--format=esm", "--outfile", "compiled"],
     env: { ...bunEnv, BUN_AOT: "1" },

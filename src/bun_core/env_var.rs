@@ -67,15 +67,9 @@ new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT",
 // with error + close(1006). 0 disables; uSockets' 4 s sweep rounds small values up.
 new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIMEOUT", { default: 120 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
-// Turns on `--sound-types` for `bun build` and `Bun.build`: "1" or "full".
-// `bun build --compile --bytecode`: every function is compiled to machine code by JSC's static compiler, and the code
-// embedded in the executable. In an executable built that way, `0` runs it without that code.
 new!(pub BUN_AOT: boolean, "BUN_AOT", {});
 new!(pub BUN_SOUND_TYPES: string, "BUN_SOUND_TYPES", {});
-// Comma-separated. A bundled file whose path contains one of these keeps its annotations erased.
 new!(pub BUN_SOUND_TYPES_EXCLUDE: string, "BUN_SOUND_TYPES_EXCLUDE", {});
-// A build with sound types writes how many checks it emitted, by rule and mask, to this path as JSON, and the
-// type names it could not check to `<path>.unresolved`.
 new!(pub BUN_SOUND_TYPES_STATS: string, "BUN_SOUND_TYPES_STATS", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});

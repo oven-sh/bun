@@ -167,7 +167,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             removeCount = i + 1;
             break;
         }
-        // A frame of compiled code may have no callee: then the realm has one closure of the function.
         if (!frame.callee() && frame.hasLineAndColumnInfo()) {
             if (auto* callerFunction = dynamicDowncast<JSC::JSFunction>(callerObject); callerFunction && callerFunction->executable() == frame.ownerExecutable()) {
                 removeCount = i + 1;
@@ -218,8 +217,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         m_wasmFunctionIndexOrName = frame.wasmFunctionIndexOrName();
         m_isWasmFrame = true;
 #if ENABLE(AOT)
-    } else if (auto reported = frame.reportedPosition(JSC::AOT::FunctionRef::OfConstruction::WhereItStarts)) {
-        // Code that was compiled ahead of time. It has no CodeBlock, and asking for one would make one.
+    } else if (auto reported = frame.reportedPosition(JSC::AOT::FunctionRef::ConstructPosition::AtStart)) {
         m_isCompiledAheadOfTime = true;
         m_sourcePositions = { OrdinalNumber::fromOneBasedInt(reported->lineColumn.line), OrdinalNumber::fromOneBasedInt(reported->lineColumn.column) };
         m_sourcePositionsState = SourcePositionsState::Calculated;
@@ -430,9 +428,8 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
         return "[native code]"_s;
     }
 
-    // Code that was compiled ahead of time may say where it is in the sources the executable was made from.
     if (auto position = frame.reportedPosition(); position && position->source)
-        return JSC::AOT::ProgramData::get()->nameOfSource(position->source);
+        return JSC::AOT::ProgramData::get()->sourceName(position->source);
 
     auto* executable = frame.ownerExecutable();
     return executable ? sourceURL(executable->source()) : String();
@@ -448,7 +445,7 @@ String sourceURL(JSC::StackVisitor& visitor)
 #if ENABLE(AOT)
         if (auto function = visitor->aotFunction()) {
             if (auto position = function.reportedPositionFor(visitor->bytecodeIndex()); position && position->source)
-                return JSC::AOT::ProgramData::get()->nameOfSource(position->source);
+                return JSC::AOT::ProgramData::get()->sourceName(position->source);
         }
 #endif
         return sourceURL(visitor->codeBlock());

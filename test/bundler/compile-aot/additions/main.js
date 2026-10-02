@@ -1,5 +1,3 @@
-// Built-in objects are immutable in ahead-of-time compiled code: what they have cannot be changed. They can still be
-// given more, and much depends on what a prototype does not have. Each function runs before, with and after an addition.
 
 function show(label, f) {
   let result;
@@ -151,7 +149,6 @@ withAddition("an element", Array.prototype, 1, { value: "inherited" }, {
   "arguments object": () => (function () { return arguments[1]; })(0),
 });
 
-// The addition is made by the callback, while the method runs.
 for (const [label, run] of Object.entries({
   forEach: (a, f) => a.forEach(f),
   map: (a, f) => a.map(f),
@@ -238,7 +235,6 @@ withAddition("toJSON of strings", String.prototype, "toJSON", { value: () => "by
   "inside": () => JSON.stringify({ a: "s", b: ["t"] }),
 });
 
-// A property that nothing had, read from each kind of value.
 for (const [name, prototype, make] of [
   ["arrays", Array.prototype, () => []],
   ["strings", String.prototype, () => "s"],
@@ -266,7 +262,6 @@ for (const [name, prototype, make] of [
   });
 }
 
-// A setter that is inherited takes what would have become a property.
 {
   let taken = [];
   withAddition("a setter", Array.prototype, "label", { set(value) { taken.push(value); } }, {
@@ -279,7 +274,6 @@ for (const [name, prototype, make] of [
   });
 }
 
-// Of its own: a regular expression whose exec is replaced, an array whose constructor is.
 show("exec of its own", () => {
   const test = re => re.test("abc");
   const plain = /b/;
@@ -299,7 +293,6 @@ show("a subclass", () => {
   return [s.concat(3), s.slice(0), s.splice(0, 0), s.map(x => x), s.filter(() => true), s.flat()].map(made => made instanceof Sub);
 });
 
-// What is awaited is asked for `then`, and what is iterated with `for await` for Symbol.asyncIterator.
 const awaitArray = async () => await [1];
 const returnArray = async () => [1];
 const resolveArray = () => Promise.resolve([1]);
@@ -319,7 +312,6 @@ for (const [label, f] of Object.entries(asyncCases)) await showAsync("asyncItera
 delete Array.prototype[Symbol.asyncIterator];
 for (const [label, f] of Object.entries(asyncCases)) await showAsync("after: " + label, f);
 
-// A promise with a `then` of its own.
 {
   const awaitIt = async promise => await promise;
   for (let i = 0; i < 3; i++) await awaitIt(Promise.resolve(i));
@@ -328,7 +320,6 @@ for (const [label, f] of Object.entries(asyncCases)) await showAsync("after: " +
   await showAsync("then of its own", async () => [await awaitIt(Promise.resolve("its value")), await awaitIt(changed), await Promise.all([changed]), await (async () => changed)()]);
 }
 
-// A typed array whose buffer is gone.
 show("detached", () => {
   const attempt = f => {
     try {
@@ -373,7 +364,6 @@ show("resized", () => {
   return seen;
 });
 
-// An element with a setter: every array of the realm changes its ways.
 Object.defineProperty(Array.prototype, 2, { configurable: true, set(value) { console.log("the setter got", value); }, get() { return "from the getter"; } });
 show("push", () => {
   const a = [1, 2];

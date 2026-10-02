@@ -2415,14 +2415,12 @@ mod draft {
     }
 
     unsafe extern "C" {
-        // ZigSourceProvider.cpp
         safe fn Bun__AOT__offsetInCode(address: *const core::ffi::c_void) -> i64;
     }
 
     impl StackLine {
         /// `None` implies the trace is not known.
         fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
-            // To remap this, look the offset up in the map that the build of the executable wrote.
             let offset_in_aot_code = Bun__AOT__offsetInCode(addr.saturating_sub(1) as *const _);
             if offset_in_aot_code >= 0 {
                 return Some(StackLine {

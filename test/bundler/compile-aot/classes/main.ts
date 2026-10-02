@@ -1,5 +1,3 @@
-// A constructor with many subclasses creates objects that start with different structures. The result has to be the same as storing
-// the properties one at a time, whatever has happened to the prototypes in the meantime.
 const out: string[] = [];
 const say = (name: string, f: () => unknown) => {
   let text: string;
@@ -12,7 +10,6 @@ class Other { declare b: any; declare a: any; constructor(a: any, b: any) { this
 function OldBase(this: any, a: any, b: any) { this.p = a; this.q = b; }
 const describe = (o: any) => JSON.stringify(Object.entries(o)) + Object.getPrototypeOf(o)?.constructor?.name + Object.keys(Object.getOwnPropertyDescriptors(o)).length;
 const tally = (all: any[]) => { const seen = new Map<string, number>(); for (const s of all) seen.set(s, (seen.get(s) ?? 0) + 1); return [...seen].map(([s, n]) => s + "*" + n).join(" "); };
-// So many classes that extend it, made one at a time so that each is its own.
 const extend = (base: any, n: number, body = (B: any) => class extends B {}) => Array.from({ length: n }, () => body(base));
 const construct = (classes: any[], rounds = 3) => { let last: string[] = []; for (let r = 0; r < rounds; r++) last = classes.map((C, i) => { const o = new C(i % 3, "s"); return JSON.stringify(Object.entries(o)) + (Object.getPrototypeOf(o) === C.prototype) + (o instanceof Base); }); return tally(last); };
 
@@ -25,7 +22,6 @@ say("two deep", () => construct(extend(Base, 6).flatMap(C => extend(C, 6))));
 say("with methods", () => construct(extend(Base, 20, B => class extends B { who() { return "sub"; } get x() { return 1; } static s() {} })));
 say("Base itself among them", () => construct([Base, ...extend(Base, 5), Base, ...extend(Base, 5)]));
 
-// ---- setters and read-only properties on the prototypes
 const explicit = (B: any) => class extends B { constructor(a: any, b: any) { super(a, b); } };
 for (const [kind, classes] of [["implicit", extend(Base, 30)], ["explicit", extend(Base, 30, explicit)], ["explicit, two deep", extend(Base, 5, explicit).flatMap(C => extend(C, 6, explicit))]] as [string, any[]][]) {
   out.push("-- " + kind);
@@ -59,7 +55,6 @@ for (const [kind, classes] of [["implicit", extend(Base, 30)], ["explicit", exte
   say("a property of another name", () => construct(classes));
 }
 
-// ---- a constructor that does nothing but store what it was given, so that nothing else has had a look at the prototypes
 {
   class Plain { declare a: any; declare b: any; constructor(a: any, b: any) { this.a = a; this.b = b; } }
   const classes: any[] = extend(Plain, 30, explicit);
@@ -84,7 +79,6 @@ for (const [kind, classes] of [["implicit", extend(Base, 30)], ["explicit", exte
   say("plain: a prototype in between", () => own(2) + " " + calls);
 }
 
-// ---- functions, whose prototype can be another object
 {
   const subs = Array.from({ length: 20 }, () => { function Sub(this: any, a: any, b: any) { return Reflect.construct(OldBase, [a, b], new.target); } Object.setPrototypeOf(Sub.prototype, OldBase.prototype); return Sub as any; });
   const run = () => tally(subs.map((S, i) => { let o: any; for (let r = 0; r < 3; r++) o = new S(i % 2, "z"); return JSON.stringify(Object.entries(o)) + (Object.getPrototypeOf(o) === S.prototype); }));
@@ -98,7 +92,6 @@ for (const [kind, classes] of [["implicit", extend(Base, 30)], ["explicit", exte
   say("a prototype with a setter", () => run() + " " + describe(new subs[6](1, 2)));
 }
 
-// ---- constructed with something else
 {
   class NT {}
   say("Reflect.construct", () => { let r = ""; for (let i = 0; i < 4; i++) r = describe(Reflect.construct(Base, [1, 2], NT)) + " / " + describe(Reflect.construct(Other, [1, 2], NT)) + " / " + describe(Reflect.construct(OldBase, [1, 2], NT)); return r; });
@@ -112,7 +105,6 @@ for (const [kind, classes] of [["implicit", extend(Base, 30)], ["explicit", exte
   say("an arrow", () => Reflect.construct(Base, [1, 2], (() => 0) as any));
 }
 
-// ---- classes come and go
 {
   const log: string[] = [];
   for (let round = 0; round < 12; round++) {

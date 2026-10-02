@@ -1,4 +1,3 @@
-// Variables that another module reads while this one goes on writing them.
 export let live: any = 1;
 export function setLive(v: any) { live = v; }
 export let neverWrittenAgain: any = "constant";

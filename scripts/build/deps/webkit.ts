@@ -332,8 +332,6 @@ export const webkit: Dependency = {
       USE_BUN_JSC_ADDITIONS: "ON",
       USE_BUN_EVENT_LOOP: "ON",
       // Match the prebuilt: JSC allocates through Bun's mimalloc, not libpas.
-      // BUN_WEBKIT_SYSTEM_MALLOC=1: a diagnostic build whose JSC allocates from the system allocator, so that
-      // MallocStackLogging / malloc_history can attribute every allocation to a call stack.
       ...(process.env.BUN_WEBKIT_SYSTEM_MALLOC === "1"
         ? { USE_SYSTEM_MALLOC: "ON", USE_MIMALLOC: "OFF" }
         : cfg.asan

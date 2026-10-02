@@ -119,9 +119,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
 #if ENABLE(AOT)
-    // Code that was compiled ahead of time says where it is in the sources that the executable was made from. It has no CodeBlock
-    // (asking for one would make one), and there are no lines to show.
-    if (auto reported = stackFrame.reportedPosition(JSC::AOT::FunctionRef::OfConstruction::WhereItStarts)) {
+    if (auto reported = stackFrame.reportedPosition(JSC::AOT::FunctionRef::ConstructPosition::AtStart)) {
         position.line_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.line).zeroBasedInt();
         position.column_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.column).zeroBasedInt();
         position.byte_position = -1;
@@ -156,8 +154,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     memcpy(&position, &location, sizeof(ZigStackFramePosition));
     if (flags == PopulateStackTraceFlags::OnlyPosition)
         return;
-    // The executable was built without it: there are no lines to show.
-    if (provider->hasNoText())
+    if (provider->hasNoSourceText())
         return;
     if (location.byte_position < 0 || static_cast<unsigned>(location.byte_position) >= sourceString.length())
         return;

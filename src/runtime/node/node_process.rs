@@ -300,7 +300,6 @@ mod _impl {
 
             if arg.len() >= 1 && arg[0] == b'-' {
                 args.push(if arg.starts_with(b"--aot-graph-fd=") {
-                    // What it was given as.
                     BunString::static_("--aot")
                 } else {
                     BunString::clone_utf8(arg)

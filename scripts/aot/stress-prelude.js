@@ -1,4 +1,3 @@
-// Stand-ins for the functions of the jsc shell that JSTests/stress uses. Tier-control functions do nothing: what is compared is behaviour.
 import * as jsc from "bun:jsc";
 const g = globalThis, nop = () => {};
 for (const name of ["noInline", "noDFG", "noFTL", "neverInlineFunction", "noOSRExitFuzzing", "optimizeNextInvocation", "ensureArrayStorage", "setNeverInline", "setNeverOptimize", "failNextNewCodeBlock", "disableRichSourceInfo"])

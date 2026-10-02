@@ -1,9 +1,7 @@
-// Every call here is of something found under a name that a stub knows. Most are what the stub takes them for; the rest are not.
 const out: string[] = [];
 const say = (name: string, f: () => unknown) => { let r: string; try { const v = f(); r = typeof v === "string" ? JSON.stringify(v) : Object.is(v, -0) ? "-0" : String(v); } catch (e: any) { r = "threw " + e.constructor.name + ": " + String(e.message).slice(0, 60); } out.push(name + " = " + r); };
 const any = (v: unknown): any => v;
 
-// ---- strings
 const ascii = "hello, world";
 const wide = "héllo 世界 😀!";
 const rope = any("left-" + String(Date.now()).slice(0, 0) + "right" + ascii.slice(3));
@@ -23,7 +21,6 @@ say("charCodeAt of an object", () => fake.charCodeAt(3));
 say("charAt of an object", () => fake.charAt(3));
 say("codePointAt that is a number", () => any(fake).codePointAt(1));
 
-// ---- arrays
 const ints = [1, 2, 3]; const vals: unknown[] = ["a", {}, null]; const dbls = [1.5, 2.5]; const holes = [1, , 3]; const empty: number[] = [];
 say("push int", () => ints.push(4)); say("push double onto ints", () => ints.push(4.5)); say("push string onto numbers", () => any(ints).push("s"));
 say("ints now", () => JSON.stringify(ints));
@@ -59,7 +56,6 @@ say("isArray of a revoked proxy", () => { const p = Proxy.revocable([], {}); p.r
 say("isArray none", () => any(Array).isArray()); say("isArray two", () => any(Array).isArray([], 1));
 say("isArray of an object", () => ({ isArray: (v: unknown) => "mine " + v }).isArray(1));
 
-// ---- maps and sets
 const m = new Map<unknown, unknown>([["a", 1], [1, "one"], [NaN, "nan"], [0, "zero"]]); const k = {};
 say("get", () => m.get("a")); say("get number", () => m.get(1)); say("get NaN", () => m.get(NaN)); say("get -0", () => m.get(-0)); say("get missing", () => m.get("zz")); say("get rope", () => m.get("" + "a"));
 say("has", () => m.has("a")); say("has missing", () => m.has(k)); say("set returns the map", () => m.set(k, "obj") === m); say("get object", () => m.get(k)); say("size", () => m.size);
@@ -86,7 +82,6 @@ say("get of null", () => any(null).get(1)); say("has of undefined", () => any(un
 const patched = new Map([["a", 1]]); any(patched).get = function (key: string) { return "patched " + key; }; say("get of a map with its own get", () => patched.get("a"));
 const original = Map.prototype.has; say("has after the prototype is changed", () => { Map.prototype.has = function (key) { return !original.call(this, key); }; try { return m.has("a") + ":" + m.has("never"); } finally { Map.prototype.has = original; } }); say("has after it is put back", () => m.has("a"));
 
-// ---- keys of every kind, there and not there
 {
   const built = (t: string) => t.split("").join(""); const sym = Symbol("s"); const obj = { o: 1 }; const fn = () => 1;
   const keys: unknown[] = ["", "a", "key", "a longer key, of forty-odd characters, to compare", "\u4e16\u754c", "caf\u00e9", 0, 1, -1, 2 ** 31 - 1, -(2 ** 31), 2 ** 31, 2 ** 53, 1.5, -0, NaN, Infinity, 10n, 2n ** 70n, true, false, null, undefined, sym, Symbol.iterator, obj, fn, [], 0.1 + 0.2];
@@ -120,11 +115,9 @@ const original = Map.prototype.has; say("has after the prototype is changed", ()
   say("keys: a string as one byte and as two", () => { const m2 = new Map([["abc", 1]]); const wide = ("\u4e16abc").slice(1); return m2.get(wide) + ":" + m2.has(wide) + ":" + new Set([wide]).has("abc"); });
 }
 
-// ---- where an error says it happened
 function thrower(map: any) { return map.get(1); }
 say("stack of a get of nothing", () => { try { thrower(undefined); } catch (e: any) { return String(e.stack).split("\n").slice(0, 3).map(l => l.trim().replace(/\(.*[\\/]/, "(")).join(" < "); } });
 
-// ---- where the call is the last thing a function does
 const codeAt = (t: string, i: number) => t.charCodeAt(i); const pointAt = (t: string, i: number) => t.codePointAt(i); const at = (t: string, i: number) => t.charAt(i);
 const pushed = (a: unknown[], v: unknown) => a.push(v); const popped = (a: unknown[]) => a.pop(); const isList = (v: unknown) => Array.isArray(v);
 const got = (c: Map<unknown, unknown>, key: unknown) => c.get(key); const had = (c: { has(key: unknown): boolean }, key: unknown) => c.has(key); const put = (c: Map<unknown, unknown>, key: unknown, v: unknown) => c.set(key, v); const added = (c: Set<unknown>, key: unknown) => c.add(key);
@@ -137,7 +130,6 @@ say("last: two that call each other", () => chain.push(300001));
 say("last: with two arguments", () => any(chain).isArray(300000, 0));
 say("last: that ends in the real one", () => chain.codePointAt(300000));
 
-// ---- the same in loops, of both kinds
 function lex(src: string) { let n = 0, sum = 0; const seen = new Map<number, number>(); const parts: string[] = []; for (let i = 0; i < src.length; i++) { const c = src.charCodeAt(i); sum += c + (src.codePointAt(i) ?? 0); if (c === 32) n++; seen.set(c, (seen.get(c) ?? 0) + 1); if (!seen.has(c + 1)) parts.push(src.charAt(i)); } return [n, sum, seen.size, parts.length, parts.pop()].join(); }
 say("lex ascii", () => lex(ascii.repeat(50))); say("lex wide", () => lex(wide.repeat(50))); say("lex rope", () => lex(rope));
 function drain(list: unknown[]) { let n = 0; const back: unknown[] = []; while (list.length) { const v = list.pop(); if (Array.isArray(v)) n += v.length; else back.push(v); } return n + ":" + back.length; }

@@ -1,5 +1,3 @@
-// A function whose parameter is a number, and every way of passing it a string. If the compiler wrongly assumed that it can see
-// every call, the output would differ: nothing here is supposed to throw.
 import theDefault, { onlyImported, importedAndPassedAString, table, arrow } from "./lib";
 import * as ns from "./lib";
 import { viaNamedReexport, notReexported, renamedOnTheWay } from "./pure2";
@@ -19,18 +17,15 @@ const show = (x: unknown) => typeof x + ":" + String(x);
 const S: any = "s";
 const opaque = <T,>(x: T): T => (globalThis as any).nothingHere ? (undefined as any) : x;
 
-// ---- called before the variable has been given the function, from a loop, where a small function is compiled into its caller
 function inALoop() { let sum = 0; for (let i = 0; i < 20; i++) sum += givenLater(i); return sum; }
 say("before it is initialized", () => inALoop());
 const givenLater = function (a: number) { return a | 0; };
 say("after it is initialized", () => inALoop());
 
-// ---- a decorator can put another class in the variable
 function replaced(_class: unknown, _context: unknown) { return class { who() { return "the other"; } } as any; }
 @replaced class Decorated { who() { return "the one that was declared"; } }
 say("decorated", () => new Decorated().who());
 
-// ---- a single call, from a place where it is hard to tell which scope a variable is read from
 function calledFromALoopOnly(s: string) { if (!s.startsWith("a")) return; const rest = s.slice(1); return rest.length ? rest : undefined; }
 function loops() {
   const list = ["ab", "c", "ad"];
@@ -42,7 +37,6 @@ const kept: unknown[] = [];
 function holdOn(f: unknown) { kept.push(f); }
 say("called from a loop only", () => loops().join());
 
-// ---- after loops that have handlers (to close what they iterate over), where the scope that a variable is read from has been in memory
 const groups = { all: [{ name: "abc:g", map: { a: "abc:h", b: "", c: 3, d: "abc:i,abc:j" } as Record<string, unknown> }] };
 function splitAfterLoops(s: string) { return s.split(","); }
 function calledAfterLoops(s: string) { if (!s.startsWith("abc:")) return; const rest = s.slice(4); return /^[a-z]+$/.test(rest) ? rest : undefined; }
@@ -61,7 +55,6 @@ function loopsAndThenACall() {
 }
 say("called after loops", () => loopsAndThenACall().join());
 
-// ---- the only calls there are come after an await or a yield, where the scope has been put away and taken out again
 function afterAnAwait(s: string) { return s.length > 1 ? s.slice(1) : undefined; }
 function afterAYield(s: string) { return s.length > 1 ? s.slice(1) : undefined; }
 function inACatchAfterAnAwait(s: string) { return s.length > 1 ? s.slice(1) : undefined; }
@@ -72,7 +65,6 @@ out.push("after an await = " + String(await awaitsAndCalls()));
 say("after a yield", () => { const g = yieldsAndCalls(); g.next(); return String(g.next("xy").value) + String(g.next().value); });
 out.push("in a catch, after an await = " + String(await catchesAndCalls()));
 
-// ---- every call is in sight
 function numbersOnly(x: number) { return show(x); }
 say("numbers only", () => numbersOnly(1) + numbersOnly(2.5) + numbersOnly(-0) + numbersOnly(NaN));
 function intsOnly(x: number) { return show(x / 2) + show(x | 0) + show(x + 0.5); }
@@ -91,7 +83,6 @@ function nullable(x: number | null) { return show(x); }
 say("nullable", () => nullable(1) + nullable(null));
 say("nullable, undefined", () => nullable(undefined as any));
 
-// ---- the argument comes from somewhere else
 function identity(x: any) { return x; }
 function fromAResult(x: number) { return show(x); }
 say("from a result", () => fromAResult(identity(1)));
@@ -114,7 +105,6 @@ function pong(x: number, n: number): string { return n ? ping(x, n - 1) : show(x
 say("one another", () => ping(1, 4));
 say("one another, a string", () => ping(1, 3));
 
-// ---- it gets out
 function stored(x: number) { return show(x); }
 const keptIn: any = stored;
 say("stored", () => stored(1) + keptIn(S));
@@ -165,7 +155,6 @@ say("yielded", () => yielded(1) + [...(function* () { yield yielded; })()][0](S 
 function compared(x: number) { return show(x); }
 say("compared", () => compared(1) + (opaque<any>(compared) === compared) + typeof compared + compared.name + compared.length);
 
-// ---- at its creation site
 let alsoHere: any;
 const twoVariables = (alsoHere = function (x: number) { return show(x); });
 say("two variables", () => twoVariables(1) + alsoHere(S));
@@ -188,7 +177,6 @@ say("before", () => reassigned(1));
 reassigned = function (x: any) { return "another" + show(x); };
 say("after", () => reassigned(S));
 
-// ---- code that is not reached, or is it
 function fromDeadCode(x: number) { return show(x); }
 if (opaque(false)) say("never", () => fromDeadCode(S));
 say("from dead code", () => fromDeadCode(1));
@@ -199,7 +187,6 @@ function calledLate(x: number) { return show(x); }
 const later: (() => string)[] = [() => calledLate(S)];
 say("called late", () => calledLate(1) + later[0]());
 
-// ---- kinds of function
 async function isAsync(x: number) { return show(x); }
 function* isGenerator(x: number) { yield show(x); }
 function withHandler(x: number) { try { if (x > 1) throw new Error("big"); return show(x); } catch (e: any) { return e.message + show(x); } finally { out.push("finally " + show(x)); } }
@@ -219,7 +206,6 @@ say("many", () => manyParameters(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14))
 say("many, the last is a string", () => manyParameters(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, S));
 say("many, the twelfth is a string", () => manyParameters(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, S, 13, 14));
 
-// ---- other modules
 say("only imported", () => onlyImported(1) + onlyImported(2.5));
 say("imported", () => importedAndPassedAString(1));
 say("imported, a string", () => importedAndPassedAString(S));
@@ -256,13 +242,11 @@ say("exported again with a star", () => re.viaStarReexport(S));
 say("two stars away", () => re.twoStarsAway(S));
 say("inside a namespace", () => re.everything.insideANamespace(S));
 say("not exported again", () => String(re.notReexported) + notReexported(7));
-// The callee and the argument are the same variable: one of the two is a use of the value.
 function passedToItself(x: unknown) { return typeof x === "function" ? (x as (y: unknown) => string)(S) : "passedToItself " + typeof x + ":" + String(x); }
 say("passed to itself", () => passedToItself(passedToItself));
 function onlyNumbers(x: number) { return "onlyNumbers " + typeof x + ":" + String(x); }
 say("only numbers", () => onlyNumbers(5));
 say("the callee of one call, an argument of another", () => onlyNumbers(6) + [S].map(onlyNumbers as unknown as (y: string) => string).join());
-// (In a separate chunk: nothing can be assumed about the variables of a chunk that contains a direct eval, or about what that chunk imports.)
 const { evaluate, callsBoth } = await import("./evals");
 say("both, with numbers", () => callsBoth() + notSeenByEval(3));
 say("eval names an import", () => { const f = evaluate("typeof seenByEval === 'function' ? seenByEval : null"); return f ? f(S) : "renamed"; });

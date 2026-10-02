@@ -40,7 +40,7 @@ unsafe extern "C" {
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
     safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
-    safe fn JSC__VM__isPastUsualFirstCollection(vm: &VM) -> bool;
+    safe fn JSC__VM__isPastTypicalFirstCollection(vm: &VM) -> bool;
 }
 
 bun_opaque::opaque_ffi! {
@@ -167,9 +167,8 @@ impl VM {
         JSC__VM__blockBytesAllocated(self)
     }
 
-    /// `JSC::Heap::isPastUsualFirstCollection`.
     pub(crate) fn is_past_usual_first_collection(&self) -> bool {
-        JSC__VM__isPastUsualFirstCollection(self)
+        JSC__VM__isPastTypicalFirstCollection(self)
     }
 }
 

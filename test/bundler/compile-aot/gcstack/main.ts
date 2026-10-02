@@ -1,5 +1,3 @@
-// Errors that outlive the closures on their stacks: the engine renders such a stack at the end of a collection, where nothing may be
-// allocated in the heap. Nothing has read .stack before that.
 function deeper(n: number, f: () => Error): Error { return n ? deeper(n - 1, f) : f(); }
 class Thrower { constructor(public tag: number) {} make(): Error { return deeper(2, () => new RangeError("tag " + this.tag)); } }
 const kept: Error[] = [];

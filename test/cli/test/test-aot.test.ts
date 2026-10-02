@@ -3,12 +3,8 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// `bun test --aot`: compiles the test files ahead of time, as `bun build --compile --compile-aot` does, then replaces
-// itself with the result. The compiler only targets arm64 so far.
 const supported = isArm64 && !isWindows;
 
-// A run that did not use its compiled code would still work, from the bytecode, and nothing else here would notice. So
-// each run logs what it uses, which is checked and then removed from the output.
 function expectToHaveUsedImage(stderr: string) {
   expect(stderr).toContain("[aot] program data: ");
   expect(stderr).toContain("[aot] image: ");
@@ -28,7 +24,6 @@ async function runTests(cwd: string, aot: boolean, args: string[] = [], builds =
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return {
     stdout: stdout.replaceAll(cwd, "<dir>"),
-    // Remove durations, which are only printed for slow tests.
     stderr: (aot && builds ? expectToHaveUsedImage(stderr) : stderr)
       .replaceAll(cwd, "<dir>")
       .replace(/ \[\d+(\.\d+)?m?s\]/g, ""),
@@ -36,7 +31,6 @@ async function runTests(cwd: string, aot: boolean, args: string[] = [], builds =
   };
 }
 
-// `bun test` provides the expected output. Each run gets its own directory, because tests may write snapshots.
 async function expectSameAsBunTest(files: Record<string, string>, args?: string[], builds = true) {
   using expectedDir = tempDir("test-aot", files);
   using actualDir = tempDir("test-aot", files);
@@ -117,8 +111,6 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 1 pass");
   });
 
-  // The bundler puts `await init_dep()` at the top of the file's chunk. If the runner did not wait for it, no test would be
-  // registered, and the run would pass.
   test.concurrent("a dependency that is imported both ways and awaits at the top level", async () => {
     const { stderr, exitCode } = await expectSameAsBunTest({
       "both.test.ts": `
@@ -138,7 +130,6 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The same, where the async initializer is the test file's own: the top level only contains `await init_self()`.
   test.concurrent("a test file that awaits at the top level and is imported by its dependency", async () => {
     const { stderr, exitCode } = await expectSameAsBunTest({
       "self.test.ts": `
@@ -173,7 +164,6 @@ describe.skipIf(!supported)("bun test --aot", () => {
     ]);
     expect(actual).toEqual(expected);
     expect(actual.exitCode).toBe(0);
-    // Both are written next to, and into, the source file.
     for (const file of [join("__snapshots__", "snap.test.ts.snap"), "snap.test.ts"])
       expect(readFileSync(join(String(actualDir), file), "utf8")).toBe(
         readFileSync(join(String(expectedDir), file), "utf8"),
@@ -201,7 +191,6 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 0 fail");
   });
 
-  // This differs from `bun test`: the compiler assumes that built-in objects do not change.
   test.concurrent("built-in objects are immutable, and spyOn says so", async () => {
     using dir = tempDir("test-aot", {
       "builtins.test.ts": `
@@ -257,7 +246,6 @@ describe.skipIf(!supported)("bun test --aot", () => {
   test.concurrent("an error in the build", async () => {
     using dir = tempDir("test-aot", { "bad.test.ts": `import "./does-not-exist";` });
     const { stderr, exitCode } = await runTests(String(dir), true, [], false);
-    // The bundler's error message.
     expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
     expect(exitCode).toBe(1);
   });

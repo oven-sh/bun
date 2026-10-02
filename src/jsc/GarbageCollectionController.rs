@@ -24,8 +24,7 @@ pub struct GarbageCollectionController {
     /// nominal time (from tick intervals) since the JS heap last grew.
     idle_gc_at_ms: Cell<[u32; 3]>,
     idle_quiet_ms: Cell<u32>,
-    /// There has been a collection, so there is none to catch up with (`process_gc_timer`).
-    first_collection_is_settled: Cell<bool>,
+    first_collection_done: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -44,7 +43,7 @@ impl Default for GarbageCollectionController {
             disabled: Cell::new(false),
             idle_gc_at_ms: Cell::new([0; 3]),
             idle_quiet_ms: Cell::new(0),
-            first_collection_is_settled: Cell::new(false),
+            first_collection_done: Cell::new(false),
         }
     }
 }
@@ -163,17 +162,15 @@ impl GarbageCollectionController {
     }
 
     /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
-    /// Also where the collection that `let_heap_take_initial_module_graph` put off is caught up with: that is for not
-    /// collecting in the middle of what the program starts with, and here the event loop is about to poll.
     #[inline]
     pub(crate) fn process_gc_timer(&self) {
         if self.disabled.get() {
             return;
         }
-        if !self.first_collection_is_settled.get() {
+        if !self.first_collection_done.get() {
             let vm = VirtualMachine::get().jsc_vm();
             if vm.is_past_usual_first_collection() {
-                self.first_collection_is_settled.set(true);
+                self.first_collection_done.set(true);
                 self.perform_gc(false);
             }
         }
@@ -195,7 +192,7 @@ impl GarbageCollectionController {
         if self.disabled.get() {
             return;
         }
-        self.first_collection_is_settled.set(true);
+        self.first_collection_done.set(true);
         let vm = VirtualMachine::get().jsc_vm();
         if idle_full {
             vm.collect_async_idle();

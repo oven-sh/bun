@@ -42,7 +42,6 @@
 #endif
 #include <wtf/PageBlock.h>
 
-
 namespace Zig {
 
 using SourceOrigin = JSC::SourceOrigin;
@@ -121,7 +120,7 @@ Ref<SourceProvider> SourceProvider::create(
             if (getenv("BUN_AOT_VERBOSE")) [[unlikely]]
                 fprintf(stderr, "[aot] module: %s\n", byteCast<char>(sourceURLString.utf8().data()));
             auto provider = adoptRef(*new SourceProvider(globalObject->bunVM(), resolvedSource, Ref { *StringImpl::empty() }, JSC::SourceTaintedOrigin::Untainted, origin, WTF::move(sourceURLString), TextPosition(), sourceType));
-            provider->setHasNoText();
+            provider->setHasNoSourceText();
             provider->setAOTModuleID(resolvedSource.bytecode_cache_entry_offset + 1);
             return provider;
         }
@@ -335,15 +334,13 @@ extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::Encod
     hints.evaluatedModules.append(std::span { evaluatedModules, evaluatedModuleCount });
     hints.notEvaluatedModules.append(std::span { notEvaluatedModules, notEvaluatedModuleCount });
     hints.compileAheadOfTime = compileAheadOfTime;
-    // For this build's VM only. The caller of Bun.build keeps compiling its own code as before.
     auto& options = vm.bytecodeGenerationOptions;
     options = { };
-    // The bundler has turned type annotations into $$t(value, mask): the code generated from its output has to know what that is.
     options.useSoundTypes |= soundTypes;
     options.resolveAllScopeSlotsStatically |= compileAheadOfTime;
     options.evaluateObjectLiteralValuesFirst |= compileAheadOfTime;
     options.definePlainInstanceFieldsInConstructor |= compileAheadOfTime;
-    options.keepLineStartsOfEverySource |= compileAheadOfTime;
+    options.keepAllSourceLineStarts |= compileAheadOfTime;
     vm.useImmutableIntrinsics |= compileAheadOfTime;
     return new JSC::BytecodeLinkEncoder(vm, externalStrings, WTF::move(hints));
 }
@@ -375,32 +372,29 @@ extern "C" bool Bun__BytecodeLinkEncoder__addModule(JSC::BytecodeLinkEncoder* en
     return true;
 }
 
-// For AOT builds: passes the module linkage to the compiler. Read by Bun__BytecodeLinkEncoder__finish.
-extern "C" void Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(JSC::BytecodeLinkEncoder* encoder, const uint8_t* blob, size_t blobSize, const uint32_t* stringSlots, size_t stringSlotCount, const uint32_t* graphModuleOfEachAdd, size_t addCount)
+extern "C" void Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(JSC::BytecodeLinkEncoder* encoder, const uint8_t* blob, size_t blobSize, const uint32_t* stringSlots, size_t stringSlotCount, const uint32_t* graphModuleIndices, size_t addCount)
 {
     JSC::JSLockHolder locker(vmOfBytecodeLinkEncoder(*encoder));
-    encoder->setPrelinkedModuleGraph({ blob, blobSize }, { stringSlots, stringSlotCount }, Vector<uint32_t>(std::span { graphModuleOfEachAdd, addCount }));
+    encoder->setPrelinkedModuleGraph({ blob, blobSize }, { stringSlots, stringSlotCount }, Vector<uint32_t>(std::span { graphModuleIndices, addCount }));
 }
 
 // `entryOffsets` has room for one number per successful add* call; `regionEnds` for
 // JSC::BytecodeLinkEncoder::numberOfRegions.
 static_assert(JSC::BytecodeLinkEncoder::numberOfRegions == 6, "bun_resolver::LINKED_BYTECODE_REGION_COUNT");
-static thread_local Vector<uint8_t> s_aotImageOfLastLink;
-// Kept until Bun__AOT__buildProgramData, which runs once all of the strings are known.
-static thread_local RefPtr<JSC::CachedBytecode> s_payloadOfLastLink;
-static thread_local Vector<uint32_t> s_modulesOfLastLink;
-static thread_local Vector<JSC::ReportableSitesOfFunction> s_reportableSitesOfLastLink;
-static thread_local Vector<std::optional<Vector<uint32_t>>> s_variablesExportedByModulesOfLastLink;
+static thread_local Vector<uint8_t> s_lastLinkAOTImage;
+static thread_local RefPtr<JSC::CachedBytecode> s_lastLinkPayload;
+static thread_local Vector<uint32_t> s_lastLinkModules;
+static thread_local Vector<JSC::FunctionReportableSites> s_lastLinkReportableSites;
+static thread_local Vector<std::optional<Vector<uint32_t>>> s_lastLinkExportedVariables;
 static thread_local Vector<uint8_t> s_aotImageForProgramData;
 extern "C" const uint8_t* Bun__BytecodeLinkEncoder__aotImage(size_t* size)
 {
-    // (The data after the image is for Bun__AOT__buildProgramData.)
-    *size = JSC::aotImageSize(s_aotImageOfLastLink.span()).value_or(s_aotImageOfLastLink.size());
-    return s_aotImageOfLastLink.span().data();
+    *size = JSC::aotImageSize(s_lastLinkAOTImage.span()).value_or(s_lastLinkAOTImage.size());
+    return s_lastLinkAOTImage.span().data();
 }
 extern "C" void Bun__BytecodeLinkEncoder__freeAOTImage()
 {
-    s_aotImageForProgramData = std::exchange(s_aotImageOfLastLink, { });
+    s_aotImageForProgramData = std::exchange(s_lastLinkAOTImage, { });
 }
 extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encoder, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, uint32_t* entryOffsets, size_t entryOffsetCount, uint32_t* regionEnds, uint32_t* namedHotFunctions, uint32_t* placedHotFunctions, uint32_t* functionsWithoutName)
 {
@@ -413,12 +407,12 @@ extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encod
     *namedHotFunctions = result.namedHotFunctions;
     *placedHotFunctions = result.placedHotFunctions;
     *functionsWithoutName = result.functionsWithoutName;
-    s_aotImageOfLastLink = WTF::move(result.aotImage);
-    if (!s_aotImageOfLastLink.isEmpty()) {
-        s_payloadOfLastLink = result.payload;
-        s_modulesOfLastLink = WTF::move(result.entryOffsetsOfModules);
-        s_reportableSitesOfLastLink = WTF::move(result.reportableSites);
-        s_variablesExportedByModulesOfLastLink = WTF::move(result.variablesExportedByModules);
+    s_lastLinkAOTImage = WTF::move(result.aotImage);
+    if (!s_lastLinkAOTImage.isEmpty()) {
+        s_lastLinkPayload = result.payload;
+        s_lastLinkModules = WTF::move(result.moduleEntryOffsets);
+        s_lastLinkReportableSites = WTF::move(result.reportableSites);
+        s_lastLinkExportedVariables = WTF::move(result.variablesExportedByModules);
     }
     *outputByteCode = result.payload->span().data();
     *outputByteCodeSize = result.payload->span().size();
@@ -426,13 +420,10 @@ extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encod
     return true;
 }
 
-// The offset in the executable's file of the byte that is mapped at `address` (in one of the executable's own
-// segments).
 static std::optional<off_t> offsetInExecutableFile(const void* address)
 {
     uintptr_t target = reinterpret_cast<uintptr_t>(address);
 #if OS(DARWIN)
-    // Not necessarily the first image: libraries that are inserted come before it.
     const mach_header_64* header = nullptr;
     uintptr_t slide = 0;
     for (uint32_t i = 0, count = _dyld_image_count(); i < count; ++i) {
@@ -469,7 +460,7 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
             if (segment.p_type == PT_LOAD && context.target >= start && context.target - start < segment.p_filesz)
                 context.result = static_cast<off_t>(segment.p_offset + (context.target - start));
         }
-        return 1; // The first is the executable.
+        return 1;
     }, &context);
     return result;
 #else
@@ -478,8 +469,7 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
     return std::nullopt;
 }
 
-// For AOT builds: the codec that an image uses to compress rarely used data. (For JSCInitialize().)
-extern "C" void Bun__AOT__setCodecOfImages()
+extern "C" void Bun__AOT__setImageCodec()
 {
 #if ENABLE(AOT)
     JSC::AOT::setCodec(
@@ -493,32 +483,28 @@ extern "C" void Bun__AOT__setCodecOfImages()
 #endif
 }
 
-// For AOT builds: what the program consists of besides its code (JSC::AOT::ProgramData). Runs on the bundler's bytecode thread.
-// The result is placed after the image of the code, which ends on a page boundary.
-// `find`, if given, maps a position in a module's text to a position in the executable's original sources. Lines and columns
-// count from one. Those positions are kept, for the places that a stack trace can report, and no other position information is.
 extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t stringsSize, void* ctx, void (*append)(void* ctx, const uint8_t* bytes, size_t size),
-    void* findCtx, bool (*find)(void* ctx, uint32_t entryOffsetOfModule, uint32_t line, uint32_t column, const uint8_t** name, size_t* nameLength, uint32_t* lineInSource, uint32_t* columnInSource))
+    void* findCtx, bool (*find)(void* ctx, uint32_t moduleEntryOffset, uint32_t line, uint32_t column, const uint8_t** name, size_t* nameLength, uint32_t* lineInSource, uint32_t* columnInSource))
 {
-    Vector<JSC::ReportableSitesOfFunction> reportableSites = std::exchange(s_reportableSitesOfLastLink, { });
-    Vector<uint8_t> imageOfCode = std::exchange(s_aotImageForProgramData, { });
+    Vector<JSC::FunctionReportableSites> reportableSites = std::exchange(s_lastLinkReportableSites, { });
+    Vector<uint8_t> codeImage = std::exchange(s_aotImageForProgramData, { });
     JSC::VM& vm = vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
-    RefPtr payload = std::exchange(s_payloadOfLastLink, nullptr);
-    Vector<uint32_t> modules = std::exchange(s_modulesOfLastLink, { });
-    Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules = std::exchange(s_variablesExportedByModulesOfLastLink, { });
-    JSC::AOT::ProgramData::PositionsToKeep positions { reportableSites, [&](uint32_t entryOffsetOfModule, JSC::LineColumn inModule, CString& nameOfSource, JSC::LineColumn& inSource) {
+    RefPtr payload = std::exchange(s_lastLinkPayload, nullptr);
+    Vector<uint32_t> modules = std::exchange(s_lastLinkModules, { });
+    Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules = std::exchange(s_lastLinkExportedVariables, { });
+    JSC::AOT::ProgramData::RetainedPositions positions { reportableSites, [&](uint32_t moduleEntryOffset, JSC::LineColumn inModule, CString& sourceName, JSC::LineColumn& inSource) {
         const uint8_t* name = nullptr;
         size_t nameLength = 0;
         uint32_t line = 0;
         uint32_t column = 0;
-        if (!find(findCtx, entryOffsetOfModule, inModule.line, inModule.column, &name, &nameLength, &line, &column))
+        if (!find(findCtx, moduleEntryOffset, inModule.line, inModule.column, &name, &nameLength, &line, &column))
             return false;
-        nameOfSource = CString(std::span { reinterpret_cast<const char*>(name), nameLength });
+        sourceName = CString(std::span { reinterpret_cast<const char*>(name), nameLength });
         inSource = { line, column };
         return true;
     } };
-    Vector<uint8_t> image = JSC::AOT::ProgramData::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> { }, modules.span(), imageOfCode.span(), positions, reportableSites.span(), variablesExportedByModules.span());
+    Vector<uint8_t> image = JSC::AOT::ProgramData::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> { }, modules.span(), codeImage.span(), positions, reportableSites.span(), variablesExportedByModules.span());
     append(ctx, image.span().data(), image.size());
 }
 
@@ -535,22 +521,19 @@ static int openExecutable()
     return open(path, O_RDONLY | O_CLOEXEC);
 }
 
-extern "C" bool Bun__AOT__stringTableInImage(const uint8_t* bytes, size_t length, size_t* result)
+extern "C" bool Bun__AOT__imageStringTable(const uint8_t* bytes, size_t length, size_t* result)
 {
-    auto sizeOfCodeImage = JSC::aotImageSize({ bytes, length });
-    if (!sizeOfCodeImage || *sizeOfCodeImage >= length)
+    auto codeImageSize = JSC::aotImageSize({ bytes, length });
+    if (!codeImageSize || *codeImageSize >= length)
         return false;
-    auto found = JSC::AOT::ProgramData::stringTableIn({ bytes + *sizeOfCodeImage, length - *sizeOfCodeImage });
+    auto found = JSC::AOT::ProgramData::stringTableIn({ bytes + *codeImageSize, length - *codeImageSize });
     if (!found)
         return false;
-    result[0] = *sizeOfCodeImage + found->first;
+    result[0] = *codeImageSize + found->first;
     result[1] = found->second;
     return true;
 }
 
-// `bytes` is the image of the code and the program data that follows it. They stay mapped. Before there is a VM.
-// `fileDescriptor`, `offsetInFile`: the file that `bytes` is mapped from, and the offset of `bytes` in it. A negative
-// descriptor means the executable's own file.
 extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int fileDescriptor, int64_t offsetInFile)
 {
 #if OS(DARWIN) || OS(LINUX)
@@ -562,24 +545,23 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
         offsetInFile = offset.value_or(0);
     }
     const char* cannotOpen = "cannot find it in the executable's file";
-    JSC::UseOfAOTFile use = fileDescriptor >= 0 ? JSC::useAOTFile({ bytes, length }, fileDescriptor, offsetInFile) : JSC::UseOfAOTFile { cannotOpen, cannotOpen };
+    JSC::AOTFileUse use = fileDescriptor >= 0 ? JSC::useAOTFile({ bytes, length }, fileDescriptor, offsetInFile) : JSC::AOTFileUse { cannotOpen, cannotOpen };
     if (isInExecutable && fileDescriptor >= 0)
         close(fileDescriptor);
     if (!verbose)
         return;
-    if (use.whyNoProgramData)
-        fprintf(stderr, "[aot] not using the program data: %s\n", use.whyNoProgramData);
+    if (use.programDataRejectionReason)
+        fprintf(stderr, "[aot] not using the program data: %s\n", use.programDataRejectionReason);
     else
-        fprintf(stderr, "[aot] program data: %zu bytes\n", use.sizeOfProgramData);
-    if (use.whyNoImage) {
-        fprintf(stderr, "[aot] not using the image: %s\n", use.whyNoImage);
+        fprintf(stderr, "[aot] program data: %zu bytes\n", use.programDataSize);
+    if (use.imageRejectionReason) {
+        fprintf(stderr, "[aot] not using the image: %s\n", use.imageRejectionReason);
         return;
     }
-    fprintf(stderr, "[aot] image: %zu bytes, %zu of code at %p, %u regular expressions\n", length, use.sizeOfCode, use.code, JSC::aotImageNumberOfRegExps({ bytes, length }).value_or(0));
-    if (!strcmp(verbose, "2") && use.sizeOfCode > 4096) {
-        // Finds the copies of the stubs by scanning all of the code. The code starts with one.
+    fprintf(stderr, "[aot] image: %zu bytes, %zu of code at %p, %u regular expressions\n", length, use.codeSizeInBytes, use.code, JSC::aotImageRegExpCount({ bytes, length }).value_or(0));
+    if (!strcmp(verbose, "2") && use.codeSizeInBytes > 4096) {
         auto* start = static_cast<const uint8_t*>(use.code);
-        for (auto* at = start; (at = static_cast<const uint8_t*>(memmem(at, start + use.sizeOfCode - at, start, 512))); at += 512)
+        for (auto* at = start; (at = static_cast<const uint8_t*>(memmem(at, start + use.codeSizeInBytes - at, start, 512))); at += 512)
             fprintf(stderr, "[aot] stubs at image+0x%zx\n", static_cast<size_t>(at - start));
     }
 #else
@@ -590,13 +572,10 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
 #endif
 }
 
-// For the crash handler. The loader knows nothing about the machine code that an AOT executable carries, so its frames
-// would be reported as unknown. Returns the offset of an address in that code, which the map of the image resolves to a
-// function, or -1.
 extern "C" int64_t Bun__AOT__offsetInCode(const void* address)
 {
 #if ENABLE(AOT)
-    auto offset = JSC::AOT::offsetInCodeOfImage(address);
+    auto offset = JSC::AOT::imageCodeOffset(address);
     return offset ? static_cast<int64_t>(*offset) : -1;
 #else
     UNUSED_PARAM(address);

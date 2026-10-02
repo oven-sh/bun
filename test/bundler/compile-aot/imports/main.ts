@@ -25,7 +25,7 @@ say("builtin", join("a", "b"), basename("/x/y.z"), typeof EventEmitter, new Even
 function globals() { return [typeof Object, typeof Math.max, Array.isArray([]), typeof process.pid, typeof undefinedGlobalName === "undefined"].join(","); }
 declare const undefinedGlobalName: unknown;
 say("globals", globals());
-function missing() { try { // @ts-ignore
+function missing() { try {
   return notDefinedAnywhere; } catch (e) { return (e as Error).constructor.name + ":" + (e as Error).message; } }
 say("missing", missing());
 (globalThis as any).lateGlobal = 1; declare const lateGlobal: number;

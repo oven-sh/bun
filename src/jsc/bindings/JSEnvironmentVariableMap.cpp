@@ -161,9 +161,6 @@ static void applyTLSRejectEnvValue(JSGlobalObject* globalObject, JSC::JSString* 
     applyTLSRejectFromString(globalObject, view->toString());
 }
 
-// process.env is read far more than it is changed, and has enough properties to be a dictionary from the start; after
-// one delete, one that nothing can cache a read of, or the absence of a variable in. So every change ends with an
-// ordinary structure again. (The next change moves the object to another structure, so what was cached for this one holds.)
 static void settleStructureAfterChange(VM& vm, JSCell* cell)
 {
     auto* object = asObject(cell);

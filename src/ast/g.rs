@@ -160,7 +160,6 @@ pub struct Property {
 
     pub ts_metadata: TypeScript::Metadata,
 
-    /// The annotation of a class field, when sound types are enabled.
     pub sound_type: SoundType,
 }
 
@@ -338,7 +337,6 @@ pub struct Arg {
 
     pub ts_metadata: TypeScript::Metadata,
 
-    /// The annotation, when sound types are enabled.
     pub sound_type: SoundType,
 }
 
@@ -377,6 +375,5 @@ impl Arg {
     }
 }
 
-// `sound_type` sits in what was padding.
 const _: () = assert!(core::mem::size_of::<Arg>() == 88);
 const _: () = assert!(core::mem::size_of::<Property>() == 112);

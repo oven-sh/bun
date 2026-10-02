@@ -1,4 +1,3 @@
-// These are only accessible through named imports.
 const show = (x: unknown) => typeof x + ":" + String(x);
 export function numbersFromBoth(x: number) { return "numbersFromBoth " + show(x); }
 export function aStringFromTheOther(x: number) { return "aStringFromTheOther " + show(x); }

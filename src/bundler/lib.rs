@@ -290,8 +290,6 @@ pub mod options {
         /// in it (`OutputFile::bytecode_entry_offset`).
         #[strum(serialize = "bytecode-payload")]
         BytecodePayload,
-        /// For AOT builds: the machine code of every function of the link (`JSC::AOT::Image`). It is placed on a page
-        /// boundary of the executable's file, and the executable maps its code from there.
         #[strum(serialize = "aot-image")]
         AotImage,
         /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).

@@ -1838,7 +1838,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     let name = p.lexer.identifier;
                     p.skip_type_script_type_stmt(&mut stmt_opts)?;
-                    // "export declare type Foo = any"
                     if opts.is_export && p.sound_types_enabled() {
                         p.sound_declare_export(name, name);
                     }
@@ -1934,7 +1933,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
                     let scope_index = p.scopes_in_order.len();
-                    // No scope is pushed, but these are not declarations of this module.
                     if p.sound_types_enabled() {
                         p.sound().foreign_declaration_depth += 1;
                     }

@@ -227,7 +227,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             prop_flags.insert(flags::Property::IsStatic);
         }
 
-        // What reading the property gives.
         let sound_type = if p.sound_types_enabled() {
             let returns = p.sound().last_fn_return;
             match kind {
@@ -688,7 +687,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 Level::Lowest,
                                 wants_metadata.then_some(&mut ts_metadata),
                             )?;
-                            // `foo!: T` reads as undefined until something assigns it.
                             if is_optional || has_definite_assignment_assertion_operator {
                                 sound_type = p.sound().types.optional(sound_type);
                             }

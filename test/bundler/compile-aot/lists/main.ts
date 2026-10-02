@@ -1,4 +1,3 @@
-// Calls whose argument list is built at run time: f.apply(o, list), f(...list), and functions that forward their own arguments.
 const any = (v: unknown): any => v;
 const show = (v: unknown): string =>
   typeof v === "string" ? JSON.stringify(v) : Object.is(v, -0) ? "-0" : typeof v === "function" ? "fn" : typeof v === "symbol" ? "sym" :
@@ -10,13 +9,12 @@ const say = (name: string, f: () => unknown) => {
 };
 function count(this: unknown, ...a: unknown[]) { return show(this) + "|" + a.length + "|" + a.map(show).join(","); }
 function fixed(this: unknown, a?: unknown, b?: unknown, c?: unknown) { return [show(this), show(a), show(b), show(c), arguments.length].join("|"); }
-function howMany(this: unknown) { return arguments.length; }
+function elementCount(this: unknown) { return arguments.length; }
 class Made { all: string; constructor(...a: unknown[]) { this.all = a.length + ":" + a.map(show).join(","); } }
 class Derived extends Made { constructor(...a: unknown[]) { super(...a); } }
 class DerivedMore extends Made { constructor(x: unknown, ...a: unknown[]) { super("first", ...a, x); } }
 const holder = { name: "holder", m: count };
 
-// ---- lists of every kind
 class Sub extends Array<unknown> {}
 const sparse: unknown[] = [1, 2]; sparse[100000] = 3; sparse.length = 3;
 const withProps: unknown[] = any(Object.assign([1, 2], { extra: 1 }));
@@ -54,7 +52,6 @@ for (const [name, list] of lists) {
   say(`Reflect.apply ${name}`, () => Reflect.apply(count, "r", l));
 }
 
-// ---- something happens between the spread and the call
 let order: string[] = [];
 const noting = (s: string, v: unknown) => { order.push(s); return v; };
 const shrinking = [1, 2, 3];
@@ -63,7 +60,6 @@ say("in order", () => { order = []; const r = count(noting("a", 1), ...any(notin
 const getter = { get k() { shrinking.push(9); return "k"; } };
 say("spread, then a getter", () => { const r = count(...shrinking, getter.k); return r; });
 
-// ---- passing on one's own arguments
 function pass(this: unknown) { const r = count.apply(this, any(arguments)); return r; }
 function passTail(this: unknown) { return count.apply(this, any(arguments)); }
 function passNamed(this: unknown, a?: unknown, b?: unknown, c?: unknown) { const r = count.apply(this, any(arguments)); return r + "/" + show(a) + show(b) + show(c); }
@@ -110,7 +106,6 @@ say("thrown through", () => inTry(1, 2 as never));
 function spreadsArguments(_a?: unknown) { const r = count(...arguments); return r; }
 say("arguments spread", () => spreadsArguments(1, 2 as never));
 
-// ---- passing on the rest of one's arguments
 function rest(...xs: unknown[]) { const r = count(...xs); return r; }
 function restTail(...xs: unknown[]) { return count(...xs); }
 function restAfter(a?: unknown, b?: unknown, ...xs: unknown[]) { const r = count(...xs); return r + "/" + show(a) + show(b); }
@@ -147,7 +142,6 @@ say("arguments, deep, in tail position", () => passDeepTail(100000, "x"));
 function forever(...xs: unknown[]): unknown { return 1 + any(forever(...xs)); }
 say("without end", () => { try { return forever(1, 2); } catch (e) { return any(e).constructor.name; } });
 
-// ---- callees of every kind
 say("Math.max spread ints", () => Math.max(...[3, 9, 2])); say("Math.max spread doubles", () => Math.max(...[3.5, 9.25, 2]));
 say("Math.max apply", () => Math.max.apply(null, [3, 9, 2])); say("Math.min of none", () => Math.min(...[]));
 say("fromCharCode apply", () => String.fromCharCode.apply(null, [104, 105]));
@@ -165,16 +159,14 @@ say("new of an arrow", () => new (any(restArrow))(...[1])); say("new of bound", 
 say("new of a function", () => { function F(this: any, ...a: unknown[]) { this.n = a.length; } return new (any(F))(...[1, 2, 3]).n; });
 say("Reflect.construct", () => Reflect.construct(Made, [1, 2]).all);
 
-// ---- long lists
 for (const n of [100, 5000, 70000, 1000000, 1100000, 5000000]) {
   const ints: number[] = [], doubles: number[] = [];
   for (let i = 0; i < n; i++) { ints.push(i); doubles.push(i + 0.5); }
   const name = (f: () => unknown) => { try { return f(); } catch (e) { return any(e).constructor.name; } };
-  say(`apply ${n}`, () => name(() => { const r = howMany.apply(null, any(ints)); return r; })); say(`spread ${n}`, () => name(() => { const r = any(howMany)(...doubles); return r; }));
+  say(`apply ${n}`, () => name(() => { const r = elementCount.apply(null, any(ints)); return r; })); say(`spread ${n}`, () => name(() => { const r = any(elementCount)(...doubles); return r; }));
   say(`max ${n}`, () => name(() => Math.max(...ints)));
 }
 
-// ---- how arrays are iterated over is changed
 const arrayIterator = Array.prototype[Symbol.iterator];
 const thisOfIterator: unknown[] = [];
 say("a new way to iterate over arrays", () => { any(Array.prototype)[Symbol.iterator] = function* (this: unknown[]) { thisOfIterator.push(this); yield "patched"; yield this.length; }; return "done"; });
@@ -193,14 +185,12 @@ say("an element on the prototype", () => { any(Array.prototype)[1] = "from the p
 say("holes: apply", () => { const r = count.apply(null, [1, , 3]); return r; }); say("holes: spread", () => { const r = count(...[1, , 3]); return r; });
 say("no element on the prototype", () => delete any(Array.prototype)[1]);
 
-// ---- where errors say they came from
 const where = (f: () => unknown) => { try { f(); return "no error"; } catch (e) { return String(any(e).stack).split("\n").slice(0, 3).map(l => l.replace(/\(?[^ (]*[\\/]/, "").replace(/\)$/, "")).join(" < "); } };
 say("where: not iterable", () => where(() => { const r = count(1, ...any(5)); return r; }));
 say("where: thrown by the callee", () => where(() => { const r = thrower(...[1, 2]); return r; }));
 say("where: thrown by the callee of apply", () => where(function (this: unknown) { const r = thrower.apply(null, any(arguments)); return r; }));
 say("where: not a function", () => where(() => { const r = any(holder).nothing(...[1]); return r; }));
 
-// ---- everything again, many times over, with things to collect
 let total = 0;
 for (let i = 0; i < 20000; i++) {
   const o = { i }, s = "s" + i;
@@ -208,7 +198,6 @@ for (let i = 0; i < 20000; i++) {
 }
 say("many times", () => total);
 console.log(await fromAsync(1, 2 as never));
-// Arrays that are built from other arrays.
 {
   const a = [1, 2], b = [3, 4], none: number[] = [];
   say("two arrays", () => [...a, ...b]);
@@ -250,7 +239,6 @@ console.log(await fromAsync(1, 2 as never));
   } catch (e) { console.log("iteration cannot be changed: " + any(e).constructor.name); }
   say("and is again", () => [...a, ...b]);
 }
-// A regular expression that is written where it is used.
 {
   const isWord = (s: string) => /^\w+$/.test(s);
   say("test", () => [isWord("abc"), isWord("a b"), isWord("")]);

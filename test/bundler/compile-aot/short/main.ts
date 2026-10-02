@@ -6,10 +6,8 @@ const say = (name: string, f: () => unknown) => {
   try { text = String(f()); } catch (e: any) { text = "threw " + e?.name + ": " + e?.message; }
   out.push(name + " = " + text);
 };
-// Features that depend on the program's source text, which is not present in every build configuration that this is compared across.
 const sayOfText = (name: string, f: () => unknown) => say("text: " + name, f);
 
-// ---- every kind of function
 function declared(a: any, b: any, c: any) { return a; }
 function noParameters() {}
 function withDefaults(a: any, b = 1, c?: any) {}
@@ -81,7 +79,6 @@ for (const [label, f] of Object.entries(all)) {
   sayOfText(label + " starts", () => String(f).replace(/\s+/g, " ").slice(0, 5).replace(/[^a-z*( ]/g, "?"));
 }
 
-// ---- names and lengths that are changed, or deleted
 say("delete name", () => { function f(a: any) {} delete (f as any).name; return JSON.stringify(f.name) + Object.hasOwn(f, "name"); });
 say("delete length", () => { function f(a: any) {} delete (f as any).length; return f.length + "" + Object.hasOwn(f, "length"); });
 say("define name", () => { function f() {} Object.defineProperty(f, "name", { value: "other" }); return f.name + "/" + f.bind(null).name; });
@@ -97,7 +94,6 @@ say("super", () => new Derived().over() === Plain.prototype.method);
 say("named class", () => namedClassExpression.who());
 say("named expression", () => namedExpression(1, 2));
 
-// ---- stacks
 function outer() { return middle(); }
 function middle() { const r = innermost(); return r; }
 function innermost() { return new Error("x").stack!.split("\n").slice(0, 4).map(l => l.trim().replace(/\(?[^ (]*[\\/]/, "(")).join(" | "); }
@@ -117,14 +113,12 @@ say("call sites", () => {
 });
 say("captureStackTrace", () => { function skip() { const o: any = {}; Error.captureStackTrace(o, skip); return o.stack.split("\n")[1].trim().replace(/\(?[^ (]*[\\/]/, "("); } function from() { const r = skip(); return r; } const r = from(); return r; });
 
-// ---- features that depend on the function's source file
 say("import.meta", () => whoImports());
 say("import.meta here", () => (() => import.meta.url.split("/").pop())());
 out.push("import() = " + await importsLater());
 out.push("import() here = " + await (async function () { return (await import("./third")).third(); })());
 say("require.resolve", () => { function f() { return typeof import.meta.resolve("./third"); } return f(); });
 
-// ---- eval, new Function, templates
 say("direct eval", () => { function f(a: number) { const local = a * 2; return eval("local + a"); } return f(4); });
 say("direct eval, this and arguments", () => { function f(this: any, a: number) { return eval("this.k + arguments.length + a"); } return f.call({ k: 1 }, 2); });
 say("direct eval in an arrow in a method", () => { const o = { k: 5, m() { return (() => eval("this.k"))(); } }; return o.m(); });
@@ -138,7 +132,6 @@ function tag(strings: TemplateStringsArray, ...values: any[]) { return strings; 
 function tagged(i: number) { return tag`a${i}b`; }
 say("templates", () => [tagged(1) === tagged(2), tagged(1).raw.join(), Object.isFrozen(tagged(1)), (() => tag`a${0}b`)() === tagged(1)].join());
 
-// ---- tools
 say("heap snapshot", () => { const s: any = Bun.generateHeapSnapshot(); return typeof s + Array.isArray(s.nodes); });
 say("v8 heap snapshot", () => typeof Bun.generateHeapSnapshot("v8"));
 {
@@ -147,7 +140,6 @@ say("v8 heap snapshot", () => typeof Bun.generateHeapSnapshot("v8"));
   say("heapStats", () => jsc.heapStats().objectTypeCounts.FunctionExecutable >= 0);
   function busy() { let s = 0; for (let i = 0; i < 3e6; i++) s += hot(i); return s; }
   function hot(i: number) { return Math.sqrt(i) | 0; }
-  // (Whether a sample lands in the loop is a matter of luck: on a busy machine with the collector running constantly, none may. The test is whether the profiler can name these functions.)
   say("profile", () => { let p: any, named = false; for (let i = 0; i < 40 && !named; i++) { p = jsc.profile(busy, 100); named = /busy|hot/.test(p.functions + JSON.stringify(p.stackTraces)); } return typeof p.functions + typeof p.bytecodes + typeof p.stackTraces + named; });
   say("debugging snapshot", () => typeof (jsc as any).generateHeapSnapshotForDebugging());
 }
@@ -173,7 +165,6 @@ say("console.log", () => { console.log(declared, arrow, Plain, object.method, as
 Bun.gc(true);
 say("after gc", () => Object.values(all).map(f => f.name.length + f.length).join(""));
 
-// ---- another thread
 out.push("worker = " + await new Promise<string>((resolve, reject) => {
   const w = new Worker(new URL("./worker.ts", import.meta.url).href);
   w.onmessage = e => { resolve(e.data); w.terminate(); };

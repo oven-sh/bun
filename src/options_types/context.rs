@@ -237,16 +237,9 @@ pub struct BundlerOptions {
     pub compile_autoload_bunfig: bool,
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
-    /// `--compile-aot`: the executable carries machine code for its functions, compiled when it is built.
     pub compile_aot: bool,
-    /// `--compile-run`: instead of writing an executable, replace this process with one that runs what was built
-    /// (`bun run --aot`). It runs where its sources are, so its modules see the paths of their source files.
     pub compile_run: bool,
-    /// `--compile-run-arg`: the arguments of the `bun` that runs the result. The file descriptor of the build output is
-    /// appended to the argument `--aot-graph-fd=`.
     pub compile_run_args: Vec<Box<[u8]>>,
-    /// `--rewrite-jest-for-tests`: the entry points are test files, and are transpiled the way `bun test` transpiles
-    /// them.
     pub rewrite_jest_for_tests: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
     /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
@@ -575,9 +568,7 @@ pub struct DebuggerEnable {
 
 pub struct RuntimeOptions {
     pub smol: bool,
-    /// `--aot`: compile the program ahead of time, as `bun build --compile --compile-aot` does, and run that.
     pub aot: bool,
-    /// `--aot-graph-fd`: replaces `--aot` once the build is done. The file descriptor of the build output.
     pub aot_graph_fd: Option<i32>,
     pub debugger: Debugger,
     pub if_present: bool,

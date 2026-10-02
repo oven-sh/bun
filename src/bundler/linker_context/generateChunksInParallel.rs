@@ -1689,7 +1689,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         );
         debug!("Bytecode external string table: {} bytes", bytes.len());
         if !aot_image.is_empty() {
-            // The image ends on a page boundary, and so this starts on one.
             let maps = SourceMapsByEntryOffset::of(&result);
             let find =
                 |entry_offset: u32, line: u32, column: u32| maps.find(entry_offset, line, column);
@@ -1713,7 +1712,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             ..Default::default()
         }));
     }
-    // Without both, the executable would still run, from its bytecode, with nothing to show that it was not compiled.
     if c.options.aot && !has_program_data {
         c.log_mut().add_error(
             None,
@@ -1766,7 +1764,6 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
 struct LinkedBytecode {
     encoder: crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
     output_files: Vec<u32>,
-    /// For each chunk added, its module of the pre-resolved graph (`u32::MAX`: none).
     graph_modules: Vec<u32>,
     /// What the code of the internal modules that will join the link is called, in their order.
     internal_names: Vec<Option<crate::bytecode_order::CodeNames>>,
@@ -2026,8 +2023,6 @@ use crate::EntryPoint;
 use crate::options::SourceMapOption;
 use crate::output_file::{BakeExtra, BakeRouteKind};
 
-/// The source map of each chunk that has one, by where the chunk's cache entry is in the linked bytecode payload: which is how
-/// `JSC::AOT::ProgramData` says which module it means.
 struct SourceMapsByEntryOffset {
     maps: std::collections::HashMap<u32, (Box<[u8]>, Vec<Box<[u8]>>)>,
 }
@@ -2052,7 +2047,6 @@ impl SourceMapsByEntryOffset {
         Self { maps }
     }
 
-    /// Parses the map the way `serialize_json_source_map_for_standalone` does, so that lookups here match the executable's.
     fn parse(json_source: &[u8]) -> Option<(Box<[u8]>, Vec<Box<[u8]>>)> {
         let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
         let mut log = bun_ast::Log::init();
@@ -2072,7 +2066,6 @@ impl SourceMapsByEntryOffset {
         Some((blob, names))
     }
 
-    /// Lines and columns count from one, going in and coming out.
     fn find(&self, entry_offset: u32, line: u32, column: u32) -> Option<(*const [u8], u32, u32)> {
         let (blob, names) = self.maps.get(&entry_offset)?;
         let map = bun_sourcemap::InternalSourceMap {

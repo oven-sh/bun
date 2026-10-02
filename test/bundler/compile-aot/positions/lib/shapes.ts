@@ -1,4 +1,3 @@
-// A comment, so that lines here are not the lines of the bundle.
 export interface Options { depth: number; label?: string }
 
 export class Boom extends Error {

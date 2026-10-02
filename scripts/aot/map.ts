@@ -1,8 +1,3 @@
-// The map of an image, which says what is where in its code. A build writes one when it is asked to:
-//
-//   BUN_AOT_OPTIONS=aotMapFilePath=<path> bun build --compile --compile-aot ...
-//
-// AOT::ImageBuilder::finish() says what the lines are.
 import { readFileSync } from "node:fs";
 
 export type CompiledFunction = {
@@ -10,7 +5,6 @@ export type CompiledFunction = {
   offset: number;
   size: number;
   module: number;
-  /** Where it starts in the module's text. */
   start: number;
   kind: number;
   name: string;
@@ -36,42 +30,39 @@ function lastAtOrBefore<T extends { offset: number }>(sorted: T[], offset: numbe
 }
 
 export class ImageMap {
-  /** By offset. */
   functions: CompiledFunction[] = [];
-  /** Where the code is mapped in the process that the addresses are from. It differs from run to run: `BUN_AOT_VERBOSE=1` prints it. */
-  addressOfCode: number;
-  sizeOfCode = 0;
+  codeAddress: number;
+  codeSizeInBytes = 0;
   #stubs: { offset: number; name: string }[] = [];
-  #copiesOfStubs: number[] = [];
-  #sizeOfStubs = 0;
-  #startOfRegExps = Infinity;
+  #stubCopies: number[] = [];
+  #stubsSize = 0;
+  #regExpsStart = Infinity;
 
-  constructor(path: string, addressOfCode?: string) {
-    this.addressOfCode = Number(addressOfCode ?? 0);
+  constructor(path: string, codeAddress?: string) {
+    this.codeAddress = Number(codeAddress ?? 0);
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const [what, ...fields] = line.split("\t");
       if (what === "F") {
         const [index, offset, size, module, start, kind] = fields.map(Number);
         this.functions.push({ index, offset, size, module, start, kind, name: fields[6] ?? "" });
       } else if (what === "T") this.#stubs.push({ offset: +fields[0], name: fields[1] });
-      else if (what === "C") this.#copiesOfStubs.push(+fields[0]);
-      else if (what === "R") this.#startOfRegExps = +fields[0];
-      else if (what === "B") this.sizeOfCode = +fields[0];
+      else if (what === "C") this.#stubCopies.push(+fields[0]);
+      else if (what === "R") this.#regExpsStart = +fields[0];
+      else if (what === "B") this.codeSizeInBytes = +fields[0];
     }
     this.functions.sort((a, b) => a.offset - b.offset);
     this.#stubs.sort((a, b) => a.offset - b.offset);
-    this.#sizeOfStubs = this.#stubs.at(-1)?.offset ?? 0;
+    this.#stubsSize = this.#stubs.at(-1)?.offset ?? 0;
   }
 
-  /** What is at an offset in the code. */
   at(offset: number): Place {
-    for (const copy of this.#copiesOfStubs) {
-      if (offset >= copy && offset < copy + this.#sizeOfStubs) {
+    for (const copy of this.#stubCopies) {
+      if (offset >= copy && offset < copy + this.#stubsSize) {
         const stub = lastAtOrBefore(this.#stubs, offset - copy)!;
         return { in: "stub", name: stub.name, offset: offset - copy - stub.offset };
       }
     }
-    if (offset >= this.#startOfRegExps && offset < this.sizeOfCode) return { in: "regexp" };
+    if (offset >= this.#regExpsStart && offset < this.codeSizeInBytes) return { in: "regexp" };
     const found = lastAtOrBefore(this.functions, offset);
     if (found && offset < found.offset + found.size)
       return { in: "function", function: found, offset: offset - found.offset };

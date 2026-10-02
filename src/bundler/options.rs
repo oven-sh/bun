@@ -1339,9 +1339,7 @@ pub struct BundleOptions<'a> {
     pub bytecode_depth: u32,
     /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
     pub optimize_bytecode: bool,
-    /// `--compile-aot` / `compile.aot`: compile the link's bytecode to machine code (`JSC::AOT::Image`) and build its static heap.
     pub aot: bool,
-    /// `--compile-run`: the program sees the paths of its source files: in `import.meta`, in stack traces, in `process.argv`.
     pub preserve_source_paths: bool,
     /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
     pub bytecode_order: Vec<Box<[u8]>>,

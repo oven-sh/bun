@@ -1,10 +1,3 @@
-//! Sound types: the parser half. See `bun_ast::sound_types` for the model.
-//!
-//! The parse pass records annotations (`G::Arg::sound_type`,
-//! `G::Property::sound_type`, `Symbol::sound_type`) or wraps the annotated
-//! expression in `E::TypeCheck`. The visit pass resolves them and emits
-//! `$$t(value, mask)`, an ordinary call of an unbound identifier, so every
-//! later pass treats a check as a call it knows nothing about.
 
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::{HashMap, VecExt};
@@ -34,42 +27,27 @@ impl FieldKey<'_> {
     }
 }
 
-/// The annotated instance fields of a class being visited.
 #[derive(Default)]
 struct ClassFields<'a> {
     fields: Vec<(FieldKey<'a>, Mask)>,
-    /// What `this` is in its instance methods. Only at `Level::Infer`.
     instance: SoundType,
 }
 
 pub struct SoundTypesState<'a> {
     pub(crate) types: ModuleTypes,
     resolver: Resolver<'a>,
-    /// The unbound `$$t` symbol, once a check has been emitted.
     check_ref: Ref,
-    /// Symbol index of a function declaration or a `const` bound to a function
-    /// literal -> its return annotation. Only filled at `Level::Full`.
     fn_returns: HashMap<u32, SoundType>,
-    /// Symbol index of a variable without an annotation -> what TypeScript
-    /// infers for it from its initializer. Only filled at `Level::Infer`.
     inferred: HashMap<u32, Located>,
-    /// The return annotation of the function or arrow that finished parsing last.
     pub(crate) last_fn_return: SoundType,
-    /// Out-parameter of `skip_type_script_arrow_return_type_with_backtracking`.
     pub(crate) arrow_return: SoundType,
-    /// Non-zero inside `declare global { }`.
     pub(crate) foreign_declaration_depth: u32,
-    /// The items of the import or export clause parsed last, type-only ones included.
     clause: Vec<(&'a [u8], &'a [u8])>,
     classes: Vec<ClassFields<'a>>,
-    /// 1 + index into `classes` for the method `visit_func` is about to visit.
     next_fn_this_class: u32,
     counts: Vec<(Rule, Mask)>,
-    /// EXPERIMENT: see `bun_ast::sound_types::oracle`.
     oracle: Option<bun_ast::sound_types::oracle::Entries>,
-    /// `BUN_SOUND_TYPES_ORACLE_FOR=iteration`: it is only asked what a `for`-`of` goes through,
-    /// where a check follows that is worth its size.
-    oracle_is_for_iteration_only: bool,
+    oracle_iteration_only: bool,
     is_marking_iteration: bool,
 }
 
@@ -93,15 +71,14 @@ impl<'a> SoundTypesState<'a> {
             next_fn_this_class: 0,
             counts: Vec::new(),
             oracle: bun_ast::sound_types::oracle::entries_for(path, contents),
-            oracle_is_for_iteration_only: std::env::var_os("BUN_SOUND_TYPES_ORACLE_FOR")
+            oracle_iteration_only: std::env::var_os("BUN_SOUND_TYPES_ORACLE_FOR")
                 .is_some_and(|v| v == "iteration"),
             is_marking_iteration: false,
         })
     }
 }
 
-/// What the TypeScript module `text` at `path` declares in the type namespace.
-pub fn module_types_of_text(
+pub fn module_types_for_text(
     path: &[u8],
     text: &[u8],
     loader: bun_ast::Loader,
@@ -127,7 +104,6 @@ pub fn module_types_of_text(
 
 const STATIC_MASK_MAX_DEPTH: u32 = 8;
 
-/// What `<string>.<name>(...)` returns.
 fn string_method_mask(name: &[u8]) -> Mask {
     match name {
         b"charCodeAt" | b"indexOf" | b"lastIndexOf" | b"localeCompare" | b"search" => mask::NUMBER,
@@ -166,20 +142,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("sound types are enabled")
     }
 
-    // ───────────────────────────── parse pass ─────────────────────────────
-
-    /// `value` annotated with `ty`, to be resolved by the visit pass.
     pub(crate) fn sound_annotate(&mut self, value: Expr, ty: SoundType, rule: Rule) -> Expr {
-        // A cast to `any` is kept: see `sound_is_escape_hatch`.
         if ty == SoundType::TOP || (ty == SoundType::ANY && rule != Rule::Cast) {
             return value;
         }
         self.new_expr(E::TypeCheck { value, ty, rule }, value.loc)
     }
 
-    /// `e` for a position whose meaning depends on the shape of the operand:
-    /// `(a.b as F)()` calls `a.b` with `a` as the receiver, `delete (a.b as T)`
-    /// deletes a property, `typeof (a as T)` does not throw when `a` is unbound.
     #[inline]
     pub(crate) fn sound_without_annotations(mut e: Expr) -> Expr {
         if TYPESCRIPT {
@@ -190,7 +159,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         e
     }
 
-    /// A `type`, `interface`, `class` or `enum` declaration in the current scope.
     pub(crate) fn sound_declare_type(
         &mut self,
         name: &[u8],
@@ -221,8 +189,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A class statement in the current scope. `name` is empty for
-    /// `export default class {}`.
     pub(crate) fn sound_declare_class(&mut self, name: &[u8], class: &G::Class, is_export: bool) {
         if name.is_empty() {
             return;
@@ -242,7 +208,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.sound_declare_type(name, DeclKind::Class, ty, is_export);
     }
 
-    /// The declared types of the instance properties of `class`.
     fn sound_class_members(&mut self, class: &G::Class) -> Vec<(NameId, SoundType)> {
         let mut members: Vec<(NameId, SoundType)> = Vec::new();
         for property in class.properties.slice() {
@@ -276,7 +241,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
             let name = self.sound().types.intern(key.data.slice());
-            // A getter and a setter, or overloads: the first one that says something.
             if !members.iter().any(|(member, _)| *member == name) {
                 members.push((name, property.sound_type));
             }
@@ -284,7 +248,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         members
     }
 
-    /// `<kind> <binding>: <ty> = <init>`
     pub(crate) fn sound_annotate_initializer(
         &mut self,
         kind: js_ast::symbol::Kind,
@@ -319,7 +282,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         SoundType::from_mask(if m == 0 { mask::NUMBER } else { m })
     }
 
-    /// `let name: ty = <initializer>`
     pub(crate) fn sound_record_variable(&mut self, binding: &js_ast::Binding, ty: SoundType) {
         let B::B::BIdentifier(id) = binding.data else {
             return;
@@ -328,7 +290,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let slot = &mut self.symbols[id.r#ref.inner_index() as usize].sound_type;
-        // A redeclared `var`. `ANY` keeps later declarations from reviving it.
         *slot = if *slot == SoundType::TOP || *slot == ty {
             ty
         } else {
@@ -336,7 +297,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
     }
 
-    /// A parameter that has been declared and whose default has been parsed.
     pub(crate) fn sound_record_parameter(&mut self, arg: &G::Arg) {
         if arg.sound_type.is_top()
             || arg
@@ -348,15 +308,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.sound_record_variable(&arg.binding, arg.sound_type);
     }
 
-    // ── Imports and exports ──────────────────────────────────────────────
-
     #[inline]
     fn sound_is_declaring_for_this_module(&mut self) -> bool {
         self.current_scope == self.module_scope && self.sound().foreign_declaration_depth == 0
     }
 
-    /// `{ outer as inner }` of the import or export clause being parsed.
-    /// `outer` is the name the other module sees.
     pub(crate) fn sound_clause_item(&mut self, outer: &'a [u8], inner: &'a [u8]) {
         self.sound().clause.push((outer, inner));
     }
@@ -369,7 +325,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `import default_name, * as star_name, { <clause> } from path`
     pub(crate) fn sound_declare_imports(
         &mut self,
         path: &[u8],
@@ -401,7 +356,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `export { <clause> }` or `export { <clause> } from path`
     pub(crate) fn sound_declare_exports(&mut self, path: Option<&[u8]>) {
         let for_this_module = self.sound_is_declaring_for_this_module();
         let state = self.sound();
@@ -417,7 +371,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `export * from path` or `export * as alias from path`
     pub(crate) fn sound_declare_export_star(&mut self, path: &[u8], alias: Option<&[u8]>) {
         if !self.sound_is_declaring_for_this_module() {
             return;
@@ -429,14 +382,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `export { local as exported }`, where `local` may be a class or a type.
     pub(crate) fn sound_declare_export(&mut self, exported: &[u8], local: &[u8]) {
         if self.sound_is_declaring_for_this_module() {
             self.sound().types.export_local(exported, local);
         }
     }
 
-    /// `ref_` always holds the function whose return annotation is `ty`.
     pub(crate) fn sound_record_fn_return(&mut self, ref_: Ref, ty: SoundType) {
         if !ref_.is_symbol() {
             return;
@@ -463,7 +414,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Between the parse pass and the visit pass.
     pub(crate) fn sound_finish_parse_pass(&mut self) {
         let module_scope = self.module_scope;
         let symbols = &self.symbols;
@@ -472,15 +422,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("sound types are enabled")
             .types
             .finish(|name| {
-                // `emitDecoratorMetadata` binds the type names it refers to.
                 module_scope.members.get(name).is_some_and(|member| {
                     symbols[member.ref_.inner_index() as usize].kind
                         != js_ast::symbol::Kind::Unbound
                 })
             });
     }
-
-    // ───────────────────────────── visit pass ─────────────────────────────
 
     #[inline]
     pub(crate) fn sound_resolve(&mut self, ty: SoundType) -> Mask {
@@ -491,8 +438,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         state.resolver.resolve(&state.types, ty)
     }
 
-    /// An unvisited expression whose author opted out of type checking:
-    /// `e as any`, `e as unknown as T`, `null!`, `undefined!`.
     pub(crate) fn sound_is_escape_hatch(&self, expr: &Expr) -> bool {
         let ExprData::ETypeCheck(check) = expr.data else {
             return false;
@@ -508,7 +453,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The tags a visited expression can evaluate to, as far as its syntax tells.
     fn sound_static_mask(&mut self, expr: &Expr, depth: u32) -> Mask {
         if depth >= STATIC_MASK_MAX_DEPTH {
             return mask::TOP;
@@ -583,8 +527,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ExprData::EIf(e) => {
                 self.sound_static_mask(&e.yes, depth + 1) | self.sound_static_mask(&e.no, depth + 1)
             }
-            ExprData::ECall(call) => self.sound_mask_of_check(&call).unwrap_or(mask::TOP),
-            // The initializer of an annotated `const` was checked, and nothing else stores to it.
+            ExprData::ECall(call) => self.sound_check_mask(&call).unwrap_or(mask::TOP),
             ExprData::EIdentifier(id) => {
                 let symbol = &self.symbols[id.ref_.inner_index() as usize];
                 if symbol.kind == js_ast::symbol::Kind::Constant {
@@ -598,8 +541,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `Some(mask)` when `call` is `$$t(value, mask)`.
-    fn sound_mask_of_check(&mut self, call: &E::Call) -> Option<Mask> {
+    fn sound_check_mask(&mut self, call: &E::Call) -> Option<Mask> {
         let ExprData::EIdentifier(target) = call.target.data else {
             return None;
         };
@@ -613,20 +555,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `$$t(value, mask)`, or `value` when the check cannot fail or cannot be
-    /// expressed. `value` has been visited.
     pub(crate) fn sound_check(&mut self, value: Expr, m: Mask, rule: Rule) -> Expr {
         self.sound_check_impl(value, m, rule, false)
     }
 
-    /// `for (x of value)`. If the type of `value` is an array, wraps it in a check that the engine
-    /// recognizes, so that it iterates by index. (The check is kept even where it is known to
-    /// pass: it is the marker that the engine looks for, and is free where the engine knows too.)
     pub(crate) fn sound_mark_iterated_array(&mut self, value: Expr) -> Expr {
         self.sound().is_marking_iteration = true;
         let t = self.sound_infer(&value, 0);
         self.sound().is_marking_iteration = false;
-        if self.sound_mask_of(t) != mask::ARRAY {
+        if self.sound_mask_for(t) != mask::ARRAY {
             return value;
         }
         self.sound_check_impl(value, mask::ARRAY, Rule::Iterated, true)
@@ -638,7 +575,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return value;
         }
         match value.data {
-            // The bundler tracks where these flow by their position.
             ExprData::ERequireString(_)
             | ExprData::ERequireResolveString(_)
             | ExprData::EImport(_)
@@ -650,9 +586,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !even_if_known && self.sound_static_mask(&value, 0) & !m == 0 {
             return value;
         }
-        // One check does for two.
         let (value, m) = match value.data {
-            ExprData::ECall(inner) => match self.sound_mask_of_check(&inner) {
+            ExprData::ECall(inner) => match self.sound_check_mask(&inner) {
                 Some(inner_mask) if inner_mask & m != 0 => (*inner.args.at(0), inner_mask & m),
                 _ => (value, m),
             },
@@ -699,7 +634,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = value;
 
         if rule == Rule::Param {
-            // Made by `sound_param_checks`: `value` already names the symbol.
             let ExprData::EIdentifier(id) = value.data else {
                 unreachable!()
             };
@@ -729,10 +663,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
-        // `e!` has the type of `e`, without null and undefined.
         let m = if rule == Rule::NonNull && self.sound_types_infer() {
             let t = self.sound_infer(e, 0);
-            match self.sound_mask_of(t) & m {
+            match self.sound_mask_for(t) & m {
                 0 => m,
                 narrowed => narrowed,
             }
@@ -742,14 +675,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = self.sound_check(*e, m, rule);
     }
 
-    /// How many leading statements of a visited function body are its
-    /// directives and parameter checks.
     pub(crate) fn sound_prologue_len(&mut self, body: &[Stmt]) -> usize {
         body.iter()
             .take_while(|stmt| match stmt.data {
                 StmtData::SDirective(_) => true,
                 StmtData::SExpr(expr) => match expr.value.data {
-                    ExprData::ECall(call) => self.sound_mask_of_check(&call).is_some(),
+                    ExprData::ECall(call) => self.sound_check_mask(&call).is_some(),
                     _ => false,
                 },
                 _ => false,
@@ -757,7 +688,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .count()
     }
 
-    /// One `E::TypeCheck` per parameter to check on entry. Call before `visit_args`.
     fn sound_param_checks(
         &mut self,
         args: &[G::Arg],
@@ -765,7 +695,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> smallvec::SmallVec<[Expr; 4]> {
         let mut checks = smallvec::SmallVec::new();
         let count = args.len() - usize::from(has_rest_arg && !args.is_empty());
-        // TEMPORARY-ANNOTATION-STATS
         let stats = bun_ast::sound_types::stats::is_requested();
         let bump = |what: String| {
             if stats {
@@ -781,7 +710,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 bump("any or unknown".to_owned());
                 continue;
             }
-            // EXPERIMENT: see `bun_ast::sound_types::oracle`.
             let from_oracle = if arg.sound_type.is_top() && !is_destructured {
                 self.sound_oracle(arg.binding.loc.start)
             } else {
@@ -844,8 +772,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         checks
     }
 
-    /// The unvisited body of a function with its parameter checks after the
-    /// directive prologue.
     pub(crate) fn sound_body_with_param_checks(
         &mut self,
         args: &[G::Arg],
@@ -876,7 +802,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts.into_bump_slice()
     }
 
-    /// Same for `(a) => expr`, which becomes `(a) => ($$t(a, m), expr)`.
     pub(crate) fn sound_arrow_body_with_param_checks(
         &mut self,
         arrow: &E::Arrow,
@@ -913,9 +838,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // ── Class fields ─────────────────────────────────────────────────────
-
-    /// Call before visiting the members of `class`; pair with `sound_leave_class`.
     pub(crate) fn sound_enter_class(&mut self, class: &G::Class) {
         let mut fields: Vec<(FieldKey<'a>, Mask)> = Vec::new();
         let mut add = |key: FieldKey<'a>, m: Mask| {
@@ -951,7 +873,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             add(field_key, m);
 
-            // Parameter properties
             if property.flags.contains(flags::Property::IsMethod)
                 && let FieldKey::Name(b"constructor") = field_key
                 && let Some(ExprData::EFunction(ctor)) = property.value.map(|v| v.data)
@@ -1001,13 +922,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.sound().classes.pop();
     }
 
-    /// What `FnOnlyDataVisit::sound_this_class` should be while `this` is an
-    /// instance of the innermost class being visited.
     pub(crate) fn sound_current_class(&mut self) -> u32 {
         self.sound().classes.len() as u32
     }
 
-    /// The next `visit_func` visits an instance method of the innermost class.
     pub(crate) fn sound_next_fn_is_instance_method(&mut self) {
         let state = self.sound();
         state.next_fn_this_class = state.classes.len() as u32;
@@ -1017,7 +935,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         core::mem::take(&mut self.sound().next_fn_this_class)
     }
 
-    /// The mask of `this.<field>` for a visited or unvisited member expression.
     fn sound_this_field_mask(&mut self, member: &ExprData) -> Mask {
         let class = self.fn_only_data_visit.sound_this_class;
         if class == 0 {
@@ -1050,7 +967,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .map_or(mask::TOP, |(_, m)| *m)
     }
 
-    /// Whether the unvisited `e` is somewhere a read of it can be wrapped in a call.
     pub(crate) fn sound_is_plain_read(&self, e: &Expr, in_: ExprIn) -> bool {
         fn same(a: &ExprData, b: &ExprData) -> bool {
             match (a, b) {
@@ -1067,7 +983,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !same(&e.data, &self.template_tag)
     }
 
-    /// `e` is a visited member expression that `sound_is_plain_read` accepted.
     pub(crate) fn sound_check_field_read(&mut self, e: &mut Expr) {
         let m = self.sound_this_field_mask(&e.data);
         if m == mask::TOP && self.sound_types_infer() {
@@ -1078,42 +993,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = self.sound_check(*e, m, Rule::FieldRead);
     }
 
-    // ── Inference ────────────────────────────────────────────────────────
-
     #[inline]
-    fn sound_mask_of(&mut self, t: Located) -> Mask {
+    fn sound_mask_for(&mut self, t: Located) -> Mask {
         let state = self.sound();
         state.resolver.mask_of(&state.types, t)
     }
 
-    /// The mask to check a read of the visited member expression `e` against:
-    /// `TOP` unless its TypeScript type is a primitive. Knowing only that a value
-    /// is an object is of little use.
     fn sound_read_mask(&mut self, e: &Expr) -> Mask {
         let t = self.sound_infer(e, 0);
-        let mut m = self.sound_mask_of(t);
-        // Nor which kind, unless it is a kind whose elements can be got at directly.
+        let mut m = self.sound_mask_for(t);
         if m == mask::TOP
             || (m & (mask::OBJECT & !mask::TYPED_ARRAYS) != 0
                 && !bun_ast::sound_types::oracle::keeps_objects())
         {
             return mask::TOP;
         }
-        // TypeScript's type does not include it, but the element may not exist.
         if matches!(e.data, ExprData::EIndex(_)) {
             m |= mask::UNDEFINED;
         }
         m
     }
 
-    /// A best-effort approximation of the TypeScript type of the visited expression `e`.
-    /// It must not be relied on: it only decides where a check is worth emitting.
     pub(crate) fn sound_infer(&mut self, e: &Expr, depth: u32) -> Located {
         let t = self.sound_infer_unaided(e, depth);
         if !t.is_top() || self.sound().oracle.is_none() {
             return t;
         }
-        // EXPERIMENT: see `bun_ast::sound_types::oracle`.
         let anchor = match e.data {
             ExprData::EDot(dot) => dot.name_loc.start,
             ExprData::ECall(call) => call.close_paren_loc.start,
@@ -1123,12 +1028,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Located::from_mask(self.sound_oracle(anchor))
     }
 
-    /// EXPERIMENT: what `bun_ast::sound_types::oracle` says of what has that anchor.
     fn sound_oracle(&mut self, anchor: i32) -> Mask {
         let Some(entries) = self.sound().oracle else {
             return mask::TOP;
         };
-        if self.sound().oracle_is_for_iteration_only && !self.sound().is_marking_iteration {
+        if self.sound().oracle_iteration_only && !self.sound().is_marking_iteration {
             return mask::TOP;
         }
         let m = bun_ast::sound_types::oracle::mask_at(entries, anchor);
@@ -1162,8 +1066,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 Located::own(self.sound().classes[class as usize - 1].instance)
             }
-            // What a chain comes to when it is cut short is `undefined`, and no part of
-            // one can be wrapped in a call without cutting it up.
             ExprData::EDot(dot) if dot.optional_chain.is_some() => Located::TOP,
             ExprData::EIndex(index) if index.optional_chain.is_some() => Located::TOP,
             ExprData::EDot(dot) => {
@@ -1173,7 +1075,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             ExprData::EIndex(index) => {
                 let key = self.sound_infer(&index.index, depth + 1);
-                if self.sound_mask_of(key) != mask::NUMBER {
+                if self.sound_mask_for(key) != mask::NUMBER {
                     return Located::TOP;
                 }
                 let target = self.sound_infer(&index.target, depth + 1);
@@ -1188,10 +1090,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Located::own(self.sound().types.reference(name, SoundType::TOP))
             }
             ExprData::ECall(call) => {
-                if let Some(m) = self.sound_mask_of_check(&call) {
-                    // The structure, if there is any: the check has nothing to say about that.
+                if let Some(m) = self.sound_check_mask(&call) {
                     let value = self.sound_infer(call.args.at(0), depth + 1);
-                    return if value.is_top() || self.sound_mask_of(value) & !m != 0 {
+                    return if value.is_top() || self.sound_mask_for(value) & !m != 0 {
                         Located::from_mask(m)
                     } else {
                         value
@@ -1215,7 +1116,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Located::from_mask(mask::NUMBER);
                         }
                         let object = self.sound_infer(&dot.target, depth + 1);
-                        if self.sound_mask_of(object) == mask::STRING {
+                        if self.sound_mask_for(object) == mask::STRING {
                             return Located::from_mask(string_method_mask(dot.name.slice()));
                         }
                         let state = self.sound();
@@ -1243,7 +1144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 let left = self.sound_infer(&binary.left, depth + 1);
                 let right = self.sound_infer(&binary.right, depth + 1);
-                let (left, right) = (self.sound_mask_of(left), self.sound_mask_of(right));
+                let (left, right) = (self.sound_mask_for(left), self.sound_mask_for(right));
                 if left == mask::NUMBER && right == mask::NUMBER {
                     Located::from_mask(mask::NUMBER)
                 } else if binary.op == Op::Code::BinAdd
@@ -1266,7 +1167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ) =>
             {
                 let value = self.sound_infer(&unary.value, depth + 1);
-                if self.sound_mask_of(value) == mask::NUMBER {
+                if self.sound_mask_for(value) == mask::NUMBER {
                     value
                 } else {
                     Located::TOP
@@ -1281,8 +1182,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `<binding> = <value>` declares a variable that has no annotation.
-    /// `value` has been visited.
     pub(crate) fn sound_infer_variable(&mut self, binding: &js_ast::Binding, value: &mut Expr) {
         let B::B::BIdentifier(id) = binding.data else {
             return;
@@ -1292,22 +1191,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let t = self.sound_infer(value, 0);
-        // `let x = null`, `let x = undefined` and `let x = []` say nothing about `x`.
-        let m = self.sound_mask_of(t);
+        let m = self.sound_mask_for(t);
         if m == mask::TOP
             || m & !(mask::NULL | mask::UNDEFINED) == 0
             || matches!(value.data, ExprData::EArray(_))
         {
             return;
         }
-        // `new Float64Array(n)` only creates one if the global has not been replaced.
         if m & !mask::TYPED_ARRAYS == 0 && m.is_power_of_two() {
             *value = self.sound_check(*value, m, Rule::VarInit);
         }
         self.sound().inferred.insert(index, t);
     }
 
-    /// `for (<binding> of <iterable>)`. `iterable` has been visited.
     pub(crate) fn sound_infer_loop_variable(&mut self, binding: &js_ast::Binding, iterable: &Expr) {
         let B::B::BIdentifier(id) = binding.data else {
             return;
@@ -1317,8 +1213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let t = self.sound_infer(iterable, 0);
-        // Only what iterates over its elements.
-        if self.sound_mask_of(t) & !(mask::ARRAY | mask::OTHER_OBJECT) != 0 {
+        if self.sound_mask_for(t) & !(mask::ARRAY | mask::OTHER_OBJECT) != 0 {
             return;
         }
         let state = self.sound();
@@ -1328,9 +1223,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // ── Stores ───────────────────────────────────────────────────────────
-
-    /// Both operands of the assignment `e` have been visited.
     pub(crate) fn sound_check_assignment(&mut self, e: &mut E::Binary) {
         if self.is_revisit_for_substitution {
             return;
@@ -1365,7 +1257,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
             Op::Code::BinAddAssign => Op::Code::BinAdd,
-            // These produce a number or a bigint, whichever the variable held.
             _ if m & !(mask::NUMBER | mask::BIGINT) == 0 => return,
             Op::Code::BinSubAssign => Op::Code::BinSub,
             Op::Code::BinMulAssign => Op::Code::BinMul,
@@ -1380,7 +1271,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Op::Code::BinBitwiseXorAssign => Op::Code::BinBitwiseXor,
             _ => return,
         };
-        // `x += e` => `x = $$t(x + e, m)`. Evaluating a member target twice is observable.
         let Some(id) = variable else { return };
         let read = self.new_expr(id, e.left.loc);
         let result = self.new_expr(
@@ -1399,9 +1289,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `o.f -= e` => `o.f = $$t(o.f, m) - e`, so that the value read is checked
-    /// against its TypeScript type. Only done where writing `o.f` twice evaluates
-    /// nothing twice, other than the original read and write.
     fn sound_split_member_update(&mut self, e: &mut E::Binary) -> bool {
         let arithmetic = match e.op {
             Op::Code::BinAddAssign => Op::Code::BinAdd,
@@ -1450,7 +1337,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => return false,
         };
         let mut m = self.sound_read_mask(&read);
-        // `undefined -= 1` is not something TypeScript lets through.
         m &= !mask::UNDEFINED;
         if m != mask::NUMBER && !(m == mask::STRING && arithmetic == Op::Code::BinAdd) {
             return false;
@@ -1468,7 +1354,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// Another use of a visited identifier, `this` or number.
     fn sound_reuse_simple(&mut self, e: Expr) -> Expr {
         if let ExprData::EIdentifier(id) = e.data {
             self.record_usage(id.ref_);
@@ -1477,9 +1362,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         e
     }
 
-    // ── Calls ────────────────────────────────────────────────────────────
-
-    /// `e` has been visited.
     pub(crate) fn sound_check_call_result(&mut self, e: &mut Expr) {
         if self.is_revisit_for_substitution {
             return;
@@ -1490,7 +1372,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if call.optional_chain.is_some() {
             return;
         }
-        // TEMPORARY-ANNOTATION-STATS
         let stats = bun_ast::sound_types::stats::is_requested();
         let bump = |what: &str| {
             if stats {
@@ -1500,7 +1381,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ExprData::EIdentifier(target) = call.target.data else {
             if self.sound_types_infer() && matches!(call.target.data, ExprData::EDot(_)) {
                 let t = self.sound_infer(e, 0);
-                let m = self.sound_mask_of(t);
+                let m = self.sound_mask_for(t);
                 bump(if m == mask::TOP {
                     "of a method: result type not inferred"
                 } else if m & mask::OBJECT == 0 {
@@ -1523,7 +1404,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 "of a local name with no recorded return type"
             });
-            // EXPERIMENT: see `bun_ast::sound_types::oracle`.
             let m = self.sound_oracle(call.close_paren_loc.start);
             if m & mask::OBJECT == 0 || bun_ast::sound_types::oracle::keeps_objects() {
                 *e = self.sound_check(*e, m, Rule::Call);

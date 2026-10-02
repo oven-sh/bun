@@ -1,4 +1,3 @@
-// Everything that queries a function's executable, directly or indirectly.
 export function ordinary(a: number, b = 2, ...rest: number[]) { return a + b + rest.length; }
 export const arrowFn = (x: number) => x + 1;
 export async function asyncFn(x: number) { return x + 1; }

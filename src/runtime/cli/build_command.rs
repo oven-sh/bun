@@ -876,7 +876,6 @@ impl BuildCommand {
             }
 
             if ctx.bundler_options.compile {
-                // (With `--compile-run`, stdout belongs to the program that is about to run.)
                 if !ctx.bundler_options.compile_run {
                     print_summary(
                         bundled_end,

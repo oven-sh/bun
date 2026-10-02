@@ -1,8 +1,6 @@
-// The invariants that typed code relies on for typed layouts that use field IDs, and every way that untyped code could break them.
-// No type annotation here is wrong, so the output must match the interpreter's.
 type A = { kind: "a"; x?: string; y?: string; z?: number };
-type B = { kind: "b"; p?: string; q?: string; r?: number };   // p, q, r may well have the slots of x, y, z
-type C = { kind: "c"; x?: string; p?: string; w?: string; v?: string; u?: string; t?: string; s?: string; o?: string; n?: string; m?: string };   // more than there are slots
+type B = { kind: "b"; p?: string; q?: string; r?: number };
+type C = { kind: "c"; x?: string; p?: string; w?: string; v?: string; u?: string; t?: string; s?: string; o?: string; n?: string; m?: string };
 type U = A | B | C;
 const say = (what: string, got: unknown) => console.log(what + ": " + (typeof got === "string" ? got : JSON.stringify(got) ?? String(got)));
 const mkA = (): A => ({ kind: "a" }); const mkAx = (): A => ({ kind: "a", x: "x" }); const mkB = (): B => ({ kind: "b", p: "p" });
@@ -13,7 +11,6 @@ function all(o: U): string {
   return "c " + o.x + " " + o.p + " " + o.w + " " + o.v + " " + o.u + " " + o.t + " " + o.s + " " + o.o + " " + o.n + " " + o.m;
 }
 const asA = (o: A): string => o.x + " " + o.y + " " + o.z; const asB = (o: B): string => o.p + " " + o.q + " " + o.r;
-// Code that knows nothing.
 const set = (o: any, k: string, v: unknown) => { o[k] = v; }; const del = (o: any, k: string) => { delete o[k]; };
 const through = <T,>(o: unknown): T => o as T;
 const outside = <T,>(text: string): T => JSON.parse(text) as T;
@@ -39,14 +36,12 @@ say("wide, from outside", all(outside<U>('{"m":"M","n":"N","o":"O","s":"S","t":"
 { const o = Object.create({ kind: "a", x: "all inherited" }) as A; say("has nothing of its own", asA(o)); }
 { const o: any = { kind: "a" }; for (let i = 0; i < 200; i++) o["k" + i] = i; for (let i = 0; i < 200; i++) delete o["k" + i]; o.x = "of a dictionary"; say("a dictionary", [asA(o as A), Object.keys(o).join()]); del(o, "x"); say("and without", asA(o as A)); }
 { const o = mkAx(); const copy = { ...o }; const more: A = { ...o, y: "added in the copy" }; const assigned: A = Object.assign({ kind: "a" as const }, o); say("copies", [asA(copy), asA(more), asA(assigned), asA(structuredClone(o))]); }
-// Objects created by untyped code, with properties that are not plain data properties. They are still converted to the typed layout: only an accessor is not a field.
 { const o: any = { kind: "a", x: "plain x" }; Object.defineProperty(o, "hidden", { value: 1, enumerable: false }); say("with one that is not enumerable", [asA(o as A), asA(o as A), Object.keys(o).join(), JSON.stringify(o), o.hidden]); }
 { const o: any = { kind: "a", z: 4 }; let got = 0; Object.defineProperty(o, "x", { get() { got++; return "got " + got; }, enumerable: true, configurable: true }); say("with a getter for a field", [asA(o as A), asA(o as A), got, Object.keys(o).join(), JSON.stringify(o)]); }
 { const o: any = { kind: "a", x: "plain x" }; let got = 0; Object.defineProperty(o, "other", { get() { got++; return "other"; }, set(_v: unknown) { got += 10; }, enumerable: true }); say("with a getter for something else", [asA(o as A), asA(o as A), o.other, got, (o.other = 1, got), JSON.stringify(o)]); }
 { const o: any = { kind: "a" }; Object.defineProperty(o, "x", { value: "read-only x", writable: false, enumerable: true, configurable: true }); let threw = "no"; const a = o as A; const first = asA(a); try { a.x = "written"; } catch (e) { threw = (e as Error).constructor.name; } say("with a field that is read-only", [first, asA(a), threw, Object.getOwnPropertyDescriptor(o, "x")]); }
 { const proto: any = { kind: "a", x: "of the prototype" }; const child = Object.create(proto); say("what is a prototype", [asA(proto as A), asA(child as A)]); proto.x = "changed"; proto.y = "added"; say("and is changed", [asA(proto as A), asA(child as A)]); }
 { const o: any = { get kind() { return "a"; }, x: "x", get y() { return "y of a getter"; } }; say("a literal with getters", [asA(o as A), asA(o as A), all(o as U), Object.keys(o).join()]); }
-// Repeated reads with nothing in between. A plain field may be read once and reused, but a getter has to be called as often as the program says.
 const thrice = (o: A): string => (o.x === "1" || o.x === "2" || o.x === "3" ? "yes " : "no ") + o.x + " " + o.x;
 const both = (o: A): string => o.x + " " + o.y + " " + o.x + " " + o.y;
 say("just read, before anything else has been", [thrice(mkAx()), thrice(mkA()), thrice(outside<A>('{"kind":"a","x":"2"}')), both(mkAx())]);
@@ -57,8 +52,6 @@ say("just read, before anything else has been", [thrice(mkAx()), thrice(mkA()), 
 { const o: any = { kind: "a", x: "before" }; Object.defineProperty(o, "y", { get() { o.x = "changed by the getter of y"; return "y"; }, enumerable: true, configurable: true }); say("a getter that writes another field", both(o as A)); }
 say("just read, afterwards", [thrice(mkAx()), thrice(mkA()), thrice(outside<A>('{"kind":"a","x":"2"}')), both(mkAx())]);
 for (const bad of [undefined, null]) { let what: string; try { what = asA(through<A>(bad)); } catch (e) { what = (e as Error).constructor.name; } say("of " + bad, what); }
-// (A value that is not an object is rejected where an object type is expected. That would be a wrong type annotation, which this test does not cover.)
-// A mixture, over and over, changed on the way.
 { const list: U[] = []; for (let i = 0; i < 12; i++) list.push(i % 4 === 0 ? mkA() : i % 4 === 1 ? mkAx() : i % 4 === 2 ? mkB() : outside<U>('{"kind":"b","q":"' + i + '"}'));
   let s = ""; for (let round = 0; round < 3; round++) { for (const o of list) s += all(o).length + ","; for (const o of list) if (o.kind === "a") { if (round === 0) o.y = "r0"; else del(o, "y"); } else if (o.kind === "b") set(o, round ? "p" : "r", round ? "R" : 7); }
   say("a mixture", s); say("in the end", list.map(all).join(";")); }

@@ -1,32 +1,29 @@
-// Reads the samples of lr-probe.c: a line for each, with pc, lr, x0, x1 and x2 in hexadecimal.
 import { readFileSync } from "node:fs";
 import type { ImageMap } from "./map.ts";
 
 export type Samples = {
   total: number;
-  /** In a compiled function, by offset in the code. */
   own: Map<number, number>;
-  /** In a stub that a compiled function called, by the offset that the call returns to, and by stub. */
   inStubs: Map<number, Map<string, number>>;
-  inStubsFromElsewhere: number;
+  isInExternalStubs: number;
   inRegExps: number;
   outside: number;
 };
 
 export function readSamples(path: string, map: ImageMap): Samples {
-  if (!map.addressOfCode)
+  if (!map.codeAddress)
     throw new Error("--code-at <address>: where the process had the code (BUN_AOT_VERBOSE=1 prints it)");
   const samples: Samples = {
     total: 0,
     own: new Map(),
     inStubs: new Map(),
-    inStubsFromElsewhere: 0,
+    isInExternalStubs: 0,
     inRegExps: 0,
     outside: 0,
   };
   const offsetOf = (address: string) => {
-    const offset = parseInt(address, 16) - map.addressOfCode;
-    return offset >= 0 && offset < map.sizeOfCode ? offset : undefined;
+    const offset = parseInt(address, 16) - map.codeAddress;
+    return offset >= 0 && offset < map.codeSizeInBytes ? offset : undefined;
   };
   for (const line of readFileSync(path, "utf8").split("\n")) {
     const [pc, lr] = line.split(" ");
@@ -40,7 +37,7 @@ export function readSamples(path: string, map: ImageMap): Samples {
     else {
       const returnsTo = offsetOf(lr);
       if (returnsTo === undefined || map.at(returnsTo).in !== "function") {
-        samples.inStubsFromElsewhere++;
+        samples.isInExternalStubs++;
         continue;
       }
       if (!samples.inStubs.has(returnsTo)) samples.inStubs.set(returnsTo, new Map());

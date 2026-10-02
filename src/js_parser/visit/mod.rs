@@ -305,7 +305,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.visit_binding(decl.binding, None);
 
             if let Some(mut val) = decl.value {
-                // Everything below looks at the shape of the initializer.
                 let mut sound_mask = bun_ast::sound_types::mask::TOP;
                 if TYPESCRIPT
                     && let ExprData::ETypeCheck(check) = val.data

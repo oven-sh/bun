@@ -1109,7 +1109,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
-    /// `bun run --aot <file>`: see [`cli::aot`].
     fn boot_aot(ctx: &mut ContextData, entry_path: &[u8]) -> crate::Result<()> {
         let mut cwd_buf = paths::path_buffer_pool::get();
         let mut path_buf = paths::path_buffer_pool::get();

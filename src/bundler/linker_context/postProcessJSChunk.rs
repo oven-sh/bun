@@ -335,8 +335,6 @@ pub(crate) fn post_process_js_chunk(
                 break;
             }
         }
-        // The `await` may also be the linker's: of the initializer of a wrapped dependency
-        // (generate_code_for_file_in_chunk_js() sets the flag) or of the entry point's own, in the tail below.
         if chunk.is_entry_point() {
             let idx = chunk.entry_point.source_index() as usize;
             if wraps[idx].wrap == crate::WrapKind::Esm
@@ -385,7 +383,7 @@ pub(crate) fn post_process_js_chunk(
     // cross-chunk import specifiers (which use unique_key placeholders during
     // printing) can be resolved to actual paths.
     if let Some(mut mi) = module_info {
-        note_bindings_of_chunk(c, chunk, chunk_index as u32, &mut mi);
+        record_chunk_bindings(c, chunk, chunk_index as u32, &mut mi);
         chunk.content.javascript_mut().module_info = Some(mi);
     }
 
@@ -1327,8 +1325,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     }
 }
 
-/// `ModuleInfo::bindings`: the top-level symbols that the parts of `chunk` that ship declare.
-fn note_bindings_of_chunk(
+fn record_chunk_bindings(
     c: &LinkerContext,
     chunk: &mut Chunk,
     chunk_index: u32,
@@ -1342,8 +1339,6 @@ fn note_bindings_of_chunk(
     let crate::chunk::Content::Javascript(js) = &chunk.content else {
         return;
     };
-    // Code that obtains the namespace object of an entry point also sees what the chunk exports to other chunks,
-    // under their generated names.
     let all_exports_are_visible = chunk.is_entry_point() && {
         let source_index = chunk.entry_point.source_index() as usize;
         c.graph.files.items_entry_point_kind()[source_index] == crate::entry_point::Kind::UserSpecified
@@ -1352,7 +1347,6 @@ fn note_bindings_of_chunk(
                 crate::js_meta::DynamicImportReferencedAliases::All
             )
     };
-    // Code run by direct eval sees every top-level variable of the chunk, from any file.
     let has_direct_eval = chunk_has_direct_eval(c, chunk);
     let symbols = &c.graph.symbols;
     let mut found: Vec<(Ref, u32)> = Vec::new();
@@ -1361,10 +1355,8 @@ fn note_bindings_of_chunk(
         let source_index = source_index as usize;
         let wrap = c.graph.meta.items_flags()[source_index].wrap;
         if wrap == WrapKind::Cjs {
-            // They are variables of the wrapper's closure.
             continue;
         }
-        // The namespace object of one of these has setters.
         let is_lifted = c.graph.ast.items_flags()[source_index]
             .contains(crate::bundled_ast::Flags::COMMONJS_LIFTED_TO_ESM);
         let parts_live = &c.graph.parts_live[source_index];
@@ -1381,7 +1373,6 @@ fn note_bindings_of_chunk(
             for ref_ in declared {
                 let ref_ = symbols.follow(ref_);
                 let symbol = symbols.get_const(ref_).unwrap();
-                // (Without code splitting, every chunk has its own copy of what its files declare.)
                 if (c.graph.code_splitting && symbol.chunk_index() != Some(chunk_index))
                     || seen.insert(ref_, ()).is_some()
                 {
@@ -1392,8 +1383,6 @@ fn note_bindings_of_chunk(
                     Kind::GeneratorOrAsyncFunction => flag::KIND_GENERATOR_OR_ASYNC_FUNCTION,
                     Kind::Class => flag::KIND_CLASS,
                     Kind::Constant => flag::KIND_CONST,
-                    // A `var` can be initialized again by a `for (var x of ..)` head, which is on record nowhere; and
-                    // the rest are also what the parser and the linker make up, and store to as they like.
                     _ => continue,
                 };
                 if symbol.has_been_assigned_to() || is_lifted || has_direct_eval {
@@ -1406,11 +1395,11 @@ fn note_bindings_of_chunk(
                 {
                     flags |= flag::ESCAPES;
                 }
-                if escapes & bun_ast::Symbol::IS_VISIBLE_FROM_OUTSIDE != 0
+                if escapes & bun_ast::Symbol::IS_EXTERNALLY_VISIBLE != 0
                     || has_direct_eval
                     || (all_exports_are_visible && js.exports_to_other_chunks.contains(&ref_))
                 {
-                    flags |= flag::IS_VISIBLE_FROM_OUTSIDE;
+                    flags |= flag::IS_EXTERNALLY_VISIBLE;
                 }
                 if symbol.call_ignores_this() {
                     flags |= flag::CALL_IGNORES_THIS;
@@ -1426,7 +1415,6 @@ fn note_bindings_of_chunk(
     }
 }
 
-/// Some file with parts in `chunk` has a direct `eval` somewhere in it.
 pub(crate) fn chunk_has_direct_eval(c: &LinkerContext, chunk: &Chunk) -> bool {
     let module_scopes = c.graph.ast.items_module_scope();
     chunk

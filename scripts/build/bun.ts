@@ -351,7 +351,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
 
   const cxxObjects: string[] = [];
-  // Two objects define Bun__installCompilers(). The executable is linked with the first, bun-slim with the second.
   let compilersObject: string | undefined;
   let regExpCompilerOnlyObject: string | undefined;
   for (const src of cxxSources) {
@@ -459,9 +458,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     ...depLibs,
   ]);
 
-  // ─── bun-slim: the same link without JavaScriptCore's compilers ───
-  // The runtime for executables whose code was compiled ahead of time (`bun build --compile --compile-aot
-  // --compile-executable-path=<bun-slim>`). Not a default target: `ninja bun-slim`.
   if (strippedExe !== undefined && !cfg.windows) {
     const slimName = "bun-slim-profile";
     const renamed = (path: string) => path.replaceAll(`${exeName}.`, `${slimName}.`);
@@ -786,7 +782,6 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
   return out;
 }
 
-/** The rule that emitStrip() uses. */
 function registerStripRule(n: Ninja, cfg: Config): void {
   // Windows: strip equivalent is handled at link time (/OPT:REF etc), no
   // separate strip binary. The "stripped" bun is just a copy. Copy command

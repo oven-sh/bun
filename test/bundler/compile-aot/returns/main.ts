@@ -1,9 +1,6 @@
-// Functions that return several values in an object literal, and look-alikes that have to allocate the object. The output must match the interpreter's.
 const say = (what: string, got: unknown) => console.log(what + ": " + (typeof got === "string" ? got : JSON.stringify(got) ?? String(got)));
 const keep: unknown[] = []; let spins = 0;
-// (Each is large enough not to be inlined.)
 const busy = (n: number) => { let s = 0; for (let i = 0; i < (n & 3) + 1; i++) { s += i * 3; if (s > 1e9) s = 0; spins++; } for (let j = 0; j < 2; j++) { s ^= j; if (s < -1e9) s = 1; } return s; };
-// ---- Handed back in registers.
 function divmod(a: number, b: number) { let q = 0, r = a; while (r >= b) { r -= b; q++; if (q > 1e9) break; } for (let i = 0; i < 2; i++) spins += i; return { q, r }; }
 function minmax(list: number[]) { let lo = Infinity, hi = -Infinity, n = 0; for (const x of list) { if (x < lo) lo = x; if (x > hi) hi = x; n++; } for (let i = 0; i < 2; i++) spins += i; return { lo, hi, n }; }
 function parse(text: string) {
@@ -29,7 +26,6 @@ say("taken apart further", (() => { const { o: { in: inner }, a: [first] } = kin
 say("throws", (() => { const out: unknown[] = []; for (let i = 1; i < 5; i++) { try { const { n, twice } = sometimesThrows(i); out.push(n + twice); } catch (e) { out.push((e as Error).message); } } return out; })());
 say("now one kind of thing, now another", (() => { const out: unknown[] = []; for (let i = 0; i < 4; i++) { const { v, w } = intsOrDoubles(i); out.push(v, w, typeof w); } return out; })());
 say("in the arguments of another", (() => Math.max(divmod(20, 3).q, divmod(20, 3).r) + divmod(divmod(100, 7).q, divmod(100, 7).r).q)());
-// ---- Has to make its object.
 function wantedByOne(n: number) { busy(n); busy(n); return { a: n, b: n + 1 }; }
 say("wanted by one of those who call it", (() => { const { a } = wantedByOne(1); keep.push(wantedByOne(2)); return [a, keep]; })());
 function otherNames(n: number) { busy(n); busy(n); if (n) return { a: n, b: 1 }; return { a: n, c: 2 }; }
@@ -74,7 +70,6 @@ function oneOfTwo(n: number) { busy(n); busy(n); return { a: n }; }
 say("one of two", ((c: boolean) => { const o = c ? oneOfTwo(1) : oneOfTwo(2); return o.a; })(true));
 class C { v = 2; pair(n: number) { busy(n); busy(n); return { a: n, v: this.v }; } }
 say("a method", (() => { const { a, v } = new C().pair(1); return [a, v]; })());
-// ---- Over and over.
 { let s = 0; for (let i = 1; i < 20000; i++) { const { q, r } = divmod(i & 63, 7); const { ok, value } = parse(String(i & 15)); s += q + r + (ok ? value : 0); } say("many times", s); }
 say("spins", spins > 0);
 export {};

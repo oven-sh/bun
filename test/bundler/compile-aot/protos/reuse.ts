@@ -1,4 +1,3 @@
-// Structures are created and collected. A cache entry for a dead structure must not match a new structure at the same address.
 function readX(o: any) { return o.x; }
 function readM(o: any) { return o.m; }
 function hasX(o: any) { return "x" in o; }
@@ -11,7 +10,6 @@ for (let round = 0; round < 60; round++) {
   let batch: any[] = [];
   for (let i = 0; i < 400; i++) {
     const o = Object.create(protos[i % protos.length]);
-    // Start with a varying number of properties with fresh names, so that x is at a different offset every time. Some objects have no x.
     const before = (i * 7 + round) % 9;
     for (let k = 0; k < before; k++) o["p" + serial++] = -1;
     const kind = (i + round) % 4;

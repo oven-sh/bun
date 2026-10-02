@@ -685,7 +685,6 @@ pub mod SerializedSourceMap {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
                 let compressed_file = sp.slice(self.map.bytes);
-                // The executable was built without them.
                 if compressed_file.is_empty() {
                     return Vec::new();
                 }

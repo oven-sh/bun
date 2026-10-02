@@ -1,5 +1,3 @@
-// Something is looked up through objects of many shapes, so that it is the cache all sites share that answers. Then an object on the
-// prototype chain changes, and the very next lookup has to know.
 const out: string[] = [];
 const say = (name: string, f: () => unknown) => {
   let text: string;
@@ -7,15 +5,12 @@ const say = (name: string, f: () => unknown) => {
   out.push(name + " = " + text);
 };
 const SHAPES = 40;
-// (The prototypes that the language comes with may be frozen.)
 const attempt = (f: () => void) => { try { f(); } catch (e: any) { out.push("could not: " + e?.name); } };
-// Objects of that many shapes, all with `proto` for a prototype.
 function family(proto: object | null, own: Record<string, unknown> = {}) {
   const all: any[] = [];
   for (let i = 0; i < SHAPES; i++) { const o = Object.create(proto); o["s" + i] = i; Object.assign(o, own); all.push(o); }
   return all;
 }
-// One site each, that sees them all.
 function readX(o: any) { return o.x; }
 function readY(o: any) { return o.y; }
 function hasX(o: any) { return "x" in o; }
@@ -25,7 +20,6 @@ function readKey(o: any, k: string) { return o[k]; }
 const sum = (all: any[], f: (o: any) => any) => { const seen = new Map<string, number>(); for (let r = 0; r < 3; r++) for (const o of all) { const v = String(f(o)); if (r === 2) seen.set(v, (seen.get(v) ?? 0) + 1); } return [...seen].map(([v, n]) => v + "*" + n).join(","); };
 
 function scenario(name: string, depth: number, at: number) {
-  // A chain that deep, and the change is to the object that far up it.
   const chain: any[] = [];
   let p: any = null;
   for (let i = 0; i < depth; i++) { p = Object.create(p); p["level" + i] = i; chain.unshift(p); }
@@ -54,7 +48,6 @@ function scenario(name: string, depth: number, at: number) {
 }
 for (const depth of [1, 2, 3, 5]) for (let at = 0; at < depth; at++) scenario("chain", depth, at);
 
-// ---- Object.prototype, Array.prototype, Function.prototype
 {
   const all = family(Object.prototype);
   say("Object.prototype: absent", () => sum(all, readX) + " " + sum(all, hasX));
@@ -76,12 +69,11 @@ for (const depth of [1, 2, 3, 5]) for (let at = 0; at < depth; at++) scenario("c
   say("functions: deleted", () => sum(functions, readX));
 }
 
-// ---- two prototypes with the same structure: the one on the lookup path makes a transition that the other has already made
 {
   const make = () => { const p: any = Object.create(null); p.a = 1; p.b = 2; return p; };
   const first = make(), second = make();
   Object.create(first); Object.create(second);
-  second.x = "the other's"; // The transition exists now.
+  second.x = "the other's";
   const all = family(first);
   say("twins: absent", () => sum(all, readX) + " " + sum(all, hasX));
   first.x = "its own";
@@ -93,7 +85,6 @@ for (const depth of [1, 2, 3, 5]) for (let at = 0; at < depth; at++) scenario("c
   say("twins, again: added", () => sum(more, readX));
 }
 
-// ---- classes
 {
   class A { m() { return "A.m"; } }
   class B extends A {}
@@ -110,13 +101,11 @@ for (const depth of [1, 2, 3, 5]) for (let at = 0; at < depth; at++) scenario("c
   say("classes: replaced at the top", () => sum(all, callM));
   Object.setPrototypeOf(B.prototype, { m() { return "grafted"; } });
   say("classes: grafted", () => sum(all, callM));
-  // A class that is defined afterwards, whose prototype no lookup has gone through, must not invalidate anything.
   class D { x = 0; later() { return 1; } }
   (D.prototype as any).x2 = 1;
   say("classes: after another was defined", () => sum(all, callM) + " " + sum(all, readX) + new D().later());
 }
 
-// ---- stores: setters and read-only properties on the prototype chain
 {
   const proto: any = {};
   const fresh = () => family(proto);
@@ -138,7 +127,6 @@ for (const depth of [1, 2, 3, 5]) for (let at = 0; at < depth; at++) scenario("c
   say("stores: frozen further up", () => store(fresh()));
 }
 
-// ---- prototypes that are dictionaries, are frozen, or become prototypes late
 {
   const big: any = {};
   for (let i = 0; i < 200; i++) big["k" + i] = i;
@@ -167,7 +155,6 @@ for (const depth of [1, 2, 3, 5]) for (let at = 0; at < depth; at++) scenario("c
   say("frozen", () => { try { sealed.x = "no"; } catch {} return sum(under, readX); });
 }
 
-// ---- by a name that is computed, and symbols
 {
   const proto: any = {};
   const all = family(proto);
@@ -179,7 +166,6 @@ for (const depth of [1, 2, 3, 5]) for (let at = 0; at < depth; at++) scenario("c
   say("computed: deleted", () => sum(all, o => readKey(o, "x")) + " " + sum(all, o => o[s]));
 }
 
-// ---- proxies and the like on the chain
 {
   let answer: any = undefined;
   const proxy = new Proxy({}, { get: (_, k) => (k === "x" ? answer : undefined), has: (_, k) => k === "x" && answer !== undefined });
@@ -189,7 +175,6 @@ for (const depth of [1, 2, 3, 5]) for (let at = 0; at < depth; at++) scenario("c
   say("proxy: present", () => sum(all, readX) + " " + sum(all, hasX));
 }
 
-// ---- over and over, with collections in between
 {
   const proto: any = {};
   const all = family(proto);

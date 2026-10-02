@@ -1742,7 +1742,6 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        // (With `--aot-graph-fd`, this process already printed it before it replaced itself.)
         if !ctx.test_options.test_worker && ctx.runtime_options.aot_graph_fd.is_none() {
             // print the version so you know its doing stuff if it takes a sec
             let w = Output::writer();
@@ -1778,7 +1777,6 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
-        // `bun test --aot`: see `cli::aot`.
         let aot_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph> =
             crate::cli::aot::graph(ctx)?.map(|graph| crate::cli::aot::as_dyn(graph));
         jsc::initialize(jsc::InitializeOptions {
@@ -2932,7 +2930,6 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            // `bun test --aot`: the file was compiled, and is in the graph under another name.
             let promise = vm.load_entry_point_for_test_runner(
                 vm.standalone_module_graph
                     .and_then(|graph| graph.find_by_source_path(file_path))

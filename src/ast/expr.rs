@@ -1498,7 +1498,6 @@ pub enum Data {
 
     ENameOfSymbol(StoreRef<E::NameOfSymbol>),
 
-    /// Only between the parse pass and the visit pass.
     ETypeCheck(StoreRef<E::TypeCheck>),
 }
 

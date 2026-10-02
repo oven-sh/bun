@@ -4341,7 +4341,6 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
     #[cfg(unix)]
     {
-        // We clone argv so that the memory address isn't the same as the libc one.
         let dupe_argv: Vec<ZBox> = argv_storage()
             .iter()
             .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
@@ -4359,15 +4358,11 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
     #[cfg(not(any(unix, windows)))]
     {
-        // Bun only targets POSIX + Windows; any other target
-        // is a build-time error, not a runtime panic.
         let _ = (clear_terminal, may_return);
         compile_error!("unsupported platform for reload_process");
     }
 }
 
-/// Replaces this process with `bun`, run with `args` (the arguments after `argv[0]`, which is unchanged). `keep_open` stays open
-/// in the new process image. Returns only on failure, with the errno.
 #[cfg(unix)]
 pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     let mut argv: Vec<ZBox> = Vec::with_capacity(args.len() + 1);
@@ -4378,7 +4373,6 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     execve_self(&argv, keep_open)
 }
 
-/// `execve` of this executable. Returns only if it fails, with the errno.
 #[cfg(unix)]
 fn execve_self(argv: &[ZBox], keep_open: Option<Fd>) -> i32 {
     // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
@@ -4390,7 +4384,6 @@ fn execve_self(argv: &[ZBox], keep_open: Option<Fd>) -> i32 {
             }
             on_before_reload_process_posix();
         }
-        // After the hook: on Linux it marks every descriptor from 3 up close-on-exec.
         if let Some(fd) = keep_open {
             let flags = libc::fcntl(fd.native(), libc::F_GETFD);
             if flags >= 0 {

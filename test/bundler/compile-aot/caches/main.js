@@ -1,9 +1,7 @@
-// Inline caches that warm up on one state of the program, which the program then changes. The output must match the interpreter's.
 const say = (what, got) => console.log(what + ": " + (typeof got === "string" ? got : JSON.stringify(got, (k, v) => (v === undefined ? "undefined" : typeof v === "function" ? "fn" : v))));
 const attempt = f => { try { return f(); } catch (e) { return e.constructor.name + ": " + e.message; } };
 const warm = (f, n = 200) => { let r; for (let i = 0; i < n; i++) r = f(i); return r; };
 
-// ---------------------------------------------------------------- instanceof
 class A {} class B extends A {} class C extends B {} class D extends C {} class Other {}
 function F() {} function G() {} G.prototype = Object.create(F.prototype);
 const isA = x => x instanceof A, isC = x => x instanceof C, isF = x => x instanceof F;
@@ -16,7 +14,7 @@ say("one site, many constructors", warm(i => [A, B, C, D, Other, F, G, Object, A
 say("the right side is no object", [1, "s", null, undefined, Symbol.iterator].map(c => attempt(() => against({}, c))));
 say("not callable", [attempt(() => against({}, {})), attempt(() => against(1, {})), attempt(() => against({}, Object.create(F)))]);
 say("no prototype property", [attempt(() => against({}, () => 1)), attempt(() => against(1, () => 1)), attempt(() => against({}, { m() {} }.m)), attempt(() => against({}, Function.prototype)), attempt(() => against({}, Math.max))]);
-{ // Symbol.hasInstance appears after the site is warm: on the class, on a parent, by definition and by assignment.
+{
   class P {} class Q extends P {} class R extends Q {}
   const isR = x => x instanceof R, o = new R, log = [];
   log.push(warm(() => isR(o)), warm(() => isR({})));
@@ -56,7 +54,6 @@ say("no prototype property", [attempt(() => against({}, () => 1)), attempt(() =>
   say("a proxy that throws", attempt(() => isC(new Proxy({}, { getPrototypeOf() { throw new RangeError("no"); } })))); }
 { const bound = C.bind(null), twice = bound.bind(null); say("bound functions", warm(() => [new C instanceof bound, new B instanceof bound, new D instanceof twice, 1 instanceof bound])); }
 
-// ---------------------------------------------------------------- a list of words between ^ and $
 const words = "break case catch continue debugger default do else finally for function if return switch throw try var while with null true false instanceof typeof void delete new in this const class extends export import super".split(" ");
 const list = w => new RegExp("^(?:" + w.join("|") + ")$");
 const keywords = list(words);
@@ -76,7 +73,6 @@ for (const source of near) say("near " + source, warm(() => { const r = new RegE
 say("written out", warm(() => ["if", "else", "elses", ""].map(s => /^(?:if|else)$/.test(s))));
 say("many words", (() => { const w = Array.from({ length: 500 }, (_, i) => "w" + i.toString(36)), r = list(w); return [w.every(s => r.test(s)), r.test("w"), r.test("w" + (500).toString(36)), r.test("w0w1")]; })());
 
-// ---------------------------------------------------------------- the same name at the same offset in many structures
 class Base { constructor(i) { this.kind = "k" + i; this.flag = i % 2 === 0; this.parent = null; this.n = i; } }
 const subclasses = Array.from({ length: 12 }, (_, i) => eval(`(class S${i} extends Base { constructor() { super(${i}); this.own${i} = ${i}; this.last = "l${i}"; } })`));
 const kindOf = o => o.kind, nOf = o => o.n, flagOf = o => o.flag, lastOf = o => o.last, parentOf = o => o.parent;
@@ -95,7 +91,7 @@ say("fields of the base class", warm(() => instances.map(o => kindOf(o) + nOf(o)
   say("other shapes at the same sites", warm(() => shapes.map(o => kindOf(o) + "/" + nOf(o)).join())); }
 { const d = new subclasses[7]; for (let i = 0; i < 200; i++) d["p" + i] = i; for (let i = 0; i < 150; i++) delete d["p" + i];
   const log = [warm(() => kindOf(d) + nOf(d))]; delete d.kind; d.kind = "moved"; log.push(warm(() => kindOf(d) + nOf(d))); say("a dictionary", log); }
-{ // Two names that swap places.
+{
   const ab = i => ({ a: "a" + i, b: "b" + i }), ba = i => ({ b: "b" + i, a: "a" + i }), getA = o => o.a, getB = o => o.b;
   say("names that swap places", warm(i => [ab(i), ba(i), { a: 1 }, { b: 2 }, { c: 0, a: 3 }].map(o => getA(o) + ":" + getB(o)).join())); }
 { const s = Symbol("s"), get = o => o[s]; say("a symbol for a name", warm(i => [{ [s]: 1 }, { [s]: 2, x: 1 }, { x: 1, [s]: 3 }, {}].map(get))); }
@@ -103,7 +99,6 @@ say("fields of the base class", warm(() => instances.map(o => kindOf(o) + nOf(o)
   say("at every offset", warm(() => Array.from({ length: 14 }, (_, n) => tailOf(make(n))).join())); }
 { let names = 0; const o = {}; for (let i = 0; i < 70000; i++) { const p = { ["n" + i]: i }; names += Function("o", "return o.n" + (i % 3))(i % 3 === i ? p : { n0: 0, n1: 1, n2: 2 }); if (i > 300) break; } say("sites made at run time", names); }
 
-// ---------------------------------------------------------------- one name in many structures, in more inline slots than a site remembers
 { const typeOf = o => o.type, alsoTypeOf = o => o.type;
   const pad = n => { const o = {}; for (let i = 0; i < n; i++) o["p" + i] = i; return o; };
   const at = (n, extra) => { const o = pad(n); o.type = "t" + n; for (let i = 0; i < extra; i++) o["x" + i] = i; return o; };
@@ -136,18 +131,17 @@ say("fields of the base class", warm(() => instances.map(o => kindOf(o) + nOf(o)
     Object.setPrototypeOf(kids[0], { type: "another prototype" }); log.push(kids.map(typeOf));
     say("a prototype gets the name", log); }
   say("values", warm(() => [{ type: undefined }, { type: null }, { type: 0 }, { type: "" }, { type: false }, { a: 1, type: -1 }, { a: 1, b: 2, type: [] }, { a: 1, b: 2, c: 3, type: {} }].map(typeOf)));
-  { // Written through one site while read through another.
+  {
     const setType = (o, v) => { o.type = v; }, log = [];
     for (const o of many) setType(o, typeOf(o) + "!");
     log.push(many.map(typeOf).join()); const fresh = pad(3); setType(fresh, "set"); log.push(typeOf(fresh), Object.keys(fresh).join());
     say("written and read", log); }
-  { // Two names that take turns in the same inline slots, each read at its own site.
+  {
     const kindOf = o => o.kind, pairs = [];
     for (let n = 0; n < 5; n++) { const a = pad(n); a.type = "T" + n; a.kind = "K" + n; const b = pad(n); b.kind = "k" + n; b.type = "t" + n; pairs.push(a, b, Object.assign(pad(n), { kind: "only kind" }), Object.assign(pad(n), { type: "only type" })); }
     say("two names in the same slots", warm(() => pairs.map(o => typeOf(o) + "/" + kindOf(o)).join())); }
 }
 
-// ---------------------------------------------------------------- copies by spread
 { const copy = o => ({ ...o }), copyAnd = o => ({ ...o, extra: 1 }), over = o => ({ ...o, a: "over" }), before = o => ({ first: 0, ...o });
   const lit = i => ({ a: i, b: "b" + i, c: [i] });
   say("a copy", warm(i => copy(lit(i))));
@@ -185,7 +179,6 @@ say("fields of the base class", warm(() => instances.map(o => kindOf(o) + nOf(o)
   { let sum = 0; for (let i = 0; i < 20000; i++) sum += copy(lit(i)).a + copyAnd(lit(i)).extra; say("many copies", sum); }
 }
 
-// ---------------------------------------------------------------- reads and comparisons in loops, and in functions that loops call
 { const typeOf = o => o.type, viaHelper = o => typeOf(o), twoDown = o => viaHelper(o);
   const isA = o => o.type === "a", isNotB = o => "b" !== o.type, hasKind = o => o.kind === "k" && o.type === "a";
   class WithField { constructor(t) { this.type = t; } } class WithGetter { get type() { return "from a getter"; } } class Inherits extends WithField {}

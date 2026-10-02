@@ -990,8 +990,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.sound_types_enabled() {
                 let ty = p.skip_type_script_type_sound(Level::Lowest, None)?;
                 p.lexer.expect_greater_than::<false>()?;
-                // The cast covers "x.y" in "<T>x.y", which the caller's suffix
-                // loop would otherwise apply to the annotated "x".
                 let mut value = Expr::EMPTY;
                 p.parse_expr_with_flags(Level::Prefix, flags, &mut value)?;
                 return Ok(p.sound_annotate(value, ty, bun_ast::sound_types::Rule::Cast));

@@ -118,7 +118,6 @@ impl Default for Config {
 use bun_bundler_jsc::options_jsc::{loader_from_js, target_from_js};
 use bun_collections::index_sort;
 
-/// `soundTypes: boolean | "basic" | "full" | "infer"`
 pub(crate) fn sound_types_from_js(
     global: &JSGlobalObject,
     options: JSValue,

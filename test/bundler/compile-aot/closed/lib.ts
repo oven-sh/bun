@@ -1,4 +1,3 @@
-// Functions that another module gets at, one way or another.
 const show = (x: unknown) => typeof x + ":" + String(x);
 export function onlyImported(x: number) { return "onlyImported " + show(x); }
 export function importedAndPassedAString(x: number) { return "importedAndPassedAString " + show(x); }

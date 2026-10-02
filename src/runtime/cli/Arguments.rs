@@ -2101,7 +2101,6 @@ fn parse_build_command_options(
     diag: &mut clap::Diagnostic,
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
-    // Ahead-of-time compilation takes the linked bytecode as its input, so it implies `--bytecode`.
     ctx.bundler_options.compile_aot = args.flag(b"--compile-aot");
     ctx.bundler_options.compile_run = args.flag(b"--compile-run");
     ctx.bundler_options.rewrite_jest_for_tests = args.flag(b"--rewrite-jest-for-tests");

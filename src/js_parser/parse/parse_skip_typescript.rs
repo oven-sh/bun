@@ -58,7 +58,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    /// `skip_type_script_type` that also evaluates the type. Sound types must be enabled.
     pub(crate) fn skip_type_script_type_sound(
         &mut self,
         level: Level,
@@ -304,7 +303,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// `sound` is only written when `SOUND`, which requires sound types to be enabled.
     fn skip_type_script_type_impl<const GET_METADATA: bool, const SOUND: bool>(
         &mut self,
         level: Level,
@@ -324,7 +322,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if SOUND {
             *sound = SoundType::TOP;
         }
-        // A bare `Name` that a following `.Member` would qualify.
         let mut sound_name: Option<&'a [u8]> = None;
 
         // Deeply nested types ("[[[[...", "A<A<A<...", ...) recurse through this
@@ -1221,7 +1218,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.skip_type_script_object_type_impl::<false>(&mut ObjectTypeShape::default())
     }
 
-    /// `shape` is only written when `SOUND`.
     fn skip_type_script_object_type_impl<const SOUND: bool>(
         &mut self,
         shape: &mut ObjectTypeShape,
@@ -1239,10 +1235,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Skip over modifiers and the property identifier
             let mut found_key = false;
-            // The last token of the run is the key. A string key is never one
-            // that primitives have; strings have numeric ones.
             let mut sound_key: &'a [u8] = b"";
-            // The key, if it is one that `object.key` names.
             let mut sound_member: Option<&'a [u8]> = None;
             let mut sound_is_optional = false;
             while self.lexer.is_identifier_or_keyword()
@@ -1692,7 +1685,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         >(&mut SoundType::default())
     }
 
-    /// `first` is only written when `SOUND`.
     fn skip_type_script_type_arguments_impl<
         const IS_INSIDE_JSX_ELEMENT: bool,
         const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,

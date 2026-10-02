@@ -1,15 +1,4 @@
 #!/usr/bin/env bun
-// Does the C++ still compile for another CPU? The counterpart of `bun run rust:check-all` for a machine that has no
-// cross toolchain: takes the compile commands of a local build, switches the target, and runs them with -fsyntax-only.
-//
-//   bun scripts/cpp-check-target.ts [--build-dir build/release-local] [--webkit] [--target x86_64-apple-macos]
-//       [--jobs 6] [--only <regex of source paths>] [--show 60]
-//
-// --webkit: the local build of WebKit (bmalloc, WTF, JavaScriptCore) instead of Bun's own sources.
-//
-// The target has to be one that the SDK in use has headers for, so on macOS this finds what differs by CPU
-// (`#if CPU(ARM64)` guards that have fallen behind), and not what differs by operating system. It does not cover the
-// generated LLInt assembly, or linking.
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -46,8 +35,6 @@ function split(command: string) {
 
 function forTarget({ command, arguments: list }: Command) {
   const words = list ? [...list] : split(command!);
-  // A precompiled header is for the CPU it was built for. "-Xclang -include-pch -Xclang <file>" goes. The "-include" of
-  // the same header stays.
   for (let at; (at = words.indexOf("-include-pch")) >= 0; ) words.splice(at - 1, 4);
   const kept: string[] = [];
   for (let at = 0; at < words.length; at++) {

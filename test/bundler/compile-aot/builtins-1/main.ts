@@ -1,5 +1,3 @@
-// Every built-in function that the compiler knows the result type of, called with many kinds of arguments. Generated, and split into
-// several programs to keep each one quick to compile. It matters most with validateAOTInferredTypes, which checks the result of each call.
 process.on("unhandledRejection", () => {});
 const out: string[] = [];
 const describe = (x: any): string => { try { return x === null ? "null" : Array.isArray(x) ? "array(" + x.length + ")" : typeof x === "object" ? "object " + Object.prototype.toString.call(x) : typeof x === "function" ? "function" : typeof x + ":" + String(x); } catch (e: any) { return "indescribable " + e?.name; } };
@@ -7,7 +5,6 @@ let failures = 0;
 const say = (name: string, f: () => unknown) => { let text: string; try { const r = f(); text = /^(Date|Math\.random|new Date)/.test(name) ? typeof r : describe(r); } catch (e: any) { text = "threw " + e?.name; failures++; } out.push(name + " = " + text); };
 const own = (methods: any) => Object.assign(Object.create(null), methods);
 class OtherArray { length = 0; }
-// (The result of Function.prototype.toString() depends on whether the source text was kept.)
 const withText = <T,>(f: T): T => Object.defineProperty(f, "toString", { value: () => "return 1" }) as T;
 const A: any[] = [
   undefined, null, true, 0, -1, 1.5, NaN, 2 ** 40, "", "abc", "a,b", "12px", 10n, Symbol("s"), Symbol.iterator,

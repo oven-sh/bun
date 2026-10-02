@@ -1,19 +1,9 @@
-//! `bun run --aot` and `bun test --aot`: compile the program ahead of time, as `bun build --compile --compile-aot` does, and run that.
-//!
-//! The process replaces itself twice, so it stays one process, and the run starts from one that has done nothing else:
-//!
-//! 1. `bun run --aot app.ts a b` finds out what to build ([`exec_build`]).
-//! 2. `bun build --compile --compile-aot --compile-run ... app.ts` builds it, into a temporary file that has no name.
-//! 3. `bun run --aot-graph-fd=5 app.ts a b` runs it ([`graph`]).
-//!
-//! The last has the arguments of the first, so every other option means there what it meant.
 
 use bun_core::{Global, pretty_errorln};
 use bun_options_types::compile_target::CompileTarget;
 
 use crate::cli::command::ContextData;
 
-/// Why this bun cannot compile ahead of time for `target`, if it cannot.
 pub(crate) fn why_unsupported(target: &CompileTarget) -> Option<&'static str> {
     unsafe extern "C" {
         safe fn Bun__AOT__hasCompiler() -> bool;
@@ -24,14 +14,12 @@ pub(crate) fn why_unsupported(target: &CompileTarget) -> Option<&'static str> {
     if !Bun__AOT__hasCompiler() {
         return Some("this build of Bun does not include the ahead-of-time compiler");
     }
-    // The compiler emits code for the machine it runs on, which only the runtime it is part of can load.
     if !target.is_default() {
         return Some("ahead-of-time compilation cannot target another platform or version of Bun");
     }
     None
 }
 
-/// Step 3: loads the graph that step 2 built.
 #[cfg(unix)]
 pub(crate) fn graph(
     ctx: &ContextData,
@@ -43,7 +31,6 @@ pub(crate) fn graph(
         pretty_errorln!("<r><red>error<r>: --aot-graph-fd is not a module graph");
         Global::exit(1);
     };
-    // SAFETY: `from_fd` returns the process-static graph, which nothing else refers to yet.
     Ok(Some(unsafe { &mut *graph }))
 }
 
@@ -54,18 +41,15 @@ pub(crate) fn graph(
     Ok(None)
 }
 
-/// The graph as the trait object that the resolver and the VM expect.
 pub(crate) fn as_dyn(
     graph: &bun_standalone_graph::Graph,
 ) -> &'static dyn bun_resolver::StandaloneModuleGraph {
-    // SAFETY: `graph` lives in the process-global INSTANCE static and is never freed.
     unsafe {
         &*(std::ptr::from_ref::<bun_standalone_graph::Graph>(graph)
             as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
     }
 }
 
-/// Step 1: replaces this process with the build of `entry_points` (absolute paths).
 #[cfg(unix)]
 pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: bool) -> ! {
     if let Some(why) = why_unsupported(&CompileTarget::default()) {
@@ -87,11 +71,9 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         b"--compile",
         b"--compile-aot",
         b"--compile-run",
-        // As `bun run` does. Executables leave these two off by default.
         b"--compile-autoload-tsconfig",
         b"--compile-autoload-package-json",
         b"--target=bun",
-        // For stack traces.
         b"--sourcemap=inline",
     ]
     .map(<[u8]>::to_vec)
@@ -100,7 +82,6 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         args.push(b"--rewrite-jest-for-tests".to_vec());
     }
 
-    // Options that affect how modules are resolved or transpiled are forwarded to the build, which now does both.
     let mut option = |name: &[u8], value: &[u8]| args.push([name, b"=", value].concat());
     if let Some(define) = &ctx.args.define {
         for (key, value) in define.keys.iter().zip(define.values.iter()) {
@@ -122,7 +103,6 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         }
     }
 
-    // (`BUN_OPTIONS` is spliced in after argv[0], and will be again.)
     let mut has_replaced_option = false;
     for arg in bun_core::argv()
         .iter()

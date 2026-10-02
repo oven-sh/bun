@@ -486,9 +486,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
 
-    /// `Off` unless this file's annotations are being lowered to checks.
     pub(crate) sound_level: bun_ast::sound_types::Level,
-    /// `Some` iff `sound_level != Off`.
     pub(crate) sound_state: Option<Box<crate::sound_types::SoundTypesState<'a>>>,
 
     /// only applicable when `.options.features.server_components` is
@@ -553,9 +551,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // syntactic constructs as appropriate.
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
-    /// The next use passed to `record_usage` is `f` in `f()`, or in `export { f }`, so the variable's value does not escape
-    /// through it. See `symbol::Use::is_more_than_called`.
-    pub(crate) next_use_leaves_the_value_alone: bool,
+    pub(crate) next_use_preserves_value: bool,
     pub(crate) template_tag: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
@@ -2080,8 +2076,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self.part_uses[index].1
     }
 
-    /// A use that has been recorded turns out to be more than a call. See `symbol::Use::is_more_than_called`.
-    pub(crate) fn note_use_of_value(&mut self, ref_: Ref) {
+    pub(crate) fn record_value_use(&mut self, ref_: Ref) {
         if let Some(use_) = self.existing_part_use(ref_) {
             use_.note_value();
         }
@@ -2131,8 +2126,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.is_control_flow_dead {
             debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
-            let leaves_the_value_alone = self.next_use_leaves_the_value_alone;
-            self.part_use(ref_).add_scoped(1, leaves_the_value_alone);
+            let preserves_value = self.next_use_preserves_value;
+            self.part_use(ref_).add_scoped(1, preserves_value);
             if scope_use {
                 self.record_scope_use(ref_);
             }
@@ -3728,7 +3723,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
-                                // "function foo() {} { var foo = 1 }"
                                 self.record_assignment(member_in_scope.ref_);
                                 if self.symbols[symbol_idx].must_not_be_renamed() {
                                     self.set_must_not_be_renamed_through_links(
@@ -5285,7 +5279,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 MR::OverwriteWithNew => {}
             }
-            // Each declaration may come with an initializer: "function foo() {} var foo = 1".
             if !matches!(merge, MR::Forbidden) {
                 self.record_assignment(ref_);
             }
@@ -9776,8 +9769,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             opts.features.sound_types = bun_ast::sound_types::Level::Off;
         }
 
-        // The printed callee has to be the global `$$t`. A file that mentions
-        // the name could bind it, so it keeps its annotations erased.
         let sound_level = if opts.features.sound_types.is_enabled()
             && !SCAN_ONLY
             && !strings::contains(&source.contents, bun_ast::sound_types::CHECK_FN_NAME)
@@ -9848,7 +9839,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: true,
 
             call_target: null_expr_data(),
-            next_use_leaves_the_value_alone: false,
+            next_use_preserves_value: false,
             template_tag: null_expr_data(),
             delete_target: null_expr_data(),
             stmt_expr_value: null_expr_data(),

@@ -541,22 +541,18 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     }
 }
 
-/// `bun run --aot`: the path of the source file of the entry point `name`, which its `import.meta` reports. Returns
-/// null if the graph does not record it (`StandaloneModuleGraph::source_path`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__standaloneModuleSourcePath(
     name: *const u8,
     len: usize,
     out_len: *mut usize,
 ) -> *const u8 {
-    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
     let name = unsafe { bun_core::ffi::slice(name, len) };
     if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
         return core::ptr::null();
     }
     match standalone_module_graph().and_then(|graph| graph.source_path(name)) {
         Some(source_path) => {
-            // SAFETY: `out_len` is the caller's writable out-parameter.
             unsafe { *out_len = source_path.len() };
             source_path.as_ptr()
         }
@@ -1500,8 +1496,6 @@ impl VirtualMachine {
         unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
     }
 
-    /// Hands the executable's machine code and static heap (if it has any) to JSC, for every VM of the process. Must run
-    /// before the main VM exists.
     fn use_aot_image(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
         unsafe extern "C" {
             fn Bun__AOT__useImage(bytes: *const u8, len: usize, fd: i32, offset_in_file: i64);
@@ -1509,12 +1503,10 @@ impl VirtualMachine {
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| {
             let image = graph.aot_image();
-            // The C++ side decides whether to use it (`JSC::Options::useAOT()`).
             if image.is_empty() {
                 return;
             }
             let (fd, offset_in_file) = graph.aot_image_file().unwrap_or((-1, 0));
-            // SAFETY: `image` is a mmapped process-lifetime span, and `fd` (if any) stays open as long.
             unsafe { Bun__AOT__useImage(image.as_ptr(), image.len(), fd, offset_in_file) };
         });
     }
@@ -5175,7 +5167,6 @@ impl VirtualMachine {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                    // `bun run --aot`: a module that is not in the graph is resolved relative to the entry point's source file.
                     if core::mem::take(&mut may_retry_from_source_path) {
                         if let Some(source_path) = self
                             .standalone_module_graph

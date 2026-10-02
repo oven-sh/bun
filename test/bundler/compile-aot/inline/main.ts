@@ -3,13 +3,10 @@ const any = (x: unknown): any => x;
 const where = (e: any) => String(e.stack).split("\n").slice(0, 6).map((l: string) => l.trim().replace(/\(?[^ ()]*[\\/]/g, "")).join(" < ");
 const say = (label: string, f: () => unknown) => { let r; try { r = JSON.stringify(f()); } catch (e: any) { r = "throws " + e; } console.log(label + " -> " + r); };
 
-// Called from one place.
 function once(a: number, b: number) { const c = a + b; return c * 2; }
 say("once", () => once(1, 2));
-// Little, called from several.
 function little(a: number) { return a + 1; }
 say("little", () => little(1) + little(2) + little(little(3)));
-// Fewer arguments than parameters, and more.
 function three(a: any, b: any, c: any) { return [a, b, c]; }
 say("fewer", () => three(1));
 function threeAgain(a: any, b: any, c: any) { return [a, b, c]; }
@@ -18,28 +15,23 @@ function threeMore(a: any, b: any, c: any) { return [a, b, c]; }
 say("more, known", () => (threeMore as any)(1, 2, 3, sideEffect()));
 let effects = 0; function sideEffect() { return ++effects; }
 say("its arguments were evaluated", () => effects);
-// One in another in another.
 function inner(x: number) { return x * 2; }
 function middle(x: number) { return inner(x) + 1; }
 function outer(x: number) { return middle(x) * 3; }
 say("nested", () => outer(5));
-// Several ways out.
 function ways(x: number) { if (x < 0) return "negative"; if (x === 0) return "zero"; return x > 10 ? "big" : "small"; }
 say("ways", () => [ways(-1), ways(0), ways(5), ways(50)]);
 function noResult(o: { n: number }) { o.n++; }
 say("no result", () => { const o = { n: 1 }; noResult(o); const r = noResult(o); return [o.n, r === undefined]; });
-// A loop in it, and it in a loop.
 function sums(n: number) { let s = 0; for (let i = 0; i < n; i++) s += i; return s; }
 say("has a loop", () => sums(10));
 function square(n: number) { return n * n; }
 say("in a loop", () => { let s = 0; for (let i = 0; i < 100; i++) s += square(i); return s; });
-// It calls itself.
 function fact(n: number): number { return n <= 1 ? 1 : n * fact(n - 1); }
 say("recursive", () => fact(10));
 function ping(n: number): number { return n <= 0 ? 0 : pong(n - 1) + 1; }
 function pong(n: number): number { return n <= 0 ? 0 : ping(n - 1) + 1; }
 say("mutually", () => ping(9));
-// What goes wrong in it.
 function throwsHere(x: any) { return x.missing.deeper; }
 say("throws", () => throwsHere({}));
 function throwsForStack(x: any) { return x.missing.deeper; }
@@ -51,14 +43,12 @@ function callsWhatMakes() { const e = makesError(); made.push(e); return e; }
 say("where it was made", () => where(callsWhatMakes()));
 function notAFunction(x: any) { return x.nothing(1); }
 say("quotes", () => notAFunction({}));
-// Caught by the caller.
 function mayThrow(x: number) { if (x > 1) throw new TypeError("too much: " + x); return x; }
 say("caught", () => { let seen = 0; let local = "before"; try { seen = mayThrow(1); local = "between"; seen += mayThrow(2); local = "after"; } catch (e: any) { return [seen, local, e.message]; } return "no"; });
 function mayThrowInLoop(x: number) { if (x === 3) throw new TypeError("three"); return x; }
 say("caught in a loop", () => { let s = 0; for (let i = 0; i < 6; i++) { try { s += mayThrowInLoop(i); } catch { s += 100; } } return s; });
 function withFinally(x: number) { if (x) throw new Error("finally"); return 1; }
 say("finally", () => { const log: string[] = []; try { try { withFinally(1); } finally { log.push("f"); } } catch (e: any) { log.push(e.message); } return log; });
-// A call in tail position in it.
 function tailOf(x: number) { return lastOne(x + 1); }
 function lastOne(x: number) { return x * 7; }
 say("tail", () => tailOf(1) + 1);
@@ -66,27 +56,21 @@ function tailUnknown(f: any, x: number) { return f(x); }
 say("tail of who knows", () => tailUnknown((v: number) => v + 5, 1) * 2);
 say("tail of nothing", () => tailUnknownAgain(undefined, 1));
 function tailUnknownAgain(f: any, x: number) { return f(x); }
-// this.
 function usesThis(this: any) { return typeof this; }
 say("this", () => usesThis());
-// Variables of the module.
 let total = 0;
 function adds(n: number) { total += n; return total; }
 say("module variable", () => [adds(1), adds(2), total]);
-// From another module.
 say("other module", () => fromOther(1, 2));
 say("other module throws", () => { try { throwsInOther("x"); } catch (e) { return where(e); } });
 say("other module, deeper", () => callsBack(2));
 say("other module's variable", () => [bumps(), bumps(), counter]);
-// Spread and rest stay calls.
 function rests(...all: number[]) { return all.length; }
 say("rest", () => rests(1, 2, 3));
 function argumentsOf() { return arguments.length; }
 say("arguments", () => (argumentsOf as any)(1, 2));
-// Closures made in it.
 function makes(n: number) { return () => n + 1; }
 say("closure", () => makes(1)());
-// Objects and strings.
 function point(x: number, y: number) { return { x, y }; }
 say("object", () => point(1, 2));
 function joins(a: string, b: string) { return a + "-" + b; }
@@ -99,7 +83,6 @@ function deep(n: number): number { return n ? deep(n - 1) + littleAgain(n) : 0; 
 function littleAgain(n: number) { return n & 1; }
 say("stack overflow", () => { try { return deep(1e7); } catch (e: any) { return e.constructor.name; } });
 
-// Closures that are called where they are created.
 say("called at once", () => (() => 41 + 1)());
 say("called at once, with arguments", () => ((a: number, b: number) => a * b)(6, 7));
 say("closes over", () => { const k = 10; return ((x: number) => x + k)(5); });
@@ -112,7 +95,6 @@ say("throws at once", () => { try { return (() => { throw new Error("in it"); })
 say("closure in a closure", () => ((a: number) => ((b: number) => a + b)(2))(1));
 say("in a loop, closing over the variable", () => { const fs: (() => number)[] = []; for (let i = 0; i < 3; i++) { ((j: number) => { fs.push(() => i * 10 + j); })(i + 1); } return fs.map(f => f()); });
 say("escapes as well", () => { const f = (x: number) => x + 1; return [f(1), [1, 2].map(f)]; });
-// Features that depend on which function is running.
 function switches(s: string) { switch (s) { case "one": return 1; case "two": return 2; case "three": return 3; case "four": return 4; default: return -1; } }
 say("switch on strings", () => [switches("one"), switches("three"), switches("nine")]);
 function switchesOnce(n: number) { switch (n) { case 0: return "a"; case 1: return "b"; case 2: return "c"; case 3: return "d"; case 4: return "e"; default: return "?"; } }
@@ -129,7 +111,6 @@ function destructures({ a, b = 2 }: { a: number; b?: number }) { return a + b; }
 say("destructures", () => [destructures({ a: 1 }), destructures({ a: 1, b: 5 })]);
 function optional(o?: { v?: number }) { return o?.v ?? "none"; }
 say("optional", () => [optional(), optional({}), optional({ v: 0 })]);
-// Methods of arrays that are passed a closure made on the spot.
 const nums = [1, 2, 3, 4, 5];
 say("map", () => nums.map(x => x * 2));
 say("map with index and array", () => nums.map((x, i, a) => x + i + a.length));
@@ -163,7 +144,6 @@ say("default", () => nums.map((x, i = 5, a = 1 as any) => typeof a + i + x));
 say("destructures its parameter", () => [{ a: 1 }, { a: 2 }].map(({ a }) => a));
 say("strings", () => ["a", "b"].map(s => s + s).join());
 say("empty", () => [([] as number[]).map(x => x), ([] as number[]).every(x => !!x), ([] as number[]).some(x => !!x)]);
-// By the same names, and not those.
 class Box<T> { constructor(public v: T) {} map<U>(f: (v: T) => U) { return new Box(f(this.v)); } forEach(f: (v: T) => void) { f(this.v); f(this.v); } filter(f: (v: T) => boolean) { return f(this.v) ? "kept" : "dropped"; } }
 say("a class of my own", () => { let n = 0; const b = new Box(4); b.forEach(v => { n += v; }); return [b.map(v => v + 1).v, n, b.filter(v => v > 9)]; });
 say("a Map and a Set", () => { const out: any[] = []; new Map([[1, "a"]]).forEach((v, k) => { out.push(k, v); }); new Set([7]).forEach(v => { out.push(v); }); return out; });
@@ -180,7 +160,6 @@ say("species", () => { class Odd extends Array<number> { static get [Symbol.spec
 say("a proxy", () => { const log: string[] = []; const p = new Proxy([1, 2], { get(t, k, r) { if (typeof k === "string") log.push(k); return Reflect.get(t, k, r); }, has(t, k) { log.push("has " + String(k)); return Reflect.has(t, k); } }); return [p.map(x => x + 1), log]; });
 say("frozen", () => Object.freeze([1, 2]).map(x => x + 1));
 say("sparse and long", () => { const a: number[] = []; a[1000] = 1; let n = 0; a.forEach(() => { n++; }); return [n, a.map(x => x).length]; });
-// What goes wrong with a call in what has been made part of another.
 function tailInIt(x: any) { return x.nothing(1); }
 function callInIt(x: any) { const r = x.nothing(1); return r; }
 function tailInItAgain(x: any) { return x.nothing(1); }
@@ -193,7 +172,6 @@ say("a call in it, called by a call", () => { const r = callInItAgain({}); retur
 say("new in it", () => { const r = newInIt({}); return r; });
 say("a call in a callback", () => nums.map(x => any(x).nothing()));
 say("a callback that is nothing much", () => nums.map(x => any(undefined).deeper.still + x));
-// Not so little, with several call sites, called by functions that loops call: the inliner treats those call sites like call sites in loops.
 function medium(o: any, k: number) { if (o === null) throw new TypeError("null at " + k); const t = o.type === "a" || o.type === "b"; return t && o.n > k ? o.n - k : -1; }
 function mediumDefault(o: any, k = 2, extra?: any) { return (o.n ?? 0) * k + (extra === undefined ? 0 : 1); }
 function calledInLoop(o: any) { return medium(o, 1) + mediumDefault(o); }

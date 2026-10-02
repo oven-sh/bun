@@ -277,9 +277,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             // Track how many times we've referenced this symbol
-                            p.next_use_leaves_the_value_alone = identifier_opts.is_call_target();
+                            p.next_use_preserves_value = identifier_opts.is_call_target();
                             p.record_usage(ref_);
-                            p.next_use_leaves_the_value_alone = false;
+                            p.next_use_preserves_value = false;
                             if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
                             {
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);

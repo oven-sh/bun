@@ -1,4 +1,3 @@
-// Checks that fail, with things in use around them that have to be as they were once the error has been caught.
 export function wantsNumber(a: number, b: number) { return a + b; }
 export function wantsString(s: string) { return s + "!"; }
 export function wantsBoolean(b: boolean) { return !b; }

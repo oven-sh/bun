@@ -3,8 +3,6 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
-// `soundTypes` lowers TypeScript annotations to `$$t(value, mask)`. JavaScriptCore compiles that call to a tag check;
-// this is the same check in JavaScript, so that the emitted code can be run here whether or not the engine has it.
 const Undefined = 1,
   Null = 2,
   Boolean_ = 4,
@@ -15,14 +13,12 @@ const Undefined = 1,
   Function_ = 128,
   Array_ = 256,
   OtherObject = 512;
-/** The objects that get past are typed arrays of one type: how far it is from `Int8Array` in the engine's order, plus one. */
 const typedArray = (kind: number) => OtherObject | ((kind + 1) << 10);
 const Uint8Array_ = typedArray(1),
   Int32Array_ = typedArray(5),
   Float64Array_ = typedArray(9);
 const AnyObject = Function_ | Array_ | OtherObject;
 const NonNullish = 1023 & ~(Undefined | Null);
-/** No check is emitted. */
 const Top = null;
 
 const shim = /* js */ `
@@ -59,14 +55,12 @@ function emit(source: string, level: keyof typeof transpilers = "basic"): string
   return transpilers[level].transformSync(source).trim();
 }
 
-/** Runs `source`, which reports through `out(...)`, and returns what it reported. */
 function run(source: string, level: keyof typeof transpilers = "basic"): unknown[] {
   const reported: unknown[] = [];
   new Function("out", emit(source, level))((...values: unknown[]) => reported.push(...values));
   return reported;
 }
 
-/** The mask a parameter of type `type` is checked against. */
 function maskOf(type: string, declarations = ""): number | null {
   const output = emit(`${declarations}\nexport function probe(value: ${type}) {}`);
   const checks = [...output.matchAll(/\$\$t\(value, (\d+)\)/g)];
@@ -105,7 +99,6 @@ describe("type -> mask", () => {
     ["{ a?: number }", AnyObject],
     ["{ [key: string]: number }", AnyObject],
     ["{ [K in 'a' | 'b']: number }", AnyObject],
-    // `{ [K in keyof T]: ... }` is `T` itself when `T` is a primitive.
     ["{ [K in keyof Unresolved]: number }", Top],
     ["{ readonly [K in keyof Unresolved]?: Unresolved[K] }", Top],
     ["{ readonly a: number; b(): void }", AnyObject],
@@ -113,7 +106,6 @@ describe("type -> mask", () => {
     ["{ <T>(a: T): void }", Function_],
     ["{ new (a: number): object }", Function_],
     ["{ (a: number): void; extra: number }", Function_],
-    // Primitives have these members: `const x: { length: number } = "abc"` type checks.
     ["{ length: number }", NonNullish],
     ["{ toString(): string }", NonNullish],
     ["{ length: number; a: number }", AnyObject],
@@ -149,7 +141,6 @@ describe("type -> mask", () => {
     ["Buffer", Uint8Array_],
     ["Float64Array | null", Float64Array_ | Null],
     ["Float64Array | number[]", Float64Array_ | Array_],
-    // There is room to name one.
     ["Float64Array | Int32Array", OtherObject],
     ["Float64Array | Map<string, number>", OtherObject],
     ["DataView", OtherObject],
@@ -184,13 +175,11 @@ describe("type -> mask", () => {
     ["{ a: number } & { b: number }", AnyObject],
     ["(() => void) & { extra: number }", Function_],
     ["number[] & { extra: number }", Array_],
-    // Branding: the values are primitives.
     ["string & { __brand: 'x' }", String_],
     ["{ __brand: 'x' } & number", Number_],
     ["(string | number) & { __brand: 'x' }", String_ | Number_],
     ["(string | { a: number }) & { __brand: 'x' }", String_ | AnyObject],
     ["(string | null) & {}", String_],
-    // The unknown side could be a primitive that the object type brands.
     ["Unresolved & { __brand: 'x' }", Top],
     ["Unresolved & string", String_],
     ["string & number", Top],
@@ -233,7 +222,6 @@ describe("type -> mask", () => {
     expect(maskOf("A", "type A = B | number; type B = A | string;")).toBe(Top);
     expect(maskOf("B", "type A = B | number; type B = A | string;")).toBe(Top);
     expect(maskOf("A", "type A = A;")).toBe(Top);
-    // Not a cycle: the recursion is under a type constructor.
     expect(maskOf("Json", "type Json = string | number | boolean | null | Json[] | { [key: string]: Json };")).toBe(
       String_ | Number_ | Boolean_ | Null | AnyObject,
     );
@@ -259,7 +247,6 @@ describe("type -> mask", () => {
       "export class C<T> { m(value: T) {} }",
       "export class C { m<T>(value: T) {} }",
       "export const o = { m<T>(value: T) {} };",
-      // A type parameter hides a declaration with the same name.
       "type T = string; export function f<T>(value: T) {}",
       "export function f<Map>(value: Map) {}",
     ]) {
@@ -274,7 +261,6 @@ describe("type -> mask", () => {
     expect(maskOf("I", "interface I { a: number } interface I { b: number }")).toBe(AnyObject);
     expect(maskOf("I<string>", "interface I<T> { a: T }")).toBe(AnyObject);
     expect(maskOf("I", "interface I extends Unresolved { a: number }")).toBe(AnyObject);
-    // `const x: I = 1` type checks.
     expect(maskOf("I", "interface I {}")).toBe(NonNullish);
     expect(maskOf("I", "interface I { length: number }")).toBe(NonNullish);
   });
@@ -286,7 +272,6 @@ describe("type -> mask", () => {
     expect(maskOf("C<string>", "class C<T> { a!: T }")).toBe(OtherObject);
     expect(maskOf("D", "class C {} class D extends C {}")).toBe(OtherObject);
     expect(maskOf("D", "class D extends Error {}")).toBe(OtherObject);
-    // An instance is whatever the base class constructs.
     expect(maskOf("D", "class D extends Array<number> {}")).toBe(Array_);
     expect(maskOf("D", "class D extends Function {}")).toBe(Function_);
     expect(maskOf("D", "class D extends Unresolved {}")).toBe(AnyObject);
@@ -1714,8 +1699,6 @@ describe("bundler", () => {
     run: { stdout: "tag 2 is not in mask 16" },
   });
 
-  // The file that binds `$$t` is not transformed, and its binding is renamed
-  // away from the global that the checks of the other file call.
   itBundled("sound-types/UserSymbolWithTheSameName", {
     files: {
       "/entry.ts": /* ts */ `
@@ -1787,7 +1770,6 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).toContain("$$t(a, 8)");
-      // Nothing resolves imports here.
       expect(out).not.toContain("$$t(b");
     },
   });
@@ -1997,7 +1979,6 @@ describe("bundler", () => {
       },
     });
 
-    // The imported module shadows or hides names in ways that only it knows about.
     itBundled("sound-types/ImportedModuleScopes", {
       files: {
         "/entry.ts": /* ts */ `
@@ -2033,7 +2014,6 @@ describe("bundler", () => {
     });
   });
 
-  // The React Compiler sees a check as a call of a global it knows nothing about.
   itBundled("sound-types/ReactCompiler", {
     files: {
       "/entry.tsx": /* tsx */ `

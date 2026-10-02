@@ -133,7 +133,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         left: &mut Expr,
     ) -> CResult {
         p.lexer.next()?;
-        // "(e as Error)?.name" probes a value that the author does not trust to be an Error.
         *left = Self::sound_without_annotations(*left);
         let mut optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
 
@@ -510,7 +509,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         *optional_chain = old_optional_chain;
 
-        // "a?.b!.c" is still one chain: it is undefined when "a" is.
         if p.sound_types_enabled() && old_optional_chain.is_none() {
             *left = p.sound_annotate(
                 *left,

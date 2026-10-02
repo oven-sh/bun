@@ -1,4 +1,3 @@
-// A comment, so that lines differ from the bundle's.
 interface Options { depth: number }
 
 export function fail(options: Options): never {

@@ -1,11 +1,8 @@
-// The value of a variable that lives in an environment record, and every way of changing it.
 import { live, setLive, neverWrittenAgain, hoisted, initHoisted, counter, bump, declared, replaceDeclared, Klass, table, list, pattern } from "./other";
 import * as ns from "./other";
-// (A namespace that is still one when the program runs: it is put in a variable of this module's, by name, when the module is linked.)
 import * as pathOfNode from "node:path";
 import * as osOfNode from "node:os";
 import defaultOfEvents, * as eventsOfNode from "node:events";
-// Read while the module is being evaluated, at its top.
 const readAtTheTop = typeof pathOfNode.join + typeof osOfNode.EOL + typeof eventsOfNode.defaultMaxListeners + typeof defaultOfEvents.once;
 const out: string[] = [];
 const say = (name: string, f: () => unknown) => {
@@ -13,11 +10,9 @@ const say = (name: string, f: () => unknown) => {
   try { text = String(f()); } catch (e: any) { text = "threw " + e?.name + ": " + e?.message; }
   out.push(name + " = " + text);
 };
-// What one does with a value tells what it was taken for.
 const use = (x: any) => { if (typeof x === "function") return "function:" + x.length + ";"; let r = typeof x + ":"; try { r += String(x + 1) + "," + String(x?.length) + "," + String(x * 2) + "," + (x ? "t" : "f") + "," + (x === undefined) + "," + (x == null); } catch (e: any) { r += e.name; } return r; };
 const values: any[] = [1, 1.5, "s", true, null, undefined, [1], { a: 1 }, () => 1, 10n, Symbol.iterator, new Map(), /x/];
 
-// ---- of the module
 let onlyInts: any = 1;
 say("only ints", () => use(onlyInts));
 function setOnlyInts() { onlyInts = 2; }
@@ -70,7 +65,6 @@ const evaluates = (code: string) => eval(code);
 say("eval, before", () => use(byEval));
 say("eval", () => { evaluates("byEval = 'from eval'"); return use(byEval); });
 
-// ---- of functions
 function counterMaker() { let n: any = 0; return { next: () => ++n, set: (v: any) => { n = v; }, get: () => use(n) }; }
 say("a closure", () => { const c = counterMaker(); c.next(); const a = c.get(); c.set("s"); const b = c.get(); c.set(null); return a + b + c.get(); });
 say("two of them", () => { const a = counterMaker(), b = counterMaker(); a.set([1]); b.set(2.5); return a.get() + b.get(); });
@@ -99,7 +93,6 @@ say("eval inside", () => evalInside("local = 'from eval'"));
 function evalDeeper(code: string) { let outer: any = 1; const read = () => use(outer); function inner() { eval(code); } inner(); return read(); }
 say("eval deeper", () => evalDeeper("outer = ['from eval']"));
 
-// ---- of another module
 say("live", () => use(live));
 for (const v of values.slice(0, 8)) { setLive(v); say("live, written there", () => use(live)); }
 say("never written again", () => use(neverWrittenAgain));
@@ -120,17 +113,15 @@ async function acrossAwaits() { let v: any = 1; const read = () => use(v); const
 out.push("across awaits = " + await acrossAwaits());
 async function localsAcrossAwaits(x: any) { let v: any = x; const a = use(v); await null; const b = use(v); v = await Promise.resolve("s"); await null; return a + b + use(v); }
 out.push("locals across awaits = " + await localsAcrossAwaits(1) + await localsAcrossAwaits(null));
-// The variables that the module loader stores in each module's environment, read from inside functions.
 const importsLater = () => import("./dyn");
 function importsLaterToo() { return import("./dyn"); }
-const whereItIs = () => typeof import.meta + typeof import.meta.url + typeof import.meta.dirname;
+const knownLocation = () => typeof import.meta + typeof import.meta.url + typeof import.meta.dirname;
 function whereItIsToo() { const inner = () => import.meta; return typeof inner().path; }
-say("import.meta", () => whereItIs() + whereItIsToo());
+say("import.meta", () => knownLocation() + whereItIsToo());
 out.push("import() in functions = " + typeof (await importsLater()).seenFromHere + typeof (await importsLaterToo()).writeFromHere);
 const dyn: any = await import("./dyn");
 say("from a third", () => dyn.seenFromHere());
 say("written from a third", () => { dyn.writeFromHere({ toString() { return "object"; } }); return dyn.seenFromHere() + use(live) + use(counter); });
-// ---- an array that is created here and filled by other code, read in a loop: its elements flow into a variable and into a call
 let takenFromAnArray: unknown = 0;
 function fillsIt(a: unknown[]) { a.push({ toString() { return "object"; } }, "s", 2.5); }
 function isPassedIt(x: unknown) { return typeof x + ":" + String(x) + " "; }
@@ -145,7 +136,6 @@ say("filled by somebody else", () => readsItInALoop() + use(takenFromAnArray));
 say("namespaces of builtins, at the top", () => readAtTheTop);
 say("namespaces of builtins, in a function", () => pathOfNode.join("a", "b") + typeof osOfNode.platform() + (eventsOfNode.once === defaultOfEvents.once) + Object.keys(pathOfNode).includes("join"));
 say("a namespace of a builtin as a value", () => { const all: any[] = [pathOfNode, osOfNode, fsOfNode]; return all.map(n => Object.prototype.toString.call(n)).join(); });
-// A module's exports are looked up by name through its namespace object: every exported name, and no others.
 say("the namespace of what is imported later", () => Object.keys(dyn).sort().join() + ";" + Object.keys(dyn).map(k => typeof dyn[k]).join());
 say("what it does not export", () => String(dyn.notExportedByIt) + ("notExportedByIt" in dyn));
 console.log(out.join("\n"));

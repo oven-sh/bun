@@ -1556,7 +1556,7 @@ pub mod bv2_impl {
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
                 blob: &[u8],
                 string_slots: &[u32],
-                graph_module_of_each_add: &[u32],
+                graph_module_indices: &[u32],
             );
             safe fn __bun_jsc_bytecode_link_encoder_finish(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
@@ -1662,7 +1662,6 @@ pub mod bv2_impl {
             }
         }
 
-        /// `JSC::AOT::ProgramData` for a program with these strings (`EncoderStringTableHandle::take`).
         #[inline]
         pub(crate) fn build_program_data(
             strings: &[u8],
@@ -1757,19 +1756,17 @@ pub mod bv2_impl {
                 self.module_count += ok as usize;
                 ok
             }
-            /// `finish`, with the module linkage that ahead-of-time compilation needs: the pre-resolved graph, the slot of
-            /// each of its strings, and the graph module that each successful `add_*` call was for.
             pub(crate) fn finish_linked(
                 &mut self,
                 graph: &[u8],
                 string_slots: &[u32],
-                graph_module_of_each_add: &[u32],
+                graph_module_indices: &[u32],
             ) -> Option<crate::bytecode_order::LinkedPayload> {
                 __bun_jsc_bytecode_link_encoder_set_prelinked_module_graph(
                     self.encoder,
                     graph,
                     string_slots,
-                    graph_module_of_each_add,
+                    graph_module_indices,
                 );
                 self.finish()
             }
@@ -3414,7 +3411,6 @@ pub mod bv2_impl {
                                 ),
                             );
                         }
-                        // The static compiler compiles a link, so there has to be one: laid out by no order file at all.
                         this.linker.options.bytecode_order = order.or_else(|| {
                             this.linker
                                 .options
@@ -6825,7 +6821,6 @@ pub mod bv2_impl {
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(
-                        // (`new Worker("./worker.ts")`)
                         if import_record.kind == ImportKind::EntryPointRun {
                             Fs::FileSystem::instance().top_level_dir
                         } else {
@@ -7053,7 +7048,6 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                // The file that a Worker starts with is another entry point, not something that this file depends on.
                 if import_record
                     .flags
                     .contains(bun_ast::ImportRecordFlags::IS_WORKER_ENTRY_POINT)

@@ -63,7 +63,7 @@ private:
 
     bool m_isFunctionOrEval = false;
     bool m_isAsync = false;
-    bool m_isCompiledAheadOfTime = false; // Then there is no m_codeBlock, and m_stackFrame answers.
+    bool m_isCompiledAheadOfTime = false;
 
     enum class SourcePositionsState {
         NotCalculated,

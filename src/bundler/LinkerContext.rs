@@ -1431,11 +1431,8 @@ pub struct LinkerOptions {
     pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     pub(crate) bytecode_depth: u32,
     pub(crate) optimize_bytecode: bool,
-    /// See `BundleOptions::aot`.
     pub(crate) aot: bool,
-    /// The chunks have `$$t(value, mask)` in them (`BundleOptions::sound_types`), which the bytecode generator has to know.
     pub(crate) sound_types: bool,
-    /// See `BundleOptions::preserve_source_paths`.
     pub(crate) preserve_source_paths: bool,
     /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
     pub(crate) bytecode_order: Option<crate::bytecode_order::BytecodeOrder>,
@@ -2487,7 +2484,6 @@ impl<'a> LinkerContext<'a> {
             },
             mangled_props: Some(mangled_props),
             module_info,
-            // Only in text that goes from here to the engine and nowhere else: nothing else reads such things.
             type_tags: if self.options.generate_bytecode_cache {
                 let source = &parse_graph.input_files.items_source()[source_index.get() as usize];
                 bun_ast::sound_types::oracle::tags_for(source.path.text, source.contents())

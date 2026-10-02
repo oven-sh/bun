@@ -1,5 +1,3 @@
-// A place that reads a property has a slot, which is good for one structure. When the object is of another, and the megamorphic cache knows the answer, the stub gives the slot that structure:
-// but only a structure that has been through a collection. So: many structures at one place, in every order, with collections of both kinds in between, and structures that die.
 const out: string[] = [];
 const any = (x: unknown): any => x;
 const say = (name: string, f: () => unknown) => {
@@ -10,7 +8,6 @@ const say = (name: string, f: () => unknown) => {
 const young = () => Bun.gc(false);
 const full = () => Bun.gc(true);
 
-// The access sites. Each is called often enough to get its own inline cache slots.
 function readP(o: any) { return o.p; }
 function readQ(o: any) { return o.q; }
 function readBoth(o: any) { return o.p + ":" + o.q; }
@@ -20,7 +17,6 @@ function readDeep(o: any) { return o.inner.p; }
 function readTwice(o: any) { const a = o.p; const b = o.p; return a === b ? a : "differs " + a + " " + b; }
 const warm = (f: (o: any) => unknown, o: any, times = 300) => { let r: unknown; for (let i = 0; i < times; i++) r = f(o); return r; };
 
-// ---- p at every place in the object
 const makers: ((v: unknown) => any)[] = [
   v => ({ p: v }),
   v => ({ a: 1, p: v }),
@@ -31,10 +27,10 @@ const makers: ((v: unknown) => any)[] = [
   v => ({ z: 0, y: 0, x: 0, w: 0, v: 0, u: 0, p: v }),
   v => { const o: any = {}; o.p = v; return o; },
   v => { const o: any = { a: 1 }; o.b = 2; o.p = v; return o; },
-  v => { const o: any = {}; for (let i = 0; i < 12; i++) o["k" + i] = i; o.p = v; return o; }, // out of line
-  v => { const o: any = {}; for (let i = 0; i < 80; i++) o["k" + i] = i; o.p = v; return o; }, // far out of line
+  v => { const o: any = {}; for (let i = 0; i < 12; i++) o["k" + i] = i; o.p = v; return o; },
+  v => { const o: any = {}; for (let i = 0; i < 80; i++) o["k" + i] = i; o.p = v; return o; },
   v => Object.assign(Object.create(null), { p: v }),
-  v => Object.create({ p: v }), // inherited
+  v => Object.create({ p: v }),
   v => Object.create(Object.create({ p: v })),
   v => ({ get p() { return v; } }),
   v => Object.create({ get p() { return v; } }),
@@ -62,7 +58,6 @@ say("two by two", () => { const r: unknown[] = []; for (let i = 0; i < kept.leng
 say("runs of each", () => { let bad = 0; for (let round = 0; round < 6; round++) for (let i = 0; i < kept.length; i++) for (let n = 0; n < 7; n++) if (readP(kept[i]) !== "v" + i) bad++; return bad; });
 say("read twice in a row", () => sweep(readTwice, kept));
 
-// ---- the same names in another order: the place differs, the names do not
 const pq = [{ p: 1, q: 2 }, { q: 3, p: 4 }, { a: 0, p: 5, q: 6 }, { a: 0, q: 7, p: 8 }, { p: 9, a: 0, q: 10 }, { q: 11, a: 0, b: 0, p: 12 }];
 say("p and q, first", () => sweep(readBoth, pq));
 for (const o of pq) warm(readBoth, o);
@@ -70,7 +65,6 @@ full();
 say("p and q, once they are old", () => { const r: string[] = []; for (let i = 0; i < 40; i++) r.push(sweep(readBoth, pq)); return new Set(r).size + " " + r[0]; });
 say("p and q, shuffled", () => { let seed = 7, bad = 0; for (let i = 0; i < 5000; i++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; const o: any = pq[seed % pq.length]; if (readBoth(o) !== o.p + ":" + o.q) bad++; } return bad; });
 
-// ---- absent here, present there
 const some = [{ p: "here" }, { a: 1 }, { a: 1, b: 2 }, { b: 1, p: "there" }, {}, Object.create(null), Object.create({ q: 1 })];
 for (const o of some) warm(readP, o);
 full();
@@ -78,7 +72,6 @@ say("absent and present", () => { const r: string[] = []; for (let i = 0; i < 30
 say("then it is added", () => { const o: any = { a: 1 }; const before = warm(readP, o); o.p = "added"; return before + "," + readP(o) + "," + readP({ a: 1 }) + "," + readP(o); });
 say("then it is put on what they inherit from", () => { const proto: any = {}; const o = Object.create(proto); warm(readP, o); full(); const before = readP(o); proto.p = "late"; const after = readP(o); delete proto.p; return before + "," + after + "," + readP(o); });
 
-// ---- objects that change under the slot
 say("deleted and put back", () => { const o: any = { a: 1, p: "first", b: 2 }; warm(readP, o); full(); warm(readP, o); delete o.p; const gone = readP(o); o.p = "second"; return gone + "," + readP(o) + "," + warm(readP, o); });
 say("deleted, and another takes its place", () => { const o: any = { p: "p", z: "z" }; warm(readP, o); full(); warm(readP, kept[1]); warm(readP, o); delete o.p; o.y = "y"; const gone = readP(o); o.p = "back"; return gone + "," + readP(o) + "," + o.y + "," + o.z; });
 say("a dictionary", () => { const o: any = {}; for (let i = 0; i < 200; i++) o["d" + i] = i; o.p = "in a dictionary"; for (let i = 0; i < 150; i++) delete o["d" + i]; warm(readP, o); full(); warm(readP, kept[0]); const a = warm(readP, o); delete o.p; o.fresh = "not p"; const b = readP(o); o.p = "again"; return a + "," + b + "," + readP(o); });
@@ -90,7 +83,6 @@ say("given another prototype", () => { const o: any = { a: 1 }; warm(readP, o); 
 say("own hides inherited", () => { const proto = { p: "inherited" }; const o: any = Object.create(proto); const a = warm(readP, o); full(); o.p = "own"; const b = warm(readP, o); full(); warm(readP, kept[5]); const c = warm(readP, o); delete o.p; return a + "," + b + "," + c + "," + warm(readP, o); });
 say("written between reads", () => { const o: any = { a: 1, p: 0 }; const other: any = { p: -1 }; warm(readP, o); warm(readP, other); full(); let bad = 0; for (let i = 0; i < 2000; i++) { o.p = i; other.p = -i; if (readP(o) !== i || readP(other) !== -i) bad++; } return bad; });
 
-// ---- structures that die: their numbers are used again
 const shaped = (tag: string, n: number, v: unknown) => { const o: any = {}; for (let i = 0; i < n; i++) o[tag + i] = i; o.p = v; return o; };
 say("structures that come and go, young collections", () => { let bad = 0; for (let round = 0; round < 60; round++) { const o = shaped("y" + round + "_", round % 5, "r" + round); for (let i = 0; i < 40; i++) if (readP(o) !== "r" + round) bad++; if (readP(kept[round % kept.length]) !== "v" + (round % kept.length)) bad++; young(); } return bad; });
 say("structures that come and go, full collections", () => { let bad = 0; for (let round = 0; round < 40; round++) { const o = shaped("f" + round + "_", round % 5, "r" + round); for (let i = 0; i < 40; i++) if (readP(o) !== "r" + round) bad++; full(); for (let i = 0; i < 40; i++) if (readP(o) !== "r" + round) bad++; if (readP(kept[round % kept.length]) !== "v" + (round % kept.length)) bad++; } return bad; });
@@ -98,16 +90,15 @@ say("old ones that die while the slot has them", () => {
   let bad = 0;
   for (let round = 0; round < 30; round++) {
     let a: any = shaped("oa" + round + "_", 1 + (round % 4), "a" + round), b: any = shaped("ob" + round + "_", round % 3, "b" + round);
-    warm(readP, a, 50); warm(readP, b, 50); full(); // Both are old.
-    for (let i = 0; i < 20; i++) { if (readP(a) !== "a" + round) bad++; if (readP(b) !== "b" + round) bad++; } // The slot goes from one to the other.
-    a = b = null; full(); full(); // Whichever it has is gone.
+    warm(readP, a, 50); warm(readP, b, 50); full();
+    for (let i = 0; i < 20; i++) { if (readP(a) !== "a" + round) bad++; if (readP(b) !== "b" + round) bad++; }
+    a = b = null; full(); full();
     for (let k = 0; k < 8; k++) { const c = shaped("oc" + round + "_" + k + "_", (k + round) % 6, "c" + k); if (readP(c) !== "c" + k) bad++; if (readQ(c) !== undefined) bad++; }
   }
   return bad;
 });
 say("many at once, most of which die", () => { let bad = 0; for (let round = 0; round < 10; round++) { let all: any[] = []; for (let k = 0; k < 300; k++) all.push(shaped("m" + round + "_" + k + "_", k % 7, k)); for (const pass of [0, 1]) { for (let k = 0; k < all.length; k++) if (readP(all[k]) !== k) bad++; if (!pass) full(); } all = all.filter((_, k) => k % 50 === 0); full(); for (const o of all) if (typeof readP(o) !== "number") bad++; young(); } return bad; });
 
-// ---- names that some kinds of object have a say about
 const lengths: any[] = [[1, 2, 3], "four", { length: 5 }, { a: 1, length: 6 }, function (_a: any, _b: any) { }, new Uint8Array(7), { get length() { return 8; } }, Object.create({ length: 9 }), new String("ten chars!"), (function (..._x: any[]) { return arguments; })(1, 2)];
 say("length, first", () => sweep(readLength, lengths));
 for (const o of lengths) warm(readLength, o);
@@ -119,12 +110,10 @@ for (const o of names) warm(readName, o);
 full();
 say("name", () => { const r: string[] = []; for (let i = 0; i < 30; i++) r.push(sweep(readName, names)); return new Set(r).size + " " + r[0]; });
 
-// ---- values that are not objects
 const odd: any[] = [1, "s", true, 1n, Symbol.iterator, 1.5, { p: "object" }, { a: 1, p: "another" }];
 say("not objects", () => { (Number.prototype as any).q = "number"; (String.prototype as any).q = "string"; try { const r: string[] = []; const list = [...odd, { q: "own" }, { a: 1, q: "own too" }]; for (const o of list) warm(readQ, o, 50); full(); for (let i = 0; i < 20; i++) r.push(list.map(o => String(readQ(o))).join()); return new Set(r).size + " " + r[0]; } finally { delete (Number.prototype as any).q; delete (String.prototype as any).q; } });
 say("null and undefined", () => { const r: string[] = []; for (const o of [{ p: 1 }, null, { a: 1, p: 2 }, undefined, { p: 3 }]) { try { r.push(String(readP(o))); } catch (e: any) { r.push(e.name); } } return r.join(); });
 
-// ---- one level down, and in a loop
 const deep = kept.filter((_, i) => i < 9).map((o, i) => (i % 2 ? { inner: o } : { pad: 0, inner: o }));
 for (const o of deep) warm(readDeep, o);
 full();
@@ -132,7 +121,6 @@ say("one level down", () => { const r: string[] = []; for (let i = 0; i < 30; i+
 say("in a loop that a collection happens in", () => { let bad = 0; const list = kept.slice(0, 9); for (let i = 0; i < 3000; i++) { const k = (i * 7) % list.length; if (list[k].p !== "v" + k) bad++; if (i % 500 === 250) young(); if (i % 1000 === 999) full(); } return bad; });
 say("with garbage made all the while", () => { let bad = 0, keep: any[] = []; for (let i = 0; i < 20000; i++) { const k = i % 9; if (readP(kept[k]) !== "v" + k) bad++; keep.push({ ["g" + (i % 97)]: i, p: i }); if (readP(keep[keep.length - 1]) !== i) bad++; if (keep.length > 50) keep = []; } return bad; });
 
-// ---- a place that remembers several structures: each of what it remembers can stop being so on its own
 function readM(o: any) { return o.m; }
 function callM(o: any) { return o.m(); }
 function readG(o: any) { return o.g; }
@@ -186,5 +174,4 @@ function readH(o: any) { return o.h; }
 
 console.log(out.join("\n"));
 console.log(out.length + " said");
-// (counts.sh: how often the stubs went which way.)
 if (process.env.BUN_HEAP_CENSUS) (await import("bun:jsc")).heapStats();

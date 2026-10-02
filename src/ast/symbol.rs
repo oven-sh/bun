@@ -79,9 +79,6 @@ pub struct Symbol {
     /// Do not use this directly. Use `nestedScopeSlot()` instead.
     pub nested_scope_slot: u32,
 
-    /// The annotation of a variable declared with an initializer, when sound
-    /// types are enabled. Every plain assignment to the variable is checked
-    /// against it.
     pub sound_type: crate::sound_types::SoundType,
 
     /// The kind of symbol. This is used to determine how to print the symbol
@@ -110,21 +107,12 @@ pub struct Symbol {
     /// Packed boolean state — see [`SymbolFlags`].
     pub flags: SymbolFlags,
 
-    /// What the variable holds can get somewhere other than into a call of it:
-    /// some part that ships has a use that `Use::is_more_than_called`, or an
-    /// entry point exports it. Set on the symbol a use resolves to, by the
-    /// same walk and under the same rules as `chunk_index`; means nothing
-    /// before that.
-    ///
-    /// `IS_VISIBLE_FROM_OUTSIDE`: the value can be obtained by something other than a
-    /// use of the variable in code that ships: through an entry point's exports, or
-    /// by evaluated code. Never set without `ESCAPES`.
     pub escapes: AtomicU8,
 }
 
 impl Symbol {
     pub const ESCAPES: u8 = 1;
-    pub const IS_VISIBLE_FROM_OUTSIDE: u8 = 2;
+    pub const IS_EXTERNALLY_VISIBLE: u8 = 2;
 }
 
 bitflags::bitflags! {
@@ -388,9 +376,6 @@ impl Kind {
 /// A part's uses of one symbol: an estimated count, plus whether any of them
 /// was added without its scope being recorded in `Ast::scope_uses` (by the
 /// linker or a transform), in which case the renamer must assume the symbol
-/// may be printed in any scope of the part; plus whether any of the parser's
-/// own is something other than the callee of a call. Packed into one word
-/// because every part holds one per referenced symbol.
 #[derive(Default, Clone, Copy)]
 pub struct Use(u32);
 
@@ -418,20 +403,17 @@ impl Use {
         self.0 & Self::UNSCOPED != 0
     }
 
-    /// Some use may do more with the value than call it: the parser saw such a
-    /// use, or a use was added later without saying what kind it is.
     #[inline]
-    pub const fn is_more_than_called(self) -> bool {
+    pub const fn is_used_as_value(self) -> bool {
         self.0 & Self::FLAGS != 0
     }
 
     /// The parser's `record_usage`: the use's scope is on record.
-    /// `leaves_the_value_alone`: it is `f` in `f()`, `f?.()` or `export { f }`.
     #[inline]
-    pub fn add_scoped(&mut self, count: u32, leaves_the_value_alone: bool) {
+    pub fn add_scoped(&mut self, count: u32, preserves_value: bool) {
         debug_assert!(self.count_estimate() + count < Self::AS_VALUE);
         self.0 += count;
-        if !leaves_the_value_alone {
+        if !preserves_value {
             self.0 |= Self::AS_VALUE;
         }
     }
@@ -513,19 +495,17 @@ impl Map {
         bun_core::output::flush();
     }
 
-    /// See `Symbol::escapes`. From worker threads, like `assign_chunk_index`.
     pub fn note_escape(&self, ref_: Ref) {
         if let Some(symbol) = self.get_const(self.follow(ref_)) {
             symbol.escapes.fetch_or(Symbol::ESCAPES, Ordering::Relaxed);
         }
     }
 
-    /// See `Symbol::escapes`.
-    pub fn note_visible_from_outside(&self, ref_: Ref) {
+    pub fn mark_externally_visible(&self, ref_: Ref) {
         if let Some(symbol) = self.get_const(self.follow(ref_)) {
             symbol
                 .escapes
-                .fetch_or(Symbol::ESCAPES | Symbol::IS_VISIBLE_FROM_OUTSIDE, Ordering::Relaxed);
+                .fetch_or(Symbol::ESCAPES | Symbol::IS_EXTERNALLY_VISIBLE, Ordering::Relaxed);
         }
     }
 

@@ -401,7 +401,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     sound_return = p.skip_typescript_return_type_sound(
                         wants_metadata.then_some(&mut func.return_ts_metadata),
                     )?;
-                    // The annotation of these describes the promise or the iterator.
                     if func.flags.contains(Flags::Function::IsAsync)
                         || func.flags.contains(Flags::Function::IsGenerator)
                     {

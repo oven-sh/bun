@@ -489,8 +489,6 @@ pub mod analyze_transpiled_module {
         record_kinds: Vec<RecordKind>,
         pub flags: Flags,
         exported_names: HashMap<StringID, ()>,
-        /// Of a chunk: the variables at the top of it, and what the linker knows of each
-        /// (`bun_bundler::prelinked_module_graph::binding_flags`). Only the pre-linked module graph has them.
         pub bindings: Vec<(StringID, u32)>,
         pub finalized: bool,
     }
@@ -1404,9 +1402,6 @@ pub struct Options<'a> {
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 
-    /// The type tags of the file being printed: sorted pairs of an anchor (a byte offset in the source that
-    /// identifies a construct, such as the start of a property name or the brace of a literal) and a type number.
-    /// The number is printed directly before the token, for an engine that understands it (`print_type_tag`).
     pub type_tags: Option<&'static [(u32, u32)]>,
 }
 
@@ -2453,8 +2448,6 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        /// A byte with the value 1, then six characters that each encode six bits of the number, highest first. This is
-        /// not JavaScript syntax: JavaScriptCore applies it to the next token (`Options::useTypeTags()`).
         pub(crate) fn print_type_tag(&mut self, anchor: bun_ast::Loc) {
             let Some(tags) = self.options.type_tags else {
                 return;
@@ -4575,7 +4568,6 @@ pub(crate) mod __gated_printer {
                         self.print(b" */");
                     }
                 }
-                // The visit pass replaces these; an AST printed without one has no checks.
                 ExprData::ETypeCheck(e) => self.print_expr(e.value, level, flags),
                 ExprData::ENameOfSymbol(e) => {
                     let name = self.mangled_prop_name(e.ref_);

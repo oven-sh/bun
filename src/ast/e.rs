@@ -2437,9 +2437,6 @@ pub struct RequireResolveString {
     // close_paren_loc: logger.Loc = logger.Loc.Empty,
 }
 
-/// A sound-types check the parse pass wants around `value`. The visit pass
-/// resolves `ty` and replaces this node with `value` or `$$t(value, mask)`,
-/// so nothing after the visit pass sees it.
 pub struct TypeCheck {
     pub value: ExprNodeIndex,
     pub ty: crate::sound_types::SoundType,

@@ -17,7 +17,6 @@ const unknown = (globalThis as any).nothingHere ? null : (n: number, f: any): st
 attempt("plain", () => plain(N)); attempt("rest, spread", () => rest(N, 1, 2, 3)); attempt("rest, fixed", () => restFixed(N)); attempt("tagged", () => tag`a${N}b`); attempt("tagged, rest", () => tagRest`a${N}b`);
 attempt("arguments", () => usesArguments(N)); attempt("many parameters", () => many(N)); attempt("fewer arguments", () => fewer(N)); attempt("more arguments", () => more(N));
 attempt("mutual", () => even(N)); attempt("method", () => o.m(N)); attempt("method, rest", () => o.r(N, 1)); attempt("call", () => viaCall(N)); attempt("apply", () => viaApply(N)); attempt("unknown callee", () => unknown!(N, unknown));
-// One of the two gets out of sight of the compiler, the other does not. Both return an int32.
 function seen(n: number): number { return n ? hidden(n - 1) : 1; }
 function hidden(n: number): number { return n ? seen(n - 1) : 2; }
 (globalThis as any).keep = hidden;
@@ -30,7 +29,6 @@ function seenB(n: number): boolean { return n ? hiddenB(n - 1) : true; }
 function hiddenB(n: number): boolean { return n ? seenB(n - 1) : false; }
 (globalThis as any).keepB = hiddenB;
 attempt("boolean, one escapes", () => seenB(N));
-// Returns an object literal whose properties are all that is read: handed back in registers.
 function pair(n: number): { a: number; b: number } { return n ? pair2(n - 1) : { a: 1, b: 2 }; }
 function pair2(n: number): { a: number; b: number } { return n ? pair(n - 1) : { a: 3, b: 4 }; }
 attempt("several values", () => { const { a, b } = pair(N); return a + b; });
@@ -38,7 +36,6 @@ function pairE(n: number): { a: number; b: number } { return n ? pairE2(n - 1) :
 function pairE2(n: number): { a: number; b: number } { return n ? pairE(n - 1) : { a: 3, b: 4 }; }
 (globalThis as any).keepP = pairE2;
 attempt("several values, one escapes", () => { const { a, b } = pairE(N); return a + b; });
-// The result is ignored by one caller and used by another.
 function narrow(n: number): number { return n ? wide(n - 1) as number : 1; }
 function wide(n: number): number | string { return n ? narrow(n - 1) : "s"; }
 attempt("a wider result", () => narrow(N));

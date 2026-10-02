@@ -1,4 +1,3 @@
-// Functions of a module that are called as no object at all, and what could tell.
 import { far1, far2, mutual } from "./noobject2";
 
 export function plain(a: number, b: number) { return a + b; }
@@ -29,10 +28,10 @@ export function tail(n: number): number { "use strict"; return n ? tail(n - 1) :
 export async function asyncOne(x: number) { await null; return plain(x, 1); }
 export function* generatorOne(x: number) { yield plain(x, 1); yield arrow(x); }
 export function early() { return late(); }
-export const beforeInit = (() => { try { return notYet(1); } catch (e: any) { return e.constructor.name; } })();
+export const beforeInit = (() => { try { return notReachedYet(1); } catch (e: any) { return e.constructor.name; } })();
 export const beforeInitNew = (() => { try { return typeof new NotYetClass(); } catch (e: any) { return e.constructor.name; } })();
-export const beforeInitMessage = (() => { try { return notYet(1); } catch (e: any) { return e.message; } })();
-export const notYet = (x: number) => x;
+export const beforeInitMessage = (() => { try { return notReachedYet(1); } catch (e: any) { return e.message; } })();
+export const notReachedYet = (x: number) => x;
 export class NotYetClass { x = 1; }
 export function late() { return "late"; }
 export function withThis(this: unknown) { return this === undefined; }

@@ -6,7 +6,6 @@ const say = (name: string, f: () => unknown) => {
   out.push(name + " = " + text);
 };
 
-// ---- callees
 function add(a: number, b: number) { return a + b; }
 function sub(a: number, b: number) { return a - b; }
 function three(a: any, b: any, c: any) { return a + "," + b + "," + c; }
@@ -35,7 +34,6 @@ function toRestAny(a: any, b: any, c: any) { return withRestAny(c, b, a); }
 function usesOwnArgumentsAny(a: any, b: any) { const n = arguments.length; return addAny(n, b); }
 function readsOwnArgumentsAny(a: any, b: any) { const last = arguments[arguments.length - 1]; return addAny(last, a); }
 
-// ---- as many arguments as parameters, fewer, more
 function same(a: number, b: number) { return add(a, b); }
 function swapped(a: number, b: number) { return sub(b, a); }
 function rotated(a: any, b: any, c: any) { return three(c, a, b); }
@@ -43,7 +41,7 @@ function repeated(a: any, b: any, c: any) { return three(b, b, b); }
 function computed(a: number, b: number, c: number) { return three(a + b, b * c, a - c); }
 function fewer(a: number, b: number, c: number, d: number) { return add(c, d); }
 function fewest(a: number, b: number, c: number) { return none(); }
-function tooMany(a: number) { return three(a, a + 1, a + 2); } // Not in the frame of the caller.
+function tooMany(a: number) { return three(a, a + 1, a + 2); }
 function constants(a: number, b: number, c: number) { return three(1, "two", null); }
 function toArguments(a: any, b: any) { return seesArguments(b, a); }
 function toArgumentsOne(a: any, b: any) { return seesArguments(b); }
@@ -131,7 +129,6 @@ for (let round = 0; round < 3; round++) {
   say("doubles", () => doubles(3, 1));
   say("mixed", () => mixed({ x: 1 }, [2], () => 0));
 
-  // ---- the caller was passed fewer than it has parameters, or more
   say("same()", () => (same as any)());
   say("same(1)", () => (same as any)(1));
   say("same(1,2,3,4,5)", () => (same as any)(1, 2, 3, 4, 5));
@@ -162,7 +159,6 @@ for (let round = 0; round < 3; round++) {
   say("Reflect.apply", () => Reflect.apply(rotated, null, [1, 2, 3]) + "|" + Reflect.apply(rotated as any, null, []));
 }
 
-// ---- called by native code
 function first1(a: number, i: number) { return firstFromNative1(a, i); }
 function firstFromNative1(a: number, i: number) { return "first:" + a + ":" + i; }
 say("first call, from map", () => [10, 20].map(first1).join("|"));
@@ -181,12 +177,11 @@ function first6(m: string, p: string) { return firstFromNative6(p, m); }
 function firstFromNative6(p: string, m: string) { return "<" + p + "/" + m + ">"; }
 say("first call, from replace", () => "a1b2".replace(/[a-z](\d)/g, first6));
 
-// ---- however deep, no deeper
 function count(n: number, acc: number) { return n ? count(n - 1, acc + 1) : acc; }
 function even(n: number) { return n ? odd(n - 1) : true; }
 function odd(n: number) { return n ? even(n - 1) : false; }
 function shrinks(n: number, a: number, b: number, c: number) { return n ? grows(n - 1, a + b + c) : a; }
-function grows(n: number, a: number) { return n ? shrinks(n - 1, a, 1, 1) : a; } // This one is not in the frame of the caller.
+function grows(n: number, a: number) { return n ? shrinks(n - 1, a, 1, 1) : a; }
 function padded(n: number, acc: number, x?: any, y?: any, z?: any) { return n ? padded(n - 1, acc + 1) : acc + (x === undefined && y === undefined && z === undefined ? 0 : 1e9); }
 say("count", () => count(1_000_000, 0));
 say("even", () => even(1_000_001));
@@ -197,7 +192,6 @@ say("across modules", () => farBack(600_000, 0));
 function notATailCall(n: number): number { return n ? 1 + notATailCall(n - 1) : 0; }
 say("not a tail call", () => { try { return notATailCall(10_000_000); } catch (e: any) { return e.name; } });
 
-// ---- before it is initialized
 say("var, not yet", () => early(1, 2));
 function early(a: number, b: number) { return later(a, b); }
 var later = function (a: number, b: number) { return a + b; };
@@ -215,7 +209,6 @@ function early4(a: number) { const r = new Later4(a); return r.a; }
 const Later4 = function (this: any, a: number) { this.a = a; } as any;
 say("constructed, by now", () => early4(6));
 
-// ---- who is on the stack
 function top(a: number) { return middle(a); }
 function middle(a: number) { return bottom(a); }
 function bottom(a: number) { return new Error("e" + a).stack!.split("\n").filter(l => /\b(top|middle|bottom)\b/.test(l)).map(l => /\b(top|middle|bottom)\b/.exec(l)![1]).join(">"); }
@@ -224,7 +217,6 @@ function throwsDeep(a: number): number { return throwsDeeper(a); }
 function throwsDeeper(a: number): number { return throws(a); }
 say("caught", () => { try { return throwsDeep(4); } catch (e: any) { return e.message + " " + e.stack.split("\n").filter((l: string) => /throws/.test(l)).length; } });
 
-// ---- garbage collected in the middle
 function allocates(a: any, b: any): any { const junk = []; for (let i = 0; i < 50; i++) junk.push({ i, a }); return holds({ v: junk.length }, b); }
 function holds(a: any, b: any) { Bun.gc(true); return a.v + ":" + b.w; }
 say("gc", () => allocates({ q: 1 }, { w: 2 }));

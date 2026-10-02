@@ -13,9 +13,13 @@ const deleter = `
   const path = require("node:path");
   const { workerData } = require("node:worker_threads");
   const { tree, sab } = workerData;
+  const flag = new Int32Array(sab);
   const dirs = fs.readdirSync(tree).map(d => path.join(tree, d));
   const files = dirs.flatMap(d => fs.readdirSync(d).map(f => path.join(d, f))).reverse();
-  Atomics.wait(new Int32Array(sab), 0, 0);
+  // The listing is done: report ready, then wait for the walk to start.
+  Atomics.store(flag, 0, 1);
+  Atomics.notify(flag, 0);
+  Atomics.wait(flag, 0, 1);
   for (const f of files) {
     try { fs.unlinkSync(f); } catch {}
   }
@@ -47,7 +51,10 @@ async function raceDeleter(tree: string, run: () => Promise<void> | void) {
   const { worker, failed, online } = startWorker(deleter, { tree, sab });
   await Promise.race([online, failed]);
   const flag = new Int32Array(sab);
-  Atomics.store(flag, 0, 1);
+  // Start the walk only when the deleter has listed the tree. Without this a
+  // slow (debug) build lets the walk finish before the deleter removes anything.
+  expect(Atomics.wait(flag, 0, 0, 10_000)).not.toBe("timed-out");
+  Atomics.store(flag, 0, 2);
   Atomics.notify(flag, 0);
   try {
     await Promise.race([run(), failed]);

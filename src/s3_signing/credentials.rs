@@ -4,6 +4,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::strings;
+use bun_http_types::ETag::{HeaderEntry, HeaderEntryList, Headers, StringPointer};
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
@@ -986,35 +987,59 @@ pub struct SignResult {
 }
 
 impl SignResult {
-    pub const MAX_HEADERS: usize = 11;
+    const MAX_HEADERS: usize = 11;
 
-    pub fn headers(&self) -> &[PicoHeader] {
+    fn headers(&self) -> &[PicoHeader] {
         &self._headers[0..self._headers_len as usize]
     }
 
-    /// The redirect mode for a request that carries these headers. The
-    /// signature covers the method, the host and the path, so the transport
-    /// must not send the request again to a `Location`. `requested` is the
-    /// mode the caller asked for, when a caller can ask.
-    pub const fn redirect_mode(requested: Option<FetchRedirect>) -> FetchRedirect {
-        match requested {
+    /// The headers of the signed request, `extra` last, and the redirect mode to send them with.
+    /// The mode is never `Follow`: the signature is for one host and path, not for a `Location`.
+    #[must_use]
+    pub fn request_headers(
+        &self,
+        extra: Option<(&[u8], &[u8])>,
+        requested: Option<FetchRedirect>,
+    ) -> (Headers, FetchRedirect) {
+        let signed = self.headers();
+        let pairs = signed.iter().map(|header| (header.name(), header.value())).chain(extra);
+
+        let mut buf_len: usize = 0;
+        for (name, value) in pairs.clone() {
+            buf_len += name.len() + value.len();
+        }
+        let mut headers = Headers {
+            entries: HeaderEntryList::default(),
+            buf: Vec::new(),
+        };
+        bun_core::handle_oom(
+            headers
+                .entries
+                .ensure_total_capacity(signed.len() + usize::from(extra.is_some())),
+        );
+        headers.buf.reserve_exact(buf_len);
+        for (name, value) in pairs {
+            let name_offset = headers.buf.len() as u32;
+            headers.buf.extend_from_slice(name);
+            let value_offset = headers.buf.len() as u32;
+            headers.buf.extend_from_slice(value);
+            headers.entries.append_assume_capacity(HeaderEntry {
+                name: StringPointer {
+                    offset: name_offset,
+                    length: name.len() as u32,
+                },
+                value: StringPointer {
+                    offset: value_offset,
+                    length: value.len() as u32,
+                },
+            });
+        }
+
+        let redirect = match requested {
             Some(FetchRedirect::Error) => FetchRedirect::Error,
             _ => FetchRedirect::Manual,
-        }
-    }
-
-    pub fn mix_with_header<'b>(
-        &self,
-        headers_buffer: &'b mut [PicoHeader],
-        header: PicoHeader,
-    ) -> &'b [PicoHeader] {
-        // copy the headers to buffer
-        let len = self._headers_len as usize;
-        for (i, existing_header) in self._headers[0..len].iter().enumerate() {
-            headers_buffer[i] = *existing_header;
-        }
-        headers_buffer[len] = header;
-        &headers_buffer[0..len + 1]
+        };
+        (headers, redirect)
     }
 }
 

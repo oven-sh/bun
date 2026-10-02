@@ -5,7 +5,6 @@ use std::io::Write as _;
 
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
-use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_ptr::RefPtr;
@@ -285,7 +284,7 @@ pub(crate) fn list_objects(
 
     drop(search_params);
 
-    let headers = bun_http::Headers::from_pico_http_headers(result.headers());
+    let (headers, redirect) = result.request_headers(None, None);
     let proxy_url = s3_simple_request::resolve_proxy(None, &result.url);
 
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
@@ -345,7 +344,7 @@ pub(crate) fn list_objects(
             S3HttpSimpleTask::http_callback,
             S3HttpSimpleTask::release_at_shutdown,
         ),
-        bun_s3_signing::credentials::SignResult::redirect_mode(None),
+        redirect,
         bun_http::async_http::Options {
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
@@ -1194,19 +1193,10 @@ fn download_stream(
         }
     };
 
-    let mut header_buffer =
-        [bun_picohttp::Header::ZERO; bun_s3_signing::credentials::SignResult::MAX_HEADERS + 1];
-    let headers = 'brk: {
-        if let Some(range_) = &range {
-            let _headers = result.mix_with_header(
-                &mut header_buffer,
-                bun_picohttp::Header::new(b"range", range_),
-            );
-            break 'brk bun_http::Headers::from_pico_http_headers(_headers);
-        } else {
-            break 'brk bun_http::Headers::from_pico_http_headers(result.headers());
-        }
-    };
+    let (headers, redirect) = result.request_headers(
+        range.as_deref().map(|range| (b"range".as_slice(), range)),
+        None,
+    );
     let owned_proxy = s3_simple_request::resolve_proxy(None, &result.url);
     let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(
         S3HttpDownloadStreamingTask {
@@ -1279,7 +1269,7 @@ fn download_stream(
             S3HttpDownloadStreamingTask::http_callback,
             S3HttpDownloadStreamingTask::release_at_shutdown,
         ),
-        bun_s3_signing::credentials::SignResult::redirect_mode(None),
+        redirect,
         bun_http::async_http::Options {
             http_proxy,
             verbose: Some(verbose),

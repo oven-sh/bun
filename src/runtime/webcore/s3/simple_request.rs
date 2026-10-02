@@ -5,12 +5,9 @@ use bun_core::MutableString;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
-use bun_http::{
-    AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt, Method,
-};
+use bun_http::{AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, Headers, Method};
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
@@ -634,25 +631,14 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
-    let headers = 'brk: {
-        let mut header_buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
-        if let Some(range_) = &options.range {
-            let _headers =
-                result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
-            break 'brk Headers::from_pico_http_headers(_headers);
-        } else {
-            if let Some(content_type) = options.content_type {
-                if !content_type.is_empty() {
-                    let _headers = result.mix_with_header(
-                        &mut header_buffer,
-                        picohttp::Header::new(b"Content-Type", content_type),
-                    );
-                    break 'brk Headers::from_pico_http_headers(_headers);
-                }
-            }
-            break 'brk Headers::from_pico_http_headers(result.headers());
+    let extra: Option<(&[u8], &[u8])> = match (&options.range, options.content_type) {
+        (Some(range), _) => Some((b"range".as_slice(), &range[..])),
+        (None, Some(content_type)) if !content_type.is_empty() => {
+            Some((b"Content-Type".as_slice(), content_type))
         }
+        _ => None,
     };
+    let (headers, redirect) = result.request_headers(extra, None);
 
     let mut poll_ref = KeepAlive::init();
     poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
@@ -718,7 +704,7 @@ pub(crate) fn execute_simple_s3_request(
             S3HttpSimpleTask::http_callback,
             S3HttpSimpleTask::release_at_shutdown,
         ),
-        SignResult::redirect_mode(None),
+        redirect,
         HttpOptions {
             http_proxy,
             verbose: Some(verbose),

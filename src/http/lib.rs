@@ -53,7 +53,7 @@ pub use async_http::AsyncHTTP;
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;
-pub use headers::{Headers, HeadersExt};
+pub use headers::Headers;
 pub(crate) use http_cert_error::HTTPCertError;
 pub use http_context::{HTTPContext, HTTPSocket, PeerVerification};
 pub use http_request_body::HTTPRequestBody;

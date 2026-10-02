@@ -50,7 +50,7 @@ use crate::webcore::jsc::{
 };
 use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::http_request_body::StreamFraming;
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
+use bun_http::{self as http, FetchRedirect, Headers, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
@@ -74,9 +74,8 @@ use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
-use bun_picohttp as picohttp;
 use bun_resolver::data_url::DataURL;
-use bun_s3_signing::{SignOptions, SignResult};
+use bun_s3_signing::SignOptions;
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
@@ -1843,7 +1842,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         };
         // `defer result.deinit()` → Drop.
-        redirect_type = SignResult::redirect_mode(Some(redirect_type));
 
         if let Some(proxy_) = &proxy {
             // proxy and url are in the same buffer lets replace it
@@ -1866,28 +1864,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         let content_type = headers.as_ref().and_then(|h| h.get_content_type());
-        let mut header_buffer: [picohttp::Header; SignResult::MAX_HEADERS + 1] =
-            [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
-
-        if let Some(range_) = &range {
-            let new_headers = result.mix_with_header(
-                &mut header_buffer,
-                picohttp::Header::new(b"range", range_.as_bytes()),
-            );
-            set_headers(&mut headers, new_headers);
-        } else if let Some(ct) = content_type {
-            if !ct.is_empty() {
-                let new_headers = result.mix_with_header(
-                    &mut header_buffer,
-                    picohttp::Header::new(b"Content-Type", ct),
-                );
-                set_headers(&mut headers, new_headers);
-            } else {
-                set_headers(&mut headers, result.headers());
+        let extra: Option<(&[u8], &[u8])> = match (&range, content_type) {
+            (Some(range), _) => Some((b"range".as_slice(), range.as_bytes())),
+            (None, Some(content_type)) if !content_type.is_empty() => {
+                Some((b"Content-Type".as_slice(), content_type))
             }
-        } else {
-            set_headers(&mut headers, result.headers());
-        }
+            _ => None,
+        };
+        let (signed_headers, signed_redirect) =
+            result.request_headers(extra, Some(redirect_type));
+        headers = Some(signed_headers);
+        redirect_type = signed_redirect;
     }
 
     // Decided before anything is queued, so an unusable framing header rejects up front.
@@ -2071,13 +2058,3 @@ impl<'a> S3StreamWrapper<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// setHeaders helper
-// ──────────────────────────────────────────────────────────────────────────
-
-fn set_headers(headers: &mut Option<Headers>, new_headers: &[picohttp::Header]) {
-    let old = headers.take();
-    *headers = Some(Headers::from_pico_http_headers(new_headers));
-    // `if (old) |*h| h.deinit()` → Drop on `old`.
-    drop(old);
-}

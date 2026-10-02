@@ -143,6 +143,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             n.ref_ = p.declare_symbol(kind, n.loc, name_text)?;
         }
         func.name = name;
+        if p.current_scope == p.module_scope {
+            p.note_const_call_wrapper(&func);
+        }
 
         // flags is freshly built so unset → only insert when true
         if has_if_scope {

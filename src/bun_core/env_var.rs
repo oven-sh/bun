@@ -255,6 +255,8 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IO_POOL, "BUN_FEATURE_FLAG_DISABLE_IO_POOL", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IPV4, "BUN_FEATURE_FLAG_DISABLE_IPV4", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IPV6, "BUN_FEATURE_FLAG_DISABLE_IPV6", {});
+    // The bundler folds a call of a function that always returns the same primitive. This flag disables that.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_CONST_CALL_FOLDING, "BUN_FEATURE_FLAG_DISABLE_CONST_CALL_FOLDING", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_MEMFD, "BUN_FEATURE_FLAG_DISABLE_MEMFD", {});
     // The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", {});

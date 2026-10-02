@@ -168,9 +168,7 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
 pub(crate) struct ParserSnapshot<'a> {
     lexer: js_lexer::LexerSnapshot<'a>,
     comments_to_preserve_before: Vec<js_ast::G::Comment>,
-    log_msgs_len: usize,
-    log_errors: u32,
-    log_warnings: u32,
+    log: bun_ast::LogMark,
     allow_in: bool,
     allow_private_identifiers: bool,
     has_classic_runtime_warned: bool,
@@ -680,6 +678,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) after_arrow_body_loc: bun_ast::Loc,
 
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
+
+    /// See `visit/const_call.rs`. Allocated by the first function that folds.
+    pub(crate) const_calls: Option<Box<crate::visit::const_call::ConstCalls>>,
+    pub(crate) const_calls_enabled: bool,
+    /// Visiting the argument of `import()`, `require()` or `require.resolve()`.
+    pub(crate) in_import_specifier: bool,
+    /// Visiting the tag of a template. A value in place of a call there can change the `this` of the tag.
+    pub(crate) in_template_tag: bool,
+    /// The parse pass looks for imports that a branch condition calls.
+    pub(crate) const_call_prefilter: bool,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub(crate) binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
@@ -2139,6 +2147,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let symbol = &mut self.symbols[ref_.inner_index() as usize];
             if !symbol.has_link() {
                 symbol.set_has_been_assigned_to(true);
+                if let Some(calls) = self.const_calls.as_mut() {
+                    calls.rebound(ref_);
+                }
                 return;
             }
             ref_ = symbol.link.get();
@@ -3727,12 +3738,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .value_ptr = member_in_scope;
 
                                 // "function foo() {} { var foo; }"
-                                if _scope_ptr == self.module_scope
-                                    && self.symbols[symbol_idx].kind
-                                        == js_ast::symbol::Kind::Hoisted
+                                if self.symbols[symbol_idx].kind == js_ast::symbol::Kind::Hoisted
                                     && Symbol::is_kind_function(existing_kind)
                                 {
-                                    self.has_top_level_function_merged_with_var = true;
+                                    self.note_function_merged_with_var(member_in_scope.ref_);
+                                    if _scope_ptr == self.module_scope {
+                                        self.has_top_level_function_merged_with_var = true;
+                                    }
                                 }
                                 continue 'next_member;
                             }
@@ -5248,13 +5260,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
-                    } else if self.current_scope == self.module_scope
-                        && ((existing_kind == js_ast::symbol::Kind::Hoisted && kind.is_function())
-                            || (existing_kind.is_function()
-                                && kind == js_ast::symbol::Kind::Hoisted))
-                    {
-                        // "var foo; function foo() {}" or "function foo() {} var foo;"
-                        self.has_top_level_function_merged_with_var = true;
+                    } else {
+                        // "var foo; function foo() {}" keeps the function's symbol.
+                        if existing_kind == js_ast::symbol::Kind::Hoisted && kind.is_function() {
+                            self.note_function_merged_with_var(ref_);
+                        }
+                        if self.current_scope == self.module_scope
+                            && ((existing_kind == js_ast::symbol::Kind::Hoisted
+                                && kind.is_function())
+                                || (existing_kind.is_function()
+                                    && kind == js_ast::symbol::Kind::Hoisted))
+                        {
+                            // "var foo; function foo() {}" or "function foo() {} var foo;"
+                            self.has_top_level_function_merged_with_var = true;
+                        }
                     }
                 }
                 MR::BecomePrivateGetSetPair => {
@@ -8335,13 +8354,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
         let comments_to_preserve_before =
             core::mem::take(&mut self.lexer.comments_to_preserve_before);
-        let log = self.log();
+        let log = self.log().mark();
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
             comments_to_preserve_before,
-            log_msgs_len: log.msgs.len(),
-            log_errors: log.errors,
-            log_warnings: log.warnings,
+            log,
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
             has_classic_runtime_warned: self.has_classic_runtime_warned,
@@ -8371,10 +8388,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.restore(&snapshot.lexer);
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
 
-        let log = self.log();
-        log.msgs.truncate(snapshot.log_msgs_len);
-        log.errors = snapshot.log_errors;
-        log.warnings = snapshot.log_warnings;
+        self.log().rewind(snapshot.log);
 
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;
@@ -9735,6 +9749,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
+        // Almost no file in a package calls a constant import, so only first-party files ask.
+        let const_call_prefilter = opts.const_call_lookup.is_some()
+            && crate::visit::const_call::const_calls_allowed(&opts)
+            && !source.path.is_node_module();
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
         if !TYPESCRIPT {
@@ -9930,6 +9948,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
+            const_calls: None,
+            const_calls_enabled: false,
+            in_import_specifier: false,
+            in_template_tag: false,
+            const_call_prefilter,
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),

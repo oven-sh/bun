@@ -1402,6 +1402,30 @@ impl Default for Log {
     }
 }
 
+/// The length of a [`Log`] at one point. [`Log::rewind`] drops what the log got after it.
+#[derive(Clone, Copy)]
+pub struct LogMark {
+    msgs: usize,
+    errors: u32,
+    warnings: u32,
+}
+
+impl Log {
+    pub fn mark(&self) -> LogMark {
+        LogMark {
+            msgs: self.msgs.len(),
+            errors: self.errors,
+            warnings: self.warnings,
+        }
+    }
+
+    pub fn rewind(&mut self, mark: LogMark) {
+        self.msgs.truncate(mark.msgs);
+        self.errors = mark.errors;
+        self.warnings = mark.warnings;
+    }
+}
+
 impl Log {
     /// Copy `s` into
     /// storage owned by this `Log` and return a `&'static [u8]` view. The

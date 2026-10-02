@@ -106,6 +106,8 @@ pub struct Parser<'a> {
     pub(crate) bump: &'a Arena,
     /// `log.errors` before the priming `lexer.next()` in `init`.
     pub(crate) orig_error_count: u32,
+    /// `log` before the priming `lexer.next()` in `init`.
+    pub(crate) log_mark: bun_ast::LogMark,
 }
 
 pub struct Options<'a> {
@@ -157,6 +159,16 @@ pub struct Options<'a> {
     /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
+
+    /// Set by `_parse` for an attempt after the first, when a folded call turned out to be unsound.
+    pub const_call_retry: Option<crate::visit::const_call::ConstCallRetry<'a>>,
+
+    /// Bundler only: answers what a call of an import returns (`visit/const_call.rs`).
+    pub const_call_lookup: Option<&'a dyn crate::visit::const_call::ConstCallLookup>,
+
+    /// Bundler only: receives what the exports of this file return, for `const_call_lookup` of its importers.
+    pub const_call_exports:
+        Option<&'a core::cell::Cell<Option<Box<crate::visit::const_call::ConstCallExports>>>>,
 }
 
 impl<'a> Default for Options<'a> {
@@ -191,6 +203,9 @@ impl<'a> Default for Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: false,
             is_entry_point: false,
+            const_call_retry: None,
+            const_call_lookup: None,
+            const_call_exports: None,
         }
     }
 }
@@ -278,6 +293,9 @@ impl<'a> Options<'a> {
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
+            const_call_retry: None,
+            const_call_lookup: None,
+            const_call_exports: None,
         }
     }
 
@@ -352,6 +370,9 @@ impl<'a> Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
+            const_call_retry: None,
+            const_call_lookup: None,
+            const_call_exports: None,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -372,6 +393,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Parser<'a>, Error> {
         source.check_parseable_len(log, "File")?;
         let orig_error_count = log.errors;
+        let log_mark = log.mark();
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
@@ -390,6 +412,7 @@ impl<'a> Parser<'a> {
             source,
             log: log_ptr,
             orig_error_count,
+            log_mark,
         })
     }
 }
@@ -821,8 +844,36 @@ fn lower_one_date_time_literal<'a>(
     Ok(())
 }
 
+/// One run of `_parse_attempt`.
+enum ParseAttempt<'a> {
+    Done(crate::Result<'a>),
+    /// A folded call was unsound (`visit/const_call.rs`). Boxed: this is rare, and `Options` is large.
+    RetryConstCalls(Box<(Options<'a>, crate::visit::const_call::ConstCallRetry<'a>)>),
+}
+
 impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
+        let (log, source, define, bump) = (self.log, self.source, self.define, self.bump);
+        let log_mark = self.log_mark;
+        let mut parser = self;
+        // A fold changes which code is dead, so the second attempt can fold a function the first did not visit.
+        for attempt in 0..3 {
+            let (mut options, mut retry) = match parser._parse_attempt::<TS>()? {
+                ParseAttempt::Done(result) => return Ok(result),
+                ParseAttempt::RetryConstCalls(retry) => *retry,
+            };
+            retry.disable |= attempt == 1;
+            options.const_call_retry = Some(retry);
+            // SAFETY: the pointee outlives `'a` (see `Parser::init`). The parser and the lexer of the attempt are dropped.
+            let log = unsafe { &mut *log.as_ptr() };
+            // The next attempt logs the same messages again.
+            log.rewind(log_mark);
+            parser = Parser::init(options, log, source, define, bump)?;
+        }
+        unreachable!("the third attempt folds nothing")
+    }
+
+    fn _parse_attempt<const TS: bool>(self) -> Result<ParseAttempt<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
         let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
@@ -841,6 +892,7 @@ impl<'a> Parser<'a> {
             define,
             bump,
             orig_error_count,
+            log_mark: _,
         } = self;
 
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
@@ -880,7 +932,7 @@ impl<'a> Parser<'a> {
         // Detect a leading "// @bun" pragma
         if p.options.features.dont_bundle_twice {
             if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {
-                return Ok(crate::Result::AlreadyBundled(pragma));
+                return Ok(ParseAttempt::Done(crate::Result::AlreadyBundled(pragma)));
             }
         }
 
@@ -905,7 +957,7 @@ impl<'a> Parser<'a> {
                     core::ptr::NonNull::from(&p.options).cast::<()>(),
                     p.options.jsx.parse && (!is_node_module || is_jsx_file),
                 ) {
-                    return Ok(crate::Result::Cached);
+                    return Ok(ParseAttempt::Done(crate::Result::Cached));
                 }
             }
         }
@@ -951,6 +1003,9 @@ impl<'a> Parser<'a> {
         if p.log().errors > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
+
+        p.enable_const_calls();
+        p.seed_const_call_imports(stmts);
 
         // A second guard dropped at end of `_parse` restores the previous action.
         let _visit_action_guard =
@@ -1211,6 +1266,13 @@ impl<'a> Parser<'a> {
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
             return Err(crate::Error::SyntaxError);
+        }
+
+        if let Some(retry) = p.const_call_retry() {
+            return Ok(ParseAttempt::RetryConstCalls(Box::new((
+                core::mem::take(&mut p.options),
+                retry,
+            ))));
         }
 
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
@@ -1671,13 +1733,18 @@ impl<'a> Parser<'a> {
                                     && !p.options.is_entry_point
                                 {
                                     part.symbol_uses = Default::default();
-                                    return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                                        import_records: p.import_records.move_to_baby_list(p.arena),
-                                        redirect_import_record_index: Some(id),
-                                        named_imports: core::mem::take(&mut *p.named_imports),
-                                        named_exports: core::mem::take(&mut p.named_exports),
-                                        ..js_ast::Ast::empty_in(p.arena)
-                                    })));
+                                    p.send_const_call_redirect(id);
+                                    return Ok(ParseAttempt::Done(crate::Result::Ast(Box::new(
+                                        js_ast::Ast {
+                                            import_records: p
+                                                .import_records
+                                                .move_to_baby_list(p.arena),
+                                            redirect_import_record_index: Some(id),
+                                            named_imports: core::mem::take(&mut *p.named_imports),
+                                            named_exports: core::mem::take(&mut p.named_exports),
+                                            ..js_ast::Ast::empty_in(p.arena)
+                                        },
+                                    ))));
                                 }
                             }
                         }
@@ -2533,7 +2600,8 @@ impl<'a> Parser<'a> {
             return Err(crate::Error::SyntaxError);
         }
 
-        Ok(crate::Result::Ast(ast))
+        p.send_const_call_exports(&ast);
+        Ok(ParseAttempt::Done(crate::Result::Ast(ast)))
     }
 
     // associated fn (was `&self` reading `self.lexer.source.contents`)

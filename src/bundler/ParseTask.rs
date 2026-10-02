@@ -2672,6 +2672,19 @@ pub mod parse_worker {
         opts.module_type = task.module_type;
         opts.is_entry_point = task.is_entry_point;
 
+        let const_call_lookup = if loader.is_javascript_like() && !task.source_index.is_runtime() {
+            // SAFETY: `transpiler` is the one of this worker. It and the bundle outlive the parse.
+            unsafe {
+                crate::const_call_lookup::Lookup::new(task.ctx(), transpiler, bump, task.path)
+            }
+        } else {
+            None
+        };
+        // SAFETY: `const_call_lookup` is dropped after `opts` is.
+        opts.const_call_lookup = const_call_lookup.as_ref().map(|lookup| unsafe {
+            bun_ptr::detach_lifetime_ref::<dyn js_parser::ConstCallLookup>(lookup)
+        });
+
         task.jsx.parse = loader.is_jsx();
 
         let mut unique_key_for_additional_file = FileLoaderHash {

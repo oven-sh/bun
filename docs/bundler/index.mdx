@@ -1362,6 +1362,83 @@ declare module "bun:bundle" {
 
 Ensure the file is included in your `tsconfig.json` (for example, `"include": ["src", "env.d.ts"]`). Now `feature()` only accepts those flags, and invalid strings like `feature("TYPO")` become type errors.
 
+### Constant function calls
+
+With [`minify.syntax`](#minify), the bundler replaces a call of a function that always returns `true`, `false`, `null` or `undefined` with that value. A small function can then wrap a build-time value from [`define`](#define) or [`feature()`](#features), and the code that the function guards is removed like the code behind the value itself.
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+function isDev() {
+  return process.env.NODE_ENV === "development";
+}
+
+if (isDev()) {
+  require("./devtools").install();
+}
+```
+
+```bash terminal icon="terminal"
+bun build ./app.ts --outdir ./out --minify-syntax --define process.env.NODE_ENV='"production"'
+```
+
+Here `isDev()` is `false`. The bundler removes the code in the branch, and `./devtools` is not part of the bundle.
+
+A function qualifies when all of these are true:
+
+- It is a function declaration. A `const` that holds an arrow function or a function expression also qualifies when only `const` declarations come before it in its scope. This is the rule for the value of a `const` too.
+- It is not `async` and it is not a generator.
+- Each parameter is a plain name with no default value.
+- The body is empty, or it has only `return` and `if` statements and always returns the same `true`, `false`, `null` or `undefined`. A number or a string is not replaced.
+- Nothing assigns to the function, and the file has no direct `eval`.
+
+`feature()` is only valid in a condition, so return a value from the condition: `return feature("PREMIUM") ? true : false`.
+
+The bundler replaces a call of the function by its name, below the declaration of the function. It keeps the arguments of the call when they have side effects: `isDev(track())` becomes `(track(), false)`.
+
+The bundler does not replace `new f()`, `f.call()`, `f?.()`, a tagged template, a call in the tag of a template, or a call in the argument of `import()`, `require()` or `require.resolve()`.
+
+#### Functions from other files
+
+The function can be an import:
+
+```ts title="env.ts" icon="/icons/typescript.svg"
+export function isDev() {
+  return process.env.NODE_ENV === "development";
+}
+```
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import { isDev } from "./env";
+
+if (isDev()) {
+  require("./devtools").install();
+}
+```
+
+The bundler does not resolve or parse `./devtools`. The build succeeds when `./devtools` does not exist.
+
+These rules apply to an import:
+
+- A condition in the file calls the import, with no argument or with literal arguments only. A condition is the test of `if` or `?:`, or an operand of `&&`, `||`, `??` or `!`. When a condition calls the import, the bundler also replaces the other calls of that import in the file.
+- The file that calls the import is not in `node_modules`.
+- The export is a top-level function declaration in an ES module. The bundler does not replace a call of `export const f = () => ...`, because the call can throw before the file of `f` runs. It does not replace a call of `export default function`, of a name from `export *`, or of a CommonJS export.
+- The bundler follows `export { isDev } from "./env"` and an import that a file exports again, up to 8 files. It follows a file that is only `module.exports = require("./env")`.
+- The function can return a call of a function that its own file imports, for example `export function isInternalDev() { return isDev() && INTERNAL; }`. The bundler does not look further than that second file.
+- The bundler does not replace `ns.isDev()` on `import * as ns`, or an import with an attribute (`with { type: ... }`).
+- The bundler does not replace a call when the filter of an `onResolve` plugin matches the specifier, or when the filter of an `onLoad` plugin matches the imported file. A native plugin with `onBeforeParse` turns the replacement off for imports.
+- The bundler does not replace a call of an import from a package that has both a `"main"` and a `"module"` file, because the bundler can use one or the other.
+- The bundler does not replace a call of an import in a build with server components.
+
+The thread that parses the file with the condition also parses the imported file, one time for each build, to find out what the function returns.
+
+#### When the bundler does not replace calls
+
+- The build does not use `minify.syntax`.
+- The file imports a [macro](/bundler/macros).
+- The React Compiler or React Fast Refresh reads the file.
+- The build is for the development server.
+- The build does not bundle (`--no-bundle`, `Bun.Transpiler`, `bun run`).
+- The environment variable `BUN_FEATURE_FLAG_DISABLE_CONST_CALL_FOLDING=1` is set. Use it to find out if this replacement causes a difference in the output.
+
 ### optimizeImports
 
 Skip parsing unused submodules of barrel files (re-export index files). When you import only a few named exports from a large library, normally the bundler parses every file the barrel re-exports. With `optimizeImports`, the bundler parses only the submodules you use.

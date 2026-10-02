@@ -1725,6 +1725,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     // parser.log and lexer.log both store `NonNull<Log>`; copy the lexer's
     // pointer so they share one provenance chain. See `Parser::init` for the
     // same pattern.
+    let log_mark = temp_log.mark();
     let lexer = js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump);
     let log_ptr = lexer.log;
     let mut parser = Parser {
@@ -1735,6 +1736,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         source,
         log: log_ptr,
         orig_error_count: 0,
+        log_mark,
     };
     let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,

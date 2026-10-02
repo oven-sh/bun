@@ -131,6 +131,33 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The graph has every file a test can load, also when a function always returns the same value.
+  test("change to a dependency behind a call of a constant function selects the importing test", async () => {
+    using dir = tempDir("test-changed-constant-call", {
+      ...fixture,
+      "src/flags.ts": `export function isOn() { return false; }\n`,
+      "src/guarded.ts": `export const guarded = 1;\n`,
+      "d.test.ts": [
+        `import { test, expect } from "bun:test";`,
+        `import { isOn } from "./src/flags";`,
+        `function isLocal() { return false; }`,
+        `test("d", async () => {`,
+        `  if (isOn()) await import("./src/guarded");`,
+        `  if (isLocal()) require("./src/guarded");`,
+        `  expect(isOn()).toBe(false);`,
+        `});`,
+        ``,
+      ].join("\n"),
+    });
+    initRepo(String(dir));
+
+    appendFileSync(join(String(dir), "src", "guarded.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, [...names, "d.test.ts"])).toEqual(["d.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("change to a file no test imports runs nothing", async () => {
     using dir = tempDir("test-changed-unrelated", fixture);
     initRepo(String(dir));

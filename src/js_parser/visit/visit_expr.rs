@@ -272,6 +272,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || in_.assign_target == js_ast::AssignTarget::None
                     {
                         p.ignore_usage(e_.ref_);
+                        // `--define G=f` makes `G = x` an assignment to `f`.
+                        if in_.assign_target != js_ast::AssignTarget::None {
+                            if let Data::EIdentifier(target) = newvalue.data {
+                                p.record_assignment(target.ref_);
+                            }
+                        }
                         *e = newvalue;
                         return;
                     }
@@ -660,7 +666,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if let Some(tag) = e_.tag.as_mut() {
             p.template_tag = tag.data;
+            let prev_in_template_tag = core::mem::replace(&mut p.in_template_tag, true);
             p.visit_expr(tag);
+            p.in_template_tag = prev_in_template_tag;
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -1826,7 +1834,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
 
+        let prev_in_import_specifier = core::mem::replace(&mut p.in_import_specifier, true);
         p.visit_expr(&mut e_.expr);
+        p.in_import_specifier = prev_in_import_specifier;
         p.visit_expr(&mut e_.options);
 
         // Already transposed (this is a re-visit, e.g. after the minifier
@@ -1872,9 +1882,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
-        p.call_target = e_.target.data;
+        let prev_call_target = core::mem::replace(&mut p.call_target, e_.target.data);
 
-        p.then_catch_chain = ThenCatchChain {
+        let then_catch_chain = ThenCatchChain {
             next_target: e_.target.data,
             has_multiple_args: e_.args.len_u32() >= 2,
             has_catch: matches!(
@@ -1882,6 +1892,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Data::ECall(nt) if core::ptr::eq(&raw const *e_, &raw const *nt)
             ) && p.then_catch_chain.has_catch,
         };
+        let prev_then_catch_chain = core::mem::replace(&mut p.then_catch_chain, then_catch_chain);
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
         p.visit_expr_in_out(
@@ -1919,6 +1930,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         == b"eval"
                 {
                     e_.is_direct_eval = true;
+                    p.const_call_direct_eval();
 
                     // Pessimistically assume that if this looks like a CommonJS module
                     // (e.g. no "export" keywords), a direct call to "eval" means that
@@ -2131,9 +2143,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
+            let prev_in_import_specifier = p.in_import_specifier;
+            if matches!(
+                e_.target.data,
+                Data::ERequireCallTarget | Data::ERequireResolveCallTarget
+            ) {
+                p.in_import_specifier = true;
+            }
             for arg in e_.args.slice_mut() {
                 p.visit_expr(arg);
             }
+            p.in_import_specifier = prev_in_import_specifier;
 
             // Restore saved state.
             p.options.ignore_dce_annotations = old_ce;
@@ -2155,6 +2175,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // to avoid stack memory usage from copying values back and forth.
         if p.bundler_feature_flag_ref.is_valid() {
             if let Some(result) = Self::maybe_replace_bundler_feature_call(p, &mut *e_, expr.loc) {
+                *e = result;
+                return;
+            }
+        }
+
+        if p.const_calls.is_some() {
+            if let Some(result) = p.fold_const_call(&e_, expr.loc) {
+                // The visitor state is the same as after a visit of the value.
+                p.call_target = prev_call_target;
+                p.then_catch_chain = prev_then_catch_chain;
                 *e = result;
                 return;
             }

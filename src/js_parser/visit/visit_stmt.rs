@@ -921,6 +921,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let original_name: &'a [u8] = name_symbol.original_name.slice();
         let remove_overwritten = name_symbol.remove_overwritten_function_declaration();
 
+        // An export of a namespace or of a client module is rebound below.
+        if p.const_calls_enabled
+            && !mark_as_dead
+            && !remove_overwritten
+            && !(data.func.flags.contains(flags::Function::IsExport)
+                && (p.enclosing_namespace_arg_ref.is_some()
+                    || p.options.features.server_components.wraps_exports()))
+        {
+            p.note_const_call_function(&data.func);
+        }
+
         // Handle exporting this function from a namespace
         if data.func.flags.contains(flags::Function::IsExport)
             && p.enclosing_namespace_arg_ref.is_some()

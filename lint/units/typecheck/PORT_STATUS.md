@@ -539,6 +539,7 @@ other steps that the stand-ins replace (API.md, same heading).
 | --- | --- | --- | --- | --- |
 | `checker/checker.go` 2182-2200 (`getSymbol`) | N-RESOLVE | `checker/c04_name_resolution_hooks.rs` | run (1 of 1) | |
 | `checker/checker.go` 13991-14050 (`getResolvedSymbol` to `getCannotFindNameDiagnosticForName`) | N-RESOLVE | `checker/c21_resolved_symbols_diagnostics.rs` | run (4 of 4) | |
+| `checker/checker.go` 14052-14168 (`GetDiagnostics` to `hasParseDiagnostics`, 18 functions) | D-SINK | `checker/c21_resolved_symbols_diagnostics.rs` (commit `f49ea57437`), with `ProgramFiles` (the files behind the view that the two collections compare through) and `DiagnosticsCollectionKind` (the collection that `getDiagnostics` is given) | translated (the paragraph "The sink of `c21`" under the table) | the `ctx` of `GetDiagnostics`, `GetSuggestionDiagnostics` and `getDiagnostics`: a check is not canceled |
 | `checker/checker.go` 14170-14531 (`newSymbol` to `resolveSymbolEx`) | S-MERGE | `checker/c22_symbols_merge.rs` | run (26 of 26) | |
 | `checker/checker.go` 14533-15193 (`getTargetOfImportEqualsDeclaration` to `markSymbolOfAliasDeclarationIfTypeOnly`) | A-ALIAS | `checker/c23_alias_targets.rs` | run (29 of 31: not `getTargetOfBinaryExpression`, `getTargetOfAccessExpression`) | |
 | `checker/checker.go` 15195-15828 (`resolveExternalModuleName` to `cloneTypeAsModuleType`) | M-MODULE | `checker/c24_external_modules.rs` | run (20 of 22: not `createModeMismatchDetails`, `isCommonJSRequire`) | |
@@ -833,6 +834,82 @@ function of `printer/` has its name, underscores, case and the suffix `_exported
 
 ## Checker, evaluator and module specifiers (`checker`, `evaluator`, `modulespecifiers`): layer 7 of round 2
 
+The three directories are one layer, because they name each other: `checker/types.rs` 6 and
+`c39_declared_types_enums.rs` 15 import `crate::evaluator`, `c08_check_statements.rs` 18,
+`c47_promised_mapped_template.rs` 9 and `flow.rs` 38 import a function of it, `checker/nodebuilderimpl.rs` 43 imports
+`crate::modulespecifiers`, `evaluator/evaluator.rs` 3 imports `crate::checker::LiteralValue`, and
+`modulespecifiers/specifiers.rs` 3 imports `crate::checker::Checker`. No file of layers 1 to 6 names one of the three.
+
+`lib.rs` declares them since `f49ea57437`: the lines `pub mod checker;`, `pub mod evaluator;` and
+`pub mod modulespecifiers;`, each at its place in the alphabet. The commit was written by the job that commits the
+worktree ("typecheck: compile the port, work in progress"): it holds the three lines, the new glob list of
+`checker/mod.rs` (next paragraph) and `c21_resolved_symbols_diagnostics.rs` of another step.
+`src/typecheck/Cargo.toml` did not change: the three directories name `bun_core` and `bun_collections` only. No
+`cargo check` was run with that commit, and its tree cannot compile yet: `evaluator/` has `evaluator.rs` (264 lines)
+and no `mod.rs`, and 14 of the 15 modules of the first table below have no file (`c41_new_types.rs` is `2f2a7071b1`).
+
+`checker/mod.rs` declares one module per upstream file and re-exports them as `crate::checker`, which is how 58 files
+(56 of `checker/`, `evaluator.rs`, `specifiers.rs`) import the names of the package. Until `f49ea57437` it did so with
+one braced `pub use` of 71 globs under `#[allow(unused_imports)]`: 21 of the globs named a file that holds only
+methods of the checker and private helpers, and such a glob re-exports nothing. The goal of round 2 gives `lib.rs`
+one attribute and switches no other lint off, and the attribute did not cover the second error of an empty glob
+(below). Now `mod.rs` has one line `pub use m::*;` for a module that exports a name, as the other directories of the
+crate write it: 46 lines for the 72 modules.
+
+- 35 modules that have a `pub` item at column 0 in the tree of `c73680fe1d`: `c01`, `c02`, `c06`, `c09`, `c10`, `c12`,
+  `c13`, `c22`, `c23`, `c24`, `c26`, `c28`, `c33` to `c38`, `c40`, `c42`, `c43`, `c45`, `c46`, `flow`, `jsdoc`, `jsx`,
+  `links`, `mapper`, `nodebuilder`, `nodebuilderimpl`, `nodebuilderscopes`, `relater`, `symbolaccessibility`,
+  `symboltracker`, `types`.
+- 11 modules whose names other files import or, by upstream, will import: `c30`, `c44`, `c50`, `emitresolver`,
+  `grammarchecks`, `inference` and `utilities` (no file at `c73680fe1d`; the imports are in the first table below),
+  `c21` (`ProgramFiles`, which `c22_symbols_merge.rs` 8 imports and `f49ea57437` defines), `c47`
+  (`get_mapped_type_modifiers` and `is_partial_mapped_type`, imported by `c36`, `nodebuilderimpl.rs` and
+  `relater.rs`), `c49` (upstream's `isSpreadArgument` of 30235 is called from the ranges of `c15` and `c48`) and `c51`
+  (`isZeroBigInt` of 31259 is called from the range of `c47`).
+- No line for the other 26. 18 are the files of `c73680fe1d` without a `pub` item that nothing imports from: `c04`,
+  `c05`, `c07`, `c08`, `c11`, `c15`, `c17`, `c20`, `c25`, `c27`, `c29`, `c31`, `c39`, `c48`, `nodecopy`, `printer`,
+  `pseudotypenodebuilder`, `stringer_generated`. 8 had no file: `c03`, `c14`, `c16`, `c18`, `c19`, `c32`, `c41`,
+  `c52`. No file of the tree imports a name of their ranges, and no other range of `checker.go` and no other file of
+  the package uses a function, type or constant that upstream declares in them
+  (`round2-layer7-checker/cross.py`, which reads upstream only). `c41_new_types.rs` of `2f2a7071b1` holds methods only.
+  The look-ahead counts the import `is_in_ambient_or_type_node` of `c11_check_variables_decorators.rs` 17 for `c18` as
+  well, by its name: the call of line 141 is the free function of `utilities.go` 1058, as `checker.go` 5947 has it,
+  and the method of 11328 is the one of `c18`.
+
+The list follows the files, so it changes with them. A module of the 26 that gets a `pub` item at column 0
+(`new_checker` of 908, `PredicateSemantics` of 12968, a free function of `c14` or `c18`) compiles without a line, and
+its names are then not in `crate::checker`; a module of the 46 that has no `pub` item is an error.
+`python3 round2-layer7-checker/globs.py` reads `mod.rs` and the files and prints both cases (D and A), and a `pub`
+name of two globbed modules (C). At `f49ea57437` it prints `c47`, `c49` and `c51` under A (the functions named above
+are not in those files yet), nothing under C and D, and seven globs of modules without a file.
+
+What the lints of the workspace make of a glob was asked of `rustc` alone (the toolchain of the worktree,
+1.100.0-nightly 574ff7d98), with `round2-layer7-checker/globprobe.rs` and variants of it, files of about 25 lines that
+stand alone, `#![deny(warnings)]` and `unreachable_pub` denied:
+
+- `pub use m::*;` of a module without a `pub` item: `unused import` and `unreachable pub item`. With the braced form
+  under `#[allow(unused_imports)]`: `unreachable pub item` alone.
+- Of a module whose items are `pub(crate)`: `glob import doesn't reexport anything with visibility pub` and
+  `unused import`.
+- A `pub` name of two globbed modules: `ambiguous glob re-exports`.
+- `unused import` is reported beside E0432, E0308 and E0599 of other modules; `unreachable pub item` is not.
+- A `mod` line without a file is E0583, and rustc stops there: it reports no error of name resolution or of types
+  beside it. So a survey of this layer shows the `file not found for module` lines, and nothing of the files that
+  exist, until each of the 15 modules and `evaluator/mod.rs` has its file.
+
+What was checked when the lines were written:
+
+- `rustfmt --check --edition 2024 --config skip_children=true` on `lib.rs`, `checker/mod.rs` and
+  `modulespecifiers/mod.rs`: exit 0 each.
+- `python3 /workspace/notes/lint/tools/undeclared.py src/typecheck` on the tree of `f49ea57437`: 180 of 181 files
+  are reached. The one outside is `evaluator/evaluator.rs`.
+- Not looked at for this step: any body of a file of the three directories against upstream, and clippy.
+
+`round2-layer7-checker/ranges.py` counts by name, as the look-ahead does: for a module, the functions of its upstream
+range that have a `fn` of their name in its file, only in another file of `checker/`, or nowhere. On the tree of
+`f49ea57437` it gives the numbers of the two tables below but for `c41` and `c21`, whose functions `2f2a7071b1` and
+that commit bring (27 of 27 and 22 of 22 in the file).
+
 ### The 15 modules of `checker/mod.rs` that have no file
 
 `checker/mod.rs` declares 72 modules. In the tree of `c73680fe1d` (the survey of round 8) 57 of them have a file
@@ -858,7 +935,7 @@ compared, and a call counts when it is written `self.NAME(` or `c.NAME(` in a fi
 | `checker/checker.go` 12378-13233 (`checkAssertion` to `checkReferenceExpression`, 34 functions, and `PredicateSemantics` of 12968) | `checker/c19_assertions_binary_operators.rs` | not started | 4 names called at 5 sites; by name elsewhere: `getExactOptionalUnassignableProperties` 13208, `isExactOptionalPropertyMismatch` 13217 (`relater.rs`) |
 | `checker/checker.go` 17471-17775 (`CacheHashKey` to `isUnconstrainedTypeParameter`, 30 functions) | `checker/c30_type_keys.rs` | not started | 11 names imported at 22 sites (`CacheHashKey` by 6 files, `get_type_list_key` by 5, `KeyBuilder`, the keys of aliases, unions, intersections, tuples, instantiations, templates and relations) |
 | `checker/checker.go` 18861-18958 (`pushTypeResolution` to `reportCircularityError`, 5 functions) | `checker/c32_type_resolution.rs` | not started | 4 names called at 27 sites of 9 files |
-| `checker/checker.go` 25126-25394 (`newType` to `newIndexInfo`, 27 functions) | `checker/c41_new_types.rs` | translated (`2f2a7071b1`: the 27 functions, in upstream order; no cargo run has compiled the file) | 18 names called at 106 sites of 22 files; by name elsewhere: `newType` 25126 (`c02_program_checker.rs`, where it is a helper of the test module: the method of the checker is in `c41_new_types.rs`). Not ported: the tracer call of `newType` (25134) |
+| `checker/checker.go` 25126-25394 (`newType` to `newIndexInfo`, 27 functions) | `checker/c41_new_types.rs` | translated (`2f2a7071b1`: the 27 functions, in upstream order; cargo does not compile the file in the tree of that commit, whose `lib.rs` does not declare `checker`) | 18 names called at 106 sites of 22 files; by name elsewhere: `newType` 25126 (`c02_program_checker.rs`, where it is a helper of the test module: the method of the checker is in `c41_new_types.rs`). Not ported: the tracer call of `newType` (25134) |
 | `checker/checker.go` 26803-27549 (`getIndexType` to `getOrCreateSubstitutionType`, 38 functions) | `checker/c44_index_indexed_access.rs` | not started | 19 names called at 79 sites of 20 files; `is_invalid_computed_property_name` imported by `c46_mark_references.rs` |
 | `checker/checker.go` 30674-31095 (`getTypeOfPropertyOfContextualType` to `getInferenceContext`, 28 functions, and `ObjectLiteralDiscriminator` of 30836) | `checker/c50_contextual_properties_inference_context.rs` | not started | 8 names called at 15 sites; `ObjectLiteralDiscriminator` imported by `jsx.rs`; by name elsewhere: its methods `len`, `name`, `matches` 30842-30853 (`relater.rs`, `mapper.rs`) |
 | `checker/checker.go` 31704-32296 (`GetSymbolAtLocation` to `GetAliasedSymbol`, 16 functions) | `checker/c52_symbol_at_location.rs` | not started | 5 names called at 16 sites (`get_symbol_at_location` 8, `get_type_of_node` 4) |

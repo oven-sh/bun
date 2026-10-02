@@ -3231,3 +3231,165 @@ callers of the tree write them:
   `report_nonexistent_property(prop_node, containing_type, is_unchecked_js)` (11620),
   `check_property_accessibility(node, is_super, writing, t, prop) -> bool` (11844).
 - `c45`: `mark_property_as_referenced(prop, node_for_check_write_only, is_self_type_access)` (27829).
+
+## Checker: the emit resolver (`checker/emitresolver.rs`)
+
+Commits `48da5c6a89`, `e0fe9fcd4a` and `cff856f6be` (the file) and `04848b7d4f` (`c02_program_checker.rs`), written
+by the job that commits the worktree. The file holds `checker/emitresolver.go` whole and in upstream order, 65
+functions, 2,009 lines. After them come the hook `try_get_element_access_expression_name` of the reference resolver
+and `Checker::get_constant_value` of `services.go` 859, which `GetConstantValue` calls and which no module holds
+(`services.go` has none). Eight callees are stand-ins: the entries of the node builder of a request (below).
+PORT_STATUS.md has the row.
+
+NOT compiled by cargo when this was written: `checker/mod.rs` still names `c18`, which has no file. "Verified" below
+says what was checked instead.
+
+### How a caller writes the calls
+
+- `EmitResolver` is a value without fields (`#[derive(Clone, Copy, Default)] pub struct EmitResolver;`), as
+  `c52_symbol_at_location.rs` 792, `symbolaccessibility.rs` 89 and `nodebuilderimpl.rs` 3151 and 3361 name it. A
+  method takes `self` by value and the checker as its first argument:
+  `EmitResolver.is_entity_name_visible(c, entity_name, enclosing_declaration, false)`.
+- What the resolver keeps is the field `emit_resolver: EmitResolverState` of the checker: `jsx_links`,
+  `declaration_links` and `declaration_file_links`, each a `LinkStore<NodeId, _>` of `JSXLinks { import_ref }`,
+  `DeclarationLinks { is_visible: Tristate }` and `DeclarationFileLinks { aliases_marked }`.
+- The five pairs of an exported and an unexported function with one name in snake_case are named by the contract
+  (`node-table-id-contract/bottom-up/data/snake-collisions.txt` 90-94): `is_optional_parameter_exported(c, node)` and
+  `is_optional_parameter(c, node)`, `is_declaration_visible_exported` and `is_declaration_visible`,
+  `is_entity_name_visible_exported(c, entity_name, enclosing_declaration)` and
+  `is_entity_name_visible(c, entity_name, enclosing_declaration, should_compute_alias_to_make_visible)`,
+  `requires_adding_implicit_undefined_exported` and `requires_adding_implicit_undefined(c, declaration, symbol,
+  enclosing_declaration)`, `is_symbol_accessible_exported` and `is_symbol_accessible`.
+- A node, a symbol and a type are ids, nil for upstream's nil. A file is the id of its SourceFile node
+  (`precalculate_declaration_emit_visibility(c, file)`, `mark_linked_references_recursively(c, file)`, and the result
+  of `get_external_module_file_from_declaration(c, declaration)`).
+- `has_visible_declarations(c, symbol, should_compute_alias_to_make_visible) -> Option<SymbolAccessibilityResult>`:
+  `None` is upstream's nil.
+- `get_enum_member_value(c, node) -> evaluator::Result<'a>`, `get_constant_value(c, node) -> LiteralValue<'a>`
+  (upstream's `any`: `Nil`, a string or a number), `get_properties_of_container_function(c, node) ->
+  List<'a, SymbolId>` (never nil), `get_referenced_value_declarations(c, node) -> Vec<NodeId>`,
+  `get_element_access_expression_name(c, expression) -> Text<'a>`, `get_resolution_mode_override(c, node) ->
+  ResolutionMode`, `get_effective_declaration_flags(c, node, flags) -> ModifierFlags`.
+- The seven functions that make nodes take the emit context and the tracker of the caller by reference:
+  `create_type_of_declaration(c, emit_context: &mut EmitContext, declaration, enclosing_declaration, flags: Flags,
+  internal_flags: InternalFlags, tracker: &mut dyn SymbolTracker) -> NodeId`, and the same for
+  `create_return_type_of_signature_declaration`, `create_type_of_expression`, `try_js_type_node_to_type_node`,
+  `create_type_parameters_of_signature_declaration` and `create_late_bound_index_signatures` (both `-> Vec<NodeId>`),
+  and `create_literal_const_value(c, emit_context, node, tracker) -> NodeId`.
+- `get_type_reference_serialization_kind(c, type_name, location) -> TypeReferenceSerializationKind`: the enum of
+  `printer/emitresolver.go` 28-68 is declared in this file (`Unknown` is its default) and is `crate::checker::
+  TypeReferenceSerializationKind`.
+- `get_reference_resolver(compiler_options) -> impl ReferenceResolver<'a, Checker<'a>>`: the caller gives
+  `c.compiler_options`, and the checker is the host of each call of the resolver.
+- Free functions, exported through `crate::checker`: `is_common_js_module_exports(a, node)`,
+  `get_meaning_of_entity_name_reference(a, entity_name) -> SymbolFlags`, `noop_add_visible_alias(declaration,
+  aliasing_statement)`, `is_const_enum_or_const_enum_only_module(a, s)` (what `c46_mark_references.rs` imports) and
+  `new_emit_resolver(checker)`.
+- `Checker::get_constant_value(node) -> LiteralValue<'a>` is a method of the checker.
+
+### Differences from upstream
+
+- No lock: `checkerMu` has no field (`c02_program_checker.rs` 730). The exported function of a pair calls the other,
+  and `RequiresAddingImplicitUndefinedUnsafe`, `IsExpandoFunctionDeclarationUnsafe` and
+  `GetReferencedValueDeclarationUnsafe` keep their names and do what the locking ones do.
+- `newEmitResolver` answers the value and nothing calls it: `Checker::get_emit_resolver` of `c52` answers the value
+  itself. The two function values that it binds (`isValueAliasDeclaration`, `aliasMarkingVisitor`) are the methods
+  `is_value_alias_declaration_worker` and `alias_marking_visitor_worker`, called in a closure where upstream passes
+  the value.
+- The link stores are in the checker, where upstream has them in the resolver that the checker holds. The record of
+  the checker got the field `emit_resolver` at the place of upstream's `emitResolver`; `emitResolverOnce` has no field.
+- `getReferenceResolver`: the resolver holds the options and function pointers only, so it is made at each call, as
+  `c03_init.rs` makes the name resolver. Six hooks are methods of the checker. `get_merged_symbol` and
+  `get_export_symbol_of_value_symbol_if_exported` take `&self`, so their hooks are closures, and
+  `tryGetElementAccessExpressionName` answers a `Cow`, so its hook (the private function at the end of the file)
+  copies a name that the checker built into the texts of the checker.
+- The node builder of a request, `NewNodeBuilder(r.checker, emitContext)`: the node builder of the tree is the one
+  state `node_builder` of the checker over its own emit context (`nodebuilder.rs` 1), and `nodebuilder.rs` has four of
+  upstream's entries. So `RequestNodeBuilder` (private to the file) has the eight entries that the resolver calls as
+  stand-ins with upstream's parameters: each records `NodeBuilder.<Entry>` and answers nil (an empty list for
+  `SerializeTypeParametersForSignature`). What the callers make themselves is ported: the `any` keyword for a node
+  that is not of the parse tree, the `true` and `false` keywords and the literal of `CreateLiteralConstValue`, the
+  modifiers and the property declarations of `CreateLateBoundIndexSignatures`. After the stand-in, an enum literal
+  type gives its literal in `CreateLiteralConstValue` where upstream gives the expression of the enum member, and
+  `CreateLateBoundIndexSignatures` gives property declarations without a type node and no index signature.
+- The tracker is `&mut dyn SymbolTracker`: the caller keeps it, and `CreateLateBoundIndexSignatures` uses it for
+  every component. The entries of `nodebuilder.rs` take `Option<Box<dyn SymbolTracker>>`.
+- `core.IfElse` is an `if` (two places in `CreateLateBoundIndexSignatures`): the node of the `static` modifier is
+  made for the static list only, and no modifier list is made for no modifier.
+- `hasVisibleDeclarations`: `aliasesToMakeVisibleSet` is a list of pairs in the order of the first entry of a
+  declaration, where upstream collects the values of a map, in no order. The closure `addVisibleAlias` is a nested
+  function that takes the checker, the flag and the list, and calls `noop_add_visible_alias` when no alias is computed.
+- `markLinkedAliases`: `visited` is a `Set<u64>` of the ids that `get_symbol_id` gives.
+- Panics are faults: 601 (`Node cannot possibly require adding undefined`) answers false, 1046 (`unhandled literal
+  const value kind`) answers nil. A read through a nil node reads the nil node (`isDeclarationVisible` tests the flags
+  before nil upstream).
+- Stack tests, where Go's stack grows: `is_declaration_visible` (it climbs the parents with
+  `determine_if_declaration_is_visible`), `alias_marking_visitor_worker` and the nested `visit` of
+  `MarkLinkedReferencesRecursively` (both walk a whole file). Each records `StackLimit` and answers false.
+- `r.checker.GetEffectiveDeclarationFlags` and `r.checker.GetResolutionModeOverride` are wrappers of `exports.go`,
+  which has no module: the calls go to the methods that they wrap. `r.checker.IsSymbolAccessible` is
+  `is_symbol_accessible` of `symbolaccessibility.rs`.
+- `var _ printer.EmitResolver = (*EmitResolver)(nil)`: the printer has no such trait (`printer/emitresolver.rs` 1).
+- The statement `r.checker.mappedSymbolLinks.Has(symbol)` of 596, whose result upstream drops, is kept.
+- `CreateLiteralConstValue`: the identifier `Infinity` is made before the test of the sign, and the text of a number
+  is made once.
+- Comments that ask a question of the future (72, 243, 686, 946, 958, 994, 1094) are dropped or say what upstream
+  asks.
+
+### Verified
+
+Cargo has not compiled the file, and nothing ran a function of it. What was checked:
+
+- `sh round2-layer7-checker/emitresolver-probe.sh`: exit 0, "probe ok". It runs `rustc` and `clippy-driver` alone, no
+  cargo, and `rustfmt --check --edition 2024`. `emitresolver-probe-gen.py` writes the probe: this file by `#[path]`,
+  `ast/{flags,ids,checkflags,symbolflags,modifierflags,nodeflags,tokenflags,kind_generated}.rs`,
+  `core/{arena,linkstore,tristate,tristate_stringer_generated}.rs`, `collections/set.rs`, `jsnum/jsnum.rs`,
+  `nodebuilder/types.rs` and `printer/emitresolver.rs` by `#[path]`, and stand-ins for every other name. The probe
+  denies warnings, unused imports, variables, `mut` and assignments and `unreachable_pub`; clippy runs with the clippy
+  table of the workspace, `clippy::all` and the repository's `clippy.toml`. The script reads the signature of a
+  stand-in from the file of the tree that defines the function at the time of the run, and the body of a stand-in
+  never returns: 25 methods of `Ast` and 46 free functions of `ast/`, 10 default methods of the two factory traits, 59
+  methods of the checker from 28 files and 8 free functions of `checker/`, `parse_node`, `new_node_factory`,
+  `new_reference_resolver`, `should_preserve_const_enums` and `Number::string`. Copied from their files as text: `Text`,
+  `GoIndex` and `List`, `some` and `every`, the `Symbol` record and five node records, `JSDeclarationKind`, the trait
+  `ReferenceResolver` and its hooks, `evaluator::Result` and `new_result`, and from `checker/types.rs` the flag and id
+  macros, `Records`, seven records, `LiteralValue`, `TypeFlags`, `ObjectFlags`, and `ReferenceHint` of `c01_data.rs`.
+  The types of the 16 fields of the checker that the file names are read from `c02_program_checker.rs`. Written by
+  hand, and checked against the text of the tree at each run (`need` in the script): `MessageId`, `ModuleKind`,
+  `CompilerOptions`, `PseudoBigInt`, the view `SourceFile` with its one member, `NodeSink`, `NodeUpdate` and the two
+  blanket impls, `EmitContext`, the factory of the printer, `Type` and `Signature` with the members that the file
+  reads, `as_literal_type`, `StackCheck`, `ListItem`, `Fallback`. `Ast` and `Checker` are invariant in their lifetime
+  there, as in the tree. A copy of the file with a `bool` bound to a `u32` gave E0308, and a copy with a `Vec` passed
+  by value and `n = n + 1` gave the two clippy findings, so the probe sees the file.
+- `python3 round2-layer7-checker/emitresolver-callseq.py`: per function, the calls of methods of the checker, of
+  methods of the resolver and of free functions are upstream's by name and number in 58 of the 65 functions. The
+  seven others differ where a function value of upstream is a call in a closure here (`alias_marking_visitor_worker`
+  twice, `is_value_alias_declaration_worker`, `visit`, `add_visible_alias`, the two `&self` hooks) and in
+  `create_late_bound_index_signatures`, where upstream's loop variable `c` is a node and `core.IfElse` is an `if`. The
+  script compares names and counts, not arguments and not order: each function was also read against upstream
+  statement by statement.
+- `python3 round2-layer7-checker/ranges.py emitresolver`: 65 of 65 functions have a `fn` of their name in the file.
+  `python3 round2-layer7-checker/globs.py --names`: nothing under A, C and F, and no name of the 351 that files import
+  through `crate::checker` is without a globbed module.
+- The four places where other files use the resolver (`symbolaccessibility.rs` 89, `nodebuilderimpl.rs` 3151 and 3361,
+  `c52_symbol_at_location.rs` 791) and the import of `c46_mark_references.rs` 24 with its three calls were read
+  against the signatures.
+- No two comment lines are adjacent; no `unwrap`, `expect`, `panic`, `todo`, `unimplemented`, `unreachable` or
+  `unsafe`; every `[...]` indexes a link store or a store of records of the checker.
+- Not checked: the real crate through cargo, the one callee of the next section, the real `Ast`, `SourceFile`,
+  `EmitContext`, factory and `Checker` (the probe has stand-ins for them), and any result against upstream's baselines.
+
+### What this file expects and the tree does not have
+
+At `cff856f6be`:
+
+- `c18` (no file): `get_this_container(node, include_arrow_functions, include_class_computed_property_name) ->
+  NodeId` (12279; the method of the checker, as `c04_name_resolution_hooks.rs` 98 and `c52_symbol_at_location.rs` 125
+  and 478 call it).
+- `nodebuilder.rs`: a node builder over the emit context of a caller (`NewNodeBuilder`, 279) and seven entries of
+  `nodebuilder.go` that it does not have (`IndexInfoToIndexSignatureDeclaration` 111,
+  `SerializeReturnTypeForSignature` 117, `SerializeTypeParametersForSignature` 126, `SerializeTypeForDeclaration` 134,
+  `SerializeTypeForExpression` 140, `SymbolToExpression` 231, `TryJSTypeNodeToTypeNode` 272). The functions of
+  `NodeBuilderImpl` that those entries call are in the tree but for `serializeTypeForExpression`,
+  `symbolToTypeParameterDeclarations` and `tryJSTypeNodeToTypeNode`. Until then the eight entries of
+  `RequestNodeBuilder` are stand-ins.

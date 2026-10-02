@@ -9,6 +9,7 @@ pub mod importer;
 pub mod internal;
 pub mod jsnum;
 pub mod lowering;
+pub mod module;
 pub mod scanner;
 pub mod stringutil;
 pub mod tspath;

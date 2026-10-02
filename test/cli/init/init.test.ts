@@ -501,4 +501,48 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
   });
+
+  // The filesystem probe for Cursor runs only on Windows. It looks for the
+  // per-user install at %LOCALAPPDATA%\Programs\Cursor\Cursor.exe.
+  // https://github.com/oven-sh/bun/issues/44416
+  test.skipIf(!isWindows)("bun init detects a per-user Cursor install through LOCALAPPDATA", async () => {
+    const cursorRule = path.join(".cursor", "rules", "use-bun-instead-of-node-vite-npm-pnpm.mdc");
+    const probeEnv = {
+      ...bunEnv,
+      BUN_AGENT_RULE_DISABLED: undefined,
+      CURSOR_AGENT_RULE_DISABLED: undefined,
+      CURSOR_TRACE_ID: undefined,
+      // A plain Windows session sets USERNAME, not USER. The probe must not need it.
+      USER: undefined,
+    };
+
+    await using installed = tempDir("bun-init-cursor-localappdata", {
+      "Programs/Cursor/Cursor.exe": "",
+    });
+    await using withCursor = tempDir("bun-init-cursor-found", {});
+    await using withCursorProc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: withCursor,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...probeEnv, LOCALAPPDATA: String(installed) },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      withCursorProc.stdout.text(),
+      withCursorProc.stderr.text(),
+      withCursorProc.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(fs.existsSync(path.join(withCursor, cursorRule))).toBe(true);
+
+    await using empty = tempDir("bun-init-cursor-localappdata-empty", {});
+    await using withoutCursor = tempDir("bun-init-cursor-missing", {});
+    await using withoutCursorProc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: withoutCursor,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...probeEnv, LOCALAPPDATA: String(empty) },
+    });
+    expect(await withoutCursorProc.exited).toBe(0);
+    expect(fs.existsSync(path.join(withoutCursor, ".cursor"))).toBe(false);
+  });
 });

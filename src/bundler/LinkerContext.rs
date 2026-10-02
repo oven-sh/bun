@@ -259,6 +259,11 @@ impl<'a> LinkerContext<'a> {
             .get()
     }
 
+    /// With an output directory and no executable to assemble, the linker writes the output files itself.
+    pub(crate) fn writes_output_files_to_disk(&self) -> bool {
+        !self.resolver().opts.output_dir.is_empty() && !self.options.compile_mode.is_executable()
+    }
+
     /// Mutable projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
     /// (`enqueue_task_concurrent*`, `tick`). Centralises the raw `NonNull`
     /// deref so the three callers (`BundleV2::any_loop_mut`, `ParseTask` /
@@ -1455,6 +1460,7 @@ pub struct LinkerOptions {
     pub(crate) metafile_json_path: &'static [u8],
     /// Path to write markdown metafile (for Bun.build API)
     pub(crate) metafile_markdown_path: &'static [u8],
+    pub(crate) caller_output_paths: &'static [Box<[u8]>],
 
     pub(crate) mode: LinkerOptionsMode,
 
@@ -1502,6 +1508,7 @@ impl Default for LinkerOptions {
             metafile: false,
             metafile_json_path: b"",
             metafile_markdown_path: b"",
+            caller_output_paths: &[],
             mode: LinkerOptionsMode::Bundle,
             public_path: b"",
         }

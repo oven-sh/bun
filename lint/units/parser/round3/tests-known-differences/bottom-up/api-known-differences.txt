@@ -1,0 +1,534 @@
+PASTE SOURCE FOR /workspace/notes/lint/units/parser/API.md, section "Known differences of a parse without lint".
+Made by lists.mjs from rows.facts.json (the 366 rows of the four removed test files) and corpus-lists.json. main = f4d755a9cf,
+binary /workspace/base/bun.f4d755a9c. tsc = typescript 6.0.2. Replace the marked sentence when the routes of the lint parse are known.
+
+## Known differences of a parse without lint
+
+A parse without lint is the parser of main: what it accepts, what it rejects and what it prints are those of
+`f4d755a9cf`. The lists below are where that parser differs from tsc 6.0.2 on TypeScript that tsc takes. They are
+defects of main. This work does not fix them: a fix changes what every run and every bundle reads, and it costs the
+type skipper its speed. Until this round, four test files (`test/bundler/transpiler/typescript-grammar*.test.ts`,
+366 cases) asserted the other behaviour for a parse without lint. They are gone, and each case is a case of
+`src/js_parser/parse/grammar_rows_tests.rs`, which reads the same source with a lint parse.
+
+"Valid" means what it meant in round 2: tsc reports no parse diagnostic and its checker reports no grammar error.
+Where the checker of tsc reports another rule for the form itself, the heading names its code.
+
+### Valid TypeScript that a parse without lint rejects
+
+222 sources in 23 groups. Each line is the source and the first error of main, with its line and column.
+A source is read with the `ts` loader unless the line says otherwise. "In the corpora" counts the sources of the
+three corpora of the differential harness (`testrows`, `targeted`, `small-sub`) that main rejects for the same cause.
+
+Inside the type skipper (`src/js_parser/parse/parse_skip_typescript.rs`):
+
+**A reserved word is the name of a type reference.** 25 sources, 185 in the corpora for the cause "a reserved word is the name of a type reference". Where main decides: parse_skip_typescript.rs:239 skip_type_script_type_with_opts, the arm of no type: Lexer::unexpected.
+
+```
+"let x: if;"  =>  Unexpected if (1:8)   [ts; tsx]
+"let x: class;"  =>  Unexpected class (1:8)
+"let x: function;"  =>  Unexpected function (1:8)
+"let x: in;"  =>  Unexpected in (1:8)
+"let x: extends;"  =>  Unexpected extends (1:8)
+"let x: super;"  =>  Unexpected super (1:8)
+"let x: delete;"  =>  Unexpected delete (1:8)
+"let x: if.x;"  =>  Unexpected if (1:8)
+"let x: class<T>;"  =>  Unexpected class (1:8)
+"let x: | if;"  =>  Unexpected if (1:10)
+"let x: A | if;"  =>  Unexpected if (1:12)
+"let x: A & class;"  =>  Unexpected class (1:12)
+"let x: keyof if;"  =>  Unexpected if (1:14)
+"let x: (if);"  =>  Unexpected if (1:9)
+"let x: (class);"  =>  Unexpected class (1:9)
+"let x: `${if}`;"  =>  Unexpected if (1:11)
+"const v = <if>x;"  =>  Unexpected if (1:12)
+"const v = <class>x;"  =>  Unexpected class (1:12)
+"const v = <enum>x;"  =>  Unexpected enum (1:12)
+"const v = x as if;"  =>  Unexpected if (1:16)
+"const v = x as var;"  =>  Unexpected var (1:16)
+"const v = x satisfies if;"  =>  Unexpected if (1:23)
+"const v = (): if => x;"  =>  Expected "=>" but found ":" (1:13)
+"x as if;"  =>  Unexpected if (1:6)   [tsx]
+"x as var;"  =>  Unexpected var (1:6)   [tsx]
+```
+
+**A reserved word is the label of a rest element of a tuple.** 4 sources, 201 in the corpora for the cause "a reserved word is the label of a rest element of a tuple". Where main decides: parse_skip_typescript.rs:239 skip_type_script_type_with_opts, the tuple arm (H6).
+
+```
+"type X = [...const: A[]];"  =>  Unexpected "const" (1:14)
+"type X = [...in: A[]];"  =>  Unexpected in (1:14)
+"type X = [...class: A[]];"  =>  Unexpected class (1:14)
+"type X = [...if: A[]];"  =>  Unexpected if (1:14)
+```
+
+**An import type takes type arguments; the value of an import attribute is an expression; `.<` stands before type arguments.** 9 sources, 43 in the corpora for the cause "an import type takes type arguments and an expression in an attribute; .< stands before type arguments". Where main decides: parse_skip_typescript.rs:239 skip_type_script_type_with_opts, the import arm; :1024 skip_type_script_object_type for the attributes.
+
+```
+"let x: typeof import(\"x\")<C>;"  =>  Expected ";" but found "<" (1:26)
+"type X = typeof import(\"x\")<C>;"  =>  Expected ";" but found "<" (1:28)
+"let x: import(\"x\")<T>;"  =>  Expected ";" but found "<" (1:19)
+"type X = import(\"x\")<T>;"  =>  Expected ";" but found "<" (1:21)
+"let x: import(\"x\", { with: { a: \"b\" } })<T>;"  =>  Expected ";" but found "<" (1:41)
+"let x: import(\"x\", { with: { a: \"b\" + \"c\" } });"  =>  Unexpected + (1:37)
+"type X = import(\"x\", { with: { a: \"b\" + \"c\" } });"  =>  Unexpected + (1:39)
+"let x: import(\"x\").A.<T>;"  =>  Expected identifier but found "<" (1:22)
+"type X = import(\"x\").A.<T>;"  =>  Expected identifier but found "<" (1:24)
+```
+
+**The type of an assertion predicate starts on the line after its subject.** 5 sources, 9 in the corpora for the cause "the type of an assertion predicate starts on the next line". Where main decides: parse_skip_typescript.rs:20 skip_typescript_return_type and the asserts arm of :239.
+
+```
+"type X = (a) => asserts a\nis B;"  =>  Expected ";" but found "B" (2:4)
+"const f = (a): (a) => asserts a\nis B => 0;"  =>  Expected ";" but found ":" (1:14)
+"const f = (a): asserts a\nis B => 0;"  =>  Expected ";" but found ":" (1:14)
+"const f = (a): asserts this\nis B => 0;"  =>  Expected ";" but found ":" (1:14)
+"function f(): asserts this\nis B { throw 0 }"  =>  Expected ";" but found "B" (2:4)
+```
+
+**A parameter of a signature has an initializer (the checker of tsc: TS2371, no grammar error).** 7 sources, 176 in the corpora for the cause "a parameter of a signature has an initializer". Where main decides: parse_skip_typescript.rs:60 skip_type_script_binding, :157 skip_typescript_fn_args, :1024 skip_type_script_object_type (H4, H7).
+
+```
+"type X = { a(b = 1): A };"  =>  Expected ")" but found "=" (1:16)
+"let x: { a(b = 1): A };"  =>  Expected ")" but found "=" (1:14)
+"interface I { (a = 1): A }"  =>  Expected ")" but found "=" (1:18)
+"let g: (a = 1) => void;"  =>  Expected ")" but found "=" (1:11)   [ts; tsx]
+"let x: ({ a = 1 }) => void;"  =>  Unexpected = (1:13)
+"let x: A<(a = 1) => void>;"  =>  Expected ")" but found "=" (1:13)
+"class C extends B<(a = 1) => void> {}"  =>  Expected ")" but found "=" (1:22)
+```
+
+**An array pattern of a signature has a hole.** 6 sources, 58 in the corpora for the cause "a binding pattern of a signature is read as a binding pattern". Where main decides: parse_skip_typescript.rs:60 skip_type_script_binding.
+
+```
+"let x: ([a, , b]) => void;"  =>  Unexpected , (1:13)
+"type X = ([a, , b]) => void;"  =>  Unexpected , (1:15)
+"let x: new ([a, , b]) => A;"  =>  Unexpected , (1:17)
+"type X = { ([a, , b]): void };"  =>  Unexpected , (1:17)
+"type X = { new ([a, , b]): A };"  =>  Unexpected , (1:21)
+"type X = A<([a, , b]) => void>;"  =>  Unexpected , (1:17)
+```
+
+**A modifier stands before a parameter of a signature (the checker of tsc: TS2369, no grammar error).** 2 sources, 110 in the corpora for the cause "a modifier stands before a parameter that is no parameter property". Where main decides: parse_skip_typescript.rs:157 skip_typescript_fn_args, :1024 skip_type_script_object_type.
+
+```
+"type X = { a(public b: B): A };"  =>  Expected ")" but found "b" (1:21)
+"let x: (public a: A) => void;"  =>  Expected ")" but found "a" (1:16)
+```
+
+**`out` and `in` name a type or a type parameter.** 27 sources, 63 in the corpora for the cause "out or in names a type or a type parameter". Where main decides: parse_skip_typescript.rs:1145 skip_type_script_type_parameters logs `The modifier "out" is not valid here` through the log, also inside an attempt that goes back (H3).
+
+```
+"function f<out>() {}"  =>  The modifier "out" is not valid here (1:12)
+"const f = function <out>() {};"  =>  The modifier "out" is not valid here (1:21)
+"function f<out = A>() {}"  =>  The modifier "out" is not valid here (1:12)
+"const f = function <out = A>() {};"  =>  The modifier "out" is not valid here (1:21)
+"function f<const out>() {}"  =>  The modifier "out" is not valid here (1:18)
+"const f = function <const out>() {};"  =>  The modifier "out" is not valid here (1:27)
+"const f = <out>(a): T => a;"  =>  The modifier "out" is not valid here (1:12)
+"const f = <out>(a: T) => a;"  =>  The modifier "out" is not valid here (1:12)
+"const f = <out = A>(a): T => a;"  =>  The modifier "out" is not valid here (1:12)
+"const f = <out = A>(a: T) => a;"  =>  The modifier "out" is not valid here (1:12)
+"const f = <const out>(a): T => a;"  =>  The modifier "out" is not valid here (1:18)
+"const f = function g<out>() {};"  =>  The modifier "out" is not valid here (1:22)   [tsx]
+"async function f<out>() {}"  =>  The modifier "out" is not valid here (1:18)   [tsx]
+"const f = function g<out = A>() {};"  =>  The modifier "out" is not valid here (1:22)   [tsx]
+"async function f<const out>() {}"  =>  The modifier "out" is not valid here (1:24)   [tsx]
+"const f = <out = A>() => 0;"  =>  The modifier "out" is not valid here (1:12)   [tsx]
+"const f = async <out = A>() => 0;"  =>  The modifier "out" is not valid here (1:18)   [tsx]
+"const v = <out>x;"  =>  The modifier "out" is not valid here (1:12)
+"<out>x;"  =>  The modifier "out" is not valid here (1:2)
+"const v = <out>(x);"  =>  The modifier "out" is not valid here (1:12)
+"const v = <in>x;"  =>  The modifier "in" is not valid here (1:12)
+"const v = <in>(x);"  =>  The modifier "in" is not valid here (1:12)
+"const v = <out>(x) => x;"  =>  The modifier "out" is not valid here (1:12)
+"const v = <out, T>(x) => x;"  =>  The modifier "out" is not valid here (1:12)
+"const v = <out = A>(x) => x;"  =>  The modifier "out" is not valid here (1:12)
+"f(<out, T>(x) => x);"  =>  The modifier "out" is not valid here (1:4)   [tsx]
+"f(<out = A>(x) => x);"  =>  The modifier "out" is not valid here (1:4)   [tsx]
+```
+
+**A comparison follows the type after `as` and `satisfies`.** 5 sources, 5 in the corpora for the cause "a comparison follows the type after as and satisfies". Where main decides: parse_skip_typescript.rs:1395 skip_type_script_type_arguments takes T::TLessThanEquals for the start of type arguments.
+
+```
+"const v = x as T <= y;"  =>  Unexpected = (1:19)
+"x as T <= y;"  =>  Unexpected = (1:9)
+"const v = x satisfies T <= y;"  =>  Unexpected = (1:26)
+"f(x as T <= y);"  =>  Unexpected = (1:11)   [tsx]
+"const v = [x as T <= y];"  =>  Unexpected = (1:20)   [tsx]
+```
+
+**An interface extends an expression (the checker of tsc: TS2499, no grammar error).** 2 sources, 207 in the corpora for the cause "an interface extends, or a class implements, an expression". Where main decides: parse_skip_typescript.rs:1352 skip_type_script_interface_stmt reads each entry with skip_type_script_type (H8).
+
+```
+"interface I extends a() {}"  =>  Expected "{" but found "(" (1:22)
+"interface I extends a.b() {}"  =>  Expected "{" but found "(" (1:24)
+```
+
+Outside the type skipper:
+
+**A class implements an expression (the checker of tsc: TS2500, no grammar error).** 1 sources, 207 in the corpora for the cause "an interface extends, or a class implements, an expression". Where main decides: parse/mod.rs:163 parse_class, `if Self::IS_TYPESCRIPT_ENABLED { if p.lexer.is_contextual_keyword(b"implements")`: each entry is skip_type_script_type (H8).
+
+```
+"class C implements a() {}"  =>  Expected "{" but found "(" (1:21)
+```
+
+**A modifier stands before a parameter of a function or method that is no constructor (the checker of tsc: TS2369, no grammar error).** 2 sources, 110 in the corpora for the cause "a modifier stands before a parameter that is no parameter property". Where main decides: parse_fn.rs:251 `if is_identifier && opts.is_constructor`: every parameter of a TypeScript file passes it. main fails later at parse_fn.rs:365 `p.lexer.expect(T::TCloseParen)`, after it declared the modifier as a parameter.
+
+```
+"function f(public a: A) {}"  =>  Expected ")" but found "a" (1:19)
+"class C { m(public a: A) {} }"  =>  Expected ")" but found "a" (1:20)
+```
+
+**A comma follows the rest parameter of a signature of a declared class.** 4 sources, 4 in the corpora for the cause "a comma follows the rest parameter of a signature of a declared class". Where main decides: parse_fn.rs:331 `if func.flags.contains(Flags::Function::HasRestArg)`: the else of `opts.is_typescript_declare` is `p.lexer.expect(T::TCloseParen)` (parse_fn.rs:337) at a comma, which always fails.
+
+```
+"declare class C { m(...a,): void; }"  =>  Expected ")" but found "," (1:25)
+"declare class C { constructor(...a,); }"  =>  Expected ")" but found "," (1:35)
+"declare class C { m(...a: A[],): void; }"  =>  Expected ")" but found "," (1:30)
+"declare class C { constructor(...a: A[],); }"  =>  Expected ")" but found "," (1:40)
+```
+
+**A comma ends an index signature of a class.** 4 sources, 4 in the corpora for the cause "a comma ends an index signature of a class". Where main decides: parse_property.rs:301 `if p.lexer.token == T::TColon && was_identifier && opts.is_class` inside `if Self::IS_TYPESCRIPT_ENABLED`, then expect_or_insert_semicolon at :309.
+
+```
+"class C { [k: string]: T, }"  =>  Expected ";" but found "," (1:25)
+"abstract class C extends B { [k: string]: T, }"  =>  Expected ";" but found "," (1:44)
+"const c = class { [k: string]: T, };"  =>  Expected ";" but found "," (1:33)
+"declare class C { [k: string]: T, }"  =>  Expected ";" but found "," (1:33)
+```
+
+**`accessor` is a modifier with experimentalDecorators.** 6 sources, 15 in the corpora for the cause "accessor is a modifier without standard decorators". Where main decides: parse_property.rs:464 PropertyModifierKeyword::PAccessor asks `p.options.features.standard_decorators` (:468): without it main reads a property named accessor and fails at the name after it.
+
+```
+"class C { accessor x: T; }"  =>  Expected ";" but found "x" (1:20)   [ts, experimentalDecorators]
+"class C { static accessor x = 1; }"  =>  Expected ";" but found "x" (1:27)   [ts, experimentalDecorators]
+"class C { accessor #x: T; }"  =>  Expected ";" but found "#x" (1:20)   [ts, experimentalDecorators]
+"class C { static accessor #x = 1; }"  =>  Expected ";" but found "#x" (1:27)   [ts, experimentalDecorators]
+"abstract class C extends B { abstract accessor x: T; }"  =>  Expected ";" but found "x" (1:48)   [ts, experimentalDecorators]
+"declare class C { accessor x: T; }"  =>  Expected ";" but found "x" (1:28)   [ts, experimentalDecorators]
+```
+
+**`as` and `satisfies` name a type alias, an interface or a namespace.** 35 sources, 37 in the corpora for the cause "as or satisfies names a type alias, an interface or a namespace". Where main decides: parse_stmt.rs:1706 parse_stmt_fallthrough reads the expression first, so parse_suffix.rs:23 sfx_handle_typescript_as reads a cast of the keyword: `type as = 1` fails in the type after as, `interface as {}` is the cast and the arm TsStmtInterface (parse_stmt.rs:1808) then finds no name. The keyword arms of parse_stmt.rs:1776 parse_stmt_fallthrough_ts_keyword and the Err of parse_expr_or_let_stmt (parse_stmt.rs:1728) are free places; both have to put the lexer back to the token after the keyword.
+
+```
+"type as = 1"  =>  Unexpected = (1:9)
+"declare type as = 1"  =>  Unexpected = (1:17)
+"type satisfies = 1"  =>  Unexpected = (1:16)
+"interface as {}"  =>  Expected identifier but found end of file (1:15)
+"export interface as {}"  =>  Expected identifier but found end of file (1:22)
+"interface satisfies {}"  =>  Expected identifier but found end of file (1:22)
+"declare namespace as {}"  =>  Unexpected "namespace" (1:9)
+"namespace as { export const x = 1; }"  =>  Unexpected = (1:31)   [ts; tsx]
+"namespace as.b { export const x = 1; }"  =>  Unexpected . (1:13)
+"namespace satisfies { export const x = 1; }"  =>  Unexpected = (1:38)
+"type as = 1; let x: as;"  =>  Unexpected = (1:9)   [ts; tsx]
+"type as<T> = T;"  =>  Expected "(" but found "=" (1:12)
+"type /* c */ as = 1"  =>  Unexpected = (1:17)
+"type as\n= 1"  =>  Unexpected = (2:1)
+"let type: any; type as = 1;"  =>  Unexpected = (1:24)
+"function f() { type as = 1; return 1 as as }"  =>  Unexpected = (1:24)
+"{ type satisfies = 1 }"  =>  Unexpected = (1:18)
+"export declare type satisfies = 1"  =>  Unexpected = (1:31)
+"interface as {}; foo()"  =>  Expected identifier but found ";" (1:16)
+"interface as<T> extends B<T> { a: T }"  =>  Expected "(" but found "extends" (1:17)
+"interface satisfies extends B {}"  =>  Unexpected extends (1:21)
+"declare interface as { a: 1 }"  =>  Expected identifier but found end of file (1:29)
+"export declare interface as {}"  =>  Expected identifier but found end of file (1:30)
+"export default interface as {}"  =>  Expected identifier but found end of file (1:30)
+"function f() { interface as {} }"  =>  Expected identifier but found "}" (1:32)
+"namespace N { export interface as {} }"  =>  Expected identifier but found "}" (1:38)
+"declare global { interface as {} }"  =>  Expected identifier but found "}" (1:34)
+"namespace as {}`x`"  =>  Expected ";" but found "`x`" (1:16)
+"module as.b {}"  =>  Unexpected . (1:10)
+"namespace as.b.c { export const a = 1 }"  =>  Unexpected . (1:13)
+"export namespace as { export const a = 1 }"  =>  Unexpected = (1:38)
+"namespace N { namespace as { export const x = 1 } export const y = as.x }"  =>  Unexpected = (1:45)
+"declare namespace as { const x: number; function f(): void }"  =>  Unexpected "namespace" (1:9)
+"declare module as.b {}"  =>  Unexpected . (1:18)
+"export declare namespace satisfies {}"  =>  Unexpected "namespace" (1:16)
+```
+
+**`abstract` stands before `declare`.** 4 sources, 4 in the corpora for the cause "abstract stands before declare". Where main decides: parse_stmt.rs:1830 the arm TsStmtAbstract of parse_stmt_fallthrough_ts_keyword takes only T::TClass (or decorators) after abstract.
+
+```
+"abstract declare class C {}"  =>  Expected ";" but found "declare" (1:10)   [ts; tsx]
+"export abstract declare class C {}"  =>  Expected ";" but found "declare" (1:17)
+"abstract declare class C { m(): void }"  =>  Expected ";" but found "declare" (1:10)
+"@d abstract declare class C {}"  =>  Expected "class" but found "declare" (1:13)
+```
+
+**A string in brackets names an enum member.** 14 sources, 15 in the corpora for the cause "a string in brackets names an enum member". Where main decides: parse_typescript.rs:576 parse_typescript_enum_stmt: a name that is no string and no identifier is `p.lexer.expect(T::TIdentifier)` (:645).
+
+```
+"enum E { [\"x\"] }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"x\"] = 1 }"  =>  Expected identifier but found "[" (1:10)   [ts; tsx]
+"enum E { ['x'] = 1, B = E.x }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [`x`] = 1 }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"x\"], [\"y\"] }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [ \"x\" ] = 1, }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"x\"] = \"s\" }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"x\"] = 1, [\"y\"] = x + 1 }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [\"a-b\"] = 1, B = E[\"a-b\"] }"  =>  Expected identifier but found "[" (1:10)
+"enum E { [`x`] = 1, [`y`] }"  =>  Expected identifier but found "[" (1:10)
+"const enum E { [\"x\"] = 1 } var v = E.x;"  =>  Expected identifier but found "[" (1:16)
+"export enum E { [\"x\"] = 1 }"  =>  Expected identifier but found "[" (1:17)
+"declare enum E { [\"x\"] = 1 }"  =>  Expected identifier but found "[" (1:18)
+"namespace N { export enum E { [\"x\"] = 1 } }"  =>  Expected identifier but found "[" (1:31)
+```
+
+**A statement of a namespace starts with `import(` or `import.`.** 7 sources, 7 in the corpora for the cause "import starts an expression in a namespace". Where main decides: parse_stmt.rs:1410 t_import: `(opts.is_export || (opts.scope.is_namespace() && !opts.is_typescript_declare)) && token != T::TIdentifier` is `p.lexer.expected(T::TIdentifier)` (:1413).
+
+```
+"namespace N { import(\"x\"); }"  =>  Expected identifier but found "(" (1:21)   [ts; tsx]
+"namespace N { import.meta; }"  =>  Expected identifier but found "." (1:21)
+"namespace N { import(\"x\").then(f); }"  =>  Expected identifier but found "(" (1:21)
+"namespace N { import\n(\"x\"); }"  =>  Expected identifier but found "(" (2:1)
+"namespace N { import.meta.url; }"  =>  Expected identifier but found "." (1:21)
+"namespace N.M { import(\"x\"); }"  =>  Expected identifier but found "(" (1:23)
+"export namespace N { import(\"x\"); }"  =>  Expected identifier but found "(" (1:28)
+```
+
+**The attributes of an import start on the line after its path.** 3 sources, 3 in the corpora for the cause "the attributes of an import start on the next line". Where main decides: parse/mod.rs:1356 parse_path `if !p.lexer.has_newline_before && (assert || with)`: JavaScript reaches it for every module path, and a line break is the common case. main then reads a with statement and fails at `{`: that error (parse_stmt.rs:309 in t_with, which is #[cold]: `p.lexer.expect(T::TOpenParen)`) is the one free place, and the import statement and its record are already made there.
+
+```
+"import A from \"x\"\nwith { type: \"json\" };"  =>  Expected "(" but found "{" (2:6)
+"import \"x\"\nwith { type: \"json\" };"  =>  Expected "(" but found "{" (2:6)
+"import A from \"x\"\nwith { type: \"json\" }; A;"  =>  Expected "(" but found "{" (2:6)   [js]
+```
+
+**The colon of a conditional or of a case follows an operand that ends with a parenthesis.** 13 sources, 13 in the corpora for the cause "a colon follows an operand that ends with a parenthesis". Where main decides: parse/mod.rs:513 parse_paren_expr: `is_arrow_fn || opts.force_arrow_fn || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)` then `if level.gt(Level::Assign) { p.lexer.unexpected()?; ...` (:518).
+
+```
+"x = a ? 1 + async(b) : c;"  =>  Unexpected : (1:22)   [ts; tsx]
+"x = a ? -<T>(b) : c;"  =>  Unexpected : (1:17)
+"x = a ? -async(b) : c;"  =>  Unexpected : (1:19)
+"x = a ? y || async(b) : c;"  =>  Unexpected : (1:23)
+"x = a ? typeof async() : c => d;"  =>  Unexpected : (1:24)
+"x = a ? 1 + async<T>(b) : c;"  =>  Unexpected : (1:25)
+"switch (x) { case 1 + async(b): c; }"  =>  Unexpected : (1:31)
+"x = a ? !<T>(b) : c => d;"  =>  Unexpected : (1:17)
+"x = a ? typeof <T>(b) : c;"  =>  Unexpected : (1:23)
+"x = a ? 1 + <T>(b) : c;"  =>  Unexpected : (1:20)
+"async function f() { x = a ? await <T>(b) : c; }"  =>  Unexpected : (1:43)
+"switch (x) { case -<T>(b): c; }"  =>  Unexpected : (1:26)
+"switch (x) { case -async(b): c; }"  =>  Unexpected : (1:28)   [tsx]
+```
+
+**The colon of a conditional follows `<T>(...)` in its true branch.** 7 sources, 37 in the corpora for the cause "a colon follows parentheses between ? and : of a conditional". Where main decides: parse_prefix.rs:965 pfx_t_less_than and parse/mod.rs:1703 parse_async_prefix_expr (T::TLessThan) call parse_paren_expr with ParenExprOpts::default(): `flags == EFlags::AfterQuestionAndBeforeColon` is in hand there and is dropped, so parse/mod.rs:570 takes the cheap check.
+
+```
+"x = a ? <T>(b) : c => d;"  =>  Expected ":" but found ";" (1:24)
+"x = a ? <T>(b, c) : d => e;"  =>  Expected ":" but found ";" (1:27)
+"x = a ? async <T>(b) : c => d;"  =>  Expected ":" but found ";" (1:30)
+"x = a ? b ? c : <T>(d) : e => f;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? b ? c : async <T>(d) : e => f;"  =>  Expected ":" but found ";" (1:38)
+"for (const k of a ? <T>(b) : c => d) {}"  =>  Expected ":" but found ")" (1:36)
+"x = { [a ? <T>(b) : c => d]: 1 };"  =>  Expected ":" but found "]" (1:27)
+```
+
+**The colon of a conditional follows the parenthesized body of an arrow function in its true branch.** 30 sources, 37 in the corpora for the cause "a colon follows parentheses between ? and : of a conditional". Where main decides: parse_fn.rs:520 parse_arrow_body reads the body with EFlags::None: the body of an arrow function in the true branch does not know of the `?`. JavaScript reaches parse_arrow_body and parse_suffix.rs:404 sfx_t_question. main fails at parse_suffix.rs:466 `p.lexer.expect(T::TColon)`, after the inner arrow function took the colon: that error is a free place for a parse that starts again with the offset of the colon as a hint.
+
+```
+"x = a ? y => (b) : c => d;"  =>  Expected ":" but found ";" (1:26)
+"x = a ? (y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:28)   [ts; tsx]
+"x = a ? <T>(y: T) => (b) : c => d;"  =>  Expected ":" but found ";" (1:34)
+"x = a ? y => ({ y }) : z => ({ z });"  =>  Expected ":" but found ";" (1:36)   [tsx; ts]
+"x = a ? y => ([y]) : z => z;"  =>  Expected ":" but found ";" (1:28)
+"x = a ? y => (b, c) : d => e;"  =>  Expected ":" but found ";" (1:29)
+"x = a ? y => (b = 1) : c => d;"  =>  Expected ":" but found ";" (1:30)
+"x = a ? y => async (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? y => <T>(b) : c => d;"  =>  Expected ":" but found ";" (1:29)
+"x = a ? y => z => (b) : c => d;"  =>  Expected ":" but found ";" (1:31)
+"x = a ? y => q ? r : (b) : c => d;"  =>  Expected ":" but found ";" (1:34)
+"x = a ? async y => (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? async => (b) : c => d;"  =>  Expected ":" but found ";" (1:30)
+"x = a ? b ? c : y => (d) : e => f;"  =>  Expected ":" but found ";" (1:34)
+"f(a ? y => (b) : c => d);"  =>  Expected ":" but found ")" (1:24)
+"x = a ? (y, z) => ({ y, z }) : c => ({ c });"  =>  Expected ":" but found ";" (1:44)
+"x = a ? (y = 1) => (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? ({ y }) => (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? ({ y }: Y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:35)
+"x = a ? ([y]: Y, z: Z) => (b) : c => d;"  =>  Expected ":" but found ";" (1:39)
+"x = a ? (y, ...z) => (b) : c => d;"  =>  Expected ":" but found ";" (1:34)
+"x = a ? async (y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:34)
+"x = a ? <T>(y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:31)
+"x = a ? <T,>(y) => (b) : c => d;"  =>  Expected ":" but found ";" (1:32)
+"x = a ? <T>() => (b) : c => d;"  =>  Expected ":" but found ";" (1:30)
+"x = a ? <T>(y: T) => ({ y }) : z => ({ z });"  =>  Expected ":" but found ";" (1:44)
+"x = a ? <T extends U>(y: T) => (b) : c => d;"  =>  Expected ":" but found ";" (1:44)
+"x = a ? <T>(...y: T[]) => (b) : c => d;"  =>  Expected ":" but found ";" (1:39)
+"x = a ? async <T>(y: T) => (b) : c => d;"  =>  Expected ":" but found ";" (1:40)
+"x = a ? async <T>() => (b) : c => d;"  =>  Expected ":" but found ";" (1:36)
+```
+
+### Decorator metadata that differs from tsc
+
+63 values in 9 groups, with `experimentalDecorators` and `emitDecoratorMetadata`. main accepts every source. Each line is the
+source, the key, the value of main and the value of tsc with `strictNullChecks` off. Where tsc writes a guarded
+reference to a name (`typeof (_a = typeof x !== "undefined" && x.b) === "function" ? _a : Object`), the line has the
+guard that Bun writes for the same name. `undefined` is how Bun prints `void 0`.
+
+**The operands of `|` and `&` are the check type of a conditional type: main reads `A | (B extends C ? D : E)`.** 9 values, 10 sources in the corpora.
+
+```
+"class C { @d p: number | A extends B ? string : never; }"  design:type  main: Number  tsc: String
+"class C { @d p: K & A extends B ? string : never; }"  design:type  main: undefined  tsc: String
+"class C { @d p: K | A extends B ? string[] : number[]; }"  design:type  main: Object  tsc: Array
+"class C { @d p: string | A extends B ? () => void : () => void; }"  design:type  main: Object  tsc: Function
+"class C { @d p: K | A extends B ? null : K; }"  design:type  main: typeof K === "undefined" ? Object : K  tsc: Object
+"class C { @d m(a: number | A extends B ? string : string) {} }"  design:paramtypes  main: [Object]  tsc: [String]
+"class C { @d m(): string & A extends B ? never : string { throw 0 } }"  design:returntype  main: undefined  tsc: String
+"class C { @d p: number | A extends B ? string : string; }"  design:type  main: Object  tsc: String
+"class C { @d p: string & A extends B ? never : string; }"  design:type  main: undefined  tsc: String
+```
+
+**The operand of `keyof`, `readonly` and `unique` ends before `extends`: main reads `keyof (A extends B ? C : D)`.** 7 values, 17 sources in the corpora.
+
+```
+"class C { @d p: keyof A extends B ? string : never; }"  design:type  main: Object  tsc: String
+"class C { @d p: readonly A[] extends B ? string : number; }"  design:type  main: Array  tsc: Object
+"class C { @d p: unique symbol extends B ? string : never; }"  design:type  main: undefined  tsc: String   [the checker of tsc: TS1335]
+"class C { @d m(a: keyof A extends B ? () => void : () => void) {} }"  design:paramtypes  main: [Object]  tsc: [Function]
+"class C { @d m(): readonly A[] extends B ? unknown : string { throw 0 } }"  design:returntype  main: Array  tsc: Object
+"class C { @d p: keyof A extends B ? () => void : () => void; }"  design:type  main: Object  tsc: Function
+"class C { @d p: readonly A[] extends B ? unknown : string; }"  design:type  main: Array  tsc: Object
+```
+
+**The type after the colon of a conditional type takes `|` and `&`: main ends it before them.** 8 values, 8 sources in the corpora.
+
+```
+"class C { @d p: A extends B ? string : never | number; }"  design:type  main: Number  tsc: Object
+"class C { @d p: A extends B ? unknown : string & string; }"  design:type  main: String  tsc: Object
+"class C { @d p: X extends Y ? A : (A | null); }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object
+"class C { @d p: A extends B ? never : string | number; }"  design:type  main: undefined  tsc: Object
+"class C { @d p: A extends B ? string : unknown | null; }"  design:type  main: String  tsc: Object
+"class C { @d p: A extends B ? string : never & K; }"  design:type  main: undefined  tsc: Object
+"class C { @d p: X extends Y ? never : string & string; }"  design:type  main: undefined  tsc: String
+"class C { @d p: X extends Y ? string : never & string; }"  design:type  main: undefined  tsc: Object
+```
+
+**A keyword before a dot is the first name of a type reference: main reads the keyword type and drops the rest.** 6 values, 6 sources in the corpora.
+
+```
+"class C { @d p: any.b; }"  design:type  main: Object  tsc: typeof any === "undefined" || typeof any.b === "undefined" ? Object : any.b
+"class C { @d p: string.b; }"  design:type  main: String  tsc: typeof string === "undefined" || typeof string.b === "undefined" ? Object : string.b
+"class C { @d p: bigint.b<T>; }"  design:type  main: typeof BigInt === "undefined" ? Object : BigInt  tsc: typeof bigint === "undefined" || typeof bigint.b === "undefined" ? Object : bigint.b
+"class C { @d p: undefined.b; }"  design:type  main: undefined  tsc: Object
+"class C { @d m(a: never.b) {} }"  design:paramtypes  main: [undefined]  tsc: [typeof never === "undefined" || typeof never.b === "undefined" ? Object : never.b]
+"class C { @d p: never.b; }"  design:type  main: undefined  tsc: typeof never === "undefined" || typeof never.b === "undefined" ? Object : never.b
+```
+
+**`unique` takes the whole type after it: main gives it the tag of the array or tuple (the checker of tsc: TS1005 `'symbol' expected.`).** 2 values, 10 sources in the corpora.
+
+```
+"class C { @d p: unique symbol[]; }"  design:type  main: Array  tsc: Object   [the checker of tsc: TS1005]
+"class C { @d p: unique [A]; }"  design:type  main: Array  tsc: Object   [the checker of tsc: TS1005]
+```
+
+**The branches of a conditional type merge as the operands of `|` do: main takes one branch.** 6 values, 130 sources in the corpora.
+
+```
+"class C { @d p: X extends Y ? number : never; }"  design:type  main: undefined  tsc: Number
+"class C { @d p: X extends Y ? K : K; }"  design:type  main: typeof K === "undefined" ? Object : K  tsc: Object
+"class C { @d p: (X extends Y ? string : unknown); }"  design:type  main: String  tsc: Object
+"class C { @d p: X extends infer U extends V ? string : never; }"  design:type  main: undefined  tsc: String
+"class C { @d p: X extends Y ? never : A.B; }"  design:type  main: undefined  tsc: Object
+"class C { @d p: X extends Y ? A<B> : null; }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object
+```
+
+**An operand of `|` and `&` counts as what it serializes to: main skips `never`, `unknown`, nested unions and dotted names.** 7 values, 7 sources in the corpora.
+
+```
+"class C { @d p: string | (never | never); }"  design:type  main: String  tsc: Object
+"class C { @d p: (null | undefined) | string; }"  design:type  main: String  tsc: Object
+"class C { @d p: A.B | C.D; }"  design:type  main: typeof C === "undefined" || typeof C.D === "undefined" ? Object : C.D  tsc: Object
+"class C { @d m(a: A.B & A.C) {} }"  design:paramtypes  main: [typeof A === "undefined" || typeof A.C === "undefined" ? Object : A.C]  tsc: [Object]
+"class C { @d p: string | never & string; }"  design:type  main: String  tsc: Object
+"class C { @d p: string & (unknown & unknown); }"  design:type  main: String  tsc: Object
+"class C { @d p: A.B & A.C; }"  design:type  main: typeof A === "undefined" || typeof A.C === "undefined" ? Object : A.C  tsc: Object
+```
+
+**An import type and `unique symbol` are `Object`: main skips them among the operands, and gives `import("x")["y"]` the tag of an array.** 5 values, 19 sources in the corpora.
+
+```
+"class C { @d p: A | unique symbol; }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object   [the checker of tsc: TS1335]
+"class C { @d p: import(\"x\") | A; }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object
+"class C { @d p: import(\"x\")[\"y\"]; }"  design:type  main: Array  tsc: Object
+"class C { @d p: unique symbol & A; }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object   [the checker of tsc: TS1335]
+"class C { @d p: A | import(\"x\"); }"  design:type  main: typeof A === "undefined" ? Object : A  tsc: Object
+```
+
+**A type predicate is `Boolean` and an assertion predicate is `undefined`: main reads the name before `is` as a type.** 13 values, 64 sources in the corpora.
+
+```
+"class C { @d p: this is B; }"  design:type  main: Object  tsc: Boolean
+"class C { @d m(): a is B { throw 0 } }"  design:returntype  main: typeof a === "undefined" ? Object : a  tsc: Boolean
+"class C { @d m(): a is B | C { throw 0 } }"  design:returntype  main: typeof a === "undefined" ? Object : a  tsc: Boolean
+"class C { @d m(): string is B { throw 0 } }"  design:returntype  main: String  tsc: Boolean
+"class C { @d m(): asserts a { throw 0 } }"  design:returntype  main: Object  tsc: undefined
+"class C { @d m(): asserts a is B { throw 0 } }"  design:returntype  main: Object  tsc: undefined
+"class C { @d m(): asserts this is B { throw 0 } }"  design:returntype  main: Object  tsc: undefined
+"class C { @d m(): asserts a | B { throw 0 } }"  design:returntype  main: typeof B === "undefined" ? Object : B  tsc: Object
+"class C { @d m(): A | asserts a { throw 0 } }"  design:returntype  main: typeof A === "undefined" ? Object : A  tsc: Object
+"class C { @d p: this is this; }"  design:type  main: Object  tsc: Boolean
+"class C { @d m(): a is B extends C ? D : E { throw 0 } }"  design:returntype  main: typeof a === "undefined" ? Object : a  tsc: Boolean
+"class C { @d m(): this is B { throw 0 } }"  design:returntype  main: Object  tsc: Boolean
+"class C { @d m(): asserts this { throw 0 } }"  design:returntype  main: Object  tsc: undefined
+```
+
+### TypeScript that a parse without lint reads as another program
+
+6 sources. main accepts each and reads `interface as {}` and `namespace as {}` as the cast of the identifier `interface` or
+`namespace` to the type `{}`, where tsc reads a declaration named `as`. Each line is the source, what main prints, and
+what tsc's program prints.
+
+```
+"namespace as {}"  main: "namespace;\n"  tsc: ""
+"interface as {}\nfoo()"  main: "interface;\nfoo();\n"  tsc: "foo();\n"   [ts; tsx]
+"interface as { a: 1 }\nconst x = 1;"  main: "interface;\nconst x = 1;\n"  tsc: "const x = 1;\n"
+"interface as {}\n[x] = y"  main: "interface;\n[x] = y;\n"  tsc: "[x] = y;\n"
+"namespace as {}\nfoo()"  main: "namespace;\nfoo();\n"  tsc: "foo();\n"
+"namespace as {};"  main: "namespace;\n"  tsc: ""
+```
+
+### What the removed tests named and is no defect of main
+
+tsc does not take these sources as a whole, so main's reading is not listed above:
+
+```
+"import type A from \"x\"\nwith { type: \"json\" };"  [ts]  the checker of tsc: TS2857 Import attributes cannot be used with type-only imports or exports.; main rejects: Expected "(" but found "{" (2:6)
+"export { a } from \"x\"\nwith { type: \"json\" };"  [ts]  tsc: TS1005 '(' expected. at offset 27; main rejects: Expected "(" but found "{" (2:6)
+"export * from \"x\"\nwith { type: \"json\" };"  [ts]  tsc: TS1005 '(' expected. at offset 23; main rejects: Expected "(" but found "{" (2:6)
+"export * from \"x\"\nwith { type: \"json\" };"  [js]  tsc: TS1005 '(' expected. at offset 23; main rejects: Expected "(" but found "{" (2:6)
+"type as = 1\ntype as any"  [ts]  tsc: TS1005 '=' expected. at offset 20; main rejects: Unexpected = (1:9)
+"type as = 1\ntype as <T>(x: T) => void"  [ts]  tsc: TS1005 '=' expected. at offset 23; main rejects: Unexpected = (1:9)
+"interface as {}\ninterface as any\nfoo()"  [ts]  tsc: TS1005 '{' expected. at offset 29; main prints "interface;\ninterface;\nfoo();\n"
+"interface as {}\ninterface as {} | X\nfoo()"  [ts]  tsc: TS1109 Expression expected. at offset 32; main prints "interface;\ninterface;\nfoo();\n"
+"namespace as {}\nnamespace as any"  [ts]  tsc: TS1005 '{' expected. at offset 29; main prints "namespace;\nnamespace;\n"
+"namespace as {}\nnamespace as { foo(): void }"  [ts]  tsc: TS1005 ';' expected. at offset 36; main prints "namespace;\nnamespace;\n"
+"import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}"  [js]  tsc: TS1005 '{' expected. at offset 64; main rejects: Expected "(" but found "{" (2:6)
+```
+
+### What a lint parse does with these sources
+
+REPLACE WHEN THE ROUTES ARE KNOWN. A lint parse reads every source of the lists above as tsc does: the types with the lint
+grammar, the rest through the sites that test the side table. `grammar_rows_tests.rs` holds each source with what tsc builds.
+
+### Checked against the corpora of round 2
+
+The three corpora were run again with main at `f4d755a9cf`: `small-sub` (7,089 sources) gives the records of the run of
+round 2 at `e3566be889` without a difference, and the tables of `diff.mjs` against the release build of round 1
+(`23a20afa7e`) are those of `round2/a1-differential/top-down/runs/table.be1ebe5295.tsv`. Of the 153 sources of
+`probes/valid.plain.txt`, main rejects each. Beyond the cases above, the corpora hold:
+
+- 52 sources that main rejects and round 1 accepted, with no case of their own: `asserts is T`: the assertion about a parameter named `is` (the checker of tsc: TS1225 when no parameter has the name). Example: `class C { @d m(): asserts is A { return x; } }` is `Expected ";" but found "A"`.
+- 29 sources that main rejects and round 1 accepted, with no case of their own: `[function]`, `[...if]`: a reserved word as an element of a tuple; `import('x').#a`; `{ [+1]: A }`, `{ get #a(): A }`. Example: `type X = [function];` is `Expected ":" but found "]"`.
+- 2 sources that main rejects and round 1 accepted, with no case of their own: `implements [delete A]` (tsc: TS1102 from its binder). Example: `class C implements [delete A] {}` is `Unexpected delete`.
+- 653 sources that tsc takes by the rule above and that main and round 1 both reject. No case named them and no grammar of this
+  work reads them: a lint parse rejects them too until its grammar is widened. Examples: `typeof import('x').a<>` (`Unexpected >`),
+  `typeof a.<C>` (`Expected identifier but found "<"`), `A extends  extends ? 1 : 2` (`Unexpected extends`), `declare {};`, `export { type if };`,
+  `try {} catch (e: any = 1) {}`, `enum E { [a] = 1 }` (tsc: TS1164).
+- 205 sources whose metadata differs from tsc in main and in round 1 alike. They need what no parse has (the declaration of the name:
+  a type alias, an enum, an interface, a type parameter), or are forms that no case named: a type named `asserts`, `abstract` or `const`
+  (main: `Object`, tsc: the guarded name), `readonly` before a type that is no array (main: `Array`; the checker of tsc: TS1354), the return type of
+  a method whose parameter has a decorator (main: `Object`, tsc: `void 0` or the type), the rest parameter (main: `Object`, tsc: the element type).

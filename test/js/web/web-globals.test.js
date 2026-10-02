@@ -419,6 +419,36 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
+test.each([
+  ["hello\n", "hello"],
+  ["hello\r\n", "hello"],
+  ["\rX\n", "\rX"],
+  // Only the single `\r` that forms the CRLF terminator is stripped; earlier
+  // `\r` bytes are part of the answer. Previously these inputs tripped a
+  // debug assertion in prompt().
+  ["x\r\r\n", "x\r"],
+  ["x\r\r\r\n", "x\r\r"],
+  ["\r\r\n", "\r"],
+])("prompt with stdin %j returns %j", async (stdin, expected) => {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", `console.error(JSON.stringify(prompt("Q?")));`],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  proc.stdin.write(stdin);
+  await proc.stdin.flush();
+  proc.stdin.end();
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "Q? ",
+    stderr: JSON.stringify(expected) + "\n",
+    exitCode: 0,
+  });
+});
+
 test("globalThis.self = 123 works", () => {
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
     configurable: true,

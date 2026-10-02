@@ -959,6 +959,14 @@ come, and no survey asks for it: nothing imports those names. On the tree of `63
 before, nothing under C and D, four globs of modules without a file (`c30`, `c50`, `emitresolver`, `inference`), and
 under G 22 names, each of one of those four modules or of `c47`.
 
+`3d0ca04154` has the 48th line, `pub use c03_init::*;`: `c03_init.rs` of `aae9f74be7` has `new_checker`, the three
+other free functions of its range and the type `MemoField` as `pub` items. What the list expected of three more files
+came as expected: `c32_type_resolution.rs` (`487ef2f220`) holds methods and private helpers and has no line, and
+`c51_type_facts_awaited.rs` has `pub fn is_zero_big_int` since that commit. On the tree of `88e8c64306` (64 of the 72
+modules have a file; `c16`, `c18`, `c19`, `c30`, `c50`, `c52`, `emitresolver` and `inference` have none, and
+`evaluator/` has no `mod.rs`) the script prints `c47` and `c49` under A, nothing under C and D, and the same 22 names
+under G. `c18`, `c19`, `c04` and `c15` have no line: when their files have a `pub` item, D names them.
+
 What the lints of the workspace make of a glob was asked of `rustc` alone (the toolchain of the worktree,
 1.100.0-nightly 574ff7d98), with `round2-layer7-checker/globprobe.rs` and variants of it, files of about 25 lines that
 stand alone, `#![deny(warnings)]` and `unreachable_pub` denied:

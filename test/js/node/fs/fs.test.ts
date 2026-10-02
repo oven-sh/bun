@@ -5,7 +5,6 @@ import {
   gc,
   getMaxFD,
   isBroken,
-  isDebug,
   isGlibc,
   isIntelMacOS,
   isLinux,
@@ -1946,20 +1945,25 @@ describe("readSync", () => {
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
 
   it("works on large files", () => {
-    const dest = join(tmpdir(), "readSync-large-file.txt");
-    rmSync(dest, { force: true });
+    // A position that does not fit in 32 bits. The file is a hole below it
+    // everywhere except on NTFS, which zero-fills up to the write position
+    // (4.9 GB of disk writes, ~25s in CI) unless the file is marked sparse first.
+    const position = 4_900_000_000;
+    using dir = tempDir("readSync-large-file", { "large.txt": "" });
+    const dest = join(String(dir), "large.txt");
+    if (isWindows) {
+      const { exitCode, stdout, stderr } = spawnSync({ cmd: ["fsutil", "sparse", "setflag", dest], stderr: "pipe" });
+      expect(exitCode, String(stdout) + String(stderr)).toBe(0);
+    }
 
-    const writefd = openSync(dest, "w");
-    writeSync(writefd, Buffer.from([0x10]), 0, 1, 4_900_000_000);
-    closeSync(writefd);
-
-    const fd = openSync(dest, "r");
+    const fd = openSync(dest, "r+");
+    const written = writeSync(fd, Buffer.from([0x10]), 0, 1, position);
+    const { size } = fstatSync(fd);
     const out = Buffer.alloc(1);
-    const bytes = readSync(fd, out, 0, 1, 4_900_000_000);
-    expect(bytes).toBe(1);
-    expect(out[0]).toBe(0x10);
+    const read = readSync(fd, out, 0, 1, position);
     closeSync(fd);
-    rmSync(dest, { force: true });
+
+    expect({ written, size, read, byte: out[0] }).toEqual({ written: 1, size: position + 1, read: 1, byte: 0x10 });
   });
 
   it("works with bigint on read", () => {
@@ -4685,43 +4689,56 @@ describe("fs/promises", () => {
     100000,
   );
 
+  // Order-insensitive view of a recursive listing (a Set of the relative names,
+  // or parentPath -> Set of names for Dirents), so that the listings below can
+  // be compared with a readdirSync() of the same tree without sorting each one.
+  // Sorting thousands of entries per listing is what made these tests slow.
+  function listingShape(entries: unknown[], withFileTypes: boolean) {
+    if (!withFileTypes) return new Set(entries as string[]);
+    const byDirectory = new Map<string, Set<string>>();
+    for (const { parentPath, name } of entries as Dirent[]) {
+      let names = byDirectory.get(parentPath);
+      if (names === undefined) byDirectory.set(parentPath, (names = new Set()));
+      names.add(name);
+    }
+    return byDirectory;
+  }
+
+  // readdirSync() listing of `dir` (test/js/node: thousands of entries in a few
+  // hundred directories) that the listings below are compared against. It has to
+  // include this file, so a wrong or empty tree cannot make them pass vacuously.
+  function expectedListing(dir: string, withFileTypes: boolean) {
+    const reference = readdirSync(dir, { recursive: true, withFileTypes });
+    if (withFileTypes) {
+      expect(reference).toContainEqual(
+        expect.objectContaining({ parentPath: import.meta.dir, name: path.basename(import.meta.path) }),
+      );
+    } else {
+      expect(reference).toContain(relative(dir, import.meta.path));
+    }
+    return { length: reference.length, shape: listingShape(reference, withFileTypes) };
+  }
+
+  // Enough listings that leaking one descriptor per listing exceeds the tolerance
+  // of the fd check below. Each listing of this tree takes a few hundred ms in a
+  // debug build, so more of them mostly adds time.
+  const iterCount = 8;
+
   for (let withFileTypes of [false, true] as const) {
-    const iterCount = isDebug ? 16 : 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
+      const expected = expectedListing(full, withFileTypes);
+
       const maxFD = getMaxFD();
 
-      await Promise.all(
-        Array.from({ length: iterCount }, () => promises.readdir(full, { withFileTypes, recursive: true })),
+      const results = await Promise.all(
+        Array.from({ length: iterCount }, () => promises.readdir(full, { recursive: true, withFileTypes })),
       );
 
-      const pending = new Array(iterCount);
-      for (let i = 0; i < iterCount; i++) {
-        pending[i] = promises.readdir(full, { recursive: true, withFileTypes });
-      }
-
-      const results = await Promise.all(pending);
-      // Sort the results for determinism.
-      if (withFileTypes) {
-        for (let i = 0; i < iterCount; i++) {
-          results[i].sort((a, b) => a.path.localeCompare(b.path));
-        }
-      } else {
-        for (let i = 0; i < iterCount; i++) {
-          results[i].sort();
-        }
-      }
-
-      expect(results[0].length).toBeGreaterThan(0);
-      for (let i = 1; i < iterCount; i++) {
-        expect(results[i]).toEqual(results[0]);
-      }
-
-      if (!withFileTypes) {
-        expect(results[0]).toContain(relative(full, import.meta.path));
-      } else {
-        expect(results[0][0].path).toEqual(full);
+      for (const entries of results) {
+        expect(entries).toHaveLength(expected.length);
+        expect(listingShape(entries, withFileTypes)).toEqual(expected.shape);
       }
 
       const newMaxFD = getMaxFD();
@@ -4755,44 +4772,28 @@ describe("fs/promises", () => {
 
     if (withFileTypes) {
       describe("withFileTypes", () => {
-        it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
-        it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+        it(`readdir(path, {recursive: true}) should work x ${iterCount}`, doIt, 10_000);
+        it(`readdir(path, {recursive: true}) should fail x ${iterCount}`, fail, 10_000);
       });
     } else {
-      it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
-      it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+      it(`readdir(path, {recursive: true}) should work x ${iterCount}`, doIt, 10_000);
+      it(`readdir(path, {recursive: true}) should fail x ${iterCount}`, fail, 10_000);
     }
   }
 
   for (let withFileTypes of [false, true] as const) {
-    const warmup = 1;
-    const iterCount = isDebug ? 4 : 200;
     const full = resolve(import.meta.dir, "../");
 
-    const doIt = async () => {
-      for (let i = 0; i < warmup; i++) {
-        readdirSync(full, { withFileTypes });
-      }
+    const doIt = () => {
+      // Taken before the fd baseline so that it also serves as the warm-up.
+      const expected = expectedListing(full, withFileTypes);
 
       const maxFD = getMaxFD();
 
-      const results = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
-        results[i] = readdirSync(full, { recursive: true, withFileTypes });
-      }
-
-      for (let i = 0; i < iterCount; i++) {
-        results[i].sort();
-      }
-      expect(results[0].length).toBeGreaterThan(0);
-      for (let i = 1; i < iterCount; i++) {
-        expect(results[i]).toEqual(results[0]);
-      }
-
-      if (!withFileTypes) {
-        expect(results[0]).toContain(relative(full, import.meta.path));
-      } else {
-        expect(results[0][0].path).toEqual(full);
+        const entries = readdirSync(full, { recursive: true, withFileTypes });
+        expect(entries).toHaveLength(expected.length);
+        expect(listingShape(entries, withFileTypes)).toEqual(expected.shape);
       }
 
       const newMaxFD = getMaxFD();
@@ -4800,9 +4801,9 @@ describe("fs/promises", () => {
     };
 
     if (withFileTypes) {
-      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, 10_000);
+      it(`readdirSync(path, {recursive: true, withFileTypes: true}) should work x ${iterCount}`, doIt, 10_000);
     } else {
-      it("readdirSync(path, {recursive: true} should work x 100", doIt, 10_000);
+      it(`readdirSync(path, {recursive: true}) should work x ${iterCount}`, doIt, 10_000);
     }
   }
 

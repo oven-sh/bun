@@ -48,38 +48,23 @@ Everything here runs on whatever bun `host.sh` pinned when the host was first
 provisioned, so it sticks to `Bun.spawn` with argv arrays and stays off
 `Bun.$`.
 
-## Reboots
+## Leaked TCP sockets
 
-Every host reboots nightly (the `com.buildkite.cleanup` launchd job).
+macOS does not free every TCP socket that the test suite closes. A leaked
+socket stays in the kernel with no owning process until the host reboots.
+`sysctl net.inet.tcp.pcbcount` counts them. `netstat` and `lsof` do not show
+them.
 
-A `bare` host keeps one kernel between jobs, and macOS does not free every TCP
-socket the test suite closes: `sysctl net.inet.tcp.pcbcount` grows by about
-1,000 per job while netstat shows nothing. Every test job on a `bare` host
-prints that count and the uptime when it starts.
+A `bare` host keeps one kernel between jobs, so its count grows by about 1,000
+per test job until the nightly reboot (`com.buildkite.cleanup`). A `tart`
+guest is fresh for every job. Every macOS job prints `uptime` and the count in
+its log header, under "Uptime and TCP sockets".
 
-macOS 26 caps TCP memory at 1/32 of RAM, so an 8 GB host loses its network
-late in a busy day. On macOS 26 or later, a job that starts over
-`getDarwinLeakedSocketLimit()` (`scripts/agent.ts`: about 20,000 on 8 GB and
-85,000 on 16 GB) says in its log that the host needs a reboot.
-
-The job reboots the host only when it has `BUN_RUNNER_REBOOT_DARWIN_AGENT=1`.
-Nothing sets that yet: to turn it on, add it to the `env` of the test step in
-`.buildkite/ci.ts`. The job then runs `sudo -n shutdown -r now` instead of the
-tests. The shutdown stops the agent, which ends the job as `agent_stop`, and
-the pipeline retries that on another agent.
-
-With the reboot turned on, there are three cases where the job runs its tests
-and leaves a warning annotation that names the host:
-
-- The host does not reboot within five minutes. Reboot it by hand.
-- `who` shows a remote login. `who` lists interactive sessions only. An ssh
-  command that runs without a terminal is not in it, so it does not hold off
-  a reboot, and nothing on the host shows that it ran.
-- The host booted less than an hour ago. It cannot leak that much in an hour,
-  so the count or the limit is wrong.
-
-The beta lane has no automatic retry, so its host never reboots this way.
-`tart` guests are fresh for every job.
+macOS 26 caps TCP memory at 1/32 of RAM (`tcp_init` in xnu). An 8 GB host
+reached that cap at a count of about 81,300. From 80% of the cap the kernel
+drops received TCP data, so connections stall. At the cap `socket()` fails
+with `ENOBUFS`, which Bun reports as `Failed to start server. Is port 0 in
+use?`. A 16 GB host has twice the room. macOS 14 and 15 do not have this cap.
 
 ## Bringing up a host
 

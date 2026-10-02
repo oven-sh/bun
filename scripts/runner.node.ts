@@ -29,14 +29,13 @@ import {
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Socket } from "node:net";
-import { availableParallelism, hostname as osHostname, release, totalmem, uptime, userInfo } from "node:os";
+import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
-  checkDarwinAgentSockets,
   getAbi,
   getAbiVersion,
   getArch,
@@ -44,7 +43,6 @@ import {
   getDistroVersion,
   getHostname,
   getOs,
-  ignoreTerminationSignals,
   isAndroid,
   isLinux,
   isMacOS,
@@ -52,7 +50,6 @@ import {
   run,
   tmpdir,
   which,
-  type DarwinAgentHost,
 } from "./agent.ts";
 import {
   escapeCodeBlock,
@@ -252,38 +249,6 @@ function getLoggedInUserCountOrDetails(): number | string | undefined {
   }
 
   return undefined;
-}
-
-/** This machine and this job, for the leaked-socket check of a bare-metal macOS agent. */
-function getDarwinAgentHost(): DarwinAgentHost {
-  return {
-    hostname: osHostname(),
-    os: process.platform,
-    release: release(),
-    env: process.env,
-    totalMemory: totalmem(),
-    uptime: uptime(),
-    command([file, ...args]) {
-      const { error, status, stdout } = spawnSync(file, args, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "inherit"],
-        timeout: 30_000,
-      });
-      return error || status !== 0 ? undefined : stdout;
-    },
-    loggedInUsers: getLoggedInUserCountOrDetails,
-    annotate(content) {
-      reportAnnotationToBuildkite({
-        context: "darwin-agent-reboot",
-        label: "darwin agent reboot",
-        content,
-        style: "warning",
-      });
-    },
-    group: title => startGroup(title),
-    ignoreSignals: ignoreTerminationSignals,
-    sleep: ms => setTimeoutPromise(ms),
-  };
 }
 
 let isQuiet = false;
@@ -3504,7 +3469,6 @@ async function main(): Promise<void> {
 
   let ok = true;
   if (doRunTests) {
-    await checkDarwinAgentSockets(getDarwinAgentHost());
     const results = await runTests();
     ok = results.every(({ ok }) => ok);
   }

@@ -773,6 +773,10 @@ export function printEnvironment(): void {
       show("Memory", ["sh", "bash"], "free -m -w");
       show("Docker", ["sh", "bash"], "docker ps");
     }
+    if (isMacOS) {
+      // macOS leaks TCP sockets that only this sysctl counts: scripts/darwin-ci/README.md, "Leaked TCP sockets".
+      show("Uptime and TCP sockets", ["sh", "bash"], "uptime", "/usr/sbin/sysctl net.inet.tcp.pcbcount");
+    }
     if (isWindows) {
       show("Disk (win)", ["pwsh"], "get-psdrive");
       show("Memory", ["pwsh"], "Get-Counter '\\Memory\\Available MBytes'", "Get-CimInstance Win32_PhysicalMemory");

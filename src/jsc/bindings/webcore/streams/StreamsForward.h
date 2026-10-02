@@ -200,6 +200,12 @@ enum class ReadIntoRequestKind : uint8_t {
     ByteTee, // the byte tee's BYOB read-into request: context = the JSStreamTeeState
 };
 
+// No: the step runs from the microtask it was put off to, and has to advance (see streamLinkMustDefer).
+enum class MayDefer : bool {
+    No,
+    Yes,
+};
+
 // Bun `type:"direct"`
 
 // The 3 direct sink flavors carried by ONE JSDirectStreamController.

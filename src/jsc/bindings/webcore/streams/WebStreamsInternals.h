@@ -360,6 +360,8 @@ void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefau
 JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
+// True when a chain of tees or text streams left too little stack for the next link: it continues from a microtask.
+bool streamLinkMustDefer(JSC::VM&); // userJS: no (pure) — WebStreamsMisc.cpp
 JSC::JSValue readableStreamDefaultReaderTryReadFromQueue(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (a drained queue can pull) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderRelease(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (error-steps dispatch) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderErrorReadRequests(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSC::JSValue error); // userJS: yes — JSReadableStreamDefaultReader.cpp
@@ -396,7 +398,7 @@ void readableStreamBYOBReaderErrorReadIntoRequests(JSC::JSGlobalObject*, JSReada
 
 // JSReadableStreamDefaultController.cpp
 
-void readableStreamDefaultControllerCallPullIfNeeded(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes (user pull) — JSReadableStreamDefaultController.cpp
+void readableStreamDefaultControllerCallPullIfNeeded(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, MayDefer = MayDefer::Yes); // userJS: yes (user pull) — JSReadableStreamDefaultController.cpp
 bool readableStreamDefaultControllerShouldCallPull(JSReadableStreamDefaultController*); // userJS: no — JSReadableStreamDefaultController.cpp
 void readableStreamDefaultControllerClearAlgorithms(JSReadableStreamDefaultController*); // userJS: no — JSReadableStreamDefaultController.cpp
 void readableStreamDefaultControllerClose(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes — JSReadableStreamDefaultController.cpp
@@ -408,7 +410,7 @@ bool readableStreamDefaultControllerCanCloseOrEnqueue(JSReadableStreamDefaultCon
 
 // JSReadableByteStreamController.cpp
 
-void readableByteStreamControllerCallPullIfNeeded(JSC::JSGlobalObject*, JSReadableByteStreamController*); // userJS: yes (user pull) — JSReadableByteStreamController.cpp
+void readableByteStreamControllerCallPullIfNeeded(JSC::JSGlobalObject*, JSReadableByteStreamController*, MayDefer = MayDefer::Yes); // userJS: yes (user pull) — JSReadableByteStreamController.cpp
 bool readableByteStreamControllerShouldCallPull(JSReadableByteStreamController*); // userJS: no — JSReadableByteStreamController.cpp
 void readableByteStreamControllerClearAlgorithms(JSReadableByteStreamController*); // userJS: no — JSReadableByteStreamController.cpp
 void readableByteStreamControllerClearPendingPullIntos(JSReadableByteStreamController*); // userJS: no — JSReadableByteStreamController.cpp

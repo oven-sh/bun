@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDirWithFiles } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -588,6 +588,47 @@ test("fetch().clone(): chunks buffered for the unread clone share the original b
     bytes += a.value!.byteLength;
   }
   expect(bytes).toBe(total);
+});
+
+// Every clone() of a body that is still arriving tees the stream that the clone before it left on
+// the original, so a loop builds a chain of tees with a read parked at every link. When the body
+// ends, the close steps of every link run in one synchronous cascade. The chain here is deeper
+// than the native stack: a cascade that does not bound itself overflows it and the process dies.
+// That takes about 29,000 links on the 8 MB main thread stack of a release build, and about 3,000
+// in a debug build. macOS and Windows have 18 MB. Debug and ASAN builds also clone slower.
+test("fetch().clone() in a loop before the body ends: the body still ends on every clone", async () => {
+  const depth = (isDebug ? 4_000 : isASAN ? 30_000 : 50_000) * (isMacOS || isWindows ? 2 : 1);
+  const script = `
+    import net from "node:net";
+    let finish;
+    const server = net.createServer(socket => {
+      socket.write("HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n5\\r\\nhello\\r\\n");
+      finish = () => socket.end("0\\r\\n\\r\\n");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const response = await fetch("http://127.0.0.1:" + server.address().port + "/");
+    let clone;
+    for (let i = 0; i < ${depth}; i++) clone = response.clone();
+    // Lets every link start, pull, and park a read on its parent.
+    await new Promise(resolve => setImmediate(resolve));
+    // The terminating chunk arrives alone, so the body stream closes with no data in front of it.
+    finish();
+    console.log(JSON.stringify(await Promise.all([response.text(), clone.text()])));
+    server.close();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify(["hello", "hello"]) + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 // clone() on a locked-stream body must throw a single catchable TypeError.

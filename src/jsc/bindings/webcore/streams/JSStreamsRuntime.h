@@ -76,6 +76,7 @@ namespace WebCore {
 //   Tee: context = the JSStreamTeeState, except onByteTeeReaderClosedRejected whose context
 //     is an InternalFieldTuple{teeState, thisReader}.
 //   The two *Microtask entries are the tee chunk-steps "queue a microtask" jobs.
+//   onTextDecodeCancelDeferred: context = an InternalFieldTuple{source reader, result promise}.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V) \
     V(onFromIterablePullFulfilled)                             \
     V(onFromIterableCancelFulfilled)                           \
@@ -83,7 +84,15 @@ namespace WebCore {
     V(onDefaultTeeReaderClosedRejected)                        \
     V(onByteTeeReadChunkMicrotask)                             \
     V(onByteTeeReadIntoChunkMicrotask)                         \
-    V(onByteTeeReaderClosedRejected)
+    V(onByteTeeReaderClosedRejected)                           \
+    V(onTeeCancelDeferred)                                     \
+    V(onTextDecodeCancelDeferred)
+
+// owner: JSReadRequest.cpp. context = the JSReadRequest / JSReadIntoRequest whose steps run again.
+#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READ_REQUEST(V) \
+    V(onReadRequestCloseStepsDeferred)                        \
+    V(onReadRequestErrorStepsDeferred)                        \
+    V(onReadIntoRequestCloseStepsDeferred)
 
 // owner: BunAsyncIterableSource.cpp. context = the JSAsyncIteratorSourceOperation, EXCEPT
 // onAsyncIterableSourceErrorRethrow, whose context is
@@ -234,6 +243,7 @@ namespace WebCore {
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_DEFAULT_CONTROLLER(V) \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_BYTE_CONTROLLER(V)    \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V)         \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READ_REQUEST(V)          \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERATOR(V)        \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_PIPE(V)                  \

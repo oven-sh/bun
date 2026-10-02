@@ -142,7 +142,6 @@ pub(crate) struct TestRunner<'a> {
     /// `*mut` at the use site would launder shared provenance into a write (UB).
     pub(crate) filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
 
-    pub(crate) unhandled_errors_between_tests: u32,
     pub(crate) summary: Summary,
 
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
@@ -258,21 +257,96 @@ impl<'a> TestRunner<'a> {
 // through `crate::timer` (see src/runtime/timer/mod.rs).
 use crate::timer::EventLoopTimerState as TimerState;
 
-#[derive(Default, Clone, Copy)]
-pub(crate) struct Summary {
-    pub(crate) pass: u32,
-    pub(crate) expectations: u32,
-    pub(crate) skip: u32,
-    pub(crate) todo: u32,
-    pub(crate) fail: u32,
-    pub(crate) files: u32,
-    pub(crate) skipped_because_label: u32,
-}
+pub(crate) use failures::{FileFailure, Summary};
 
-impl Summary {
-    pub(crate) fn did_label_filter_out_all_tests(&self) -> bool {
-        self.skipped_because_label > 0
-            && (self.pass + self.skip + self.todo + self.fail + self.expectations) == 0
+/// The two counters that fail a run are private to this module: a failure that is not a finished test is counted only by `fail_file`.
+mod failures {
+    use crate::cli::test_command::{CommandLineReporter, FailureSite, TestFailure};
+
+    #[derive(Default, Clone, Copy)]
+    pub(crate) struct Summary {
+        pub(crate) pass: u32,
+        pub(crate) expectations: u32,
+        pub(crate) skip: u32,
+        pub(crate) todo: u32,
+        fail: u32,
+        unhandled_errors: u32,
+        pub(crate) files: u32,
+        pub(crate) skipped_because_label: u32,
+    }
+
+    impl Summary {
+        #[inline]
+        pub(crate) fn fail(&self) -> u32 {
+            self.fail
+        }
+
+        /// Errors printed outside of a test: the `N errors` line of the summary.
+        #[inline]
+        pub(crate) fn unhandled_errors(&self) -> u32 {
+            self.unhandled_errors
+        }
+
+        #[inline]
+        pub(crate) fn count_failed_test(&mut self) {
+            self.fail += 1;
+        }
+
+        /// What a `--parallel` worker counted for one file. The records came as `TestDone` frames.
+        pub(crate) fn merge_worker_counts(&mut self, fail: u32, unhandled_errors: u32) {
+            self.fail += fail;
+            self.unhandled_errors += unhandled_errors;
+        }
+
+        pub(crate) fn did_label_filter_out_all_tests(&self) -> bool {
+            self.skipped_because_label > 0
+                && (self.pass + self.skip + self.todo + self.fail + self.expectations) == 0
+        }
+    }
+
+    /// A failure that is not a finished test.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum FileFailure {
+        /// The module of the file rejected while it loaded. `reported`: it was printed as an unhandled error, which `N errors` counts.
+        Load { reported: bool },
+        /// A `describe` callback threw or rejected.
+        DescribeCallback,
+        /// An error that no running test owns.
+        Unhandled,
+        /// `--parallel`: the worker died while it ran the file.
+        WorkerCrashed,
+        /// `--parallel`: the file was running when another worker panicked.
+        Aborted,
+        /// `--parallel`: the run stopped before a worker took the file.
+        NotDispatched,
+    }
+
+    impl CommandLineReporter {
+        /// Counts a failure that is not a finished test, then leaves its record with the structured reporter.
+        #[cold]
+        pub(crate) fn fail_file(
+            &mut self,
+            kind: FileFailure,
+            site: FailureSite<'_>,
+            detail: impl FnOnce() -> Option<TestFailure>,
+        ) {
+            let summary = &mut self.jest.summary;
+            match kind {
+                FileFailure::Load { reported } => {
+                    summary.fail += 1;
+                    summary.unhandled_errors += u32::from(reported);
+                }
+                FileFailure::DescribeCallback | FileFailure::Unhandled => {
+                    summary.unhandled_errors += 1;
+                }
+                FileFailure::WorkerCrashed | FileFailure::Aborted | FileFailure::NotDispatched => {
+                    summary.fail += 1;
+                }
+            }
+            if let Some(name) = self.file_failure_testcase(kind, &site) {
+                self.record_file_failure(name, site, detail());
+            }
+        }
     }
 }
 

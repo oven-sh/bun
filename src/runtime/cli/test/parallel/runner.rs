@@ -574,7 +574,6 @@ impl<'a> WorkerLoop<'a> {
             self.cmds.send(wf.finish());
 
             let before = *self.reporter.summary();
-            let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
             let started_ns =
                 bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns();
 
@@ -611,13 +610,13 @@ impl<'a> WorkerLoop<'a> {
             for v in [
                 idx,
                 after.pass - before.pass,
-                after.fail - before.fail,
+                after.fail() - before.fail(),
                 after.skip - before.skip,
                 after.todo - before.todo,
                 after.expectations - before.expectations,
                 after.skipped_because_label - before.skipped_because_label,
                 after.files - before.files,
-                self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
+                after.unhandled_errors() - before.unhandled_errors(),
             ] {
                 wf.u32(v);
             }

@@ -9,7 +9,7 @@ use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResu
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
-use super::jest::{Jest, FileId, FileColumns as _};
+use super::jest::{Jest, FileFailure, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::{CommandLineReporter, FailureSite, TestFailure};
 use super::execution::TimespecExt as _;
@@ -1317,7 +1317,6 @@ impl BunTest {
             // `NonNull<CommandLineReporter>` carries write provenance from
             // `enter_file`'s `&mut`; single-threaded, no other borrow live.
             let reporter = unsafe { &mut *self.reporter.unwrap().as_ptr() };
-            reporter.jest.unhandled_errors_between_tests += 1;
             is_load_failure = core::mem::take(&mut reporter.load_failure_pending);
             bun_core::pretty_errorln!(
                 "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
@@ -1343,40 +1342,40 @@ impl BunTest {
 
         Output::flush();
 
-        // After the flush: a `--parallel` worker sends the record behind the text it belongs to.
-        if unhandled && !failure_ctx.is_null() {
-            // SAFETY: as for the count above.
+        // Counted after the flush: a `--parallel` worker sends the record behind the text it belongs to.
+        if unhandled {
+            // SAFETY: as for the marker above.
             let reporter = unsafe { &mut *self.reporter.unwrap().as_ptr() };
             let file = reporter.jest.files.items_source()[self.file_id as usize].path.text;
             let in_describe = handle_status == HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe;
-            let (name, site) = self.unhandled_error_record(file, is_load_failure, in_describe);
-            reporter.record_file_failure(name, site, unhandled_detail);
+            let (kind, site) = self.unhandled_failure(file, is_load_failure, in_describe);
+            reporter.fail_file(kind, site, || unhandled_detail);
         }
     }
 
-    /// The testcase name and the place of the record of an error that no running test owns.
-    fn unhandled_error_record<'a>(
+    /// The kind and the place of the record of an error that no running test owns.
+    fn unhandled_failure<'a>(
         &'a mut self,
         file: &'a [u8],
         is_load_failure: bool,
         in_describe: bool,
-    ) -> (&'static [u8], FailureSite<'a>) {
+    ) -> (FileFailure, FailureSite<'a>) {
         if is_load_failure {
-            return (b"(load error)", FailureSite::File(file));
+            return (FileFailure::Load { reported: true }, FailureSite::File(file));
         }
         if in_describe {
             let scope = self.collection.active_scope();
             if !core::ptr::eq(scope, &*self.collection.root_scope) {
-                return (b"(describe callback)", FailureSite::Describe(file, scope));
+                return (FileFailure::DescribeCallback, FailureSite::Describe(file, scope));
             }
         } else if self.phase == Phase::Execution
             && let Some(sequence) = self.get_current_state_data().sequence(self)
             && let Some(entry) = sequence.test_entry.or(sequence.first_entry)
         {
             // SAFETY: entries are owned by the collection tree, which lives as long as `self`.
-            return (b"(unhandled error)", FailureSite::BesideTest(file, unsafe { entry.as_ref() }));
+            return (FileFailure::Unhandled, FailureSite::BesideTest(file, unsafe { entry.as_ref() }));
         }
-        (b"(unhandled error)", FailureSite::File(file))
+        (FileFailure::Unhandled, FailureSite::File(file))
     }
 }
 

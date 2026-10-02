@@ -17,7 +17,8 @@ use bun_ptr::Interned;
 
 use super::frame::{self, Frame};
 use super::worker::{Worker, WorkerPipe};
-use crate::test_command::{CommandLineReporter, FileFailureRecord, TestFailure};
+use crate::test_command::{CommandLineReporter, FailureSite, FileFailureRecord, TestFailure};
+use crate::test_runner::jest::FileFailure;
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
@@ -192,10 +193,7 @@ impl<'a> Coordinator<'a> {
             .filter_map(|w| w.inflight.map(|idx| (idx, now - w.dispatched_at)))
             .collect();
         for (idx, ms) in &running {
-            self.reporter.summary().fail += 1;
-            self.reporter.summary().files += 1;
-            self.mark_crashed(*idx, *ms);
-            self.files_done += 1;
+            self.fail_crashed_file(*idx, *ms);
         }
         if !running.is_empty() {
             bun_core::pretty_errorln!("<r>\n<red>Interrupted<r> while still running:");
@@ -487,26 +485,19 @@ impl<'a> Coordinator<'a> {
                     return;
                 }
 
-                // Reshaped for borrowck — `summary()` mutably borrows
-                // `self.reporter`, so the unhandled-errors counter (also on
-                // `self.reporter.jest`) and `bail_out()` must run after the
-                // summary borrow is released.
-                {
-                    let summary = self.reporter.summary();
-                    summary.pass += pass;
-                    summary.fail += fail;
-                    summary.skip += skip;
-                    summary.todo += todo;
-                    summary.expectations += expectations;
-                    summary.skipped_because_label += skipped_label;
-                    summary.files += files;
-                }
-                self.reporter.jest.unhandled_errors_between_tests += unhandled;
+                let summary = self.reporter.summary();
+                summary.pass += pass;
+                summary.merge_worker_counts(fail, unhandled);
+                summary.skip += skip;
+                summary.todo += todo;
+                summary.expectations += expectations;
+                summary.skipped_because_label += skipped_label;
+                summary.files += files;
                 self.record_timing(idx, w.dispatched_at);
 
                 w.inflight = None;
                 self.files_done += 1;
-                let fail_now = self.reporter.summary().fail;
+                let fail_now = self.reporter.summary().fail();
                 if self.bail > 0 && fail_now >= self.bail {
                     self.bail_out();
                 }
@@ -735,34 +726,34 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(self.rel_path(file_idx)),
             bstr::BStr::new(reason),
         );
-        self.reporter.summary().fail += 1;
-        self.reporter.summary().files += 1;
-        self.files_done += 1;
-        self.record_file_failure(file_idx, b"(aborted)", reason);
+        self.fail_file(file_idx, FileFailure::Aborted, reason);
     }
 
-    fn mark_crashed(&mut self, file_idx: u32, elapsed_ms: i64) {
+    fn fail_crashed_file(&mut self, file_idx: u32, elapsed_ms: i64) {
         if let Some(file) = self.test_records.get_mut(file_idx as usize) {
             file.elapsed_ns = u64::try_from(elapsed_ms).unwrap_or(0) * bun_core::time::NS_PER_MS;
         }
-        self.record_file_failure(
+        self.fail_file(
             file_idx,
-            b"(worker crashed)",
+            FileFailure::WorkerCrashed,
             b"worker process crashed before reporting results",
         );
     }
 
-    /// The failed testcase a structured reporter gets for a file that the coordinator fails itself.
-    fn record_file_failure(&mut self, file_idx: u32, name: &'static [u8], message: &[u8]) {
-        if let Some(file) = self.test_records.get_mut(file_idx as usize) {
-            file.failure = Some(Box::new(FileFailureRecord {
-                name,
-                failure: Some(TestFailure {
+    /// Counts a file that the coordinator fails itself. `message` goes into its record.
+    fn fail_file(&mut self, file_idx: u32, kind: FileFailure, message: &[u8]) {
+        self.reporter.fail_file(
+            kind,
+            FailureSite::Coordinator(self.test_records.get_mut(file_idx as usize)),
+            || {
+                Some(TestFailure {
                     message: message.to_vec(),
                     ..Default::default()
-                }),
-            }));
-        }
+                })
+            },
+        );
+        self.reporter.summary().files += 1;
+        self.files_done += 1;
     }
 
     fn account_crash(
@@ -777,11 +768,8 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(self.rel_path(file_idx)),
             detail,
         );
-        self.reporter.summary().fail += 1;
-        self.reporter.summary().files += 1;
-        self.mark_crashed(file_idx, bun_core::time::milli_timestamp() - dispatched_at);
-        self.files_done += 1;
-        if self.bail > 0 && self.reporter.summary().fail >= self.bail {
+        self.fail_crashed_file(file_idx, bun_core::time::milli_timestamp() - dispatched_at);
+        if self.bail > 0 && self.reporter.summary().fail() >= self.bail {
             self.bail_out();
         }
     }
@@ -898,7 +886,11 @@ impl<'a> Coordinator<'a> {
                     )),
                     bstr::BStr::new(reason),
                 );
-                self.reporter.summary().fail += 1;
+                self.reporter.fail_file(
+                    FileFailure::NotDispatched,
+                    FailureSite::Coordinator(self.test_records.get_mut(idx as usize)),
+                    || None,
+                );
                 self.reporter.summary().files += 1;
                 self.files_done += 1;
             }

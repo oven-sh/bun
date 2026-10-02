@@ -237,3 +237,30 @@ queueMicrotask(() => {
 Support for corking is planned. In the meantime, you must manage backpressure manually with the `drain` handler.
 
 </Note>
+
+---
+
+## `TCPSocket` / `TLSSocket` methods
+
+Sockets returned by `Bun.connect()` and passed to `Bun.listen()` handlers expose TLS inspection and session management methods (see `Socket` in `bun.d.ts`):
+
+```ts
+const socket = await Bun.connect({ hostname: "example.com", port: 443, tls: true });
+
+// The negotiated ALPN protocol: a string, `false` when the handshake
+// completed without one, or `null` before the handshake completes.
+console.log(socket.alpnProtocol);
+
+// SNI hostname for this connection.
+console.log(socket.getServername());
+socket.setServername("example.com");
+
+// TLS session ticket (client only, useful for debugging session resumption).
+const ticket = socket.getTLSTicket();
+
+// Resume a previous TLS session explicitly.
+socket.setSession(ticket);
+
+// Upgrade a plaintext socket to TLS, keeping the raw socket around.
+const [raw, tls] = socket.upgradeTLS({ tls: true, socket: handlers });
+```

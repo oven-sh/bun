@@ -55,6 +55,9 @@ fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
 }
 
 impl SASL {
+    /// PBKDF2 runs on the JS thread, so bound the work a server-chosen `i=` can demand.
+    pub(crate) const MAX_ITERATION_COUNT: u32 = 10_000_000;
+
     // Note: takes the password slice rather than `&mut PostgresSQLConnection` —
     // only `connection.password` is read, and `&mut PostgresSQLConnection` here
     // would alias the `&mut self.authentication_state` borrow live at the call

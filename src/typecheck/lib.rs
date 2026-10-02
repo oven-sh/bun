@@ -1,5 +1,7 @@
 //! The TypeScript type checker behind `bun --lint`: a port of typescript-go onto `bun_ast`.
 
+#![allow(dead_code)]
+
 pub mod ast;
 pub mod binder;
 pub mod collections;
@@ -11,6 +13,7 @@ pub mod jsnum;
 pub mod lowering;
 pub mod module;
 pub mod nodebuilder;
+pub mod printer;
 pub mod pseudochecker;
 pub mod scanner;
 pub mod stringutil;

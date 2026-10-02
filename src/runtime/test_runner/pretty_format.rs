@@ -2896,37 +2896,26 @@ impl JestPrettyFormat {
             )?;
             *this.amf_quote_strings() = original_quote_strings;
         } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
-            let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
-                instance, value, this.amf_global_this(), &mut *writer.ctx, true,
-            )
-            .expect("unreachable");
-            if !printed {
-                // default print (non-overridden by user)
-                let flags = instance.flags;
-                let Some(args_value) =
-                    expect_js::custom::captured_args_get_cached(value)
-                else {
-                    return Ok(true);
-                };
-                let Some(matcher_fn) =
-                    expect_js::custom::matcher_fn_get_cached(value)
-                else {
-                    return Ok(true);
-                };
-                let matcher_name = matcher_fn.get_name(this.amf_global_this())?;
+            let flags = instance.flags;
+            let Some(args_value) = expect_js::custom::captured_args_get_cached(value) else {
+                return Ok(true);
+            };
+            let Some(matcher_fn) = expect_js::custom::matcher_fn_get_cached(value) else {
+                return Ok(true);
+            };
+            let matcher_name = matcher_fn.get_name(this.amf_global_this())?;
 
-                Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
-                if flags.not() {
-                    this.amf_add_for_new_line(b"not ".len());
-                    writer.write_all(b"not ");
-                }
-                this.amf_add_for_new_line(matcher_name.length() + 1);
-                writer.print(format_args!("{}", matcher_name));
-                writer.write_all(b" ");
-                this.amf_print_as::<ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatTag::Array, &mut *writer.ctx, args_value, JSType::Array,
-                )?;
+            Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
+            if flags.not() {
+                this.amf_add_for_new_line(b"not ".len());
+                writer.write_all(b"not ");
             }
+            this.amf_add_for_new_line(matcher_name.length() + 1);
+            writer.print(format_args!("{}", matcher_name));
+            writer.write_all(b" ");
+            this.amf_print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatTag::Array, &mut *writer.ctx, args_value, JSType::Array,
+            )?;
         } else {
             return Ok(false);
         }

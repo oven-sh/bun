@@ -4289,7 +4289,7 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. A failed reload is reported, then `may_return` returns and `false` exits 1.
+/// Port of `bun.reloadProcess`. On POSIX a failed reload is reported, then `may_return` returns and `false` exits 1.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
@@ -4390,7 +4390,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
                 );
                 // execve only returns on error.
                 let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
-                Some((exec_path.as_bytes(), errno))
+                Some(("execve", exec_path.as_bytes(), errno))
             }
             Err(_) => None,
         };
@@ -4410,25 +4410,27 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 }
 
-/// `failed_exec` is the path and errno of the failed `execve`, or `None` when the path lookup failed.
+/// `failed_exec` is the syscall, path and errno of the failed exec, or `None` when the path lookup failed.
 #[cfg(unix)]
 #[cold]
-fn report_reload_failure(failed_exec: Option<(&[u8], i32)>) {
+fn report_reload_failure(failed_exec: Option<(&str, &[u8], i32)>) {
     match failed_exec {
-        Some((exec_path, errno)) => match (
+        Some((syscall, exec_path, errno)) => match (
             crate::ErrnoNames::SYS.name(errno),
             crate::coreutils_error_map::get(errno),
         ) {
             (Some(code), Some(message)) => crate::err_generic!(
-                "Failed to reload {}: {}: {} <d>(execve)<r>",
+                "Failed to reload {}: {}: {} <d>({})<r>",
                 crate::fmt::quote(exec_path),
                 code,
-                message
+                message,
+                syscall
             ),
             _ => crate::err_generic!(
-                "Failed to reload {}: errno {} <d>(execve)<r>",
+                "Failed to reload {}: errno {} <d>({})<r>",
                 crate::fmt::quote(exec_path),
-                errno
+                errno,
+                syscall
             ),
         },
         None => crate::err_generic!("Failed to reload: the path of this executable is unknown"),

@@ -135,6 +135,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 🟡 See [`process`](#process) Global.
 
+On POSIX, `process.stdout.end()` and `process.stderr.end()` flush pending writes, then asynchronously shut down the write side of socket stdio. Pipeline completion does the same. The descriptors stay open, and `destroy()` never closes fd 1/2. Actual pipes keep their writers open. After socket or pipe finalization, later stream writes fail with `EPIPE`.
+
 ### [`node:sys`](https://nodejs.org/api/util.html)
 
 🟢 See [`node:util`](#node-util).

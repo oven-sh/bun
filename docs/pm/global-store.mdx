@@ -104,7 +104,24 @@ project/node_modules/
 └── react -> .bun/react@18.3.1/node_modules/react
 ```
 
-The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure**: the package's own store path and tarball integrity, plus the hash of every dependency it links to. Two projects that resolve `react@18.3.1` to the same set of transitive versions share one global directory. A project that resolves a transitive dependency to a different version gets a separate global entry whose dep symlinks point at the right siblings. Packages that participate in a dependency cycle share one hash computed over the whole strongly-connected component. The key is therefore independent of which member a given project's dependency graph happened to reach first.
+The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure**: the package's own store path and tarball integrity, plus the hash of every dependency it links to. Two projects that resolve `react@18.3.1` to the same set of transitive versions share one global directory. A project that resolves a transitive dependency to a different version gets a separate global entry whose dep symlinks point at the right siblings.
+
+Packages that participate in a dependency cycle share one hash computed over the whole strongly-connected component. The key is therefore independent of which member a given project's dependency graph happened to reach first. The members of a cycle also share one directory, named by that hash:
+
+```bash tree layout icon="list-tree"
+~/.bun/install/cache/links/
+└── scc-9c1f2e07b3a4d6e8/                 # scc-<entry hash>
+    ├── es-abstract@1.23.3/               # <storepath> of each member
+    │   └── node_modules/
+    │       ├── es-abstract/
+    │       └── object.assign -> ../../object.assign@4.1.5/node_modules/object.assign
+    └── object.assign@4.1.5/
+        └── node_modules/
+            ├── object.assign/
+            └── es-abstract -> ../../es-abstract@1.23.3/node_modules/es-abstract
+```
+
+The links between the members stay inside that directory, so they are valid while Bun builds the cycle and after Bun publishes it.
 
 ## What stays project-local
 
@@ -141,6 +158,8 @@ Each unique `(package, version, resolved-dependency-set)` triple gets one direct
 ### Concurrency
 
 Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Each process builds the entire entry (package files, dependency symlinks, bin links) under a private `<entry>.tmp-<random>/` staging directory. As the final step, it renames that directory into place. The loser of the rename sees `EEXIST` and discards its identical staging tree. A writer that crashes mid-build leaves only an unreferenced staging directory that the next install ignores. A published entry is therefore always complete; there is no separate completeness sentinel.
+
+The members of a dependency cycle need each other's files to link their bins, so Bun builds them in one `scc-<entry hash>.tmp-<random>/` staging directory and publishes them with one rename. If one member fails to install, Bun does not publish the cycle.
 
 ## Related documentation
 

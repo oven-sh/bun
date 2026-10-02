@@ -668,6 +668,34 @@ struct UninstallTask {
     task: WorkPoolTask,
 }
 
+/// Main thread only. Deletes a directory tree on the thread pool. The install waits for it.
+/// No other task may use the directory: rename it to a private name first, or own it.
+pub(crate) fn delete_tree_in_background(absolute_path: &[u8]) {
+    let task = bun_core::heap::into_raw(Box::new(UninstallTask {
+        absolute_path: absolute_path.to_vec().into_boxed_slice(),
+        task: WorkPoolTask {
+            callback: UninstallTask::run,
+            node: ThreadPoolNode::default(),
+        },
+    }));
+    let pm = crate::package_manager::get();
+    // SAFETY: the caller is on the install main thread.
+    // Raw-pointer field projection avoids forming `&mut PackageManager`
+    // (the caller can already hold one); `total_tasks` is
+    // main-thread-only state, `pending_tasks` is atomic. Mirrors
+    // `increment_pending_tasks`.
+    unsafe {
+        *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
+        (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
+    }
+    // SAFETY: task is a valid heap allocation; .task is the intrusive node.
+    PackageManager::get()
+        .thread_pool
+        .schedule(Batch::from(unsafe {
+            core::ptr::addr_of_mut!((*task).task)
+        }));
+}
+
 impl UninstallTask {
     fn run(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of an UninstallTask.
@@ -1976,33 +2004,12 @@ impl<'a> PackageInstall<'a> {
                 //   bun install --ignore-scripts ran
                 //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
                 //
-                let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
+                delete_tree_in_background(path::resolve_path::join_abs_string::<
+                    path::platform::Auto,
+                >(
                     bun_fs::FileSystem::instance().top_level_dir(),
                     &[&self.node_modules.path, temp_path.as_bytes()],
-                );
-                let task = bun_core::heap::into_raw(Box::new(UninstallTask {
-                    absolute_path: absolute_path.to_vec().into_boxed_slice(),
-                    task: WorkPoolTask {
-                        callback: UninstallTask::run,
-                        node: ThreadPoolNode::default(),
-                    },
-                }));
-                let pm = crate::package_manager::get();
-                // SAFETY: `uninstall_before_install` runs on the install main thread.
-                // Raw-pointer field projection avoids forming `&mut PackageManager`
-                // (the caller `PackageInstaller` already holds one); `total_tasks` is
-                // main-thread-only state, `pending_tasks` is atomic. Mirrors
-                // `increment_pending_tasks`.
-                unsafe {
-                    *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
-                    (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
-                }
-                // SAFETY: task is a valid heap allocation; .task is the intrusive node.
-                PackageManager::get()
-                    .thread_pool
-                    .schedule(Batch::from(unsafe {
-                        core::ptr::addr_of_mut!((*task).task)
-                    }));
+                ));
             }
         }
     }

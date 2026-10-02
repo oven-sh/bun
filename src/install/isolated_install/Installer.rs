@@ -126,6 +126,14 @@ pub struct Installer<'a> {
 pub(crate) struct UnitState {
     /// The parked member that waits, for the whole cycle, on a dependency outside it.
     waiter: StoreEntryId,
+    /// Global store: whether the directory of the cycle existed when the install started.
+    published: Option<bool>,
+    /// Global store: the members that are built in the staging directory and wait for its publication.
+    built: u32,
+    /// Global store: a member failed, so the staging directory is not published.
+    failed: bool,
+    /// Global store: the staging directory was published or discarded.
+    closed: bool,
 }
 
 impl<'a> Installer<'a> {
@@ -172,6 +180,8 @@ impl<'a> Installer<'a> {
             | Result::Blocked
             // the task returned to the main thread to spawn some scripts
             | Result::RunScripts(_)
+            // the task returned to the main thread to publish its dependency cycle
+            | Result::UnitBuilt
         ));
 
         task.result = Result::None;
@@ -407,7 +417,10 @@ impl<'a> Installer<'a> {
         // Clean up the staging directory so a half-built global-store entry
         // doesn't leak in the cache (it would never be reused — the suffix is
         // random — but it's wasted disk).
-        if self.entry_uses_global_store(entry_id) {
+        if let Some(unit) = self.global_store_unit_of(entry_id) {
+            // The other members build in the same staging directory. `publish_unit_if_complete` removes it.
+            self.units[unit].failed = true;
+        } else if self.entry_uses_global_store(entry_id) {
             let mut staging = AutoAbsPath::init();
             self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
@@ -676,6 +689,70 @@ impl<'a> Installer<'a> {
 
         if let Some(unit) = self.store.components.unit_of(completed) {
             self.release_unit_if_ready(unit);
+            self.publish_unit_if_complete(unit);
+        }
+    }
+
+    /// Called from main thread: a member of a global-store dependency cycle is built in the staging directory.
+    pub(crate) fn on_unit_member_built(&mut self, entry_id: StoreEntryId) {
+        let unit = self
+            .store
+            .components
+            .unit_of(entry_id)
+            .expect("only a member of a dependency cycle yields UnitBuilt");
+        self.units[unit].built += 1;
+        self.publish_unit_if_complete(unit);
+    }
+
+    /// Main thread only. When each member of a global-store dependency cycle is built or done,
+    /// one rename publishes the staging directory and the built members go on to their last step.
+    /// If a member failed, the staging directory is removed and the built members fail too.
+    fn publish_unit_if_complete(&mut self, unit: usize) {
+        let state = &self.units[unit];
+        if state.closed || (state.built == 0 && !state.failed) {
+            return;
+        }
+
+        let store = self.store;
+        let entry_steps = store.entries.items_step();
+        let members = store.components.unit_members(unit);
+        let is_done = |member: StoreEntryId| {
+            entry_steps[member.get() as usize].load(Ordering::Acquire) == Step::Done as u32
+        };
+
+        let done = members.iter().filter(|&&member| is_done(member)).count();
+        if state.built as usize + done != members.len() {
+            return;
+        }
+        self.units[unit].closed = true;
+
+        let mut publish_err = None;
+        if self.units[unit].failed {
+            self.discard_global_store_unit(members[0]);
+        } else {
+            match self.commit_global_store_unit(members[0]) {
+                sys::Result::Ok(()) => {
+                    for &member in members {
+                        if !is_done(member) {
+                            self.start_task(member);
+                        }
+                    }
+                    return;
+                }
+                sys::Result::Err(err) => publish_err = Some(err),
+            }
+        }
+
+        for &member in members {
+            if is_done(member) {
+                continue;
+            }
+            // .monotonic is okay because a built task isn't running.
+            entry_steps[member.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
+            match publish_err.take() {
+                Some(err) => self.on_task_fail(member, &TaskError::LinkPackage(err)),
+                None => self.on_task_fail(member, &TaskError::UnitNotPublished),
+            }
         }
     }
 }
@@ -748,6 +825,8 @@ pub enum Result {
     // task; threading `'a` here is blocked by the `Installer<'static>` BackRef
     // the queued `Task` already carries.
     RunScripts(*mut package::scripts::List),
+    /// The entry is built in the staging directory of its dependency cycle and waits for the publication.
+    UnitBuilt,
     Done,
 }
 
@@ -763,6 +842,8 @@ pub enum TaskError {
     Binaries(crate::Error),
     Patching(Log),
     Download(DownloadError),
+    /// Another member of the entry's global-store dependency cycle failed and reported it.
+    UnitNotPublished,
 }
 
 #[repr(u8)]
@@ -834,6 +915,7 @@ pub(crate) enum Yield {
     RunScripts(*mut package::scripts::List),
     Done,
     Blocked,
+    UnitBuilt,
     Fail(TaskError),
 }
 
@@ -844,6 +926,29 @@ impl Yield {
 }
 
 impl Task {
+    /// Called from task thread, as the last step of the build of a global-store entry. An entry
+    /// on its own is renamed into place here. A member of a dependency cycle goes to the main
+    /// thread, which renames the directory of the cycle when each member is built.
+    fn publish(&self, installer: &Installer<'_>, current_step: Step) -> Option<Yield> {
+        if installer.global_store_unit_of(self.entry_id).is_none() {
+            return match installer.commit_global_store_entry(self.entry_id) {
+                sys::Result::Ok(()) => None,
+                sys::Result::Err(err) => Some(Yield::failure(TaskError::LinkPackage(err))),
+            };
+        }
+        // A junction holds an absolute path, so its target moves with the rename.
+        #[cfg(windows)]
+        if let sys::Result::Err(err) = installer.symlink_dependencies(
+            self.entry_id,
+            symlinker::Strategy::ExpectExisting,
+            Which::Final,
+        ) {
+            return Some(Yield::failure(TaskError::SymlinkDependencies(err)));
+        }
+        self.next_step(current_step);
+        Some(Yield::UnitBuilt)
+    }
+
     /// Called from task thread
     fn next_step(&self, current_step: Step) -> Step {
         let next_step: Step = match current_step {
@@ -1554,7 +1659,11 @@ impl Task {
                         symlinker::Strategy::ExpectMissing
                     };
 
-                    let changed = match installer.symlink_dependencies(self.entry_id, strategy) {
+                    let changed = match installer.symlink_dependencies(
+                        self.entry_id,
+                        strategy,
+                        Which::Staging,
+                    ) {
                         sys::Result::Ok(changed) => changed,
                         sys::Result::Err(err) => {
                             return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
@@ -1807,11 +1916,8 @@ impl Task {
 
                     let bin = pkg_bins[pkg_id as usize];
                     if bin.tag == bin::Tag::None {
-                        match installer.commit_global_store_entry(self.entry_id) {
-                            sys::Result::Ok(()) => {}
-                            sys::Result::Err(e) => {
-                                return Ok(Yield::failure(TaskError::LinkPackage(e)));
-                            }
+                        if let Some(yielded) = self.publish(installer, current_step) {
+                            return Ok(yielded);
                         }
                         step = self.next_step(current_step);
                         continue;
@@ -1852,7 +1958,7 @@ impl Task {
                         installer.append_real_store_node_modules_path(
                             &mut p,
                             replacement_entry_id,
-                            Which::Final,
+                            installer.which_while_building(self.entry_id, replacement_entry_id),
                         );
                         target_node_modules_path = Some(p);
 
@@ -1914,11 +2020,8 @@ impl Task {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
 
-                    match installer.commit_global_store_entry(self.entry_id) {
-                        sys::Result::Ok(()) => {}
-                        sys::Result::Err(e) => {
-                            return Ok(Yield::failure(TaskError::LinkPackage(e)));
-                        }
+                    if let Some(yielded) = self.publish(installer, current_step) {
+                        return Ok(yielded);
                     }
 
                     step = self.next_step(current_step);
@@ -2047,6 +2150,13 @@ impl Task {
                     );
                 }
                 this.result = Result::Blocked;
+                // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
+                installer.task_queue.push(core::ptr::NonNull::from(this));
+                // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
+                unsafe { PackageManager::wake_raw(manager_ptr) };
+            }
+            Yield::UnitBuilt => {
+                this.result = Result::UnitBuilt;
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
                 installer.task_queue.push(core::ptr::NonNull::from(this));
                 // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
@@ -2298,10 +2408,15 @@ impl<'a> Installer<'a> {
     }
 
     /// Ok(true) when at least one dependency link of the entry was written.
+    ///
+    /// A member of a global-store dependency cycle reaches the other members in the staging
+    /// directory that the cycle is built in. With `unit_members == Which::Final` the call writes
+    /// only the links to those members again, for the directory the cycle is published to.
     fn symlink_dependencies(
         &self,
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
+        unit_members: Which,
     ) -> sys::Result<bool> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2317,6 +2432,7 @@ impl<'a> Installer<'a> {
         let entry_node_modules_name =
             self.entry_store_node_modules_package_name(dep_id, pkg_id, pkg_res, pkg_names);
         let uses_global_store = self.entry_uses_global_store(entry_id);
+        let in_unit = self.global_store_unit_of(entry_id).is_some();
 
         let mut dest = AutoPath::init_top_level_dir();
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
@@ -2324,6 +2440,10 @@ impl<'a> Installer<'a> {
 
         let mut changed = false;
         for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
+            let is_unit_member = in_unit && self.store.components.same(entry_id, dep.entry_id);
+            if unit_members == Which::Final && !is_unit_member {
+                continue;
+            }
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
             dest.set_length(base_len);
@@ -2337,7 +2457,15 @@ impl<'a> Installer<'a> {
             let mut dep_store_path = AutoAbsPath::init_top_level_dir();
             if uses_global_store {
                 debug_assert!(self.entry_uses_global_store(dep.entry_id));
-                self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final);
+                self.append_real_store_path(
+                    &mut dep_store_path,
+                    dep.entry_id,
+                    if is_unit_member {
+                        Which::Staging
+                    } else {
+                        Which::Final
+                    },
+                );
             } else {
                 self.append_store_path(&mut dep_store_path, dep.entry_id);
             }
@@ -2346,6 +2474,12 @@ impl<'a> Installer<'a> {
             dest.undo(1);
             let target = dest.relative(&dep_store_path);
             dest.set_length(dest_len);
+
+            // The relative target is the same in the staging and the published directory.
+            #[cfg(windows)]
+            if is_unit_member && unit_members == Which::Final {
+                self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final);
+            }
 
             let mut symlinker = Symlinker {
                 dest: dest.into_sep::<{ PathSeparators::ANY }>(),
@@ -2424,7 +2558,7 @@ impl<'a> Installer<'a> {
                 self.append_real_store_node_modules_path(
                     &mut p,
                     replacement_entry_id,
-                    Which::Final,
+                    self.which_while_building(parent_entry_id, replacement_entry_id),
                 );
                 target_node_modules_path = Some(p);
 
@@ -2502,8 +2636,73 @@ impl<'a> Installer<'a> {
         self.store.entries.items_entry_hash()[entry_id.get() as usize] != 0
     }
 
+    /// The dependency cycle of an entry that is built and published in the global virtual store
+    /// together with the other members of the cycle. The members share one `entry_hash`, so
+    /// either all of them use the global store or none does.
+    pub(crate) fn global_store_unit_of(&self, entry_id: StoreEntryId) -> Option<usize> {
+        if !self.entry_uses_global_store(entry_id) {
+            return None;
+        }
+        self.store.components.unit_of(entry_id)
+    }
+
+    /// Where the files of `entry_id` are while `builder` is built. The members of a global-store
+    /// dependency cycle see each other in the staging directory of the cycle.
+    fn which_while_building(&self, builder: StoreEntryId, entry_id: StoreEntryId) -> Which {
+        if self.global_store_unit_of(builder).is_some()
+            && self.store.components.same(builder, entry_id)
+        {
+            Which::Staging
+        } else {
+            Which::Final
+        }
+    }
+
+    /// Absolute path to the global virtual-store directory of the dependency cycle of `member`:
+    ///   <cache>/links/scc-<entry_hash>
+    /// It holds a `<storepath>` directory for each member. The links between the members stay
+    /// inside it, so one rename publishes the cycle.
+    fn append_global_store_unit_path(
+        &self,
+        buf: &mut impl paths::PathLike,
+        member: StoreEntryId,
+        which: Which,
+    ) {
+        debug_assert!(self.global_store_unit_of(member).is_some());
+        let hash = self.store.entries.items_entry_hash()[member.get() as usize];
+        buf.clear();
+        buf.append(self.global_store_path.as_ref().unwrap().as_bytes());
+        match which {
+            Which::Final => buf.append_fmt(format_args!("scc-{hash:016x}")),
+            Which::Staging => buf.append_fmt(format_args!(
+                "scc-{hash:016x}.tmp-{:x}",
+                self.global_store_tmp_suffix,
+            )),
+        }
+    }
+
+    /// Main thread only. A global-store entry is complete when its directory exists: the rename
+    /// that publishes it is the last step of its build. The members of a dependency cycle are
+    /// published with one rename, so the directory of the cycle answers for each of them.
+    pub(crate) fn global_store_entry_is_published(&mut self, entry_id: StoreEntryId) -> bool {
+        let mut path = AutoAbsPath::init();
+        let Some(unit) = self.global_store_unit_of(entry_id) else {
+            self.append_global_store_entry_path(&mut path, entry_id, Which::Final);
+            return sys::directory_exists_at(Fd::cwd(), path.slice_z()).unwrap_or(false);
+        };
+        if let Some(published) = self.units[unit].published {
+            return published;
+        }
+        self.append_global_store_unit_path(&mut path, entry_id, Which::Final);
+        let published = sys::directory_exists_at(Fd::cwd(), path.slice_z()).unwrap_or(false);
+        self.units[unit].published = Some(published);
+        published
+    }
+
     /// Absolute path to the global virtual-store directory for `entry_id`:
     ///   <cache>/links/<storepath>-<entry_hash>
+    /// or, for a member of a dependency cycle:
+    ///   <cache>/links/scc-<entry_hash>/<storepath>
     /// (no trailing `/node_modules`). Pass `.staging` to get the per-process
     /// temp sibling that the build steps write into; the final `binaries`
     /// step renames staging → final.
@@ -2514,6 +2713,14 @@ impl<'a> Installer<'a> {
         which: Which,
     ) {
         debug_assert!(self.entry_uses_global_store(entry_id));
+        if self.store.components.unit_of(entry_id).is_some() {
+            self.append_global_store_unit_path(buf, entry_id, which);
+            buf.append_fmt(format_args!(
+                "{}",
+                store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
+            ));
+            return;
+        }
         buf.clear();
         buf.append(self.global_store_path.as_ref().unwrap().as_bytes());
         match which {
@@ -2539,16 +2746,50 @@ impl<'a> Installer<'a> {
         if !self.entry_uses_global_store(entry_id) {
             return sys::Result::Ok(());
         }
+        debug_assert!(self.store.components.unit_of(entry_id).is_none());
         let mut staging = AutoAbsPath::init();
         self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
         let mut final_ = AutoAbsPath::init();
         self.append_global_store_entry_path(&mut final_, entry_id, Which::Final);
+        self.publish_global_store_directory(&mut staging, &mut final_, |path| {
+            let _ = Fd::cwd().delete_tree(path);
+        })
+    }
 
+    /// Main thread only. Publishes the staging directory of the dependency cycle of `member`,
+    /// like `commit_global_store_entry` does for one entry. A directory that lost goes to the
+    /// thread pool: it holds every member.
+    fn commit_global_store_unit(&self, member: StoreEntryId) -> sys::Result<()> {
+        let mut staging = AutoAbsPath::init();
+        self.append_global_store_unit_path(&mut staging, member, Which::Staging);
+        let mut final_ = AutoAbsPath::init();
+        self.append_global_store_unit_path(&mut final_, member, Which::Final);
+        self.publish_global_store_directory(
+            &mut staging,
+            &mut final_,
+            crate::package_install::delete_tree_in_background,
+        )
+    }
+
+    /// Main thread only.
+    fn discard_global_store_unit(&self, member: StoreEntryId) {
+        let mut staging = AutoAbsPath::init();
+        self.append_global_store_unit_path(&mut staging, member, Which::Staging);
+        crate::package_install::delete_tree_in_background(staging.slice());
+    }
+
+    /// Renames `staging` to `final_`, both directly in `<cache>/links`.
+    fn publish_global_store_directory(
+        &self,
+        staging: &mut AutoAbsPath,
+        final_: &mut AutoAbsPath,
+        delete_tree: impl Fn(&[u8]),
+    ) -> sys::Result<()> {
         match sys::renameat(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z()) {
             sys::Result::Ok(()) => sys::Result::Ok(()),
             sys::Result::Err(err) => {
                 if !is_rename_collision(&err) {
-                    let _ = Fd::cwd().delete_tree(staging.slice());
+                    delete_tree(staging.slice());
                     return sys::Result::Err(err);
                 }
                 // Under --force, the existing entry may be the corrupt one
@@ -2564,26 +2805,26 @@ impl<'a> Installer<'a> {
                     // OOM/capacity: fire-and-forget
                     let _ = old.append_fmt(format_args!(
                         "{}.old-{:x}",
-                        store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
+                        bstr::BStr::new(paths::basename(final_.slice())),
                         bun_core::fast_random(),
                     ));
                     if let Some(swap_err) =
                         sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z()).err()
                     {
-                        let _ = Fd::cwd().delete_tree(staging.slice());
+                        delete_tree(staging.slice());
                         return sys::Result::Err(swap_err);
                     }
                     match sys::renameat(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z()) {
                         sys::Result::Ok(()) => {
-                            let _ = Fd::cwd().delete_tree(old.slice());
+                            delete_tree(old.slice());
                             return sys::Result::Ok(());
                         }
                         sys::Result::Err(publish_err) => {
                             // Another --force install raced us in the window
                             // between swap-out and publish. Theirs is fresh
                             // too; clean up both temp trees.
-                            let _ = Fd::cwd().delete_tree(staging.slice());
-                            let _ = Fd::cwd().delete_tree(old.slice());
+                            delete_tree(staging.slice());
+                            delete_tree(old.slice());
                             return if is_rename_collision(&publish_err) {
                                 sys::Result::Ok(())
                             } else {
@@ -2592,7 +2833,7 @@ impl<'a> Installer<'a> {
                         }
                     }
                 }
-                let _ = Fd::cwd().delete_tree(staging.slice());
+                delete_tree(staging.slice());
                 // A concurrent install renamed first; both writers produced
                 // the same content-addressed bytes, so theirs is as good as
                 // ours.

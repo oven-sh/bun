@@ -1515,7 +1515,9 @@ pub(crate) fn install_isolated_packages(
                         index_sort::sort_slice_unstable_by(&mut member_sub, |a, b| a.cmp(b));
                         let ext_keys = scc_ext.keys_mut();
                         index_sort::sort_slice_unstable_by(ext_keys, |a, b| a.cmp(b));
-                        let mut hasher = Wyhash::init(0x42A7C15F9E3779B9);
+                        // The seed changed when cycle members moved into one `scc-<hash>`
+                        // directory: entries keyed with the old seed link to per-member directories.
+                        let mut hasher = Wyhash::init(0x42A7C15F9E3779BA);
                         for k in &member_sub {
                             hasher.update(bun_core::bytes_of(k));
                         }
@@ -2141,17 +2143,14 @@ pub(crate) fn install_isolated_packages(
                         || (is_new_bun_modules && !uses_global_store)
                         || matches!(patch_info, installer::PatchInfo::Remove(_))
                         || 'needs_install: {
-                            let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                             if uses_global_store {
                                 // Global entries are built under a per-process
                                 // staging path and renamed into place as the
                                 // final step, so the directory existing at its
                                 // final path is the completeness signal.
-                                installer.append_global_store_entry_path(&mut store_path, entry_id, installer::Which::Final);
-                                break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z())
-                                    .ok()
-                                    .unwrap_or(false);
+                                break 'needs_install !installer.global_store_entry_is_published(entry_id);
                             }
+                            let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
                             // Capture the length instead of a `ResetScope` so
                             // `store_path` stays unborrowed.

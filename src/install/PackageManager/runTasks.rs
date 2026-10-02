@@ -377,6 +377,9 @@ fn run_tasks_erased(
                 store_installer::Result::Blocked => {
                     installer.on_task_blocked(task.entry_id);
                 }
+                store_installer::Result::UnitBuilt => {
+                    installer.on_unit_member_built(task.entry_id);
+                }
                 &store_installer::Result::RunScripts(list) => {
                     let entry_id = task.entry_id;
                     let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];

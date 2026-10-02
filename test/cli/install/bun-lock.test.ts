@@ -1113,7 +1113,7 @@ for (const args of [[], ["--silent"], ["--lockfile-only", "--silent"]]) {
     }
     expect(out).not.toContain("Saved");
     expect(await file(join(packageDir, "bun.lock")).text()).toBe("{ this is not json");
-    expect(existsSync(join(packageDir, "node_modules"))).toBe(false);
+    expect(await exists(join(packageDir, "node_modules"))).toBe(false);
     expect(exitCode).toBe(1);
   });
 }

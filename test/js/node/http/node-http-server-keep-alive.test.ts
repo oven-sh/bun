@@ -915,10 +915,19 @@ describe("every head of _storeHeader for an HTTP/1.0 request with Connection: ke
     hasBody(row)
       ? !(row.length === "set" && row.encoding !== "chunked")
       : row.status !== 200 && row.encoding === "chunked";
+  /**
+   * https://github.com/oven-sh/bun/pull/33871 changes the last rule of bunCloses: with a Connection: keep-alive
+   * header of the listener, the connection then stays open, as in Node.js. The table takes each of the two
+   * results for those rows.
+   */
+  const framingChanges = (row: Row) =>
+    row.status !== 200 && row.encoding === "chunked" && row.connection === "keep-alive";
+  const closesOrStays = "end, or the next response";
   /** In Bun: the Connection header and what follows the response. How Bun frames a body is not a subject of this table. */
   function expected(row: Row): { connection: string; body?: string; then: string } {
     const node = storeHeader(row);
     if (!inBun) return node;
+    if (framingChanges(row)) return { connection: node.connection, then: closesOrStays };
     const then = bunCloses(row) ? "end" : node.then;
     // The Connection header that Bun writes says close when the connection closes. The one of Node.js says
     // keep-alive in front of a body that only the end of the connection delimits.
@@ -933,7 +942,7 @@ describe("every head of _storeHeader for an HTTP/1.0 request with Connection: ke
     const peer = await server.connect();
     try {
       // With a connection that must close, the next request is in the same write: no answer to it must arrive.
-      const stays = want.then !== "end";
+      const stays = want.then === "the next response";
       const [response, ...rest] = await converse(peer, [request, stays ? last : probe], { pipelined: !stays });
       const head = response.slice(0, response.indexOf("\r\n\r\n") + 4);
       const inChunks =
@@ -945,9 +954,11 @@ describe("every head of _storeHeader for an HTTP/1.0 request with Connection: ke
           : /\r\nContent-Length: /i.test(head)
             ? "length"
             : "until the end";
-      const then = rest.length === 1 ? rest[0] : rest.length === 2 && rest[1] === "end" ? "the next response" : rest;
+      const what = rest.length === 1 ? rest[0] : rest.length === 2 && rest[1] === "end" ? "the next response" : rest;
       // No runtime keeps the connection open behind a body that nothing delimits.
-      if (then !== "end") assert.notStrictEqual(body, "until the end", JSON.stringify(row));
+      if (what !== "end") assert.notStrictEqual(body, "until the end", JSON.stringify(row));
+      const either = want.then === closesOrStays && (what === "end" || what === "the next response");
+      const then = either ? closesOrStays : what;
       return { connection: /\r\nConnection: ([^\r]*)/i.exec(head)?.[1] ?? "", ...(want.body && { body }), then };
     } catch (error) {
       return { error: String(error) };

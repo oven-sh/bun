@@ -452,10 +452,11 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           }).toThrow(DOMException);
         });
         // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializewithtransfer
-        // The transfer list is checked again after serialization (step 5), which can run user
-        // code. A listed buffer detached by a getter is a DataCloneError, and nothing else in
-        // the list may be detached by the failed call (previously: TypeError, with `first`
-        // already detached). `second` is deliberately kept out of the value so the serializer
+        // Serialization can run user code, so the transfer list is checked again after it
+        // (step 5): a listed buffer that a getter detached is a DataCloneError. Bun checks the
+        // whole list before it detaches anything, so the failed call also leaves `first`
+        // intact (previously: TypeError, with `first` already detached). HTML detaches entry
+        // by entry, so this is stricter. `second` is kept out of the value so the serializer
         // itself never sees it.
         test("a listed ArrayBuffer detached during serialization fails without detaching the others", () => {
           const first = new ArrayBuffer(8);

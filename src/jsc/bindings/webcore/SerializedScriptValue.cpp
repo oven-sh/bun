@@ -4802,19 +4802,23 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
     }
 
-    if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
-        releaseSerializedBlockListRefs();
-        RELEASE_AND_RETURN(scope, WTF::move(*exception));
-    }
-
-    auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);
-    if (arrayBufferContentsArray.hasException()) {
-        releaseSerializedBlockListRefs();
-        RELEASE_AND_RETURN(scope, arrayBufferContentsArray.releaseException());
+    // Most calls have no transfer list; this keeps them at one branch.
+    std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray;
+    if (!transferList.isEmpty()) {
+        if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
+            releaseSerializedBlockListRefs();
+            RELEASE_AND_RETURN(scope, WTF::move(*exception));
+        }
+        auto transferred = transferArrayBuffers(vm, arrayBuffers);
+        if (transferred.hasException()) {
+            releaseSerializedBlockListRefs();
+            RELEASE_AND_RETURN(scope, transferred.releaseException());
+        }
+        arrayBufferContentsArray = transferred.releaseReturnValue();
     }
 
     scope.releaseAssertNoException();
-    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
+    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), WTF::move(arrayBufferContentsArray), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
 #if ENABLE(WEBASSEMBLY)
         ,
         makeUnique<WasmModuleArray>(wasmModules), context == SerializationContext::WorkerPostMessage ? makeUnique<WasmMemoryHandleArray>(wasmMemoryHandles) : nullptr

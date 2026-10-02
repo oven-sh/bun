@@ -143,6 +143,12 @@ export var __exportGetters = /* @__PURE__ */ (target, all) => {
     });
 };
 
+export var __lazyExports = /* @__PURE__ */ (all, target) => () => (target || __export((target = {}), all()), target);
+
+export var __lazyExportGetters = /* @__PURE__ */ (all, target) => () => (
+  target || __exportGetters((target = {}), all()), target
+);
+
 function __exportValueSetter(name, newValue) {
   this[name] = newValue;
 }

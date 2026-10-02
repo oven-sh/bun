@@ -476,7 +476,8 @@ impl LinkerContext<'_> {
             .expect("OOM");
 
         let initial_flags = *meta_flags;
-        let needs_exports_variable = initial_flags.needs_exports_variable;
+        let has_lazy_exports = initial_flags.has_lazy_exports;
+        let needs_exports_variable = initial_flags.needs_exports_variable && !has_lazy_exports;
         let force_include_exports_for_entry_point = self.options.output_format == Format::Cjs
             && initial_flags.force_include_exports_for_entry_point;
 
@@ -484,7 +485,7 @@ impl LinkerContext<'_> {
             // 1 statement for every export
             export_aliases.len() +
             // + 1 if there are non-zero exports
-            (!export_aliases.is_empty()) as usize +
+            (!export_aliases.is_empty() || has_lazy_exports) as usize +
             // + 1 if we need to inject the exports variable
             needs_exports_variable as usize +
             // + 1 if we need to do module.exports = __toCommonJS(exports)
@@ -650,7 +651,7 @@ impl LinkerContext<'_> {
         let mut declared_symbols = DeclaredSymbolList::default();
         let exports_ref = self.graph.ast.items_exports_ref()[id as usize];
         let all_export_stmts_len = needs_exports_variable as usize
-            + (!properties.is_empty()) as usize
+            + (!properties.is_empty() || has_lazy_exports) as usize
             + force_include_exports_for_entry_point as usize;
         // The trailing `all_export_stmts_len` slots of `stmts_slab`
         // (after the per-export `eat1`s above) are filled below in the order
@@ -691,12 +692,12 @@ impl LinkerContext<'_> {
         // "__export(exports, { foo: () => foo })", or for a lifted CommonJS module
         // "__exportCjs(exports, { foo: () => foo }, { foo: (value) => foo = value })"
         let mut export_ref = Ref::NONE;
-        if !properties.is_empty() {
+        if !properties.is_empty() || has_lazy_exports {
             let is_lifted = lifted_setter_param.is_valid();
             export_ref = self.runtime_function(if is_lifted {
                 b"__exportCjs"
             } else {
-                self.export_runtime_function()
+                self.export_runtime_function(has_lazy_exports)
             });
             // `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
@@ -704,15 +705,33 @@ impl LinkerContext<'_> {
             let mut owned_props: Vec<G::Property> = Vec::with_capacity(properties.len());
             owned_props.extend(properties.drain(..));
             let mut args: Vec<Expr> = Vec::with_capacity(3);
-            args.push(Expr::init_identifier(exports_ref, loc));
-            args.push(Expr::allocate(
+            let all = Expr::allocate(
                 arena,
                 E::Object {
                     properties: G::PropertyList::move_from_list(owned_props),
                     ..Default::default()
                 },
                 loc,
-            ));
+            );
+            if has_lazy_exports {
+                args.push(Expr::allocate(
+                    arena,
+                    E::Arrow {
+                        prefer_expr: true,
+                        body: G::FnBody {
+                            stmts: bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter([
+                                Stmt::allocate(arena, S::Return { value: Some(all) }, loc),
+                            ])),
+                            loc,
+                        },
+                        ..Default::default()
+                    },
+                    loc,
+                ));
+            } else {
+                args.push(Expr::init_identifier(exports_ref, loc));
+                args.push(all);
+            }
             if is_lifted {
                 let mut owned_setters: Vec<G::Property> =
                     Vec::with_capacity(setter_properties.len());
@@ -732,22 +751,47 @@ impl LinkerContext<'_> {
                     })
                     .expect("unreachable");
             }
-            emit_export_stmt!(Stmt::allocate(
+            let call = Expr::allocate(
                 arena,
-                S::SExpr {
-                    value: Expr::allocate(
-                        arena,
-                        E::Call {
-                            target: Expr::init_identifier(export_ref, loc),
-                            args: bun_ast::ExprNodeList::from_owned_slice(args.into_boxed_slice()),
-                            ..Default::default()
-                        },
-                        loc,
-                    ),
+                E::Call {
+                    target: Expr::init_identifier(export_ref, loc),
+                    args: bun_ast::ExprNodeList::from_owned_slice(args.into_boxed_slice()),
                     ..Default::default()
                 },
                 loc,
-            ));
+            );
+            if has_lazy_exports {
+                emit_export_stmt!(Stmt::allocate(
+                    arena,
+                    S::Local {
+                        decls: G::DeclList::from_slice(&[G::Decl {
+                            binding: Binding::alloc(
+                                arena,
+                                bun_ast::b::Identifier { r#ref: exports_ref },
+                                loc,
+                            ),
+                            value: Some(call),
+                        }]),
+                        ..Default::default()
+                    },
+                    loc,
+                ));
+                declared_symbols
+                    .append(DeclaredSymbol {
+                        ref_: exports_ref,
+                        is_top_level: true,
+                    })
+                    .expect("unreachable");
+            } else {
+                emit_export_stmt!(Stmt::allocate(
+                    arena,
+                    S::SExpr {
+                        value: call,
+                        ..Default::default()
+                    },
+                    loc,
+                ));
+            }
             // Make sure this file depends on the "__export" symbol
             let parts = self.top_level_symbols_to_parts_for_runtime(export_ref);
             ns_export_dependencies.ensure_unused_capacity(parts.len());

@@ -2426,6 +2426,7 @@ impl<'a> LinkerContext<'a> {
 
         let print_options = js_printer::Options {
             bundling: true,
+            has_lazy_namespaces: self.options.aot,
             // TODO: IIFE
             indent: Default::default(),
             commonjs_named_exports: Some(&ast.commonjs_named_exports),
@@ -4297,11 +4298,12 @@ impl<'a> LinkerContext<'a> {
         result
     }
 
-    pub(crate) fn export_runtime_function(&self) -> &'static [u8] {
-        if self.options.deprecated_namespace_object_setters {
-            b"__export"
-        } else {
-            b"__exportGetters"
+    pub(crate) fn export_runtime_function(&self, is_lazy: bool) -> &'static [u8] {
+        match (self.options.deprecated_namespace_object_setters, is_lazy) {
+            (true, false) => b"__export",
+            (false, false) => b"__exportGetters",
+            (true, true) => b"__lazyExports",
+            (false, true) => b"__lazyExportGetters",
         }
     }
 

@@ -644,6 +644,48 @@ pub(crate) fn scan_imports_and_exports(
             }
         }
 
+        if this.options.aot && this.options.output_format == Format::Esm {
+            for source_index_ in &reachable {
+                let id = source_index_.get() as usize;
+                if !(id < col_ref!(import_records_list).len()) {
+                    continue;
+                }
+                let flag = &mut col!(flags)[id];
+                flag.has_lazy_exports = flag.needs_exports_variable
+                    && !flag.force_include_exports_for_entry_point
+                    && !col_ref!(lifted_setter_params)[id].is_valid();
+            }
+            for source_index_ in &reachable {
+                let id = source_index_.get() as usize;
+                if !(id < col_ref!(import_records_list).len())
+                    || !col_ref!(entry_point_kinds)[id].is_entry_point()
+                {
+                    continue;
+                }
+                for export in col_ref!(resolved_exports)[id].values() {
+                    let mut target = export.data.source_index.get() as usize;
+                    let mut target_ref = export.data.import_ref;
+                    if let Some(import) = col_ref!(imports_to_bind_list)[target].get(&target_ref) {
+                        target = import.data.source_index.get() as usize;
+                        target_ref = import.data.import_ref;
+                    }
+                    if target_ref == col_ref!(exports_refs)[target] {
+                        col!(flags)[target].has_lazy_exports = false;
+                    }
+                }
+            }
+            for source_index_ in &reachable {
+                let id = source_index_.get() as usize;
+                if id < col_ref!(import_records_list).len() && col_ref!(flags)[id].has_lazy_exports {
+                    let exports_ref = col_ref!(exports_refs)[id];
+                    // SAFETY: serial; nothing else holds a reference to this symbol.
+                    unsafe { this.graph.symbol_mut(exports_ref) }
+                        .flags
+                        .insert(bun_ast::symbol::SymbolFlags::IS_LAZY_NAMESPACE);
+                }
+            }
+        }
+
         // Step 5: Create namespace exports for every file. This is always necessary
         // for CommonJS files, and is also necessary for other files if they are
         // imported using an import star statement.
@@ -739,6 +781,7 @@ pub(crate) fn scan_imports_and_exports(
         // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items().needs_export_symbol_from_runtime;
 
         let mut runtime_export_symbol_ref: Ref = Ref::NONE;
+        let mut runtime_lazy_export_symbol_ref: Ref = Ref::NONE;
         let mut runtime_export_cjs_symbol_ref: Ref = Ref::NONE;
         let mut ident_scratch: Vec<u8> = Vec::new();
         let module_preload = this.module_preload();
@@ -908,10 +951,16 @@ pub(crate) fn scan_imports_and_exports(
                         runtime_export_cjs_symbol_ref = this.runtime_function(b"__exportCjs");
                     }
                     runtime_export_cjs_symbol_ref
+                } else if flag.has_lazy_exports {
+                    if !runtime_lazy_export_symbol_ref.is_valid() {
+                        runtime_lazy_export_symbol_ref =
+                            this.runtime_function(this.export_runtime_function(true));
+                    }
+                    runtime_lazy_export_symbol_ref
                 } else {
                     if !runtime_export_symbol_ref.is_valid() {
                         runtime_export_symbol_ref =
-                            this.runtime_function(this.export_runtime_function());
+                            this.runtime_function(this.export_runtime_function(false));
                     }
                     runtime_export_symbol_ref
                 };

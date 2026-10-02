@@ -300,6 +300,10 @@ bitflags::bitflags! {
         /// (`createJsxAttributesTypeFromAttributesProperty`), so `shouldCheckAsExcessProperty` accepts it like a written attribute,
         /// unlike a property copied by a spread. `jsx_attributes_type` sets it only when the attributes type is fresh.
         const JSX_CHILDREN = 512;
+        /// A member of an object literal as `checkObjectLiteral` makes it anew in a check under a pushed contextual type: a symbol with
+        /// the type just found and the `ValueDeclaration` of the member. The parent of that is the literal, so
+        /// `shouldCheckAsExcessProperty` accepts it, unlike a property a spread brought along, which is a `PropSource::Copy` too.
+        const WRITTEN = 1024;
     }
 }
 

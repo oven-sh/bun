@@ -1417,6 +1417,7 @@ impl<'p> Checker<'p> {
                 (PropSource::Literal(..), None) => true,
                 (PropSource::Type(_) | PropSource::Copy(..), None) => {
                     is_fresh_partial
+                        || prop.flags.contains(PropFlags::WRITTEN)
                         || is_jsx
                             && prop.flags.contains(PropFlags::JSX_CHILDREN)
                             && sm

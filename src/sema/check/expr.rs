@@ -155,7 +155,7 @@ impl<'p> Checker<'p> {
             return TypeId::UNRESOLVED;
         }
         if self.contextual_binding_patterns.is_empty()
-            && !self.is_rechecking()
+            && !self.is_rechecked(file, e)
             && let Some((known, uncertain)) = self.kept_type_of_expr(file, e)
         {
             self.uncertain |= uncertain;
@@ -164,11 +164,37 @@ impl<'p> Checker<'p> {
         self.type_of_expr_not_kept(file, e)
     }
 
+    /// Whether `e` is checked again, with nothing kept. tsgo checks everything in an argument again for every contextual type that
+    /// is pushed. A name, `this` and an access are where the flow analysis is, and nothing is expected of what is accessed or of a
+    /// key. They are the same under every contextual type, and are checked once, unless a type parameter is in scope:
+    /// `getNarrowableTypeForReference` puts what a type parameter extends in its place or not, going by the check mode and by
+    /// `hasContextualTypeWithNoGenericTypes`.
+    #[inline]
+    fn is_rechecked(&mut self, file: FileId, e: ExprId) -> bool {
+        self.is_rechecking() && (self.contextual.is_empty() || self.depends_on_pushed_type(file, e))
+    }
+
+    fn depends_on_pushed_type(&mut self, file: FileId, e: ExprId) -> bool {
+        if !matches!(
+            self.hir(file)[e].kind,
+            ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. } | ExprKind::Index { .. }
+        ) {
+            return true;
+        }
+        if self.hir(file).type_params.is_empty() {
+            return false;
+        }
+        let scope = self.scope_of_expr(file, e);
+        self.type_params_in_scope(file, scope)
+            .iter()
+            .any(|&p| matches!(self.data(p), TypeData::TypeParam(..)))
+    }
+
     /// The same, of an `e` that is there and whose type is not kept, or may be looked at afresh.
     fn type_of_expr_not_kept(&mut self, file: FileId, e: ExprId) -> TypeId {
         // `getTypeFromBindingElement`: the defaults in a pattern are looked at afresh every time it is worked out what the pattern
         // implies its initializer to be. The names of the pattern are anything meanwhile.
-        let is_rechecked = self.is_rechecking();
+        let is_rechecked = self.is_rechecked(file, e);
         // While it is worked out what a pattern implies its names are anything: that is nobody else's answer.
         let is_memoised = is_rechecked && self.contextual_binding_patterns.is_empty();
         if is_memoised && let Some(&known) = self.rechecked_exprs.get(&(file, e)) {
@@ -970,6 +996,21 @@ impl<'p> Checker<'p> {
         (Ok(left), stops)
     }
 
+    /// `core.IfElse(assignmentKind != AssignmentKindNone || c.isMethodAccessForCall(node), c.getWidenedType(leftType), leftType)`: what
+    /// is written to or called is looked up in what a variable holding the object would be.
+    pub(super) fn widened_left_type_of_property_access(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        left: TypeId,
+    ) -> TypeId {
+        if self.target_kind(file, e).written || self.is_called(file, e) {
+            self.regular_object(left)
+        } else {
+            left
+        }
+    }
+
     /// `getApparentType`: what may be anything at all has nothing that can be counted on, not even what every object has.
     pub(super) fn is_apparently_unknown(&mut self, ty: TypeId) -> bool {
         self.p.files.options.strict_null_checks
@@ -1020,12 +1061,7 @@ impl<'p> Checker<'p> {
                 any
             }
         };
-        // `getWidenedType(leftType)`: what is written to or called is looked up in what a variable holding the object would be.
-        let receiver = if target.written || self.is_called(file, e) {
-            self.regular_object(left)
-        } else {
-            left
-        };
+        let receiver = self.widened_left_type_of_property_access(file, e, left);
         let cycles_before = self.cycles;
         // `isThisPropertyAccessInConstructor`: the property is `autoType`, and `getTypeOfSymbol` is not called.
         if hir.is_js
@@ -2845,23 +2881,37 @@ impl<'p> Checker<'p> {
 
     /// `checkObjectLiteral` gives the property it makes for the member `p` the declarations of `p` and the type it has just found
     /// (`links.resolvedType`). `PropSource::Literal` reads the kept type of `p`, so it stands for that only if the two are the same.
-    fn source_of_literal_member(&mut self, file: FileId, p: PropId, name: Atom) -> PropSource {
-        if self.is_rechecking() {
+    /// The kept type is that of the check with nothing pushed, and is not asked for while something is.
+    /// With it: `PropFlags::WRITTEN`, if it does not. An accessor is not looked at (`checkNodeDeferred`): it is what it is declared
+    /// as whatever is expected, and what it returns may well lead back to what the literal is given to.
+    fn source_of_literal_member(
+        &mut self,
+        file: FileId,
+        p: PropId,
+        name: Atom,
+    ) -> (PropSource, PropFlags) {
+        if self.is_rechecking()
+            && !matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter)
+        {
             let ty = self.check_literal_member(file, p);
-            if ty != self.type_of_literal_prop(file, p) {
-                return Self::literal_member_of_type(file, p, name, ty).source;
+            if !self.contextual.is_empty() || ty != self.type_of_literal_prop(file, p) {
+                let source = Self::literal_member_of_type(file, p, name, ty).source;
+                return (source, PropFlags::WRITTEN);
             }
         }
-        PropSource::Literal(file, p)
+        (PropSource::Literal(file, p), PropFlags::empty())
     }
 
     /// `checkObjectLiteral` makes a new type of the symbol of the literal every time. `kept`, whose members are those of the first
     /// check, stands for it if the members are the same.
     fn recheck_object_literal(&mut self, file: FileId, e: ExprId, kept: TypeId) -> TypeId {
         let mut shape = self.build_object_literal_shape(file, e);
-        if self
-            .members(kept)
-            .is_some_and(|members| *members.shape() == shape)
+        let has_nothing = shape.props.is_empty() && shape.index.is_empty();
+        if has_nothing
+            || self.contextual.is_empty()
+                && self
+                    .members(kept)
+                    .is_some_and(|members| *members.shape() == shape)
         {
             return kept;
         }
@@ -3141,7 +3191,9 @@ impl<'p> Checker<'p> {
                 // `someType` asks `never` itself, which is assignable to any list.
                 && context != Some(TypeId::NEVER)
                 && !context.is_some_and(|c| {
-                    // `getApparentTypeOfContextualType`: a type variable maps to its constraint, and `someType` tests each member of that.
+                    // `getApparentTypeOfContextualType`: `instantiateContextualType` first. Then a type variable maps to its
+                    // constraint, and `someType` tests each member of that.
+                    let c = self.instantiate_contextual_type_from_expected_result(c);
                     self.parts(c).iter().any(|&member| {
                         let apparent = if self.is_deferred(member) {
                             self.base_constraint(member)
@@ -3431,10 +3483,11 @@ impl<'p> Checker<'p> {
                 flags
             };
             pending.props.retain(|x| x.name != name);
+            let (source, written) = self.source_of_literal_member(file, source, name);
             pending.props.push(Prop {
                 name,
-                flags,
-                source: self.source_of_literal_member(file, source, name),
+                flags: flags | written,
+                source,
                 mapper: literal_mapper,
             });
         }
@@ -3838,10 +3891,11 @@ impl<'p> Checker<'p> {
                 }
                 shape.props.remove(existing);
             }
+            let (source, written) = self.source_of_literal_member(file, source, name);
             shape.props.push(Prop {
                 name,
-                flags,
-                source: self.source_of_literal_member(file, source, name),
+                flags: flags | written,
+                source,
                 mapper: MapperId::IDENTITY,
             });
         }

@@ -1829,7 +1829,8 @@ impl<'p> Checker<'p> {
             let mapper = self.decl_params_mapper(sym, file, self.hir(file)[c].type_params);
             let base = self.base_instance_type(sym, file, c);
             let base = self.instantiate(base, mapper);
-            let valid = self.as_base_type(base, |checker, reduced, unreduced| {
+            let extending = (file, Decl::Class(c));
+            let valid = self.as_base_type(base, extending, |checker, reduced, unreduced| {
                 let Some(at) = checker.place_to_report_base_at(file, c) else {
                     return;
                 };
@@ -1862,7 +1863,7 @@ impl<'p> Checker<'p> {
                 }
                 let base = self.type_from_node(file, node);
                 let base = self.instantiate(base, mapper);
-                let valid = self.as_base_type(base, |checker, _, _| {
+                let valid = self.as_base_type(base, (file, decl), |checker, _, _| {
                     let at = (file, hir[node].pos, checker.end_of_type_node(file, node));
                     checker.error(at, 2312, &[]);
                 });
@@ -1924,10 +1925,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `getReducedType`, `isErrorType`, `isValidBaseType`: `base` as a base type of the class or interface whose base types are being
-    /// worked out, if it can be one. `report`: told one that cannot, reduced and as it was.
+    /// worked out, if it can be one. `extending`: the declaration that says it extends it. `report`: told one that cannot, reduced
+    /// and as it was.
     fn as_base_type(
         &mut self,
         base: TypeId,
+        extending: (FileId, Decl),
         report: impl FnOnce(&mut Self, TypeId, TypeId),
     ) -> Option<TypeId> {
         let base = self.force(base);
@@ -1947,7 +1950,7 @@ impl<'p> Checker<'p> {
                 let was_in_a_circle = self.is_innermost_in_a_circle();
                 self.mapped_constraint(file, node, mapper);
                 if !was_in_a_circle && self.is_innermost_in_a_circle() {
-                    self.p.circular_mapped_keys.insert((file, node), ());
+                    self.report_circular_mapped_key(file, node, extending);
                 }
             }
         }
@@ -3127,7 +3130,9 @@ impl<'p> Checker<'p> {
         // count as written in the element.
         let is_written = |prop: &Prop| {
             matches!(prop.source, PropSource::Literal(..))
-                || prop.flags.contains(PropFlags::JSX_CHILDREN)
+                || prop
+                    .flags
+                    .intersects(PropFlags::JSX_CHILDREN | PropFlags::WRITTEN)
         };
         for prop in &l.shape().props {
             if !self.is_spreadable_property(prop) {

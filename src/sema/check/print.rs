@@ -1841,6 +1841,35 @@ impl<'p> Printer<'_, 'p> {
         expression
     }
 
+    /// `symbolToExpression(symbol, SymbolFlagsValue)` of the member `m` of a class or an interface, which has no `Sym`. `None`: it is
+    /// a member of something else, or there is nowhere to look from.
+    fn member_to_expression(&mut self, file: FileId, m: MemberId, name: Atom) -> Option<String> {
+        let bound = self.c.bound(file);
+        let container = match bound.member_owner[m.idx()] {
+            MemberOwner::Class(class) => bound.class_symbol[class.idx()],
+            MemberOwner::Interface(interface) => bound.interface_symbol[interface.idx()],
+            _ => return None,
+        };
+        if container.is_none() {
+            return None;
+        }
+        let container = self.c.files().sym(file, container);
+        let at = self.enclosing_declaration?;
+        let chain = self.c.lookup_symbol_chain_of_member_at(container, at);
+        if chain.is_empty() {
+            return None;
+        }
+        // `createExpressionFromSymbolChain`
+        let mut expression = self.symbol_to_text(chain[0]);
+        for &part in &chain[1..] {
+            expression.push('.');
+            expression.push_str(&self.export_name(part));
+        }
+        expression.push('.');
+        expression.push_str(&self.text(name));
+        Some(expression)
+    }
+
     /// `symbolToTypeNode`. `is_type_of`: the meaning is `SymbolFlagsValue`.
     fn symbol_to_type_node(
         &mut self,
@@ -2528,10 +2557,20 @@ impl<'p> Printer<'_, 'p> {
 
     /// The constraint of `parameter` in its declaration. `typeToTypeNodeHelperWithPossibleReusableTypeNode`: it is written as it is
     /// declared if that still is what it comes to.
-    fn constraint_to_node(&mut self, parameter: TypeId, constraint: TypeId) -> Node {
+    /// `clones`: type parameters that stand for clones of themselves (`has_inference_context`).
+    fn constraint_to_node(
+        &mut self,
+        parameter: TypeId,
+        constraint: TypeId,
+        clones: &[TypeId],
+    ) -> Node {
         if let TypeData::TypeParam(file, tp, _) = *self.c.data(parameter) {
             let written = self.c.hir(file)[tp].constraint;
-            if written.is_some() {
+            if written.is_some()
+                && !clones
+                    .iter()
+                    .any(|&clone| self.c.mentions(constraint, clone))
+            {
                 let declared = self.c.type_from_node(file, written);
                 if self.c.instantiate(declared, self.mapper) == constraint {
                     return self.reuse_type_node(file, written);
@@ -2542,9 +2581,9 @@ impl<'p> Printer<'_, 'p> {
     }
 
     /// `typeParameterToDeclaration`
-    fn type_parameter_declaration(&mut self, parameter: TypeId) -> String {
+    fn type_parameter_declaration(&mut self, parameter: TypeId, clones: &[TypeId]) -> String {
         let constraint = match self.c.constraint_of_type_param(parameter) {
-            Some(constraint) => Some(self.constraint_to_node(parameter, constraint).text),
+            Some(constraint) => Some(self.constraint_to_node(parameter, constraint, clones).text),
             None => None,
         };
         let mut text = String::new();
@@ -3371,21 +3410,16 @@ impl<'p> Printer<'_, 'p> {
             && let Some(name_type) = self.c.key_type_of_name(prop.name)
             && let TypeData::UniqueSymbol { symbol, name } = *self.c.data(name_type)
         {
+            let outer = self.enclosing_declaration;
+            if let Some(own) = self.enclosing_declaration_of_property_name(prop) {
+                self.enclosing_declaration = Some(own);
+            }
             let expression = match symbol {
-                UniqueSymbolDeclaration::Variable(variable) => {
-                    let outer = self.enclosing_declaration;
-                    if let Some(own) = self.enclosing_declaration_of_property_name(prop) {
-                        self.enclosing_declaration = Some(own);
-                    }
-                    let expression = self.symbol_to_expression(variable);
-                    self.enclosing_declaration = outer;
-                    expression
-                }
-                // `getContainersOfSymbol` starts from the symbol of the member, which there is none of.
-                UniqueSymbolDeclaration::Member(..) => match self.computed_key_text(prop, 0) {
-                    Some(written) => written,
-                    None => self.text(name),
-                },
+                UniqueSymbolDeclaration::Variable(variable) => self.symbol_to_expression(variable),
+                UniqueSymbolDeclaration::Member(file, m) => self
+                    .member_to_expression(file, m, name)
+                    .or_else(|| self.computed_key_text(prop, 0))
+                    .unwrap_or_else(|| self.text(name)),
                 UniqueSymbolDeclaration::SymbolConstructor => {
                     match self.computed_key_text(prop, 0) {
                         Some(written) => written,
@@ -3393,6 +3427,7 @@ impl<'p> Printer<'_, 'p> {
                     }
                 }
             };
+            self.enclosing_declaration = outer;
             self.approximate_length += expression.len() + 1;
             return format!("[{expression}]");
         }
@@ -4187,11 +4222,15 @@ impl<'p> Printer<'_, 'p> {
         self.approximate_length += 3;
         let mut type_parameters = Vec::new();
         let mut own_type_parameters = self.c.sig_type_params(signature).into_vec();
+        let mut clones = Vec::new();
         if own_type_parameters.is_empty() {
             own_type_parameters = self.type_parameters_taken_from_context(signature);
+            if self.has_inference_context(signature) {
+                clones.clone_from(&own_type_parameters);
+            }
         }
         for parameter in own_type_parameters {
-            type_parameters.push(self.type_parameter_declaration(parameter));
+            type_parameters.push(self.type_parameter_declaration(parameter, &clones));
         }
         let mut parameters = Vec::with_capacity(expanded.len() + 1);
         for parameter in &expanded {
@@ -4277,6 +4316,41 @@ impl<'p> Printer<'_, 'p> {
                 self.type_parameters_taken_from_context(inner)
             }
             _ => self.c.adopted_type_params(signature),
+        }
+    }
+
+    /// `getInferenceContext(node) != nil` when the function expression `signature` is that of got the types of its parameters: it is
+    /// an argument of a call whose type arguments are inferred, or in a literal or a conditional that is. The contextual signature
+    /// is instantiated then, and `instantiateSignature` clones its type parameters. Here the function has the declared ones.
+    fn has_inference_context(&mut self, signature: SigId) -> bool {
+        let (file, func) = match *self.c.p.types.sig(signature) {
+            SigData::WithReturn { sig: inner, .. } => return self.has_inference_context(inner),
+            SigData::Decl { file, func, .. } => (file, func),
+            _ => return false,
+        };
+        let Some(mut at) = self.c.takes_context(file, func) else {
+            return false;
+        };
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        loop {
+            at = match bound.expr_parent[at.idx()] {
+                Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => bound.prop_owner[p.idx()],
+                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                    ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee != at => {
+                        let resolved = self.c.p.calls.get(&(file, parent));
+                        let declared = resolved
+                            .and_then(|resolved| resolved.sig)
+                            .and_then(|sig| self.c.sig_decl(sig));
+                        return hir[call].type_args.is_empty()
+                            && declared.is_some_and(|(of, declared, _)| {
+                                !self.c.hir(of)[declared].type_params.is_empty()
+                            });
+                    }
+                    ExprKind::Array(_) | ExprKind::Cond { .. } => parent,
+                    _ => return false,
+                },
+                _ => return false,
+            };
         }
     }
 

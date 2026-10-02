@@ -179,12 +179,11 @@ pub struct Program {
     flows_too_deep: NodeSet<(FileId, ExprId)>,
     /// `resolvedBaseConstructorType` of each class.
     base_constructor_types: ByNode<Sym, TypeId>,
-    /// The aliases that depend on themselves, and the mapped types whose keys do.
+    /// The aliases that depend on themselves.
     circular_aliases: NodeSet<Sym>,
     /// `symbolReferenceLinks`: what `Resolve` found when it was asked with `isUse`, where that is noted by who asks. `check_unused`
     /// works out the rest.
     symbol_reference_links: NodeSet<Sym>,
-    circular_mapped_keys: NodeSet<(FileId, TypeNodeId)>,
     /// Type nodes at which 2615 is reported: the type of a property of a mapped type depends on itself. See
     /// `first_checked_type_node`.
     circular_mapped_props: NodeSet<(FileId, TypeNodeId)>,
@@ -407,7 +406,6 @@ impl Program {
             sink: sink::Sink::new(files.modules.len()),
             circular_aliases: NodeSet::new(&symbols),
             symbol_reference_links: NodeSet::new(&symbols),
-            circular_mapped_keys: NodeSet::new(&type_nodes),
             circular_mapped_props: NodeSet::new(&type_nodes),
             global_errors: Default::default(),
             circular_mapped_prop_names: ByNodeKept::new(&type_nodes),

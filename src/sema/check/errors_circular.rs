@@ -99,32 +99,6 @@ impl Checker<'_> {
             let own = self.files().sym(file, symbol);
             self.base_types(own);
         }
-        // `getResolvedBaseConstraint`, of the key of a mapped type that had to be known to tell whether the type can be extended.
-        let looked_through = if hir.mapped.is_empty() {
-            0
-        } else {
-            hir.types.len()
-        };
-        for (n, node) in hir.types[..looked_through].iter().enumerate() {
-            if let TypeNodeKind::Mapped(m) = node.kind
-                && hir[hir[m].param].constraint.is_some()
-                && self
-                    .p
-                    .circular_mapped_keys
-                    .get(&(file, TypeNodeId(n as u32)))
-                    .is_some()
-            {
-                let param = &hir[hir[m].param];
-                let start = start_of_constraint(hir, param.constraint);
-                out.push(Diagnostic { start, code: 2313 });
-                let end = self.end_of_type_node_from(file, param.constraint, start);
-                self.note(start, end, 2313, vec![self.atom_text(param.name)]);
-                let mapped = TypeNodeId(n as u32);
-                self.relate(start, 2313, |c| {
-                    c.interface_that_extends_mapped_type(file, mapped)
-                });
-            }
-        }
         self.check_circular_mapped_properties(file, out);
         for p in 0..hir.type_params.len() {
             let constraint = hir.type_params[p].constraint;
@@ -158,60 +132,41 @@ impl Checker<'_> {
         }
     }
 
-    /// `getResolvedBaseConstraint`: `c.currentNode` when the keys of the mapped type at `mapped` are asked for to tell whether it can be
-    /// extended: the first interface of `file` that extends it, which is being checked then. Nothing if the mapped type is written in
-    /// that interface.
-    fn interface_that_extends_mapped_type(
+    /// `getResolvedBaseConstraint`: 2313, of the key of the mapped type at `mapped`, which had to be known to tell whether `extending`
+    /// can extend the type. `c.currentNode` is `extending`, which is being checked.
+    pub(super) fn report_circular_mapped_key(
         &mut self,
         file: FileId,
         mapped: TypeNodeId,
-    ) -> Vec<super::explain::Related> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for (i, interface) in hir.interfaces.iter().enumerate() {
-            if bound.interface_symbol[i].is_none() {
-                continue;
-            }
-            for base in hir.ids(interface.extends) {
-                if matches!(
-                    hir[base].kind,
-                    TypeNodeKind::Error | TypeNodeKind::Heritage(_)
-                ) {
-                    continue;
-                }
-                let ty = self.type_from_node(file, base);
-                let ty = self.force(ty);
-                let parts: &[TypeId] = match self.data(ty) {
-                    TypeData::Intersection(parts) => &parts[..],
-                    _ => std::slice::from_ref(&ty),
-                };
-                let extends_it = parts.iter().any(|&part| {
-                    matches!(
-                        *self.data(part),
-                        TypeData::Anon { origin: Origin::Mapped(of, node), .. } if (of, node) == (file, mapped)
-                    )
-                });
-                if !extends_it {
-                    continue;
-                }
-                let is_written_in_it = hir
-                    .stmts
-                    .iter()
-                    .position(|s| matches!(s.kind, StmtKind::Interface(x) if x.idx() == i))
-                    .is_some_and(|s| {
-                        let end = self.end_of_stmt(file, StmtId(s as u32));
-                        (hir.stmts[s].pos..end).contains(&hir[mapped].pos)
-                    });
-                if is_written_in_it {
-                    return Vec::new();
-                }
-                return vec![super::explain::Related {
-                    at: Some(self.place_of_token(file, interface.name_pos)),
-                    code: 2751,
-                    args: Vec::new(),
-                }];
+        extending: (FileId, Decl),
+    ) {
+        let hir = self.hir(file);
+        let TypeNodeKind::Mapped(m) = hir[mapped].kind else {
+            return;
+        };
+        let param = &hir[hir[m].param];
+        // `GetDiagnostics` reads what is said of a file when it has checked the file, in the order of the program. What the check of a
+        // later file says of it is never read.
+        let files = self.files();
+        let order = |f: FileId| (!files.module(f).is_lib, files.rank_of_file(f));
+        if param.constraint.is_none() || order(extending.0) > order(file) {
+            return;
+        }
+        let start = start_of_constraint(hir, param.constraint);
+        let end = self.end_of_type_node_from(file, param.constraint, start);
+        let mut err = self.new_diagnostic((file, start, end), 2313, &[Arg::Atom(param.name)]);
+        if let (of, Decl::Interface(i)) = extending {
+            // `isNodeDescendantOf`
+            let is_written_in_it = of == file
+                && (hir[hir[i].stmt].pos..self.end_of_stmt(file, hir[i].stmt))
+                    .contains(&hir[mapped].pos);
+            if !is_written_in_it {
+                let at = self.place_of_token(of, self.hir(of)[i].name_pos);
+                let origin = self.new_diagnostic(at, 2751, &[]);
+                err.add_related_info(origin);
             }
         }
-        Vec::new()
+        self.add_diagnostic(err);
     }
 
     /// Asks for the types that `reportCircularityError`, `getReturnTypeOfSignature` and `getTypeOfAccessors` report circles of.

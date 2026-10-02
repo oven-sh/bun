@@ -2200,7 +2200,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getIntersectedSignatures`: one signature for a function that is to be all of `sigs`.
-    fn intersected_signature(&mut self, sigs: &[SigId]) -> Option<SigId> {
+    pub(super) fn intersected_signature(&mut self, sigs: &[SigId]) -> Option<SigId> {
         if !self.p.files.options.no_implicit_any {
             return None;
         }

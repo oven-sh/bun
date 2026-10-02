@@ -395,6 +395,8 @@ impl<'p> Checker<'p> {
                 return Some(self.string_literal(prop.name, false));
             }
             PropSource::Intersected(_, parts) => return self.key_type_of_props(owner, parts),
+            // It has the `ValueDeclaration` of the first, and goes by how the name is written there.
+            PropSource::Copy(_, parts, true) => return self.key_type_of_prop(owner, &parts[0]),
             _ => return self.key_type_of_name(prop.name),
         };
         match key {
@@ -1260,6 +1262,10 @@ impl<'p> Checker<'p> {
                 Ok((root, is_tail_call)) => {
                     if is_tail_call {
                         alias = None;
+                    }
+                    // A root that is not written in the branch itself is reached through a type reference. The other steps descend in
+                    // the syntax.
+                    if is_tail_call && (root.0, root.1) != (file, branch) {
                         // The loop is deterministic: a root that comes back under the same mapper comes back until a limit is hit.
                         if !tail_roots.insert(root) {
                             return self.excessively_deep();
@@ -1311,7 +1317,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `Ok`: the conditional type that the loop of `getConditionalType` continues with instead of instantiating the branch at `branch`
-    /// under `mapper`, and whether it is reached through a type reference. `Err`: the declared type of the branch, which is to be
+    /// under `mapper`, and whether `getTailRecursionRoot` gives it. `Err`: the declared type of the branch, which is to be
     /// instantiated. `outer_check` is the declared check type of the conditional type that has the branch.
     fn tail_recursion_root(
         &mut self,
@@ -1355,11 +1361,7 @@ impl<'p> Checker<'p> {
                 return Err(declared);
             }
         }
-        // A root that is not written in the branch itself is reached through a type reference. The other steps descend in the syntax.
-        Ok((
-            (root_file, root, root_mapper),
-            (root_file, root) != (file, branch),
-        ))
+        Ok(((root_file, root, root_mapper), true))
     }
 
     /// `getConstraintFromConditionalType`, and the base constraint of what it gives (`computeBaseConstraint`).
@@ -2028,6 +2030,12 @@ impl<'p> Checker<'p> {
         let modifiers = self.reduced(modifiers);
         let modifiers = self.apparent_type(modifiers);
         let modifiers = self.reduced(modifiers);
+        // `getUnionOrIntersectionProperty`
+        let modifiers = if self.is_union(modifiers) {
+            self.union_as_object(modifiers)
+        } else {
+            modifiers
+        };
         self.prop_of(modifiers, name).map(|found| found.0)
     }
 

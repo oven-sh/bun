@@ -87,6 +87,8 @@ impl Meaning {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Table {
     Locals(FileId, ScopeId),
+    /// The members of a class or an interface that are types: the type parameters of all its declarations.
+    TypeMembers(Sym),
     Exports(Sym),
     ResolvedExports(Sym),
     Globals,
@@ -355,6 +357,7 @@ pub(super) struct EmitResolverLinks {
     // `symbolContainerLinks`, `symbolTableAliasCache`
     chains: FxHashMap<(Sym, FileId, ScopeId, Meaning), Rc<Vec<Sym>>>,
     containing_modules: FxHashMap<(Sym, FileId), Rc<Vec<Sym>>>,
+    variable_matches: FxHashMap<(Sym, FileId, ScopeId), Rc<Vec<Sym>>>,
     exports: FxHashMap<Sym, Rc<Vec<(Atom, Sym)>>>,
     global_aliases: Option<Rc<Vec<(Atom, Sym)>>>,
     /// `specifierCache`
@@ -440,6 +443,25 @@ impl<'p> Checker<'p> {
     ) -> (bool, Vec<Sym>) {
         let symbol = module_clone(originating_import);
         self.lookup_symbol_chain_at(symbol, true, yields_module, at)
+    }
+
+    /// `lookupSymbolChain(symbol, SymbolFlagsValue)` without `yieldModuleSymbol`, of a member of the class or the interface `container`.
+    /// It has no `Sym` and is in no table in scope: what is written before its name.
+    pub(super) fn lookup_symbol_chain_of_member_at(
+        &mut self,
+        container: Sym,
+        at: Enclosing,
+    ) -> Vec<Sym> {
+        self.with_emit_resolver(at.file, |resolver| {
+            let parents = resolver.with_alternative_containers(container, None, at, Meaning::Value);
+            for parent in resolver.sorted_by_best_name(parents, at) {
+                let chain = resolver.symbol_chain_ex(parent, at, Meaning::Value, false, 1);
+                if !chain.is_empty() {
+                    return chain;
+                }
+            }
+            Vec::new()
+        })
     }
 
     /// `IsTypeSymbolAccessible`
@@ -1164,6 +1186,15 @@ impl<'p> EmitResolver<'_, 'p> {
                     }
                 }
                 ScopeKind::Enum(_) => {}
+                // "Type parameters are bound into `members` lists so they can merge across declarations"
+                ScopeKind::Class(class) => {
+                    let symbol = bound.class_symbol[class.idx()];
+                    tables.push(Table::TypeMembers(files.sym(at.file, symbol)));
+                }
+                ScopeKind::Interface(interface) => {
+                    let symbol = bound.interface_symbol[interface.idx()];
+                    tables.push(Table::TypeMembers(files.sym(at.file, symbol)));
+                }
                 _ => tables.push(Table::Locals(at.file, scope)),
             }
             scope = s.parent;
@@ -1185,6 +1216,11 @@ impl<'p> EmitResolver<'_, 'p> {
                     .lookup(bound.scopes[scope.idx()].locals, name)
                     .map(|id| Sym { file, id })
             }
+            Table::TypeMembers(_) => {
+                let parameters = self.symbols_in_table(table);
+                let found = parameters.iter().find(|parameter| parameter.0 == name);
+                found.map(|parameter| parameter.1)
+            }
             Table::Exports(symbol) => files.export_in_table(symbol, name),
             Table::ResolvedExports(symbol) if symbol != files.global_this_symbol => self
                 .exports_of_symbol(symbol)
@@ -1200,44 +1236,66 @@ impl<'p> EmitResolver<'_, 'p> {
         self.lookup(table, self.c.name_of(symbol))
     }
 
-    /// `getSymbolTableAliases`, each with the name it is in the table under.
-    fn aliases_in_table(&mut self, table: Table) -> Rc<Vec<(Atom, Sym)>> {
+    /// The symbols of `table`, each with the name it is there under.
+    fn symbols_in_table(&mut self, table: Table) -> Vec<(Atom, Sym)> {
         let files = self.c.files();
-        let is_alias = |entry: &(Atom, Sym)| files.flags(entry.1).contains(SymFlags::ALIAS);
-        let aliases: Vec<(Atom, Sym)> = match table {
+        match table {
             Table::Locals(file, scope) => {
                 let bound = self.c.bound(file);
                 bound
                     .table(bound.scopes[scope.idx()].locals)
                     .iter()
                     .map(|&(name, id)| (name, files.sym(file, id)))
-                    .filter(is_alias)
                     .collect()
             }
-            Table::Exports(symbol) => files.each_export(symbol).filter(is_alias).collect(),
-            Table::ResolvedExports(symbol) if symbol != files.global_this_symbol => self
-                .exports_of_symbol(symbol)
-                .iter()
-                .copied()
-                .filter(is_alias)
-                .collect(),
-            Table::ResolvedExports(_) | Table::Globals => {
-                if let Some(known) = &self.links.global_aliases {
-                    return Rc::clone(known);
+            Table::TypeMembers(symbol) => {
+                let mut parameters = Vec::new();
+                for (file, decl) in self.c.decls_of(symbol) {
+                    let hir = self.c.hir(file);
+                    let type_params = match decl {
+                        Decl::Class(class) => hir[class].type_params,
+                        Decl::Interface(interface) => hir[interface].type_params,
+                        _ => continue,
+                    };
+                    for parameter in type_params.iter() {
+                        let id = self.c.bound(file).type_param_symbol[parameter.idx()];
+                        if id.is_some() {
+                            parameters.push((hir[parameter].name, Sym { file, id }));
+                        }
+                    }
                 }
-                let mut aliases: Vec<(Atom, Sym)> = files
-                    .globals
-                    .iter()
-                    .map(|(&name, &symbol)| (name, symbol))
-                    .filter(is_alias)
-                    .collect();
-                aliases.sort_unstable();
-                let aliases = Rc::new(aliases);
-                self.links.global_aliases = Some(Rc::clone(&aliases));
-                return aliases;
+                parameters
             }
+            Table::Exports(symbol) => files.each_export(symbol).collect(),
+            Table::ResolvedExports(symbol) if symbol != files.global_this_symbol => {
+                self.exports_of_symbol(symbol).to_vec()
+            }
+            Table::ResolvedExports(_) | Table::Globals => {
+                let globals = files.globals.iter();
+                let mut globals: Vec<(Atom, Sym)> = globals.map(|(&n, &s)| (n, s)).collect();
+                globals.sort_unstable();
+                globals
+            }
+        }
+    }
+
+    /// `getSymbolTableAliases`, each with the name it is in the table under.
+    fn aliases_in_table(&mut self, table: Table) -> Rc<Vec<(Atom, Sym)>> {
+        let files = self.c.files();
+        let is_globals = match table {
+            Table::ResolvedExports(symbol) => symbol == files.global_this_symbol,
+            table => table == Table::Globals,
         };
-        Rc::new(aliases)
+        if is_globals && let Some(known) = &self.links.global_aliases {
+            return Rc::clone(known);
+        }
+        let mut aliases = self.symbols_in_table(table);
+        aliases.retain(|entry| files.flags(entry.1).contains(SymFlags::ALIAS));
+        let aliases = Rc::new(aliases);
+        if is_globals {
+            self.links.global_aliases = Some(Rc::clone(&aliases));
+        }
+        aliases
     }
 
     /// `getAccessibleSymbolChain`. Empty: there is none.
@@ -1643,11 +1701,53 @@ impl<'p> EmitResolver<'_, 'p> {
         results
     }
 
-    /// `getWithAlternativeContainers`
+    /// "look for a variable in scope with the container's type which may be acting like a namespace (eg, `Symbol` acts like a namespace
+    /// when looking up `Symbol.toStringTag`)"
+    fn variable_matches(
+        &mut self,
+        container: Sym,
+        at: Enclosing,
+        meaning: Meaning,
+    ) -> Rc<Vec<Sym>> {
+        let flags = self.c.flags_of(container);
+        if meaning != Meaning::Value
+            || flags.intersects(SymFlags::VALUE)
+            || !flags.intersects(SymFlags::TYPE)
+        {
+            return Rc::default();
+        }
+        let key = (container, at.file, at.scope);
+        if let Some(known) = self.links.variable_matches.get(&key) {
+            return Rc::clone(known);
+        }
+        let declared = self.c.declared_type(container);
+        let mut matches = Vec::new();
+        if self.c.is_object_type(declared) {
+            for table in self.tables_in_scope(at) {
+                for (_, symbol) in self.symbols_in_table(table) {
+                    if self.c.flags_of(symbol).intersects(SymFlags::VALUE)
+                        && self.c.type_of_symbol(symbol) == declared
+                    {
+                        matches.push(symbol);
+                    }
+                }
+                if !matches.is_empty() {
+                    break;
+                }
+            }
+            matches.sort_by(|&a, &b| self.c.compare_symbols_of_chain(a, b));
+        }
+        let matches = Rc::new(matches);
+        self.links.variable_matches.insert(key, Rc::clone(&matches));
+        matches
+    }
+
+    /// `getWithAlternativeContainers`. `symbol`: none if it is a member, which no module exports. What is a member of a type literal
+    /// or an object literal (`getVariableDeclarationOfObjectLiteral`) has no `container` to ask with.
     fn with_alternative_containers(
         &mut self,
         container: Sym,
-        symbol: Sym,
+        symbol: Option<Sym>,
         at: Enclosing,
         meaning: Meaning,
     ) -> Vec<Sym> {
@@ -1659,7 +1759,10 @@ impl<'p> EmitResolver<'_, 'p> {
         {
             additional.push(module);
         }
-        let reexports = self.alternative_containing_modules(symbol, at);
+        let reexports = match symbol {
+            Some(symbol) => self.alternative_containing_modules(symbol, at),
+            None => Rc::default(),
+        };
         let is_in_scope = self
             .c
             .flags_of(container)
@@ -1673,6 +1776,7 @@ impl<'p> EmitResolver<'_, 'p> {
             result.push(container);
             result.extend(additional);
         } else {
+            result.extend(self.variable_matches(container, at, meaning).iter());
             result.extend(additional);
             result.push(container);
         }
@@ -1730,7 +1834,7 @@ impl<'p> EmitResolver<'_, 'p> {
         if let Some(container) = self.c.parent_of_symbol(symbol)
             && !self.c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER)
         {
-            return self.with_alternative_containers(container, symbol, at, meaning);
+            return self.with_alternative_containers(container, Some(symbol), at, meaning);
         }
         let files = self.c.files();
         let mut candidates: Vec<Sym> = Vec::new();
@@ -1786,7 +1890,7 @@ impl<'p> EmitResolver<'_, 'p> {
             {
                 continue;
             }
-            let all = self.with_alternative_containers(container, symbol, at, meaning);
+            let all = self.with_alternative_containers(container, Some(symbol), at, meaning);
             if let Some((&first, rest)) = all.split_first() {
                 best.push(first);
                 alternatives.extend_from_slice(rest);
@@ -4370,6 +4474,21 @@ impl<'p> EmitResolver<'_, 'p> {
         }
     }
 
+    /// `parentSpecifiers`, sorted.
+    fn sorted_by_best_name(&mut self, parents: Vec<Sym>, at: Enclosing) -> Vec<Sym> {
+        let mut named: Vec<(Sym, String)> = Vec::with_capacity(parents.len());
+        for parent in parents {
+            let name = if self.c.is_external_module_symbol(parent) {
+                self.specifier_for_module_symbol(parent, at.file, ResolutionMode::None)
+            } else {
+                String::new()
+            };
+            named.push((parent, name));
+        }
+        named.sort_by(|a, b| self.sort_by_best_name(a, b));
+        named.into_iter().map(|parent| parent.0).collect()
+    }
+
     /// `getSymbolChain`, which may start with a module (`yieldModuleSymbol`).
     fn symbol_chain(
         &mut self,
@@ -4401,17 +4520,8 @@ impl<'p> EmitResolver<'_, 'p> {
             && root.is_none_or(|root| self.needs_qualification(root, at, qualifier_meaning))
         {
             // Go up and add the parent.
-            let mut parents: Vec<(Sym, String)> = Vec::new();
-            for parent in self.containers_of_symbol(root.unwrap_or(symbol), at, meaning) {
-                let name = if self.c.is_external_module_symbol(parent) {
-                    self.specifier_for_module_symbol(parent, at.file, ResolutionMode::None)
-                } else {
-                    String::new()
-                };
-                parents.push((parent, name));
-            }
-            parents.sort_by(|a, b| self.sort_by_best_name(a, b));
-            for (parent, _) in parents {
+            let parents = self.containers_of_symbol(root.unwrap_or(symbol), at, meaning);
+            for parent in self.sorted_by_best_name(parents, at) {
                 let mut parent_chain =
                     self.symbol_chain_ex(parent, at, meaning.left(), yields_module, depth + 1);
                 if parent_chain.is_empty() {

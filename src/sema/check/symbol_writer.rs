@@ -308,6 +308,18 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                 else {
                     return None;
                 };
+                // `getTypeOfNode` of a binding pattern is `getTypeForVariableLikeDeclaration` of its parent: of a parameter,
+                // `getContextuallyTypedParameterType`. "If inference didn't come up with anything but unknown, fall back to the
+                // binding pattern" (`assignParameterType`) only reaches the type of the symbol.
+                if let PatParent::Param(param) = bound.pat_parent[pattern.idx()]
+                    && hir[param].ty.is_none()
+                {
+                    let func = bound.param_fn[param.idx()];
+                    let index = (param.0 - hir[func].params.start) as usize;
+                    if self.c.contextual_param_type(file, func, index) == Some(TypeId::UNKNOWN) {
+                        return None;
+                    }
+                }
                 let ty = self.c.type_of_pat(file, pattern);
                 self.get_property_of_type(ty, name)
             }
@@ -482,6 +494,7 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
                     .left_type_of_property_access(file, obj, chain)
                     .0
                     .ok()?;
+                let ty = self.c.widened_left_type_of_property_access(file, e, ty);
                 if self.c.is_apparently_unknown(ty) {
                     return None;
                 }

@@ -4411,6 +4411,20 @@ impl<'p> Checker<'p> {
                     self.normalized_tuple(&new, flags, *readonly)
                 }
             }
+            // Only a reference, a tuple, a union and an intersection are marked for what they hold (`getPropagatingFlagsOfTypes`).
+            // An anonymous type is inferred from like any other, with `silentNeverType` in it.
+            TypeData::Anon { .. } | TypeData::Fns { .. } => {
+                let silent = self
+                    .p
+                    .types
+                    .mapping(so_far)
+                    .iter()
+                    .filter(|pair| pair.1 == TypeId::UNRESOLVED)
+                    .map(|pair| (pair.0, TypeId::SILENT_NEVER))
+                    .collect();
+                let silent = self.p.types.mapper(silent);
+                self.instantiate(ty, silent)
+            }
             _ => ty,
         }
     }
@@ -4525,26 +4539,6 @@ impl<'p> Checker<'p> {
                 }
             };
             pairs.push((param, ty));
-        }
-        self.p.types.mapper(pairs)
-    }
-
-    /// `known`, and for each of `type_params` it says nothing of, what the arguments looked at so far come to, if they say anything.
-    fn with_arguments_so_far(
-        &mut self,
-        known: MapperId,
-        type_params: &[TypeId],
-        inference: &Inference,
-    ) -> MapperId {
-        let mut pairs = self.p.types.mapping(known).to_vec();
-        for k in 0..type_params.len() {
-            let c = &inference.candidates[k];
-            if c.priority == 0
-                && (c.fixed.is_some() || !c.covariant.is_empty() || !c.contravariant.is_empty())
-                && !pairs.iter().any(|p| p.0 == type_params[k])
-            {
-                pairs.push((type_params[k], self.inferred_type(inference, k)));
-            }
         }
         self.p.types.mapper(pairs)
     }
@@ -5117,9 +5111,6 @@ impl<'p> Checker<'p> {
                 }
             }
         }
-        let mut from_plain: Option<(MapperId, MapperId)> = None;
-        // The result of `infer_type_arguments_from_first_check`, once computed.
-        let mut first_check: Option<Option<SmallVec<[MapperId; 8]>>> = None;
         let mut inferred_type_params: Vec<TypeId> = Vec::new();
         for pass in 0..2 {
             if pass == 1 && skip_sensitive {
@@ -5284,109 +5275,16 @@ impl<'p> Checker<'p> {
                             param
                         };
                         self.set_async_return_contexts(file, e, param, return_mapper);
-                        let context = self.instantiate_with_expected_result(param, return_mapper);
-                        // `isSignatureApplicable` checks a literal again, under the instantiated parameter type. That check is the
-                        // cached one.
-                        let mut instantiated_context = None;
-                        if pass == 0
-                            && !skip_sensitive
-                            && !settled
-                            && !inference.calls_itself
-                            && self.provisional == 0
-                            && self.has_type_variables(param)
-                            && self.is_literal_that_depends_on_context(file, e)
-                            && !self.frames.iter().any(|frame| frame.tainted)
-                            // `return_mapper` has `boolean` removed, which the contextual type of a call nested in the literal keeps.
-                            && !self
-                                .p
-                                .types
-                                .mapping(from_result)
-                                .iter()
-                                .any(|&(_, ty)| self.without_boolean(ty) != ty)
-                        {
-                            if first_check.is_none() {
-                                first_check = Some(self.infer_type_arguments_from_first_check(
-                                    file,
-                                    sig,
-                                    &params,
-                                    &args[..arg_count],
-                                    i,
-                                    &is_sensitive,
-                                    &put_off,
-                                    &inference,
-                                    return_mapper,
-                                ));
-                            }
-                            if let Some(Some(inferred)) = &first_check {
-                                let instantiated = self.instantiate(param, inferred[i]);
-                                let instantiated = self
-                                    .instantiate_with_expected_result(instantiated, return_mapper);
-                                // A contextual type recorded by an earlier resolution stays.
-                                let recorded = self.without_no_infer(instantiated);
-                                if self
-                                    .explicit_context(file, e)
-                                    .is_none_or(|earlier| earlier == recorded)
-                                {
-                                    instantiated_context = Some(instantiated);
-                                }
-                            }
-                        }
-                        // Otherwise the instantiated parameter type is anticipated as far as the plain arguments go.
-                        if let Some(instantiated) = instantiated_context {
-                            instantiated
-                        } else if self.has_type_variables(context)
-                            && self.is_literal_that_depends_on_context(file, e)
-                        {
-                            let (known, lesser) = match from_plain {
-                                Some(said) => said,
-                                None => {
-                                    let (_, known, lesser) =
-                                        self.plain_arguments_say(file, sig, &params, args, 0);
-                                    (known, lesser)
-                                }
-                            };
-                            from_plain = Some((known, lesser));
-                            let known = self.plain_arguments_say_to_literal(param, known, lesser);
-                            // And the arguments before it, whatever they are.
-                            let so_far =
-                                self.with_arguments_so_far(known, &type_params, &inference);
-                            let context = self.instantiate(context, so_far);
-                            // `getInferredType`: a type parameter that is still open comes to no more than what it extends, which
-                            // may be known by now.
-                            let mut bounds = Vec::new();
-                            if self.has_type_variables(context) {
-                                let outer = self
-                                    .sig_decl(sig)
-                                    .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
-                                for &p in &type_params {
-                                    if self.p.types.map(so_far, p).is_none()
-                                        && let Some(constraint) = self.constraint_of_type_param(p)
-                                        && self.has_type_variables(constraint)
-                                    {
-                                        let constraint =
-                                            self.filled_in_around(p, constraint, outer);
-                                        let bound = self.instantiate(constraint, so_far);
-                                        // `isLiteralOfContextualType` reads the base constraint of a type parameter, so a primitive
-                                        // bound adds nothing, and substituting it would widen the literals in the argument.
-                                        if !type_params.iter().any(|&q| self.mentions(bound, q))
-                                            && !self.every_type(bound, |c, t| c.is_primitive(t))
-                                        {
-                                            bounds.push((p, bound));
-                                        }
-                                    }
-                                }
-                            }
-                            if bounds.is_empty() {
-                                context
-                            } else {
-                                let bounds = self.p.types.mapper(bounds);
-                                self.instantiate(context, bounds)
-                            }
-                        } else {
-                            context
-                        }
+                        self.instantiate_with_expected_result(param, return_mapper)
                     };
-                    self.set_context(file, e, context);
+                    // `checkExpression` is not memoised: a literal is checked anew for every inference and for every signature it is
+                    // held against, each time under what is expected of it then. Nothing is recorded for it.
+                    if pass == 1
+                        || sensitive.is_some()
+                        || !self.is_literal_that_depends_on_context(file, e)
+                    {
+                        self.set_context(file, e, context);
+                    }
                     if inference.calls_itself {
                         let declared = self.without_no_infer(param);
                         if let Some(resolving) = self.resolving.last_mut() {
@@ -5406,23 +5304,29 @@ impl<'p> Checker<'p> {
                 {
                     self.infer_from_annotated_functions(file, e, param, &mut inference);
                 }
-                let mut ty = match arg {
-                    Arg::Expr(e) => self.type_of_expr_for_inference(file, e),
-                    _ => self.arg_type(file, arg),
+                let literal = match arg {
+                    // Under `settled` a literal with functions in it counts as one that waits for nothing. Their parameters go by the
+                    // inference, not by the declared type.
+                    Arg::Expr(e)
+                        if pass == 0
+                            && sensitive_operands[i].is_none()
+                            && !self.is_context_sensitive(file, e) =>
+                    {
+                        self.literal_argument_type_for_inference(
+                            file,
+                            e,
+                            param,
+                            return_mapper,
+                            &mut inference.array_literals,
+                        )
+                    }
+                    _ => None,
                 };
-                if pass == 0
-                    && let Arg::Expr(e) = arg
-                    && let Some(first) = self.literal_argument_type_for_inference(
-                        file,
-                        sig,
-                        e,
-                        param,
-                        return_mapper,
-                        &mut inference.array_literals,
-                    )
-                {
-                    ty = first;
-                }
+                let mut ty = match (literal, arg) {
+                    (Some(ty), _) => ty,
+                    (None, Arg::Expr(e)) => self.type_of_expr_for_inference(file, e),
+                    (None, _) => self.arg_type(file, arg),
+                };
                 self.settle_after_look(&mut inference);
                 if let Arg::Expr(e) = arg {
                     if let Some(kept) = self.type_of_reference_to_infer_from(file, e) {
@@ -5494,27 +5398,6 @@ impl<'p> Checker<'p> {
             for (i, &arg) in args.iter().enumerate().skip(arg_count) {
                 let Arg::Expr(e) = arg else { continue };
                 if !is_sensitive[i] {
-                    // `getSpreadArgumentType`: `checkExpressionWithContextualType(arg, contextualType, ..)`. Recorded like the
-                    // contextual type of any other argument: it stands for the element of the instantiated rest type, under which
-                    // `getSignatureApplicabilityError` checks the argument again.
-                    if self.is_literal_that_depends_on_context(file, e) {
-                        let element = self.rest_argument_context(
-                            rest,
-                            i - arg_count,
-                            Some(args.len() - arg_count),
-                        );
-                        if self.has_type_variables(element) {
-                            let context =
-                                self.instantiate_with_expected_result(element, return_mapper);
-                            let so_far = self.with_arguments_so_far(
-                                MapperId::IDENTITY,
-                                &type_params,
-                                &inference,
-                            );
-                            let context = self.instantiate(context, so_far);
-                            self.set_context(file, e, context);
-                        }
-                    }
                     continue;
                 }
                 if pass == 0 {
@@ -5577,7 +5460,6 @@ impl<'p> Checker<'p> {
                     );
                     taken_for[i] = self.literal_argument_type_for_inference(
                         file,
-                        sig,
                         e,
                         element,
                         return_mapper,
@@ -5597,22 +5479,8 @@ impl<'p> Checker<'p> {
             }
             self.infer(&mut inference, spread, rest, 0);
         }
-        // Only the call under way says what is expected of a literal that a generic rest parameter collects
-        // (`getSpreadArgumentType`), and the members of an object literal are not looked at before `getInferredType`.
-        let early = if rest_ty.is_some_and(|rest| self.has_type_variables(rest))
-            && args.iter().enumerate().skip(arg_count).any(|(i, a)| {
-                !is_sensitive[i]
-                    && matches!(a, Arg::Expr(e) if self.is_literal_that_depends_on_context(file, *e))
-            }) {
-            Some(self.inference_mapper(&inference))
-        } else {
-            None
-        };
         self.resolving.pop();
-        let mapper = match early {
-            Some(mapper) => mapper,
-            None => self.inference_mapper(&inference),
-        };
+        let mapper = self.inference_mapper(&inference);
         let candidate = sig;
         let sig = self.instantiate_sig(sig, mapper);
         if skip_sensitive && !anything_waits && inferred_type_params.is_empty() {
@@ -5963,474 +5831,65 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether `check_expression_with_contextual_type` checks every object and array literal in `e` by value: none has a spread, an
-    /// accessor, a computed name or an omitted element, and none is the operand of an operator other than `?:`.
-    fn can_check_with_contextual_type(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Object(props) => props.iter().all(|p| {
-                let prop = &hir[p];
-                matches!(
-                    prop.kind,
-                    PropKind::Init | PropKind::Shorthand | PropKind::Method
-                ) && matches!(prop.key, PropKey::Name(_))
-                    && prop.value.is_some()
-                    && self.can_check_with_contextual_type(file, prop.value)
-            }),
-            ExprKind::Array(items) => hir.ids(items).all(|item| {
-                !matches!(hir[item].kind, ExprKind::Spread(_) | ExprKind::Missing)
-                    && self.can_check_with_contextual_type(file, item)
-            }),
-            ExprKind::Cond { yes, no, .. } => {
-                self.can_check_with_contextual_type(file, yes)
-                    && self.can_check_with_contextual_type(file, no)
-            }
-            _ => !self.is_literal_that_depends_on_context(file, e),
-        }
-    }
-
-    /// `checkExpressionWithContextualType`: the type of `e` under `contextual_type`, without reading or writing the cached types of
-    /// the object and array literals in `e`. The type of an object literal is lazy and identified by its expression, so the result
-    /// holds a copy with resolved property types. Everything else in `e` is checked once and cached (`resolvedSignature`,
-    /// `NodeCheckFlagsContextChecked`). Requires `can_check_with_contextual_type` and no const context.
-    /// `root`: the argument that `e` is part of, and its contextual type.
-    /// `prefers_cached`: the literals have cached types, and one that is equal to the copy replaces the copy.
+    /// `checkExpressionWithContextualType`: `pushContextualType`, `checkExpression`, which is not memoised, `popContextualType`.
+    /// What tsgo keeps of what is in `e` is kept: `resolvedSignature`, `NodeCheckFlagsContextChecked`.
     /// `array_literals`: receives the types of the array literals (`ObjectFlagsArrayLiteral`).
     fn check_expression_with_contextual_type(
         &mut self,
         file: FileId,
         e: ExprId,
-        contextual_type: Option<TypeId>,
-        root: (ExprId, TypeId),
-        prefers_cached: bool,
+        contextual_type: TypeId,
         array_literals: &mut Vec<TypeId>,
     ) -> TypeId {
-        let hir = self.hir(file);
-        // As `contextual_type` returns it.
-        let contextual_type = contextual_type
-            .map(|ty| self.force(ty))
-            .filter(|&ty| ty != TypeId::UNRESOLVED);
-        match hir[e].kind {
-            // `checkObjectLiteral`
-            ExprKind::Object(_) => {
-                let scope = self.scope_of_expr(file, e);
-                let mapper = self.identity_mapper(file, scope);
-                let is_js_literal = self.is_js_literal(file, e);
-                let cached = self.intern(TypeData::Anon {
-                    origin: Origin::ObjectLiteral(file, e, is_js_literal),
-                    mapper,
-                });
-                let Some(members) = self.members(cached) else {
-                    return TypeId::UNRESOLVED;
-                };
-                let apparent =
-                    contextual_type.map(|ty| self.apparent_context_of_object_literal(file, e, ty));
-                let mut props: Vec<Prop> = Vec::with_capacity(members.shape().props.len());
-                let mut is_equal_to_cached = prefers_cached;
-                for prop in &members.shape().props {
-                    let PropSource::Literal(_, written) = prop.source else {
-                        return TypeId::UNRESOLVED;
-                    };
-                    let expected = apparent.and_then(|ty| self.contextual_property(ty, prop.name));
-                    let ty = self.check_expression_for_mutable_location(
-                        file,
-                        hir[written].value,
-                        expected,
-                        root,
-                        prefers_cached,
-                        array_literals,
-                    );
-                    is_equal_to_cached =
-                        is_equal_to_cached && ty == self.type_of_literal_prop(file, written);
-                    props.push(Prop {
-                        name: prop.name,
-                        flags: prop.flags,
-                        source: Self::copy_of(ty, &[prop], true),
-                        mapper: MapperId::IDENTITY,
-                    });
-                }
-                if is_equal_to_cached || props.is_empty() {
-                    return cached;
-                }
-                self.synth(Shape {
-                    props,
-                    literal: Literalness::Literal,
-                    ..Shape::default()
-                })
-            }
-            // `checkArrayLiteral`
-            ExprKind::Array(items) => {
-                let in_tuple_context = self.is_in_tuple_context(file, e, contextual_type);
-                let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(items.len());
-                for (i, item) in hir.ids(items).enumerate() {
-                    let expected = contextual_type.and_then(|ty| {
-                        self.contextual_element_at(ty, i, Some(items.len()), None, None)
-                    });
-                    types.push(self.check_expression_for_mutable_location(
-                        file,
-                        item,
-                        expected,
-                        root,
-                        prefers_cached,
-                        array_literals,
-                    ));
-                }
-                let ty = if in_tuple_context {
-                    let flags: SmallVec<[ElemFlags; 8]> =
-                        smallvec![ElemFlags::REQUIRED; types.len()];
-                    let made_before = self.p.types.len();
-                    let ty = self.normalized_tuple(&types, &flags, false);
-                    self.p.types.mark_manifest(ty, made_before);
-                    ty
-                } else {
-                    let element = if !types.is_empty() {
-                        self.union_reduced(&types)
-                    } else if self.p.files.options.strict_null_checks {
-                        TypeId::NEVER
-                    } else {
-                        TypeId::UNDEFINED
-                    };
-                    let made_before = self.p.types.len();
-                    let ty = self.array_of(element);
-                    self.p.types.mark_manifest(ty, made_before);
-                    ty
-                };
-                if !array_literals.contains(&ty) {
-                    array_literals.push(ty);
-                }
-                ty
-            }
-            // `checkConditionalExpression`
-            ExprKind::Cond { yes, no, .. } if self.depends_on_context(file, e) => {
-                let yes = self.check_expression_with_contextual_type(
-                    file,
-                    yes,
-                    contextual_type,
-                    root,
-                    prefers_cached,
-                    array_literals,
-                );
-                let no = self.check_expression_with_contextual_type(
-                    file,
-                    no,
-                    contextual_type,
-                    root,
-                    prefers_cached,
-                    array_literals,
-                );
-                self.union_reduced(&[yes, no])
-            }
-            kind if self.depends_on_context(file, e)
-                || matches!(kind, ExprKind::TaggedTemplate(_)) =>
-            {
-                // `pushContextualType`, on the argument as in tsgo. The result is cached, and later contextual types do not change it.
-                self.contextual.push((file, root.0, root.1));
-                let ty = self.type_of_expr_for_inference(file, e);
-                self.contextual.pop();
-                ty
-            }
-            _ => self.type_of_expr(file, e),
-        }
-    }
-
-    /// `checkExpressionForMutableLocation`, for a property value or an element of a literal that
-    /// `check_expression_with_contextual_type` checks.
-    fn check_expression_for_mutable_location(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        contextual_type: Option<TypeId>,
-        root: (ExprId, TypeId),
-        prefers_cached: bool,
-        array_literals: &mut Vec<TypeId>,
-    ) -> TypeId {
-        let ty = self.check_expression_with_contextual_type(
-            file,
-            e,
-            contextual_type,
-            root,
-            prefers_cached,
-            array_literals,
+        self.contextual.push((file, e, contextual_type));
+        // What is found under one pushed type is not what is found under another, or under none.
+        let found_outside = (
+            std::mem::take(&mut self.rechecked_exprs),
+            std::mem::take(&mut self.rechecked_members),
         );
-        if matches!(
-            self.hir(file)[e].kind,
-            ExprKind::As { .. } | ExprKind::AsConst(_)
-        ) {
-            return ty;
+        let outer = self.begin_recheck();
+        let ty = self.type_of_expr(file, e);
+        self.note_array_literals(file, e, array_literals);
+        self.end_recheck(outer);
+        (self.rechecked_exprs, self.rechecked_members) = found_outside;
+        if self.resolving.last().is_some_and(|r| r.is_inferential) {
+            self.resolve_return_types_in(file, e);
         }
-        self.widen_literal_for_context(ty, contextual_type)
+        self.contextual.pop();
+        ty
     }
 
-    /// `inferTypeArguments`: `checkExpressionWithContextualType(arg, paramType, context, checkMode)`, of the literal argument `e` of a
-    /// call of `sig`. Every inference checks `e` under `param`, the uninstantiated parameter type: one for each candidate and round of
-    /// `chooseOverload`, and `inferSignatureInstantiationForOverloadFailure`. The cached type of `e` is its type under the recorded
-    /// contextual type, which stands for the instantiated parameter type of `getSignatureApplicabilityError`.
-    /// `None`: the cached type is the type to infer from.
+    /// `inferTypeArguments`: `checkExpressionWithContextualType(arg, paramType, context, checkMode)`, of the argument `e`, under
+    /// `param`, the uninstantiated parameter type. `None`: `e` is no literal, and is checked once.
     fn literal_argument_type_for_inference(
         &mut self,
         file: FileId,
-        sig: SigId,
         e: ExprId,
         param: TypeId,
         return_mapper: MapperId,
         array_literals: &mut Vec<TypeId>,
     ) -> Option<TypeId> {
-        if !self.is_literal_that_depends_on_context(file, e)
-            || !self.can_check_with_contextual_type(file, e)
-            || self.hir(file).is_js
-            || self.has_const_type_parameter(sig)
-        {
+        if !self.is_literal_that_depends_on_context(file, e) {
             return None;
         }
+        let return_mapper = self.without_const_type_parameters(return_mapper);
         let uninstantiated = self.instantiate_with_expected_result(param, return_mapper);
         let uninstantiated = self.without_no_infer(uninstantiated);
-        if self
-            .explicit_context(file, e)
-            .is_none_or(|recorded| recorded == uninstantiated)
-        {
-            return None;
-        }
         let uninstantiated = self.force(uninstantiated);
-        let first = self.check_expression_with_contextual_type(
-            file,
-            e,
-            Some(uninstantiated),
-            (e, uninstantiated),
-            true,
-            array_literals,
-        );
-        self.is_known(first).then_some(first)
+        Some(self.check_expression_with_contextual_type(file, e, uninstantiated, array_literals))
     }
 
-    /// The type of `e`, a call given for the parameter type `param`, to infer from. A call is resolved once (`resolvedSignature`), under
-    /// the contextual type that `instantiate_for_call_as` records for it and with the inferences made so far.
-    /// `None`: the type is a generic function that waits (`CheckModeSkipGenericFunctions`).
-    fn check_call_argument_once(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        param: TypeId,
-        return_mapper: MapperId,
-        inference: &mut Inference,
-    ) -> Option<TypeId> {
-        let context = self.instantiate_with_expected_result(param, return_mapper);
-        self.set_context(file, e, context);
-        self.note_so_far(inference);
-        let ty = self.type_of_expr_for_inference(file, e);
-        self.settle_after_look(inference);
-        let from_result = self
-            .resolving
-            .last()
-            .map_or(MapperId::IDENTITY, |r| r.return_mapper);
-        if let Some(wants_construct) = self.wants_plain_signature(param, from_result)
-            && self.single_generic_signature(ty, wants_construct).is_some()
-        {
-            return None;
+    /// `isConstContext` asks `getContextualType`, which gives the parameter type as declared: `returnMapper` comes after it
+    /// (`instantiateContextualType`). What is pushed has been through `return_mapper` already, so a `const` type parameter is left in.
+    fn without_const_type_parameters(&mut self, return_mapper: MapperId) -> MapperId {
+        let mapping = self.p.types.mapping(return_mapper);
+        let mut pairs = mapping.to_vec();
+        pairs.retain(|pair| !self.is_const_type_variable(pair.0, 0));
+        if pairs.len() == mapping.len() {
+            return_mapper
+        } else {
+            self.p.types.mapper(pairs)
         }
-        Some(ty)
-    }
-
-    /// The loop of `inferTypeArguments` over the arguments `args[from..]`, on a copy of `inference`, which holds the inferences from
-    /// the arguments before. It checks each literal argument under its uninstantiated parameter type
-    /// (`check_expression_with_contextual_type`). Returns, for each literal argument, the inferred types (`getInferredType`) that
-    /// instantiate the contextual type of its cached check. `None`: a literal argument cannot be checked that way.
-    /// `is_skipped`: the arguments that the first round of `chooseOverload` leaves out. `put_off`: those of them that are calls of a
-    /// generic function that returns a function. The second round resolves them, so they follow, up to the first argument that is
-    /// context sensitive. A function contributes only its parameter annotations.
-    /// A type parameter without candidates is left out. So is, for one argument, a type parameter whose inferred type depends on a
-    /// candidate that this argument supplies and that is, or holds, the type of a literal: the cached check would differ from the
-    /// first one (`true` for `boolean`), and the type parameter would be inferred from a copy.
-    fn infer_type_arguments_from_first_check(
-        &mut self,
-        file: FileId,
-        sig: SigId,
-        params: &[SigParam],
-        args: &[Arg],
-        from: usize,
-        is_skipped: &[bool],
-        put_off: &[bool],
-        inference: &Inference,
-        return_mapper: MapperId,
-    ) -> Option<SmallVec<[MapperId; 8]>> {
-        if self.hir(file).is_js || self.has_const_type_parameter(sig) {
-            return None;
-        }
-        // A lone literal given for a type parameter is the only candidate for it: there is nothing to instantiate.
-        if let [Arg::Expr(_)] = args
-            && let Some(param) = self.param_type_at(params, 0)
-            && inference.params.contains(&param)
-        {
-            return None;
-        }
-        for (i, &arg) in args.iter().enumerate().skip(from) {
-            if let Arg::Expr(e) = arg
-                && !is_skipped[i]
-                && self.is_literal_that_depends_on_context(file, e)
-                && !self.can_check_with_contextual_type(file, e)
-            {
-                return None;
-            }
-        }
-        let uncertain = self.uncertain;
-        let mut inference = inference.clone();
-        // The index, the type and the parameter type of each literal argument.
-        let mut literal_arguments: SmallVec<[(usize, TypeId, TypeId); 4]> = SmallVec::new();
-        for (i, &arg) in args.iter().enumerate().skip(from) {
-            if is_skipped[i] {
-                continue;
-            }
-            let Some(param) = self.param_type_at(params, i) else {
-                break;
-            };
-            if !self.has_type_variables(param) {
-                continue;
-            }
-            let mut ty = match arg {
-                Arg::Expr(e) if self.is_literal_that_depends_on_context(file, e) => {
-                    let uninstantiated =
-                        self.instantiate_with_expected_result(param, return_mapper);
-                    let uninstantiated = self.without_no_infer(uninstantiated);
-                    let uninstantiated = self.force(uninstantiated);
-                    self.note_so_far(&inference);
-                    self.infer_from_annotated_functions(file, e, param, &mut inference);
-                    let ty = self.check_expression_with_contextual_type(
-                        file,
-                        e,
-                        Some(uninstantiated),
-                        (e, uninstantiated),
-                        false,
-                        &mut inference.array_literals,
-                    );
-                    self.settle_after_look(&mut inference);
-                    literal_arguments.push((i, ty, param));
-                    ty
-                }
-                Arg::Expr(e)
-                    if matches!(self.hir(file)[e].kind, ExprKind::Call(_) | ExprKind::New(_)) =>
-                {
-                    match self.check_call_argument_once(
-                        file,
-                        e,
-                        param,
-                        return_mapper,
-                        &mut inference,
-                    ) {
-                        Some(ty) => ty,
-                        None => continue,
-                    }
-                }
-                Arg::Expr(e) if self.depends_on_context(file, e) => {
-                    self.infer_from_annotated_functions(file, e, param, &mut inference);
-                    match self.function_type_from_parameter_annotations(file, e, param) {
-                        Some(ty) => ty,
-                        None => continue,
-                    }
-                }
-                Arg::Expr(e) => {
-                    let ty = self.type_of_expr(file, e);
-                    self.note_array_literals(file, e, &mut inference.array_literals);
-                    self.type_of_reference_to_infer_from(file, e).unwrap_or(ty)
-                }
-                _ => self.arg_type(file, arg),
-            };
-            // `checkExpressionWithContextualType` strips the freshness of a literal that the contextual type has room for.
-            if self.some_type(ty, |c, m| c.is_literal(m)) {
-                let room = self.instantiate_with_expected_result(param, return_mapper);
-                if self.is_literal_context(ty, room) {
-                    ty = self.regular(ty);
-                }
-            }
-            self.infer(&mut inference, ty, param, 0);
-        }
-        for (i, &arg) in args.iter().enumerate() {
-            if !is_skipped[i] {
-                continue;
-            }
-            if !put_off[i] {
-                break;
-            }
-            if let Arg::Expr(e) = arg
-                && let Some(param) = self.param_type_at(params, i)
-                && self.has_type_variables(param)
-                && let Some(ty) =
-                    self.check_call_argument_once(file, e, param, return_mapper, &mut inference)
-            {
-                self.infer(&mut inference, ty, param, 0);
-            }
-        }
-        // The inferred type of each type parameter that has candidates, and its candidates that are, or hold, the type of a literal.
-        let mut inferred_types: SmallVec<[Option<(TypeId, SmallVec<[TypeId; 4]>)>; 4]> =
-            SmallVec::new();
-        for k in 0..inference.params.len() {
-            let c = &inference.candidates[k];
-            let is_fixed = c.fixed.is_some();
-            if !is_fixed
-                && (c.covariant.is_empty() && c.contravariant.is_empty()
-                    || c.priority & (PRIORITY_RETURN | PRIORITY_PARTIAL_HOMOMORPHIC) != 0
-                    || self.has_open_constraint(&inference, k))
-            {
-                inferred_types.push(None);
-                continue;
-            }
-            let inferred = self.inferred_type(&inference, k);
-            if !self.is_known(inferred) {
-                inferred_types.push(None);
-                continue;
-            }
-            let mut literal_candidates: SmallVec<[TypeId; 4]> = SmallVec::new();
-            if !is_fixed {
-                for &t in &inference.candidates[k].covariant {
-                    if inference.array_literals.contains(&t)
-                        || self
-                            .p
-                            .types
-                            .flags(t)
-                            .contains(TypeFlags::HAS_OBJECT_LITERAL)
-                    {
-                        literal_candidates.push(t);
-                    }
-                }
-            }
-            inferred_types.push(Some((inferred, literal_candidates)));
-        }
-        let has_literal_candidates = inferred_types
-            .iter()
-            .flatten()
-            .any(|(_, literal_candidates)| !literal_candidates.is_empty());
-        let mut mappers: SmallVec<[MapperId; 8]> = smallvec![MapperId::IDENTITY; args.len()];
-        for &(i, ty, param) in &literal_arguments {
-            // The candidates that argument `i` supplies, whatever the other arguments supply.
-            let mut own = Inference::for_params(&inference.params, inference.sig);
-            if has_literal_candidates {
-                self.infer(&mut own, ty, param, 0);
-            }
-            let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
-            for k in 0..inference.params.len() {
-                let Some((inferred, literal_candidates)) = &inferred_types[k] else {
-                    continue;
-                };
-                let supplied: SmallVec<[TypeId; 4]> = literal_candidates
-                    .iter()
-                    .copied()
-                    .filter(|t| own.candidates[k].covariant.contains(t))
-                    .collect();
-                if !supplied.is_empty() {
-                    let mut others = inference.clone();
-                    others.candidates[k]
-                        .covariant
-                        .retain(|t| !supplied.contains(t));
-                    if self.inferred_type(&others, k) != *inferred {
-                        continue;
-                    }
-                }
-                pairs.push((inference.params[k], *inferred));
-            }
-            if !pairs.is_empty() {
-                mappers[i] = self.p.types.mapper(pairs);
-            }
-        }
-        self.uncertain = uncertain;
-        Some(mappers)
     }
 
     /// `getSingleSignature`: the one call (or construct) signature of `ty`, if there is none of the other kind.
@@ -6596,6 +6055,21 @@ impl<'p> Checker<'p> {
                 m
             }
         }))
+    }
+
+    /// `instantiateContextualType` with the `returnMapper` of `getInferenceContext(node)`, for a `const` type parameter, which is
+    /// still in what is pushed for an argument (`without_const_type_parameters`).
+    pub(super) fn instantiate_contextual_type_from_expected_result(
+        &mut self,
+        ty: TypeId,
+    ) -> TypeId {
+        match self.resolving.last() {
+            Some(resolving) => {
+                let from_result = resolving.return_mapper;
+                self.instantiate_contextual_type_from_result(ty, from_result)
+            }
+            None => ty,
+        }
     }
 
     fn instantiate_contextual_type_from_result(
@@ -9350,13 +8824,9 @@ impl<'p> Checker<'p> {
                 self.has_effective_rest_parameter(&params) || self.parameter_count(&params) >= asked
             });
         }
-        // `getIntersectedSignatures`
-        if function.is_some()
-            && sigs.len() > 1
-            && !self.p.files.options.no_implicit_any
-            && !self.is_union(non_null)
-        {
-            sigs.clear();
+        // `getContextualCallSignature`: a function that is to be all of them goes by ONE signature, and settles what that mentions.
+        if function.is_some() && sigs.len() > 1 && !self.is_union(non_null) {
+            sigs = self.intersected_signature(&sigs).into_iter().collect();
         }
         // What the signatures nothing is settled for take.
         let mut open: Vec<TypeId> = Vec::new();
@@ -9411,6 +8881,13 @@ impl<'p> Checker<'p> {
             let own_this_is_typed = function
                 .is_some_and(|(file, func)| self.hir(file)[func].this_ty(self.hir(file)).is_some());
             for sig in sigs {
+                // `instantiateSignature(contextualSignature, inferenceContext.mapper)`: what the type parameters of a generic
+                // contextual signature extend goes through the mapper as well.
+                for &own in self.sig_type_params(sig).iter() {
+                    if let Some(constraint) = self.constraint_of_type_param(own) {
+                        self.fix_params_in(inference, constraint);
+                    }
+                }
                 let params = self.sig_params(sig);
                 let this = if own_this_is_typed {
                     None

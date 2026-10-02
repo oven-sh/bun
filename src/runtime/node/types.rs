@@ -822,6 +822,7 @@ pub(crate) trait PathLikeExt {
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
+    /// Always materialized in `buf` (the `cp` walks append entry names to it), unlike `slice_z`.
     fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
@@ -1003,7 +1004,8 @@ impl PathLikeExt for PathLike<'_> {
         }
         #[cfg(not(windows))]
         {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
+            // Unforced, an empty operand (`fs.cp(dir, "")`) yields `ZStr::EMPTY` and skips `buf`.
+            Ok(self.slice_z_with_force_copy::<true>(buf))
         }
     }
 

@@ -1047,6 +1047,162 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
   });
 });
 
+describe("endStream with waitForTrailers (RFC 9113 §8.1)", () => {
+  // node submits an endStream request/response without a data provider: END_STREAM rides on the
+  // HEADERS frame and nghttp2 never asks for trailers, so waitForTrailers is ignored and
+  // 'wantTrailers' never fires. A trailer block (or an END_STREAM DATA frame) after such a
+  // HEADERS frame would be a second terminator for the stream.
+  const END_STREAM_END_HEADERS = 0x5;
+
+  type Outcome = {
+    stream1: { type: number; flags: number }[];
+    wantTrailers: number;
+    sendTrailersError: string | undefined;
+    sentTrailers: unknown;
+  };
+  const endedOnHeaders: Outcome = {
+    stream1: [{ type: FrameType.HEADERS, flags: END_STREAM_END_HEADERS }],
+    wantTrailers: 0,
+    sendTrailersError: "ERR_HTTP2_TRAILERS_NOT_READY",
+    sentTrailers: undefined,
+  };
+
+  function observeTrailers(stream: http2.Http2Stream, listen: boolean) {
+    let wantTrailers = 0;
+    if (listen) {
+      stream.on("wantTrailers", () => {
+        wantTrailers++;
+        stream.sendTrailers({ "x-trailer": "1" });
+      });
+    }
+    return () => {
+      let sendTrailersError: string | undefined;
+      try {
+        stream.sendTrailers({ "x-late": "1" });
+      } catch (e: any) {
+        sendTrailersError = e.code;
+      }
+      return { wantTrailers, sendTrailersError, sentTrailers: stream.sentTrailers };
+    };
+  }
+
+  function stream1Frames(frames: Frame[]) {
+    return frames.filter(f => f.streamId === 1).map(f => ({ type: f.type, flags: f.flags }));
+  }
+
+  async function clientRequest(
+    headers: http2.OutgoingHttpHeaders,
+    options: http2.ClientSessionRequestOptions,
+    { listen = true, afterConnect = false } = {},
+  ): Promise<Outcome> {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      // Before 'connect' the request is queued and submitted from the connect handler; after it,
+      // request() submits it directly. Both reach the wire through the same native request().
+      if (afterConnect) await once(client, "connect");
+      const req = client.request(headers, options);
+      req.on("error", () => {});
+      const finished = once(req, "finish");
+      const finishTrailers = observeTrailers(req, listen);
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      // Whatever the client wrote for stream 1 while submitting the request was written before it
+      // could have seen this PING, so it precedes the PING ACK on the wire.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      // The writable side still finishes even though no frame carried the end separately.
+      await finished;
+      return { stream1: stream1Frames(raw.frames), ...finishTrailers() };
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+
+  test("GET (endStream by default) with waitForTrailers ends the stream on its HEADERS frame", async () => {
+    expect(await clientRequest({ ":method": "GET", ":path": "/" }, { waitForTrailers: true })).toEqual(endedOnHeaders);
+  });
+
+  test("POST with endStream and waitForTrailers ends the stream on its HEADERS frame", async () => {
+    expect(
+      await clientRequest({ ":method": "POST", ":path": "/" }, { endStream: true, waitForTrailers: true }),
+    ).toEqual(endedOnHeaders);
+  });
+
+  test("without a 'wantTrailers' listener no END_STREAM DATA frame follows the HEADERS frame", async () => {
+    expect(
+      await clientRequest({ ":method": "GET", ":path": "/" }, { waitForTrailers: true }, { listen: false }),
+    ).toEqual(endedOnHeaders);
+  });
+
+  test("a request submitted after 'connect' behaves the same", async () => {
+    expect(
+      await clientRequest({ ":method": "GET", ":path": "/" }, { waitForTrailers: true }, { afterConnect: true }),
+    ).toEqual(endedOnHeaders);
+  });
+
+  test("a request that does carry a body still gets to send trailers", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      const finishTrailers = observeTrailers(req, true);
+      req.end("hello");
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      expect({ stream1: stream1Frames(raw.frames), ...finishTrailers() }).toEqual({
+        stream1: [
+          { type: FrameType.HEADERS, flags: 0x4 /* END_HEADERS */ },
+          { type: FrameType.DATA, flags: 0 },
+          { type: FrameType.HEADERS, flags: END_STREAM_END_HEADERS },
+        ],
+        wantTrailers: 1,
+        sendTrailersError: "ERR_HTTP2_TRAILERS_ALREADY_SENT",
+        sentTrailers: { "x-trailer": "1" },
+      });
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a server response with endStream and waitForTrailers ends the stream on its HEADERS frame", async () => {
+    const closed = Promise.withResolvers<() => Omit<Outcome, "stream1">>();
+    const srv = http2.createServer();
+    srv.on("stream", (stream: any) => {
+      stream.on("error", () => {});
+      const finishTrailers = observeTrailers(stream, true);
+      stream.respond({ ":status": 200 }, { endStream: true, waitForTrailers: true });
+      // The request below is itself END_STREAM, so this response closes the stream outright.
+      stream.on("close", () => closed.resolve(finishTrailers));
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, END_STREAM_END_HEADERS, 1, requestHeaderBlock("GET"));
+      const finishTrailers = await closed.promise;
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      // Like node, sendTrailers() on the closed stream reports ERR_HTTP2_INVALID_STREAM (it was never
+      // asked for trailers, so it is also not "already sent").
+      expect({ stream1: stream1Frames(c.frames), ...finishTrailers() }).toEqual({
+        ...endedOnHeaders,
+        sendTrailersError: "ERR_HTTP2_INVALID_STREAM",
+      });
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+});
+
 describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   // HPACK "literal never indexed, new name" (0x10) so the wire shape is exactly what is written
   // and no client library normalizes it away.

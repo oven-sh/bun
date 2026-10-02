@@ -338,11 +338,11 @@ describe("--lockfile-only with remove and update", () => {
   });
 });
 
-// An error logged while resolving fails a full install after the packages are
-// linked. --lockfile-only returned before that check, so it printed the error,
-// saved bun.lock and exited 0. A peer dependency is the case that reaches it:
-// an unresolved regular dependency already fails through verify_resolutions.
-describe.concurrent("--lockfile-only fails on an error logged while resolving", () => {
+// An error logged while resolving, or while the lockfile is cleaned, fails a
+// full install after the packages are linked. --lockfile-only returned before
+// that check, so it saved bun.lock and exited 0. An unresolved regular
+// dependency is not such a case: it already fails through verify_resolutions.
+describe.concurrent("--lockfile-only fails on a logged error", () => {
   async function packManifest(tarball: string, manifest: object) {
     using work = tempDir("pack-manifest", { "package/package.json": JSON.stringify(manifest) });
     await using tar = spawn({
@@ -356,6 +356,18 @@ describe.concurrent("--lockfile-only fails on an error logged while resolving", 
     }
   }
 
+  async function lockfileOnly(dir: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: dir,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
   it("does not save bun.lock when a peer dependency is a link: that is not linked", async () => {
     using dir = tempDir("lockfile-only-peer-link", {
       "package.json": JSON.stringify({ name: "app", dependencies: { bar: "file:./bar.tgz" } }),
@@ -366,15 +378,24 @@ describe.concurrent("--lockfile-only fails on an error logged while resolving", 
       peerDependencies: { inside: "link:not-linked-anywhere" },
     });
 
-    await using proc = spawn({
-      cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: String(dir),
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await lockfileOnly(String(dir));
     expect(stderr).toContain('error: Package "inside" is not linked');
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(stdout).not.toContain("Saved bun.lock");
+    expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // The tree builder logs this error while the lockfile is cleaned, after the
+  // dependencies are resolved.
+  it("does not save bun.lock when a dependency name is not a safe folder name", async () => {
+    using dir = tempDir("lockfile-only-unsafe-name", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "..": "file:./dep" } }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    });
+
+    const { stdout, stderr, exitCode } = await lockfileOnly(String(dir));
+    expect(stderr).toContain('error: Invalid dependency name ".."');
     expect(stderr).not.toContain("Saved lockfile");
     expect(stdout).not.toContain("Saved bun.lock");
     expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);

@@ -1677,6 +1677,17 @@ describe.concurrent(() => {
     );
   });
 
+  // dlopen() and LoadLibrary() end a path at a null byte, so they would load a different file than the path names.
+  it("dlopen rejects a path with a null byte", () => {
+    using dir = tempDir("dlopen-null-byte", { "addon.node": "dlopen() got the path before the null byte" });
+    const addon = join(String(dir), "addon.node");
+    for (const filename of [addon + "\0ignored.node", Bun.pathToFileURL(addon).href + "%00ignored.node"]) {
+      expect(() => process.dlopen({ exports: {} }, filename)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    }
+  });
+
   it("process.constrainedMemory()", () => {
     expect(process.constrainedMemory() >= 0).toBe(true);
   });

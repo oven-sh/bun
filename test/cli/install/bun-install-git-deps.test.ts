@@ -5,7 +5,7 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -844,6 +844,43 @@ test.concurrent(
     expect(stderr).toBe("");
     expect(installOutput(stdout)).toEqual(output);
     expect(await installed()).toEqual(expected);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// bun.lock can spell a repository's URL differently from the dependency: an
+// scp-form URL comes back from it with `ssh://` in front. Here the locked URL
+// has a `.` segment. The install clones and checks out what bun.lock names. It
+// used to go by the dependency once the clone ended: it cloned a second time
+// and left the package waiting.
+test.concurrent(
+  "isolated linker checks out a git package whose URL bun.lock spells differently from the dependency",
+  async () => {
+    using dir = tempDir("git-dep-url-spelling", {});
+    const root = String(dir);
+    const name = nameOf("b");
+    const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+    const lockedUrl = repoUrl.replace(/\/shared-repo\.git$/, "/./shared-repo.git");
+    const sha = sharedCommits["pkg-b"];
+    const project = writeProject(root, { [name]: `${repoUrl}#pkg-b` });
+    writeFileSync(
+      join(project, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "project", dependencies: { [name]: `${repoUrl}#pkg-b` } } },
+        packages: { [name]: [`${name}@${lockedUrl}#${sha}`, {}, sha] },
+      }),
+    );
+
+    const cache = join(root, "cache");
+    const { stdout, stderr, exitCode } = await runInstall(project, cache, {}, "--frozen-lockfile", "--linker=isolated");
+    expect(stderr).toBe("");
+    expectInstalled(stdout, { [name]: `${lockedUrl}#${sha}` });
+    expect(await installedVersions(project, [name])).toEqual(markers(["b"]));
+    // one bare clone of the repository
+    expect(readdirSync(cache).filter(entry => entry.endsWith(".git"))).toHaveLength(1);
     expect(exitCode).toBe(0);
   },
   30_000,

@@ -145,7 +145,7 @@ await fetch("https://example.com", {
 ```
 
 ```txt
-[fetch] $ curl --http1.1 "https://example.com/" -X POST -H "content-type: application/json" -H "Connection: keep-alive" -H "User-Agent: Bun/1.3.3" -H "Accept: */*" -H "Host: example.com" -H "Accept-Encoding: gzip, deflate, br" --compressed -H "Content-Length: 13" --data-raw "{\"foo\":\"bar\"}"
+[fetch] $ curl --http1.1 'https://example.com/' -X POST -H 'content-type: application/json' -H 'Connection: keep-alive' -H 'User-Agent: Bun/1.3.3' -H 'Accept: */*' -H 'Host: example.com' -H 'Accept-Encoding: gzip, deflate, br' --compressed -H 'Content-Length: 13' --data-raw '{"foo":"bar"}'
 [fetch] > HTTP/1.1 POST https://example.com/
 [fetch] > content-type: application/json
 [fetch] > Connection: keep-alive
@@ -168,6 +168,8 @@ await fetch("https://example.com", {
 ```
 
 The lines with `[fetch] >` are the request from your local code, and the lines with `[fetch] <` are the response from the remote server.
+
+Each argument of the `curl` command is quoted for a POSIX shell such as `bash` or `zsh`: the shell passes the bytes of the request to `curl` and runs nothing from them. An argument with a control character (for example a line feed in the body) or with bytes that are not UTF-8 is written as `$'...'`, so the command stays on one line. `dash` and `fish` do not have `$'...'`, and PowerShell reads quotes in another way: these shells can pass other bytes for some arguments, but they also run nothing from them. Do not paste the command into `cmd.exe`, which has no single quotes. A request body with a NUL byte is not printed.
 
 Some credentials are redacted. The values of the `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie` and `x-amz-security-token` headers print as `[redacted]` (an auth scheme such as `Bearer` is kept). In the URL, a password is masked with `*` and an npm token (`npm_...`) prints as `***`. This applies to the `curl` command as well, so add these values back before you run it. The `[fetch] >` line also prints a UUID in the URL as `***`. The `curl` command keeps it.
 

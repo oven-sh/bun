@@ -1,6 +1,17 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, closeSync, ftruncateSync, openSync, rmSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  ftruncateSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import {
   bunEnv,
   bunExe,
@@ -4270,14 +4281,208 @@ describe.concurrent("verbose fetch logging redacts credentials", () => {
       const curlLine = stderr.split(/\r?\n/).find(line => line.includes("curl --http1.1")) ?? "";
       const maskedPassword = Buffer.alloc(secrets.password.length, "*").toString();
       expect(curlLine).toContain(
-        `curl --http1.1 "http://user:${maskedPassword}@${url.host}/orders/${orderId}?registry_token=***"`,
+        `curl --http1.1 'http://user:${maskedPassword}@${url.host}/orders/${orderId}?registry_token=***'`,
       );
-      expect(curlLine).toContain(`-H "Authorization: Bearer [redacted]"`);
-      expect(curlLine).toContain(`-H "Proxy-Authorization: Basic [redacted]"`);
-      expect(curlLine).toContain(`-H "Cookie: [redacted]"`);
-      expect(curlLine).toContain(`-H "x-amz-security-token: [redacted]"`);
-      expect(curlLine).toContain(`-H "X-Plain: plain-value"`);
+      expect(curlLine).toContain(`-H 'Authorization: Bearer [redacted]'`);
+      expect(curlLine).toContain(`-H 'Proxy-Authorization: Basic [redacted]'`);
+      expect(curlLine).toContain(`-H 'Cookie: [redacted]'`);
+      expect(curlLine).toContain(`-H 'x-amz-security-token: [redacted]'`);
+      expect(curlLine).toContain(`-H 'X-Plain: plain-value'`);
     }
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("verbose fetch logging curl line", () => {
+  // One request per case: `url` is fetched, `header` is sent as `x-data`, `body` (hex) as text/plain.
+  type Case = { url: string; header?: string; body?: string };
+
+  // Returns the printed `curl` lines, one per request (two for a request that is redirected).
+  async function curlLines(cases: Case[]) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `for (const { url, header, body } of JSON.parse(process.env.CASES)) {
+           const headers = {};
+           if (header !== undefined) headers["x-data"] = header;
+           const init = { verbose: "curl", headers };
+           if (body !== undefined) {
+             headers["content-type"] = "text/plain";
+             init.method = "POST";
+             init.body = Buffer.from(body, "hex");
+           }
+           await (await fetch(url, init)).arrayBuffer();
+         }`,
+      ],
+      env: { ...bunEnv, CASES: JSON.stringify(cases) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stderr.split(/\r?\n/).flatMap(line => {
+      const at = line.indexOf("curl --http1.1 ");
+      return at === -1 ? [] : [line.slice(at)];
+    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    return lines;
+  }
+
+  const hex = (text: string | number[]) => Buffer.from(text as string).toString("hex");
+
+  it("writes each word so that a shell reads it as data", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const url = server.url.href;
+
+    // [what the request carries, the word that is printed]
+    const bodies: [string | number[], string][] = [
+      ["hello-1", "hello-1"],
+      ["a b", "'a b'"],
+      [`{"name":"$(touch pwned)"}`, `'{"name":"$(touch pwned)"}'`],
+      ["`touch pwned`", "'`touch pwned`'"],
+      [`"; touch pwned; "`, `'"; touch pwned; "'`],
+      ["it's", `'it'"'"'s'`],
+      // PowerShell ends a '...' string at a typographic quote too.
+      ["it\u2019s", `'it'"\u2019"'s'`],
+      // fish reads \\ and \' inside '...' as escapes, so these backslashes are written outside.
+      ["a\\", "'a'\\\\"],
+      ["C:\\\\dir", "'C:'\\\\'\\dir'"],
+      ["\\'", `\\\\"'"`],
+      [`say \\"hi\\"`, `'say \\"hi\\"'`],
+      // A control character or a byte that is not UTF-8 makes the word one $'...'.
+      [`{\n  "a": 1\n}`, `$'{\\n  "a": 1\\n}'`],
+      ["a\tb\r\x1b[0m'\\", "$'a\\tb\\r\\033[0m\\047\\\\'"],
+      [[0x61, 0xe9, 0xff], "$'a\\351\\377'"],
+      // $'...' is all ASCII. '...' is not.
+      ["caf\u00e9 \u2019\n", "$'caf\\303\\251 \\342\\200\\231\\n'"],
+      ["caf\u00e9", "'caf\u00e9'"],
+    ];
+    const lines = await curlLines([
+      ...bodies.map(([body]) => ({ url, body: hex(body) })),
+      // No argument can hold a NUL: this body is not printed.
+      { url, body: hex("a\0b") },
+      { url: url + "p?x=1&y=$(touch${IFS}pwned)", header: "caf\xe9" },
+      { url, header: "$(touch pwned)" },
+    ]);
+
+    const word = (line: string, flag: string) => line.split(` ${flag} `)[1];
+    expect(lines.slice(0, bodies.length).map(line => word(line, "--data-raw"))).toEqual(bodies.map(([, word]) => word));
+    const [nul, latin1, substitution] = lines.slice(bodies.length);
+    expect(nul).not.toContain("--data-raw");
+    expect(latin1).toStartWith(`curl --http1.1 '${url}p?x=1&y=$(touch\${IFS}pwned)' -H $'x-data: caf\\351' -H `);
+    expect(substitution).toStartWith(`curl --http1.1 '${url}' -H 'x-data: $(touch pwned)' -H `);
+    expect(lines).toHaveLength(bodies.length + 3);
+  });
+
+  it.skipIf(isWindows)("a pasted line runs curl with the bytes of the request and nothing else", async () => {
+    const location = "/b?q=`touch${IFS}pwned`";
+    using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        new URL(req.url).pathname === "/a"
+          ? new Response(null, { status: 302, headers: { location } })
+          : new Response("ok"),
+    });
+    const base = server.url.href;
+
+    // Text that a shell acts on when it is not quoted. Each is sent in the URL, as a header and as a body.
+    const plain = [
+      "$(touch pwned)",
+      "`touch pwned`",
+      "'; touch pwned; '",
+      "\\'; touch pwned; '\\",
+      `\\'";touch pwned;#`,
+      `"; touch pwned; "`,
+      "' & touch pwned & '",
+      "$HOME ~ * {a,b} !! #c",
+      "a\\",
+      "\\\\",
+      ">pwned",
+    ];
+    // These need $'...', which not every shell has. A header value is Latin-1: its \xe9 is not UTF-8.
+    const control = ["\t`touch pwned`", "\x1b[8m'; touch pwned; '", "a\tb\x7f", "caf\xe9"];
+    const requests: (Case & { ansiC: boolean })[] = [
+      ...plain.map(text => ({ url: base + "p'" + text + "?q=" + text, header: text, body: hex(text), ansiC: false })),
+      { url: base, body: hex("\u2019; touch pwned; \u2018"), ansiC: false },
+      ...control.map(text => ({ url: base, header: "-" + text, body: hex(text), ansiC: true })),
+      { url: base, body: hex(`{\n  "a": "'; touch pwned; '"\n}`), ansiC: true },
+    ];
+    const lines = await curlLines([{ url: base + "a" }, ...requests]);
+    // The first request is redirected: its second line holds the server's `Location`.
+    const expected: (Case & { ansiC: boolean })[] = [
+      { url: base + "a", ansiC: false },
+      { url: new URL(location, base).href, ansiC: false },
+      ...requests.map(request => ({ ...request, url: new URL(request.url).href })),
+    ];
+    expect(lines).toHaveLength(expected.length);
+
+    using dir = tempDir("curl-line-paste", {
+      // `curl` is a function that records its arguments. Its first call tells if this shell has $'...'.
+      "paste.sh":
+        `curl() { printf '%s\\0' "$@" > "$CURL_ARGV"; }\n` +
+        `CURL_ARGV="$OUT/probe" curl $'\\101'\n` +
+        lines.map((line, i) => `CURL_ARGV="$OUT/${i}" ${line}\n`).join(""),
+    });
+    // The arguments of one `curl` call, one Latin-1 string per argument.
+    const argv = (file: string) => {
+      const words: string[] = [];
+      if (!existsSync(file)) return words;
+      const bytes = readFileSync(file);
+      for (let start = 0, end; (end = bytes.indexOf(0, start)) !== -1; start = end + 1) {
+        words.push(bytes.latin1Slice(start, end));
+      }
+      return words;
+    };
+
+    const shells = ["sh", "bash", "zsh", "dash"].flatMap(name => {
+      const path = Bun.which(name);
+      const flags = { sh: [], bash: ["--norc", "--noprofile"], zsh: ["-f"], dash: [] }[name]!;
+      return path ? [{ name, cmd: [path, ...flags] }] : [];
+    });
+    expect(shells.map(shell => shell.name)).toContain("sh");
+
+    await Promise.all(
+      shells.map(async ({ name, cmd }) => {
+        const out = join(String(dir), "out-" + name);
+        const cwd = join(String(dir), "cwd-" + name);
+        mkdirSync(out);
+        mkdirSync(cwd);
+        await using proc = Bun.spawn({
+          cmd: [...cmd, join(String(dir), "paste.sh")],
+          env: { ...bunEnv, HOME: String(dir), OUT: out },
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ name, stdout, stderr, exitCode }).toEqual({ name, stdout: "", stderr: "", exitCode: 0 });
+        // A command out of the data would leave `pwned` or another file here.
+        expect({ name, created: readdirSync(cwd) }).toEqual({ name, created: [] });
+
+        const hasAnsiC = argv(join(out, "probe"))[0] === "A";
+        const got = expected.map((request, i) => {
+          const words = argv(join(out, String(i)));
+          // Without $'...' the bytes of such a word differ, but the line still is one `curl` call.
+          if (request.ansiC && !hasAnsiC) return words.length > 0 ? "ran" : "did not run";
+          const header = words.findIndex((word, at) => words[at - 1] === "-H" && word.startsWith("x-data: "));
+          const body = words.indexOf("--data-raw");
+          return {
+            url: words.slice(0, 2),
+            header: header === -1 ? undefined : words[header].slice("x-data: ".length),
+            body: body === -1 ? undefined : words.slice(body + 1),
+          };
+        });
+        const want = expected.map(request =>
+          request.ansiC && !hasAnsiC
+            ? "ran"
+            : {
+                url: ["--http1.1", request.url],
+                header: request.header,
+                body: request.body === undefined ? undefined : [Buffer.from(request.body, "hex").latin1Slice()],
+              },
+        );
+        expect({ name, got }).toEqual({ name, got: want });
+      }),
+    );
   });
 });

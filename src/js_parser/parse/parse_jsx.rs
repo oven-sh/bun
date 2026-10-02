@@ -10,7 +10,12 @@ use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
 use bun_collections::VecExt;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub(crate) fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
+    /// After the "<" at `loc`, whose `TokenFullStart` is `full_start`.
+    pub(crate) fn parse_jsx_element(
+        &mut self,
+        loc: bun_ast::Loc,
+        full_start: bun_ast::Loc,
+    ) -> crate::CrateResult<Expr> {
         let p = self;
         // Nested child elements (`<a><b><c>...`) recurse back into this function,
         // so guard the stack the same way the other recursive parse entry points do.
@@ -416,6 +421,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TLessThan => {
                     let less_than_loc = p.lexer.loc();
+                    let less_than_full_start = p.lexer.full_start();
                     p.lexer.next_inside_jsx_element()?;
 
                     if p.lexer.token != T::TSlash {
@@ -424,7 +430,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.lexer.tolerant {
                             p.jsx_parent_tag = Some(tag.name);
                         }
-                        let child = Self::parse_jsx_element(p, less_than_loc)?;
+                        let child =
+                            Self::parse_jsx_element(p, less_than_loc, less_than_full_start)?;
                         children.push(child);
 
                         if p.lexer.tolerant {
@@ -577,7 +584,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && p.lexer.tolerant
                         && !p.lexer.is_log_disabled
                     {
-                        Self::report_unclosed_jsx_element(p, loc, &tag, parent_tag.is_some());
+                        Self::report_unclosed_jsx_element(p, full_start, &tag);
                         let at = p.lexer.loc();
                         let closing_tag = start_tag.map(|_| p.new_expr(E::Missing {}, at));
                         let syntax = p.keep_jsx(closing_tag, opening_end, at, at);
@@ -679,33 +686,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn rescan_inside_jsx_element(p: &mut Self) -> crate::CrateResult<()> {
+        let full_start = p.lexer.token_full_start;
         p.lexer.current = p.lexer.start;
         p.lexer.step();
         p.lexer.next_inside_jsx_element()?;
+        p.lexer.token_full_start = full_start;
         Ok(())
     }
 
     /// `parseJsxChild` at the end of the file: 17008 or 17014 at the opening tag, then 1005 for the missing `</`.
-    /// `loc` is the `<` of the element.
+    /// `start` is `TokenFullStart` of the `<` of the element.
     #[cold]
     #[inline(never)]
-    fn report_unclosed_jsx_element(
-        p: &mut Self,
-        loc: bun_ast::Loc,
-        tag: &JSXTag<'a>,
-        is_child: bool,
-    ) {
+    fn report_unclosed_jsx_element(p: &mut Self, start: bun_ast::Loc, tag: &JSXTag<'a>) {
         p.jsx_children_met_end_of_file = true;
         if tag.data.as_expr().is_some() {
             p.lexer.ts_error(tag.range, 17008);
         } else {
-            // The fragment's node starts at the full start of its `<`. Before a child that is the `<`: whitespace is text.
-            let start = if is_child {
-                loc
-            } else {
-                p.lexer.full_start_of(loc.to_usize())
-            };
-            // It ends with its `>`, which is where `JSXTag::parse` says the tag is.
+            // The fragment's node starts at the full start of its `<`. It ends with its `>`, which is where `JSXTag::parse` says the tag is.
             let len = tag.range.loc.start + 1 - start.start;
             p.lexer.ts_error(bun_ast::Range { loc: start, len }, 17014);
         }

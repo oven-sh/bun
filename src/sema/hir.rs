@@ -738,6 +738,7 @@ pub struct Stmt {
 #[derive(Copy, Clone, Debug)]
 pub enum StmtKind {
     Empty,
+    Debugger,
     Expr(ExprId),
     Var(Span<VarDeclId>),
     Fn(FnId),

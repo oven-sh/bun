@@ -320,6 +320,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TStringLiteral => {
                     key = p.parse_string_literal()?;
+                    if opts.is_class {
+                        let next = p.lexer.loc();
+                        p.mark_type_syntax(key.loc, crate::sema::Mark::StringLiteralName, next);
+                    }
                 }
                 T::TBigIntegerLiteral => {
                     key = p.new_expr(
@@ -413,6 +417,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     p.lexer.expect(T::TCloseBracket)?;
                     key = expr;
+                    p.mark_type_syntax(key.loc, crate::sema::Mark::ComputedName, key_range.loc);
                 }
                 T::TAsterisk => {
                     // `canFollowModifier`: `accessor` is a modifier before a `*` too.

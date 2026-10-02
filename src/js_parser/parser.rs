@@ -1405,6 +1405,8 @@ pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
     pub(crate) is_after_question_and_before_colon: bool,
+    /// Where the "(" is, if it is not at the `loc` that is given: type parameters come first.
+    pub(crate) open_paren: bun_ast::Loc,
 }
 
 #[repr(u8)]

@@ -944,12 +944,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `parseIdentifierName`: 1003, the token stays, and the name is missing.
                     p.lexer.expect(T::TIdentifier)?;
                     let range = bun_ast::Range { loc, len: 3 };
+                    let name = p.new_expr(E::EString::init(b""), loc);
+                    p.keep_expressions(loc, &[name]);
                     return Ok(p.new_expr(E::NewTarget { range }, loc));
                 }
                 // `checkGrammarMetaProperty`: any word makes a meta property, and all but `target` are objected to.
                 if p.lexer.identifier != b"target" {
                     let name = p.lexer.range();
                     p.lexer.ts_error(name, 17012);
+                    let name = p.new_expr(E::EString::init(p.lexer.identifier), name.loc);
+                    p.keep_expressions(loc, &[name]);
                 }
             }
             let range = bun_ast::Range {
@@ -1041,10 +1045,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let element_start = p.lexer.loc();
             match p.lexer.token {
                 T::TComma => {
-                    items.push(Expr {
+                    let hole = Expr {
                         data: ExprData::EMissing(E::Missing {}),
                         loc: p.lexer.loc(),
-                    });
+                    };
+                    p.mark_type_syntax(hole.loc, crate::sema::Mark::OmittedExpression, hole.loc);
+                    items.push(hole);
                 }
                 T::TDotDotDot => {
                     let dots_loc = p.lexer.loc();
@@ -1142,7 +1148,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 let mut value = Expr::EMPTY;
                 p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
-                p.mark_type_syntax(value.loc, crate::sema::Mark::MemberStart, element_start);
+                p.mark_type_syntax(value.loc, crate::sema::Mark::DotDotDot, element_start);
                 p.mark_end(value.loc, crate::sema::Mark::MemberEnd);
                 properties.push(G::Property {
                     kind: PropertyKind::Spread,
@@ -1290,8 +1296,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Self::pfx_jsx_or_missing(p, level);
             }
             // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
+            let full_start = p.lexer.full_start();
             p.lexer.next_inside_jsx_element()?;
-            let element = p.parse_jsx_element(loc)?;
+            let element = p.parse_jsx_element(loc, full_start)?;
 
             // The call to parseJSXElement() above doesn't consume the last
             // TGreaterThan because the caller knows what Next() function to call.
@@ -1319,7 +1326,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match skipped {
                 SkipTypeParameterResult::DidNotSkipAnything => {}
                 result => {
-                    p.mark_type_syntax(loc, crate::sema::Mark::AssertedParen, p.lexer.loc());
+                    let open_paren = p.lexer.loc();
                     p.lexer.expect(T::TOpenParen)?;
                     let mut value = p.parse_paren_expr(
                         loc,
@@ -1327,6 +1334,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ParenExprOpts {
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
+                            open_paren,
                             ..Default::default()
                         },
                     )?;
@@ -1338,13 +1346,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && !(matches!(value.data, ExprData::EArrow(_)) && value.loc == loc)
                     {
                         p.parse_suffix(&mut value, Level::Prefix, None, flags)?;
-                        p.mark_cast(
-                            &value,
-                            crate::sema::CastKind::As,
-                            bun_ast::Loc {
-                                start: loc.start + 1,
-                            },
-                        );
+                        p.mark_cast(&value, crate::sema::CastKind::LessThan, loc);
+                        // The type was read as a type parameter. The list is filed at its "<".
+                        p.mark_cast(&value, crate::sema::CastKind::As, loc);
                         if p.lexer.token == T::TAsteriskAsterisk
                             && p.lexer.tolerant
                             && !p.lexer.is_log_disabled
@@ -1365,14 +1369,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // The cast covers "x.y" in "<T>x.y", which the caller's suffix
                 // loop would otherwise apply to the annotated "x".
                 let mut value = Expr::EMPTY;
-                if only_a_cast && p.lexer.token == T::TOpenParen {
-                    // As on the path above: the parentheses of "<T>(x)" are noted as opening at the "<".
-                    value = p.parse_prefix(Level::Prefix, None, flags)?;
-                    p.mark_paren(&value, loc);
-                    p.parse_suffix(&mut value, Level::Prefix, None, flags)?;
-                } else {
-                    p.parse_expr_with_flags(Level::Prefix, flags, &mut value)?;
-                }
+                p.parse_expr_with_flags(Level::Prefix, flags, &mut value)?;
+                p.mark_cast(&value, crate::sema::CastKind::LessThan, loc);
                 p.mark_cast(&value, crate::sema::CastKind::As, type_loc);
                 if p.lexer.token == T::TAsteriskAsterisk
                     && p.lexer.tolerant
@@ -1437,9 +1435,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// reported (2657) where the first of them starts, `first`, and joined to this one by a comma.
     fn pfx_jsx_elements(p: &mut Self, first: bun_ast::Loc, must_be_unary: bool) -> PResult<Expr> {
         let less_than = p.lexer.loc();
+        let full_start = p.lexer.full_start();
         // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
         p.lexer.next_inside_jsx_element()?;
-        let element = p.parse_jsx_element(less_than)?;
+        let element = p.parse_jsx_element(less_than, full_start)?;
         // The last ">" is left to the caller, and so is the conflict marker that ended the children, which is a syntax
         // error token. Nothing is consumed for a ">" that is missing.
         if matches!(p.lexer.token, T::TGreaterThan | T::TSyntaxError) {

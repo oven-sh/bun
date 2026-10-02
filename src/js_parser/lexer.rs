@@ -143,6 +143,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) current: usize,
     pub(crate) start: usize,
     pub(crate) end: usize,
+    pub(crate) token_full_start: usize,
     pub(crate) approximate_newline_count: usize,
     pub(crate) previous_backslash_quote_in_jsx: Range,
     pub(crate) token: T,
@@ -264,6 +265,8 @@ pub struct Lexer<'a> {
     /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
     pub(crate) jsc_builtin_syntax: bool,
     pub(crate) all_comments: Vec<Range>,
+    /// `fullStartPos`: where the token before the current one ends.
+    pub(crate) token_full_start: usize,
     /// `Scanner.commentDirectives`. Tolerant mode only: see `sema::comments`.
     pub(crate) comment_directives: Vec<bun_sema::hir::CommentDirective>,
     /// `lastLineStart`, of the `/* */` comment that was scanned last.
@@ -360,6 +363,7 @@ impl<'a> Lexer<'a> {
             current: self.current,
             start: self.start,
             end: self.end,
+            token_full_start: self.token_full_start,
             approximate_newline_count: self.approximate_newline_count,
             previous_backslash_quote_in_jsx: self.previous_backslash_quote_in_jsx,
             token: self.token,
@@ -401,6 +405,7 @@ impl<'a> Lexer<'a> {
         self.current = original.current;
         self.start = original.start;
         self.end = original.end;
+        self.token_full_start = original.token_full_start;
         self.approximate_newline_count = original.approximate_newline_count;
         self.previous_backslash_quote_in_jsx = original.previous_backslash_quote_in_jsx;
         self.token = original.token;
@@ -1246,38 +1251,10 @@ impl<'a> Lexer<'a> {
     }
 
     /// `TokenFullStart`, `nodePos()`: where the previous token ends, before the whitespace and comments that precede the
-    /// current token. Tolerant mode only.
-    #[cold]
-    #[inline(never)]
+    /// current token.
+    #[inline]
     pub(crate) fn full_start(&self) -> Loc {
-        self.full_start_of(self.start)
-    }
-
-    /// `full_start` of the token that starts at `pos`, which is the current token or an earlier one.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn full_start_of(&self, pos: usize) -> Loc {
-        debug_assert!(self.tolerant);
-        let text = self.contents;
-        let mut at = pos.min(text.len());
-        // In source order. Tolerant mode records every comment and conflict marker.
-        let mut comments = self.all_comments.as_slice();
-        loop {
-            at -= trailing_whitespace_len(&text[..at]);
-            while comments.last().is_some_and(|c| c.loc.to_usize() >= at) {
-                comments = &comments[..comments.len() - 1];
-            }
-            match comments.last() {
-                // Past `at` if the comment ends with whitespace.
-                Some(comment) if comment.end_i() >= at => at = comment.loc.to_usize(),
-                _ => break,
-            }
-        }
-        // `Scan`: a shebang is trivia.
-        if text.starts_with(b"#!") && !(0..at).any(|i| starts_with_line_break(&text[i..])) {
-            at = 0;
-        }
-        bun_ast::usize2loc(at)
+        bun_ast::usize2loc(self.token_full_start)
     }
 
     /// The comments between the token that starts at `pos` and the token before it, as a range of `all_comments`, and where the
@@ -1829,6 +1806,14 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
+    /// The first character of the current token has been taken. `rest` is what is left of it.
+    #[inline]
+    fn split_token(&mut self, rest: T) {
+        self.token = rest;
+        self.start += 1;
+        self.token_full_start = self.start;
+    }
+
     pub(crate) fn expect_less_than<const IS_INSIDE_JSX_ELEMENT: bool>(
         &mut self,
     ) -> Result<(), Error> {
@@ -1841,17 +1826,14 @@ impl<'a> Lexer<'a> {
                 }
             }
             T::TLessThanEquals => {
-                self.token = T::TEquals;
-                self.start += 1;
+                self.split_token(T::TEquals);
                 self.maybe_expand_equals()?;
             }
             T::TLessThanLessThan => {
-                self.token = T::TLessThan;
-                self.start += 1;
+                self.split_token(T::TLessThan);
             }
             T::TLessThanLessThanEquals => {
-                self.token = T::TLessThanEquals;
-                self.start += 1;
+                self.split_token(T::TLessThanEquals);
             }
             _ => {
                 self.expected(T::TLessThan)?;
@@ -1873,29 +1855,24 @@ impl<'a> Lexer<'a> {
             }
 
             T::TGreaterThanEquals => {
-                self.token = T::TEquals;
-                self.start += 1;
+                self.split_token(T::TEquals);
                 self.maybe_expand_equals()?;
             }
 
             T::TGreaterThanGreaterThanEquals => {
-                self.token = T::TGreaterThanEquals;
-                self.start += 1;
+                self.split_token(T::TGreaterThanEquals);
             }
 
             T::TGreaterThanGreaterThanGreaterThanEquals => {
-                self.token = T::TGreaterThanGreaterThanEquals;
-                self.start += 1;
+                self.split_token(T::TGreaterThanGreaterThanEquals);
             }
 
             T::TGreaterThanGreaterThan => {
-                self.token = T::TGreaterThan;
-                self.start += 1;
+                self.split_token(T::TGreaterThan);
             }
 
             T::TGreaterThanGreaterThanGreaterThan => {
-                self.token = T::TGreaterThanGreaterThan;
-                self.start += 1;
+                self.split_token(T::TGreaterThanGreaterThan);
             }
 
             _ => {
@@ -1923,6 +1900,7 @@ impl<'a> Lexer<'a> {
     /// `parse_string_literal::<QUOTE>`) stay `#[inline]`/`#[inline(always)]` so
     /// they merge *into* this body.
     pub fn next(&mut self) -> Result<(), Error> {
+        self.token_full_start = self.end;
         self.has_newline_before = self.end == 0;
         self.has_pure_comment_before = false;
         self.prev_token_was_await_keyword = false;
@@ -3115,6 +3093,7 @@ impl<'a> Lexer<'a> {
             track_react_suppressions: false,
             jsc_builtin_syntax: false,
             all_comments: Vec::new(),
+            token_full_start: 0,
             comment_directives: Vec::new(),
             last_line_start: 0,
             skips_jsdoc_asterisks: false,
@@ -3322,6 +3301,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub(crate) fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
+        self.token_full_start = self.end;
         self.has_newline_before = false;
 
         loop {
@@ -3543,9 +3523,10 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn next_ordinary_token_inside_jsx_element(&mut self) -> Result<(), Error> {
         debug_assert!(self.tolerant);
-        let has_newline_before = self.has_newline_before;
+        let (has_newline_before, full_start) = (self.has_newline_before, self.token_full_start);
         self.next()?;
         self.has_newline_before |= has_newline_before;
+        self.token_full_start = full_start;
         Ok(())
     }
 
@@ -3664,6 +3645,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub(crate) fn next_jsx_element_child(&mut self) -> Result<(), Error> {
+        self.token_full_start = self.end;
         self.has_newline_before = false;
         let original_start = self.end;
 
@@ -3785,8 +3767,11 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     pub(crate) fn rescan_as_jsx_element_child(&mut self) -> Result<(), Error> {
         debug_assert!(self.tolerant);
+        let full_start = self.token_full_start;
         self.move_to(self.start);
-        self.next_jsx_element_child()
+        self.next_jsx_element_child()?;
+        self.token_full_start = full_start;
+        Ok(())
     }
 
     pub(crate) fn fix_whitespace_and_decode_jsx_entities(
@@ -4008,7 +3993,9 @@ impl<'a> Lexer<'a> {
         self.code_point = 0x60;
         self.current = self.end;
         self.end -= 1;
+        let full_start = self.token_full_start;
         self.next()?;
+        self.token_full_start = full_start;
         self.rescan_close_brace_as_template_token = false;
         Ok(())
     }

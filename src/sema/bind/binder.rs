@@ -1508,7 +1508,7 @@ impl<'f> Binder<'f> {
         }
         let is_exported = |flags: Flags| all_exported || flags.contains(Flags::EXPORT);
         match self.f[id].kind {
-            StmtKind::Empty => {}
+            StmtKind::Empty | StmtKind::Debugger => {}
             StmtKind::Expr(e) => {
                 self.expr(e, me);
                 self.maybe_call_flow(e);

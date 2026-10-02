@@ -32,7 +32,7 @@ pub(crate) enum Mark {
     Optional,
     /// A binding followed by `!`.
     Definite,
-    /// From the `(` of a function's parameters or the `=>` of an arrow function, to the return type or the `:` before it.
+    /// From the `(` of a function's parameters or from where an arrow function is said to be, to the return type.
     ReturnType,
     /// From the token after `<T, U>`, from the `class` keyword, or from where an arrow function is said to be, to the `<`.
     TypeParameters,
@@ -40,11 +40,11 @@ pub(crate) enum Mark {
     ThisParameter,
     /// From the `)` of a call or the `new` of a `new` expression, to the `<` of its type arguments.
     TypeArguments,
-    /// From the `<` of `<T>(e)`, to its `(`.
-    AssertedParen,
+
     /// From a tagged template, to the `<` of the type arguments of its tag.
     TagTypeArguments,
-    /// From where the body of an arrow function is said to be, to its `=>`.
+    /// From where the body of an arrow function is said to be, to its `=>`. Of a body that is an expression only if the `=>` is
+    /// missing: it is said to be at the `=>`.
     ArrowToken,
     /// From the `class` keyword, to the `<` after the expression it extends.
     ExtendsArguments,
@@ -52,16 +52,25 @@ pub(crate) enum Mark {
     OtherExtends,
     /// From the `class` keyword, to an element of its first `implements` clause. As many as there are.
     Implements,
-    /// From the name of a member of a class (the `{` of a static block) or of an object literal (the `e` of `...e`), to its first
-    /// token: a decorator, a modifier, `get`, `set`, `*`, `[`, `...`.
+    /// From the name of a member of a class (the `{` of a static block), of an object literal or of a JSX attribute (the `e` of
+    /// `{...e}`), to its first token: a decorator, a modifier, `get`, `set`, `*`, `[`, `{`.
     MemberStart,
-    /// From the same place, or from the name of a member of an enum, to where the last token of the member ends.
+    /// From the name of a member of a class that is a string literal, to the token after it.
+    StringLiteralName,
+    /// From the `key` of the name `[key]` of a member or of a property in a pattern, to the `[`.
+    ComputedName,
+    /// From the comma that stands for an element that is left out of `[a, , b]`, to itself.
+    OmittedExpression,
+    /// From a binding or from the `e` of `...e` in an object literal, to the `...` before it.
+    DotDotDot,
+    /// From where `MemberStart` or `DotDotDot` is noted from, or from the name of a member of an enum, to where the last token of
+    /// the member ends.
     MemberEnd,
     /// From the name or the pattern of a variable, or of a parameter of a function that has a body, to where the last token of the
     /// declaration ends (`VariableLikeDeclaration`).
     VariableLikeEnd,
-    /// From where a statement or a class expression is said to be, to its first token: a decorator or a modifier. From the dot before
-    /// the `B` of `namespace A.B`, to `B`.
+    /// From where a statement or a class expression is said to be, or from the name or pattern of a parameter, to its first token: a
+    /// decorator, a modifier, `...`, what stands where a name is missing. From the dot before the `B` of `namespace A.B`, to `B`.
     DeclarationStart,
     /// From the first token of a statement, the `{` of a block, the `finally` of its block or the initializer of a `for`, to where
     /// its last token ends.
@@ -79,6 +88,8 @@ pub(crate) enum Mark {
     /// From the name of a module, to itself: `declare module "a";`.
     NoBody,
 
+    /// From where the `(` of a function's parameters was expected, to where the token before ends (`createMissingList`).
+    MissingParameters,
     /// From the `(` of a function's parameters, to the token where its `{` was expected: the body is a missing block (`parseBlock`).
     MissingBody,
     /// From a tagged template whose last piece of text is missing or unterminated, to itself (`callIsIncomplete`).
@@ -97,14 +108,16 @@ pub(crate) enum Mark {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum CastKind {
-    /// `e as T`, `<T>e`
+    /// `e as T`, `<T>e`. `to` is where the type starts; of a `<T>(e)` that was read as type parameters, where the `<` is.
     As,
+    /// The `As` that is noted next is `<T>e`. `to` is where the `<` is.
+    LessThan,
     Satisfies,
     /// `e!`
     NonNull,
     /// `e<T>` that nothing takes the type arguments of. `to` is where the `<` is.
     Instantiation,
-    /// `(e)`. `to` is where the `(` is; of `<T>(e)`, where the `<` is.
+    /// `(e)`. `to` is where the `(` is.
     Paren,
     /// `e` is the tag of a tagged template. `to` is where the `` ` `` is.
     Tag,
@@ -507,6 +520,8 @@ pub(crate) struct TypeSyntax {
     pub(crate) by_offset: keep::KeptNodes,
     /// The most recently parsed type. `NONE` if there is no usable type.
     pub(crate) last_type: ts::TypeId,
+    /// Where the first token is of the type `parse_and_keep_type` read last.
+    pub(crate) last_type_start: i32,
     /// Shared stack for the members of unions, intersections and type argument lists that are still being parsed.
     pub(crate) type_stack: Vec<ts::TypeId>,
     /// Shared stack for the names in `typeof a.b.c`.
@@ -553,6 +568,7 @@ impl TypeSyntax {
             ast: ts::Syntax::new(),
             by_offset: Default::default(),
             last_type: ts::TypeId::NONE,
+            last_type_start: 0,
             type_stack: Vec::new(),
             name_stack: Vec::new(),
             last_type_args: None,
@@ -572,7 +588,41 @@ impl TypeSyntax {
     }
 }
 
+/// How much had been noted when a speculative parse began.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct Checkpoint {
+    marks: usize,
+    casts: usize,
+    expr_ends: usize,
+    modifier_lists: usize,
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// `mark`: pass the result to `rewind_type_syntax` if what is parsed from here on is abandoned.
+    #[inline]
+    pub(crate) fn type_syntax_checkpoint(&self) -> Checkpoint {
+        match &self.type_syntax {
+            Some(syntax) if TYPESCRIPT => Checkpoint {
+                marks: syntax.marks.len(),
+                casts: syntax.casts.len(),
+                expr_ends: syntax.expr_ends.len(),
+                modifier_lists: syntax.modifier_lists.len(),
+            },
+            _ => Checkpoint::default(),
+        }
+    }
+
+    /// `rewind`: an attempt that is abandoned leaves nothing behind.
+    #[inline]
+    pub(crate) fn rewind_type_syntax(&mut self, to: Checkpoint) {
+        if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
+            syntax.marks.truncate(to.marks);
+            syntax.casts.truncate(to.casts);
+            syntax.expr_ends.truncate(to.expr_ends);
+            syntax.modifier_lists.truncate(to.modifier_lists);
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn keeps_type_syntax(&self) -> bool {
         TYPESCRIPT && self.type_syntax.is_some()
@@ -699,10 +749,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
     pub(crate) fn note_expr_end(&mut self, expr: &Expr, end: bun_ast::Loc) {
         let is_after_start = end.start > expr.loc.start;
         let end = match expr.data {
-            // `createMissingNode`: it takes no room, where the token before it ends, however late it is made.
-            ExprData::EMissing(_) if is_after_start => {
-                self.lexer.full_start_of(expr.loc.start.max(0) as usize)
-            }
+            // `createMissingNode`: it takes no room, where the token before it ends. One that is made late does not know where.
+            ExprData::EMissing(_) if is_after_start => return,
             ExprData::EMissing(_) => end,
             // `parse_jsx_element` returns before the last ">" is taken, and text is no trivia: `hir::Jsx::end`.
             ExprData::EJsxElement(_) => return,

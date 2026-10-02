@@ -783,7 +783,9 @@ impl<'p, 'a> Reader<'p, 'a> {
     /// Before the parser reads on from the current token: its lexer scans that token, unless it did.
     fn enter_lexer(&mut self) {
         if !self.is_in_lexer {
+            let full_start = self.full_start;
             self.scan_from(self.start);
+            self.p.lexer.token_full_start = full_start;
         }
     }
 

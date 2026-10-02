@@ -524,11 +524,16 @@ impl<'a> Parser<'a> {
         let mut type_syntax = Box::new(crate::sema::TypeSyntax::new());
         type_syntax.keep_types |= is_declaration_file;
         p.type_syntax = Some(type_syntax);
-        if await_is_a_name {
+        // `parseSourceFileWorker`: nor is a declaration file ever read again for its top-level `await`.
+        if await_is_a_name || is_declaration_file {
             p.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowIdent;
         }
-        if p.lexer.token == js_lexer::T::THashbang && p.lexer.next().is_err() {
-            return (failed(), false);
+        if p.lexer.token == js_lexer::T::THashbang {
+            if p.lexer.next().is_err() {
+                return (failed(), false);
+            }
+            // `Scan`: a shebang is trivia.
+            p.lexer.token_full_start = 0;
         }
         // The parser stands on the first token: these are the comments `getCommentPragmas` goes through.
         let leading_comments = p.lexer.all_comments.len();

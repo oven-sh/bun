@@ -158,6 +158,7 @@ fn refused_in_ambient_block(hir: &File, list: IdList<StmtId>, refused: &mut Vec<
         let is_asked_about = matches!(
             hir[s].kind,
             StmtKind::Empty
+                | StmtKind::Debugger
                 | StmtKind::Expr(_)
                 | StmtKind::Return(_)
                 | StmtKind::If { .. }

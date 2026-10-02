@@ -254,6 +254,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Parse decorators for this property
             let first_decorator_loc = p.lexer.loc();
+            let member_full_start = p.lexer.full_start();
             let property_scope_index = p.scopes_in_order.len();
             if opts.allow_ts_decorators {
                 opts.ts_decorators = p.parse_type_script_decorators()?;
@@ -321,6 +322,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.finish_class_index_signature(
                         class_keyword.loc,
                         first_decorator_loc,
+                        member_full_start,
                         modifiers_base,
                     );
                 }
@@ -458,8 +460,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ) {
                         // `checkClassLikeDeclaration`: only `A.B<C>` can be implemented.
                         p.ts_checker_error(start.loc, 2500);
+                        if !p.parse_optional_chain_of_implemented(start.loc)? {
+                            p.forget_kept_type(start.loc);
+                            p.parse_rest_of_implemented(start.loc)?;
+                        }
+                    } else if !p.is_kept_entity_name(start.loc) {
+                        // What reads as a type and is no `isEntityNameExpression`: `(I)`, `string[]`.
+                        p.ts_checker_error(start.loc, 2500);
                         p.forget_kept_type(start.loc);
-                        p.parse_rest_of_implemented(start.loc)?;
                     }
                 }
                 count += 1;
@@ -723,8 +731,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Expr, Error> {
         let p = self;
         let less_than = p.lexer.loc();
+        let full_start = p.lexer.full_start();
         p.lexer.next_inside_jsx_element()?;
-        let element = p.parse_jsx_element(less_than)?;
+        let element = p.parse_jsx_element(less_than, full_start)?;
         // The last ">" is left to the caller. Nothing is consumed for one that is missed.
         if p.lexer.token == T::TGreaterThan {
             p.lexer.next_inside_jsx_element()?;
@@ -773,7 +782,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let verdict = if level.gt(Level::Assign) {
             // Only `parseAssignmentExpressionOrHigher` tries for an arrow function.
             Some(false)
-        } else if p.lexer.contents.get(loc.start as usize) != Some(&b'(') {
+        } else if !opts.open_paren.is_empty() {
             // After type parameters the lookahead cannot tell.
             None
         } else {
@@ -805,9 +814,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         mut attempt: ArrowAttempt,
     ) -> Result<Expr, Error> {
         let p = self;
+        let open_paren = if opts.open_paren.is_empty() {
+            loc
+        } else {
+            opts.open_paren
+        };
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
         // Where each item ends, its type and its initializer included. Only filled in when parsing for the type checker.
         let mut item_ends: Vec<bun_ast::Loc> = Vec::new();
+        // Where the first token of each item is, if it is a parameter: a modifier, the dots, the name. Likewise.
+        let mut item_starts: Vec<bun_ast::Loc> = Vec::new();
+        let mut first_modifier: Option<bun_ast::Loc> = None;
         let mut errors = DeferredErrors::default();
         let mut arrow_arg_errors = DeferredArrowArgErrors::default();
         let mut spread_range = bun_ast::Range::default();
@@ -944,9 +961,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.parse_suffix(&mut item, Level::Comma, Some(&mut errors), EFlags::None)?;
             } else {
                 p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
-                if matches!(item.data, js_ast::expr::Data::EMissing(_)) && p.lexer.tolerant {
+                if matches!(item.data, js_ast::expr::Data::EMissing(_))
+                    && p.lexer.tolerant
+                    && p.lexer.loc() == item.loc
+                {
                     // `createMissingNode` puts it where the previous token ends. 2695 is reported there.
-                    item.loc = p.lexer.full_start_of(item.loc.start as usize);
+                    item.loc = p.lexer.full_start();
                 }
             }
 
@@ -1019,6 +1039,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             items_list.push(item);
             if p.keeps_type_syntax() {
                 item_ends.push(p.lexer.full_start());
+                item_starts.push(first_modifier.take().unwrap_or(item_start));
             }
 
             if p.lexer.token != T::TComma {
@@ -1033,6 +1054,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `parseParameterEx`: the word was a modifier of the parameter that starts here, so this is an arrow function.
                     let _ = items_list.pop();
                     let _ = item_ends.pop();
+                    first_modifier = item_starts.pop();
                     with_modifiers |= 1u32 << items_list.len().min(31);
                     if let js_ast::expr::Data::EIdentifier(word) = item.data
                         && let Some(flag) = crate::lexer::PropertyModifierKeyword::find(
@@ -1081,6 +1103,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // The parenthetical construct must end with a close parenthesis
         let close_paren_loc = p.lexer.loc();
+        let before_close_paren = p.lexer.full_start();
         if items.is_empty() && attempt == ArrowAttempt::NeverArrow && !opts.is_async {
             // `parseParenthesizedExpression`: an expression is expected where the ")" is.
             let close_paren = p.lexer.range();
@@ -1122,6 +1145,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut invalid_log = LocList::new_in(p.arena);
             let mut args = BumpVec::<G::Arg>::new_in(p.arena);
             let mut this_parameter = bun_ast::Loc::EMPTY;
+            let mut return_type = bun_ast::Loc::EMPTY;
 
             if opts.is_async {
                 // markl,oweredsyntaxpoksdpokasd
@@ -1130,10 +1154,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // First, try converting the expressions to bindings
             for i in 0..items.len() {
                 let mut is_spread = false;
+                let dots = items[i].loc;
                 if let js_ast::expr::Data::ESpread(v) = &items[i].data {
                     is_spread = true;
                     let inner = v.value;
                     items[i] = inner;
+                }
+                if is_spread {
+                    p.mark_type_syntax(items[i].loc, Mark::DotDotDot, dots);
+                }
+                if let Some(&start) = item_starts.get(i)
+                    && start != items[i].loc
+                {
+                    p.mark_type_syntax(items[i].loc, Mark::DeclarationStart, start);
+                }
+                if let Some(&end) = item_ends.get(i) {
+                    p.mark_type_syntax(items[i].loc, Mark::VariableLikeEnd, end);
                 }
 
                 let mut item = items[i];
@@ -1142,9 +1178,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut invalid_log,
                     is_spread,
                 );
-                if let Some(&end) = item_ends.get(i) {
-                    p.mark_type_syntax(item.loc, Mark::VariableLikeEnd, end);
-                }
                 if tuple.binding.is_none()
                     && i == 0
                     && !is_spread
@@ -1211,7 +1244,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
-                let return_type_colon = p.lexer.loc();
                 if opts.force_arrow_fn && p.lexer.tolerant && !p.lexer.is_log_disabled {
                     // `allowAmbiguity`: the ":" starts the return type, whatever follows the type.
                     is_arrow_fn = true;
@@ -1232,8 +1264,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Otherwise, do the less expensive check
                     is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking();
                 }
-                if is_arrow_fn {
-                    p.mark_type_syntax(p.lexer.loc(), Mark::ReturnType, return_type_colon);
+                if is_arrow_fn && let Some(syntax) = &p.type_syntax {
+                    return_type = bun_ast::Loc {
+                        start: syntax.last_type_start,
+                    };
                 }
             }
 
@@ -1280,7 +1314,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // next token must not be taken for a suffix of it.
                     p.forbid_suffix_after_as_loc = p.lexer.loc();
                 }
-                return Ok(p.new_expr(arrow, loc));
+                let arrow = p.new_expr(arrow, loc);
+                if !return_type.is_empty() {
+                    p.mark_type_syntax(arrow.loc, Mark::ReturnType, return_type);
+                }
+                return Ok(arrow);
             }
         }
 
@@ -1366,13 +1404,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     1109,
                 );
-                let missing_loc = p.lexer.full_start_of(close_paren_loc.start as usize);
+                let missing_loc = before_close_paren;
                 let missing = p.new_expr(E::Missing {}, missing_loc);
                 let ends = [missing_loc, missing_loc];
                 value = p.join_with_commas_keeping_missing(&[value, missing], &ends);
             }
             p.mark_expr_as_parenthesized(&mut value);
-            p.mark_paren(&value, loc);
+            p.mark_paren(&value, open_paren);
             return Ok(value);
         }
 
@@ -1386,7 +1424,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 1109,
             );
             let value = p.new_expr(E::Missing {}, close_paren_loc);
-            p.mark_paren(&value, loc);
+            p.mark_paren(&value, open_paren);
             return Ok(value);
         }
 
@@ -1940,11 +1978,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         let element_start = p.lexer.loc();
                         if p.lexer.token == T::TComma {
+                            let hole = Binding {
+                                data: B::B::BMissing(B::Missing {}),
+                                loc: p.lexer.loc(),
+                            };
+                            p.mark_type_syntax(hole.loc, Mark::OmittedExpression, hole.loc);
                             items.push(ArrayBinding {
-                                binding: Binding {
-                                    data: B::B::BMissing(B::Missing {}),
-                                    loc: p.lexer.loc(),
-                                },
+                                binding: hole,
                                 default_value: None,
                             });
                         } else {
@@ -1962,6 +2002,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // `parseArrayBindingElement`: what is said of a private name that is an element does not depend on what
                             // the pattern is for.
                             let binding = p.parse_binding(ParseBindingOptions::default())?;
+                            if is_rest {
+                                p.mark_type_syntax(binding.loc, Mark::DotDotDot, element_start);
+                            }
 
                             let mut default_value: Option<Expr> = None;
                             // `parseArrayBindingElement`: TypeScript's parser takes an initializer after any element.
@@ -2165,9 +2208,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         match p.lexer.token {
             T::TDotDotDot => {
+                let dots = p.lexer.loc();
                 p.lexer.next()?;
                 if p.lexer.tolerant {
-                    return p.parse_rest_property_binding();
+                    let property = p.parse_rest_property_binding()?;
+                    p.mark_type_syntax(property.value.loc, Mark::DotDotDot, dots);
+                    return Ok(property);
                 }
                 let ident_ref = p.store_name_in_ref(p.lexer.identifier);
                 let value = p.b(B::Identifier { r#ref: ident_ref }, p.lexer.loc());
@@ -2199,8 +2245,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TOpenBracket => {
                 is_computed = true;
+                let open_bracket = p.lexer.loc();
                 p.lexer.next()?;
                 let mut expr = p.parse_expr(Level::Comma)?;
+                p.mark_type_syntax(expr.loc, Mark::ComputedName, open_bracket);
                 if p.lexer.token == T::TComma && p.lexer.tolerant {
                     // `parseComputedPropertyName` takes any expression: `checkGrammarComputedPropertyName` objects to the comma.
                     p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;

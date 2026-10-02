@@ -4059,11 +4059,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut item = ex.items.slice()[i];
                     if matches!(item.data, js_ast::ExprData::ESpread(_)) {
                         is_spread = true;
+                        let dots = item.loc;
                         item = item
                             .data
                             .e_spread()
                             .expect("infallible: variant checked")
                             .value;
+                        self.mark_type_syntax(item.loc, crate::sema::Mark::DotDotDot, dots);
                     }
                     let res = self.convert_expr_to_binding_and_initializer(
                         &mut item,

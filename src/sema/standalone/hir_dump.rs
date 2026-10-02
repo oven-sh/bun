@@ -791,7 +791,7 @@ impl Dump<'_> {
         }
         let d = depth + 1;
         match kind {
-            StmtKind::Empty => self.line(depth, label, &head),
+            StmtKind::Empty | StmtKind::Debugger => self.line(depth, label, &head),
             StmtKind::Expr(expr)
             | StmtKind::Return(expr)
             | StmtKind::Throw(expr)
@@ -1529,6 +1529,7 @@ fn expr_kind_name(kind: ExprKind) -> &'static str {
 fn stmt_kind_name(kind: StmtKind) -> &'static str {
     match kind {
         StmtKind::Empty => "Empty",
+        StmtKind::Debugger => "Debugger",
         StmtKind::Expr(_) => "Expr",
         StmtKind::Var(_) => "Var",
         StmtKind::Fn(_) => "Fn",

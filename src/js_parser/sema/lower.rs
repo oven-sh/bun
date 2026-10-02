@@ -297,28 +297,18 @@ impl<'p, 'a> Lower<'p, 'a> {
             .collect()
     }
 
-    /// The type that starts at `at`, after any whitespace and comments.
+    /// The type that starts at `at`.
     fn type_at(&mut self, at: u32) -> TypeNodeId {
-        let kept = self
-            .b
-            .kept
-            .types
-            .get(&(skip_trivia(self.source, at as usize) as i32))
-            .copied();
-        match kept {
+        match self.b.kept.types.get(&(at as i32)).copied() {
             Some(ty) => self.b.clone_type(ty),
             None => self.b.error_type(at),
         }
     }
 
     /// `<T>(x)` was first parsed as the type parameters of an arrow function and turned out to be a cast. Builds the cast's type from
-    /// the single type parameter. `after_less_than` is the offset right after the `<`.
-    fn cast_type_from_type_params(&mut self, after_less_than: u32) -> Option<TypeNodeId> {
-        let params = *self
-            .b
-            .kept
-            .type_parameters
-            .get(&(after_less_than.checked_sub(1)? as i32))?;
+    /// the single type parameter.
+    fn cast_type_from_type_params(&mut self, less_than: u32) -> Option<TypeNodeId> {
+        let params = *self.b.kept.type_parameters.get(&(less_than as i32))?;
         let &[param] = &self.b.ts[params] else {
             return None;
         };
@@ -350,20 +340,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         match kept {
             Some(parameters) => self.b.clone_type_params(parameters),
             None => Span::EMPTY,
-        }
-    }
-
-    /// The return type at `at`, or after the `:` there.
-    fn return_type_at(&mut self, at: u32) -> TypeNodeId {
-        let start = if self.source.get(at as usize) == Some(&b':') {
-            skip_trivia(self.source, at as usize + 1) as u32
-        } else {
-            at
-        };
-        let kept = self.b.kept.types.get(&(start as i32)).copied();
-        match kept {
-            Some(ty) => self.b.clone_type(ty),
-            None => self.b.error_type(at),
         }
     }
 
@@ -748,9 +724,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 return None;
             }
             StmtData::SEmpty(_) => StmtKind::Empty,
-            StmtData::SComment(_) | StmtData::SDebugger(_) | StmtData::SLazyExport(_) => {
-                return None;
-            }
+            StmtData::SDebugger(_) => StmtKind::Debugger,
+            StmtData::SComment(_) | StmtData::SLazyExport(_) => return None,
             StmtData::SBlock(s) => StmtKind::Block(self.stmts(s.stmts.slice(), false)),
             StmtData::SExpr(s) => StmtKind::Expr(self.expr(&s.value)),
             StmtData::SLocal(s) => self.local(s),
@@ -1048,31 +1023,22 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         let kind = match &binding.data {
             // `createMissingIdentifier`: a name of no length, where the token before it ends.
-            B::B::BMissing(_) => {
-                let name = self.b.atom(b"");
-                let end_of_previous_token =
-                    self.source[..pos as usize].trim_ascii_end().len() as u32;
-                return self.b.file.pat(PatKind::Ident(name), end_of_previous_token);
-            }
+            B::B::BMissing(_) => PatKind::Ident(self.b.atom(b"")),
             B::B::BIdentifier(id) => PatKind::Ident(self.name(id.r#ref)),
             B::B::BArray(array) => {
                 let items = array.items();
                 let mut elems = Vec::with_capacity(items.len());
-                // `[... /* comment */ a]`
-                let last_is_rest = array.has_spread
-                    && !items
-                        .iter()
-                        .any(|item| self.has_dots_before(item.binding.loc));
-                for (i, item) in items.iter().enumerate() {
+                for item in items {
                     // `parseArrayBindingElement`: each element has its own `...`.
-                    let is_rest = array.has_spread
-                        && (self.has_dots_before(item.binding.loc)
-                            || last_is_rest && i + 1 == items.len());
+                    let dots = self.mark(item.binding.loc, Mark::DotDotDot);
+                    let is_rest = dots.is_some();
                     // `[a, , b]`: only an element that is left out has no name. It is said to be where its comma is.
                     let is_hole = matches!(item.binding.data, B::B::BMissing(_))
                         && !is_rest
                         && item.default_value.is_none()
-                        && self.source.get(pos_of(item.binding.loc) as usize) == Some(&b',');
+                        && self
+                            .mark(item.binding.loc, Mark::OmittedExpression)
+                            .is_some();
                     let pat = if is_hole {
                         self.b.file.pat(PatKind::Missing, pos_of(item.binding.loc))
                     } else {
@@ -1083,11 +1049,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         pat,
                         default,
                         is_rest,
-                        start: if is_rest {
-                            self.dots_before(item.binding.loc)
-                        } else {
-                            self.b.file[pat].pos
-                        },
+                        start: dots.unwrap_or(self.b.file[pat].pos),
                     });
                 }
                 PatKind::Array(self.b.file.add_pat_elems(&elems))
@@ -1112,13 +1074,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                     } else {
                         pos_of(property.key.loc)
                     };
-                    let pos = if is_rest {
-                        self.dots_before(ast::Loc {
-                            start: key_pos as i32,
-                        })
-                    } else {
-                        key_pos
-                    };
+                    let dots = self.mark(property.value.loc, Mark::DotDotDot);
+                    let pos = dots.filter(|_| is_rest).unwrap_or(key_pos);
                     props.push(PatProp {
                         key,
                         value,
@@ -1132,19 +1089,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
         };
         self.b.file.pat(kind, pos)
-    }
-
-    /// Whether `...` is the token before `at`. A comment in between hides it.
-    fn has_dots_before(&self, at: ast::Loc) -> bool {
-        self.source[..pos_of(at) as usize]
-            .trim_ascii_end()
-            .ends_with(b"...")
-    }
-
-    /// Where the `...` is that is the token before `at`.
-    fn dots_before(&self, at: ast::Loc) -> u32 {
-        bun_core::strings::last_index_of(&self.source[..pos_of(at) as usize], b"...")
-            .map_or(pos_of(at), |dots| dots as u32)
     }
 
     /// `createMissingIdentifier`: whether `binding` stands for a name that is not written.
@@ -1195,72 +1139,42 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// `parseComputedPropertyName`: the name `[key]` starts at its bracket. Between that and where `key` is said to be there can be
-    /// parentheses and the `<T>` of assertions.
+    /// `parseComputedPropertyName`: the name `[key]` starts at its bracket.
     fn start_of_computed_name(&self, key: &Expr) -> u32 {
-        let mut at = pos_of(key.loc);
-        if let Some(casts) = self.casts.get(&ExprKey::of(key)) {
-            for &(kind, to) in casts.iter() {
-                // `<T>e`: the type comes before the expression.
-                if kind == CastKind::As
-                    && (to as u32) < at
-                    && let Some(less_than) =
-                        bun_core::strings::last_index_of_char(&self.source[..to as usize], b'<')
-                {
-                    at = less_than as u32;
-                }
-            }
-        }
-        let mut before = self.source[..at as usize].trim_ascii_end();
-        while let Some(rest) = before.strip_suffix(b"(") {
-            before = rest.trim_ascii_end();
-        }
-        if before.ends_with(b"[") {
-            before.len() as u32 - 1
-        } else {
-            pos_of(key.loc)
-        }
+        self.mark(key.loc, Mark::ComputedName)
+            .unwrap_or_else(|| pos_of(key.loc))
     }
 
     // ───────────────────────────── functions and classes ─────────────────────────────
 
-    fn params(&mut self, args: &[G::Arg], has_rest: bool) -> Span<ParamId> {
+    fn params(&mut self, args: &[G::Arg]) -> Span<ParamId> {
         let base = self.list_params.len();
         let mut decorators: Vec<(usize, ExprId)> = Vec::new();
         let mut modifier_lists: Vec<(usize, Span<ModifierId>)> = Vec::new();
-        // `(... /* comment */ a)`
-        let last_is_rest =
-            has_rest && !args.iter().any(|arg| self.has_dots_before(arg.binding.loc));
+
         for (i, arg) in args.iter().enumerate() {
             let mut flags = Flags::empty();
-            // A missing name took no token. What is noted at its place is about the parameter after it, and the dots before both are its own.
+            // A missing name took no token. What is noted at its place is about the parameter after it, but for what comes before a
+            // name, which is its own: the parameter after it starts right there.
             let took_nothing = self.is_missing_name(&arg.binding)
                 && args
                     .get(i + 1)
                     .is_some_and(|next| next.binding.loc == arg.binding.loc);
-            let dots_are_taken = i > 0
+            let follows_nothing = i > 0
                 && self.is_missing_name(&args[i - 1].binding)
-                && self
-                    .source
-                    .get(pos_of(args[i - 1].binding.loc) as usize..pos_of(arg.binding.loc) as usize)
-                    .is_some_and(|between| between.trim_ascii().is_empty());
+                && args[i - 1].binding.loc == arg.binding.loc;
             // `parseParameterEx`: each parameter has its own `...`.
-            if has_rest
-                && !dots_are_taken
-                && (self.has_dots_before(arg.binding.loc) || last_is_rest && i + 1 == args.len())
-            {
+            if !follows_nothing && self.mark(arg.binding.loc, Mark::DotDotDot).is_some() {
                 flags |= Flags::REST;
             }
             if !took_nothing && self.mark(arg.binding.loc, Mark::Optional).is_some() {
                 flags |= Flags::OPTIONAL;
             }
-            let mut pos = pos_of(arg.binding.loc);
-            if flags.contains(Flags::REST) {
-                pos = self.dots_before(arg.binding.loc);
-            } else if self.is_missing_name(&arg.binding) {
-                // The parameter starts at its first token, which is the one after the empty name.
-                pos = skip_trivia(self.source, pos as usize) as u32;
-            }
+            let pos = if follows_nothing {
+                pos_of(arg.binding.loc)
+            } else {
+                self.declaration_start(arg.binding.loc)
+            };
             // 1187 or 1317
             let mut parameter_property_error = None;
             let mut modifiers: Vec<(Flags, u32)> = Vec::new();
@@ -1280,9 +1194,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let seen = modifiers
                     .iter()
                     .fold(Flags::empty(), |seen, modifier| seen | modifier.0);
-                if let Some(first) = modifiers.first() {
-                    pos = first.1;
-                }
+
                 // The other modifiers mean nothing on a parameter. They are only objected to.
                 flags |= seen & PROPERTY_MODIFIERS;
                 if seen.intersects(PROPERTY_MODIFIERS) {
@@ -1316,10 +1228,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.annotation(arg.binding.loc)
             };
             let default = self.optional_expr(arg.default.as_ref());
-            // It starts with what decorates it.
-            if let Some(first) = arg.ts_decorators.first() {
-                pos = pos.min(self.at_sign(first));
-            }
+
             if let Some(code) = parameter_property_error {
                 self.b.file.early_errors.push((pos, code));
             }
@@ -1407,12 +1316,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             None => ParamId::NONE,
         };
-        let params = self.params(
-            func.args.slice(),
-            func.flags.contains(ast::flags::Function::HasRestArg),
-        );
+        let params = self.params(func.args.slice());
         let ret = match self.mark(open, Mark::ReturnType) {
-            Some(at) => self.return_type_at(at),
+            Some(at) => self.type_at(at),
             None => TypeNodeId::NONE,
         };
         // `parseFunctionBlockOrSemicolon`: no body at all after a semicolon.
@@ -1422,8 +1328,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         {
             FnBody::None
         } else {
-            // `checkGrammarStatementInAmbientContext`, `checkGrammarAccessor`
-            if flags.contains(Flags::AMBIENT) {
+            // `checkGrammarStatementInAmbientContext`, `checkGrammarAccessor`: of whatever has a body in an ambient context.
+            if self.is_ambient || flags.contains(Flags::AMBIENT) {
                 self.b.file.early_errors.push((pos_of(func.body.loc), 1183));
             }
             FnBody::Block(self.stmts(func.body.stmts.slice(), false))
@@ -1433,10 +1339,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             flags |= Flags::MISSING_BODY;
         }
         // `createMissingList`: without a `(` the parameters are where the token before them ends. The anchor is one before them.
-        let anchor = if self.source.get(pos_of(open) as usize) == Some(&b'(') {
-            pos_of(open)
-        } else {
-            (self.source[..pos_of(open) as usize].trim_ascii_end().len() as u32).saturating_sub(1)
+        let anchor = match self.mark(open, Mark::MissingParameters) {
+            Some(list) => list.saturating_sub(1),
+            None => pos_of(open),
         };
         self.b.file.add_fn(Func {
             kind,
@@ -1456,21 +1361,17 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     fn arrow(&mut self, arrow: &ast::E::Arrow, loc: ast::Loc) -> FnId {
         let pos = pos_of(loc);
-        let arrow_token = if arrow.prefer_expr {
-            Some(pos_of(arrow.body.loc))
-        } else {
-            self.mark(arrow.body.loc, Mark::ArrowToken)
-        };
+        let arrow_token = self
+            .mark(arrow.body.loc, Mark::ArrowToken)
+            .or_else(|| arrow.prefer_expr.then(|| pos_of(arrow.body.loc)));
         let type_params = match self.mark(loc, Mark::TypeParameters) {
             Some(at) => self.type_params_at(at),
             None => Span::EMPTY,
         };
-        let params = self.params(arrow.args.slice(), arrow.has_rest_arg);
+        let params = self.params(arrow.args.slice());
         let (this_param, params) = self.b.file.split_this_parameter(params);
-        let ret = match arrow_token
-            .and_then(|at| self.mark(ast::Loc { start: at as i32 }, Mark::ReturnType))
-        {
-            Some(at) => self.return_type_at(at),
+        let ret = match self.mark(loc, Mark::ReturnType) {
+            Some(at) => self.type_at(at),
             None => TypeNodeId::NONE,
         };
         let stmts = arrow.body.stmts.slice();
@@ -1483,16 +1384,17 @@ impl<'p, 'a> Lower<'p, 'a> {
             ] if arrow.prefer_expr && ret.value.is_some() => {
                 FnBody::Expr(self.expr(ret.value.as_ref().unwrap()))
             }
-            _ => FnBody::Block(self.stmts(stmts, false)),
-        };
-        // `parseExpectedToken`: a missing `=>` is at the end of the token before it.
-        let anchor = match arrow_token {
-            Some(at) if !self.source[at as usize..].starts_with(b"=>") => {
-                self.source[..at as usize].trim_ascii_end().len() as u32
+            _ => {
+                if self.is_ambient {
+                    self.b
+                        .file
+                        .early_errors
+                        .push((pos_of(arrow.body.loc), 1183));
+                }
+                FnBody::Block(self.stmts(stmts, false))
             }
-            Some(at) => at,
-            None => pos,
         };
+        let anchor = arrow_token.unwrap_or(pos);
         self.b.file.add_fn(Func {
             kind: FnKind::Arrow,
             flags: if arrow.is_async {
@@ -1705,8 +1607,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         member.ty = self.annotation(key.loc);
 
-        let text = self.source;
-        let is_quoted = !is_computed && matches!(text.get(member.pos as usize), Some(b'"' | b'\''));
+        let after_string = self.mark(key.loc, Mark::StringLiteralName);
+        let is_quoted = after_string.is_some();
         // `getLiteralTypeFromPropertyName`: `"0"` and `["0"]` name with a string, `0` and `[0]` with a number. An identifier is a
         // string to the parser as well.
         if (is_computed || is_quoted)
@@ -1717,11 +1619,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         if is_computed {
             member.pos = self.start_of_computed_name(key);
-        } else if is_quoted
-            || text
-                .get(member.pos as usize)
-                .is_some_and(|b| matches!(b, b'0'..=b'9' | b'.'))
-        {
+        } else if is_quoted || matches!(key.data, Data::ENumber(_) | Data::EBigInt(_)) {
             member.flags |= Flags::LITERAL_NAME;
         }
         if property.flags.contains(ast::flags::Property::IsStatic) {
@@ -1739,8 +1637,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 && member.key == PropKey::Name(bun_sema::atom::known::constructor)
                 // `parsePropertyOrMethodDeclaration`: after `*` it names a method.
                 && !f.func.flags.contains(ast::flags::Function::IsGenerator)
-                && (!is_quoted
-                    || self.is_right_after_string(member.pos, pos_of(f.func.open_parens_loc)));
+                && after_string.is_none_or(|next| next == pos_of(f.func.open_parens_loc));
             let is_constructor = is_named_constructor && property.kind == G::PropertyKind::Normal;
             let (member_kind, fn_kind) = match property.kind {
                 G::PropertyKind::Get => (MemberKind::Getter, FnKind::Getter),
@@ -1804,21 +1701,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         member.init = self.optional_expr(property.initializer.as_ref().or(property.value.as_ref()));
         member
-    }
-
-    /// Whether the token at `at` is the one after the string that starts at `string`.
-    fn is_right_after_string(&self, string: u32, at: u32) -> bool {
-        let Some(&quote) = self.source.get(string as usize) else {
-            return false;
-        };
-        let mut end = string as usize + 1;
-        while let Some(&c) = self.source.get(end) {
-            end += if c == b'\\' { 2 } else { 1 };
-            if c == quote {
-                break;
-            }
-        }
-        skip_trivia(self.source, end) == at as usize
     }
 
     // ───────────────────────────── expressions ─────────────────────────────
@@ -1904,9 +1786,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             for (kind, at) in casts.clone() {
                 let kind = match kind {
                     CastKind::Paren => {
-                        let Some(open) = self.open_paren(at as u32) else {
-                            continue;
-                        };
+                        let open = at as u32;
                         // `parseParenthesizedExpression`
                         let mut host = Host::Parenthesized(id);
                         self.with_jsdoc(open, true, &mut host);
@@ -1938,21 +1818,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                         expr: id,
                         ty: self.type_at(at as u32),
                     },
+                    // `parseTypeAssertion`: `<T>e` starts at its `<`, and so does what is made of it afterwards.
+                    CastKind::LessThan => {
+                        pos = at as u32;
+                        continue;
+                    }
                     CastKind::As => {
-                        // `parseTypeAssertion`: `<T>e` starts at its `<`, and so does what is made of it afterwards.
-                        if (at as u32) < pos
-                            && let Some(less_than) = bun_core::strings::last_index_of_char(
-                                &self.source[..at as usize],
-                                b'<',
-                            )
-                        {
-                            pos = less_than as u32;
-                        }
-                        let has_type = self
-                            .b
-                            .kept
-                            .types
-                            .contains_key(&(skip_trivia(self.source, at as usize) as i32));
+                        let has_type = self.b.kept.types.contains_key(&at);
                         let ty = match if has_type {
                             None
                         } else {
@@ -1978,15 +1850,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
         }
         id
-    }
-
-    /// Where the parenthesis noted at `at` opens.
-    fn open_paren(&self, at: u32) -> Option<u32> {
-        if self.source.get(at as usize) != Some(&b'<') {
-            return Some(at);
-        }
-        // `<T>(e)`: the parser has it open where the assertion starts.
-        self.mark(ast::Loc { start: at as i32 }, Mark::AssertedParen)
     }
 
     fn call(
@@ -2087,16 +1950,16 @@ impl<'p, 'a> Lower<'p, 'a> {
             Data::EBigInt(e) => ExprKind::BigInt(self.b.atom(e.value.slice())),
             Data::EString(e) => ExprKind::String(self.string(e)),
             Data::ERegExp(_) => ExprKind::Regex,
-            Data::ENewTarget(e) => {
-                // `parseMetaProperty` takes any word for the name. Without a word there is no dot in the range either.
-                let written = &self.source[pos as usize..][..e.range.len as usize];
-                let is_in_name =
-                    |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$') || *b >= 0x80;
-                let name: &[u8] = match written.iter().rposition(|b| !is_in_name(b)) {
-                    Some(before) => &written[before + 1..],
-                    None => &[],
+            Data::ENewTarget(_) => {
+                // `parseMetaProperty` takes any word for the name, or none.
+                let name = match self.kept_expressions(expr.loc).first() {
+                    Some(Expr {
+                        data: Data::EString(name),
+                        ..
+                    }) => self.string(name),
+                    _ => self.b.atom(b"target"),
                 };
-                ExprKind::NewTarget(self.b.atom(name))
+                ExprKind::NewTarget(name)
             }
             Data::EImportMeta(_) => ExprKind::ImportMeta,
             Data::EMissing(_) => ExprKind::Missing,
@@ -2417,7 +2280,13 @@ impl<'p, 'a> Lower<'p, 'a> {
             if property.kind == G::PropertyKind::Spread {
                 let from = property.value.as_ref().map_or(ast::Loc::EMPTY, |e| e.loc);
                 let value = self.optional_expr(property.value.as_ref());
-                let start = self.mark(from, Mark::MemberStart).unwrap_or(pos);
+                // `...e`, `{...e}`
+                let first_token = if is_literal {
+                    Mark::DotDotDot
+                } else {
+                    Mark::MemberStart
+                };
+                let start = self.mark(from, first_token).unwrap_or(pos);
                 self.list_props.push(Prop {
                     kind: PropKind::Spread,
                     key: PropKey::None,

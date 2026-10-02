@@ -28,16 +28,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !p.lexer.has_newline_before
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
         {
-            if p.keeps_type_syntax() {
-                let kind = if p.lexer.identifier == b"as" {
-                    CastKind::As
-                } else {
-                    CastKind::Satisfies
-                };
-                let keyword_end = bun_ast::usize2loc(p.lexer.end);
-                p.mark_cast(left, kind, keyword_end);
-            }
+            let kind = if p.lexer.identifier == b"as" {
+                CastKind::As
+            } else {
+                CastKind::Satisfies
+            };
             p.lexer.next()?;
+            p.mark_cast(left, kind, p.lexer.loc());
             p.skip_type_script_type(Level::Lowest)?;
 
             // These tokens are not allowed to follow a cast expression. This isn't

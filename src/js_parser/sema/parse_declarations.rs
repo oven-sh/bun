@@ -129,7 +129,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// The member of the class at `class_keyword` whose first token is at `start` was dropped. If it is an index signature, those
+    /// The member of the class at `class_keyword` whose first token is at `start`, and fully starts at `full_start`, was dropped. If it is an index signature, those
     /// pushed since there were `modifiers_base` are its modifiers, and it ends before the current token.
     #[cold]
     #[inline(never)]
@@ -137,9 +137,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         class_keyword: Loc,
         start: Loc,
+        full_start: Loc,
         modifiers_base: usize,
     ) {
-        let full_start = self.lexer.full_start_of(start.start.max(0) as usize);
         let end = self.lexer.full_start();
         let syntax = self.type_syntax_mut();
         let member = std::mem::replace(&mut syntax.last_index_signature, ts::MemberId::NONE);
@@ -168,6 +168,79 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ));
         }
         syntax.statement_modifiers.truncate(base);
+    }
+
+    /// `parseExpressionWithTypeArguments` after `implements`, where the names read as a type at `start` go on with `?.`.
+    /// `isEntityNameExpression` takes `A?.B` for an entity name, so it is resolved as `A.B`. False, with nothing consumed, if that is
+    /// not all there is to it.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_optional_chain_of_implemented(
+        &mut self,
+        start: Loc,
+    ) -> Result<bool, Error> {
+        let Some(&kept) = self
+            .type_syntax
+            .as_ref()
+            .and_then(|syntax| syntax.by_offset.types.get(&start.start))
+        else {
+            return Ok(false);
+        };
+        let ts::TypeData::Reference { name, args } = self.type_syntax_mut().ast[kept].data else {
+            return Ok(false);
+        };
+        if self.lexer.token != T::TQuestionDot || !args.is_empty() {
+            return Ok(false);
+        }
+        let here = self.lexer.snapshot();
+        let mut names = self.type_syntax_mut().ast[name].to_vec();
+        while matches!(self.lexer.token, T::TDot | T::TQuestionDot) {
+            self.lexer.next()?;
+            if !self.lexer.is_identifier_or_keyword() {
+                self.lexer.restore(&here);
+                return Ok(false);
+            }
+            names.push(ts::Name {
+                text: bun_ast::StoreStr::new(self.lexer.identifier),
+                loc: self.lexer.loc(),
+            });
+            self.lexer.next()?;
+        }
+        if matches!(
+            self.lexer.token,
+            T::TOpenParen
+                | T::TOpenBracket
+                | T::TExclamation
+                | T::TLessThan
+                | T::TNoSubstitutionTemplateLiteral
+                | T::TTemplateHead
+        ) {
+            self.lexer.restore(&here);
+            return Ok(false);
+        }
+        let end = self.lexer.full_start();
+        let syntax = self.type_syntax_mut();
+        let name = syntax.ast.add_names(&names);
+        syntax.ast[kept].data = ts::TypeData::Reference { name, args };
+        syntax.ast[kept].end = end;
+        Ok(true)
+    }
+
+    /// Whether the type read at `start` is `A.B<C>`. True outside of type checking, and where no type could be made out.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn is_kept_entity_name(&self, start: Loc) -> bool {
+        let Some(syntax) = &self.type_syntax else {
+            return true;
+        };
+        match syntax.by_offset.types.get(&start.start) {
+            // `number` is a name like any other to `parseLeftHandSideExpressionOrHigher`.
+            Some(&kept) => matches!(
+                syntax.ast[kept].data,
+                ts::TypeData::Reference { .. } | ts::TypeData::Keyword(_)
+            ),
+            None => true,
+        }
     }
 
     /// What was read at `start` is not the type it was taken for.

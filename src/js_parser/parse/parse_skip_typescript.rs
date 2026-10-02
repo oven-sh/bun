@@ -88,6 +88,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let syntax = self.type_syntax_mut();
         syntax.type_stack.truncate(type_stack_len);
         syntax.name_stack.truncate(name_stack_len);
+        syntax.last_type_start = start;
         let ty = syntax.last_type;
         if result.is_ok() && ty.is_some() {
             self.record_type(start, ty);
@@ -315,6 +316,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         while self.lexer.token != T::TCloseParen {
             let mut parameter = Param::at(self.lexer.loc());
+            parameter.full_start = self.lexer.full_start();
             // "(public a)": `parseParameterEx` takes modifiers on every parameter, and the checker reports them (2369).
             if self.lexer.tolerant && self.lexer.token == T::TIdentifier {
                 self.skip_parameter_modifiers(&mut parameter)?;
@@ -353,7 +355,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
-                parameter.full_start = self.lexer.full_start_of(parameter.loc.start as usize);
                 parameter.end = self.lexer.full_start();
                 if is_complete && parameter.pattern.is_some() {
                     parameters.push(parameter);
@@ -441,6 +442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             trailing_comma = None;
             let parameter_start = self.lexer.loc();
             let mut parameter = Param::at(parameter_start);
+            parameter.full_start = self.lexer.full_start();
             if self.lexer.token == T::TIdentifier {
                 self.skip_parameter_modifiers(&mut parameter)?;
             }
@@ -483,7 +485,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
-                parameter.full_start = self.lexer.full_start_of(parameter.loc.start as usize);
                 parameter.end = self.lexer.full_start();
                 if is_complete && parameter.pattern.is_some() {
                     parameters.push(parameter);
@@ -2651,7 +2652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let saved_contexts = self.enter_list(ListKind::TypeMembers);
         while self.lexer.token != T::TCloseBrace {
             if keeps {
-                self.end_type_member(&mut kept, self.token_start());
+                self.end_type_member(&mut kept, self.lexer.full_start());
             }
             // `parseMappedType` reads "[K in T]: X" itself, before the list of members.
             let is_mapped_type = core::mem::take(&mut starts_mapped_type);
@@ -2671,6 +2672,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             if keeps {
                 member.start = self.token_start();
+                member.full_start = self.lexer.token_full_start as u32;
             }
 
             // "{ -readonly [K in keyof T]: T[K] }"
@@ -2720,6 +2722,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Index signature or computed property
                 if keeps {
                     member.bracket_pos = self.token_start();
+                    member.bracket_full_start = self.lexer.token_full_start as u32;
                     member.newline_before_bracket = self.lexer.has_newline_before;
                 }
                 self.lexer.next()?;
@@ -2920,7 +2923,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.lexer.list_contexts = saved_contexts;
         if keeps {
-            self.end_type_member(&mut kept, self.token_start());
+            self.end_type_member(&mut kept, self.lexer.full_start());
         }
         self.lexer.expect(T::TCloseBrace)?;
         if keeps {
@@ -3000,6 +3003,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let keeps = self.should_keep_types();
         if keeps {
             member.bracket_pos = self.token_start();
+            member.bracket_full_start = self.lexer.token_full_start as u32;
             member.newline_before_bracket = self.lexer.has_newline_before;
         }
         member.trailing_comma = self.skip_index_signature_parameter_list()?;
@@ -4052,6 +4056,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The Lexer
         // holds `&mut Log`, so backtracking goes through a POD `LexerSnapshot` + `restore()`.
         let old_lexer = self.lexer.snapshot();
+        let noted = self.type_syntax_checkpoint();
         let old_log_disabled = self.lexer.is_log_disabled;
         let old_swallowed = self.lexer.swallowed;
         self.lexer.is_log_disabled = true;
@@ -4065,6 +4070,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if backtrack {
             self.lexer.restore(&old_lexer);
+            self.rewind_type_syntax(noted);
             // `rewind` drops the errors.
             self.lexer.swallowed = old_swallowed;
         }
@@ -4072,6 +4078,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Only changes in tolerant mode.
         if self.lexer.swallowed != old_swallowed && !backtrack && !old_log_disabled {
+            // It says everything again.
+            self.rewind_type_syntax(noted);
             self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
         }
 
@@ -4085,6 +4093,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     {
         self.mark_type_script_only();
         let old_lexer = self.lexer.snapshot();
+        let noted = self.type_syntax_checkpoint();
         let old_log_disabled = self.lexer.is_log_disabled;
         let old_swallowed = self.lexer.swallowed;
         self.lexer.is_log_disabled = true;
@@ -4099,6 +4108,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if backtrack {
             self.lexer.restore(&old_lexer);
+            self.rewind_type_syntax(noted);
             // `rewind` drops the errors.
             self.lexer.swallowed = old_swallowed;
         }
@@ -4106,6 +4116,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Only changes in tolerant mode.
         if self.lexer.swallowed != old_swallowed && !backtrack && !old_log_disabled {
+            // It says everything again.
+            self.rewind_type_syntax(noted);
             self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
         }
 

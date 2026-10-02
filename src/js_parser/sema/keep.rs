@@ -780,6 +780,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => self.simple_property_key(),
             },
             pos: self.token_start(),
+            full_start: self.lexer.token_full_start as u32,
             modifier: if self.lexer.token == T::TIdentifier {
                 PropertyModifierKeyword::find(self.lexer.raw())
             } else {
@@ -815,13 +816,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
-    /// `finishNode`, of the member added last, if it is not finished: it ends where the token before the one at `next` does.
+    /// `finishNode`, of the member added last, if it is not finished. `end`: `TokenFullStart` of the token after it.
     /// `parseTypeMemberSemicolon` is part of the member.
-    pub(crate) fn end_type_member(&self, kept: &mut ObjectTypeBuilder, next: u32) {
+    pub(crate) fn end_type_member(&self, kept: &mut ObjectTypeBuilder, end: Loc) {
         if let Some(member) = kept.members.last_mut()
             && member.end == Loc::EMPTY
         {
-            member.end = self.lexer.full_start_of(next as usize);
+            member.end = end;
         }
     }
 
@@ -844,14 +845,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             let bare = TypeMemberParts {
                 start: bare[0].pos,
+                full_start: bare[0].full_start,
                 words: bare.into(),
                 ..Default::default()
             };
             self.finish_type_member(&bare, kept);
-            let start = rest.first().map_or(member.bracket_pos, |next| next.pos);
-            self.end_type_member(kept, start);
+            let (start, full_start) = match rest.first() {
+                Some(next) => (next.pos, next.full_start),
+                None => (member.bracket_pos, member.bracket_full_start),
+            };
+            self.end_type_member(kept, loc(full_start));
             let rest = TypeMemberParts {
                 start,
+                full_start,
                 words: rest.into(),
                 is_accessor: false,
                 ..member.clone()
@@ -954,7 +960,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             signature: SignatureId::NONE,
             loc: loc(member.start),
             start: loc(member.start),
-            full_start: self.lexer.full_start_of(member.start as usize),
+            full_start: loc(member.full_start),
             end: Loc::EMPTY,
         };
         if member.bracket_kind == BracketKind::IndexParameters {
@@ -1069,6 +1075,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let bracket = MemberWord {
                     key: PropertyKey::Computed(name),
                     pos: member.bracket_pos,
+                    full_start: member.bracket_full_start,
                     token: T::TOpenBracket,
                     newline_before: member.newline_before_bracket,
                     modifier: None,
@@ -1419,6 +1426,7 @@ pub(crate) struct MemberWord {
     token: T,
     key: PropertyKey,
     pos: u32,
+    full_start: u32,
     modifier: Option<PropertyModifierKeyword>,
     newline_before: bool,
 }
@@ -1429,6 +1437,7 @@ impl Default for MemberWord {
             token: T::TEndOfFile,
             key: PropertyKey::None,
             pos: 0,
+            full_start: 0,
             modifier: None,
             newline_before: false,
         }
@@ -1455,6 +1464,8 @@ pub(crate) enum BracketKind {
 #[derive(Clone)]
 pub(crate) struct TypeMemberParts {
     pub(crate) start: u32,
+    /// `TokenFullStart` of the token at `start`.
+    pub(crate) full_start: u32,
     /// False if the member contains unusable syntax.
     pub(crate) is_complete: bool,
     pub(crate) is_accessor: bool,
@@ -1464,6 +1475,7 @@ pub(crate) struct TypeMemberParts {
     /// Leading words: modifiers, `get` or `set`, and then the member's name unless a `[` follows.
     pub(crate) words: smallvec::SmallVec<[MemberWord; 4]>,
     pub(crate) bracket_pos: u32,
+    pub(crate) bracket_full_start: u32,
     pub(crate) newline_before_bracket: bool,
     /// The first token after `[`.
     pub(crate) bracket_name: MemberWord,
@@ -1487,12 +1499,14 @@ impl Default for TypeMemberParts {
     fn default() -> Self {
         TypeMemberParts {
             start: 0,
+            full_start: 0,
             is_complete: true,
             is_accessor: false,
             leading_sign: None,
             trailing_sign: None,
             words: smallvec::SmallVec::new(),
             bracket_pos: 0,
+            bracket_full_start: 0,
             newline_before_bracket: false,
             bracket_name: MemberWord::default(),
             bracket_kind: BracketKind::Nothing,

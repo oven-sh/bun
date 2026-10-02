@@ -830,3 +830,74 @@ function of `printer/` has its name, underscores, case and the suffix `_exported
 | `printer/textwriter.go` (33), `printer/singlelinestringwriter.go` (27), `printer/semicolon_writer.go` (28), `printer/emittextwriter.go` (the interface) | `printer/textwriter.rs`, `printer/singlelinestringwriter.rs`, `printer/semicolon_writer.rs`, `printer/emittextwriter.rs` | translated | by name, all 88 functions |
 | `printer/emitflags.go`, `printer/emitresolver.go` | `printer/emitflags.rs`, `printer/emitresolver.rs` | translated | the head comment of `emitresolver.rs`: the result types of the accessibility checks only, not the `EmitResolver` interface |
 | `printer/changetrackerwriter.go`, `printer/emithost.go`, `printer/helpers.go`, `printer/sourcefilemetadataprovider.go`, `printer/syntheticfile.go` | | not started | the language service, declaration emit and the emit helpers of transformations |
+
+## Checker, evaluator and module specifiers (`checker`, `evaluator`, `modulespecifiers`): layer 7 of round 2
+
+### The 15 modules of `checker/mod.rs` that have no file
+
+`checker/mod.rs` declares 72 modules. In the tree of `c73680fe1d` (the survey of round 8) 57 of them have a file
+(59,077 lines with `mod.rs`) and 15 have none: eleven parts of `checker.go` and four whole files of upstream. No row
+above names one of the 15, and no commit before `c73680fe1d` holds a translation of them in the tree (the scratch
+crates of `checker-data-model-contract/` hold parts of five: `c30_type_keys.rs`, `c32_type_resolution.rs`,
+`c41_new_types.rs`, `inference.rs`, `utilities.rs`). State `not started` below is that tree: a row changes to
+`translated` with the commit that brings its file, and to `ported` when cargo compiles the file in the real crate.
+
+The lines of `checker.go` are the cut of `checker-core-scratch/data/split.tsv`. The counts are those of the
+look-ahead of the round-8 survey, kept as `round2-layer7-checker/lookahead-r8.txt`. It was made by reading, it is not
+compiler output: a Go name and a Rust name are equal with underscores and case aside, receivers and bodies are not
+compared, and a call counts when it is written `self.NAME(` or `c.NAME(` in a file of `checker/` and no file of
+`checker/` has a `fn` of that name. "By name elsewhere" is a function of the range whose name another file of
+`checker/` already has, perhaps for another receiver.
+
+| upstream file, lines | Rust module under `src/typecheck/` | state | what the tree names of it |
+| --- | --- | --- | --- |
+| `checker/checker.go` 908-1503 (`NewChecker` to `createNameResolverForSuggestion`, 23 functions; the closure fields that `NewChecker` and `initializeClosures` assign are methods of this module) | `checker/c03_init.rs` | not started | 41 names called at 76 sites of 24 files (`resolve_name` 20, the `get_global_*` resolvers, `contains_missing_type`, `compare_symbols`, `evaluate`) |
+| `checker/checker.go` 7419-8405 (`checkExpressionStatement` to `checkImportCallExpression`, 45 functions) | `checker/c14_expressions.rs` | not started | 16 names called at 88 sites of 21 files (`check_expression` 29, `check_expression_cached` 21, `get_type_of_expression` 16) |
+| `checker/checker.go` 10133-10705 (`checkParenthesizedExpression` to `checkClassNameCollisionWithObject`, 29 functions) | `checker/c16_function_expressions_collisions.rs` | not started | 6 names called at 13 sites; by name elsewhere: `checkClassExpressionExternalHelpers` 10171 (`c46_mark_references.rs`) |
+| `checker/checker.go` 11132-12376 (`checkIdentifier` to `classDeclarationExtendsNull`, 53 functions) | `checker/c18_identifiers_property_access_this.rs` | not started | 10 names called at 13 sites; by name elsewhere: `forEachProperty` 11997, `getDeclaringClass` 12011, `isValidOverrideOf` 12019, `isPropertyInClassDerivedFrom` 12030 (`relater.rs`) |
+| `checker/checker.go` 12378-13233 (`checkAssertion` to `checkReferenceExpression`, 34 functions, and `PredicateSemantics` of 12968) | `checker/c19_assertions_binary_operators.rs` | not started | 4 names called at 5 sites; by name elsewhere: `getExactOptionalUnassignableProperties` 13208, `isExactOptionalPropertyMismatch` 13217 (`relater.rs`) |
+| `checker/checker.go` 17471-17775 (`CacheHashKey` to `isUnconstrainedTypeParameter`, 30 functions) | `checker/c30_type_keys.rs` | not started | 11 names imported at 22 sites (`CacheHashKey` by 6 files, `get_type_list_key` by 5, `KeyBuilder`, the keys of aliases, unions, intersections, tuples, instantiations, templates and relations) |
+| `checker/checker.go` 18861-18958 (`pushTypeResolution` to `reportCircularityError`, 5 functions) | `checker/c32_type_resolution.rs` | not started | 4 names called at 27 sites of 9 files |
+| `checker/checker.go` 25126-25394 (`newType` to `newIndexInfo`, 27 functions) | `checker/c41_new_types.rs` | not started | 18 names called at 106 sites of 22 files; by name elsewhere: `newType` 25126 (`c02_program_checker.rs`) |
+| `checker/checker.go` 26803-27549 (`getIndexType` to `getOrCreateSubstitutionType`, 38 functions) | `checker/c44_index_indexed_access.rs` | not started | 19 names called at 79 sites of 20 files; `is_invalid_computed_property_name` imported by `c46_mark_references.rs` |
+| `checker/checker.go` 30674-31095 (`getTypeOfPropertyOfContextualType` to `getInferenceContext`, 28 functions, and `ObjectLiteralDiscriminator` of 30836) | `checker/c50_contextual_properties_inference_context.rs` | not started | 8 names called at 15 sites; `ObjectLiteralDiscriminator` imported by `jsx.rs`; by name elsewhere: its methods `len`, `name`, `matches` 30842-30853 (`relater.rs`, `mapper.rs`) |
+| `checker/checker.go` 31704-32296 (`GetSymbolAtLocation` to `GetAliasedSymbol`, 16 functions) | `checker/c52_symbol_at_location.rs` | not started | 5 names called at 16 sites (`get_symbol_at_location` 8, `get_type_of_node` 4) |
+| `checker/emitresolver.go` (1,330 lines, 65 functions) | `checker/emitresolver.rs` | not started | `EmitResolver` imported by `nodebuilderimpl.rs` and `symbolaccessibility.rs`, `is_const_enum_or_const_enum_only_module` by `c46_mark_references.rs`, `is_optional_parameter` called once; by name elsewhere: 8 functions (`jsx.rs`, `c39`, `symbolaccessibility.rs`, `c24`, `c07`, `c06`) |
+| `checker/grammarchecks.go` (2,185 lines, 76 functions) | `checker/grammarchecks.rs` | not started | 35 names called at 113 sites of 10 files (`grammar_error_on_node` 31, `check_grammar_statement_in_ambient_context` 14, `check_grammar_modifiers` 13); `get_identifier_from_entity_name_expression` imported by `c09_check_classes_interfaces.rs` |
+| `checker/inference.go` (1,684 lines, 77 functions) | `checker/inference.rs` | not started | 11 names called at 16 sites; `clear_cached_inferences` imported by `mapper.rs`; by name elsewhere: `hasTypeParameterDefault` 1658 (`c36_properties_apparent_types.rs`) |
+| `checker/utilities.go` (1,868 lines, 150 functions) | `checker/utilities.rs` | not started | 63 names imported at 129 sites (`is_type_any` by 11 files), 6 names called at 57 sites (`new_diagnostic_for_node` 28); by name elsewhere: `declarationBelongsToPrivateAmbientMember` 334 (`c31`), `orderedSet.add` 849 (`c38`), `ValueToString` 1696 (`printer.rs`), `CreateModuleNotFoundChain` 1786 and `CreateModeMismatchDetails` 1822 (`c24`) |
+
+By the same look-ahead, 671 functions of these ranges have no function of their name in `checker/`, and the files
+that exist name them at 625 call sites and 159 import sites.
+
+### The 14 files of `checker/` that hold a part of their range
+
+The files below exist, and the rows of the sections above say which of their functions are translated. The same
+look-ahead finds functions of their ranges that no file of `checker/` has by name and that other files call (540
+call sites) or import (4 sites). They are `not started`; the list of each file, with the upstream line of every
+function, is section B of `round2-layer7-checker/lookahead-r8.txt`.
+
+| upstream file, lines | Rust module under `src/typecheck/` | functions of the range without a function of their name in `checker/` | what the tree names of them |
+| --- | --- | --- | --- |
+| `checker/checker.go` 1505-2200 | `checker/c04_name_resolution_hooks.rs` | 30 of 31 (`symbolReferenced` 1505 to `addTypeOnlyDeclarationRelatedInfo` 2174) | 7 names called at 16 sites |
+| `checker/checker.go` 8407-10131 | `checker/c15_calls.rs` | 52 of 59 (`checkCallExpression` 8412 to `checkTaggedTemplateExpression` 10124) | 9 names called at 24 sites |
+| `checker/checker.go` 10707-11130 | `checker/c17_unary_meta_yield.rs` | 22 of 23 (`checkTypeOfExpression` 10707 to `checkSyntheticExpression` 11124) | 2 names called at 5 sites |
+| `checker/checker.go` 13235-13989 | `checker/c20_object_literals_spread.rs` | 23 of 25 (`checkObjectLiteral` 13235 to `checkExpressionForMutableLocation` 13979) | 13 names called at 25 sites |
+| `checker/checker.go` 13991-14168 | `checker/c21_resolved_symbols_diagnostics.rs` | 18 of 22 (`GetDiagnostics` 14052 to `hasParseDiagnostics` 14166: the sink) | 12 names called at 312 sites (`error` 266, `add_diagnostic` 21); `c22_symbols_merge.rs` 8 imports `crate::checker::ProgramFiles`, which no file defines (the contract has it in this module) |
+| `checker/checker.go` 20115-20727 | `checker/c34_return_types.rs` | 15 of 28 (`getReturnTypeFromBody` 20240 to `checkIfExpressionRefinesParameter` 20699) | 5 names called at 9 sites |
+| `checker/checker.go` 20729-21511 | `checker/c35_resolve_members.rs` | 3 of 29 (`resolveMappedTypeMembers` 21008, `getTypeOfMappedSymbol` 21098, `getLowerBoundOfKeyType` 21135) | 2 names called at 2 sites |
+| `checker/checker.go` 22214-22911 | `checker/c37_instantiation.rs` | 16 of 36 (`getConditionalTypeInstantiation` 22599 to `forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType` 22841) | 9 names called at 52 sites |
+| `checker/checker.go` 24225-25124 | `checker/c40_type_nodes_conditional_tuples.rs` | 12 of 57 (`getTypeFromConditionalTypeNode` 24392 to `getGlobalImportMetaExpressionType` 24805) | 5 names called at 16 sites |
+| `checker/checker.go` 27551-28310 | `checker/c45_base_constraints_normalization.rs` | 9 of 43 (`markPropertyAsReferenced` 27829 to `getModifiersTypeFromMappedType` 28250) | 5 names called at 13 sites |
+| `checker/checker.go` 29042-29447 | `checker/c47_promised_mapped_template.rs` | 15 of 26 (`getMappedTypeModifiers` 29135 to `getTypeOfPropertyOrIndexSignatureOfType` 29437) | 5 names called at 12 sites; `get_mapped_type_modifiers` imported by 3 files, `is_partial_mapped_type` by `relater.rs` |
+| `checker/checker.go` 29449-30162 | `checker/c48_contextual_types.rs` | 26 of 27 (`getContextualType` 29466 to `getContextualImportAttributeType` 30160) | 6 names called at 9 sites |
+| `checker/checker.go` 30164-30672 | `checker/c49_call_arguments_decorator_signatures.rs` | 5 of 28 (`getEffectiveCallArguments` 30165 to `getSpreadIndices` 30246) | 1 name called at 1 site |
+| `checker/checker.go` 31097-31702 | `checker/c51_type_facts_awaited.rs` | 12 of 36 (`getTypeFacts` 31097 to `convertAutoToAny` 31339) | 7 names called at 44 sites |
+
+The look-ahead also names what the layer imports from packages that cargo compiles already and that they do not
+define: `crate::core::{Map, LiveList, Memo}` (12, 3 and 1 files of `checker/`; the contract has the three in
+`checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs` 223, 153 and 347) and
+`crate::ast::{DiagnosticsCollection, RepopulateDiagnosticInfo, RepopulateDiagnosticKind, Diagnostics}` with
+`set_repopulate_info` (`c02_program_checker.rs`, `c24_external_modules.rs`, `c22_symbols_merge.rs`; upstream
+`ast/diagnostic.go` 234, 25 and 16, and `Diagnostics` is the view of the port that compares two diagnostics through
+their files). Two calls `intersects(` name a method that no file of `checker/` has and no upstream function owns.

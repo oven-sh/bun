@@ -1,0 +1,32 @@
+     84,000     42,000  p.rs:5559  [P<true,false>::parse_prefix]  matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)
+    120,000     30,000  parse/parse_fn.rs:696  [P<true,false>::parse_arrow_body_with_flags]  if let Some(starts) = &mut p.starts_for_parse_only {
+     30,000     30,000  parse/parse_fn.rs:343  [P<true,false>::parse_fn]  } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+     72,000     24,000  parse/mod.rs:2136  [P<true,false>::parse_stmts_up_to]  if let Some(starts) = &mut p.starts_for_parse_only {
+     22,000     22,000  parse/parse_fn.rs:440  [P<true,false>::parse_fn]  } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+     22,000     22,000  parse/parse_suffix.rs:29  [P<true,false>::parse_suffix]  if p.starts_for_parse_only.is_some() {
+     20,000     20,000  parse/parse_suffix.rs:903  [P<true,false>::parse_suffix]  if p.starts_for_parse_only.is_some() {
+     42,000     14,000  parse/mod.rs:270  [P<true,false>::parse_class]  if let Some(starts) = &mut p.starts_for_parse_only {
+     10,000     10,000  parse/parse_skip_typescript.rs:3070  [P<true,false>::skip_type_script_type_stmt]  if self.starts_for_parse_only.is_some() {
+     24,000      8,000  parse/mod.rs:310  [P<true,false>::parse_class]  if let Some(starts) = &mut p.starts_for_parse_only {
+     24,000      6,000  parse/parse_property.rs:128  [P<true,false>::parse_property]  if let Some(starts) = &mut p.starts_for_parse_only {
+      4,000      4,000  parse/parse_fn.rs:71  [P<true,false>::parse_fn_stmt]  if p.starts_for_parse_only.is_some() {
+      4,000      4,000  parse/parse_prefix.rs:997  [P<true,false>::parse_prefix]  if p.starts_for_parse_only.is_some() {
+      4,000      4,000  parse/parse_prefix.rs:1010  [P<true,false>::parse_prefix]  if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+      4,000      4,000  parse/parse_property.rs:838  [P<true,false>::parse_property]  } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+      4,000      4,000  parse/parse_skip_typescript.rs:3099  [P<true,false>::skip_type_script_interface_stmt]  if self.starts_for_parse_only.is_some() {
+     12,000      4,000  parse/parse_suffix.rs:526  [P<true,false>::parse_suffix]  if let Some(starts) = &mut p.starts_for_parse_only {
+      2,000      2,000  parse/mod.rs:200  [P<true,false>::parse_class]  if p.starts_for_parse_only.is_some() {
+      2,000      2,000  parse/mod.rs:1330  [P<true,false>::parse_class_stmt]  if p.starts_for_parse_only.is_some() {
+      2,000      2,000  parse/parse_jsx.rs:27  [P<true,false>::parse_jsx_element]  if p.starts_for_parse_only.is_some() {
+      6,000      2,000  parse/parse_property.rs:567  [P<true,false>::parse_property]  if let Some(starts) = &mut p.starts_for_parse_only {
+      6,000      2,000  parse/parse_property.rs:576  [P<true,false>::parse_property]  if let Some(starts) = &mut p.starts_for_parse_only {
+      6,000      2,000  parse/parse_property.rs:613  [P<true,false>::parse_property]  if let Some(starts) = &mut p.starts_for_parse_only {
+      8,000      2,000  parse/parse_skip_typescript.rs:3016  [P<true,false>::skip_type_script_type_stmt]  if let Some(starts) = &mut self.starts_for_parse_only {
+      6,000      2,000  parse/parse_stmt.rs:2367  [P<true,false>::parse_stmt_fallthrough_ts_keyword]  if let Some(starts) = &mut p.starts_for_parse_only {
+      6,000      2,000  parse/parse_stmt.rs:1718  [P<true,false>::t_import]  if let Some(starts) = &mut p.starts_for_parse_only {
+      2,000      2,000  parse/parse_typescript.rs:820  [P<true,false>::parse_typescript_enum_stmt]  if p.starts_for_parse_only.is_some() {
+         22         11  p.rs:5559  [P<false,false>::parse_prefix]  matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)
+         40         10  parse/parse_fn.rs:696  [P<false,false>::parse_arrow_body_with_flags]  if let Some(starts) = &mut p.starts_for_parse_only {
+         11          0  parse/parse_prefix.rs:50  [P<false,false>::parse_prefix]  if !SCAN_ONLY && p.is_lint_parse() {
+     42,000          0  parse/parse_prefix.rs:50  [P<true,false>::parse_prefix]  if !SCAN_ONLY && p.is_lint_parse() {
+    590,073    272,021  SUM Ir, Bc on 31 (line, function) pairs

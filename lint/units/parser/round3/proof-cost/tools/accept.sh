@@ -35,7 +35,7 @@ fi
 python3 $T/r3table.py $O base head --raw ${NOLINT:+--nolint nolint} > $O/table.txt
 for g in bun-types typescript-lib src-js tsx js-control; do
   python3 /workspace/notes/lint/units/parser/measure/tools/cgdiff.py $O/rawbase.$g.cg $O/rawhead.$g.cg --top 60 > $O/cgdiff.raw.$g.txt
-  python3 $T/newlines.py $O/rawhead.$g.cg > $O/newlines.$g.txt
+  python3 $T/newlines.py $O/rawhead.$g.cg --srcb /workspace/bun --tests > $O/newlines.$g.txt
   python3 $T/cgsites.py $O/rawhead.$g.cg --src /workspace/bun > $O/cgsites.$g.txt
 done
 python3 $T/outside.py $O rawbase rawhead --ev bc --strip-p > $O/outside.bc.txt

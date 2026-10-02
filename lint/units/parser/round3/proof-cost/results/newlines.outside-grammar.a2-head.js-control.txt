@@ -1,0 +1,14 @@
+    437,520    109,380  parse/parse_stmt.rs:1870  [P<false,false>::parse_stmt]  let expr_or_let = match p.parse_expr_or_let_stmt(opts) {
+    384,720    192,360  p.rs:5559  [P<false,false>::parse_prefix]  matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)
+    218,760          0  parse/parse_stmt.rs:1871  [P<false,false>::parse_stmt]  Ok(expr_or_let) => expr_or_let,
+    192,360          0  parse/parse_prefix.rs:50  [P<false,false>::parse_prefix]  if !SCAN_ONLY && p.is_lint_parse() {
+    132,440     66,220  parse/parse_fn.rs:463  [P<false,false>::parse_fn]  if rest_comma.len > 0 {
+      3,600          0  parse/parse_fn.rs:647  [P<false,false>::parse_arrow_body_with_flags]  pub(crate) fn parse_arrow_body_with_flags(
+        800          0  parse/mod.rs:83  [P<false,false>::parse_arrow_body_with_flags]  Ok(expr)
+        800          0  parse/mod.rs:817  [P<false,false>::parse_paren_expr]  p.parse_arrow_body_with_flags(args_slice, &mut arrow_data, body_flags)?;
+        800          0  parse/parse_prefix.rs:327  [P<false,false>::parse_prefix]  p.parse_arrow_body_with_flags(args, &mut fn_or_arrow_data, body_flags);
+        500          0  parse/mod.rs:82  [P<false,false>::parse_arrow_body_with_flags]  self.parse_expr_common(level, None, flags, &mut expr)?;
+        300          0  parse/mod.rs:81  [P<false,false>::parse_arrow_body_with_flags]  let mut expr = Expr::EMPTY;
+        200        100  parse/parse_fn.rs:707  [P<false,false>::parse_arrow_body_with_flags]  let expr = match p.parse_expr_flagged(Level::Comma, flags) {
+         80          0  parse/parse_property.rs:110  [P<false,false>::parse_property]  is_typescript_declare: p.fn_or_arrow_data_parse.is_typescript_declare,
+  1,372,880    368,060  SUM Ir, Bc on 13 executed lines that the base tree does not have

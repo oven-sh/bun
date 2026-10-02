@@ -1,0 +1,4 @@
+    384,720    192,360  p.rs:5559  [P<false,false>::parse_prefix]  matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)
+        400        100  parse/parse_fn.rs:696  [P<false,false>::parse_arrow_body_with_flags]  if let Some(starts) = &mut p.starts_for_parse_only {
+    192,360          0  parse/parse_prefix.rs:50  [P<false,false>::parse_prefix]  if !SCAN_ONLY && p.is_lint_parse() {
+    577,480    192,460  SUM Ir, Bc on 3 (line, function) pairs

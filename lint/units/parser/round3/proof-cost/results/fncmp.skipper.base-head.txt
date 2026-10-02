@@ -1,0 +1,62 @@
+IDENT 0  OFFSETS 0  DIFF 16  ONLY-A 16  ONLY-B 28
+DIFF    bytes    162   1309 (+1147)  insns    55   318 ( +263)  jcc    7   49 ( +42)  <P<true, false>>::skip_type_script_paren_or_fn_type::<SINK discard>
+DIFF    bytes    162   1309 (+1147)  insns    55   318 ( +263)  jcc    7   49 ( +42)  <P<true, true>>::skip_type_script_paren_or_fn_type::<SINK discard>
+DIFF    bytes    569   1341 ( +772)  insns   150   303 ( +153)  jcc   25   39 ( +14)  <P<true, false>>::skip_type_script_type_stmt
+DIFF    bytes    569   1341 ( +772)  insns   150   303 ( +153)  jcc   25   39 ( +14)  <P<true, true>>::skip_type_script_type_stmt
+DIFF    bytes    436   1069 ( +633)  insns   126   251 ( +125)  jcc   15   34 ( +19)  <P<true, false>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+DIFF    bytes    436   1069 ( +633)  insns   126   251 ( +125)  jcc   15   34 ( +19)  <P<true, true>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+DIFF    bytes    273    443 ( +170)  insns    80   127 (  +47)  jcc   15   23 (  +8)  <P<true, false>>::skip_typescript_fn_args
+DIFF    bytes    273    443 ( +170)  insns    80   127 (  +47)  jcc   15   23 (  +8)  <P<true, true>>::skip_typescript_fn_args
+DIFF    bytes    124    244 ( +120)  insns    35    72 (  +37)  jcc    3   13 ( +10)  <P<true, false>>::skip_typescript_return_type_with_metadata
+DIFF    bytes    124    244 ( +120)  insns    35    72 (  +37)  jcc    3   13 ( +10)  <P<true, true>>::skip_typescript_return_type_with_metadata
+DIFF    bytes    609    720 ( +111)  insns   167   202 (  +35)  jcc   34   43 (  +9)  <P<true, false>>::skip_type_script_binding
+DIFF    bytes    609    720 ( +111)  insns   167   202 (  +35)  jcc   34   43 (  +9)  <P<true, true>>::skip_type_script_binding
+DIFF    bytes    781    919 ( +138)  insns   146   174 (  +28)  jcc    6    8 (  +2)  <P<true, false>>::lexer_backtracker_bool::<<P<true, false>>::skip_type_script_arrow_args_with_backtracking, bool>
+DIFF    bytes    781    919 ( +138)  insns   146   174 (  +28)  jcc    6    8 (  +2)  <P<true, true>>::lexer_backtracker_bool::<<P<true, true>>::skip_type_script_arrow_args_with_backtracking, bool>
+DIFF    bytes   1674   1642 (  -32)  insns   415   414 (   -1)  jcc   63   62 (  -1)  <P<true, false>>::skip_type_script_type_parameters
+DIFF    bytes   1674   1642 (  -32)  insns   415   414 (   -1)  jcc   63   62 (  -1)  <P<true, true>>::skip_type_script_type_parameters
+ONLY-A  bytes   7045      0 (-7045)  insns  1601     0 (-1601)  jcc  269    0 (-269)  <P<true, false>>::skip_type_script_type_with_opts::<SINK metadata>
+ONLY-A  bytes   7045      0 (-7045)  insns  1599     0 (-1599)  jcc  269    0 (-269)  <P<true, true>>::skip_type_script_type_with_opts::<SINK metadata>
+ONLY-A  bytes   3446      0 (-3446)  insns   816     0 ( -816)  jcc  162    0 (-162)  <P<true, false>>::skip_type_script_type_with_opts::<SINK discard>
+ONLY-A  bytes   3446      0 (-3446)  insns   816     0 ( -816)  jcc  162    0 (-162)  <P<true, true>>::skip_type_script_type_with_opts::<SINK discard>
+ONLY-A  bytes    949      0 ( -949)  insns   249     0 ( -249)  jcc   51    0 ( -51)  <P<true, false>>::skip_type_script_object_type
+ONLY-A  bytes    949      0 ( -949)  insns   249     0 ( -249)  jcc   51    0 ( -51)  <P<true, true>>::skip_type_script_object_type
+ONLY-A  bytes   1052      0 (-1052)  insns   216     0 ( -216)  jcc   18    0 ( -18)  <P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+ONLY-A  bytes   1052      0 (-1052)  insns   216     0 ( -216)  jcc   18    0 ( -18)  <P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+ONLY-A  bytes    958      0 ( -958)  insns   190     0 ( -190)  jcc   17    0 ( -17)  <P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+ONLY-A  bytes    958      0 ( -958)  insns   190     0 ( -190)  jcc   17    0 ( -17)  <P<true, true>>::try_skip_type_script_type_arguments_with_backtracking
+ONLY-A  bytes    726      0 ( -726)  insns   136     0 ( -136)  jcc    4    0 (  -4)  <P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+ONLY-A  bytes    726      0 ( -726)  insns   136     0 ( -136)  jcc    4    0 (  -4)  <P<true, true>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+ONLY-A  bytes    181      0 ( -181)  insns    57     0 (  -57)  jcc    6    0 (  -6)  <P<true, false>>::skip_type_script_type_arguments::<false, false>
+ONLY-A  bytes    181      0 ( -181)  insns    57     0 (  -57)  jcc    6    0 (  -6)  <P<true, true>>::skip_type_script_type_arguments::<false, false>
+ONLY-A  bytes    121      0 ( -121)  insns    35     0 (  -35)  jcc    3    0 (  -3)  <P<true, false>>::skip_type_script_type_with_metadata
+ONLY-A  bytes    121      0 ( -121)  insns    35     0 (  -35)  jcc    3    0 (  -3)  <P<true, true>>::skip_type_script_type_with_metadata
+ONLY-B  bytes      0   2447 (+2447)  insns     0   480 ( +480)  jcc    0   41 ( +41)  <P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<parse::type_sink::Build>
+ONLY-B  bytes      0   2447 (+2447)  insns     0   480 ( +480)  jcc    0   41 ( +41)  <P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<parse::type_sink::Build>
+ONLY-B  bytes      0   2290 (+2290)  insns     0   479 ( +479)  jcc    0   52 ( +52)  <P<true, false>>::skip_type_script_interface_stmt
+ONLY-B  bytes      0   2290 (+2290)  insns     0   479 ( +479)  jcc    0   52 ( +52)  <P<true, true>>::skip_type_script_interface_stmt
+ONLY-B  bytes      0   2205 (+2205)  insns     0   463 ( +463)  jcc    0   47 ( +47)  <P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<SINK discard>
+ONLY-B  bytes      0   2205 (+2205)  insns     0   463 ( +463)  jcc    0   47 ( +47)  <P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<SINK discard>
+ONLY-B  bytes      0   1957 (+1957)  insns     0   388 ( +388)  jcc    0   35 ( +35)  <P<true, false>>::skip_type_script_predicate_of_keyword_name
+ONLY-B  bytes      0   1957 (+1957)  insns     0   388 ( +388)  jcc    0   35 ( +35)  <P<true, true>>::skip_type_script_predicate_of_keyword_name
+ONLY-B  bytes      0   1350 (+1350)  insns     0   265 ( +265)  jcc    0   24 ( +24)  <P<true, false>>::lexer_backtracker_bool::<<P<true, false>>::skip_type_script_type_arguments_with_backtracking, bool>
+ONLY-B  bytes      0   1350 (+1350)  insns     0   265 ( +265)  jcc    0   24 ( +24)  <P<true, true>>::lexer_backtracker_bool::<<P<true, true>>::skip_type_script_type_arguments_with_backtracking, bool>
+ONLY-B  bytes      0   1268 (+1268)  insns     0   249 ( +249)  jcc    0    8 (  +8)  <P<true, false>>::skip_type_script_predicate_type_after_newline
+ONLY-B  bytes      0   1268 (+1268)  insns     0   249 ( +249)  jcc    0    8 (  +8)  <P<true, true>>::skip_type_script_predicate_type_after_newline
+ONLY-B  bytes      0    765 ( +765)  insns     0   190 ( +190)  jcc    0   20 ( +20)  <P<true, false>>::skip_type_script_type_arguments_in::<parse::type_sink::Build, false, false>
+ONLY-B  bytes      0    765 ( +765)  insns     0   190 ( +190)  jcc    0   20 ( +20)  <P<true, true>>::skip_type_script_type_arguments_in::<parse::type_sink::Build, false, false>
+ONLY-B  bytes      0    867 ( +867)  insns     0   164 ( +164)  jcc    0    6 (  +6)  <P<true, false>>::lexer_backtracker_result::<<P<true, false>>::skip_type_script_type_parameters_then_open_paren_with_backtracking>
+ONLY-B  bytes      0    867 ( +867)  insns     0   164 ( +164)  jcc    0    6 (  +6)  <P<true, true>>::lexer_backtracker_result::<<P<true, true>>::skip_type_script_type_parameters_then_open_paren_with_backtracking>
+ONLY-B  bytes      0    571 ( +571)  insns     0   128 ( +128)  jcc    0    9 (  +9)  <P<true, false>>::skip_type_script_signature_property_name
+ONLY-B  bytes      0    571 ( +571)  insns     0   128 ( +128)  jcc    0    9 (  +9)  <P<true, true>>::skip_type_script_signature_property_name
+ONLY-B  bytes      0    305 ( +305)  insns     0    99 (  +99)  jcc    0   15 ( +15)  <P<true, false>>::skip_type_script_bracketed_name
+ONLY-B  bytes      0    305 ( +305)  insns     0    99 (  +99)  jcc    0   15 ( +15)  <P<true, true>>::skip_type_script_bracketed_name
+ONLY-B  bytes      0    323 ( +323)  insns     0    80 (  +80)  jcc    0    6 (  +6)  <P<true, false>>::skip_type_script_parameter_modifiers
+ONLY-B  bytes      0    323 ( +323)  insns     0    80 (  +80)  jcc    0    6 (  +6)  <P<true, true>>::skip_type_script_parameter_modifiers
+ONLY-B  bytes      0    253 ( +253)  insns     0    75 (  +75)  jcc    0    9 (  +9)  <P<true, false>>::skip_type_script_paren_type::<SINK metadata>
+ONLY-B  bytes      0    247 ( +247)  insns     0    75 (  +75)  jcc    0   12 ( +12)  <P<true, false>>::skip_type_script_type_arguments_in::<parse::type_sink::Discard, false, false>
+ONLY-B  bytes      0    253 ( +253)  insns     0    75 (  +75)  jcc    0    9 (  +9)  <P<true, true>>::skip_type_script_paren_type::<SINK metadata>
+ONLY-B  bytes      0    247 ( +247)  insns     0    75 (  +75)  jcc    0   12 ( +12)  <P<true, true>>::skip_type_script_type_arguments_in::<parse::type_sink::Discard, false, false>
+ONLY-B  bytes      0    174 ( +174)  insns     0    57 (  +57)  jcc    0   12 ( +12)  <P<true, false>>::skip_typescript_return_type
+ONLY-B  bytes      0    174 ( +174)  insns     0    57 (  +57)  jcc    0   12 ( +12)  <P<true, true>>::skip_typescript_return_type
+FAIL: 16 DIFF, 16 only in base, 28 only in head

@@ -1,0 +1,30 @@
+    845,820     93,980  parse/parse_stmt.rs:1851  [P<true,false>::parse_stmt]  && let Some(stmt) = Self::parse_stmt_named_like_cast(p, opts, loc, keyword)?
+    845,820          0  parse/parse_stmt.rs:1922  [P<true,false>::parse_stmt_named_like_cast]  fn parse_stmt_named_like_cast(
+    375,920     93,980  parse/parse_stmt.rs:1870  [P<true,false>::parse_stmt]  let expr_or_let = match p.parse_expr_or_let_stmt(opts) {
+    375,920     93,980  parse/parse_stmt.rs:1928  [P<true,false>::parse_stmt_named_like_cast]  match keyword {
+    187,960          0  parse/parse_stmt.rs:1871  [P<true,false>::parse_stmt]  Ok(expr_or_let) => expr_or_let,
+    135,440     67,720  parse/parse_stmt.rs:1943  [P<true,false>::parse_stmt_named_like_cast]  !p.lexer.has_newline_before
+    135,440     67,720  parse/parse_stmt.rs:1947  [P<true,false>::parse_stmt_named_like_cast]  if !is_named_like_cast {
+     93,980     93,980  parse/parse_stmt.rs:1849  [P<true,false>::parse_stmt]  && is_identifier
+     10,880     10,880  parse/parse_fn.rs:284  [P<true,false>::parse_fn]  if is_identifier && (opts.is_constructor || !rest_arg) {
+      3,720      3,720  parse/parse_fn.rs:70  [P<true,false>::parse_fn_stmt]  if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+        780        120  parse/mod.rs:338  [P<true,false>::parse_class]  if has_auto_accessor
+        720          0  parse/mod.rs:362  [P<true,false>::parse_class]  should_lower_standard_decorators: if standard_decorators {
+        660          0  parse/parse_fn.rs:75  [P<true,false>::parse_fn_stmt]  p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+        360          0  parse/mod.rs:282  [P<true,false>::parse_class]  if prop_kind == js_ast::g::PropertyKind::AutoAccessor && !has_auto_accessor {
+        360        360  parse/parse_stmt.rs:1934  [P<true,false>::parse_stmt_named_like_cast]  if opts.scope == StatementScope::Nested {
+        360        360  parse/parse_typescript.rs:433  [P<true,false>::parse_type_script_namespace_s]  if let Some(name) = erased_name
+        240        120  parse/mod.rs:177  [P<true,false>::parse_class]  if p.lexer.token == T::TExtends
+        240         60  parse/mod.rs:228  [P<true,false>::parse_class]  if class_opts.is_type_script_declare {
+        120          0  parse/mod.rs:227  [P<true,false>::parse_class]  let old_is_typescript_declare = p.fn_or_arrow_data_parse.is_typescript_declare;
+        120          0  parse/mod.rs:336  [P<true,false>::parse_class]  let standard_decorators = p.options.features.standard_decorators;
+        100        100  parse/parse_property.rs:782  [P<true,false>::parse_property]  if !has_definite_assignment_assertion_operator && p.lexer.token == T::TLessThan {
+         60         60  parse/mod.rs:182  [P<true,false>::parse_class]  } else if p.lexer.token == T::TExtends {
+         60          0  parse/mod.rs:229  [P<true,false>::parse_class]  p.fn_or_arrow_data_parse.is_typescript_declare = true;
+         60          0  parse/mod.rs:331  [P<true,false>::parse_class]  p.fn_or_arrow_data_parse.is_typescript_declare = old_is_typescript_declare;
+         60         60  parse/mod.rs:1329  [P<true,false>::parse_class_stmt]  if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+         60          0  parse/parse_stmt.rs:2309  [P<true,false>::parse_stmt_fallthrough_ts_key]  let stmts = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+         60         20  parse/parse_stmt.rs:2314  [P<true,false>::parse_stmt_fallthrough_ts_key]  if let Some(global) = global
+         40         20  parse/parse_stmt.rs:2208  [P<true,false>::parse_stmt_fallthrough_ts_key]  if !p.lexer.has_newline_before
+  3,015,360    527,240  SUM Ir, Bc on 28 executed lines that the base tree does not have
+    411,920    160,440  Ir, Bc left out: cost rows on lines that test the side table (16 rows)

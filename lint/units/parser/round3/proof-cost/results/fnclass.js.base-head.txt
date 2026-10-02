@@ -1,0 +1,163 @@
+<P<false, false>>::apply_repl_transforms                               -   1 +   2 jcc -0 +0
+<P<false, false>>::default_name_for_expr                               -  31 +  39 jcc -10 +12
+<P<false, false>>::e_array                                             -  17 +  11 jcc -5 +3
+<P<false, false>>::e_function                                          -  52 +  37 jcc -17 +15
+      - call mi_free
+<P<false, false>>::e_jsx_element                                       - 188 + 172 jcc -70 +69
+      - call mi_free
+<P<false, false>>::emit_decorator_metadata_for_prop                    -1153 + 810 jcc -128 +132
+      - call <alloc::vec::Vec<bun_ast::Ref> as core::clone::Clone>::clone
+      - call alloc::raw_vec::handle_error
+<P<false, false>>::generate_closure_for_type_script_namespace_or_enum  -   4 +   3 jcc -0 +0
+<P<false, false>>::hoist_symbols                                       -   2 +   2 jcc -0 +0
+<P<false, false>>::hosted_initializer                                  -  31 +  36 jcc -12 +13
+<P<false, false>>::init                                                -   3 +   4 jcc -0 +0
+<P<false, false>>::lower_class                                         - 704 + 645 jcc -99 +102
+      - call <alloc::vec::Vec<bun_ast::Ref> as core::clone::Clone>::clone
+<P<false, false>>::lower_class_body                                    - 842 + 810 jcc -226 +225
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+<P<false, false>>::make_static_block                                   -   2 +   1 jcc -0 +0
+<P<false, false>>::mark_strict_mode_feature                            -   0 +   1 jcc -0 +0
+<P<false, false>>::new_constructor                                     -  24 +  25 jcc -0 +0
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+<P<false, false>>::new_expr::<bun_ast::e::Function>                    -   3 +   1 jcc -0 +0
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+<P<false, false>>::parse_async_prefix_expr                             -  82 +  82 jcc -0 +0
+      - call <P>::parse_arrow_body
+      + call <P>::parse_arrow_body_with_flags
+<P<false, false>>::parse_class                                         - 315 + 343 jcc -47 +46
+      - call mi_free
+      + call <bun_ast::Log>::add_error_text
+<P<false, false>>::parse_fn                                            - 313 + 319 jcc -39 +39
+      - call <lexer::Lexer>::expected
+      - call core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>
+      + call <bun_ast::Log>::add_range_error
+      + call <lexer::Lexer>::expect
+      + call <lexer::Lexer>::range
+      + call <P>::next_token_is_close_paren
+<P<false, false>>::parse_fn_expr                                       -  38 +  42 jcc -1 +1
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+<P<false, false>>::parse_fn_stmt                                       - 112 +  75 jcc -4 +3
+      - call mi_free
+<P<false, false>>::parse_jsx_element                                   - 783 + 679 jcc -127 +120
+      - call <alloc::raw_vec::RawVec<(usize, bun_bundler::options_impl::PathTemplate)>>::grow_one
+      - call <alloc::vec::Vec<bun_ast::g::Property, bun_alloc::ast_alloc::AstAlloc> as core::ops::drop::Drop>::drop
+      - call L99
+      + call <alloc::raw_vec::RawVec<bun_css::rules::import::ImportConditions>>::grow_one
+      + call <lexer::Lexer>::next_jsx_element_child
+      + call L96
+<P<false, false>>::parse_paren_expr                                    -   9 +   9 jcc -0 +0
+      - call <P>::parse_arrow_body
+      + call <P>::parse_arrow_body_with_flags
+<P<false, false>>::parse_path                                          - 212 + 461 jcc -49 +67
+      - call <lexer::Lexer>::expect
+      + call <lexer::Lexer>::expected
+<P<false, false>>::parse_prefix                                        - 947 + 908 jcc -260 +258
+      - call <alloc::vec::Vec<bun_ast::g::Property, bun_alloc::ast_alloc::AstAlloc> as core::ops::drop::Drop>::drop
+      - call <P>::parse_arrow_body
+      - call L125
+      - call mi_free
+      + call <P>::parse_arrow_body_with_flags
+      + call <P>::pfx_t_open_paren_for_lint
+      + call <P>::unexpected_as
+      + call L133
+<P<false, false>>::parse_property                                      - 699 + 735 jcc -169 +166
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <alloc::vec::Vec<bun_ast::stmt::Stmt, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::stmt::Stmt>>::from_slice
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+      + call <parse::erased::ErasedTables>::member_property
+      + call bun_ast::expr::data::Store::append::<bun_ast::e::Function>
+<P<false, false>>::parse_stmt                                          - 164 + 185 jcc -45 +45
+      + call <P>::parse_expr_or_let_stmt
+      + call <P>::statement_expected
+<P<false, false>>::parse_type_script_decorators                        - 281 + 303 jcc -51 +56
+      + call <parse::wrappers::Wrappers>::parenthesized
+<P<false, false>>::record_export                                       -   0 +   1 jcc -0 +0
+<P<false, false>>::repl_convert_binding_to_expr                        -   2 +   1 jcc -0 +0
+<P<false, false>>::repl_wrap_expr_in_value_object                      -   8 +   5 jcc -0 +0
+<P<false, false>>::rewrite_private_accesses_in_expr                    -   4 +   6 jcc -0 +0
+<P<false, false>>::rewrite_private_accesses_in_stmts                   -   2 +   3 jcc -0 +0
+<P<false, false>>::s_export_default                                    -1092 +1106 jcc -161 +158
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+<P<false, false>>::s_function                                          - 247 + 242 jcc -29 +28
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+<P<false, false>>::s_local                                             - 428 + 436 jcc -213 +213
+<P<false, false>>::serialize_metadata                                  - 192 + 186 jcc -5 +4
+      - call <P>::check_if_defined_helper
+<P<false, false>>::t_export                                            -  75 +  84 jcc -16 +18
+      + call <parse::erased::ErasedTables>::exported_by_default
+<P<false, false>>::t_import                                            - 376 + 343 jcc -61 +61
+      - call <lexer::Lexer>::unexpected
+<P<false, false>>::to_ast                                              - 593 + 532 jcc -205 +194
+      - call mi_free
+<P<false, false>>::visit_args                                          -   5 +   6 jcc -0 +0
+<P<false, false>>::visit_binding_and_expr_for_macro                    -  44 +  25 jcc -4 +0
+      - call mi_free
+<P<false, false>>::visit_expr_in_out                                   -   0 +   1 jcc -0 +0
+<P<false, false>>::visit_func                                          -  16 +  20 jcc -0 +0
+<P<false, false>>::visit_stmts                                         -  14 +   9 jcc -0 +0
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+<P<false, true>>::declare_symbol                                       -   0 +   1 jcc -0 +0
+<P<false, true>>::default_name_for_expr                                -  31 +  39 jcc -10 +12
+<P<false, true>>::init                                                 -   3 +   3 jcc -0 +0
+<P<false, true>>::parse_async_prefix_expr                              -  82 +  82 jcc -0 +0
+      - call <P>::parse_arrow_body
+      + call <P>::parse_arrow_body_with_flags
+<P<false, true>>::parse_class                                          - 303 + 291 jcc -49 +46
+<P<false, true>>::parse_fn                                             - 313 + 319 jcc -39 +39
+      - call <lexer::Lexer>::expected
+      - call core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>
+      + call <bun_ast::Log>::add_range_error
+      + call <lexer::Lexer>::expect
+      + call <lexer::Lexer>::range
+      + call <P>::next_token_is_close_paren
+<P<false, true>>::parse_fn_expr                                        -  38 +  42 jcc -1 +1
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+<P<false, true>>::parse_fn_stmt                                        - 112 +  75 jcc -4 +3
+      - call mi_free
+<P<false, true>>::parse_jsx_element                                    - 785 + 680 jcc -127 +120
+      - call <alloc::raw_vec::RawVec<(usize, bun_bundler::options_impl::PathTemplate)>>::grow_one
+      - call <alloc::vec::Vec<bun_ast::g::Property, bun_alloc::ast_alloc::AstAlloc> as core::ops::drop::Drop>::drop
+      - call L99
+      + call <alloc::raw_vec::RawVec<bun_css::rules::import::ImportConditions>>::grow_one
+      + call <lexer::Lexer>::next_jsx_element_child
+      + call L96
+<P<false, true>>::parse_paren_expr                                     -   9 +   9 jcc -0 +0
+      - call <P>::parse_arrow_body
+      + call <P>::parse_arrow_body_with_flags
+<P<false, true>>::parse_path                                           - 212 + 461 jcc -49 +67
+      - call <lexer::Lexer>::expect
+      + call <lexer::Lexer>::expected
+<P<false, true>>::parse_prefix                                         - 423 + 377 jcc -82 +78
+      - call <alloc::vec::Vec<bun_ast::g::Property, bun_alloc::ast_alloc::AstAlloc> as core::ops::drop::Drop>::drop
+      - call <P>::parse_arrow_body
+      - call mi_free
+      + call <P>::parse_arrow_body_with_flags
+      + call <P>::unexpected_as
+<P<false, true>>::parse_property                                       - 699 + 735 jcc -169 +166
+      - call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::g::Class>
+      + call <alloc::vec::Vec<bun_ast::stmt::Stmt, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::stmt::Stmt>>::from_slice
+      + call <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Function>
+      + call <parse::erased::ErasedTables>::member_property
+      + call bun_ast::expr::data::Store::append::<bun_ast::e::Function>
+<P<false, true>>::parse_stmt                                           - 164 + 185 jcc -45 +45
+      + call <P>::parse_expr_or_let_stmt
+      + call <P>::statement_expected
+<P<false, true>>::parse_type_script_decorators                         - 148 + 177 jcc -50 +54
+      + call <parse::wrappers::Wrappers>::parenthesized
+<P<false, true>>::t_export                                             -  75 +  84 jcc -16 +18
+      + call <parse::erased::ErasedTables>::exported_by_default
+<P<false, true>>::t_import                                             - 376 + 343 jcc -61 +61
+      - call <lexer::Lexer>::unexpected
+core::ptr::drop_glue::<P<false, false>>                                - 193 + 224 jcc -57 +63
+      - call core::ptr::drop_glue::<parser::MacroState>
+      - call core::ptr::drop_glue::<core::option::Option<StartsForParseOnly>>
+      + call core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<StartsForParseOnly>>>

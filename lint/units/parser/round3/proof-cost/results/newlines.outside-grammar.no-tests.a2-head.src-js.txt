@@ -1,0 +1,81 @@
+  1,490,880    372,720  parse/parse_stmt.rs:1870  [P<true,false>::parse_stmt]  let expr_or_let = match p.parse_expr_or_let_stmt(opts) {
+    745,440          0  parse/parse_stmt.rs:1871  [P<true,false>::parse_stmt]  Ok(expr_or_let) => expr_or_let,
+    421,740          0  parse/mod.rs:282  [P<true,false>::parse_class]  if prop_kind == js_ast::g::PropertyKind::AutoAccessor && !has_auto_accessor {
+    374,780    374,780  parse/parse_stmt.rs:1849  [P<true,false>::parse_stmt]  && is_identifier
+    253,160    253,160  parse/parse_fn.rs:284  [P<true,false>::parse_fn]  if is_identifier && (opts.is_constructor || !rest_arg) {
+    196,400     98,200  parse/parse_fn.rs:463  [P<true,false>::parse_fn]  if rest_comma.len > 0 {
+    179,820          0  parse/parse_fn.rs:647  [P<true,false>::parse_arrow_body_with_flags]  pub(crate) fn parse_arrow_body_with_flags(
+    160,960    160,960  parse/parse_property.rs:782  [P<true,false>::parse_property]  if !has_definite_assignment_assertion_operator && p.lexer.token == T::TLessThan {
+    123,300     13,700  parse/parse_stmt.rs:1851  [P<true,false>::parse_stmt]  && let Some(stmt) = Self::parse_stmt_named_like_cast(p, opts, loc, keyword)?
+    123,300          0  parse/parse_stmt.rs:1922  [P<true,false>::parse_stmt_named_like_cast]  fn parse_stmt_named_like_cast(
+    103,760     14,600  parse/parse_suffix.rs:919  [P<true,false>::parse_suffix]  if Self::IS_TYPESCRIPT_ENABLED && Self::sfx_type_arguments(p, left) {
+     66,800          0  parse/mod.rs:817  [P<true,false>::parse_paren_expr]  p.parse_arrow_body_with_flags(args_slice, &mut arrow_data, body_flags)?;
+     58,720          0  parse/mod.rs:83  [P<true,false>::parse_arrow_body_with_flags]  Ok(expr)
+     54,800     13,700  parse/parse_stmt.rs:1928  [P<true,false>::parse_stmt_named_like_cast]  match keyword {
+     47,520     15,840  parse/mod.rs:715  [P<true,false>::parse_paren_expr]  && p.lexer.token == T::TColon
+     46,060          0  parse/parse_prefix.rs:327  [P<true,false>::parse_prefix]  p.parse_arrow_body_with_flags(args, &mut fn_or_arrow_data, body_flags);
+     45,500     45,480  parse/parse_fn.rs:70  [P<true,false>::parse_fn_stmt]  if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+     44,040          0  parse/mod.rs:82  [P<true,false>::parse_arrow_body_with_flags]  self.parse_expr_common(level, None, flags, &mut expr)?;
+     43,160      6,640  parse/mod.rs:338  [P<true,false>::parse_class]  if has_auto_accessor
+     39,840          0  parse/mod.rs:362  [P<true,false>::parse_class]  should_lower_standard_decorators: if standard_decorators {
+     27,880     10,040  parse/parse_property.rs:422  [P<true,false>::parse_property]  if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
+     26,720     13,360  parse/mod.rs:803  [P<true,false>::parse_paren_expr]  && opts.is_after_question_and_before_colon
+     19,700      7,900  parse/parse_property.rs:270  [P<true,false>::is_class_index_signature]  match p.lexer.token {
+     19,040      2,720  parse/parse_suffix.rs:1009  [P<true,false>::parse_suffix]  if Self::IS_TYPESCRIPT_ENABLED && Self::sfx_type_arguments(p, left) {
+     15,200      3,800  parse/parse_property.rs:288  [P<true,false>::is_class_index_signature]  if p.lexer.token == T::TColon || p.lexer.token == T::TComma {
+     14,900     14,900  parse/parse_fn.rs:569  [P<true,false>::parse_fn_expr]  if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+     14,680          0  parse/mod.rs:81  [P<true,false>::parse_arrow_body_with_flags]  let mut expr = Expr::EMPTY;
+     14,680      7,340  parse/parse_fn.rs:707  [P<true,false>::parse_arrow_body_with_flags]  let expr = match p.parse_expr_flagged(Level::Comma, flags) {
+     14,440      7,220  parse/parse_stmt.rs:1943  [P<true,false>::parse_stmt_named_like_cast]  !p.lexer.has_newline_before
+     14,440      7,220  parse/parse_stmt.rs:1947  [P<true,false>::parse_stmt_named_like_cast]  if !is_named_like_cast {
+     13,280      6,640  parse/mod.rs:177  [P<true,false>::parse_class]  if p.lexer.token == T::TExtends
+     13,280      3,320  parse/mod.rs:228  [P<true,false>::parse_class]  if class_opts.is_type_script_declare {
+      7,600          0  parse/parse_property.rs:286  [P<true,false>::is_class_index_signature]  p.lexer.next()?;
+      6,640          0  parse/mod.rs:227  [P<true,false>::parse_class]  let old_is_typescript_declare = p.fn_or_arrow_data_parse.is_typescript_declare;
+      6,640          0  parse/mod.rs:336  [P<true,false>::parse_class]  let standard_decorators = p.options.features.standard_decorators;
+      3,800          0  parse/parse_property.rs:277  [P<true,false>::is_class_index_signature]  p.lexer.is_log_disabled = true;
+      3,800      3,800  parse/parse_property.rs:291  [P<true,false>::is_class_index_signature]  if p.lexer.token != T::TQuestion {
+      3,800          0  parse/parse_property.rs:305  [P<true,false>::is_class_index_signature]  let name = self.lexer.identifier;
+      3,320      3,320  parse/mod.rs:182  [P<true,false>::parse_class]  } else if p.lexer.token == T::TExtends {
+      3,320          0  parse/mod.rs:331  [P<true,false>::parse_class]  p.fn_or_arrow_data_parse.is_typescript_declare = old_is_typescript_declare;
+      3,240        540  parse/mod.rs:1991  [P<false,false>::parse_path]  let is_with_on_next_line = p.lexer.has_newline_before
+      3,080      3,080  parse/mod.rs:1329  [P<true,false>::parse_class_stmt]  if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+      2,880          0  parse/parse_stmt.rs:1716  [P<true,false>::t_import]  let path = p.parse_path()?;
+      2,520      2,520  parse/parse_typescript.rs:704  [P<true,false>::parse_typescript_enum_stmt]  p.lexer.token == T::TOpenBracket && p.is_enum_member_name_in_brackets();
+      2,520      2,520  parse/parse_typescript.rs:709  [P<true,false>::parse_typescript_enum_stmt]  let needs_symbol: bool = if p.lexer.token == T::TStringLiteral || is_in_brackets {
+      2,320          0  parse/mod.rs:2351  [P<true,false>::parse_async_prefix_expr]  return p.parse_paren_expr(async_range.loc, level, opts);
+      2,160          0  parse/parse_fn.rs:75  [P<true,false>::parse_fn_stmt]  p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+      1,080        540  parse/mod.rs:1994  [P<false,false>::parse_path]  let has_newline_before = p.lexer.has_newline_before && !is_with_on_next_line;
+      1,000          0  parse/mod.rs:376  [P<true,false>::parse_class]  (log.msgs.len(), log.errors, log.warnings)
+      1,000        200  parse/mod.rs:383  [P<true,false>::parse_class]  && matches!(p.lexer.token, T::TComma | T::TOpenBrace))
+        960          0  parse/parse_stmt.rs:1714  [P<true,false>::t_import]  let clause = p.parse_import_clause()?;
+        600        200  parse/mod.rs:382  [P<true,false>::parse_class]  && p.log().errors == logged.1
+        440        440  parse/parse_stmt.rs:1934  [P<true,false>::parse_stmt_named_like_cast]  if opts.scope == StatementScope::Nested {
+        420          0  parse/parse_property.rs:786  [P<true,false>::parse_property]  p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?
+        400        200  parse/mod.rs:380  [P<true,false>::parse_class]  if p.lexer.is_log_disabled
+        360        240  parse/parse_property.rs:306  [P<true,false>::is_class_index_signature]  if name == b"await" {
+        360        360  parse/parse_typescript.rs:433  [P<true,false>::parse_type_script_namespace_s]  if let Some(name) = erased_name
+        280          0  parse/mod.rs:2319  [P<true,false>::parse_async_prefix_expr]  let parsed = p.parse_arrow_body_with_flags(args, &mut data, body_flags);
+        280         40  parse/mod.rs:804  [P<true,false>::parse_paren_expr]  && (p.paren_expr_has_type_parameters(loc, opts.is_async)
+        240          0  parse/parse_stmt.rs:1694  [P<true,false>::t_import]  let path = p.parse_path()?;
+        200          0  parse/mod.rs:375  [P<true,false>::parse_class]  let log = p.log();
+        200        200  parse/mod.rs:381  [P<true,false>::parse_class]  || (as_type.is_ok()
+        180          0  parse/syntax_errors.rs:385  [P<true,false>::type_expected]  pub(crate) fn type_expected(&mut self, opts: SkipTypeOptionsBitset) -> Result<bool, 
+        160          0  parse/mod.rs:805  [P<true,false>::parse_paren_expr]  || Self::arrow_parameters_could_be_expr(
+        120         60  parse/parse_stmt.rs:2208  [P<true,false>::parse_stmt_fallthrough_ts_key]  if !p.lexer.has_newline_before
+        120          0  parse/parse_stmt.rs:1664  [P<true,false>::t_import]  let path = p.parse_path()?;
+        100          0  parse/mod.rs:229  [P<true,false>::parse_class]  p.fn_or_arrow_data_parse.is_typescript_declare = true;
+         80         40  parse/mod.rs:2321  [P<true,false>::parse_async_prefix_expr]  let mut arrow_body = match parsed {
+         80         40  parse/mod.rs:811  [P<true,false>::parse_paren_expr]  let body_flags = if is_body_before_colon {
+         80          0  parse/mod.rs:880  [P<true,true>::arrow_parameters_could_be_expr]  fn arrow_parameters_could_be_expr(
+         80          0  parse/mod.rs:907  [P<true,true>::paren_expr_has_type_parameters]  fn paren_expr_has_type_parameters(&self, loc: bun_ast::Loc, is_async: bool) -> bool 
+         80          0  parse/mod.rs:908  [P<true,true>::paren_expr_has_type_parameters]  let mut rest = self.lexer.contents.get(loc.i()..).unwrap_or(&[]);
+         80         40  parse/mod.rs:909  [P<true,true>::paren_expr_has_type_parameters]  if is_async {
+         80         40  parse/parse_stmt.rs:1696  [P<true,false>::t_import]  if let Some(namespace) = namespace
+         80          0  parse/syntax_errors.rs:387  [P<true,false>::type_expected]  self.lexer.unexpected()?;
+         60          0  parse/parse_stmt.rs:2309  [P<true,false>::parse_stmt_fallthrough_ts_key]  let stmts = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+         60         20  parse/parse_stmt.rs:2314  [P<true,false>::parse_stmt_fallthrough_ts_key]  if let Some(global) = global
+         40         20  parse/parse_fn.rs:296  [P<true,false>::parse_fn]  if !opts.is_constructor
+         20          0  parse/syntax_errors.rs:388  [P<true,false>::type_expected]  return Ok(true);
+  4,895,180  1,472,700  SUM Ir, Bc on 79 executed lines that the base tree does not have
+    328,640    175,000  Ir, Bc left out: cost rows on lines that test the side table (31 rows)

@@ -1,0 +1,1216 @@
+STATIC LOOK-AHEAD for layer 7 of bun_typecheck (checker + evaluator + modulespecifiers). Survey round 8, worktree /workspace/wt/typecheck at c73680fe1d.
+This is NOT compiler output. It was made by reading: the layer is not declared in lib.rs, so cargo has never compiled these files.
+How a name is matched: a Go name and a Rust name are the same when they are equal with underscores and case aside (suffix _exported aside).
+  "no fn in checker/" = no `fn` of that name in any file of src/typecheck/checker and no name made by concrete_casts!/embedded_casts!.
+  "called" = a call `self.NAME(` or `c.NAME(` in a file of checker/ whose NAME has no fn in checker/.
+  "imported" = a `use crate::checker::{NAME}` of checker/, evaluator/ or modulespecifiers/ whose NAME has no definition in checker/
+               (fn, struct, enum, type, const, static, trait, mod, macro, pub use, or an argument of checker_flags!/define_checker_id!).
+  The owner of a name is the module whose upstream range declares the Go function or type; a closure field of the Checker that NewChecker or initializeClosures assigns (checker.go 908-1503) is owned by c03_init.rs.
+Limits: a method of another receiver with the same name hides a missing one; bodies and signatures are not compared; calls written another way are not seen.
+
+SURVEY OUTPUT (sh /workspace/notes/lint/tools/typecheck-survey.sh, exit 1):
+  cargo check -p bun_typecheck: exit 0, 0 errors
+  compiled by cargo: 117 of 180 files, 65279 of 124690 lines
+  NOT reached from lib.rs (cargo does not compile these):
+    modulespecifiers            4 files      70 lines
+    evaluator                   1 files     264 lines
+    checker                    58 files   59077 lines
+  The crate compiles, but cargo does not compile the files above. Declare the next layer in its parent module (see the goal for the order) and fix what the compiler then reports.
+
+##############################################################################################################
+# A. Modules that checker/mod.rs declares and that have NO FILE (15)
+##############################################################################################################
+
+src/typecheck/checker/c03_init.rs   NO FILE
+  upstream: checker.go 908-1503 (NewChecker .. Checker.createNameResolverForSuggestion)
+  upstream functions: 23; with no fn in checker/: 23; called: 41 names at 76 sites; imported: 0 names at 0 sites
+  called (sites): resolve_name(20) [closure field, assigned at checker.go 971], get_global_async_iterable_type(4) [closure field, assigned at checker.go 1101], contains_missing_type(4) [closure field, assigned at checker.go 1256], compare_symbols(3) [closure field, assigned at checker.go 918], get_global_async_iterable_iterator_type(2) [closure field, assigned at checker.go 1103], get_global_type(2), get_global_awaited_symbol(2) [closure field, assigned at checker.go 1077], get_global_es_symbol_type(2) [closure field, assigned at checker.go 1068], get_global_symbol(2), get_global_record_symbol(2) [closure field, assigned at checker.go 1080], get_global_disposable_type(2) [closure field, assigned at checker.go 1075], evaluate(2) [closure field, assigned at checker.go 937], get_global_async_iterator_type(1) [closure field, assigned at checker.go 1100], get_global_async_iterable_type_checked(1) [closure field, assigned at checker.go 1102], get_global_async_iterable_iterator_type_checked(1) [closure field, assigned at checker.go 1104], get_global_async_iterator_object_type(1) [closure field, assigned at checker.go 1105], get_global_async_generator_type(1) [closure field, assigned at checker.go 1106], get_global_iterator_yield_result_type(1) [closure field, assigned at checker.go 1107], get_global_iterator_return_result_type(1) [closure field, assigned at checker.go 1108], report_unreliable_worker(1), report_unmeasurable_worker(1), get_global_omit_symbol(1) [closure field, assigned at checker.go 1091], get_global_es_symbol_constructor_type_symbol_or_nil(1) [closure field, assigned at checker.go 1083], is_primitive_or_object_or_empty_type(1) [closure field, assigned at checker.go 1253], get_global_promise_type(1) [closure field, assigned at checker.go 1086], get_global_es_symbol_constructor_symbol_or_nil(1) [closure field, assigned at checker.go 1082], get_global_async_disposable_type(1) [closure field, assigned at checker.go 1076], get_global_import_attributes_type_checked(1) [closure field, assigned at checker.go 1072], get_global_awaited_symbol_or_nil(1) [closure field, assigned at checker.go 1078], get_global_promise_type_checked(1) [closure field, assigned at checker.go 1087], get_global_big_int_type(1) [closure field, assigned at checker.go 1069], get_global_type_alias_symbol(1), get_global_class_decorator_context_type(1) [closure field, assigned at checker.go 1110], get_global_class_method_decorator_context_type(1) [closure field, assigned at checker.go 1111], get_global_class_getter_decorator_context_type(1) [closure field, assigned at checker.go 1112], get_global_class_setter_decorator_context_type(1) [closure field, assigned at checker.go 1113], get_global_class_accessor_decorator_context_type(1) [closure field, assigned at checker.go 1114], get_global_class_field_decorator_context_type(1) [closure field, assigned at checker.go 1117], get_global_class_accessor_decorator_target_type(1) [closure field, assigned at checker.go 1115], get_global_class_accessor_decorator_result_type(1) [closure field, assigned at checker.go 1116], get_global_typed_property_descriptor_type(1) [closure field, assigned at checker.go 1109]
+  callers: c12_iteration_types.rs(13), c49_call_arguments_decorator_signatures.rs(9), nodebuilderimpl.rs(7), c25_entity_names.rs(5), c46_mark_references.rs(4), flow.rs(4), c11_check_variables_decorators.rs(4), relater.rs(3), jsx.rs(3), c39_declared_types_enums.rs(3), mapper.rs(2), c31_binding_patterns_widening.rs(2), c43_unions_intersections.rs(2), c10_check_enums_modules_imports.rs(2), c51_type_facts_awaited.rs(2), c36_properties_apparent_types.rs(2), c21_resolved_symbols_diagnostics.rs(2), c40_type_nodes_conditional_tuples.rs(1), c47_promised_mapped_template.rs(1), c38_type_nodes_references.rs(1), c24_external_modules.rs(1), c33_members_base_types_signatures.rs(1), symbolaccessibility.rs(1), c06_check_members_type_nodes.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+       908 NewChecker
+      1124 createFileIndexMap
+      1132 countGlobalSymbols
+      1142 Checker.reportUnreliableWorker
+      1149 Checker.reportUnmeasurableWorker
+      1157 Checker.getGlobalTypeResolver
+      1164 Checker.getGlobalTypeAliasResolver
+      1171 Checker.getGlobalValueSymbolResolver
+      1177 Checker.getGlobalTypeSymbolResolver
+      1183 Checker.getGlobalTypesResolver
+      1191 Checker.getGlobalTypeAliasSymbol
+      1208 Checker.GetTypeAliasTypeParameters
+      1216 Checker.getGlobalType
+      1237 getGlobalTypeDeclaration
+      1247 Checker.getGlobalSymbol
+      1252 Checker.initializeClosures
+      1265 Checker.initializeIterationResolvers
+      1302 Checker.initializeChecker
+      1392 Checker.mergeGlobalSymbol
+      1403 Checker.mergeModuleAugmentation
+      1458 Checker.addUndefinedToGlobalsOrErrorOnRedeclaration
+      1472 Checker.createNameResolver
+      1490 Checker.createNameResolverForSuggestion
+
+src/typecheck/checker/c14_expressions.rs   NO FILE
+  upstream: checker.go 7419-8405 (Checker.checkExpressionStatement .. Checker.checkImportCallExpression)
+  upstream functions: 45; with no fn in checker/: 45; called: 16 names at 88 sites; imported: 0 names at 0 sites
+  called (sites): check_expression(29), check_expression_cached(21), get_type_of_expression(16), check_expression_with_contextual_type(4), check_expression_ex(3), check_non_null_expression(3), get_context_free_type_of_expression(2), check_non_null_non_void_type(2), get_quick_type_of_expression(1), check_expression_cached_ex(1), check_array_literal(1), get_symbol_for_private_identifier_expression(1), check_non_null_type(1), check_super_expression(1), check_expression_statement(1), check_indexed_access_index_type(1)
+  callers: flow.rs(23), c08_check_statements.rs(13), jsx.rs(11), c28_types_of_symbols.rs(8), c11_check_variables_decorators.rs(6), c31_binding_patterns_widening.rs(4), c10_check_enums_modules_imports.rs(3), c33_members_base_types_signatures.rs(3), c23_alias_targets.rs(2), c38_type_nodes_references.rs(2), c05_check_source_file.rs(2), nodebuilderimpl.rs(2), c09_check_classes_interfaces.rs(1), c46_mark_references.rs(1), relater.rs(1), c26_exports_late_binding.rs(1), c15_calls.rs(1), symbolaccessibility.rs(1), c39_declared_types_enums.rs(1), c06_check_members_type_nodes.rs(1), c17_unary_meta_yield.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+      7419 Checker.checkExpressionStatement
+      7427 Checker.getTypeOfExpression
+      7451 Checker.getQuickTypeOfExpression
+      7477 Checker.getReturnTypeOfSingleNonGenericSignature
+      7485 Checker.getReturnTypeOfSingleNonGenericSignatureOfCallChain
+      7495 Checker.checkNonNullExpression
+      7499 Checker.checkNonNullType
+      7503 Checker.checkNonNullTypeWithReporter
+      7527 Checker.checkNonNullNonVoidType
+      7546 Checker.reportObjectPossiblyNullOrUndefinedError
+      7574 Checker.checkExpressionWithContextualType
+      7595 Checker.getContextNode
+      7603 Checker.checkExpressionCached
+      7607 Checker.checkExpressionCachedEx
+      7632 Checker.getContextFreeTypeOfExpression
+      7643 Checker.checkExpression
+      7647 Checker.checkExpressionEx
+      7663 Checker.checkConstEnumAccess
+      7689 Checker.instantiateTypeWithSingleGenericCallSignature
+      7761 Checker.getOuterInferenceTypeParameters
+      7774 Checker.getUniqueTypeParameters
+      7801 hasTypeParameterByName
+      7807 getUniqueTypeParameterName
+      7821 Checker.checkExpressionWorker
+      7927 Checker.checkPrivateIdentifierExpression
+      7936 Checker.getSymbolForPrivateIdentifierExpression
+      7944 Checker.checkSuperExpression
+      8054 Checker.isInConstructorArgumentInitializer
+      8066 Checker.checkTemplateExpression
+      8093 Checker.isTemplateLiteralContext
+      8098 Checker.isTemplateLiteralContextualType
+      8102 Checker.checkRegularExpressionLiteral
+      8111 Checker.checkArrayLiteral
+      8193 Checker.createArrayLiteralType
+      8207 isSpreadIntoCallOrNew
+      8212 Checker.checkQualifiedName
+      8223 Checker.checkIndexedAccess
+      8230 Checker.checkElementAccessChain
+      8236 Checker.checkElementAccessExpression
+      8269 Checker.isForInVariableForNumericPropertyNames
+      8289 Checker.getForInVariableSymbol
+      8306 Checker.hasNumericPropertyNames
+      8310 Checker.checkIndexedAccessIndexType
+      8347 Checker.getConstituentProperty
+      8357 Checker.checkImportCallExpression
+
+src/typecheck/checker/c16_function_expressions_collisions.rs   NO FILE
+  upstream: checker.go 10133-10705 (Checker.checkParenthesizedExpression .. Checker.checkClassNameCollisionWithObject)
+  upstream functions: 29; with no fn in checker/: 28; called: 6 names at 13 sites; imported: 0 names at 0 sites
+  called (sites): check_collisions_for_declaration_name(6), set_node_links_for_private_identifier_scope(3), get_first_transformable_static_class_element(1), check_function_expression_or_object_literal_method_deferred(1), check_class_expression_deferred(1), create_union_signature(1)
+  callers: c10_check_enums_modules_imports.rs(3), c06_check_members_type_nodes.rs(3), c05_check_source_file.rs(2), c09_check_classes_interfaces.rs(1), c46_mark_references.rs(1), c07_check_functions.rs(1), c11_check_variables_decorators.rs(1), c35_resolve_members.rs(1)
+  functions of this range that a file of checker/ already defines by name (the name may be another receiver's):
+     10171 Checker.checkClassExpressionExternalHelpers          c46_mark_references.rs
+  upstream functions with no fn in checker/ (line, name):
+     10133 Checker.checkParenthesizedExpression
+     10137 Checker.checkClassExpression
+     10144 Checker.getFirstTransformableStaticClassElement
+     10199 Checker.checkClassExpressionDeferred
+     10204 Checker.checkFunctionExpressionOrObjectLiteralMethod
+     10242 Checker.contextuallyCheckFunctionExpressionOrObjectLiteralMethod
+     10296 Checker.checkFunctionExpressionOrObjectLiteralMethodDeferred
+     10329 Checker.inferFromAnnotatedParametersAndReturn
+     10354 Checker.getContextualSignature
+     10385 Checker.createUnionSignature
+     10395 Checker.getContextualCallSignature
+     10404 Checker.getIntersectedSignatures
+     10423 Checker.isAritySmaller
+     10439 Checker.assignContextualParameterTypes
+     10485 Checker.assignNonContextualParameterTypes
+     10494 Checker.assignParameterType
+     10520 Checker.assignBindingElementTypes
+     10534 Checker.checkCollisionsForDeclarationName
+     10553 Checker.checkCollisionWithRequireExportsInGeneratedCode
+     10573 Checker.checkCollisionWithGlobalObjectInGeneratedCode
+     10589 Checker.needCollisionCheckForIdentifier
+     10617 Checker.setNodeLinksForPrivateIdentifierScope
+     10629 Checker.recordPotentialCollisionWithWeakMapSetInGeneratedCode
+     10638 Checker.checkWeakMapSetCollision
+     10648 Checker.checkCollisionWithGlobalPromiseInGeneratedCode
+     10664 Checker.recordPotentialCollisionWithReflectInGeneratedCode
+     10672 Checker.checkReflectCollision
+     10701 Checker.checkClassNameCollisionWithObject
+
+src/typecheck/checker/c18_identifiers_property_access_this.rs   NO FILE
+  upstream: checker.go 11132-12376 (Checker.checkIdentifier .. Checker.classDeclarationExtendsNull)
+  upstream functions: 53; with no fn in checker/: 49; called: 10 names at 13 sites; imported: 1 names at 1 sites
+  called (sites): get_type_of_property_in_base_class(3), get_flow_type_of_property(2), check_property_access_expression(1), get_contextual_this_parameter_type(1), is_node_within_class(1), lookup_symbol_for_private_identifier_declaration(1), is_method_access_for_call(1), get_private_identifier_property_of_type(1), check_property_accessibility(1), class_declaration_extends_null(1)
+  callers: c28_types_of_symbols.rs(4), c46_mark_references.rs(3), flow.rs(2), c09_check_classes_interfaces.rs(1), c31_binding_patterns_widening.rs(1), c11_check_variables_decorators.rs(1), c06_check_members_type_nodes.rs(1)
+  imported (files): is_in_ambient_or_type_node(1: c11_check_variables_decorators.rs)
+  functions of this range that a file of checker/ already defines by name (the name may be another receiver's):
+     11997 Checker.forEachProperty                              relater.rs
+     12011 Checker.getDeclaringClass                            relater.rs
+     12019 Checker.isValidOverrideOf                            relater.rs
+     12030 Checker.isPropertyInClassDerivedFrom                 relater.rs
+  upstream functions with no fn in checker/ (line, name):
+     11132 Checker.checkIdentifier
+     11292 Checker.isSameScopedBindingElement
+     11301 Checker.removeOptionalityFromDeclaredType
+     11309 Checker.parameterInitializerContainsUndefined
+     11328 Checker.isInAmbientOrTypeNode
+     11334 Checker.checkPropertyAccessExpression
+     11342 Checker.checkPropertyAccessChain
+     11348 Checker.checkPropertyAccessExpressionOrQualifiedName
+     11482 Checker.getFlowTypeOfAccessExpression
+     11528 Checker.getControlFlowContainer
+     11534 Checker.getFlowTypeOfProperty
+     11545 Checker.getTypeOfPropertyInBaseClass
+     11556 Checker.isMethodAccessForCall
+     11564 Checker.lookupSymbolForPrivateIdentifierDeclaration
+     11580 Checker.getPrivateIdentifierPropertyOfType
+     11584 Checker.checkPrivateIdentifierPropertyAccess
+     11620 Checker.reportNonexistentProperty
+     11683 Checker.getSuggestedLibForNonExistentProperty
+     11698 Checker.getSuggestedSymbolForNonexistentProperty
+     11717 Checker.isValidPropertyAccessForCompletions
+     11730 Checker.isPropertyAccessible
+     11744 Checker.containerSeemsToBeEmptyDomElement
+     11748 hasCommonDomTypeName
+     11756 Checker.checkAndReportErrorForExtendingInterface
+     11768 Checker.getEntityNameForExtendingInterface
+     11784 Checker.isUncalledFunctionReference
+     11800 Checker.checkPropertyNotUsedBeforeDeclaration
+     11822 Checker.isOptionalPropertyDeclaration
+     11826 Checker.isPropertyDeclaredInAncestorClass
+     11844 Checker.checkPropertyAccessibility
+     11848 Checker.checkPropertyAccessibilityEx
+     11877 Checker.checkPropertyAccessibilityAtLocation
+     11991 Checker.symbolHasNonMethodDeclaration
+     12040 Checker.isNodeUsedDuringClassInitialization
+     12051 Checker.isNodeWithinClass
+     12055 Checker.forEachEnclosingClass
+     12069 Checker.isClassDerivedFromDeclaringClasses
+     12078 Checker.getEnclosingClassFromThisParameter
+     12104 getThisParameterFromNodeContext
+     12112 Checker.getContextualThisParameterType
+     12168 Checker.checkThisExpression
+     12225 Checker.tryGetThisTypeAt
+     12229 Checker.TryGetThisTypeAtEx
+     12237 Checker.tryGetThisTypeAtEx
+     12279 Checker.getThisContainer
+     12326 Checker.isInParameterInitializerBeforeContainingFunction
+     12345 Checker.checkThisInStaticClassFieldInitializerInDecoratedClass
+     12354 Checker.checkThisBeforeSuper
+     12371 Checker.classDeclarationExtendsNull
+
+src/typecheck/checker/c19_assertions_binary_operators.rs   NO FILE
+  upstream: checker.go 12378-13233 (Checker.checkAssertion .. Checker.checkReferenceExpression)
+  upstream functions: 34; with no fn in checker/: 32; called: 4 names at 5 sites; imported: 0 names at 0 sites
+  called (sites): check_reference_expression(2), check_assertion_deferred(1), check_destructuring_assignment(1), is_type_equality_comparable_to(1)
+  callers: c08_check_statements.rs(4), c05_check_source_file.rs(1)
+  functions of this range that a file of checker/ already defines by name (the name may be another receiver's):
+     13208 Checker.getExactOptionalUnassignableProperties       relater.rs
+     13217 Checker.isExactOptionalPropertyMismatch              relater.rs
+  upstream functions with no fn in checker/ (line, name):
+     12378 Checker.checkAssertion
+     12406 Checker.checkAssertionDeferred
+     12422 Checker.checkBinaryExpression
+     12427 Checker.checkBinaryLikeExpression
+     12643 Checker.checkDestructuringAssignment
+     12676 Checker.checkObjectLiteralAssignment
+     12688 Checker.checkObjectLiteralDestructuringPropertyAssignment
+     12734 Checker.checkArrayLiteralAssignment
+     12754 Checker.checkArrayLiteralDestructuringElementAssignment
+     12795 Checker.checkReferenceAssignment
+     12809 Checker.reportOperatorError
+     12830 Checker.reportOperatorErrorUnless
+     12836 Checker.getBaseTypesIfUnrelated
+     12848 Checker.checkAssignmentOperator
+     12874 Checker.bothAreBigIntLike
+     12878 Checker.getSuggestedBooleanOperator
+     12890 Checker.checkArithmeticOperandType
+     12903 Checker.checkForDisallowedESSymbolOperand
+     12918 Checker.checkNaNEquality
+     12944 Checker.isGlobalNaN
+     12952 Checker.isTypeEqualityComparableTo
+     12956 Checker.checkTruthinessOfType
+     12977 Checker.getSyntacticTruthySemantics
+     13006 Checker.checkNullishCoalesceOperands
+     13027 Checker.checkNullishCoalesceOperandLeft
+     13039 Checker.getSyntacticNullishnessSemantics
+     13102 Checker.isSideEffectFree
+     13130 Checker.isIndirectCall
+     13138 Checker.checkInstanceOfExpression
+     13168 Checker.checkInExpression
+     13202 Checker.hasEmptyObjectIntersection
+     13221 Checker.checkReferenceExpression
+
+src/typecheck/checker/c30_type_keys.rs   NO FILE
+  upstream: checker.go 17471-17775 (CacheHashKey .. isUnconstrainedTypeParameter)
+  upstream functions: 30; with no fn in checker/: 30; called: 0 names at 0 sites; imported: 11 names at 22 sites
+  imported (files): CacheHashKey(6: c01_data.rs c02_program_checker.rs c37_instantiation.rs flow.rs relater.rs types.rs), get_type_list_key(5: c29_constraints.rs c33_members_base_types_signatures.rs c39_declared_types_enums.rs c40_type_nodes_conditional_tuples.rs c43_unions_intersections.rs), KeyBuilder(2: c37_instantiation.rs flow.rs), get_alias_key(2: c38_type_nodes_references.rs c43_unions_intersections.rs), get_type_instantiation_key(1: c37_instantiation.rs), get_tuple_key(1: c40_type_nodes_conditional_tuples.rs), get_relation_key(1: relater.rs), get_intersection_key(1: c43_unions_intersections.rs), get_union_key(1: c43_unions_intersections.rs), get_template_type_key(1: c47_promised_mapped_template.rs), get_type_alias_instantiation_key(1: c38_type_nodes_references.rs)
+  upstream functions with no fn in checker/ (line, name):
+     17473 CacheHashKey.IsZero
+     17483 keyBuilder.hash
+     17492 keyBuilder.spill
+     17497 keyBuilder.writeByte
+     17505 keyBuilder.writeString
+     17516 keyBuilder.writeUint32
+     17524 keyBuilder.writeUint64
+     17532 keyBuilder.writeInt
+     17536 keyBuilder.writeSymbol
+     17540 keyBuilder.writeType
+     17544 keyBuilder.writeTypes
+     17551 keyBuilder.writeAlias
+     17561 keyBuilder.writeGenericTypeReferences
+     17596 keyBuilder.writeNodeId
+     17600 keyBuilder.writeNode
+     17606 getTypeListKey
+     17612 getAliasKey
+     17618 getUnionKey
+     17642 getIntersectionKey
+     17653 getTupleKey
+     17676 getTypeAliasInstantiationKey
+     17680 getTypeInstantiationKey
+     17690 getIndexedAccessKey
+     17699 getTemplateTypeKey
+     17713 getConditionalTypeKey
+     17723 getRelationKey
+     17741 getNodeListKey
+     17750 isTypeReferenceWithGenericArguments
+     17756 isNonDeferredTypeReference
+     17761 isUnconstrainedTypeParameter
+
+src/typecheck/checker/c32_type_resolution.rs   NO FILE
+  upstream: checker.go 18861-18958 (Checker.pushTypeResolution .. Checker.reportCircularityError)
+  upstream functions: 5; with no fn in checker/: 5; called: 4 names at 27 sites; imported: 0 names at 0 sites
+  called (sites): push_type_resolution(11), pop_type_resolution(11), report_circularity_error(3), find_resolution_cycle_start_index(2)
+  callers: c31_binding_patterns_widening.rs(7), c28_types_of_symbols.rs(6), c27_resolve_alias.rs(3), c45_base_constraints_normalization.rs(2), c34_return_types.rs(2), c33_members_base_types_signatures.rs(2), c39_declared_types_enums.rs(2), c36_properties_apparent_types.rs(2), relater.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     18872 Checker.pushTypeResolution
+     18889 Checker.popTypeResolution
+     18897 Checker.findResolutionCycleStartIndex
+     18910 Checker.typeResolutionHasProperty
+     18936 Checker.reportCircularityError
+
+src/typecheck/checker/c41_new_types.rs   NO FILE
+  upstream: checker.go 25126-25394 (Checker.newType .. Checker.newIndexInfo)
+  upstream functions: 27; with no fn in checker/: 26; called: 18 names at 106 sites; imported: 0 names at 0 sites
+  called (sites): new_anonymous_type(13), set_structured_type_members(13), new_object_type(9), new_type_parameter(9), new_signature(9), new_literal_type(9), create_type_reference(8), new_index_info(8), try_create_type_reference(8), get_propagating_flags_of_types(4), create_type_reference_ex(4), create_deferred_type_reference(3), new_union_type(3), new_intersection_type(2), clone_type_reference(1), new_template_literal_type(1), new_unique_es_symbol_type(1), new_intrinsic_type(1)
+  callers: c35_resolve_members.rs(13), c33_members_base_types_signatures.rs(12), c49_call_arguments_decorator_signatures.rs(10), c40_type_nodes_conditional_tuples.rs(8), c31_binding_patterns_widening.rs(8), c38_type_nodes_references.rs(8), c43_unions_intersections.rs(7), c42_literal_types.rs(7), nodebuilderimpl.rs(6), jsx.rs(5), c37_instantiation.rs(4), c28_types_of_symbols.rs(3), c39_declared_types_enums.rs(3), relater.rs(2), c29_constraints.rs(2), c24_external_modules.rs(2), c09_check_classes_interfaces.rs(1), c47_promised_mapped_template.rs(1), c45_base_constraints_normalization.rs(1), flow.rs(1), c10_check_enums_modules_imports.rs(1), c20_object_literals_spread.rs(1)
+  functions of this range that a file of checker/ already defines by name (the name may be another receiver's):
+     25126 Checker.newType                                      c02_program_checker.rs
+  upstream functions with no fn in checker/ (line, name):
+     25140 Checker.newIntrinsicType
+     25144 Checker.newIntrinsicTypeEx
+     25150 Checker.createWideningType
+     25159 Checker.createUnknownUnionType
+     25166 Checker.newLiteralType
+     25178 Checker.newUniqueESSymbolType
+     25186 Checker.newObjectType
+     25213 Checker.newAnonymousType
+     25219 Checker.tryCreateTypeReference
+     25226 Checker.createTypeReference
+     25230 Checker.createTypeReferenceEx
+     25244 Checker.createDeferredTypeReference
+     25260 Checker.cloneTypeReference
+     25268 Checker.setStructuredTypeMembers
+     25291 Checker.newTypeParameter
+     25301 Checker.getPropagatingFlagsOfTypes
+     25311 Checker.newUnionType
+     25317 Checker.newIntersectionType
+     25323 Checker.newIndexedAccessType
+     25331 Checker.newIndexType
+     25338 Checker.newTemplateLiteralType
+     25345 Checker.newStringMappingType
+     25353 Checker.newConditionalType
+     25363 Checker.newSubstitutionType
+     25370 Checker.newSignature
+     25386 Checker.newIndexInfo
+
+src/typecheck/checker/c44_index_indexed_access.rs   NO FILE
+  upstream: checker.go 26803-27549 (Checker.getIndexType .. Checker.getOrCreateSubstitutionType)
+  upstream functions: 38; with no fn in checker/: 38; called: 19 names at 79 sites; imported: 1 names at 1 sites
+  called (sites): get_indexed_access_type(13), check_computed_property_name(13), get_indexed_access_type_or_undefined(9), get_index_type(8), get_literal_type_from_property_name(8), get_literal_type_from_property(4), get_indexed_access_type_ex(3), is_no_infer_type(3), get_substitution_type(3), get_extract_string_type(2), get_no_infer_type(2), get_property_name_from_index(2), get_index_type_ex(2), get_substitution_intersection(2), get_declaring_constructor(1), get_suggestion_for_nonexistent_property(1), should_defer_index_type(1), get_suggested_type_for_nonexistent_string_literal_type(1), get_index_type_for_mapped_type(1)
+  callers: relater.rs(22), c31_binding_patterns_widening.rs(7), c37_instantiation.rs(6), jsx.rs(6), c33_members_base_types_signatures.rs(6), c38_type_nodes_references.rs(4), c28_types_of_symbols.rs(3), c45_base_constraints_normalization.rs(3), flow.rs(3), c07_check_functions.rs(3), c11_check_variables_decorators.rs(3), c40_type_nodes_conditional_tuples.rs(2), c29_constraints.rs(2), c08_check_statements.rs(2), c49_call_arguments_decorator_signatures.rs(2), c09_check_classes_interfaces.rs(1), c26_exports_late_binding.rs(1), c51_type_facts_awaited.rs(1), c06_check_members_type_nodes.rs(1), nodebuilderimpl.rs(1)
+  imported (files): is_invalid_computed_property_name(1: c46_mark_references.rs)
+  upstream functions with no fn in checker/ (line, name):
+     26803 Checker.getIndexType
+     26807 Checker.getIndexTypeEx
+     26832 Checker.getExtractStringType
+     26840 Checker.getLiteralTypeFromProperties
+     26869 Checker.getLiteralTypeFromProperty
+     26892 Checker.getLiteralTypeFromPropertyName
+     26912 Checker.isKeyTypeIncluded
+     26919 isInvalidComputedPropertyName
+     26925 Checker.checkComputedPropertyName
+     26945 Checker.isNoInferType
+     26950 Checker.getSubstitutionIntersection
+     26957 Checker.shouldDeferIndexType
+     26965 Checker.getMappedTypeNameTypeKind
+     26976 Checker.getIndexTypeForGenericType
+     26994 Checker.getIndexTypeForMappedType
+     27046 Checker.getIndexedAccessType
+     27050 Checker.getIndexedAccessTypeEx
+     27058 Checker.getIndexedAccessTypeOrUndefined
+     27124 Checker.getPropertyTypeForIndexType
+     27338 Checker.typeHasStaticProperty
+     27346 Checker.getSuggestionForNonexistentProperty
+     27354 Checker.getSuggestionForNonexistentIndexSignature
+     27375 Checker.getSuggestedTypeForNonexistentStringLiteralType
+     27380 getIndexNodeForAccessExpression
+     27392 Checker.errorIfWritingToReadonlyIndex
+     27398 Checker.isSelfTypeAccess
+     27402 Checker.isAssignmentToReadonlyEntity
+     27451 Checker.isThisPropertyAccessInConstructor
+     27461 Checker.isAutoTypedProperty
+     27468 Checker.getDeclaringConstructor
+     27478 Checker.getPropertyNameFromIndex
+     27488 Checker.isStringIndexSignatureOnlyTypeWorker
+     27493 Checker.shouldDeferIndexedAccessType
+     27504 indexTypeLessThan
+     27517 Checker.getNoInferType
+     27524 Checker.isNoInferTargetType
+     27534 Checker.getSubstitutionType
+     27541 Checker.getOrCreateSubstitutionType
+
+src/typecheck/checker/c50_contextual_properties_inference_context.rs   NO FILE
+  upstream: checker.go 30674-31095 (Checker.getTypeOfPropertyOfContextualType .. Checker.getInferenceContext)
+  upstream functions: 28; with no fn in checker/: 25; called: 8 names at 15 sites; imported: 1 names at 1 sites
+  called (sites): is_context_sensitive(3), get_apparent_type_of_contextual_type(3), push_contextual_type(2), pop_contextual_type(2), get_type_of_property_of_contextual_type(2), find_contextual_node(1), is_possibly_discriminant_value(1), get_inference_context(1)
+  callers: jsx.rs(9), relater.rs(5), c39_declared_types_enums.rs(1)
+  imported (files): ObjectLiteralDiscriminator(1: jsx.rs)
+  functions of this range that a file of checker/ already defines by name (the name may be another receiver's):
+     30842 ObjectLiteralDiscriminator.len                       mapper.rs, relater.rs
+     30846 ObjectLiteralDiscriminator.name                      relater.rs
+     30853 ObjectLiteralDiscriminator.matches                   relater.rs
+  upstream functions with no fn in checker/ (line, name):
+     30674 Checker.getTypeOfPropertyOfContextualType
+     30678 Checker.getTypeOfPropertyOfContextualTypeEx
+     30730 Checker.getIndexedMappedTypeSubstitutedTypeOfContextualType
+     30747 Checker.isExcludedMappedPropertyName
+     30761 Checker.getTypeOfConcretePropertyOfContextualType
+     30769 Checker.getTypeFromIndexInfosOfContextualType
+     30786 Checker.isCircularMappedProperty
+     30794 Checker.appendContextualPropertyTypeConstituent
+     30809 Checker.getApparentTypeOfContextualType
+     30878 Checker.discriminateContextualTypeByObjectMembers
+     30908 Checker.getMatchingUnionConstituentForObjectLiteral
+     30925 Checker.isPossiblyDiscriminantValue
+     30940 Checker.instantiateContextualType
+     30978 Checker.instantiateInstantiableTypes
+     30995 Checker.pushCachedContextualType
+     30999 Checker.pushContextualType
+     31003 Checker.popContextualType
+     31009 Checker.findContextualNode
+     31020 Checker.isContextSensitive
+     31054 Checker.isContextSensitiveFunctionLikeDeclaration
+     31058 Checker.hasContextSensitiveReturnExpression
+     31074 Checker.hasContextSensitiveYieldExpression
+     31078 Checker.pushInferenceContext
+     31082 Checker.popInferenceContext
+     31088 Checker.getInferenceContext
+
+src/typecheck/checker/c52_symbol_at_location.rs   NO FILE
+  upstream: checker.go 31704-32296 (Checker.GetSymbolAtLocation .. Checker.GetAliasedSymbol)
+  upstream functions: 16; with no fn in checker/: 16; called: 5 names at 16 sites; imported: 0 names at 0 sites
+  called (sites): get_symbol_at_location(8), get_type_of_node(4), get_applicable_index_infos(2), contains_arguments_reference(1), get_applicable_index_symbol(1)
+  callers: c08_check_statements.rs(7), c49_call_arguments_decorator_signatures.rs(4), c09_check_classes_interfaces.rs(2), jsx.rs(2), jsdoc.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     31704 Checker.GetSymbolAtLocation
+     31717 Checker.getSymbolAtLocation
+     31887 Checker.getIndexSignaturesAtLocation
+     31903 Checker.getSymbolOfNameOrPropertyAccessExpression
+     32038 Checker.isThisPropertyAndThisTyped
+     32053 Checker.getTypeOfNode
+     32165 Checker.getThisTypeOfObjectLiteralFromContextualType
+     32182 Checker.getThisTypeFromContextualType
+     32198 Checker.getThisTypeArgument
+     32205 Checker.getApplicableIndexInfos
+     32209 Checker.getApplicableIndexSymbol
+     32238 Checker.getRegularTypeOfExpression
+     32245 Checker.containsArgumentsReference
+     32282 Checker.GetTypeAtLocation
+     32286 Checker.GetEmitResolver
+     32294 Checker.GetAliasedSymbol
+
+src/typecheck/checker/emitresolver.rs   NO FILE
+  upstream: emitresolver.go, whole file, 1330 lines
+  upstream functions: 65; with no fn in checker/: 57; called: 1 names at 1 sites; imported: 2 names at 3 sites
+  called (sites): is_optional_parameter(1)
+  callers: nodebuilderimpl.rs(1)
+  imported (files): EmitResolver(2: nodebuilderimpl.rs symbolaccessibility.rs), is_const_enum_or_const_enum_only_module(1: c46_mark_references.rs)
+  functions of this range that a file of checker/ already defines by name (the name may be another receiver's):
+        53 EmitResolver.GetJsxFactoryEntity                     jsx.rs
+        59 EmitResolver.GetJsxFragmentFactoryEntity             jsx.rs
+        89 EmitResolver.GetEnumMemberValue                      c39_declared_types_enums.rs
+       681 EmitResolver.isSymbolAccessible                      symbolaccessibility.rs
+       685 EmitResolver.IsSymbolAccessible                      symbolaccessibility.rs
+       832 EmitResolver.GetExternalModuleFileFromDeclaration    c24_external_modules.rs
+      1151 EmitResolver.GetEffectiveDeclarationFlags            c07_check_functions.rs
+      1158 EmitResolver.GetResolutionModeOverride               c06_check_members_type_nodes.rs
+  upstream functions with no fn in checker/ (line, name):
+        45 newEmitResolver
+        65 EmitResolver.IsOptionalParameter
+        71 EmitResolver.IsLateBound
+       104 EmitResolver.IsDeclarationVisible
+       111 EmitResolver.isDeclarationVisible
+       131 EmitResolver.determineIfDeclarationIsVisible
+       236 EmitResolver.PrecalculateDeclarationEmitVisibility
+       249 isCommonJSModuleExports
+       260 EmitResolver.aliasMarkingVisitorWorker
+       278 EmitResolver.markLinkedAliases
+       311 getMeaningOfEntityNameReference
+       334 EmitResolver.IsEntityNameVisible
+       340 EmitResolver.isEntityNameVisible
+       382 noopAddVisibleAlias
+       384 EmitResolver.hasVisibleDeclarations
+       467 EmitResolver.IsImplementationOfOverload
+       508 EmitResolver.IsImportRequiredByAugmentation
+       544 EmitResolver.IsDefinitelyReferenceToGlobalSymbolObject
+       568 EmitResolver.RequiresAddingImplicitUndefined
+       577 EmitResolver.RequiresAddingImplicitUndefinedUnsafe
+       585 EmitResolver.requiresAddingImplicitUndefined
+       605 EmitResolver.requiresAddingImplicitUndefinedWorker
+       609 EmitResolver.declaredParameterTypeContainsUndefined
+       622 EmitResolver.isOptionalUninitializedParameterProperty
+       629 EmitResolver.isRequiredInitializedParameter
+       639 EmitResolver.isOptionalParameter
+       643 EmitResolver.IsLiteralConstDeclaration
+       660 EmitResolver.IsExpandoFunctionDeclarationUnsafe
+       675 EmitResolver.IsExpandoFunctionDeclaration
+       693 isConstEnumOrConstEnumOnlyModule
+       697 EmitResolver.IsReferencedAliasDeclaration
+       723 EmitResolver.IsValueAliasDeclaration
+       735 EmitResolver.isValueAliasDeclarationWorker
+       764 EmitResolver.isAliasResolvedToValue
+       789 EmitResolver.IsTopLevelValueImportEqualsWithEntityName
+       808 EmitResolver.MarkLinkedReferencesRecursively
+       842 EmitResolver.getReferenceResolver
+       858 EmitResolver.GetReferencedExportContainer
+       869 EmitResolver.SetReferencedImportDeclaration
+       875 EmitResolver.GetReferencedImportDeclaration
+       889 EmitResolver.GetReferencedValueDeclaration
+       900 EmitResolver.GetReferencedValueDeclarationUnsafe
+       904 EmitResolver.GetReferencedValueDeclarations
+       916 EmitResolver.IsNameResolvable
+       924 EmitResolver.GetElementAccessExpressionName
+       935 EmitResolver.GetReferencedMemberValueDeclaration
+       950 EmitResolver.CreateReturnTypeOfSignatureDeclaration
+       962 EmitResolver.CreateTypeParametersOfSignatureDeclaration
+       974 EmitResolver.CreateTypeOfDeclaration
+       988 EmitResolver.CreateLiteralConstValue
+      1049 EmitResolver.CreateTypeOfExpression
+      1061 EmitResolver.CreateLateBoundIndexSignatures
+      1165 EmitResolver.GetConstantValue
+      1172 EmitResolver.GetTypeReferenceSerializationKind
+      1264 EmitResolver.GetPropertiesOfContainerFunction
+      1279 EmitResolver.TryJSTypeNodeToTypeNode
+      1299 EmitResolver.IsThisPropertyAssignmentDeclarationRedundant
+
+src/typecheck/checker/grammarchecks.rs   NO FILE
+  upstream: grammarchecks.go, whole file, 2185 lines
+  upstream functions: 76; with no fn in checker/: 76; called: 35 names at 113 sites; imported: 1 names at 1 sites
+  called (sites): grammar_error_on_node(31), check_grammar_statement_in_ambient_context(14), check_grammar_modifiers(13), grammar_error_on_first_token(12), check_grammar_module_element_context(5), grammar_error_at_pos(3), check_grammar_computed_property_name(3), container_allows_block_scoped_variable(2), check_grammar_variable_declaration_list(2), check_grammar_for_in_or_for_of_statement(2), check_grammar_function_like_declaration(2), check_grammar_class_like_declaration(1), is_non_bindable_dynamic_name(1), check_grammar_interface_declaration(1), check_grammar_jsx_expression(1), check_grammar_jsx_element(1), check_grammar_for_generator(1), check_grammar_source_file(1), check_grammar_for_disallowed_block_scoped_variable_statement(1), check_grammar_variable_declaration(1), check_grammar_decorator(1), check_grammar_import_clause(1), check_grammar_export_declaration(1), check_grammar_break_or_continue_statement(1), check_grammar_binding_element(1), check_grammar_property(1), check_grammar_index_signature(1), check_grammar_method(1), check_grammar_constructor_type_parameters(1), check_grammar_constructor_type_annotation(1), check_grammar_accessor(1), check_grammar_type_arguments(1), check_grammar_type_operator_node(1), check_grammar_mapped_type(1), check_grammar_await_or_await_using(1)
+  callers: c10_check_enums_modules_imports.rs(30), c08_check_statements.rs(28), c06_check_members_type_nodes.rs(28), c09_check_classes_interfaces.rs(8), c05_check_source_file.rs(7), c11_check_variables_decorators.rs(5), c13_check_aliases_unused.rs(3), jsx.rs(2), c07_check_functions.rs(1), c17_unary_meta_yield.rs(1)
+  imported (files): get_identifier_from_entity_name_expression(1: c09_check_classes_interfaces.rs)
+  upstream functions with no fn in checker/ (line, name):
+        19 Checker.grammarErrorOnFirstToken
+        29 Checker.grammarErrorAtPos
+        38 Checker.grammarErrorOnNode
+        47 Checker.grammarErrorOnNodeSkippedOnNoEmit
+        58 getIdentifierFromEntityNameExpression
+        69 Checker.checkGrammarRegularExpressionLiteral
+       100 Checker.checkGrammarPrivateIdentifierExpression
+       120 Checker.checkGrammarMappedType
+       127 Checker.checkGrammarDecorator
+       199 Checker.checkGrammarExportDeclaration
+       206 Checker.checkGrammarModuleElementContext
+       214 Checker.checkGrammarModifiers
+       571 Checker.reportObviousModifierErrors
+       579 Checker.findFirstModifierExcept
+       587 Checker.findFirstIllegalModifier
+       642 Checker.reportObviousDecoratorErrors
+       650 Checker.findFirstIllegalDecorator
+       659 Checker.checkGrammarAsyncModifier
+       671 Checker.checkGrammarForDisallowedTrailingComma
+       678 Checker.checkGrammarTypeParameterList
+       687 Checker.checkGrammarParameterList
+       722 Checker.checkGrammarForUseStrictSimpleParameterList
+       758 Checker.checkGrammarFunctionLikeDeclaration
+       767 Checker.checkGrammarClassLikeDeclaration
+       772 Checker.checkGrammarArrowFunction
+       796 Checker.checkGrammarIndexSignatureParameters
+       840 Checker.checkGrammarIndexSignature
+       845 Checker.checkGrammarForAtLeastOneTypeArgument
+       855 Checker.checkGrammarTypeArguments
+       859 Checker.checkGrammarTaggedTemplateChain
+       866 Checker.checkGrammarHeritageClause
+       885 Checker.checkGrammarExpressionWithTypeArguments
+       892 Checker.checkGrammarClassDeclarationHeritageClauses
+       935 Checker.checkGrammarInterfaceDeclaration
+       961 Checker.checkGrammarComputedPropertyName
+       974 Checker.checkGrammarForGenerator
+       990 Checker.checkGrammarForInvalidQuestionMark
+       994 Checker.checkGrammarForInvalidExclamationToken
+       998 Checker.checkGrammarObjectLiteralExpression
+      1138 Checker.checkGrammarJsxElement
+      1162 Checker.checkGrammarJsxName
+      1174 Checker.checkGrammarJsxExpression
+      1182 Checker.checkGrammarForInOrForOfStatement
+      1289 Checker.checkGrammarAccessor
+      1345 Checker.doesAccessorHaveCorrectParameterCount
+      1351 Checker.checkGrammarTypeOperatorNode
+      1391 Checker.checkGrammarForInvalidDynamicName
+      1410 Checker.isNonBindableDynamicName
+      1414 Checker.checkGrammarMethod
+      1462 Checker.checkGrammarBreakOrContinueStatement
+      1518 Checker.checkGrammarBindingElement
+      1539 Checker.checkGrammarVariableDeclaration
+      1596 Checker.checkGrammarForEsModuleMarkerInBindingName
+      1611 Checker.checkGrammarNameInLetOrConstDeclarations
+      1628 Checker.checkGrammarVariableDeclarationList
+      1658 Checker.checkGrammarAwaitOrAwaitUsing
+      1759 Checker.checkGrammarYieldExpression
+      1772 Checker.checkGrammarForDisallowedBlockScopedVariableStatement
+      1796 Checker.containerAllowsBlockScopedVariable
+      1813 Checker.checkGrammarMetaProperty
+      1841 Checker.checkGrammarConstructorTypeParameters
+      1856 Checker.checkGrammarConstructorTypeAnnotation
+      1864 Checker.checkGrammarProperty
+      1925 Checker.checkAmbientInitializer
+      1960 isInitializerStringOrNumberLiteralExpression
+      1965 isInitializerBigIntLiteralExpression
+      1978 Checker.isInitializerSimpleLiteralEnumReference
+      1994 Checker.checkGrammarTopLevelElementForRequiredDeclareModifier
+      2014 Checker.checkGrammarTopLevelElementsForRequiredDeclareModifier
+      2025 Checker.checkGrammarSourceFile
+      2029 Checker.checkGrammarStatementInAmbientContext
+      2059 Checker.checkGrammarNumericLiteral
+      2087 Checker.checkGrammarBigIntLiteral
+      2100 Checker.checkGrammarImportClause
+      2123 Checker.checkGrammarTypeOnlyNamedImportsOrExports
+      2144 Checker.checkGrammarImportCallExpression
+
+src/typecheck/checker/inference.rs   NO FILE
+  upstream: inference.go, whole file, 1684 lines
+  upstream functions: 77; with no fn in checker/: 76; called: 11 names at 16 sites; imported: 1 names at 1 sites
+  called (sites): infer_types(4), new_inference_context(2), get_inferred_types(2), get_type_of_reverse_mapped_symbol(1), infer_type_for_homomorphic_mapped_type(1), infer_from_intra_expression_sites(1), get_inferred_type(1), add_intra_expression_inference_site(1), resolve_reverse_mapped_type_members(1), apply_to_parameter_types(1), apply_to_return_types(1)
+  callers: c33_members_base_types_signatures.rs(7), jsx.rs(3), mapper.rs(2), relater.rs(2), c28_types_of_symbols.rs(1), c37_instantiation.rs(1)
+  imported (files): clear_cached_inferences(1: mapper.rs)
+  functions of this range that a file of checker/ already defines by name (the name may be another receiver's):
+      1658 hasTypeParameterDefault                              c36_properties_apparent_types.rs
+  upstream functions with no fn in checker/ (line, name):
+        32 Checker.getInferenceState
+        41 Checker.putInferenceState
+        53 Checker.inferTypes
+        65 Checker.inferFromTypes
+       284 Checker.inferFromTypeArguments
+       294 Checker.inferWithPriority
+       301 Checker.inferFromContravariantTypesWithPriority
+       308 Checker.inferFromContravariantTypes
+       314 Checker.inferFromContravariantTypesIfStrictFunctionTypes
+       335 Checker.invokeOnce
+       370 Checker.inferFromMatchingTypes
+       410 compareTypesAndDepth
+       423 getTypeDepth
+       440 getTypeListDepth
+       448 Checker.inferToMultipleTypes
+       532 getSingleTypeVariableFromIntersectionTypes
+       547 Checker.inferToMultipleTypesWithPriority
+       554 Checker.inferToConditionalType
+       566 Checker.inferToTemplateLiteralType
+       687 Checker.inferFromGenericMappedTypes
+       699 Checker.inferFromObjectTypes
+       828 Checker.inferFromProperties
+       838 Checker.inferFromSignatures
+       853 Checker.inferFromSignature
+       868 Checker.applyToParameterTypes
+       896 Checker.applyToReturnTypes
+       911 Checker.inferFromIndexTypes
+       948 Checker.inferToMappedType
+      1004 Checker.inferTypeForHomomorphicMappedType
+      1014 Checker.createReverseMappedType
+      1060 Checker.isPartiallyInferableType
+      1066 Checker.inferReverseMappedType
+      1091 Checker.inferReverseMappedTypeWorker
+      1099 Checker.resolveReverseMappedTypeMembers
+      1145 Checker.getTypeOfReverseMappedSymbol
+      1158 Checker.getLimitedConstraint
+      1178 Checker.replaceIndexedAccess
+      1185 Checker.typesDefinitelyUnrelated
+      1195 tupleTypesDefinitelyUnrelated
+      1202 Checker.isTupleTypeStructureMatching
+      1214 Checker.isTypeOrBaseIdenticalTo
+      1223 Checker.isTypeCloselyMatchedBy
+      1229 Checker.createEmptyObjectTypeFromStringLiteral
+      1251 Checker.newInferenceContext
+      1258 Checker.cloneInferenceContext
+      1265 Checker.cloneInferredPartOfContext
+      1273 Checker.newInferenceContextWorker
+      1285 Checker.addIntraExpressionInferenceSite
+      1302 Checker.inferFromIntraExpressionSites
+      1317 Checker.getInferredType
+      1406 Checker.getInferredTypes
+      1414 Checker.getMapperFromContext
+      1423 Checker.createOuterReturnMapper
+      1434 Checker.getCovariantInference
+      1463 Checker.getContravariantInference
+      1470 Checker.unionObjectAndArrayLiteralCandidates
+      1482 Checker.hasPrimitiveConstraint
+      1493 Checker.isTypeParameterAtTopLevel
+      1501 Checker.isTypeParameterAtTopLevelInReturnType
+      1509 Checker.getTypeFromInference
+      1519 getInferenceInfoForType
+      1530 Checker.getCommonSupertype
+      1557 Checker.getSingleCommonSupertype
+      1568 Checker.findLeftmostType
+      1579 Checker.getCommonSubtype
+      1589 Checker.getCombinedTypeFlags
+      1601 Checker.literalTypesWithSameBaseType
+      1617 Checker.isFromInferenceBlockedSource
+      1621 Checker.isSkipDirectInferenceNode
+      1625 newInferenceInfo
+      1629 cloneInferenceInfo
+      1642 clearCachedInferences
+      1650 hasInferenceCandidates
+      1654 hasInferenceCandidatesOrDefault
+      1669 hasOverlappingInferences
+      1678 Checker.mergeInferences
+
+src/typecheck/checker/utilities.rs   NO FILE
+  upstream: utilities.go, whole file, 1868 lines
+  upstream functions: 150; with no fn in checker/: 145; called: 6 names at 57 sites; imported: 63 names at 129 sites
+  called (sites): new_diagnostic_for_node(28), is_constant_variable(7), new_diagnostic_chain_for_node(7), is_parameter_or_mutable_local_variable(5), is_canceled(5), sort_symbols(5)
+  callers: flow.rs(11), c13_check_aliases_unused.rs(11), c24_external_modules.rs(5), c05_check_source_file.rs(5), c36_properties_apparent_types.rs(4), c09_check_classes_interfaces.rs(3), relater.rs(3), jsx.rs(3), c12_iteration_types.rs(2), c22_symbols_merge.rs(2), c51_type_facts_awaited.rs(2), symbolaccessibility.rs(2), c45_base_constraints_normalization.rs(1), c33_members_base_types_signatures.rs(1), c39_declared_types_enums.rs(1), nodebuilderimpl.rs(1)
+  imported (files): is_type_any(11: c12_iteration_types.rs c28_types_of_symbols.rs c29_constraints.rs c31_binding_patterns_widening.rs c46_mark_references.rs c47_promised_mapped_template.rs c51_type_facts_awaited.rs flow.rs jsx.rs nodebuilderimpl.rs relater.rs), has_dot_dot_dot_token(7: c06_check_members_type_nodes.rs c11_check_variables_decorators.rs c13_check_aliases_unused.rs c28_types_of_symbols.rs c31_binding_patterns_widening.rs flow.rs relater.rs), is_optional_declaration(7: c06_check_members_type_nodes.rs c07_check_functions.rs c13_check_aliases_unused.rs c28_types_of_symbols.rs c31_binding_patterns_widening.rs c33_members_base_types_signatures.rs nodebuilderimpl.rs), is_type_usable_as_property_name(7: c11_check_variables_decorators.rs c26_exports_late_binding.rs c28_types_of_symbols.rs c31_binding_patterns_widening.rs c33_members_base_types_signatures.rs flow.rs relater.rs), get_declaration_modifier_flags_from_symbol(7: c09_check_classes_interfaces.rs c20_object_literals_spread.rs c31_binding_patterns_widening.rs c36_properties_apparent_types.rs c45_base_constraints_normalization.rs nodebuilderimpl.rs relater.rs), get_property_name_from_type(6: c11_check_variables_decorators.rs c26_exports_late_binding.rs c28_types_of_symbols.rs c31_binding_patterns_widening.rs flow.rs relater.rs), is_object_literal_type(6: c28_types_of_symbols.rs c31_binding_patterns_widening.rs c34_return_types.rs c36_properties_apparent_types.rs c45_base_constraints_normalization.rs relater.rs), is_late_bound_name(4: c33_members_base_types_signatures.rs c36_properties_apparent_types.rs nodebuilderimpl.rs relater.rs), is_numeric_literal_name(4: c33_members_base_types_signatures.rs c39_declared_types_enums.rs nodebuilderimpl.rs relater.rs), entity_name_to_string(3: c25_entity_names.rs jsdoc.rs jsx.rs), is_empty_array_literal(2: c28_types_of_symbols.rs flow.rs), is_shorthand_ambient_module_symbol(2: c23_alias_targets.rs c28_types_of_symbols.rs), is_node_descendant_of(2: c37_instantiation.rs c38_type_nodes_references.rs), is_this_type_parameter(2: mapper.rs nodebuilderimpl.rs), AssignmentKind(2: c46_mark_references.rs flow.rs), get_assignment_target_kind(2: c46_mark_references.rs flow.rs), is_jsx_intrinsic_tag_name(2: c46_mark_references.rs jsx.rs), is_private_within_ambient(2: c07_check_functions.rs c31_binding_patterns_widening.rs), is_static_private_identifier_property(2: c33_members_base_types_signatures.rs relater.rs), has_export_assignment_symbol(2: c10_check_enums_modules_imports.rs c23_alias_targets.rs), is_type_alias(2: c38_type_nodes_references.rs c39_declared_types_enums.rs), get_enclosing_container(2: c07_check_functions.rs c10_check_enums_modules_imports.rs), get_declarations_of_kind(2: c06_check_members_type_nodes.rs symbolaccessibility.rs), is_reserved_member_name(2: c36_properties_apparent_types.rs nodebuilderimpl.rs), is_declaration_readonly(1: c28_types_of_symbols.rs), is_right_side_of_access_expression(1: c28_types_of_symbols.rs), has_override_modifier(1: c09_check_classes_interfaces.rs), is_exclamation_token(1: c09_check_classes_interfaces.rs), is_in_type_query(1: c46_mark_references.rs), walk_up_outer_expressions(1: c46_mark_references.rs), has_type(1: relater.rs), is_object_or_array_literal_type(1: relater.rs), is_valid_big_int_string(1: relater.rs), is_valid_number_string(1: relater.rs), find_in_map(1: c23_alias_targets.rs), get_external_module_require_argument(1: c23_alias_targets.rs), is_syntactic_default(1: c23_alias_targets.rs), compare_types(1: c43_unions_intersections.rs), get_members_of_declaration(1: c26_exports_late_binding.rs), is_const_type_reference(1: c38_type_nodes_references.rs), is_valid_es_symbol_declaration(1: c38_type_nodes_references.rs), get_binding_element_property_name(1: flow.rs), has_only_expression_initializer(1: flow.rs), is_call_chain(1: flow.rs), is_in_compound_like_assignment(1: flow.rs), is_non_null_access(1: flow.rs), is_side_effect_import(1: c24_external_modules.rs), get_set_accessor_value_parameter(1: c34_return_types.rs), is_top_level_in_external_module_augmentation(1: c10_check_enums_modules_imports.rs), has_readonly_modifier(1: c33_members_base_types_signatures.rs), is_known_symbol(1: c33_members_base_types_signatures.rs), can_have_locals(1: symbolaccessibility.rs), all_declarations_in_same_source_file(1: c13_check_aliases_unused.rs), get_selected_modifier_flags(1: c13_check_aliases_unused.rs), range_of_type_parameters(1: c13_check_aliases_unused.rs), get_containing_function_or_class_static_block(1: c08_check_statements.rs), is_type_assertion(1: c08_check_statements.rs), is_super_call(1: c06_check_members_type_nodes.rs), contains_non_missing_undefined_type(1: nodebuilderimpl.rs), is_private_identifier_symbol(1: nodebuilderimpl.rs), pseudo_big_int_to_string(1: nodebuilderimpl.rs), get_alias_declaration_from_name(1: c25_entity_names.rs), get_containing_qualified_name_node(1: c25_entity_names.rs)
+  functions of this range that a file of checker/ already defines by name (the name may be another receiver's):
+       334 declarationBelongsToPrivateAmbientMember             c31_binding_patterns_widening.rs
+       849 orderedSet.add                                       c38_type_nodes_references.rs
+      1696 ValueToString                                        printer.rs
+      1786 CreateModuleNotFoundChain                            c24_external_modules.rs
+      1822 CreateModeMismatchDetails                            c24_external_modules.rs
+  upstream functions with no fn in checker/ (line, name):
+        22 NewDiagnosticForNode
+        32 NewDiagnosticChainForNode
+        39 findInMap
+        48 tokenIsIdentifierOrKeyword
+        52 tokenIsIdentifierOrKeywordOrGreaterThan
+        56 hasOverrideModifier
+        60 hasAsyncModifier
+        64 getSelectedModifierFlags
+        68 hasReadonlyModifier
+        72 isStaticPrivateIdentifierProperty
+        76 isEmptyObjectLiteral
+        90 getAssignmentTargetKind
+       110 isDeleteTarget
+       118 isInCompoundLikeAssignment
+       123 isCompoundLikeAssignment
+       128 isConstTypeReference
+       134 isConstTypeReferenceName
+       144 isExportAssignmentExpressionName
+       155 GetSingleVariableOfVariableStatement
+       162 isTypeReferenceIdentifier
+       169 IsInTypeQuery
+       184 canHaveLocals
+       198 isShorthandAmbientModuleSymbol
+       202 isShorthandAmbientModule
+       207 getAliasDeclarationFromName
+       218 entityNameToString
+       222 getContainingQualifiedNameNode
+       229 isSideEffectImport
+       234 getExternalModuleRequireArgument
+       241 isRightSideOfAccessExpression
+       246 isTopLevelInExternalModuleAugmentation
+       250 isSyntacticDefault
+       257 hasExportAssignmentSymbol
+       261 isTypeAlias
+       265 hasOnlyExpressionInitializer
+       273 hasDotDotDotToken
+       287 IsTypeAny
+       291 isJSDocOptionalParameter
+       295 isExclamationToken
+       299 isOptionalDeclaration
+       303 Checker.isOptionalParameter
+       330 isEmptyArrayLiteral
+       343 isPrivateWithinAmbient
+       347 isTypeAssertion
+       351 createSymbolTable
+       362 Checker.sortSymbols
+       366 Checker.compareSymbolsWorker
+       393 Checker.compareNodes
+       415 CompareTypes
+       581 getSortOrderFlags
+       589 compareTypeNames
+       607 getTypeNameSymbol
+       617 getObjectTypeName
+       624 compareTupleTypes
+       647 compareElementLabels
+       660 compareTypeLists
+       672 compareTypeMappers
+       713 getDeclarationModifierFlagsFromSymbol
+       717 getDeclarationModifierFlagsFromSymbolEx
+       757 isExponentiationOperator
+       761 isMultiplicativeOperator
+       765 isMultiplicativeOperatorOrHigher
+       769 isAdditiveOperator
+       773 isAdditiveOperatorOrHigher
+       777 isShiftOperator
+       782 isShiftOperatorOrHigher
+       786 isRelationalOperator
+       791 isRelationalOperatorOrHigher
+       795 isEqualityOperator
+       800 isEqualityOperatorOrHigher
+       804 isBitwiseOperator
+       808 isBitwiseOperatorOrHigher
+       812 isLogicalOperatorOrHigher
+       816 isAssignmentOperatorOrHigher
+       820 isBinaryOperator
+       824 isObjectLiteralType
+       828 isDeclarationReadonly
+       841 orderedSet.contains
+       865 getContainingFunctionOrClassStaticBlock
+       869 isNodeDescendantOf
+       879 isTypeUsableAsPropertyName
+       886 getPropertyNameFromType
+       898 isNumericLiteralName
+       923 isThisProperty
+       927 isValidNumberString
+       935 isValidBigIntString
+       961 isValidESSymbolDeclaration
+       971 isVariableDeclarationInVariableStatement
+       975 IsKnownSymbol
+       979 IsPrivateIdentifierSymbol
+       986 isLateBoundName
+       990 isObjectOrArrayLiteralType
+       994 getContainingClassExcludingClassDecorators
+      1013 isThisTypeParameter
+      1017 isClassInstanceProperty
+      1026 isThisInitializedObjectBindingExpression
+      1032 isThisInitializedDeclaration
+      1036 isInfinityOrNaNString
+      1040 Checker.isConstantVariable
+      1044 Checker.isParameterOrMutableLocalVariable
+      1053 Checker.isMutableLocalVariableDeclaration
+      1058 isInAmbientOrTypeNode
+      1064 isLiteralExpressionOfObject
+      1073 canHaveFlowNode
+      1077 isNonNullAccess
+      1081 getBindingElementPropertyName
+      1085 isCallChain
+      1089 Checker.callLikeExpressionMayHaveTypeArguments
+      1093 isSuperCall
+      1097 getMembersOfDeclaration
+      1107 isInRightSideOfImportOrExportAssignment
+      1116 isJsxIntrinsicTagName
+      1120 getContainingObjectLiteral
+      1131 isImportTypeQualifierPart
+      1145 isInNameOfExpressionWithTypeArgumentsOrHeritageTypeReference
+      1154 getIndexSymbolFromSymbolTable
+      1160 expressionResultIsUnused
+      1185 pseudoBigIntToString
+      1189 getSuperContainer
+      1221 forEachYieldExpression
+      1255 getEnclosingContainer
+      1261 getDeclarationsOfKind
+      1265 hasType
+      1269 getNonRestParameterCount
+      1273 minAndMax
+      1555 rangeOfTypeParameters
+      1559 tryGetPropertyAccessOrIdentifierToString
+      1579 allDeclarationsInSameSourceFile
+      1593 containsNonMissingUndefinedType
+      1603 getAnyImportSyntax
+      1623 isReservedMemberName
+      1627 introducesArgumentsExoticObject
+      1636 symbolsToArray
+      1646 SkipAlias
+      1654 IsExternalModuleSymbol
+      1659 Checker.isCanceled
+      1663 Checker.checkNotCanceled
+      1669 Checker.getPackagesMap
+      1684 Checker.typesPackageExists
+      1690 Checker.packageBundlesTypes
+      1710 nodeStartsNewLexicalEnvironment
+      1724 Checker.isUncheckedJSSuggestion
+      1754 Checker.isJSLiteralType
+      1853 walkUpOuterExpressions
+      1861 GetSetAccessorValueParameter
+##############################################################################################################
+# B. Files of checker/ that exist and whose upstream range has functions with no fn in checker/ that the tree calls or imports
+##############################################################################################################
+
+src/typecheck/checker/c04_name_resolution_hooks.rs   file exists
+  upstream: checker.go 1505-2200 (Checker.symbolReferenced .. Checker.getSymbol)
+  upstream functions: 31; with no fn in checker/: 30; called: 7 names at 16 sites; imported: 0 names at 0 sites
+  called (sites): get_type_only_alias_declaration(4), get_spelling_suggestion_for_name(3), is_block_scoped_name_declared_before_use(3), add_type_only_declaration_related_info(3), symbol_referenced(1), get_immediate_aliased_symbol(1), get_type_only_alias_declaration_ex(1)
+  callers: c13_check_aliases_unused.rs(3), c46_mark_references.rs(2), c27_resolve_alias.rs(2), c10_check_enums_modules_imports.rs(2), c39_declared_types_enums.rs(2), c09_check_classes_interfaces.rs(1), jsx.rs(1), c23_alias_targets.rs(1), flow.rs(1), c25_entity_names.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+      1505 Checker.symbolReferenced
+      1509 Checker.getRequiresScopeChangeCache
+      1513 Checker.setRequiresScopeChangeCache
+      1520 Checker.checkAndReportErrorForInvalidInitializer
+      1538 Checker.checkAndReportErrorForMissingPrefix
+      1570 Checker.onFailedToResolveSymbol
+      1614 Checker.checkAndReportErrorForUsingTypeAsNamespace
+      1635 Checker.checkAndReportErrorForExportingPrimitiveType
+      1643 isPrimitiveTypeName
+      1647 Checker.checkAndReportErrorForUsingNamespaceAsTypeOrValue
+      1668 Checker.checkAndReportErrorForUsingTypeAsValue
+      1710 isES2015OrLaterConstructorName
+      1714 Checker.maybeMappedType
+      1728 Checker.checkAndReportErrorForUsingValueAsType
+      1739 Checker.getSuggestedLibForNonExistentName
+      1747 Checker.getSuggestedSymbolForNonexistentSymbol
+      1769 getPrimitiveTypeAliasSuggestions
+      1781 Checker.getSuggestionForSymbolNameLookup
+      1806 Checker.getSpellingSuggestionForName
+      1826 Checker.onSuccessfullyResolvedSymbol
+      1894 Checker.checkResolvedBlockScopedVariable
+      1928 Checker.isBlockScopedNameDeclaredBeforeUse
+      2017 Checker.isUsedInFunctionOrInstanceProperty
+      2078 isImmediatelyUsedInInitializerOfBlockScopedVariable
+      2096 isSameScopeDescendentOf
+      2112 isPropertyImmediatelyReferencedWithinDeclaration
+      2139 Checker.getTypeOnlyAliasDeclaration
+      2149 Checker.getTypeOnlyAliasDeclarationEx
+      2161 Checker.getImmediateAliasedSymbol
+      2174 Checker.addTypeOnlyDeclarationRelatedInfo
+
+src/typecheck/checker/c15_calls.rs   file exists
+  upstream: checker.go 8407-10131 (Checker.checkCallExpression .. Checker.checkTaggedTemplateExpression)
+  upstream functions: 59; with no fn in checker/: 52; called: 9 names at 24 sites; imported: 0 names at 0 sites
+  called (sites): resolve_error_call(7), resolve_untyped_call(4), get_resolved_signature(3), get_effective_check_node(2), check_deprecated_signature(2), is_untyped_function_call(2), resolve_call(2), invocation_error_details(1), invocation_error_recovery(1)
+  callers: c15_calls.rs(10), jsx.rs(7), c05_check_source_file.rs(2), c11_check_variables_decorators.rs(2), relater.rs(1), flow.rs(1), c08_check_statements.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+      8412 Checker.checkCallExpression
+      8454 Checker.checkDeprecatedSignature
+      8465 Checker.addDeprecatedSuggestionWithSignature
+      8471 Checker.isSymbolOrSymbolForCall
+      8497 Checker.getResolvedSignature
+      8543 Checker.resolveSignature
+      8561 Checker.resolveCallExpression
+      8665 Checker.resolveNewExpression
+      8738 Checker.isConstructorAccessible
+      8770 Checker.typeHasProtectedAccessibleBase
+      8800 someSignature
+      8809 Checker.resolveTaggedTemplateExpression
+      8890 Checker.resolveInstanceofExpression
+      8933 Checker.resolveCall
+      9047 Checker.reorderCandidates
+      9097 signatureHasLiteralTypes
+      9101 Checker.getOptionalCallSignature
+      9115 Checker.chooseOverload
+      9197 Checker.hasCorrectArity
+      9269 acceptsVoid
+      9304 Checker.hasCorrectTypeArgumentArity
+      9312 Checker.checkTypeArguments
+      9346 Checker.isSignatureApplicable
+      9421 Checker.maybeAddMissingAwaitInfo
+      9435 Checker.getThisArgumentOfCall
+      9457 Checker.getThisArgumentType
+      9471 Checker.getEffectiveCheckNode
+      9480 Checker.inferTypeArguments
+      9588 Checker.getCandidateForOverloadFailure
+      9600 Checker.pickLongestCandidateSignature
+      9631 Checker.getLongestCandidateIndex
+      9647 Checker.getTypeArgumentsFromNodes
+      9665 Checker.inferSignatureInstantiationForOverloadFailure
+      9671 Checker.createUnionOfSignaturesForOverloadFailure
+      9712 Checker.createCombinedSymbolFromTypes
+      9716 Checker.createCombinedSymbolForOverloadFailure
+      9739 Checker.reportCallResolutionErrors
+      9775 Checker.addImplementationSuccessElaboration
+      9795 Checker.getArgumentArityError
+      9913 Checker.isPromiseResolveArityError
+      9933 getErrorNodeForCallNode
+      9943 Checker.getTypeArgumentArityError
+      9984 Checker.reportCannotInvokePossiblyNullOrUndefinedError
+      9992 Checker.resolveUntypedCall
+     10013 Checker.resolveErrorCall
+     10023 Checker.isUntypedFunctionCall
+     10030 Checker.invocationErrorDetails
+     10086 Checker.invocationError
+     10095 Checker.invocationErrorRecovery
+     10111 Checker.isGenericFunctionReturningFunction
+     10115 Checker.skippedGenericFunction
+     10124 Checker.checkTaggedTemplateExpression
+
+src/typecheck/checker/c17_unary_meta_yield.rs   file exists
+  upstream: checker.go 10707-11130 (Checker.checkTypeOfExpression .. Checker.checkSyntheticExpression)
+  upstream functions: 23; with no fn in checker/: 22; called: 2 names at 5 sites; imported: 0 names at 0 sites
+  called (sites): check_truthiness_expression(4), check_expression_with_type_arguments(1)
+  callers: c08_check_statements.rs(4), c40_type_nodes_conditional_tuples.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     10707 Checker.checkTypeOfExpression
+     10712 Checker.checkNonNullAssertion
+     10721 Checker.checkNonNullChain
+     10727 Checker.checkExpressionWithTypeArguments
+     10750 Checker.getInstantiationExpressionType
+     10831 Checker.checkSatisfiesExpression
+     10843 Checker.checkMetaProperty
+     10858 Checker.checkNewTargetMetaProperty
+     10872 Checker.checkImportMetaProperty
+     10889 Checker.checkMetaPropertyKeyword
+     10894 Checker.checkDeleteExpression
+     10915 Checker.checkDeleteExpressionMustBeOptional
+     10930 Checker.checkVoidExpression
+     10945 Checker.checkPrefixUnaryExpression
+     10999 Checker.checkPostfixUnaryExpression
+     11013 Checker.getUnaryResultType
+     11024 Checker.checkConditionalExpression
+     11033 Checker.checkTruthinessExpression
+     11037 Checker.checkSpreadExpression
+     11042 Checker.checkYieldExpression
+     11108 Checker.getYieldedTypeOfYieldExpression
+     11124 Checker.checkSyntheticExpression
+
+src/typecheck/checker/c20_object_literals_spread.rs   file exists
+  upstream: checker.go 13235-13989 (Checker.checkObjectLiteral .. Checker.checkExpressionForMutableLocation)
+  upstream functions: 25; with no fn in checker/: 23; called: 13 names at 25 sites; imported: 0 names at 0 sites
+  called (sites): get_spread_type(5), has_default_value(4), check_expression_for_mutable_location(4), is_valid_spread_type(3), check_property_assignment(1), check_shorthand_property_assignment(1), check_object_literal_method(1), is_spreadable_property(1), get_spread_symbol(1), is_non_generic_object_type(1), check_spread_prop_overrides(1), check_contextual_deprecations(1), is_readonly_assignment_declaration(1)
+  callers: jsx.rs(8), c31_binding_patterns_widening.rs(6), c28_types_of_symbols.rs(5), relater.rs(2), c24_external_modules.rs(2), c05_check_source_file.rs(1), c20_object_literals_spread.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     13235 Checker.checkObjectLiteral
+     13447 Checker.checkContextualDeprecations
+     13459 Checker.checkDeprecatedProperty
+     13472 Checker.checkSpreadPropOverrides
+     13488 Checker.getSpreadType
+     13598 Checker.getIndexInfoWithReadonly
+     13605 Checker.isValidSpreadType
+     13627 Checker.isNonGenericObjectType
+     13631 Checker.tryMergeUnionOfObjectTypeAndEmptyObject
+     13681 Checker.isSpreadableProperty
+     13686 Checker.getSpreadSymbol
+     13705 Checker.isEmptyObjectTypeOrSpreadsIntoEmptyObject
+     13709 Checker.hasDefaultValue
+     13716 Checker.isConstContext
+     13724 Checker.isValidConstAssertionArgument
+     13746 Checker.isConstTypeVariable
+     13774 Checker.checkPropertyAssignment
+     13790 Checker.checkShorthandPropertyAssignment
+     13807 Checker.isInPropertyInitializerOrClassStaticBlock
+     13824 Checker.getNarrowedTypeOfSymbol
+     13930 Checker.isReadonlyAssignmentDeclaration
+     13966 Checker.checkObjectLiteralMethod
+     13979 Checker.checkExpressionForMutableLocation
+
+src/typecheck/checker/c21_resolved_symbols_diagnostics.rs   file exists
+  upstream: checker.go 13991-14168 (Checker.getResolvedSymbol .. Checker.hasParseDiagnostics)
+  upstream functions: 22; with no fn in checker/: 18; called: 12 names at 312 sites; imported: 0 names at 0 sites
+  called (sites): error(266), add_diagnostic(21), error_or_suggestion(7), error_and_maybe_suggest_await(3), is_deprecated_symbol(3), add_deprecated_suggestion(3), add_error_or_suggestion(3), add_deferred_diagnostic(2), produce_deferred_diagnostics(1), add_suggestion_diagnostic(1), has_parse_diagnostics(1), is_deprecated_declaration(1)
+  callers: c06_check_members_type_nodes.rs(40), c10_check_enums_modules_imports.rs(35), c09_check_classes_interfaces.rs(31), c13_check_aliases_unused.rs(23), c07_check_functions.rs(19), c24_external_modules.rs(19), jsx.rs(18), c31_binding_patterns_widening.rs(16), c08_check_statements.rs(14), c23_alias_targets.rs(13), c39_declared_types_enums.rs(12), c12_iteration_types.rs(6), c11_check_variables_decorators.rs(6), c38_type_nodes_references.rs(5), c33_members_base_types_signatures.rs(5), c46_mark_references.rs(4), c27_resolve_alias.rs(4), flow.rs(4), c05_check_source_file.rs(4), c34_return_types.rs(4), c25_entity_names.rs(4), jsdoc.rs(3), c47_promised_mapped_template.rs(3), c26_exports_late_binding.rs(3), c51_type_facts_awaited.rs(3), c28_types_of_symbols.rs(2), c43_unions_intersections.rs(2), c22_symbols_merge.rs(2), c15_calls.rs(2), c36_properties_apparent_types.rs(2), c37_instantiation.rs(1), relater.rs(1), c45_base_constraints_normalization.rs(1), c17_unary_meta_yield.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     14052 Checker.GetDiagnostics
+     14056 Checker.GetSuggestionDiagnostics
+     14060 Checker.getDiagnostics
+     14070 Checker.GetGlobalDiagnostics
+     14075 Checker.addDeferredDiagnostic
+     14079 Checker.produceDeferredDiagnostics
+     14086 Checker.addDiagnostic
+     14094 Checker.addSuggestionDiagnostic
+     14102 Checker.error
+     14106 Checker.errorSkippedOnNoEmit
+     14112 Checker.errorOrSuggestion
+     14116 Checker.errorAndMaybeSuggestAwait
+     14124 Checker.addErrorOrSuggestion
+     14134 Checker.IsDeprecatedDeclaration
+     14138 Checker.addDeprecatedSuggestion
+     14143 Checker.addDeprecatedSuggestionWorker
+     14154 Checker.isDeprecatedSymbol
+     14166 Checker.hasParseDiagnostics
+
+src/typecheck/checker/c34_return_types.rs   file exists
+  upstream: checker.go 20115-20727 (Checker.getReturnTypeOfSignature .. Checker.addOptionalTypeMarker)
+  upstream functions: 28; with no fn in checker/: 15; called: 5 names at 9 sites; imported: 0 names at 0 sites
+  called (sites): unwrap_return_type(3), get_return_type_from_body(2), create_promise_type(2), get_type_predicate_from_body(1), function_has_implicit_return(1)
+  callers: c07_check_functions.rs(3), relater.rs(2), c31_binding_patterns_widening.rs(1), c38_type_nodes_references.rs(1), c34_return_types.rs(1), c08_check_statements.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     20240 Checker.getReturnTypeFromBody
+     20373 Checker.checkAndAggregateReturnExpressionTypes
+     20421 Checker.functionHasImplicitReturn
+     20426 mayReturnNever
+     20436 Checker.checkAndAggregateYieldOperandTypes
+     20462 Checker.createPromiseType
+     20474 Checker.createPromiseLikeType
+     20486 Checker.createPromiseReturnType
+     20502 Checker.unwrapReturnType
+     20521 Checker.getWidenedLiteralLikeTypeForContextualReturnTypeIfNeeded
+     20537 Checker.getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded
+     20548 Checker.createGeneratorType
+     20649 Checker.getTypePredicateFromBody
+     20679 Checker.checkIfExpressionRefinesAnyParameter
+     20699 Checker.checkIfExpressionRefinesParameter
+
+src/typecheck/checker/c35_resolve_members.rs   file exists
+  upstream: checker.go 20729-21511 (Checker.instantiateSignature .. Checker.includeMixinType)
+  upstream functions: 29; with no fn in checker/: 3; called: 2 names at 2 sites; imported: 0 names at 0 sites
+  called (sites): get_type_of_mapped_symbol(1), resolve_mapped_type_members(1)
+  callers: c28_types_of_symbols.rs(1), c33_members_base_types_signatures.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     21008 Checker.resolveMappedTypeMembers
+     21098 Checker.getTypeOfMappedSymbol
+     21135 Checker.getLowerBoundOfKeyType
+
+src/typecheck/checker/c37_instantiation.rs   file exists
+  upstream: checker.go 22214-22911 (Checker.instantiateType .. instantiateList)
+  upstream functions: 36; with no fn in checker/: 16; called: 9 names at 52 sites; imported: 0 names at 0 sites
+  called (sites): get_constraint_type_from_mapped_type(12), get_type_parameter_from_mapped_type(11), get_name_type_from_mapped_type(9), get_template_type_from_mapped_type(8), is_mapped_type_with_keyof_constraint_declaration(4), get_homomorphic_type_variable(3), get_conditional_type_instantiation(2), get_apparent_mapped_type_keys(2), instantiate_mapped_type(1)
+  callers: relater.rs(26), nodebuilderimpl.rs(11), c40_type_nodes_conditional_tuples.rs(6), c37_instantiation.rs(3), c45_base_constraints_normalization.rs(2), c06_check_members_type_nodes.rs(2), c29_constraints.rs(1), c36_properties_apparent_types.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     22599 Checker.getConditionalTypeInstantiation
+     22638 Checker.getHomomorphicTypeVariable
+     22649 Checker.instantiateMappedType
+     22694 Checker.hasArrayOrTypeTypeConstraint
+     22699 Checker.instantiateMappedArrayType
+     22707 Checker.instantiateMappedTupleType
+     22760 Checker.instantiateMappedTypeTemplate
+     22774 getModifiedReadonlyState
+     22784 Checker.getTypeParameterFromMappedType
+     22792 Checker.getConstraintTypeFromMappedType
+     22800 Checker.getNameTypeFromMappedType
+     22811 Checker.getTemplateTypeFromMappedType
+     22823 Checker.isMappedTypeWithKeyofConstraintDeclaration
+     22828 Checker.getConstraintDeclarationForMappedType
+     22832 Checker.getApparentMappedTypeKeys
+     22841 Checker.forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType
+
+src/typecheck/checker/c40_type_nodes_conditional_tuples.rs   file exists
+  upstream: checker.go 24225-25124 (Checker.getTypeFromTypeQueryNode .. isUnaryTupleTypeNode)
+  upstream functions: 57; with no fn in checker/: 12; called: 5 names at 16 sites; imported: 0 names at 0 sites
+  called (sites): get_false_type_from_conditional_type(7), get_true_type_from_conditional_type(6), get_inferred_true_type_from_conditional_type(1), get_type_from_conditional_type_node(1), get_type_from_import_type_node(1)
+  callers: relater.rs(10), c29_constraints.rs(2), c38_type_nodes_references.rs(2), nodebuilderimpl.rs(2)
+  upstream functions with no fn in checker/ (line, name):
+     24392 Checker.getTypeFromConditionalTypeNode
+     24423 Checker.getConditionalType
+     24573 Checker.getTailRecursionRoot
+     24592 Checker.isSimpleTupleType
+     24598 Checker.isDeferredType
+     24662 Checker.getTrueTypeFromConditionalType
+     24670 Checker.getFalseTypeFromConditionalType
+     24678 Checker.getInferredTrueTypeFromConditionalType
+     24698 Checker.getTypeFromImportTypeNode
+     24773 Checker.getIdentifierChain
+     24780 Checker.resolveImportSymbolType
+     24805 Checker.getGlobalImportMetaExpressionType
+
+src/typecheck/checker/c45_base_constraints_normalization.rs   file exists
+  upstream: checker.go 27551-28310 (Checker.getBaseConstraintOrType .. Checker.transformTypeOfMembers)
+  upstream functions: 43; with no fn in checker/: 9; called: 5 names at 13 sites; imported: 0 names at 0 sites
+  called (sites): get_modifiers_type_from_mapped_type(7), get_simplified_type_or_constraint(3), get_simplified_indexed_access_type(1), get_simplified_conditional_type(1), mark_property_as_referenced(1)
+  callers: nodebuilderimpl.rs(5), relater.rs(2), c45_base_constraints_normalization.rs(2), c29_constraints.rs(2), c11_check_variables_decorators.rs(1), c36_properties_apparent_types.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     27829 Checker.markPropertyAsReferenced
+     28038 Checker.getSimplifiedIndexedAccessType
+     28053 Checker.getSimplifiedIndexedAccessTypeWorker
+     28098 Checker.distributeObjectOverIndexType
+     28113 Checker.distributeIndexOverObjectType
+     28129 Checker.getSimplifiedConditionalType
+     28152 Checker.isIntersectionEmpty
+     28156 Checker.getSimplifiedTypeOrConstraint
+     28250 Checker.getModifiersTypeFromMappedType
+
+src/typecheck/checker/c47_promised_mapped_template.rs   file exists
+  upstream: checker.go 29042-29447 (Checker.GetPromisedTypeOfPromise .. Checker.getTypeOfPropertyOrIndexSignatureOfType)
+  upstream functions: 26; with no fn in checker/: 15; called: 5 names at 12 sites; imported: 2 names at 4 sites
+  called (sites): get_string_mapping_type(4), get_combined_mapped_type_optionality(3), get_type_of_property_or_index_signature_of_type(2), substitute_indexed_mapped_type(2), get_optional_expression_type(1)
+  callers: relater.rs(5), c45_base_constraints_normalization.rs(2), flow.rs(2), c37_instantiation.rs(1), c29_constraints.rs(1), c38_type_nodes_references.rs(1)
+  imported (files): get_mapped_type_modifiers(3: c36_properties_apparent_types.rs nodebuilderimpl.rs relater.rs), is_partial_mapped_type(1: relater.rs)
+  upstream functions with no fn in checker/ (line, name):
+     29135 getMappedTypeModifiers
+     29149 getMappedTypeOptionality
+     29163 Checker.getCombinedMappedTypeOptionality
+     29183 isPartialMappedType
+     29187 Checker.getOptionalExpressionType
+     29229 Checker.removeDefinitelyFalsyTypes
+     29233 Checker.extractDefinitelyFalsyTypes
+     29237 Checker.getDefinitelyFalsyPartOfType
+     29346 Checker.getStringMappingType
+     29365 applyStringMapping
+     29381 Checker.applyTemplateStringMapping
+     29399 Checker.getStringMappingTypeForGenericType
+     29414 Checker.substituteIndexedMappedType
+     29430 Checker.couldAccessOptionalProperty
+     29437 Checker.getTypeOfPropertyOrIndexSignatureOfType
+
+src/typecheck/checker/c48_contextual_types.rs   file exists
+  upstream: checker.go 29449-30162 (Checker.getContextualType .. Checker.getContextualImportAttributeType)
+  upstream functions: 27; with no fn in checker/: 26; called: 6 names at 9 sites; imported: 0 names at 0 sites
+  called (sites): get_contextual_type(4), is_context_sensitive_function_or_object_literal_method(1), get_contextually_typed_parameter_type(1), get_contextual_type_for_argument_at_index(1), get_contextual_signature_for_function_like_declaration(1), check_generator_instantiation_assignability_to_return_type(1)
+  callers: jsx.rs(4), c28_types_of_symbols.rs(2), flow.rs(1), c34_return_types.rs(1), c06_check_members_type_nodes.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     29466 Checker.getContextualType
+     29546 Checker.getContextualTypeForInitializerExpression
+     29561 Checker.getContextualTypeForVariableLikeDeclaration
+     29581 Checker.getContextuallyTypedParameterType
+     29619 Checker.isContextSensitiveFunctionOrObjectLiteralMethod
+     29623 Checker.getSpreadArgumentType
+     29694 Checker.getMutableArrayOrTupleType
+     29706 Checker.getContextualTypeForBindingElement
+     29735 Checker.getContextualTypeForStaticPropertyDeclaration
+     29744 Checker.getContextualTypeForReturnExpression
+     29779 Checker.getContextualIterationType
+     29788 Checker.getContextualReturnType
+     29820 Checker.checkGeneratorInstantiationAssignabilityToReturnType
+     29834 Checker.getContextualSignatureForFunctionLikeDeclaration
+     29842 Checker.getContextualTypeForYieldOperand
+     29873 Checker.getContextualTypeForAwaitOperand
+     29885 Checker.getContextualTypeForArgument
+     29895 Checker.getContextualTypeForArgumentAtIndex
+     29932 Checker.getContextualTypeForBinaryOperand
+     29966 Checker.getContextualTypeForAssignmentExpression
+     30043 Checker.getContextualTypeForObjectLiteralElement
+     30087 Checker.getContextualTypeForObjectLiteralMethod
+     30095 Checker.getContextualTypeForElementExpression
+     30145 Checker.getContextualTypeForConditionalOperand
+     30153 Checker.getContextualTypeForSubstitutionExpression
+     30160 Checker.getContextualImportAttributeType
+
+src/typecheck/checker/c49_call_arguments_decorator_signatures.rs   file exists
+  upstream: checker.go 30164-30672 (Checker.getEffectiveCallArguments .. Checker.getClassElementPropertyKeyType)
+  upstream functions: 28; with no fn in checker/: 5; called: 1 names at 1 sites; imported: 0 names at 0 sites
+  called (sites): create_synthetic_expression(1)
+  callers: c49_call_arguments_decorator_signatures.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     30165 Checker.getEffectiveCallArguments
+     30231 Checker.getSpreadArgumentIndex
+     30235 isSpreadArgument
+     30239 Checker.createSyntheticExpression
+     30246 Checker.getSpreadIndices
+
+src/typecheck/checker/c51_type_facts_awaited.rs   file exists
+  upstream: checker.go 31097-31702 (Checker.getTypeFacts .. Checker.getActualTypeVariable)
+  upstream functions: 36; with no fn in checker/: 12; called: 7 names at 44 sites; imported: 0 names at 0 sites
+  called (sites): get_type_with_facts(15), get_adjusted_type_with_facts(10), has_type_facts(7), convert_auto_to_any(5), get_type_facts(4), recombine_unknown_type(2), is_function_object_type(1)
+  callers: flow.rs(27), c31_binding_patterns_widening.rs(5), relater.rs(4), c47_promised_mapped_template.rs(2), c11_check_variables_decorators.rs(2), c12_iteration_types.rs(1), c51_type_facts_awaited.rs(1), c08_check_statements.rs(1), nodebuilderimpl.rs(1)
+  upstream functions with no fn in checker/ (line, name):
+     31097 Checker.getTypeFacts
+     31101 Checker.hasTypeFacts
+     31105 Checker.getTypeFactsWorker
+     31241 Checker.getIntersectionTypeFacts
+     31259 isZeroBigInt
+     31263 Checker.isFunctionObjectType
+     31273 Checker.getTypeWithFacts
+     31282 Checker.getAdjustedTypeWithFacts
+     31302 Checker.removeNullableByIntersection
+     31324 Checker.recombineUnknownType
+     31331 Checker.getGlobalNonNullableTypeInstantiation
+     31339 Checker.convertAutoToAny
+
+##############################################################################################################
+# C. Names that the layer imports from packages that cargo already compiles and that those packages do not define
+##############################################################################################################
+  crate::core::Map       12 files: c01_data c02_program_checker c06_check_members_type_nodes c09_check_classes_interfaces c26_exports_late_binding c29_constraints c31_binding_patterns_widening c37_instantiation c39_declared_types_enums c40_type_nodes_conditional_tuples relater types
+  crate::core::LiveList   3 files: c01_data c02_program_checker mapper
+  crate::core::Memo       1 file : c02_program_checker
+     core/golang.rs defines Text, GoIndex, List. The contract crate of the notes defines the three: checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs 153 (LiveList), 223 (Map), 347 (Memo).
+  crate::ast::DiagnosticsCollection      checker/c02_program_checker.rs 4, 496, 497   (upstream ast/diagnostic.go 234)
+  crate::ast::RepopulateDiagnosticInfo   checker/c24_external_modules.rs 5, 770, 787   (upstream ast/diagnostic.go 25)
+  crate::ast::RepopulateDiagnosticKind   checker/c24_external_modules.rs 5, 771, 788   (upstream ast/diagnostic.go 16); the same lines call set_repopulate_info on a diagnostic of the store: no fn of that name in ast/
+  crate::ast::Diagnostics                checker/c22_symbols_merge.rs 3, 15            (no upstream type: the view that compares two diagnostics through their files)
+     ast/diagnostic.rs defines Arg, Diagnostic, InvalidPlaceholderFault, DiagnosticStore. Notes: diagnostics-scratch/crate/ast/diagnostic.rs 366 (Diagnostics), 615 (DiagnosticsCollection); checker-data-model-contract/bottom-up/crate/src/ast_diagnostic.rs 363, 612.
+
+# D. Not attributed to an upstream function
+  imported, no definition in checker/: ProgramFiles (checker/c22_symbols_merge.rs). Notes: checker-data-model-contract/bottom-up/crate/src/checker/c21_resolved_symbols_diagnostics.rs 11, top-down/crate/src/checker/program.rs 188.
+  called, no fn in checker/: intersects(2)
+
+TOTAL: 1165 call sites (272 names) and 163 import sites (83 names) name a definition that checker/ does not have.

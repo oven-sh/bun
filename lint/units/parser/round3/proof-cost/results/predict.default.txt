@@ -1,0 +1,25 @@
+site                                                            bun-types typescript-lib         src-js            tsx     js-control
+erased statement dropped from a statement list                      1,265          4,819            737             12              0
+interface statement                                                   386          2,708            202              3              0
+type alias statement                                                  302            660            143              6              0
+declare modifier                                                      157          1,312            316              1              0
+namespace or module                                                    73             19             19              0              0
+enum                                                                    1              0             20              2              0
+type-only import or export, import equals                              12              0             34              2              0
+annotation of a declaration                                           222          1,243            620              0              0
+annotation of a parameter (parse_fn)                                1,405            301          1,680             15              0
+return type (parse_fn)                                                715            223            702             11              0
+this parameter                                                          0              0            115              0              0
+type parameters                                                        46             13             54              5              0
+function without a body                                               221            186            288              0              0
+annotation of an arrow parameter, arrow return type                     0              0            114              9              0
+class member that is dropped                                          529              3             94              4              0
+annotation of a class property                                         98              2            362              2              0
+implements clause                                                       5              0             10              1              0
+annotation of a catch binding                                           0              0             19              0              0
+as, satisfies                                                           0              0            484             11              0
+non-null                                                                0              0            108              2              0
+type arguments of a call, new, JSX                                      0              0             55              8              0
+tests per pass (tsx: per parse)                                     5,437         11,489          6,176             94              0
+tests per KB of source                                               5.05           3.04           1.89          13.42           0.00
+Bc expected in a cgbench run of 20 passes (tsx 2,000)             108,740        229,780        123,520        188,000              0

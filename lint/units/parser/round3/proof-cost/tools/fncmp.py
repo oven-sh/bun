@@ -6,8 +6,10 @@ Classes per demangled name (ThinLTO suffix cut):
   IDENT    the same instruction stream: jumps inside the function are labels numbered by first use, a call or a jump out
            is the name of its target (the const arguments of P cut: folded bodies carry either name), addresses of data
            are masked; the sink argument of the skipper is one name in both spellings
-  OFFSETS  the same stream once every displacement of a memory operand and every small immediate is masked too: a field
-           moved (layout of P, of G::Fn ...); the same instructions and the same jumps run
+  OFFSETS  the same stream once every displacement of a memory operand is masked: a field moved (layout of P, of G::Fn ...);
+           the same instructions and the same jumps run
+  CONSTS   the same stream once every immediate is masked too (a size, a count, a shift): the same instructions, and the
+           same jumps unless the constant is a loop bound
   DIFF     anything else; printed with bytes, instructions and conditional jumps of both sides
   ONLY-A / ONLY-B  the symbol is in one binary only
 --diff prints a unified diff of the normalised streams of the functions whose name matches."""
@@ -88,13 +90,10 @@ def load(path):
             lines.append(text)
         for s, n in by_addr[a]: res[n] = (size, lines)
     return res
+def offsets(lines):
+    return [re.sub(r'(?<![\w$])-?(0x[0-9a-f]+|\d+)(?=\()', 'D', l) for l in lines]
 def loose(lines):
-    out = []
-    for l in lines:
-        l = re.sub(r'(?<![\w$])-?(0x[0-9a-f]+|\d+)(?=\()', 'D', l)
-        l = re.sub(r'\$-?(0x[0-9a-f]+|\d+)\b', '$I', l)
-        out.append(l)
-    return out
+    return [re.sub(r'\$-?(0x[0-9a-f]+|\d+)\b', '$I', l) for l in offsets(lines)]
 def stat(lines):
     ins = [l for l in lines if not re.match(r'^L\d+:$', l)]
     return len(ins), sum(1 for l in ins if CC.match(l))
@@ -105,12 +104,13 @@ for n in sorted(set(A) | set(B)):
     if n not in B: rows['ONLY-A'].append((n, A[n][0], 0, stat(A[n][1]), (0, 0))); continue
     (sa, la), (sb, lb) = A[n], B[n]
     if la == lb: k = 'IDENT'
-    elif loose(la) == loose(lb): k = 'OFFSETS'
+    elif offsets(la) == offsets(lb): k = 'OFFSETS'
+    elif loose(la) == loose(lb): k = 'CONSTS'
     else: k = 'DIFF'
     rows[k].append((n, sa, sb, stat(la), stat(lb)))
-print('  '.join('%s %d' % (k, len(rows[k])) for k in ('IDENT', 'OFFSETS', 'DIFF', 'ONLY-A', 'ONLY-B')))
+print('  '.join('%s %d' % (k, len(rows[k])) for k in ('IDENT', 'OFFSETS', 'CONSTS', 'DIFF', 'ONLY-A', 'ONLY-B')))
 short = lambda n: re.sub(r'bun_js_parser::(p::)?', '', n)[:130]
-for k in ('DIFF', 'ONLY-A', 'ONLY-B', 'OFFSETS'):
+for k in ('DIFF', 'ONLY-A', 'ONLY-B', 'CONSTS', 'OFFSETS'):
     if k == 'OFFSETS' and '--all' not in sys.argv: continue
     for n, sa, sb, (ia, ca), (ib, cb) in sorted(rows[k], key=lambda r: -abs(r[4][0] - r[3][0])):
         print('%-7s bytes %6d %6d (%+5d)  insns %5d %5d (%+5d)  jcc %4d %4d (%+4d)  %s' % (k, sa, sb, sb - sa, ia, ib, ib - ia, ca, cb, cb - ca, short(n)))

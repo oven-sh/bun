@@ -1,0 +1,64 @@
+    148,860     16,540  parse/parse_stmt.rs:1851  [P<true,false>::parse_stmt]  && let Some(stmt) = Self::parse_stmt_named_like_cast(p, opts, loc, keyword)?
+    148,860          0  parse/parse_stmt.rs:1922  [P<true,false>::parse_stmt_named_like_cast]  fn parse_stmt_named_like_cast(
+     66,160     16,540  parse/parse_stmt.rs:1870  [P<true,false>::parse_stmt]  let expr_or_let = match p.parse_expr_or_let_stmt(opts) {
+     66,160     16,540  parse/parse_stmt.rs:1928  [P<true,false>::parse_stmt_named_like_cast]  match keyword {
+     56,200     56,200  parse/parse_fn.rs:284  [P<true,false>::parse_fn]  if is_identifier && (opts.is_constructor || !rest_arg) {
+     33,080          0  parse/parse_stmt.rs:1871  [P<true,false>::parse_stmt]  Ok(expr_or_let) => expr_or_let,
+     26,760     13,380  parse/parse_stmt.rs:1943  [P<true,false>::parse_stmt_named_like_cast]  !p.lexer.has_newline_before
+     26,760     13,380  parse/parse_stmt.rs:1947  [P<true,false>::parse_stmt_named_like_cast]  if !is_named_like_cast {
+     17,640          0  parse/mod.rs:282  [P<true,false>::parse_class]  if prop_kind == js_ast::g::PropertyKind::AutoAccessor && !has_auto_accessor {
+     16,540     16,540  parse/parse_stmt.rs:1849  [P<true,false>::parse_stmt]  && is_identifier
+     12,540     12,540  parse/parse_property.rs:782  [P<true,false>::parse_property]  if !has_definite_assignment_assertion_operator && p.lexer.token == T::TLessThan {
+      9,880      1,520  parse/mod.rs:338  [P<true,false>::parse_class]  if has_auto_accessor
+      9,120          0  parse/mod.rs:362  [P<true,false>::parse_class]  should_lower_standard_decorators: if standard_decorators {
+      4,420      4,420  parse/parse_fn.rs:70  [P<true,false>::parse_fn_stmt]  if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+      3,040      1,520  parse/mod.rs:177  [P<true,false>::parse_class]  if p.lexer.token == T::TExtends
+      3,040        760  parse/mod.rs:228  [P<true,false>::parse_class]  if class_opts.is_type_script_declare {
+      1,818        303  parse/mod.rs:1991  [P<false,false>::parse_path]  let is_with_on_next_line = p.lexer.has_newline_before
+      1,520          0  parse/mod.rs:227  [P<true,false>::parse_class]  let old_is_typescript_declare = p.fn_or_arrow_data_parse.is_typescript_declare;
+      1,520          0  parse/mod.rs:336  [P<true,false>::parse_class]  let standard_decorators = p.options.features.standard_decorators;
+      1,500          0  parse/parse_fn.rs:75  [P<true,false>::parse_fn_stmt]  p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+      1,440        180  parse/parse_suffix.rs:919  [P<true,false>::parse_suffix]  if Self::IS_TYPESCRIPT_ENABLED && Self::sfx_type_arguments(p, left) {
+      1,420      1,420  parse/parse_stmt.rs:1934  [P<true,false>::parse_stmt_named_like_cast]  if opts.scope == StatementScope::Nested {
+      1,420      1,420  parse/parse_typescript.rs:433  [P<true,false>::parse_type_script_namespace_s]  if let Some(name) = erased_name
+      1,140          0  parse/parse_property.rs:786  [P<true,false>::parse_property]  p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?
+      1,080        360  parse/parse_property.rs:422  [P<true,false>::parse_property]  if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
+      1,080          0  parse/parse_stmt.rs:1716  [P<true,false>::t_import]  let path = p.parse_path()?;
+        900        360  parse/parse_property.rs:270  [P<true,false>::is_class_index_signature]  match p.lexer.token {
+        760        760  parse/mod.rs:182  [P<true,false>::parse_class]  } else if p.lexer.token == T::TExtends {
+        760          0  parse/mod.rs:229  [P<true,false>::parse_class]  p.fn_or_arrow_data_parse.is_typescript_declare = true;
+        760          0  parse/mod.rs:331  [P<true,false>::parse_class]  p.fn_or_arrow_data_parse.is_typescript_declare = old_is_typescript_declare;
+        760        760  parse/mod.rs:1329  [P<true,false>::parse_class_stmt]  if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+        720        180  parse/parse_property.rs:288  [P<true,false>::is_class_index_signature]  if p.lexer.token == T::TColon || p.lexer.token == T::TComma {
+        680        680  parse/parse_typescript.rs:704  [P<true,false>::parse_typescript_enum_stmt]  p.lexer.token == T::TOpenBracket && p.is_enum_member_name_in_brackets();
+        680        680  parse/parse_typescript.rs:709  [P<true,false>::parse_typescript_enum_stmt]  let needs_symbol: bool = if p.lexer.token == T::TStringLiteral || is_in_brackets {
+        606        303  parse/mod.rs:1994  [P<false,false>::parse_path]  let has_newline_before = p.lexer.has_newline_before && !is_with_on_next_line;
+        500          0  parse/mod.rs:376  [P<true,false>::parse_class]  (log.msgs.len(), log.errors, log.warnings)
+        500        100  parse/mod.rs:383  [P<true,false>::parse_class]  && matches!(p.lexer.token, T::TComma | T::TOpenBrace))
+        360          0  parse/parse_property.rs:286  [P<true,false>::is_class_index_signature]  p.lexer.next()?;
+        360          0  parse/parse_stmt.rs:1714  [P<true,false>::t_import]  let clause = p.parse_import_clause()?;
+        360          0  parse/parse_stmt.rs:1746  [P<true,false>::t_import]  if opts.is_typescript_declare
+        300        100  parse/mod.rs:382  [P<true,false>::parse_class]  && p.log().errors == logged.1
+        200        100  parse/mod.rs:380  [P<true,false>::parse_class]  if p.lexer.is_log_disabled
+        180          0  parse/parse_property.rs:277  [P<true,false>::is_class_index_signature]  p.lexer.is_log_disabled = true;
+        180        180  parse/parse_property.rs:291  [P<true,false>::is_class_index_signature]  if p.lexer.token != T::TQuestion {
+        180          0  parse/parse_property.rs:305  [P<true,false>::is_class_index_signature]  let name = self.lexer.identifier;
+        120          0  parse/parse_stmt.rs:2309  [P<true,false>::parse_stmt_fallthrough_ts_key]  let stmts = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+        120         40  parse/parse_stmt.rs:2314  [P<true,false>::parse_stmt_fallthrough_ts_key]  if let Some(global) = global
+        120          0  parse/parse_stmt.rs:1694  [P<true,false>::t_import]  let path = p.parse_path()?;
+        100          0  parse/mod.rs:375  [P<true,false>::parse_class]  let log = p.log();
+        100        100  parse/mod.rs:381  [P<true,false>::parse_class]  || (as_type.is_ok()
+        100         25  parse/parse_stmt.rs:1870  [P<false,false>::parse_stmt]  let expr_or_let = match p.parse_expr_or_let_stmt(opts) {
+         99          0  parse/parse_fn.rs:647  [P<false,false>::parse_arrow_body_with_flags]  pub(crate) fn parse_arrow_body_with_flags(
+         80          0  parse/mod.rs:83  [P<false,false>::parse_arrow_body_with_flags]  Ok(expr)
+         50          0  parse/mod.rs:82  [P<false,false>::parse_arrow_body_with_flags]  self.parse_expr_common(level, None, flags, &mut expr)?;
+         50          0  parse/parse_stmt.rs:1871  [P<false,false>::parse_stmt]  Ok(expr_or_let) => expr_or_let,
+         40         20  parse/parse_stmt.rs:2208  [P<true,false>::parse_stmt_fallthrough_ts_key]  if !p.lexer.has_newline_before
+         40         20  parse/parse_stmt.rs:1696  [P<true,false>::t_import]  if let Some(namespace) = namespace
+         30          0  parse/mod.rs:81  [P<false,false>::parse_arrow_body_with_flags]  let mut expr = Expr::EMPTY;
+         24          0  parse/parse_prefix.rs:327  [P<false,false>::parse_prefix]  p.parse_arrow_body_with_flags(args, &mut fn_or_arrow_data, body_flags);
+         20          0  parse/mod.rs:817  [P<false,false>::parse_paren_expr]  p.parse_arrow_body_with_flags(args_slice, &mut arrow_data, body_flags)?;
+         20         10  parse/parse_fn.rs:707  [P<false,false>::parse_arrow_body_with_flags]  let expr = match p.parse_expr_flagged(Level::Comma, flags) {
+          6          3  parse/parse_fn.rs:463  [P<false,false>::parse_fn]  if rest_comma.len > 0 {
+    673,863    177,984  SUM Ir, Bc on 62 executed lines that the base tree does not have
+    220,793    104,491  Ir, Bc left out: cost rows on lines that test the side table (23 rows)

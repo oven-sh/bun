@@ -1,0 +1,198 @@
+IDENT 44  OFFSETS 40  DIFF 37  ONLY-A 10  ONLY-B 149
+DIFF    bytes   2319   5489 (+3170)  insns   551  1079 ( +528)  jcc   73   91 ( +18)  <P<true, true>>::parse_stmt_fallthrough_ts_keyword
+DIFF    bytes    162   1309 (+1147)  insns    55   318 ( +263)  jcc    7   49 ( +42)  <P<true, true>>::skip_type_script_paren_or_fn_type::<SINK discard>
+DIFF    bytes   1542   3189 (+1647)  insns   371   608 ( +237)  jcc   57   75 ( +18)  <P<true, true>>::parse_path
+DIFF    bytes   3546   4713 (+1167)  insns   763   960 ( +197)  jcc   99  113 ( +14)  <P<true, true>>::t_import
+DIFF    bytes  17491  18102 ( +611)  insns  3939  4134 ( +195)  jcc  426  429 (  +3)  <P<true, true>>::parse_suffix
+DIFF    bytes   5741   6622 ( +881)  insns  1216  1374 ( +158)  jcc  135  147 ( +12)  <P<true, true>>::t_export
+DIFF    bytes    569   1341 ( +772)  insns   150   303 ( +153)  jcc   25   39 ( +14)  <P<true, true>>::skip_type_script_type_stmt
+DIFF    bytes   4526   5290 ( +764)  insns   946  1093 ( +147)  jcc   66   75 (  +9)  <P<true, true>>::parse_type_script_namespace_stmt
+DIFF    bytes   1346   2065 ( +719)  insns   293   437 ( +144)  jcc   32   42 ( +10)  <P<true, true>>::parse_class_stmt
+DIFF    bytes    436   1069 ( +633)  insns   126   251 ( +125)  jcc   15   34 ( +19)  <P<true, true>>::skip_type_script_paren_or_fn_type::<SINK metadata>
+DIFF    bytes   2901   3614 ( +713)  insns   620   731 ( +111)  jcc   61   65 (  +4)  <P<true, true>>::parse_class
+DIFF    bytes   3455   3878 ( +423)  insns   797   904 ( +107)  jcc   87   96 (  +9)  <P<true, true>>::parse_stmt
+DIFF    bytes   1636   2128 ( +492)  insns   350   439 (  +89)  jcc   41   45 (  +4)  <P<true, true>>::parse_fn_stmt
+DIFF    bytes   3163   3511 ( +348)  insns   661   730 (  +69)  jcc   57   66 (  +9)  <P<true, true>>::parse_typescript_enum_stmt
+DIFF    bytes   1635   1874 ( +239)  insns   358   408 (  +50)  jcc   42   44 (  +2)  <P<true, true>>::parse_type_script_import_equals_stmt
+DIFF    bytes   2638   2888 ( +250)  insns   583   630 (  +47)  jcc   66   71 (  +5)  <P<true, true>>::parse_type_script_decorators
+DIFF    bytes    273    443 ( +170)  insns    80   127 (  +47)  jcc   15   23 (  +8)  <P<true, true>>::skip_typescript_fn_args
+DIFF    bytes  10123  10626 ( +503)  insns  2110  2152 (  +42)  jcc  245  251 (  +6)  <P<true, true>>::parse_property
+DIFF    bytes    124    244 ( +120)  insns    35    72 (  +37)  jcc    3   13 ( +10)  <P<true, true>>::skip_typescript_return_type_with_metadata
+DIFF    bytes    609    720 ( +111)  insns   167   202 (  +35)  jcc   34   43 (  +9)  <P<true, true>>::skip_type_script_binding
+DIFF    bytes   3786   3502 ( -284)  insns   809   777 (  -32)  jcc   92   91 (  -1)  <P<true, true>>::parse_fn
+DIFF    bytes    781    919 ( +138)  insns   146   174 (  +28)  jcc    6    8 (  +2)  <P<true, true>>::lexer_backtracker_bool::<<P<true, true>>::skip_type_script_arrow_args_with_backtracking, bool>
+DIFF    bytes   3146   3209 (  +63)  insns   611   639 (  +28)  jcc   46   46 (  +0)  <P<true, true>>::parse_async_prefix_expr
+DIFF    bytes   1802   1912 ( +110)  insns   402   421 (  +19)  jcc   40   41 (  +1)  <P<true, true>>::parse_stmts_up_to
+DIFF    bytes   1535   1572 (  +37)  insns   325   343 (  +18)  jcc   25   27 (  +2)  <P<true, true>>::parse_fn_expr
+DIFF    bytes   6374   6261 ( -113)  insns  1246  1263 (  +17)  jcc  124  132 (  +8)  <P<true, true>>::parse_jsx_element
+DIFF    bytes   1311   1350 (  +39)  insns   289   302 (  +13)  jcc   35   36 (  +1)  <P<true, true>>::restore_parser_snapshot
+DIFF    bytes  15706  15705 (   -1)  insns  3138  3150 (  +12)  jcc  381  386 (  +5)  <P<true, true>>::parse_prefix
+DIFF    bytes    433    475 (  +42)  insns   118   126 (   +8)  jcc   14   16 (  +2)  <P<true, true>>::default_name_for_expr
+DIFF    bytes    107     81 (  -26)  insns    27    22 (   -5)  jcc    1    1 (  +0)  <bun_alloc::mimalloc_arena::MimallocArena>::alloc_slice_fill_with::<bun_ast::g::Arg, <P<true, true>>::parse_async_prefix_expr::{cl
+DIFF    bytes    276    287 (  +11)  insns    84    88 (   +4)  jcc    7    8 (  +1)  <P<true, true>>::parse_expr_common
+DIFF    bytes   6492   6225 ( -267)  insns  1298  1295 (   -3)  jcc  119  140 ( +21)  <P<true, true>>::parse_paren_expr
+DIFF    bytes   2583   2588 (   +5)  insns   584   585 (   +1)  jcc   44   44 (  +0)  <P<true, true>>::declare_symbol
+DIFF    bytes   1361   1359 (   -2)  insns   316   315 (   -1)  jcc   37   37 (  +0)  <P<true, true>>::parse_and_declare_decls
+DIFF    bytes   1674   1642 (  -32)  insns   415   414 (   -1)  jcc   63   62 (  -1)  <P<true, true>>::skip_type_script_type_parameters
+DIFF    bytes   1461   1459 (   -2)  insns   325   324 (   -1)  jcc   35   35 (  +0)  <P<true, true>>::t_try
+DIFF    bytes   3810   3810 (   +0)  insns   559   559 (   +0)  jcc   19   19 (  +0)  <P<true, true>>::init
+ONLY-A  bytes   7045      0 (-7045)  insns  1599     0 (-1599)  jcc  269    0 (-269)  <P<true, true>>::skip_type_script_type_with_opts::<SINK metadata>
+ONLY-A  bytes   3446      0 (-3446)  insns   816     0 ( -816)  jcc  162    0 (-162)  <P<true, true>>::skip_type_script_type_with_opts::<SINK discard>
+ONLY-A  bytes   1457      0 (-1457)  insns   319     0 ( -319)  jcc   31    0 ( -31)  <P<true, true>>::parse_arrow_body
+ONLY-A  bytes    949      0 ( -949)  insns   249     0 ( -249)  jcc   51    0 ( -51)  <P<true, true>>::skip_type_script_object_type
+ONLY-A  bytes   1052      0 (-1052)  insns   216     0 ( -216)  jcc   18    0 ( -18)  <P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+ONLY-A  bytes    958      0 ( -958)  insns   190     0 ( -190)  jcc   17    0 ( -17)  <P<true, true>>::try_skip_type_script_type_arguments_with_backtracking
+ONLY-A  bytes    726      0 ( -726)  insns   136     0 ( -136)  jcc    4    0 (  -4)  <P<true, true>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+ONLY-A  bytes    181      0 ( -181)  insns    57     0 (  -57)  jcc    6    0 (  -6)  <P<true, true>>::skip_type_script_type_arguments::<false, false>
+ONLY-A  bytes    185      0 ( -185)  insns    51     0 (  -51)  jcc    3    0 (  -3)  <P<true, true>>::s::<bun_ast::s::Function>
+ONLY-A  bytes    121      0 ( -121)  insns    35     0 (  -35)  jcc    3    0 (  -3)  <P<true, true>>::skip_type_script_type_with_metadata
+ONLY-B  bytes      0  13587 (+13587)  insns     0  2657 (+2657)  jcc    0  291 (+291)  <P<true, true>>::parse_type_operator_or_higher::<parse::type_sink::Build>
+ONLY-B  bytes      0   7402 (+7402)  insns     0  1419 (+1419)  jcc    0  117 (+117)  <P<true, true>>::build_type_member_list
+ONLY-B  bytes      0   4920 (+4920)  insns     0   990 ( +990)  jcc    0   84 ( +84)  <P<true, true>>::build_parameter_list
+ONLY-B  bytes      0   5130 (+5130)  insns     0   989 ( +989)  jcc    0   67 ( +67)  <P<true, true>>::lint_class_implements
+ONLY-B  bytes      0   4949 (+4949)  insns     0   894 ( +894)  jcc    0   41 ( +41)  <P<true, true>>::parse_stmt_named_like_cast
+ONLY-B  bytes      0   3289 (+3289)  insns     0   763 ( +763)  jcc    0  144 (+144)  <P<true, true>>::parse_type_operator_or_higher::<SINK metadata>
+ONLY-B  bytes      0   2536 (+2536)  insns     0   591 ( +591)  jcc    0  118 (+118)  <P<true, true>>::parse_type_operator_or_higher::<SINK discard>
+ONLY-B  bytes      0   3008 (+3008)  insns     0   590 ( +590)  jcc    0   44 ( +44)  <P<true, true>>::build_in_type::<bun_ast::expr::Expr, <P<true, true>>::build_expr_in_type::{closure#0}>
+ONLY-B  bytes      0   2846 (+2846)  insns     0   573 ( +573)  jcc    0   44 ( +44)  <P<true, true>>::build_in_type::<bun_ast::binding::Binding, <P<true, true>>::build_next_is_start_of_fn_type::{closure#0}>
+ONLY-B  bytes      0   2640 (+2640)  insns     0   567 ( +567)  jcc    0   80 ( +80)  <P<true, true>>::parse_type_member
+ONLY-B  bytes      0   2447 (+2447)  insns     0   480 ( +480)  jcc    0   41 ( +41)  <P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<parse::type_sink::Build>
+ONLY-B  bytes      0   2290 (+2290)  insns     0   479 ( +479)  jcc    0   52 ( +52)  <P<true, true>>::skip_type_script_interface_stmt
+ONLY-B  bytes      0   2205 (+2205)  insns     0   463 ( +463)  jcc    0   47 ( +47)  <P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking::<SINK discard>
+ONLY-B  bytes      0   1957 (+1957)  insns     0   388 ( +388)  jcc    0   35 ( +35)  <P<true, true>>::skip_type_script_predicate_of_keyword_name
+ONLY-B  bytes      0   1769 (+1769)  insns     0   353 ( +353)  jcc    0   25 ( +25)  <P<true, true>>::next_is_start_of_mapped_type
+ONLY-B  bytes      0   1560 (+1560)  insns     0   325 ( +325)  jcc    0   33 ( +33)  <P<true, true>>::parse_tuple_element_name_or_tuple_element_type
+ONLY-B  bytes      0   1439 (+1439)  insns     0   320 ( +320)  jcc    0   31 ( +31)  <P<true, true>>::parse_arrow_body_with_flags
+ONLY-B  bytes      0   1365 (+1365)  insns     0   300 ( +300)  jcc    0   24 ( +24)  <P<true, true>>::build_import_attributes
+ONLY-B  bytes      0   1350 (+1350)  insns     0   298 ( +298)  jcc    0   23 ( +23)  <P<true, true>>::build_type_script_type_parameters
+ONLY-B  bytes      0   1442 (+1442)  insns     0   290 ( +290)  jcc    0   16 ( +16)  <P<true, true>>::build_typescript_return_type
+ONLY-B  bytes      0   1467 (+1467)  insns     0   289 ( +289)  jcc    0   13 ( +13)  <P<true, true>>::next_token_matches::<<P<true, true>>::is_declaration_before_what_follows_braces::{closure#0}>
+ONLY-B  bytes      0   1064 (+1064)  insns     0   278 ( +278)  jcc    0   56 ( +56)  <P<true, true>>::parse_union_or_intersection_type_rest::<parse::type_sink::DecoratorMetadata, true>
+ONLY-B  bytes      0   1118 (+1118)  insns     0   269 ( +269)  jcc    0   61 ( +61)  <P<true, true>>::parse_type::<SINK discard>
+ONLY-B  bytes      0   1078 (+1078)  insns     0   267 ( +267)  jcc    0   32 ( +32)  <P<true, true>>::parse_type_reference::<parse::type_sink::Build>
+ONLY-B  bytes      0   1350 (+1350)  insns     0   265 ( +265)  jcc    0   24 ( +24)  <P<true, true>>::lexer_backtracker_bool::<<P<true, true>>::skip_type_script_type_arguments_with_backtracking, bool>
+ONLY-B  bytes      0   1218 (+1218)  insns     0   253 ( +253)  jcc    0   14 ( +14)  <P<true, true>>::build_modifiers
+ONLY-B  bytes      0   1018 (+1018)  insns     0   251 ( +251)  jcc    0   49 ( +49)  <P<true, true>>::parse_type::<SINK metadata>
+ONLY-B  bytes      0   1268 (+1268)  insns     0   249 ( +249)  jcc    0    8 (  +8)  <P<true, true>>::skip_type_script_predicate_type_after_newline
+ONLY-B  bytes      0   1366 (+1366)  insns     0   248 ( +248)  jcc    0    7 (  +7)  <P<true, true>>::parse_and_drop_in_type
+ONLY-B  bytes      0    942 ( +942)  insns     0   233 ( +233)  jcc    0   48 ( +48)  <P<true, true>>::parse_type_reference::<SINK metadata>
+ONLY-B  bytes      0    913 ( +913)  insns     0   231 ( +231)  jcc    0   49 ( +49)  <P<true, true>>::parse_type_reference::<SINK discard>
+ONLY-B  bytes      0    989 ( +989)  insns     0   230 ( +230)  jcc    0   34 ( +34)  <P<true, true>>::skip_class_index_signature
+ONLY-B  bytes      0    894 ( +894)  insns     0   229 ( +229)  jcc    0   43 ( +43)  <P<true, true>>::parse_union_or_intersection_type_rest::<parse::type_sink::DecoratorMetadata, false>
+ONLY-B  bytes      0    895 ( +895)  insns     0   227 ( +227)  jcc    0   36 ( +36)  <P<true, true>>::parse_postfix_type_rest::<parse::type_sink::Build>
+ONLY-B  bytes      0    918 ( +918)  insns     0   220 ( +220)  jcc    0   15 ( +15)  <P<true, true>>::build_type_script_fn_type
+ONLY-B  bytes      0   1065 (+1065)  insns     0   217 ( +217)  jcc    0   18 ( +18)  <P<true, true>>::is_class_index_signature
+ONLY-B  bytes      0    822 ( +822)  insns     0   215 ( +215)  jcc    0   69 ( +69)  <P<true, true>>::build_modifier_kind
+ONLY-B  bytes      0    839 ( +839)  insns     0   210 ( +210)  jcc    0   25 ( +25)  <P<true, true>>::parse_asserts_type_predicate::<parse::type_sink::Build>
+ONLY-B  bytes      0    708 ( +708)  insns     0   208 ( +208)  jcc    0   37 ( +37)  <P<true, true>>::parse_property_or_method_signature
+ONLY-B  bytes      0   1231 (+1231)  insns     0   205 ( +205)  jcc    0    2 (  +2)  <P<true, true>>::parser_snapshot
+ONLY-B  bytes      0   1059 (+1059)  insns     0   204 ( +204)  jcc    0    4 (  +4)  <P<true, true>>::parse_and_drop_in_class
+ONLY-B  bytes      0    814 ( +814)  insns     0   202 ( +202)  jcc    0   21 ( +21)  <P<true, true>>::build_type_script_type_arguments::<false, true>
+ONLY-B  bytes      0   1052 (+1052)  insns     0   197 ( +197)  jcc    0   12 ( +12)  <P<true, true>>::try_build_type_script_type_arguments_with_backtracking
+ONLY-B  bytes      0    921 ( +921)  insns     0   191 ( +191)  jcc    0   15 ( +15)  <P<true, true>>::is_index_signature
+ONLY-B  bytes      0    765 ( +765)  insns     0   190 ( +190)  jcc    0   20 ( +20)  <P<true, true>>::skip_type_script_type_arguments_in::<parse::type_sink::Build, false, false>
+ONLY-B  bytes      0    778 ( +778)  insns     0   185 ( +185)  jcc    0   69 ( +69)  <P<true, true>>::is_token_of_modifier
+ONLY-B  bytes      0    723 ( +723)  insns     0   184 ( +184)  jcc    0   29 ( +29)  <P<true, true>>::parse_union_or_intersection_type_rest::<parse::type_sink::Build, true>
+ONLY-B  bytes      0    677 ( +677)  insns     0   175 ( +175)  jcc    0   23 ( +23)  <P<true, true>>::build_type_script_import_type
+ONLY-B  bytes      0    702 ( +702)  insns     0   174 ( +174)  jcc    0   19 ( +19)  <P<true, true>>::build_type_script_type_arguments::<true, false>
+ONLY-B  bytes      0    695 ( +695)  insns     0   171 ( +171)  jcc    0    9 (  +9)  <P<true, true>>::lint_class_extends
+ONLY-B  bytes      0    867 ( +867)  insns     0   164 ( +164)  jcc    0    6 (  +6)  <P<true, true>>::lexer_backtracker_result::<<P<true, true>>::skip_type_script_type_parameters_then_open_paren_with_backtracking>
+ONLY-B  bytes      0    602 ( +602)  insns     0   162 ( +162)  jcc    0   23 ( +23)  <P<true, true>>::parse_type::<parse::type_sink::Build>
+ONLY-B  bytes      0    809 ( +809)  insns     0   156 ( +156)  jcc    0    7 (  +7)  <P<true, true>>::look_ahead::<<P<true, true>>::next_is_parenthesized_or_function_type>
+ONLY-B  bytes      0    568 ( +568)  insns     0   147 ( +147)  jcc    0   14 ( +14)  <P<true, true>>::build_property_name
+ONLY-B  bytes      0    646 ( +646)  insns     0   145 ( +145)  jcc    0    9 (  +9)  <P<true, true>>::parse_accessor_declaration
+ONLY-B  bytes      0    767 ( +767)  insns     0   144 ( +144)  jcc    0    5 (  +5)  <P<true, true>>::is_enum_member_name_in_brackets
+ONLY-B  bytes      0    520 ( +520)  insns     0   142 ( +142)  jcc    0   10 ( +10)  <P<true, true>>::build_tuple_element_type
+ONLY-B  bytes      0    555 ( +555)  insns     0   141 ( +141)  jcc    0   33 ( +33)  <P<true, true>>::parse_mapped_type
+ONLY-B  bytes      0    739 ( +739)  insns     0   141 ( +141)  jcc    0    2 (  +2)  <P<true, true>>::set_aside_failed_read
+ONLY-B  bytes      0    732 ( +732)  insns     0   139 ( +139)  jcc    0    3 (  +3)  <P<true, true>>::look_ahead::<<P<true, true>>::next_is_start_of_type>
+ONLY-B  bytes      0    710 ( +710)  insns     0   139 ( +139)  jcc    0    3 (  +3)  <P<true, true>>::restore_failed_read
+ONLY-B  bytes      0    728 ( +728)  insns     0   137 ( +137)  jcc    0    3 (  +3)  <P<true, true>>::look_ahead::<<P<true, true>>::next_token_is_numeric_or_big_int_literal>
+ONLY-B  bytes      0    731 ( +731)  insns     0   137 ( +137)  jcc    0    4 (  +4)  <P<true, true>>::next_token_is_on_same_line
+ONLY-B  bytes      0    620 ( +620)  insns     0   135 ( +135)  jcc    0   12 ( +12)  <P<true, true>>::parse_import_type_attributes
+ONLY-B  bytes      0    425 ( +425)  insns     0   135 ( +135)  jcc    0   25 ( +25)  <P<true, true>>::parse_property_or_method_signature_of_reference
+ONLY-B  bytes      0    497 ( +497)  insns     0   134 ( +134)  jcc    0   19 ( +19)  <P<true, true>>::parse_union_or_intersection_type_rest::<parse::type_sink::Build, false>
+ONLY-B  bytes      0    458 ( +458)  insns     0   129 ( +129)  jcc    0   16 ( +16)  <P<true, true>>::parse_right_side_of_dot::<SINK metadata>
+ONLY-B  bytes      0    571 ( +571)  insns     0   128 ( +128)  jcc    0    9 (  +9)  <P<true, true>>::skip_type_script_signature_property_name
+ONLY-B  bytes      0    472 ( +472)  insns     0   126 ( +126)  jcc    0   24 ( +24)  <P<true, true>>::parse_asserts_type_predicate::<SINK metadata>
+ONLY-B  bytes      0    505 ( +505)  insns     0   126 ( +126)  jcc    0   21 ( +21)  <P<true, true>>::reread_type_script_fn_type
+ONLY-B  bytes      0    492 ( +492)  insns     0   125 ( +125)  jcc    0   25 ( +25)  <P<true, true>>::parse_import_attributes_of_import_type
+ONLY-B  bytes      0    447 ( +447)  insns     0   124 ( +124)  jcc    0   16 ( +16)  <P<true, true>>::parse_function_or_constructor_type_to_error::<parse::type_sink::Build, true>
+ONLY-B  bytes      0    641 ( +641)  insns     0   119 ( +119)  jcc    0    2 (  +2)  <P<true, true>>::look_ahead::<<P<true, true>>::next_token_is_new_keyword>
+ONLY-B  bytes      0    641 ( +641)  insns     0   119 ( +119)  jcc    0    2 (  +2)  <P<true, true>>::next_token_is_close_paren
+ONLY-B  bytes      0    425 ( +425)  insns     0   119 ( +119)  jcc    0   25 ( +25)  <P<true, true>>::parse_import_type::<SINK metadata>
+ONLY-B  bytes      0    410 ( +410)  insns     0   116 ( +116)  jcc    0   24 ( +24)  <P<true, true>>::parse_postfix_type_rest::<SINK discard>
+ONLY-B  bytes      0    475 ( +475)  insns     0   114 ( +114)  jcc    0   18 ( +18)  <P<true, true>>::is_modifier_kind
+ONLY-B  bytes      0    405 ( +405)  insns     0   114 ( +114)  jcc    0   25 ( +25)  <P<true, true>>::parse_import_type::<SINK discard>
+ONLY-B  bytes      0    440 ( +440)  insns     0   114 ( +114)  jcc    0   13 ( +13)  <P<true, true>>::type_expected
+ONLY-B  bytes      0    384 ( +384)  insns     0   111 ( +111)  jcc    0   22 ( +22)  <P<true, true>>::parse_postfix_type_rest::<SINK metadata>
+ONLY-B  bytes      0    419 ( +419)  insns     0   106 ( +106)  jcc    0    8 (  +8)  <P<true, true>>::build_signature_member
+ONLY-B  bytes      0    384 ( +384)  insns     0   105 ( +105)  jcc    0   23 ( +23)  <P<true, true>>::parse_asserts_type_predicate::<SINK discard>
+ONLY-B  bytes      0    371 ( +371)  insns     0   104 ( +104)  jcc    0    6 (  +6)  <P<true, true>>::build_signature
+ONLY-B  bytes      0    305 ( +305)  insns     0    99 (  +99)  jcc    0   15 ( +15)  <P<true, true>>::skip_type_script_bracketed_name
+ONLY-B  bytes      0    455 ( +455)  insns     0    91 (  +91)  jcc    0    7 (  +7)  <P<true, true>>::parse_type_arguments_of_import_type::<SINK discard>
+ONLY-B  bytes      0    455 ( +455)  insns     0    91 (  +91)  jcc    0    7 (  +7)  <P<true, true>>::parse_type_arguments_of_import_type::<SINK metadata>
+ONLY-B  bytes      0    300 ( +300)  insns     0    90 (  +90)  jcc    0   19 ( +19)  <P<true, true>>::skip_known_type_script_fn_type
+ONLY-B  bytes      0    290 ( +290)  insns     0    87 (  +87)  jcc    0   11 ( +11)  <parse::type_sink::DecoratorMetadata as parse::type_sink::TypeSink>::conditional_true::<<P<true, true>>::parse_conditional_type_re
+ONLY-B  bytes      0    338 ( +338)  insns     0    84 (  +84)  jcc    0    6 (  +6)  <P<true, true>>::function_or_constructor_type_to_error
+ONLY-B  bytes      0    278 ( +278)  insns     0    84 (  +84)  jcc    0   10 ( +10)  <P<true, true>>::parse_conditional_type_rest::<parse::type_sink::Build>
+ONLY-B  bytes      0    304 ( +304)  insns     0    83 (  +83)  jcc    0   16 ( +16)  <P<true, true>>::parse_index_signature_declaration
+ONLY-B  bytes      0    270 ( +270)  insns     0    83 (  +83)  jcc    0    8 (  +8)  <P<true, true>>::reread_bracketed_name
+ONLY-B  bytes      0    413 ( +413)  insns     0    81 (  +81)  jcc    0    3 (  +3)  <P<true, true>>::parse_bracketed_name
+ONLY-B  bytes      0    294 ( +294)  insns     0    81 (  +81)  jcc    0    7 (  +7)  <P<true, true>>::sfx_typescript_as_for_lint
+ONLY-B  bytes      0    323 ( +323)  insns     0    80 (  +80)  jcc    0    6 (  +6)  <P<true, true>>::skip_type_script_parameter_modifiers
+ONLY-B  bytes      0    275 ( +275)  insns     0    79 (  +79)  jcc    0   10 ( +10)  <P<true, true>>::parse_function_or_constructor_type_to_error::<parse::type_sink::Build, false>
+ONLY-B  bytes      0    388 ( +388)  insns     0    79 (  +79)  jcc    0    3 (  +3)  <P<true, true>>::parse_initializer_in_type
+ONLY-B  bytes      0    280 ( +280)  insns     0    78 (  +78)  jcc    0   15 ( +15)  <P<true, true>>::parse_union_or_intersection_type::<parse::type_sink::Discard, false>
+ONLY-B  bytes      0    301 ( +301)  insns     0    77 (  +77)  jcc    0    2 (  +2)  <P<true, true>>::log_unexpected_in_attempt
+ONLY-B  bytes      0    261 ( +261)  insns     0    75 (  +75)  jcc    0    8 (  +8)  <P<true, true>>::parse_type_predicate_after_name::<parse::type_sink::Build>
+ONLY-B  bytes      0    253 ( +253)  insns     0    75 (  +75)  jcc    0    9 (  +9)  <P<true, true>>::skip_type_script_paren_type::<SINK metadata>
+ONLY-B  bytes      0    247 ( +247)  insns     0    75 (  +75)  jcc    0   12 ( +12)  <P<true, true>>::skip_type_script_type_arguments_in::<parse::type_sink::Discard, false, false>
+ONLY-B  bytes      0    244 ( +244)  insns     0    71 (  +71)  jcc    0   12 ( +12)  <P<true, true>>::parse_function_or_constructor_type_to_error::<parse::type_sink::Discard, true>
+ONLY-B  bytes      0    225 ( +225)  insns     0    71 (  +71)  jcc    0    7 (  +7)  <P<true, true>>::set_type_script_memo_at
+ONLY-B  bytes      0    224 ( +224)  insns     0    70 (  +70)  jcc    0    7 (  +7)  <P<true, true>>::reread_heritage_clause_element
+ONLY-B  bytes      0    244 ( +244)  insns     0    69 (  +69)  jcc    0    6 (  +6)  <P<true, true>>::lint_type_parameters
+ONLY-B  bytes      0    231 ( +231)  insns     0    68 (  +68)  jcc    0   12 ( +12)  <P<true, true>>::parse_union_or_intersection_type::<parse::type_sink::DecoratorMetadata, false>
+ONLY-B  bytes      0    195 ( +195)  insns     0    68 (  +68)  jcc    0    7 (  +7)  <P<true, true>>::reread_class_implements_entry
+ONLY-B  bytes      0    209 ( +209)  insns     0    65 (  +65)  jcc    0   11 ( +11)  <P<true, true>>::parse_type_after_leading_operators::<SINK metadata>
+ONLY-B  bytes      0    208 ( +208)  insns     0    65 (  +65)  jcc    0    6 (  +6)  <P<true, true>>::reread_import_type_attributes
+ONLY-B  bytes      0    231 ( +231)  insns     0    62 (  +62)  jcc    0    4 (  +4)  <P<true, true>>::lint_declaration_type_parameters
+ONLY-B  bytes      0    204 ( +204)  insns     0    62 (  +62)  jcc    0   11 ( +11)  <P<true, true>>::parse_type_after_leading_operators::<SINK discard>
+ONLY-B  bytes      0    206 ( +206)  insns     0    60 (  +60)  jcc    0    4 (  +4)  <P<true, true>>::lint_type_arguments_after
+ONLY-B  bytes      0    191 ( +191)  insns     0    59 (  +59)  jcc    0    7 (  +7)  <P<true, true>>::parse_type_arguments_of_type_reference::<parse::type_sink::Build>
+ONLY-B  bytes      0    224 ( +224)  insns     0    57 (  +57)  jcc    0   12 ( +12)  <P<true, true>>::can_follow_default_keyword
+ONLY-B  bytes      0    165 ( +165)  insns     0    57 (  +57)  jcc    0    9 (  +9)  <P<true, true>>::parse_function_or_constructor_type::<SINK metadata>
+ONLY-B  bytes      0    165 ( +165)  insns     0    57 (  +57)  jcc    0   10 ( +10)  <P<true, true>>::parse_tuple_element_at_reserved_word
+ONLY-B  bytes      0    174 ( +174)  insns     0    57 (  +57)  jcc    0   12 ( +12)  <P<true, true>>::skip_typescript_return_type
+ONLY-B  bytes      0    190 ( +190)  insns     0    56 (  +56)  jcc    0    4 (  +4)  <P<true, true>>::lint_jsx_type_arguments
+ONLY-B  bytes      0    215 ( +215)  insns     0    56 (  +56)  jcc    0    5 (  +5)  <P<true, true>>::statement_expected
+ONLY-B  bytes      0    155 ( +155)  insns     0    54 (  +54)  jcc    0    9 (  +9)  <P<true, true>>::parse_function_or_constructor_type::<SINK discard>
+ONLY-B  bytes      0    153 ( +153)  insns     0    52 (  +52)  jcc    0    8 (  +8)  <P<true, true>>::parse_entity_name_rest::<parse::type_sink::Build>
+ONLY-B  bytes      0    155 ( +155)  insns     0    50 (  +50)  jcc    0    6 (  +6)  <P<true, true>>::is_declaration_before_what_follows_braces
+ONLY-B  bytes      0    167 ( +167)  insns     0    49 (  +49)  jcc    0    3 (  +3)  <P<true, true>>::lint_type_arguments_in_expression
+ONLY-B  bytes      0    159 ( +159)  insns     0    49 (  +49)  jcc    0    7 (  +7)  <P<true, true>>::paren_expr_has_type_parameters
+ONLY-B  bytes      0    252 ( +252)  insns     0    48 (  +48)  jcc    0    2 (  +2)  <P<true, true>>::code_syntax_error
+ONLY-B  bytes      0    140 ( +140)  insns     0    48 (  +48)  jcc    0    7 (  +7)  <P<true, true>>::parse_conditional_type_rest::<SINK discard>
+ONLY-B  bytes      0    132 ( +132)  insns     0    45 (  +45)  jcc    0    7 (  +7)  <P<true, true>>::parse_entity_name_rest::<SINK discard>
+ONLY-B  bytes      0    154 ( +154)  insns     0    45 (  +45)  jcc    0    8 (  +8)  <P<true, true>>::parse_function_or_constructor_type_to_error::<parse::type_sink::Discard, false>
+ONLY-B  bytes      0    132 ( +132)  insns     0    45 (  +45)  jcc    0    7 (  +7)  <P<true, true>>::parse_type_of_index_signature
+ONLY-B  bytes      0    149 ( +149)  insns     0    40 (  +40)  jcc    0    6 (  +6)  <P<true, true>>::is_start_of_predicate_type
+ONLY-B  bytes      0    109 ( +109)  insns     0    40 (  +40)  jcc    0    4 (  +4)  <P<true, true>>::parse_right_side_of_dot::<parse::type_sink::Build>
+ONLY-B  bytes      0    116 ( +116)  insns     0    38 (  +38)  jcc    0    2 (  +2)  <P<true, true>>::build_type_script_type_arguments::<false, false>
+ONLY-B  bytes      0    106 ( +106)  insns     0    38 (  +38)  jcc    0    4 (  +4)  <P<true, true>>::parse_computed_property_name
+ONLY-B  bytes      0    138 ( +138)  insns     0    36 (  +36)  jcc    0    6 (  +6)  <P<true, true>>::is_end_of_heritage_clause_element
+ONLY-B  bytes      0    102 ( +102)  insns     0    36 (  +36)  jcc    0    4 (  +4)  <P<true, true>>::parse_entity_name_rest::<SINK metadata>
+ONLY-B  bytes      0    139 ( +139)  insns     0    36 (  +36)  jcc    0    1 (  +1)  <P<true, true>>::unexpected_as
+ONLY-B  bytes      0    103 ( +103)  insns     0    35 (  +35)  jcc    0    2 (  +2)  <P<true, true>>::build_type_with_opts
+ONLY-B  bytes      0     99 (  +99)  insns     0    34 (  +34)  jcc    0    4 (  +4)  <P<true, true>>::is_start_of_type
+ONLY-B  bytes      0     91 (  +91)  insns     0    33 (  +33)  jcc    0    3 (  +3)  <P<true, true>>::parse_right_side_of_dot::<SINK discard>
+ONLY-B  bytes      0     56 (  +56)  insns     0    25 (  +25)  jcc    0    5 (  +5)  <P<true, true>>::arrow_parameters_could_be_expr
+ONLY-B  bytes      0     72 (  +72)  insns     0    25 (  +25)  jcc    0    2 (  +2)  <P<true, true>>::parse_type_literal
+ONLY-B  bytes      0     72 (  +72)  insns     0    25 (  +25)  jcc    0    2 (  +2)  <P<true, true>>::parse_type_member_list
+ONLY-B  bytes      0     60 (  +60)  insns     0    22 (  +22)  jcc    0    3 (  +3)  <P<true, true>>::parse_function_block_in_type
+ONLY-B  bytes      0     51 (  +51)  insns     0    21 (  +21)  jcc    0    2 (  +2)  <P<true, true>>::parse_expression_with_type_arguments
+ONLY-B  bytes      0     71 (  +71)  insns     0    20 (  +20)  jcc    0    0 (  +0)  <P<true, true>>::rewind_to_read_mark
+ONLY-B  bytes      0     64 (  +64)  insns     0    19 (  +19)  jcc    0    0 (  +0)  <P<true, true>>::rewind_class_implements_entry
+ONLY-B  bytes      0     57 (  +57)  insns     0    18 (  +18)  jcc    0    0 (  +0)  <P<true, true>>::rewind_lint_attempt
+ONLY-B  bytes      0     24 (  +24)  insns     0     9 (   +9)  jcc    0    1 (  +1)  <P<true, true>>::rewind_sidecar
+FAIL: 37 DIFF, 10 only in base, 149 only in head

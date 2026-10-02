@@ -1372,8 +1372,6 @@ pub(crate) fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
-/// npm's `ignore-scripts` config key as an environment variable: `false` or `0`
-/// is off, unset or empty is no setting, any other value is on.
 fn ignore_scripts_from_process_env(env: &dot_env::Loader) -> Option<bool> {
     let mut ignore_scripts = None;
     for name in [

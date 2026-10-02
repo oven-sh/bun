@@ -1023,7 +1023,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    // RSA and EC key pairs are generated on the work pool. The cheap key types are generated inline.
+    // RSA, P-384 and P-521 key pairs are generated on the work pool. The cheap key types (P-256 too) are generated in the call.
     RELEASE_AND_RETURN(scope, algorithm->generateKey(*params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext()));
 }
 

@@ -56,9 +56,12 @@ public:
     }
     virtual ~CryptoKeyEC() = default;
 
+    WEBCORE_EXPORT static ExceptionOr<CryptoKeyPair> generatePair(CryptoAlgorithmIdentifier, const String& curve, bool extractable, CryptoKeyUsageBitmap);
+    // P-384 or P-521. A P-256 pair costs about 12 us, so generatePair() makes it in the call.
+    static std::optional<NamedCurve> curveGeneratedOnWorkPool(const String& curve);
     using KeyPairCallback = Function<void(CryptoKeyPair&&)>;
-    using FailureCallback = Function<void(ExceptionCode)>;
-    static void generatePair(CryptoAlgorithmIdentifier, const String& curve, bool extractable, CryptoKeyUsageBitmap, KeyPairCallback&&, FailureCallback&&, ScriptExecutionContext&);
+    using FailureCallback = Function<void()>;
+    static void generatePairOnWorkPool(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap, KeyPairCallback&&, FailureCallback&&, ScriptExecutionContext&);
     WEBCORE_EXPORT static RefPtr<CryptoKeyEC> importRaw(CryptoAlgorithmIdentifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyEC> importJwk(CryptoAlgorithmIdentifier, const String& curve, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
     // On failure, `keyTypeMismatch` (when given) reports whether the data held a
@@ -87,7 +90,7 @@ private:
     KeyAlgorithm algorithm() const final;
 
     static bool platformSupportedCurve(NamedCurve);
-    // Runs on the work pool. It makes no CryptoKey objects, only the platform keys.
+    // Safe on a work pool thread: it makes no CryptoKey objects, only the platform keys.
     static std::optional<EvpKeyPair> platformGeneratePair(NamedCurve);
     static RefPtr<CryptoKeyEC> platformImportRaw(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyEC> platformImportJWKPublic(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& x, Vector<uint8_t>&& y, bool extractable, CryptoKeyUsageBitmap);

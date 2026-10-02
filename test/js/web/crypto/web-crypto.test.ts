@@ -1235,11 +1235,8 @@ describe("empty usages on a private or secret key", () => {
   });
 });
 
-// RSA and EC key generation run on the work pool. When the key pair was
-// generated synchronously inside the generateKey() call, the promise was
-// already settled when it was returned, and the event loop was frozen for the
-// whole keygen (seconds for 4096-bit RSA, about 250 ms for 200 P-521 pairs).
-describe("RSA and EC generateKey run off the JS thread", () => {
+// RSA, P-384 and P-521 key pairs are generated on the work pool. A P-256 pair (about 12 us) is generated in the call.
+describe("generateKey runs slow key pairs on the work pool", () => {
   // 1024 bits keeps the debug+ASAN lane fast; only the timer test below needs a slow keygen.
   const rsa = (name: string, modulusLength = 1024): RsaHashedKeyGenParams => ({
     name,
@@ -1247,18 +1244,23 @@ describe("RSA and EC generateKey run off the JS thread", () => {
     publicExponent: new Uint8Array([1, 0, 1]),
     hash: "SHA-256",
   });
-  const cases: [string, RsaHashedKeyGenParams | EcKeyGenParams, KeyUsage[]][] = [
-    ["RSA-OAEP", rsa("RSA-OAEP"), ["encrypt", "decrypt"]],
-    ["RSA-PSS", rsa("RSA-PSS"), ["sign", "verify"]],
-    ["RSASSA-PKCS1-v1_5", rsa("RSASSA-PKCS1-v1_5"), ["sign", "verify"]],
-    ["ECDSA P-256", { name: "ECDSA", namedCurve: "P-256" }, ["sign", "verify"]],
-    ["ECDSA P-521", { name: "ECDSA", namedCurve: "P-521" }, ["sign", "verify"]],
-    ["ECDH P-521", { name: "ECDH", namedCurve: "P-521" }, ["deriveBits"]],
+  const ecdsa = (namedCurve: string): EcKeyGenParams => ({ name: "ECDSA", namedCurve });
+  const ecdh = (namedCurve: string): EcKeyGenParams => ({ name: "ECDH", namedCurve });
+  const cases: [string, RsaHashedKeyGenParams | EcKeyGenParams, KeyUsage[], "pending" | "fulfilled"][] = [
+    ["RSA-OAEP", rsa("RSA-OAEP"), ["encrypt", "decrypt"], "pending"],
+    ["RSA-PSS", rsa("RSA-PSS"), ["sign", "verify"], "pending"],
+    ["RSASSA-PKCS1-v1_5", rsa("RSASSA-PKCS1-v1_5"), ["sign", "verify"], "pending"],
+    ["ECDSA P-384", ecdsa("P-384"), ["sign", "verify"], "pending"],
+    ["ECDSA P-521", ecdsa("P-521"), ["sign", "verify"], "pending"],
+    ["ECDH P-384", ecdh("P-384"), ["deriveBits"], "pending"],
+    ["ECDH P-521", ecdh("P-521"), ["deriveBits"], "pending"],
+    ["ECDSA P-256", ecdsa("P-256"), ["sign", "verify"], "fulfilled"],
+    ["ECDH P-256", ecdh("P-256"), ["deriveBits"], "fulfilled"],
   ];
-  describe.each(cases)("%s", (_, params, usages) => {
-    it("returns a pending promise", async () => {
+  describe.each(cases)("%s", (_, params, usages, status) => {
+    it(`the promise is ${status} when generateKey returns`, async () => {
       const promise = crypto.subtle.generateKey(params, true, usages);
-      expect(Bun.peek.status(promise)).toBe("pending");
+      expect(Bun.peek.status(promise)).toBe(status);
       const pair = await promise;
       expect([pair.publicKey.type, pair.privateKey.type, pair.privateKey.algorithm.name]).toEqual([
         "public",
@@ -1340,10 +1342,12 @@ describe("RSA and EC generateKey run off the JS thread", () => {
       );
     expect({
       rsa: await rejection(crypto.subtle.generateKey(rsa("RSA-OAEP"), true, ["encrypt"])),
-      ec: await rejection(crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["verify"])),
+      p384: await rejection(crypto.subtle.generateKey(ecdsa("P-384"), true, ["verify"])),
+      p256: await rejection(crypto.subtle.generateKey(ecdsa("P-256"), true, ["verify"])),
     }).toEqual({
       rsa: "SyntaxError: Usages cannot be empty when creating a key.",
-      ec: "SyntaxError: Usages cannot be empty when creating a key.",
+      p384: "SyntaxError: Usages cannot be empty when creating a key.",
+      p256: "SyntaxError: Usages cannot be empty when creating a key.",
     });
   });
 

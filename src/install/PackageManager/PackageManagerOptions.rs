@@ -1,6 +1,6 @@
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
-use bun_core::{Output, env_var};
+use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
@@ -430,6 +430,8 @@ impl Options {
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_: Option<&Api::BunInstall>,
+        // Host-keyed `.npmrc` credentials. The caller already applied them to `bun_install_`, so only the forced registry needs them.
+        npmrc_auth: &[bun_ini::RegistryAuth],
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {
         let mut base = Api::NpmRegistry::default();
@@ -725,6 +727,12 @@ impl Options {
             self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
         }
 
+        // For the forced-registry block at the end of this fn, read before `maybe_cli` is moved.
+        let had_cli_registry = maybe_cli
+            .as_ref()
+            .is_some_and(|cli| !cli.registry.is_empty());
+        let cli_token: &[u8] = maybe_cli.as_ref().map_or(b"", |cli| cli.token);
+
         if let Some(cli) = maybe_cli {
             self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable
@@ -927,6 +935,108 @@ impl Options {
             };
             // SAFETY: main-thread CLI option load — single writer.
             super::PackageManager::set_verbose_install(false);
+        }
+
+        // `install.forceRegistry` / `BUN_CONFIG_FORCE_REGISTRY`, applied last so that it wins over every registry source above.
+        {
+            // Not `env.get()`: that also reads the project's `.env` files, which must not be able to set this.
+            let forced = match env_var::BUN_CONFIG_FORCE_REGISTRY
+                .get()
+                .filter(|url| !url.is_empty())
+            {
+                Some(url) if url.starts_with(b"https://") || url.starts_with(b"http://") => {
+                    Some((Api::NpmRegistry::from_url(url), "BUN_CONFIG_FORCE_REGISTRY"))
+                }
+                Some(_) => {
+                    // Fail closed, and do not print the value: it can hold credentials.
+                    Output::err_generic(
+                        "BUN_CONFIG_FORCE_REGISTRY is set, but its value is not an http:// or https:// URL",
+                        (),
+                    );
+                    Global::exit(1);
+                }
+                None => bun_install_ref
+                    .and_then(|config| config.force_registry.as_ref())
+                    .filter(|registry| !registry.url.is_empty())
+                    .map(|registry| (registry.clone(), "install.forceRegistry")),
+            };
+
+            if let Some((mut force_registry, set_by)) = forced {
+                // The credential precedence is listed under `install.forceRegistry` in docs/runtime/bunfig.mdx.
+                let explicit_token: Box<[u8]> = if !cli_token.is_empty() {
+                    cli_token.into()
+                } else {
+                    [
+                        b"BUN_CONFIG_TOKEN".as_slice(),
+                        b"NPM_CONFIG_TOKEN",
+                        b"npm_config_token",
+                    ]
+                    .into_iter()
+                    .find_map(|key| env.get(key).filter(|value| !value.is_empty()))
+                    .unwrap_or(b"")
+                    .into()
+                };
+                if explicit_token.is_empty() {
+                    bun_ini::RegistryAuth::apply_matching(npmrc_auth, &mut force_registry);
+                }
+                let prev_scope = core::mem::replace(
+                    &mut self.scope,
+                    Npm::registry::Scope::from_api(b"", force_registry, env)?,
+                );
+                let had_scoped_registries = !self.registries.is_empty();
+                if self.scope.token.is_empty() && self.scope.auth.is_empty() {
+                    if !explicit_token.is_empty() {
+                        self.scope.token = explicit_token;
+                    } else {
+                        // The `BUN_CONFIG_REGISTRY` guard from above: `.npmrc` can key `prev_scope.token` to another host.
+                        let same_host_no_downgrade = {
+                            let prev_url = prev_scope.url.url();
+                            let new_url = self.scope.url.url();
+                            bun_core::without_trailing_slash(new_url.host)
+                                == bun_core::without_trailing_slash(prev_url.host)
+                                && (new_url.is_https() || !prev_url.is_https())
+                        };
+                        let has_credentials = |scope: &Npm::registry::Scope| {
+                            !scope.token.is_empty() || !scope.auth.is_empty()
+                        };
+                        let forced_url_hash = self.scope.url_hash;
+                        // A scoped registry about to be cleared donates only when it is this same URL. The name order keeps the pick stable.
+                        let donor = if same_host_no_downgrade && has_credentials(&prev_scope) {
+                            Some(&prev_scope)
+                        } else {
+                            self.registries
+                                .values()
+                                .filter(|scope| {
+                                    scope.url_hash == forced_url_hash && has_credentials(scope)
+                                })
+                                .min_by(|a, b| a.name.cmp(&b.name))
+                        };
+                        if let Some(donor) = donor {
+                            self.scope.token.clone_from(&donor.token);
+                            self.scope.auth.clone_from(&donor.auth);
+                            self.scope.user.clone_from(&donor.user);
+                        }
+                    }
+                }
+                // `scope_for_package_name` now returns `self.scope` for every package.
+                self.registries.clear();
+
+                // Tell the developer why their registry configuration has no effect, if they have any.
+                if self.log_level != LogLevel::Silent
+                    && (prev_scope.url_hash != *Npm::registry::DEFAULT_URL_HASH
+                        || had_scoped_registries
+                        || had_cli_registry)
+                {
+                    bun_core::note!(
+                        "using forced registry <b>{}<r> <d>({} is set on this machine, ignoring other registry configuration)<r>",
+                        bun_fmt::redacted_npm_url(bun_core::without_trailing_slash(
+                            self.scope.url.href()
+                        )),
+                        set_by,
+                    );
+                    Output::flush();
+                }
+            }
         }
 
         // If the lockfile is frozen, don't save it to disk.

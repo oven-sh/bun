@@ -398,7 +398,7 @@ let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 ```
 
-The pointer stays valid while the `TypedArray` is referenced. `ptr()` does not keep the `TypedArray` alive, so keep a reference to it for as long as native code uses the pointer.
+The pointer stays valid while the `TypedArray` is referenced and its `ArrayBuffer` is not transferred. `ptr()` does not keep the `TypedArray` alive, so keep a reference to it for as long as native code uses the pointer.
 
 To convert from a pointer to an `ArrayBuffer`:
 

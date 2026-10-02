@@ -327,14 +327,8 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         // MimallocArena::new() calls mi_heap_new(), so defer creation to the
         // paths that actually allocate.
         let arena = Arena::new();
-        let mut parser_input = css::ParserInput::new(input.slice(), &arena);
-        let mut parser = css::Parser::new(
-            &mut parser_input,
-            None,
-            css::css_parser::ParserOpts::default(),
-            None,
-        );
-        break 'brk CssColor::parse(&mut parser);
+        // Unlike CssColor::parse alone, this rejects "red;background:url(x)".
+        break 'brk css::parse_utility::parse_string(&arena, input.slice(), CssColor::parse);
     };
 
     match parsed_color {

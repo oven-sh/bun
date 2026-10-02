@@ -576,6 +576,15 @@ describe.concurrent(".env quoted value with trailing junk does not swallow follo
   });
 });
 
+test(".env escaped quote inside double quotes (issue #39351)", () => {
+  const dir = tempDirWithFiles("dotenv-issue-39351", {
+    ".env": 'FOO="{ \\"foo\\": true }"',
+    "index.ts": "console.log(process.env.FOO);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe('{ "foo": true }');
+});
+
 describe.concurrent("boundary tests", () => {
   // TODO: this is a regression in bun ~1.0.15 ish
   test.todo("src boundary", () => {

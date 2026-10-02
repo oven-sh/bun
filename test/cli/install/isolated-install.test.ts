@@ -2040,13 +2040,14 @@ describe.concurrent("bins of a package that dependents reach under different nam
     ["the alias", { aliased: "npm:what-bin@1.0.0" }, { "what-bin": "1.0.0" }],
     ["the package name", { "what-bin": "1.0.0" }, { aliased: "npm:what-bin@1.0.0" }],
   ])("each workspace member links the bin through its own dependency name (%s first)", async (_, first, second) => {
-    const { packageDir } = await workspace({ "a-first": { dependencies: first }, "b-second": { dependencies: second } });
+    const { packageDir } = await workspace({
+      "a-first": { dependencies: first },
+      "b-second": { dependencies: second },
+    });
 
     await runBunInstall(bunEnv, packageDir);
 
-    expect(memberBin(packageDir, "a-first", "what-bin")).toBeValidBin(
-      join("..", Object.keys(first)[0], "what-bin.js"),
-    );
+    expect(memberBin(packageDir, "a-first", "what-bin")).toBeValidBin(join("..", Object.keys(first)[0], "what-bin.js"));
     expect(memberBin(packageDir, "b-second", "what-bin")).toBeValidBin(
       join("..", Object.keys(second)[0], "what-bin.js"),
     );
@@ -2086,12 +2087,8 @@ describe.concurrent("bins of a package that dependents reach under different nam
     // The install script of uses-what-bin runs `what-bin`.
     await runBunInstall(bunEnv, packageDir);
 
-    expect(await file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text()).toBe(
-      "what-bin@1.0.0",
-    );
-    expect(storeBin(packageDir, "uses-what-bin@1.0.0", "what-bin")).toBeValidBin(
-      join("..", "what-bin", "what-bin.js"),
-    );
+    expect(await file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text()).toBe("what-bin@1.0.0");
+    expect(storeBin(packageDir, "uses-what-bin@1.0.0", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
   });
 
   test("a global store entry links its dependency's bin when the project aliases that dependency", async () => {
@@ -2110,9 +2107,7 @@ describe.concurrent("bins of a package that dependents reach under different nam
     expect(readlinkSync(join(packageDir, "node_modules", ".bun", "uses-what-bin@1.0.0"))).toContain(
       join(".bun-cache", "links", "uses-what-bin@1.0.0-"),
     );
-    expect(storeBin(packageDir, "uses-what-bin@1.0.0", "what-bin")).toBeValidBin(
-      join("..", "what-bin", "what-bin.js"),
-    );
+    expect(storeBin(packageDir, "uses-what-bin@1.0.0", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
   });
 
   test("a workspace member named like its dependency does not link its own bin to the dependency's file", async () => {

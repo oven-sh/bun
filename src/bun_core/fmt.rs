@@ -243,8 +243,6 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
 
 pub struct RedactedNpmUrlFormatter<'a> {
     pub(crate) url: &'a [u8],
-    /// A UUID in a registry URL can be a legacy npm token.
-    pub(crate) uuids: bool,
 }
 
 impl Display for RedactedNpmUrlFormatter<'_> {
@@ -260,7 +258,7 @@ impl Display for RedactedNpmUrlFormatter<'_> {
                 continue;
             }
 
-            if self.uuids && strings::starts_with_uuid(&self.url[i..]) {
+            if strings::starts_with_uuid(&self.url[i..]) {
                 f.write_str("***")?;
                 i += 36;
                 continue;
@@ -296,18 +294,7 @@ impl Display for RedactedNpmUrlFormatter<'_> {
 }
 
 pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
-    RedactedNpmUrlFormatter {
-        url: str,
-        uuids: true,
-    }
-}
-
-/// Masks the password and npm tokens of a URL. A UUID stays: outside a registry it is usually an id.
-pub fn redacted_url_credentials(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
-    RedactedNpmUrlFormatter {
-        url: str,
-        uuids: false,
-    }
+    RedactedNpmUrlFormatter { url: str }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

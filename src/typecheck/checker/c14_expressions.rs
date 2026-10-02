@@ -1364,7 +1364,7 @@ impl<'a> Checker<'a> {
         if is_variable_declaration_list(a, initializer) {
             let declarations = a.nodes(a.as_variable_declaration_list(initializer).declarations);
             if declarations.len() > 0 {
-                let variable = declarations.at(0);
+                let variable = declarations.at(0usize);
                 if !variable.is_nil() && !is_binding_pattern(a, a.name(variable)) {
                     return self.get_symbol_of_declaration(variable);
                 }
@@ -1476,11 +1476,11 @@ impl<'a> Checker<'a> {
             let any_type = self.any_type;
             return self.create_promise_return_type(node, any_type);
         }
-        let specifier = args.at(0);
+        let specifier = args.at(0usize);
         let specifier_type = self.check_expression_cached(specifier);
         let mut options_type = TypeId::NIL;
         if args.len() > 1 {
-            options_type = self.check_expression_cached(args.at(1));
+            options_type = self.check_expression_cached(args.at(1usize));
         }
         // Even though multiple arguments is grammatically incorrect, type-check extra arguments for completion
         for &arg in args.as_slice().iter().skip(2) {
@@ -1503,10 +1503,16 @@ impl<'a> Checker<'a> {
             let import_call_options_type = self.get_global_import_call_options_type_checked();
             if import_call_options_type != self.empty_object_type {
                 let target = self.get_nullable_type(import_call_options_type, TypeFlags::UNDEFINED);
-                self.check_type_assignable_to(options_type, target, args.at(1), MessageId::NIL);
+                self.check_type_assignable_to(
+                    options_type,
+                    target,
+                    args.at(1usize),
+                    MessageId::NIL,
+                );
             }
-            if is_object_literal_expression(a, args.at(1)) {
-                let properties = a.nodes(a.as_object_literal_expression(args.at(1)).properties);
+            if is_object_literal_expression(a, args.at(1usize)) {
+                let properties =
+                    a.nodes(a.as_object_literal_expression(args.at(1usize)).properties);
                 for &prop in properties.as_slice() {
                     if is_property_assignment(a, prop)
                         && is_identifier(a, a.name(prop))

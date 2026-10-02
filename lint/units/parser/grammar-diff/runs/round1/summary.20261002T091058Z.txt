@@ -1,0 +1,390 @@
+run     2026-10-02T09:10:58Z  tag round1  expect differ  steps seams seams-bu testrows comments targeted bench tscases small files runtime build
+base    /workspace/base/bun.f4d755a9c  sha256 e9cfacdf4af2477170858e2d713791ef310d90a6e21a5b05dfb0e78be0d9bfe0  1.4.3-canary.1+f4d755a9c
+next    /workspace/head/bun.head  sha256 d0a760e664b2ebb2dac4dd4d1ff1e9e370b57abea77eb69b0fa0c899ff80cbf9  1.4.3-canary.1+23a20afa7  built 2026-10-01T23:29:56Z  workers 4
+tree    /workspace/wt/parser  23a20afa7ee95996f0d044f5df67bbca179d7667  0 modified files under src/js_parser, src/ast, src/jsc  42 commits after f4d755a9cf under src/js_parser, src/js_printer, src/ast
+tools   harness.all.mjs 1c94e1dad47a (34 configurations)  diff.mjs 7594403b9718  seams.mjs dbd2cbd786ef  seams-bu.mjs cc4bb2cbe20f  run-r2.sh 6148c7a26444
+seen  seams     sources 1080   x 34 records 36720    differ 12238   crashes 0/0  corpus 986dc8690931  sha256 of the records 6bb7292a343cefe3 != c20960a4ade15742
+        seen   fn.param-modifier                     46 of  70 sources differ,  1150 records  R>A=1000 R>R=150  | i.ts=46 i.tsx=46 s.ts=92 s.tsx=46 t.ts=736 t.tsx=184
+        seen   fn.rest-comma                         48 of  74 sources differ,  1200 records  R>A=1150 R>R=50  | i.ts=48 i.tsx=48 s.ts=96 s.tsx=48 t.ts=768 t.tsx=192
+        seen   class.implements                      48 of 102 sources differ,  1175 records  R>A=1125 R>R=50  | i.ts=47 i.tsx=47 s.ts=94 s.tsx=47 t.ts=752 t.tsx=188
+        seen   class.accessor                        64 of  89 sources differ,   778 records  R>A=492 R>R=286  | i.js=37 i.jsx=37 i.ts=64 i.tsx=64 s.ts=64 t.ts=384 t.tsx=128
+        seen   class.index-signature                 58 of 128 sources differ,  1438 records  R>A=1080 R>R=358  | i.js=1 i.jsx=1 i.ts=58 i.tsx=58 s.ts=115 s.tsx=57 t.ts=918 t.tsx=230
+        seen   enum.bracket-name                     29 of  42 sources differ,   725 records  R>A=625 R>R=100  | i.ts=29 i.tsx=29 s.ts=58 s.tsx=29 t.ts=464 t.tsx=116
+        seen   paren.colon-after-operand             52 of  75 sources differ,  1006 records  R>A=911 R>R=95  | i.ts=52 i.tsx=3 s.ts=104 s.tsx=3 t.ts=832 t.tsx=12
+        seen   paren.type-list-before-colon          24 of  48 sources differ,   456 records  R>A=266 R>R=190  | i.ts=24 s.ts=48 t.ts=384
+        seen   arrow.body-before-colon               40 of  78 sources differ,   934 records  R>A=834 R>R=100  | i.ts=40 i.tsx=29 s.ts=80 s.tsx=29 t.ts=640 t.tsx=116
+        seen   stmt.named-like-cast                  53 of 105 sources differ,  1271 records  A>A=123 R>A=1148  | i.ts=46 i.tsx=46 s.ts=92 s.tsx=46 t.ts=833 t.tsx=208
+        seen   stmt.abstract-declare                 16 of  24 sources differ,   400 records  R>A=375 R>R=25  | i.ts=16 i.tsx=16 s.ts=32 s.tsx=16 t.ts=256 t.tsx=64
+        seen   stmt.namespace-import-expr            15 of  38 sources differ,   375 records  R>A=300 R>R=75  | i.ts=15 i.tsx=15 s.ts=30 s.tsx=15 t.ts=240 t.tsx=60
+        seen   module.with-on-next-line              35 of  49 sources differ,  1145 records  R>A=936 R>R=209  | i.js=30 i.jsx=30 i.ts=35 i.tsx=35 s.js=30 s.jsx=30 s.ts=70 s.tsx=35 t.js=120 t.jsx=30 t.ts=560 t.tsx=140
+        seen   metadata.dotted-merge                 37 of  72 sources differ,   185 records  A>A=185  | t.ts=148 t.tsx=37
+        same   site.unchanged                         0 of  86 sources differ,     0 records    | 
+seen  seams-bu  sources 744    x 34 records 25296    differ 7173    crashes 0/0  corpus 77db46ce5942  sha256 of the records 549e63ad6fd95188 != 5ed15466c2333b4b
+        seen   fn.rest-comma                         25 of  46 sources differ,   625 records  R>A=550 R>R=75  | i.ts=25 i.tsx=25 s.ts=50 s.tsx=25 t.ts=400 t.tsx=100
+        seen   fn.param-modifier                     33 of  67 sources differ,   825 records  R>A=750 R>R=75  | i.ts=33 i.tsx=33 s.ts=66 s.tsx=33 t.ts=528 t.tsx=132
+        seen   class.index-signature                 27 of  88 sources differ,   663 records  R>A=486 R>R=177  | i.js=1 i.jsx=1 i.ts=27 i.tsx=27 s.ts=53 s.tsx=26 t.ts=422 t.tsx=106
+        seen   enum.bracket-name                     18 of  29 sources differ,   450 records  R>A=400 R>R=50  | i.ts=18 i.tsx=18 s.ts=36 s.tsx=18 t.ts=288 t.tsx=72
+        seen   class.accessor                        48 of  61 sources differ,   582 records  R>A=342 R>R=240  | i.js=27 i.jsx=27 i.ts=48 i.tsx=48 s.ts=48 t.ts=288 t.tsx=96
+        seen   expr.colon-after-parens               26 of  83 sources differ,   524 records  R>A=499 R>R=25  | i.ts=26 i.tsx=5 s.ts=52 s.tsx=5 t.ts=416 t.tsx=20
+        seen   meta.dotted-names                     11 of  20 sources differ,    55 records  A>A=55  | t.ts=44 t.tsx=11
+        seen   expr.arrow-body-before-colon          27 of  60 sources differ,   639 records  R>A=639  | i.ts=27 i.tsx=21 s.ts=54 s.tsx=21 t.ts=432 t.tsx=84
+        seen   class.implements-entry                42 of  66 sources differ,  1044 records  R>A=1019 R>R=25  | i.ts=42 i.tsx=41 s.ts=84 s.tsx=41 t.ts=672 t.tsx=164
+        seen   stmt.named-like-cast                  33 of  60 sources differ,   782 records  A>A=83 R>A=674 R>R=25  | i.ts=28 i.tsx=28 s.ts=56 s.tsx=28 t.ts=514 t.tsx=128
+        seen   stmt.abstract-declare-class            9 of  16 sources differ,   225 records  R>A=225  | i.ts=9 i.tsx=9 s.ts=18 s.tsx=9 t.ts=144 t.tsx=36
+        seen   stmt.import-in-namespace               6 of  22 sources differ,   150 records  R>A=150  | i.ts=6 i.tsx=6 s.ts=12 s.tsx=6 t.ts=96 t.tsx=24
+        seen   path.with-on-next-line                19 of  31 sources differ,   601 records  R>A=567 R>R=34  | i.js=14 i.jsx=14 i.ts=19 i.tsx=19 s.js=14 s.jsx=14 s.ts=38 s.tsx=19 t.js=56 t.jsx=14 t.ts=304 t.tsx=76
+        seen   guard.type-parameters-and-arguments    1 of  95 sources differ,     8 records  R>R=8  | i.ts=1 s.ts=1 t.ts=6
+seen  testrows  sources 301    x 34 records 10234    differ 5976    crashes 0/0  corpus 7188b5c7588d  sha256 of the records 672f1e03d5b5f014 != bf9abbbc67663411
+        i.js.plain           R>A         8
+        i.js.plain           R>R         2
+        i.jsx.plain          R>A         8
+        i.jsx.plain          R>R         2
+        i.ts.plain           R>A         228
+        i.tsx.plain          R>A         192
+        s.js.plain           R>A         6
+        s.jsx.plain          R>A         6
+        s.ts.deco            R>A         228
+        s.ts.plain           R>A         222
+        s.tsx.plain          R>A         186
+        t.js.deco            R>A         6
+        t.js.exp             R>A         6
+        t.js.min.all         R>A         6
+        t.js.plain           R>A         6
+        t.jsx.plain          R>A         6
+        t.ts.bun             A>A         10
+        t.ts.bun             R>A         222
+        t.ts.deco            A>A         73
+        t.ts.deco            R>A         228
+        t.ts.deco.keep       A>A         73
+        t.ts.deco.keep       R>A         228
+        t.ts.deco.trim       A>A         73
+        t.ts.deco.trim       R>A         228
+        t.ts.exp             A>A         10
+        t.ts.exp             R>A         228
+        t.ts.fields.assign   A>A         10
+        t.ts.fields.assign   R>A         228
+        t.ts.imports.keep    A>A         10
+        t.ts.imports.keep    R>A         222
+        t.ts.meta            A>A         73
+        t.ts.meta            R>A         228
+        t.ts.min.all         A>A         10
+        t.ts.min.all         R>A         222
+        t.ts.min.ids         A>A         10
+        t.ts.min.ids         R>A         222
+        t.ts.nodce           A>A         10
+        t.ts.nodce           R>A         222
+        t.ts.plain           A>A         10
+        t.ts.plain           R>A         222
+        t.ts.plain.min       A>A         10
+        t.ts.plain.min       R>A         222
+        t.ts.plain.node      A>A         10
+        t.ts.plain.node      R>A         222
+        t.ts.repl            A>A         10
+        t.ts.repl            R>A         221
+        t.ts.tree            A>A         10
+        t.ts.tree            R>A         222
+        t.tsx.deco           A>A         73
+        t.tsx.deco           R>A         192
+        t.tsx.exp            A>A         10
+        t.tsx.exp            R>A         192
+        t.tsx.min.ids        A>A         10
+        t.tsx.min.ids        R>A         186
+        t.tsx.plain          A>A         10
+        t.tsx.plain          R>A         186
+seen  comments  sources 122    x 34 records 4148     differ 426     crashes 0/0  corpus 71d0420c2a27  sha256 of the records 13f998485d2a2c56 != 71f5a507e14d3a12
+        i.js.plain           R>A         2
+        i.jsx.plain          R>A         2
+        i.ts.plain           R>A         18
+        i.tsx.plain          R>A         18
+        s.ts.deco            R>A         18
+        s.ts.plain           R>A         16
+        s.tsx.plain          R>A         16
+        t.ts.bun             R>A         16
+        t.ts.deco            R>A         18
+        t.ts.deco.keep       R>A         18
+        t.ts.deco.trim       R>A         18
+        t.ts.exp             R>A         18
+        t.ts.fields.assign   R>A         18
+        t.ts.imports.keep    R>A         16
+        t.ts.meta            R>A         18
+        t.ts.min.all         R>A         16
+        t.ts.min.ids         R>A         16
+        t.ts.nodce           R>A         16
+        t.ts.plain           R>A         16
+        t.ts.plain.min       R>A         16
+        t.ts.plain.node      R>A         16
+        t.ts.repl            R>A         16
+        t.ts.tree            R>A         16
+        t.tsx.deco           R>A         18
+        t.tsx.exp            R>A         18
+        t.tsx.min.ids        R>A         16
+        t.tsx.plain          R>A         16
+seen  targeted  sources 3952   x 34 records 134368   differ 4009    crashes 0/0  corpus 68d65cd91163  sha256 of the records 579fa4af21be4379 != ff4b79753e776ec9
+        i.js.plain           R>A         2
+        i.js.plain           R>R         16
+        i.jsx.plain          R>A         2
+        i.jsx.plain          R>R         16
+        i.ts.plain           R>A         121
+        i.ts.plain           R>R         46
+        i.tsx.plain          R>A         118
+        i.tsx.plain          R>R         42
+        s.ts.deco            R>A         120
+        s.ts.deco            R>R         47
+        s.ts.plain           R>A         108
+        s.ts.plain           R>R         42
+        s.tsx.plain          R>A         105
+        s.tsx.plain          R>R         38
+        t.ts.bun             A>A         1
+        t.ts.bun             R>A         108
+        t.ts.bun             R>R         42
+        t.ts.deco            A>A         12
+        t.ts.deco            R>A         120
+        t.ts.deco            R>R         47
+        t.ts.deco.keep       A>A         13
+        t.ts.deco.keep       R>A         120
+        t.ts.deco.keep       R>R         47
+        t.ts.deco.trim       A>A         12
+        t.ts.deco.trim       R>A         120
+        t.ts.deco.trim       R>R         47
+        t.ts.exp             A>A         1
+        t.ts.exp             R>A         120
+        t.ts.exp             R>R         47
+        t.ts.fields.assign   A>A         1
+        t.ts.fields.assign   R>A         120
+        t.ts.fields.assign   R>R         47
+        t.ts.imports.keep    A>A         1
+        t.ts.imports.keep    R>A         108
+        t.ts.imports.keep    R>R         42
+        t.ts.meta            A>A         12
+        t.ts.meta            R>A         120
+        t.ts.meta            R>R         47
+        t.ts.min.all         A>A         1
+        t.ts.min.all         R>A         108
+        t.ts.min.all         R>R         42
+        t.ts.min.ids         A>A         1
+        t.ts.min.ids         R>A         108
+        t.ts.min.ids         R>R         42
+        t.ts.nodce           A>A         2
+        t.ts.nodce           R>A         108
+        t.ts.nodce           R>R         42
+        t.ts.plain           A>A         1
+        t.ts.plain           R>A         108
+        t.ts.plain           R>R         42
+        t.ts.plain.min       A>A         1
+        t.ts.plain.min       R>A         108
+        t.ts.plain.min       R>R         42
+        t.ts.plain.node      A>A         1
+        t.ts.plain.node      R>A         108
+        t.ts.plain.node      R>R         42
+        t.ts.repl            A>A         2
+        t.ts.repl            R>A         108
+        t.ts.repl            R>R         42
+        t.ts.tree            A>A         1
+FAIL  bench     sources 329    x 34 records 11186    differ 0       crashes 0/0  corpus 8e8640fec3fa  sha256 of the records 28db6ef12b8fa47f =
+seen  tscases   sources 14635  x 34 records 497590   differ 2410    crashes 0/0  corpus cdddef44e6e6  sha256 of the records 52b0e193992ea0d3 != 50a046a94afe08d6
+        i.js.plain           R>A         17
+        i.js.plain           R>R         13
+        i.jsx.plain          R>A         17
+        i.jsx.plain          R>R         13
+        i.ts.plain           R>A         106
+        i.ts.plain           R>R         17
+        i.tsx.plain          R>A         103
+        i.tsx.plain          R>R         20
+        s.js.plain           R>R         1
+        s.jsx.plain          R>R         1
+        s.ts.deco            R>A         96
+        s.ts.deco            R>R         27
+        s.ts.plain           R>A         63
+        s.ts.plain           R>R         7
+        s.tsx.plain          R>A         60
+        s.tsx.plain          R>R         10
+        t.js.deco            R>R         1
+        t.js.exp             R>R         1
+        t.js.min.all         R>R         1
+        t.js.plain           R>R         1
+        t.jsx.plain          R>R         1
+        t.ts.bun             R>A         63
+        t.ts.bun             R>R         7
+        t.ts.deco            A>A         2
+        t.ts.deco            R>A         96
+        t.ts.deco            R>R         27
+        t.ts.deco.keep       A>A         2
+        t.ts.deco.keep       R>A         96
+        t.ts.deco.keep       R>R         27
+        t.ts.deco.trim       A>A         2
+        t.ts.deco.trim       R>A         96
+        t.ts.deco.trim       R>R         27
+        t.ts.exp             R>A         96
+        t.ts.exp             R>R         27
+        t.ts.fields.assign   R>A         96
+        t.ts.fields.assign   R>R         27
+        t.ts.imports.keep    R>A         63
+        t.ts.imports.keep    R>R         7
+        t.ts.meta            A>A         2
+        t.ts.meta            R>A         96
+        t.ts.meta            R>R         27
+        t.ts.min.all         R>A         63
+        t.ts.min.all         R>R         7
+        t.ts.min.ids         R>A         63
+        t.ts.min.ids         R>R         7
+        t.ts.nodce           R>A         63
+        t.ts.nodce           R>R         7
+        t.ts.plain           R>A         63
+        t.ts.plain           R>R         7
+        t.ts.plain.min       R>A         63
+        t.ts.plain.min       R>R         7
+        t.ts.plain.node      R>A         63
+        t.ts.plain.node      R>R         7
+        t.ts.repl            R>A         63
+        t.ts.repl            R>R         7
+        t.ts.tree            R>A         63
+        t.ts.tree            R>R         7
+        t.tsx.deco           A>A         2
+        t.tsx.deco           R>A         93
+        t.tsx.deco           R>R         30
+seen  small     sources 209628 x 34 records 7127352  differ 185898  crashes 0/0  corpus 19d140cdf29b  sha256 of the records 37ffa4cd917453e0 != 6c78063faddb50d1
+        i.js.plain           R>R         6
+        i.jsx.plain          R>R         6
+        i.ts.plain           R>A         1614
+        i.ts.plain           R>R         5863
+        i.tsx.plain          R>A         1524
+        i.tsx.plain          R>R         5534
+        s.ts.deco            R>A         1614
+        s.ts.deco            R>R         5863
+        s.ts.plain           R>A         1614
+        s.ts.plain           R>R         5863
+        s.tsx.plain          R>A         1524
+        s.tsx.plain          R>R         5534
+        t.ts.bun             R>A         1614
+        t.ts.bun             R>R         5863
+        t.ts.deco            A>A         295
+        t.ts.deco            R>A         1614
+        t.ts.deco            R>R         5863
+        t.ts.deco.keep       A>A         295
+        t.ts.deco.keep       R>A         1614
+        t.ts.deco.keep       R>R         5863
+        t.ts.deco.trim       A>A         295
+        t.ts.deco.trim       R>A         1614
+        t.ts.deco.trim       R>R         5863
+        t.ts.exp             R>A         1614
+        t.ts.exp             R>R         5863
+        t.ts.fields.assign   R>A         1614
+        t.ts.fields.assign   R>R         5863
+        t.ts.imports.keep    R>A         1614
+        t.ts.imports.keep    R>R         5863
+        t.ts.meta            A>A         295
+        t.ts.meta            R>A         1614
+        t.ts.meta            R>R         5863
+        t.ts.min.all         R>A         1614
+        t.ts.min.all         R>R         5863
+        t.ts.min.ids         R>A         1614
+        t.ts.min.ids         R>R         5863
+        t.ts.nodce           R>A         1614
+        t.ts.nodce           R>R         5863
+        t.ts.plain           R>A         1614
+        t.ts.plain           R>R         5863
+        t.ts.plain.min       R>A         1614
+        t.ts.plain.min       R>R         5863
+        t.ts.plain.node      R>A         1614
+        t.ts.plain.node      R>R         5863
+        t.ts.repl            R>A         1614
+        t.ts.repl            R>R         5863
+        t.ts.tree            R>A         1614
+        t.ts.tree            R>R         5863
+        t.tsx.deco           A>A         295
+        t.tsx.deco           R>A         1524
+        t.tsx.deco           R>R         5534
+        t.tsx.exp            R>A         1524
+        t.tsx.exp            R>R         5534
+        t.tsx.min.ids        R>A         1524
+        t.tsx.min.ids        R>R         5534
+        t.tsx.plain          R>A         1524
+        t.tsx.plain          R>R         5534
+seen  files     10777 files, 104438 records, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 10777 files, 104438 records, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 330169098a776091 != a055541dbef8a530
+        t.ts.exp             R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        t.ts.deco            R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        t.ts.deco.keep       R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        t.ts.deco.trim       R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        s.ts.deco            R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        i.ts.plain           R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        t.ts.meta            R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+        t.ts.fields.assign   R>R test/bundler/transpiler/esbuild-decorator-tests.ts
+104438 records compared, 8 differ
+seen  runtime seams     1080 modules, 0 evaluated | 1080 modules, 0 evaluated  base: versions 33 entries 453  next: versions 34 entries 852  sha256 a7eb9db0b2882f60 != 4afe0c1f8071fdb5
+        entries only of the base 0, only of the binary under test 399, of both with other bytes 4
+seen  runtime seams-bu  744 modules, 0 evaluated | 744 modules, 0 evaluated  base: versions 33 entries 338  next: versions 34 entries 579  sha256 d9ef1cb90f5da70b != 371d61da3276ecc6
+        entries only of the base 0, only of the binary under test 241, of both with other bytes 3
+seen  runtime testrows  301 modules, 0 evaluated | 301 modules, 0 evaluated  base: versions 33 entries 74  next: versions 34 entries 298  sha256 580d0f25123f8737 != f3f9826e2b1b736c
+        entries only of the base 0, only of the binary under test 224, of both with other bytes 5
+seen  runtime comments  122 modules, 0 evaluated | 122 modules, 0 evaluated  base: versions 33 entries 101  next: versions 34 entries 117  sha256 fd0b1276f239d73a != 86fa0b2107e5dcdc
+        entries only of the base 0, only of the binary under test 16, of both with other bytes 0
+seen  runtime targeted  3952 modules, 0 evaluated | 3952 modules, 0 evaluated  base: versions 33 entries 1990  next: versions 34 entries 2098  sha256 97b3758ec5df97dc != e80241693697553f
+        entries only of the base 0, only of the binary under test 108, of both with other bytes 1
+seen  runtime bench     329 modules, 0 evaluated | 329 modules, 0 evaluated  base: versions 33 entries 328  next: versions 34 entries 328  sha256 53ef4aa301bb26cb != 95f96fe2c9d6b116
+        entries only of the base 0, only of the binary under test 0, of both with other bytes 0
+seen  build   seams     2160 builds, 610 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 2160 builds, 1031 built, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 f02619f630f43e78 != 8f9d365d8320aabb
+        R>A              .ts "function f(public a) {}"
+        R>A              .ts "function f(private a: A, protected b?: B, readonly c = 1, override d) {}"
+        R>A              .ts "function f(public readonly a: A) {}"
+        R>A              .ts "function f(readonly public a: A) {}"
+        R>A              .ts "(function (public a) {});"
+        R>A              .ts "x = function (private a) {};"
+        R>A              .ts "x = async function (protected a) {};"
+        R>A              .ts "x = function* (readonly a) {};"
+        R>A              .ts "export default function (public a) {}"
+        R>A              .ts "export function f(public a) {}"
+        R>A              .ts "async function f(public a) {}"
+        R>A              .ts "function* f(public a) {}"
+        A>A output       6
+        R>A              421
+        R>R              64
+2160 records compared, 491 differ
+seen  build   seams-bu  1488 builds, 463 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 1488 builds, 716 built, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 87e2f014e012099e != a97e955c890b077d
+        R>A              .ts "function f(...a,): void;\nfunction f(...a: any[]) {}"
+        R>A              .ts "function f(...a,);"
+        R>A              .ts "function f(...a,)"
+        R>A              .ts "export function f(...a,): void;\nexport function f() {}"
+        R>A              .ts "export default function (...a,): void;"
+        R>A              .ts "class C { m(...a,): void; m(...a: any[]) {} }"
+        R>A              .ts "class C { m(...a,): void }"
+        R>A              .ts "class C { m?(...a,): void }"
+        R>A              .ts "class C { static m(...a,): void; static m() {} }"
+        R>A              .ts "class C { constructor(...a,); constructor(...a: any[]) {} }"
+        R>A              .ts "class C { get x(...a,): number }"
+        R>A              .ts "declare class C { m(...a,): void }"
+        A>A output       4
+        R>A              253
+        R>R              20
+1488 records compared, 277 differ
+seen  build   testrows  602 builds, 108 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 602 builds, 336 built, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 29bdf37aadbd361f != 619bd104bdbb9b60
+        R>A              .ts "let x: if;"
+        R>A              .ts "let x: class;"
+        R>A              .ts "let x: function;"
+        R>A              .ts "let x: in;"
+        R>A              .ts "let x: extends;"
+        R>A              .ts "let x: super;"
+        R>A              .ts "let x: delete;"
+        R>A              .ts "let x: if.x;"
+        R>A              .ts "let x: class<T>;"
+        R>A              .ts "let x: | if;"
+        R>A              .ts "let x: A | if;"
+        R>A              .ts "let x: A & class;"
+        A>A output       10
+        R>A              228
+602 records compared, 238 differ
+seen  build   comments  244 builds, 109 built, bun 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 | 244 builds, 125 built, bun 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667  sha256 22ab91371f0fb90d != 2cba91d10919d275
+        R>A              .ts "type Cc = { [1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ + 2]: number }; export function g(){ let longName = 1; re
+        R>A              .ts "class X3 { [key: string = \"a\" /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */]: number } export function g(){ let long
+        R>A              .ts "let g1: (a = 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */) => void; export function g(){ let longName = 1; return l
+        R>A              .ts "type G2 = { get x(): number { return 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */; } }; export function g(){ let lo
+        R>A              .ts "type H = { a: number = 1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ }; export function g(){ let longName = 1; retur
+        R>A              .ts "type as /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ = 1; export function g(){ let longName = 1; return longName; }"
+        R>A              .ts "interface as /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ { a: 1 } export function g(){ let longName = 1; return long
+        R>A              .ts "type Cc = { [1 // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n + 2]: number }; export function g(){ let longName = 1; ret
+        R>A              .ts "class X3 { [key: string = \"a\" // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n]: number } export function g(){ let longN
+        R>A              .ts "interface I3 extends A // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n [\"b\"] {} export function g(){ let longName = 1; 
+        R>A              .ts "let g1: (a = 1 // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n) => void; export function g(){ let longName = 1; return lo
+        R>A              .ts "type G2 = { get x(): number { return 1 // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n; } }; export function g(){ let lon
+        R>A              16
+244 records compared, 16 differ
+RESULT  FAIL: 1 of 19 pairs of runs are not as expected (differ) or did not run

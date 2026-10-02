@@ -1,0 +1,16 @@
+        R>A              .ts "function f(...a,): void;\nfunction f(...a: any[]) {}"
+        R>A              .ts "function f(...a,);"
+        R>A              .ts "function f(...a,)"
+        R>A              .ts "export function f(...a,): void;\nexport function f() {}"
+        R>A              .ts "export default function (...a,): void;"
+        R>A              .ts "class C { m(...a,): void; m(...a: any[]) {} }"
+        R>A              .ts "class C { m(...a,): void }"
+        R>A              .ts "class C { m?(...a,): void }"
+        R>A              .ts "class C { static m(...a,): void; static m() {} }"
+        R>A              .ts "class C { constructor(...a,); constructor(...a: any[]) {} }"
+        R>A              .ts "class C { get x(...a,): number }"
+        R>A              .ts "declare class C { m(...a,): void }"
+        A>A output       4
+        R>A              253
+        R>R              20
+1488 records compared, 277 differ

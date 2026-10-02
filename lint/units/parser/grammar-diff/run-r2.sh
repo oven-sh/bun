@@ -333,8 +333,9 @@ one_run() {
 records_sha() { gzip -dc "$1" | tail -n +2 | sha256sum | cut -d' ' -f1; }
 field() { sed -nE "s/.*: ([0-9]+) inputs x ([0-9]+) apis, ([0-9]+) crashes.*/\\$2/p" "$1"; }
 # The verdict of one pair: with R2_EXPECT=zero `equal` passes, with R2_EXPECT=differ `differs` does.
+# The benchmark inputs are valid code that round 1 reads as main does: with R2_EXPECT=differ they may be equal.
 verdict() {
-  if [ "$1" = broken ]; then echo FAIL; elif [ "$EXPECT" = zero ] && [ "$1" = equal ]; then echo ok; elif [ "$EXPECT" = differ ] && [ "$1" = differs ]; then echo seen; else echo FAIL; fi
+  if [ "$1" = broken ]; then echo FAIL; elif [ "$EXPECT" = zero ] && [ "$1" = equal ]; then echo ok; elif [ "$EXPECT" = differ ] && [ "$1" = differs ]; then echo seen; elif [ "$EXPECT" = differ ] && [ "${2:-}" = bench ]; then echo same; else echo FAIL; fi
 }
 
 pair() {
@@ -361,7 +362,7 @@ pair() {
   [ "$(field "${b%.jsonl.gz}.log" 1)" = "$(field "${n%.jsonl.gz}.log" 1)" ] || state=broken
   [ "$compared" = "$(($(field "${b%.jsonl.gz}.log" 1) * NAPIS))" ] || state=broken
   [ "$(field "${b%.jsonl.gz}.log" 3)" = 0 ] && [ "$(field "${n%.jsonl.gz}.log" 3)" = 0 ] || state=broken
-  mark=$(verdict $state)
+  mark=$(verdict $state "$c")
   printf '%-4s  %-9s sources %-6s x %-2s records %-8s differ %-7s crashes %s/%s  corpus %s  sha256 of the records %s %s\n' \
     "$mark" "$c" "$(field "${b%.jsonl.gz}.log" 1)" "$NAPIS" "${compared:-?}" "${differ:-?}" \
     "$(field "${b%.jsonl.gz}.log" 3)" "$(field "${n%.jsonl.gz}.log" 3)" "$csha" "${bs:0:16}" "$([ "$bs" = "$ns" ] && echo = || echo "!= ${ns:0:16}")"
@@ -370,7 +371,7 @@ pair() {
       env $ENVS "$BASE" "$G/seams-seen.mjs" "$cfile" "$D/diff.$c.jsonl" > "$D/$c-seen.txt" 2>&1 || { [ "$EXPECT" = differ ] && mark=FAIL; }
       sed 's/^/        /' "$D/$c-seen.txt"
     else
-      env $ENVS "$BASE" "$OUT/classes.mjs" "$D/diff.$c.jsonl" | head -60
+      env $ENVS "$BASE" "$OUT/classes.mjs" "$D/diff.$c.jsonl" | head -40
     fi
   fi
   [ "$mark" != FAIL ]
@@ -407,7 +408,7 @@ runtime_one() {
   done
   cmp -s "$B/rt.$c.txt" "$D/rt.$c.txt" || state=differs
   [ "$(tail -1 "$D/rt.$c.log" | cut -d' ' -f3)" = 0 ] || state=broken
-  mark=$(verdict $state)
+  mark=$(verdict $state "$c")
   printf '%-4s  runtime %-9s %s | %s  base: %s  next: %s  sha256 %s %s\n' "$mark" "$c" "$(tail -1 "$B/rt.$c.log")" "$(tail -1 "$D/rt.$c.log")" \
     "$(head -1 "$B/rt.$c.txt")" "$(head -1 "$D/rt.$c.txt")" "$(sha256sum < "$B/rt.$c.txt" | cut -c1-16)" \
     "$(cmp -s "$B/rt.$c.txt" "$D/rt.$c.txt" && echo = || echo "!= $(sha256sum < "$D/rt.$c.txt" | cut -c1-16)")"

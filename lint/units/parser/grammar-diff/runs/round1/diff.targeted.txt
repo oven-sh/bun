@@ -1,0 +1,51 @@
+base 1.4.3 f4d755a9cf5fc732511bdab354a103b4a7833356 (3952 sources)
+next 1.4.3 23a20afa7ee95996f0d044f5df67bbca179d7667 (3952 sources)
+134368 records compared, 4009 differ, in 185 sources
+!!       78  A>A          unexplained  
+              t.ts.plain       "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.exp         "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.ts.deco        "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.tsx.plain      "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+              t.tsx.exp        "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+!!     2820  R>A          unexplained  
+              t.ts.plain       "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+              t.ts.exp         "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+              t.ts.deco        "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+              t.tsx.plain      "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+              t.tsx.exp        "type as = 1;"
+                base ["e",[["Unexpected =",1,9,1,8,"error",[]]]]
+                next ["o",""]
+!!     1111  R>R          unexplained  
+              i.js.plain       "class C { accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20,1,19,"error",[]],["Expected identifier but found \":\"",1,21,1,20,"error",[]]]]
+                next ["e",[["Expected \";\" but found \":\"",1,21,1,20,"error",[]]]]
+              i.jsx.plain      "class C { accessor a: A }"
+                base ["e",[["Expected \";\" but found \"a\"",1,20,1,19,"error",[]],["Expected identifier but found \":\"",1,21,1,20,"error",[]]]]
+                next ["e",[["Expected \";\" but found \":\"",1,21,1,20,"error",[]]]]
+              i.js.plain       "class C { static accessor a: A = 1 }"
+                base ["e",[["Expected \";\" but found \"a\"",1,27,1,26,"error",[]],["Expected identifier but found \":\"",1,28,1,27,"error",[]]]]
+                next ["e",[["Expected \";\" but found \":\"",1,28,1,27,"error",[]]]]
+              i.jsx.plain      "class C { static accessor a: A = 1 }"
+                base ["e",[["Expected \";\" but found \"a\"",1,27,1,26,"error",[]],["Expected identifier but found \":\"",1,28,1,27,"error",[]]]]
+                next ["e",[["Expected \";\" but found \":\"",1,28,1,27,"error",[]]]]
+              i.js.plain       "class C { accessor 'a': A }"
+                base ["e",[["Expected \";\" but found \"'a'\"",1,20,3,19,"error",[]],["Expected identifier but found \":\"",1,23,1,22,"error",[]]]]
+                next ["e",[["Expected \";\" but found \":\"",1,23,1,22,"error",[]]]]

@@ -1,0 +1,12 @@
+// @target: es2015
+// @declaration: true
+namespace M {
+    namespace P.Q { } // This shouldnt be emitted
+}
+
+namespace M {
+    export namespace R.S { }  //This should be emitted
+}
+
+namespace T.U { // This needs to be emitted
+}

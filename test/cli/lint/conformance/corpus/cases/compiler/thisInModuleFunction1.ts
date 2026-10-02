@@ -1,0 +1,7 @@
+// @target: es2015
+namespace bar {
+ export function bar() {
+  return this;
+ } 
+} 
+var z = bar.bar();

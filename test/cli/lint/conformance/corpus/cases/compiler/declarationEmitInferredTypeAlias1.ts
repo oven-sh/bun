@@ -1,0 +1,15 @@
+﻿// @module: commonjs
+// @target: es2015
+// @declaration: true
+// @skipDefaultLibCheck: true
+
+// @Filename: 0.ts
+{
+    type Data = string | boolean;
+    let obj: Data = true;
+}
+export { }
+
+// @Filename: 1.ts
+let v = "str" || true;
+export { v }

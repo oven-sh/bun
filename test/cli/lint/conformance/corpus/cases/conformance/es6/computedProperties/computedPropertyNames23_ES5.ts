@@ -1,0 +1,9 @@
+// @target: es5, es2015
+class C {
+    bar() {
+        return 0;
+    }
+    [
+        { [this.bar()]: 1 }[0]
+    ]() { }
+}

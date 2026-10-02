@@ -1,0 +1,12 @@
+// @target: es2015
+// @strictNullChecks: true
+// @jsx: react
+// @skipLibCheck: true
+/// <reference path="/.lib/react.d.ts" />
+import * as React from "react";
+
+interface Props {
+    x?: "a" | "b";
+}
+class MyComponent<P extends Props = Props> extends React.Component<P, {}> {}
+const m = <MyComponent x="a"/>

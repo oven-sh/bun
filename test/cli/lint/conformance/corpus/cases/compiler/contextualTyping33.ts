@@ -1,0 +1,2 @@
+// @target: es2015
+function foo(param: {():number; (i:number):number; }[]) { }; foo([function(){return 1;}, function(){return "foo"}]);

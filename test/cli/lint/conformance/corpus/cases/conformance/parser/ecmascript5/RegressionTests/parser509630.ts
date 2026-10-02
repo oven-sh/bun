@@ -1,0 +1,7 @@
+// @target: es2015
+// @strict: false
+class Type {
+    public examples = [ // typing here
+}
+class Any extends Type {
+}

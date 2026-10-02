@@ -1,0 +1,2 @@
+// @target: es2015
+function foo5<T extends hm>(test: T) { }

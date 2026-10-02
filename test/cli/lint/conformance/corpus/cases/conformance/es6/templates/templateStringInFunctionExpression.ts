@@ -1,0 +1,5 @@
+// @target: es2015
+var x = function y() {
+    `abc${ 0 }def`
+    return `abc${ 0 }def`;
+};

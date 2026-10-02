@@ -1,0 +1,7 @@
+// @target: es2015
+// @strict: false
+namespace a {
+    export var b = 10;
+}
+var f = () => this;
+import _this = a; // Error

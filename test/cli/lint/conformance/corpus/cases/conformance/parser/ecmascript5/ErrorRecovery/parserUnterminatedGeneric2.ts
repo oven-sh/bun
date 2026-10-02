@@ -1,0 +1,9 @@
+// @target: es2015
+declare namespace ng {
+    interfaceICompiledExpression {
+        (context: any, locals?: any): any;
+        assign(context: any, value: any): any;
+    }
+
+    interface IQService {
+        all(promises: IPromise < any > []): IPromise<

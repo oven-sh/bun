@@ -1,0 +1,12 @@
+// @target: es2015
+class A {
+    aProp: string;
+}
+namespace A {
+    export interface X { s: string }
+    export var a = 10;
+}
+
+namespace B {
+    import Y = A;
+}

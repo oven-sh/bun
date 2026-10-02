@@ -1,0 +1,10 @@
+// @target: es2015
+// @strict: false
+interface I {
+    foo(value: number);
+}
+
+class Bug implements I {
+    public foo(value: number) {
+    }
+}

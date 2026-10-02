@@ -1,0 +1,14 @@
+// @target: es2015
+// @strict: false
+class a {
+    static x: string;
+}
+
+class b extends a {
+    static get x() {
+        return "20";
+    }
+    static set x(aValue: string) {
+
+    }
+}

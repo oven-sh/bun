@@ -1,3 +1,8 @@
+// Node writes to a piped stdout asynchronously on POSIX: after one EAGAIN every
+// console.log is queued until the event loop runs while the addons' printf keeps
+// writing to the fd directly. Make it blocking so output stays in program order.
+if (!process.isBun) process.stdout._handle?.setBlocking?.(true);
+
 const tests = require("./module");
 if (process.argv[2] === "self") {
   console.log(

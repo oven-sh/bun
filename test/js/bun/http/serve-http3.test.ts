@@ -514,6 +514,51 @@ describe("Bun.serve HTTP/3", () => {
     expect(stdout).toContain("listening");
     expect(exitCode).toBe(0);
   });
+
+  // The TCP listener is bound before the UDP one, and a fixed port is not
+  // retried, so a UDP bind failure tears down a server that is already
+  // listening on TCP. That teardown used to destroy the uws app with the
+  // listener still in it: the TCP port stayed bound (and debug builds abort in
+  // us_socket_group_deinit).
+  test("http3 UDP bind failure releases the TCP port the server had bound", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // Occupy a UDP port whose TCP side is free, then ask for http3 on it.
+          // Retried in case the kernel-chosen port is also busy on TCP.
+          for (let attempt = 0; ; attempt++) {
+            const udp = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+            const { port } = udp;
+            let error;
+            try {
+              Bun.serve({ port, hostname: "127.0.0.1", tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("x") });
+            } catch (e) {
+              error = e;
+            }
+            if (error?.code === "EADDRINUSE" && attempt < 5) {
+              udp.close();
+              continue;
+            }
+            using tcp = Bun.serve({ port, hostname: "127.0.0.1", fetch: () => new Response("x") });
+            console.log(String(error?.message).replace(port, "PORT"), "| TCP port rebound:", tcp.port === port);
+            udp.close();
+            break;
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "Failed to listen on UDP port PORT for HTTP/3 | TCP port rebound: true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // Cases ported from h2o t/40http3 and aioquic interop. Each test gets its own

@@ -1430,8 +1430,30 @@ describe("res.end() when a replaced res.writeHead sends the head", () => {
     });
   });
 
+  // Node's end() reads the trailers after writeHead() ran: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1126-L1127
+  test.concurrent.each([
+    [
+      "Transfer-Encoding: chunked",
+      (res: any) => res.setHeader("Transfer-Encoding", "chunked"),
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "a Trailer header",
+      (res: any) => res.setHeader("Trailer", "X-T"),
+      "HTTP/1.1 200 OK\r\nTrailer: X-T\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n",
+    ],
+  ])("addTrailers() in the replaced writeHead of a response with %s", async (_, setHeader, head) => {
+    const result = await respond((req, res) => {
+      setHeader(res);
+      wrapWriteHead(res, res => res.addTrailers({ "X-T": "1" }));
+      res.end("ok");
+    }, GET_CLOSE);
+    expect(result).toEqual({ thrown: null, response: head + "2\r\nok\r\n0\r\nX-T: 1\r\n\r\n" });
+  });
+
   // Node has no answer for this one: it sends the bytes of both calls and then fails an internal assertion.
-  // Here the outer end() is an end() of a finished response, as it already is behind a pipelined response.
+  // Here the response is finished when the replaced writeHead returns: the outer end() drops its data and
+  // gives its callback what an end() on a finished response gives it.
   test.concurrent.each([
     ["", false],
     [' on a connection from emit("connection")', true],
@@ -1447,9 +1469,10 @@ describe("res.end() when a replaced res.writeHead sends the head", () => {
       const server = createServer((req, res) => {
         wrapWriteHead(res, res => res.end(body));
         res.on("finish", () => events.push("finish"));
+        res.on("error", (err: any) => events.push(`'error' ${err.code}`));
         res.on("close", () => responseClosed.resolve());
         try {
-          res.end(() => callbacks++);
+          res.end("dropped", () => callbacks++);
           events.push("end() returned");
         } catch (err: any) {
           events.push(`end() threw ${err.code}`);

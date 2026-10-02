@@ -3451,15 +3451,12 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
   }
 
-  // Read before a replaced writeHead() runs: the trailers of an addTrailers() call inside it are not sent.
-  const trailer = this._trailer;
-  // Like Node's write_(), the implicit writeHead() runs before anything below reads the response: a replaced writeHead() can
-  // change the status code and the headers, and it can send the head: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L975-L992
+  // Node's write_() runs the implicit writeHead() before it reads the response: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L975-L992
   const stateBefore = this[headerStateSymbol];
   const headerState = callWriteHeadIfObservable(this, stateBefore, true);
-  // A replaced writeHead() that called end() itself makes this call an end() of a finished response.
+  // A replaced writeHead() that called end() itself finished the response: the data of this call is dropped.
   if (headerState !== stateBefore && this.finished) {
-    hasServerResponseFinished(this, chunk, callback, true);
+    hasServerResponseFinished(this, undefined, callback, true);
     return this;
   }
   if (headerState === NodeHTTPHeaderState.none) {
@@ -3485,6 +3482,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   // framing, so they only apply when nothing pinned the framing to
   // Content-Length and the response can carry a body - Node.js drops them in
   // every other case (explicit Content-Length, HTTP/1.0, body-less statuses).
+  const trailer = this._trailer;
   if (
     trailer &&
     this._hasBody &&
@@ -3926,9 +3924,8 @@ const kSnapshotStatusMessage = Symbol("kSnapshotStatusMessage");
 // Set by writeHead() when it froze the framing with no length/encoding of its
 // own — the state Node's _storeHeader resolves to chunked.
 const kFramingFrozenChunked = Symbol("kFramingFrozenChunked");
-// Set while end() drives an observable writeHead: Node already knows the body
-// length there, so that call must not freeze the framing, and a flushHeaders()
-// inside it leaves the head to end().
+// Set while end() drives an observable writeHead. Node knows the body length there: that call
+// does not freeze the framing, and a flushHeaders() in it leaves the head to end().
 const kImplicitHeaderFromEnd = Symbol("kImplicitHeaderFromEnd");
 ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
   if (this.headersSent) {
@@ -4035,14 +4032,13 @@ ServerResponse.prototype.flushHeaders = function () {
   if (headerState === NodeHTTPHeaderState.sent) return; // Should be idempotent.
   if (headerState !== NodeHTTPHeaderState.assigned) this._implicitHeader();
 
-  if (this[kPipelinedQueuedState] !== undefined || this[kImplicitHeaderFromEnd]) {
+  if (this[kPipelinedQueuedState] !== undefined) {
     // Queued pipelined response: its headers go out when it is assigned the
     // socket (advanceResponsePipeline) - nothing can be flushed before then.
-    // Inside the writeHead() that end() drives: end() sends the head with the body, so the head has the
-    // Content-Length that Node's has. Node's end() corks the socket before that writeHead(), so its head
-    // leaves with the body too: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1094-L1098
     return;
   }
+  // end() drives this writeHead() and sends the head with the body, as Node's corked end() does: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1094-L1098
+  if (this[kImplicitHeaderFromEnd]) return;
 
   const handle = this[kHandle];
   if (handle) {

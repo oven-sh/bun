@@ -1231,9 +1231,19 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     function hasNoLoop(a: number[]) { return a[0] + a[1]; }
     out.push(sumsNumbers([1, 2, 3]), sumsFields([{ v: 1 }, { v: 2 }]), callsInLoop([1, 2, 3]), hasNoLoop([1, 2]));
 
+    class Twin { v: number; constructor(v: number) { this.v = v; } twin() { return new Twin(this.v + 1); } }
+    class Parent { v: number; constructor(v: number) { this.v = v; } }
+    class Child extends Parent { constructor(v: number) { super(v + 1); } }
+    class Implicit { again() { return new Implicit(); } one() { return 1; } }
+    function constructsInLoop(n: number) { let s = 0; for (let i = 0; i < n; i++) s += new Twin(i).v; return s; }
+    function constructsChildInLoop(n: number) { let s = 0; for (let i = 0; i < n; i++) s += new Child(i).v; return s; }
+    function constructsEitherInLoop(C: new (v: number) => { v: number }, n: number) { let s = 0; for (let i = 0; i < n; i++) s += new C(i).v; return s; }
+    function constructsImplicitInLoop(n: number) { let s = 0; const first = new Implicit(); for (let i = 0; i < n; i++) s += first.again().one(); return s; }
+    out.push(new Twin(1).twin().v, constructsInLoop(4), constructsChildInLoop(4), constructsEitherInLoop(EitherA, 4), constructsEitherInLoop(EitherB, 4), constructsImplicitInLoop(20000));
+
     console.log(out.join());
   `;
-  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3\n";
+  const expectedOutput = "2,55,2,2,3,4,6,3,2,2,3,3,8,12,function1,6,0,6,3,2,2,1,2,1,1.5,true,6,3,6,3,2,6,10,6,10,20000\n";
   const loopOptions = "useAOTLoopSplitting=1,useAOTInlineFastPathsInLoops=1";
 
   const builds = new Map<string, Promise<Map<string, string[]>>>();
@@ -1280,7 +1290,12 @@ describe.skipIf(!supported)("--compile-aot optimizations", () => {
     ["planned-construction", ["Planned", "EitherA", "EitherB"], ["Conditional"]],
     ["direct-construct:Planned", ["constructsPlanned"], []],
     ["direct-construct:Conditional", ["constructsConditional"], []],
-    ["direct-construct", [], ["constructsEither"]],
+    ["direct-construct", [], ["constructsEither", "constructsEitherInLoop"]],
+    ["direct-construct:Twin", ["twin"], []],
+    ["direct-construct:Child", ["constructsChildInLoop"], []],
+    ["inlined-construct:Twin", ["constructsInLoop"], []],
+    ["inlined-construct", [], ["constructsChildInLoop", "constructsEitherInLoop", "constructsImplicitInLoop", "again"]],
+    ["direct-construct", [], ["again"]],
     ["lowered-builtin:Math.floor", ["floors"], ["floorsShadowed"]],
     ["lowered-builtin:Array.isArray", ["isArray"], []],
     ["profitable-loop", ["sumsNumbers", "sumsFields"], ["callsInLoop", "hasNoLoop"], loopOptions],
@@ -1358,6 +1373,11 @@ describe.skipIf(!supported)("--compile-aot with a type table", () => {
     ["typed-field-write", [], ["writesTyped", "writesUntyped"]],
     ["typed-planned-construction", ["Vector"], ["Loose"]],
     ["planned-construction", ["Loose"], ["Vector"]],
+    ["inlined-call:twice", ["scalesInLoop"], []],
+    ["inlined-construct:Scaled", ["scalesInLoop"], []],
+    ["inlined-call", [], ["scalesLeakedInLoop"]],
+    ["direct-call", [], ["scalesLeakedInLoop"]],
+    ["direct-construct:Leaked", ["twiceLeaked"], []],
   ];
 
   for (const [label, options, env] of [

@@ -48,4 +48,21 @@ type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
 function area(s: Shape) { return s.kind === "circle" ? 3 * s.r * s.r : s.side * s.side; }
 out.push(area({ kind: "circle", r: 2 }), area({ kind: "square", side: 3 }), area(JSON.parse('{"kind":"square","side":4}')));
 
+class Scaled {
+  v: number;
+  constructor(v: number) { this.v = v; }
+  twice() { return new Scaled(this.v * 2); }
+}
+class Leaked {
+  v: number;
+  constructor(v: number) { this.v = v; }
+  twiceLeaked() { return new Leaked(this.v * 2); }
+}
+function scalesInLoop(n: number) { let s = 0; const one = new Scaled(1); for (let i = 0; i < n; i++) s += one.twice().v; return s; }
+function scalesLeakedInLoop(n: number) { let s = 0; const one = new Leaked(1); for (let i = 0; i < n; i++) s += one.twiceLeaked().v; return s; }
+const leaked: unknown[] = [new Leaked(3)];
+out.push(scalesInLoop(3), scalesLeakedInLoop(3), (leaked[0] as any).twiceLeaked().v);
+(leaked[0] as any).constructor.prototype.twiceLeaked = function () { return { v: 100 }; };
+out.push(scalesLeakedInLoop(3));
+
 console.log(out.join());

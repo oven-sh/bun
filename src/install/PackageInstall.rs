@@ -13,7 +13,7 @@ use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
-use bun_threading::{ThreadPool, WaitGroup};
+use bun_threading::{IntrusiveWorkTask, ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
@@ -450,28 +450,25 @@ impl<TaskType> NewTaskQueue<TaskType> {
     }
 
     /// # Safety
-    /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
-    /// being handed to the thread pool; the worker reclaims it in its callback.
+    /// `task` must be the pointer `bun_core::heap::into_raw` returned for a live
+    /// `TaskType` whose ownership is being handed to the thread pool; the worker
+    /// reclaims it through the pointer scheduled here (`from_task_ptr` + `heap::take`).
     pub(crate) unsafe fn push(&self, task: *mut TaskType)
     where
-        TaskType: HasWorkPoolTask,
+        TaskType: IntrusiveWorkTask,
     {
         self.wait_group.add_one();
-        // SAFETY: caller contract — `task` is a valid Box-allocated task; `.task()`
-        // is the intrusive node field.
-        self.thread_pool.schedule(Batch::from(unsafe {
-            std::ptr::from_mut::<WorkPoolTask>((*task).task())
-        }));
+        // SAFETY: caller contract — `task` is a live allocation. The projection goes
+        // through `task` itself (not through a `&mut` to the field) so the pointer the
+        // pool hands back carries the whole allocation's provenance, which the worker's
+        // container-of and `heap::take` need.
+        self.thread_pool
+            .schedule(Batch::from(unsafe { TaskType::field_of(task) }));
     }
 
     pub(crate) fn wait(&self) {
         self.wait_group.wait();
     }
-}
-
-#[cfg(windows)]
-pub(crate) trait HasWorkPoolTask {
-    fn task(&mut self) -> &mut WorkPoolTask;
 }
 
 // ───────────────────────────── HardLinkWindowsInstallTask ─────────────────────────────
@@ -490,11 +487,7 @@ struct HardLinkWindowsInstallTask {
 }
 
 #[cfg(windows)]
-impl HasWorkPoolTask for HardLinkWindowsInstallTask {
-    fn task(&mut self) -> &mut WorkPoolTask {
-        &mut self.task
-    }
-}
+bun_threading::intrusive_work_task!(HardLinkWindowsInstallTask, task);
 
 #[cfg(windows)]
 type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
@@ -569,8 +562,10 @@ impl HardLinkWindowsInstallTask {
     }
 
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to the `task` field of a HardLinkWindowsInstallTask.
-        let self_: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
+        // SAFETY: `task` is the pointer `NewTaskQueue::push` projected out of the
+        // `init()` allocation, so it points at our `task` field with provenance for
+        // the whole allocation, which the `heap::take` calls below rely on.
+        let self_: *mut Self = unsafe { Self::from_task_ptr(task) };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
         let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }

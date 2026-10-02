@@ -1161,6 +1161,7 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     "src/public/index.mjs": `export default "index.mjs";`,
     "src/node_modules/dep/package.json": `{ "name": "dep", "main": "main.mjs" }`,
     "src/node_modules/dep/main.mjs": `export default "dep";`,
+    "src/real.img": "",
     "src/importer.mjs": `export { default } from "who.importer";`,
     "src/importer.cjs": `module.exports = require("who.importer");`,
     "plugin.ts": `
@@ -1175,19 +1176,20 @@ describe.concurrent("what onResolve answers without a namespace", () => {
         "namespace.img": "served:thing",
         "absent.img": import.meta.dir + "/src/absent.served",
         "itself.img": "itself.img",
+        "symlink.img": import.meta.dir + "/src/link.img",
         "long.img": "/" + Buffer.alloc(9000, "a") + ".js",
       };
       Bun.plugin({
         name: "answers",
         setup(build) {
-          build.onResolve({ filter: /\\.img$/ }, ({ path }) => ({ path: answers[path] }));
+          build.onResolve({ filter: /\\.img$/ }, ({ path }) => ({ path: answers[path] ?? path }));
           build.onResolve({ filter: /\\.importer$/ }, ({ importer }) => ({ path: basename(importer), namespace: "served" }));
           build.module("a-module", () => ({ exports: { default: "a module" }, loader: "object" }));
           build.onLoad({ filter: /.*/, namespace: "served" }, ({ path }) => ({
             contents: "export default " + JSON.stringify(path),
             loader: "js",
           }));
-          build.onLoad({ filter: /(absent\\.served|itself\\.img)$/ }, ({ path }) => ({
+          build.onLoad({ filter: /(absent\\.served|(itself|link|real)\\.img)$/ }, ({ path }) => ({
             contents: "export default " + JSON.stringify(basename(path)),
             loader: "js",
           }));
@@ -1251,6 +1253,15 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     ],
   ])("is resolved from the importer for %s", async (_, name, source, stdout) => {
     expect(await run(name, source)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  it("is the module of the real path when it is a symlink", async () => {
+    const source = `
+      require("node:fs").symlinkSync(import.meta.dir + "/real.img", import.meta.dir + "/link.img");
+      const symlink = await import("symlink.img");
+      console.log(symlink.default, symlink === (await import("./real.img")));
+    `;
+    expect(await run("entry.mjs", source)).toEqual({ stdout: "real.img true\n", stderr: "", exitCode: 0 });
   });
 
   it("is an error to catch when it is too long for a path", async () => {

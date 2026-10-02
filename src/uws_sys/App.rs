@@ -224,7 +224,11 @@ impl<const SSL: bool> App<SSL> {
             Method::HEAD => self.head(pattern, handler, user_data),
             Method::CONNECT => self.connect(pattern, handler, user_data),
             Method::TRACE => self.trace(pattern, handler, user_data),
-            _ => {}
+            _ => debug_assert!(
+                false,
+                "{} has no route function: the route would not be registered",
+                method_.as_str()
+            ),
         }
     }
 

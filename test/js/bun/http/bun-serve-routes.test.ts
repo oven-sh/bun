@@ -260,6 +260,70 @@ describe("implicit HEAD for per-method route objects", () => {
     expect(await post.text()).toBe("static-post-response");
   });
 
+  // The default handler used to be registered for HEAD on "/*" over the route's
+  // own HEAD, so fetch() answered, with the headers of its response.
+  test('a GET route on "/*" that is not a function answers HEAD like on any other path', async () => {
+    using dir = tempDir("serve-routes-head-star", {
+      "file.txt": "file body",
+      "public/a.txt": "a body",
+      "index.html": "<!doctype html><title>page</title><h1>page</h1>",
+    });
+    const { default: html } = await import(join(String(dir), "index.html"));
+    const kinds: Record<string, any> = {
+      static: new Response("star"),
+      file: new Response(Bun.file(join(String(dir), "file.txt"))),
+      "missing file": new Response(Bun.file(join(String(dir), "missing.txt"))),
+      directory: { dir: join(String(dir), "public") },
+      html,
+    };
+
+    const results: Record<string, unknown> = {};
+    let htmlLength: string | null = null;
+    for (const [kind, route] of Object.entries(kinds)) {
+      let fetchCalls = 0;
+      await using server = Bun.serve({
+        port: 0,
+        development: false,
+        routes: { "/*": { GET: route } },
+        fetch() {
+          fetchCalls++;
+          return new Response("from fetch", { status: 202 });
+        },
+      });
+      // The bundler rewrites the page, so its length comes from a GET.
+      if (kind === "html") htmlLength = String((await (await fetch(server.url)).bytes()).length);
+      for (const [method, path] of [
+        ["HEAD", "/a.txt"],
+        ["HEAD", "/missing"],
+        ["POST", "/a.txt"],
+      ]) {
+        fetchCalls = 0;
+        const res = await fetch(new URL(path, server.url), { method });
+        const body = await res.text();
+        results[`${kind}: ${method} ${path}`] = [res.status, res.headers.get("content-length"), body, fetchCalls];
+      }
+    }
+
+    expect(results).toEqual({
+      "static: HEAD /a.txt": [200, "4", "", 0],
+      "static: HEAD /missing": [200, "4", "", 0],
+      "static: POST /a.txt": [202, "10", "from fetch", 1],
+      "file: HEAD /a.txt": [200, "9", "", 0],
+      "file: HEAD /missing": [200, "9", "", 0],
+      "file: POST /a.txt": [202, "10", "from fetch", 1],
+      // The route yields when it cannot open the file.
+      "missing file: HEAD /a.txt": [202, "10", "", 1],
+      "missing file: HEAD /missing": [202, "10", "", 1],
+      "missing file: POST /a.txt": [202, "10", "from fetch", 1],
+      "directory: HEAD /a.txt": [200, "6", "", 0],
+      "directory: HEAD /missing": [404, "0", "", 0],
+      "directory: POST /a.txt": [202, "10", "from fetch", 1],
+      "html: HEAD /a.txt": [200, htmlLength, "", 0],
+      "html: HEAD /missing": [200, htmlLength, "", 0],
+      "html: POST /a.txt": [202, "10", "from fetch", 1],
+    });
+  });
+
   test("HEAD is not derived for route objects without a GET handler", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -1189,6 +1253,11 @@ describe.concurrent("a request method that is not one of Bun's 36 methods", () =
       get: "fetch GET",
       getCalls: ["fetch GET"],
     },
+    "a GET function route on /*": {
+      routes: calls => ({ "/*": { GET: handler(calls, "star") } }),
+      get: "star GET",
+      getCalls: ["star GET"],
+    },
     "static routes for GET and POST on /*": {
       routes: () => ({ "/*": { GET: new Response("star"), POST: new Response("post") } }),
       get: "star",
@@ -1196,6 +1265,12 @@ describe.concurrent("a request method that is not one of Bun's 36 methods", () =
     },
     "a GET file route on /* whose file is missing": {
       routes: () => ({ "/*": { GET: new Response(Bun.file(missingFile)) } }),
+      get: "fetch GET",
+      getCalls: ["fetch GET"],
+    },
+    // The file route yields, and the default handler comes after it.
+    "a GET file route on /* whose file is missing, and an any-method route": {
+      routes: calls => ({ "/*": { GET: new Response(Bun.file(missingFile)) }, "/any": handler(calls, "any") }),
       get: "fetch GET",
       getCalls: ["fetch GET"],
     },
@@ -1476,3 +1551,141 @@ describe.concurrent("a request method that is not one of Bun's 36 methods", () =
     });
   });
 });
+
+// The default handler (fetch, or the 404) is an any-method route on "/*". It
+// takes a request when no route for the request's method, and no other
+// any-method route, answers it. When a "/*" route named some methods, it used
+// to be registered once per other method, ahead of the any-method routes over
+// HTTP/2 and HTTP/3, and only for 9 of the 36 methods.
+describe.concurrent(
+  'a "/*" route for some methods leaves the other methods to the any-method routes, then to fetch',
+  () => {
+    const protocols = ["http1.1", "http2", "http3"] as const;
+    const verbs = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"];
+
+    // An answer names its route and the method the handler saw. The responses
+    // have no body, so that HEAD and TRACE answers read like the others.
+    const answer = (name: string) => (req: Request) =>
+      new Response(null, { headers: { "x-from": `${name} ${req.method}` } });
+    const still = (name: string) => new Response(null, { headers: { "x-from": name } });
+    const missingFile = "/bun-serve-routes-this-file-does-not-exist";
+
+    type Table = { routes: (file: string) => any; fetch?: false; rows: Record<string, string> };
+    const tables: Record<string, Table> = {
+      "a GET function": {
+        routes: () => ({ "/*": { GET: answer("star") } }),
+        rows: {
+          "GET /x": "200 star GET",
+          "HEAD /x": "200 star HEAD",
+          "POST /x": "200 fetch POST",
+          "PROPFIND /x": "200 fetch PROPFIND",
+          "ACL /x": "200 fetch ACL",
+        },
+      },
+      "a static GET": {
+        routes: () => ({ "/*": { GET: still("star") } }),
+        rows: {
+          "GET /x": "200 star",
+          "HEAD /x": "200 star",
+          "POST /x": "200 fetch POST",
+          "PROPFIND /x": "200 fetch PROPFIND",
+        },
+      },
+      "a static GET and a TRACE function": {
+        routes: () => ({ "/*": { GET: still("star"), TRACE: answer("trace") } }),
+        rows: {
+          "TRACE /x": "200 trace TRACE",
+          "POST /x": "200 fetch POST",
+          "PROPFIND /x": "200 fetch PROPFIND",
+          "ACL /x": "200 fetch ACL",
+        },
+      },
+      "a GET function, beside any-method routes": {
+        routes: file => ({
+          "/*": { GET: answer("star") },
+          "/any": answer("any"),
+          "/static": still("static"),
+          "/file": new Response(Bun.file(file)),
+          "/u/:id": answer("param"),
+        }),
+        rows: {
+          "POST /any": "200 any POST",
+          "PROPFIND /any": "200 any PROPFIND",
+          "POST /static": "200 static",
+          "POST /file": "200 9 bytes",
+          "POST /u/1": "200 param POST",
+          "PROPFIND /u/1": "200 param PROPFIND",
+          "POST /nope": "200 fetch POST",
+          "PROPFIND /nope": "200 fetch PROPFIND",
+        },
+      },
+      "a GET file route whose file is missing, beside an any-method route": {
+        routes: () => ({ "/*": { GET: new Response(Bun.file(missingFile)) }, "/any": answer("any") }),
+        rows: {
+          "GET /x": "200 fetch GET",
+          "POST /x": "200 fetch POST",
+          "GET /any": "200 any GET",
+        },
+      },
+      "a GET function, on a server with no fetch": {
+        routes: () => ({ "/*": { GET: answer("star") }, "/any": answer("any") }),
+        fetch: false,
+        rows: {
+          "GET /x": "200 star GET",
+          "POST /x": "404 0 bytes",
+          "PROPFIND /x": "404 0 bytes",
+          "POST /any": "200 any POST",
+          "PROPFIND /any": "200 any PROPFIND",
+        },
+      },
+      // Every method a route object can name is registered over each protocol.
+      "nothing: a route for each method on /m, and one for CONNECT on /c": {
+        routes: () => ({
+          "/m": Object.fromEntries(["CONNECT", ...verbs].map(method => [method, answer(`route ${method}`)])),
+          "/c": { CONNECT: answer("connect") },
+        }),
+        rows: Object.fromEntries([
+          ...verbs.map(method => [`${method} /m`, `200 route ${method} ${method}`]),
+          ...verbs.map(method => [`${method} /c`, `200 fetch ${method}`]),
+        ]),
+      },
+    };
+
+    test.each(Object.keys(tables))('when "/*" has %s', async name => {
+      using dir = tempDir("serve-routes-star-default", { "file.txt": "file body" });
+      const table = tables[name];
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http2: true,
+        http3: true,
+        routes: table.routes(join(String(dir), "file.txt")),
+        ...(table.fetch === false ? {} : { fetch: answer("fetch") }),
+      });
+
+      const results: Record<string, Record<string, string>> = {};
+      for (const row of Object.keys(table.rows)) {
+        const [method, path] = row.split(" ");
+        results[row] = {};
+        for (const protocol of protocols) {
+          const res = await fetch(`https://127.0.0.1:${server.port}${path}`, {
+            method,
+            protocol,
+            tls: { rejectUnauthorized: false },
+          });
+          // Only the file route and the 404 set no x-from header.
+          const from = res.headers.get("x-from") ?? `${(await res.bytes()).length} bytes`;
+          results[row][protocol] = `${res.status} ${from}`;
+        }
+      }
+      expect(results).toEqual(
+        Object.fromEntries(
+          Object.entries(table.rows).map(([row, expected]) => [
+            row,
+            Object.fromEntries(protocols.map(protocol => [protocol, expected])),
+          ]),
+        ),
+      );
+    });
+  },
+);

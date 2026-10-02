@@ -7,7 +7,6 @@ use bun_collections::OffsetByteList;
 use bun_core::UnwrapOrOom;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_ptr::RefPtr;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
@@ -613,8 +612,7 @@ impl ValkeyClient {
     /// stopped reading never lets it through. Either way the close callback
     /// has run when this returns.
     ///
-    /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
-    /// runs by hand here, whatever that left.
+    /// `Err` when the close event left a termination pending.
     pub(crate) fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
         if self.socket.is_closed() {
             return Ok(());
@@ -624,16 +622,6 @@ impl ValkeyClient {
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
-        // usockets does not dispatch `on_close`/`on_connect_error` when an
-        // application explicitly closes a `us_socket_t` whose TCP connect
-        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
-        // synchronously so `connect()` got a real `us_socket_t*` rather than
-        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
-        // The close event is what releases the keep-alive ref `connect()`
-        // took, so detect a SEMI_SOCKET before closing and run the close
-        // event by hand afterwards.
-        let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
-            && !socket.is_established();
         // TODO: make socket.close() return a JsResult.
         socket.close(code);
         // Still open means usockets parked the fast shutdown behind its
@@ -643,22 +631,11 @@ impl ValkeyClient {
         if code == uws::CloseCode::FastShutdown && !socket.is_closed() {
             socket.close(uws::CloseCode::Failure);
         }
-        let thrown = if global.has_exception() {
+        if global.has_exception() {
             Err(bun_jsc::JsError::Thrown)
         } else {
             Ok(())
-        };
-        if !is_semi_socket {
-            return thrown;
         }
-        // SAFETY: takes over the keep-alive ref `connect()` handed to this
-        // socket, as `SocketHandler::on_close` does for one uSockets closes.
-        // Every caller of `close()` holds a scoped ref of its own, so the
-        // client outlives this scope.
-        let _socket_ref = unsafe { RefPtr::from_raw(self.parent_ptr()) };
-        self.status = Status::Disconnected;
-        let closed = self.on_close();
-        thrown.and(closed)
     }
 
     /// Handle connection closed event

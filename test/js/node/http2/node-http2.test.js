@@ -6429,6 +6429,32 @@ describe.concurrent("write() after end()", () => {
       }
     });
 
+    it("request(headers, { waitForTrailers: true }) is not asked for trailers", async () => {
+      const server = http2.createServer();
+      let client;
+      try {
+        const errored = Promise.withResolvers();
+        // The request never ends, so this stream sees only the teardown below.
+        server.on("stream", stream => stream.on("error", () => {}));
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        client = http2.connect(`http://127.0.0.1:${port}`);
+        client.on("error", errored.reject);
+        const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+        const events = [];
+        req.on("wantTrailers", () => events.push("wantTrailers"));
+        req.on("error", err => errored.resolve(events.concat(`error:${err.code}`)));
+        req.on("ready", () => {
+          req.write("body");
+          req.end();
+          req.write("late", err => events.push(`write:${err.code}`));
+        });
+        expect(await errored.promise).toEqual(["write:ERR_STREAM_WRITE_AFTER_END", "error:ERR_STREAM_WRITE_AFTER_END"]);
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
+
     // END_STREAM goes out when the write completes, before 'error' is emitted (node submits it
     // before 'error' too), so a reset from the 'error' listener comes after a clean end.
     it.each([

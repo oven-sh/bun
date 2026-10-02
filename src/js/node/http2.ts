@@ -2062,6 +2062,8 @@ enum StreamState {
   Delivered = 1 << 8, // 100000000 = 256
   // The native side closed the stream and reported it through streamError. The destroy is queued.
   NativeErrored = 1 << 9, // 1000000000 = 512
+  // A client request made with waitForTrailers. The native side keeps that flag for the request.
+  RequestWaitsForTrailers = 1 << 10, // 10000000000 = 1024
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2117,14 +2119,14 @@ function onStreamWriteDone(this: Http2Stream, err?: Error | null) {
   const state = this._writableState;
   // A chunk still queued behind this one carries END_STREAM itself (isFinalWrite).
   if (err || !state.ending || !state.errored || state.destroyed || state.finalCalled || state.length !== 0) return;
+  const status = this[bunHTTP2StreamStatus];
   // The native side drops a closed stream at the next read, and writeStream throws on an id it dropped.
-  const sentOrGone = StreamState.EndStreamSent | StreamState.NativeClosed | StreamState.NativeErrored;
-  if ((this[bunHTTP2StreamStatus] & sentOrGone) !== 0) return;
+  if ((status & (StreamState.EndStreamSent | StreamState.NativeClosed | StreamState.NativeErrored)) !== 0) return;
   // Pending trailers carry END_STREAM themselves. A pending reset must not follow a clean end.
-  if (this[bunHTTP2WaitForTrailers] || this.rstCode) return;
+  if (this[bunHTTP2WaitForTrailers] || (status & StreamState.RequestWaitsForTrailers) !== 0 || this.rstCode) return;
   const native = this[bunHTTP2Session]?.[bunHTTP2Native];
   if (!native) return;
-  this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
+  this[bunHTTP2StreamStatus] = status | StreamState.EndStreamSent;
   const settled = native.writeStream(this.id, "", "ascii", true);
   native.flush();
   if (settled === 5) onEndStreamSettled(this);
@@ -2298,6 +2300,7 @@ function abortRequestStream(this: Http2Stream, signal: AbortSignal) {
 // set (the END_STREAM flag itself rides on the HEADERS frame) and attaches exactly one 'abort'
 // listener per request, detached when the stream closes.
 function setupRequestEndAndSignal(req: Http2Stream, options: any, signal: AbortSignal | undefined) {
+  if (options?.waitForTrailers === true) req[bunHTTP2StreamStatus] |= StreamState.RequestWaitsForTrailers;
   if (options?.endStream) req.end();
   if (signal) {
     addAbortListener ??= require("internal/abort_listener").addAbortListener;

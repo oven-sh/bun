@@ -5,8 +5,9 @@
 //! `checkElementAccessExpression`, `getPropertyTypeForIndexType`, and `checkVariableLikeDeclaration` with
 //! `getBindingElementTypeFromParentType` as far as the elements of patterns go, of TypeScript 7.0.2's checker.go.
 
-use super::errors::{Diagnostic, is_close};
+use super::errors::is_close;
 use super::explain::Line;
+use super::sink::held;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent, PatParent};
 use smallvec::{SmallVec, smallvec};
@@ -164,10 +165,10 @@ struct Inaccessible {
 impl Checker<'_> {
     /// `a[k]`, what patterns and types look up by name, and private names out of place. What is wrong with `a.b` is reported where
     /// its type is worked out (`type_of_property_access`).
-    pub(super) fn check_property_accesses(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        self.check_private_names(file, out);
-        self.check_lookups_by_name(file, out);
-        self.check_element_accesses(file, out);
+    pub(super) fn check_property_accesses(&mut self, file: FileId) {
+        self.check_private_names(file);
+        self.check_lookups_by_name(file);
+        self.check_element_accesses(file);
     }
 
     /// `checkAndReportErrorForExtendingInterface`
@@ -181,7 +182,7 @@ impl Checker<'_> {
         }
         let name = self.entity_name_around(file, e);
         let node = (file, self.start_of(file, e), self.end_of_expr(file, e));
-        self.error(node, 2689, &[Arg::Text(&name)]);
+        self.error_at(node, 2689, &[Arg::Text(&name)]);
         true
     }
 
@@ -219,17 +220,14 @@ impl Checker<'_> {
     /// Private names out of place: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18012 (`checkPrivateIdentifier` of
     /// binder.go), 18024 (`checkEnumMember`).
     /// A bare `#x` is an `ExprKind::String` whose source text starts with `#`.
-    fn check_private_names(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_private_names(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Empty for a declaration file.
         let text = &hir.text[..];
         // `checkEnumMember`: a plain error.
         for (i, member) in hir.enum_members.iter().enumerate() {
             if bound.enum_member_owner[i].is_some() && is_private_name_at(hir, member.pos) {
-                out.push(Diagnostic {
-                    start: member.pos,
-                    code: 18024,
-                });
+                self.error_at((file, member.pos, 0), 18024, &[]);
             }
         }
         // The rest are grammar errors, and the binder also reports nothing in a file with parse diagnostics.
@@ -240,10 +238,7 @@ impl Checker<'_> {
             if !matches!(bound.member_owner[i], MemberOwner::None)
                 && is_private_constructor_name(text, member.name_pos)
             {
-                out.push(Diagnostic {
-                    start: member.name_pos,
-                    code: 18012,
-                });
+                self.error_at((file, member.name_pos, 0), 18012, &[]);
             }
         }
         let index = self.exprs_by_kind(file);
@@ -255,10 +250,7 @@ impl Checker<'_> {
                 && !bound.is_unchecked(e.idx())
                 && is_private_constructor_name(text, name_pos)
             {
-                out.push(Diagnostic {
-                    start: name_pos,
-                    code: 18012,
-                });
+                self.error_at((file, name_pos, 0), 18012, &[]);
             }
         }
         for &e in index.of(ExprTag::String) {
@@ -272,16 +264,10 @@ impl Checker<'_> {
                 continue;
             }
             if is_private_constructor_name(text, pos) {
-                out.push(Diagnostic {
-                    start: pos,
-                    code: 18012,
-                });
+                self.error_at((file, pos, 0), 18012, &[]);
             }
             if self.enclosing_classes(file, e).is_empty() {
-                out.push(Diagnostic {
-                    start: pos,
-                    code: 18016,
-                });
+                self.error_at((file, pos, 0), 18016, &[]);
                 continue;
             }
             // Parentheses are a parent of their own.
@@ -303,10 +289,7 @@ impl Checker<'_> {
                     _ => false,
                 };
             if !is_allowed {
-                out.push(Diagnostic {
-                    start: pos,
-                    code: 1451,
-                });
+                self.error_at((file, pos, 0), 1451, &[]);
             }
         }
     }
@@ -314,7 +297,7 @@ impl Checker<'_> {
     /// `a[k]`: 18046 to 18050, 2531 to 2533, 2571; 2493 2339 2537 2538, 2542, 7015 7052 7053 2551 2576.
     /// `checkIndexedAccess`, `checkElementAccessExpression`, `getIndexedAccessTypeOrUndefined`, and `getPropertyTypeForIndexType`
     /// where an expression does the looking up.
-    fn check_element_accesses(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_element_accesses(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let no_implicit_any = self.p.files.options.no_implicit_any;
         let by_kind = self.exprs_by_kind(file);
@@ -331,7 +314,7 @@ impl Checker<'_> {
             if !self.is_known(receiver) {
                 continue;
             }
-            let object = self.check_not_nullish(file, obj, receiver, out);
+            let object = self.check_non_null_type(file, obj, receiver);
             // `getWidenedType`: what is assigned to, or called, is looked up in the type a variable would get.
             let object = if self.is_written_or_called(file, e) {
                 self.regular_object(object)
@@ -406,14 +389,15 @@ impl Checker<'_> {
                     {
                         let place: f64 = self.files().atoms.text(name).parse().unwrap_or(f64::NAN);
                         if let Some(code) = self.past_the_end_of_tuples(apparent, name) {
-                            out.push(Diagnostic {
-                                start: at_index,
-                                code,
-                            });
                             let end = self.end_of_expr(file, index);
-                            self.explain_to(at_index, end, code, |c| {
-                                c.names_in_no_lookup(code, apparent, key)
-                            });
+                            {
+                                let args = self.names_in_no_lookup(code, apparent, key);
+                                self.add_diagnostic(Reported::new(
+                                    (file, at_index, end),
+                                    code,
+                                    held(args),
+                                ));
+                            }
                         }
                         // Below zero in a tuple that ends: 2514, and `undefined`.
                         if place < 0.0
@@ -426,14 +410,8 @@ impl Checker<'_> {
                             if is_written
                                 && infos.iter().any(|info| info.0 == TypeId::NUMBER && info.1)
                             {
-                                out.push(Diagnostic {
-                                    start: at_access,
-                                    code: 2542,
-                                });
                                 let end = self.end_inside_parentheses(file, e);
-                                self.explain_to(at_access, end, 2542, |c| {
-                                    vec![c.type_to_string(apparent)]
-                                });
+                                self.error_at((file, at_access, end), 2542, &[Arg::Type(apparent)]);
                             }
                             continue;
                         }
@@ -459,19 +437,11 @@ impl Checker<'_> {
                             .every_type(plain, |c, m| c.is_string_like(m) || c.is_number_like(m))
                     {
                         // The signature for strings stands in for symbols, which is an error all the same.
-                        out.push(Diagnostic {
-                            start: at_index,
-                            code: 2538,
-                        });
                         let end = self.end_of_expr(file, index);
-                        self.explain_to(at_index, end, 2538, |c| vec![c.type_to_string(key)]);
+                        self.error_at((file, at_index, end), 2538, &[Arg::Type(key)]);
                     } else if is_written && is_readonly {
-                        out.push(Diagnostic {
-                            start: at_access,
-                            code: 2542,
-                        });
                         let end = self.end_inside_parentheses(file, e);
-                        self.explain_to(at_access, end, 2542, |c| vec![c.type_to_string(apparent)]);
+                        self.error_at((file, at_access, end), 2542, &[Arg::Type(apparent)]);
                     }
                     continue;
                 }
@@ -483,14 +453,15 @@ impl Checker<'_> {
                 if is_key_like && !is_const_enum {
                     if self.is_object_literal_type(apparent) {
                         if no_implicit_any && is_literal_key {
-                            out.push(Diagnostic {
-                                start: at_access,
-                                code: 2339,
-                            });
                             let end = self.end_inside_parentheses(file, e);
-                            self.explain_another(at_access, end, 2339, |c| {
-                                c.names_in_no_lookup(2339, apparent, key)
-                            });
+                            {
+                                let args = self.names_in_no_lookup(2339, apparent, key);
+                                self.add_diagnostic(Reported::new(
+                                    (file, at_access, end),
+                                    2339,
+                                    held(args),
+                                ));
+                            }
                             continue;
                         }
                         if key == TypeId::STRING || key == TypeId::NUMBER {
@@ -505,14 +476,15 @@ impl Checker<'_> {
                         }
                     ) && name.is_some_and(|n| self.is_block_scoped_global(n))
                     {
-                        out.push(Diagnostic {
-                            start: at_access,
-                            code: 2339,
-                        });
                         let end = self.end_inside_parentheses(file, e);
-                        self.explain_to(at_access, end, 2339, |c| {
-                            c.names_in_no_lookup(2339, apparent, key)
-                        });
+                        {
+                            let args = self.names_in_no_lookup(2339, apparent, key);
+                            self.add_diagnostic(Reported::new(
+                                (file, at_access, end),
+                                2339,
+                                held(args),
+                            ));
+                        }
                         was_missing = true;
                         continue;
                     }
@@ -528,58 +500,54 @@ impl Checker<'_> {
                     if let Some(name) = name
                         && self.static_side_has(apparent, name)
                     {
-                        out.push(Diagnostic {
-                            start: at_access,
-                            code: 2576,
-                        });
-                        self.explain_to(at_access, end_of_access, 2576, |c| {
-                            let container = c.type_to_string(apparent);
-                            let written = c.source_text(file, at_index, end_of_index);
+                        {
+                            let container = self.type_to_string(apparent);
+                            let written = self.source_text(file, at_index, end_of_index);
                             let member = format!("{container}[{written}]");
-                            vec![c.atom_text(name), container, member]
-                        });
+                            self.error_at(
+                                (file, at_access, end_of_access),
+                                2576,
+                                &[Arg::Atom(name), Arg::Text(&container), Arg::Text(&member)],
+                            );
+                        }
                     } else if infos.iter().any(|info| info.0 == TypeId::NUMBER) {
-                        out.push(Diagnostic {
-                            start: at_index,
-                            code: 7015,
-                        });
-                        self.explain_to(at_index, end_of_index, 7015, |_| Vec::new());
+                        self.error_at((file, at_index, end_of_index), 7015, &[]);
                     } else if name.is_some_and(|n| self.is_property_misspelt(apparent, n, None)) {
-                        out.push(Diagnostic {
-                            start: at_index,
-                            code: 2551,
-                        });
-                        self.explain_to(at_index, end_of_index, 2551, |c| {
-                            let mut names = c.names_in_no_lookup(2339, apparent, key);
+                        {
+                            let mut names = self.names_in_no_lookup(2339, apparent, key);
                             names.push(
-                                match name.and_then(|n| c.property_meant(apparent, n, None, true)) {
-                                    Some(meant) => c.name_of_unread_property(meant),
+                                match name
+                                    .and_then(|n| self.property_meant(apparent, n, None, true))
+                                {
+                                    Some(meant) => self.name_of_unread_property(meant),
                                     None => String::new(),
                                 },
                             );
-                            names
-                        });
+                            self.add_diagnostic(Reported::new(
+                                (file, at_index, end_of_index),
+                                2551,
+                                held(names),
+                            ));
+                        }
                     } else if self.has_accessor_method_for(apparent, key, is_target) {
-                        out.push(Diagnostic {
-                            start: at_access,
-                            code: 7052,
-                        });
-                        self.explain_to(at_access, end_of_access, 7052, |c| {
+                        {
                             let method = if is_target { "set" } else { "get" };
-                            let call = match c.access_to_string(file, obj) {
+                            let call = match self.access_to_string(file, obj) {
                                 Some(receiver) => format!("{receiver}.{method}"),
                                 None => method.to_owned(),
                             };
-                            vec![c.type_to_string(apparent), call]
-                        });
+                            self.error_at(
+                                (file, at_access, end_of_access),
+                                7052,
+                                &[Arg::Type(apparent), Arg::Text(&call)],
+                            );
+                        }
                     } else {
-                        out.push(Diagnostic {
-                            start: at_access,
-                            code: 7053,
-                        });
-                        self.explain_to(at_access, end_of_access, 7053, |c| {
-                            vec![c.type_to_string(keys), c.type_to_string(apparent)]
-                        });
+                        self.error_at(
+                            (file, at_access, end_of_access),
+                            7053,
+                            &[Arg::Type(keys), Arg::Type(apparent)],
+                        );
                         self.explain_chain(at_access, 7053, |c| {
                             c.lines_under_implicit_any_element(apparent, key)
                         });
@@ -593,10 +561,7 @@ impl Checker<'_> {
                 } else {
                     2538
                 };
-                out.push(Diagnostic {
-                    start: at_index,
-                    code,
-                });
+                self.error_at((file, at_index, 0), code, &[]);
                 let end = self.end_of_expr(file, index);
                 self.explain_to(at_index, end, code, |c| {
                     // `indexNode.Kind == KindBigIntLiteral`
@@ -655,7 +620,7 @@ impl Checker<'_> {
         };
         vec![Line {
             code,
-            args: vec![first, self.type_to_string(object)],
+            args: held(vec![first, self.type_to_string(object)]),
             level: 1,
         }]
     }
@@ -1157,11 +1122,11 @@ impl Checker<'_> {
 
     /// What a pattern takes out of something has to be within reach: 2341 2445 2446. What an object pattern takes out, and what a type
     /// looks up in another, has to be there: 2339 2493 2514 2537 2538.
-    fn check_lookups_by_name(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_lookups_by_name(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for p in 0..hir.pats.len() {
             if matches!(hir.pats[p].kind, PatKind::Object(_) | PatKind::Array(_)) {
-                self.check_lookups_of_pattern(file, PatId(p as u32), out);
+                self.check_lookups_of_pattern(file, PatId(p as u32));
             }
         }
         // `getTypeFromIndexedAccessTypeNode`
@@ -1194,27 +1159,23 @@ impl Checker<'_> {
                 if code == 2514 {
                     continue;
                 }
-                out.push(Diagnostic {
-                    start: hir[index].pos,
-                    code,
-                });
                 // `boolean` is not taken apart (`getIndexedAccessTypeOrUndefined`).
                 let key = if self.is_boolean(keys) { keys } else { key };
                 let end = self.end_of_type_node(file, index);
-                self.explain_another(hir[index].pos, end, code, |c| {
-                    c.names_in_no_lookup(code, apparent, key)
-                });
+                {
+                    let args = self.names_in_no_lookup(code, apparent, key);
+                    self.add_diagnostic(Reported::new(
+                        (file, hir[index].pos, end),
+                        code,
+                        held(args),
+                    ));
+                }
             }
         }
     }
 
     /// `checkVariableLikeDeclaration` and `getBindingElementTypeFromParentType`, of the elements of `pattern`.
-    fn check_lookups_of_pattern(
-        &mut self,
-        file: FileId,
-        pattern: PatId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_lookups_of_pattern(&mut self, file: FileId, pattern: PatId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let first = match hir[pattern].kind {
             PatKind::Object(props) if !props.is_empty() => hir[props.at(0)].value,
@@ -1238,8 +1199,7 @@ impl Checker<'_> {
             if matches!(owner, FnOwner::None) {
                 return;
             }
-            has_no_body = matches!(hir[func].body, FnBody::None)
-                && !hir[func].flags.contains(Flags::BODY_DROPPED);
+            has_no_body = matches!(hir[func].body, FnBody::None);
             if hir[param].ty.is_none() {
                 // Of a setter the getter says.
                 if hir[func].kind == FnKind::Setter {
@@ -1306,15 +1266,16 @@ impl Checker<'_> {
                         && let Some(code) =
                             self.why_not_accessible(file, around, is_super, false, declared, name)
                     {
-                        out.push(Diagnostic {
-                            start: hir[binding].pos,
-                            code,
-                        });
-                        self.explain(hir[binding].pos, code, |c| {
-                            c.names_in_inaccessibility(
+                        {
+                            let args = self.names_in_inaccessibility(
                                 file, around, is_super, false, declared, name,
-                            )
-                        });
+                            );
+                            self.add_diagnostic(Reported::new(
+                                (file, hir[binding].pos, 0),
+                                code,
+                                held(args),
+                            ));
+                        }
                     }
                 }
                 return;
@@ -1377,14 +1338,12 @@ impl Checker<'_> {
                 && let Some(code) =
                     self.why_not_accessible(file, around, is_super, false, declared, name)
             {
-                out.push(Diagnostic {
-                    start: at_name,
-                    code,
-                });
                 let end = self.end_of_name_at(file, at_name);
-                self.explain_to(at_name, end, code, |c| {
-                    c.names_in_inaccessibility(file, around, is_super, false, declared, name)
-                });
+                {
+                    let args = self
+                        .names_in_inaccessibility(file, around, is_super, false, declared, name);
+                    self.add_diagnostic(Reported::new((file, at_name, end), code, held(args)));
+                }
             }
             // What a pattern implies is the type of an object literal until it is widened: it may lack what has a default.
             if prop.is_rest || is_declared || is_implied && !is_widened && prop.default.is_some() {
@@ -1416,20 +1375,20 @@ impl Checker<'_> {
                     && matches!(prop.key, PropKey::Name(_))
                     && is_bigint_literal_at(hir, at);
                 let code = if is_bigint { 2538 } else { code };
-                out.push(Diagnostic { start: at, code });
                 let end = match prop.key {
                     PropKey::Computed(k) => self.end_of_expr(file, k),
                     _ => self.end_of_name_at(file, at),
                 };
                 // `boolean` is not taken apart (`getIndexedAccessTypeOrUndefined`).
                 let key = if self.is_boolean(keys) { keys } else { key };
-                self.explain_to(at, end, code, |c| {
-                    if is_bigint {
+                {
+                    let args = if is_bigint {
                         vec!["bigint".to_owned()]
                     } else {
-                        c.names_in_no_lookup(code, looked_into, key)
-                    }
-                });
+                        self.names_in_no_lookup(code, looked_into, key)
+                    };
+                    self.add_diagnostic(Reported::new((file, at, end), code, held(args)));
+                }
             }
         }
     }
@@ -1512,9 +1471,29 @@ impl Checker<'_> {
         {
             return;
         }
+        // `typeToStringEx` says "?" and `addDiagnostic` discards.
+        let is_discarded = self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL;
+        let made = self.non_existent_properties.insert((file, e), is_discarded);
+        if made.unwrap_or(is_discarded) {
+            self.non_existent_properties.insert((file, e), true);
+            return;
+        }
         self.reporting_nonexistent.push((file, e, self.stack.len()));
-        // Printing is behind a barrier that no circle passes (`with_printer`). In tsgo it closes them.
-        self.resolve_as_printed(containing, 0, &mut Vec::new());
+        let dropped: Vec<bool> = self
+            .frames
+            .iter()
+            .map(|frame| frame.drops_reported)
+            .collect();
+        // Printing is behind a barrier that no circle passes (`with_printer`). In tsgo it closes them: so does this one, the first
+        // time. The error is made again where it was dropped with an answer that was not kept, which tsgo has no need of.
+        if made.is_none() {
+            self.serialization_level += 1;
+            self.printing_closes_circles = true;
+            let printed = self.reduced(containing);
+            self.type_to_string(printed);
+            self.printing_closes_circles = false;
+            self.serialization_level -= 1;
+        }
         let at = self.place_of_token(file, start);
         let missing = self.declaration_name_at(file, start);
         // The static side and what is promised are asked for a `#x` by its text, which is the name of no property.
@@ -1578,6 +1557,10 @@ impl Checker<'_> {
             self.new_diagnostic_chain(chain, at, code, &args)
         };
         self.reporting_nonexistent.pop();
+        // What the making of the message comes back to is no reason to take the message back.
+        for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
+            frame.drops_reported = dropped;
+        }
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
     }
 
@@ -1804,7 +1787,7 @@ impl Checker<'_> {
             let shadowing = self.new_diagnostic(shadowing, 18017, &args);
             let meant = meant.map(|m| self.place_of_token(file, hir[m].name_pos));
             let meant = meant.map(|place| self.new_diagnostic(place, 18018, &args));
-            let diagnostic = self.error(at, 18014, &[args[0], Arg::Type(left)]);
+            let diagnostic = self.error_at(at, 18014, &[args[0], Arg::Type(left)]);
             diagnostic.add_related_info(shadowing);
             if let Some(meant) = meant {
                 diagnostic.add_related_info(meant);
@@ -1812,7 +1795,7 @@ impl Checker<'_> {
             return true;
         }
         let class = self.class_sym(declared_in, type_class);
-        self.error(at, 18013, &[Arg::Text(&diag_name), Arg::Sym(class)]);
+        self.error_at(at, 18013, &[Arg::Text(&diag_name), Arg::Sym(class)]);
         true
     }
     /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` again and again: the classes the private name of `e`,
@@ -1933,7 +1916,7 @@ impl Checker<'_> {
         if let Some(found) = self.inaccessibility(file, at, is_super, writing, containing, name) {
             let names = self.names_of_inaccessible(&found);
             let args: Vec<Arg> = names.iter().map(|name| Arg::Text(name)).collect();
-            self.error(self.place_of_token(file, name_pos), found.code, &args);
+            self.error_at(self.place_of_token(file, name_pos), found.code, &args);
         }
     }
 

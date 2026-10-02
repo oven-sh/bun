@@ -46,28 +46,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `import < a`: nothing is said, and the caller goes on with the comparison.
                 return Ok(p.new_expr(E::Missing {}, loc));
             }
-            // `parseMemberExpressionRest`: a tagged template takes the type arguments for itself, and nothing objects to them there.
-            if !matches!(
-                p.lexer.token,
-                T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
-            ) {
-                // `checkGrammarExpressionWithTypeArguments`, `checkGrammarImportCallExpression`
-                let range = js_lexer::range_of_identifier(p.source, loc);
-                p.lexer.ts_grammar_error(range, 1326);
-            }
             if p.lexer.token != T::TOpenParen {
+                // `parseMemberExpressionRest`: a tagged template takes the type arguments for itself, and nothing objects to them there.
+                if !matches!(
+                    p.lexer.token,
+                    T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
+                ) {
+                    // `checkGrammarExpressionWithTypeArguments`
+                    p.lexer.ts_grammar_error(p.lexer.range_from(loc), 1326);
+                }
                 // `checkExpressionWithTypeArguments` checks the type arguments.
                 let mut keyword = p.new_expr(E::Missing {}, loc);
                 p.note_type_arguments(&mut keyword, less_than);
                 return Ok(keyword);
             }
             // `import<T>(x)` is the call. `checkImportCallExpression` never looks at its type arguments, so what the list logged about
-            // itself (1099, 1009) goes. The 1326 is logged again.
+            // itself (1099, 1009) goes.
             let log = p.log();
             log.msgs.truncate(logged);
             log.errors = errors;
-            let range = js_lexer::range_of_identifier(p.source, loc);
-            p.lexer.ts_grammar_error(range, 1326);
             type_arguments = p.kept_type_arguments();
         }
 
@@ -175,8 +172,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(Some(p.new_expr(E::Missing {}, loc)));
         }
         let name = p.lexer.range();
-        let text = E::Str::new(p.lexer.identifier);
-        let is_defer = p.lexer.identifier == b"defer";
+        let word = p.lexer.identifier;
+        let text = E::Str::new(word);
+        let is_defer = word == b"defer";
         p.lexer.next()?;
         let is_callee = p.lexer.token == T::TOpenParen;
         if is_defer && is_callee {
@@ -189,9 +187,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             p.lexer
                 .ts_grammar_expected(bun_ast::Range { loc: end, len: 0 }, "(");
+        } else if is_callee {
+            p.lexer.ts_grammar_error(name, 18061);
         } else {
-            p.lexer
-                .ts_grammar_error(name, if is_callee { 18061 } else { 17012 });
+            let named = [word, b"import", b"meta"].join(&0);
+            p.lexer.ts_grammar_error_about(name, 17012, &named);
         }
         let target = p.new_expr(E::Missing {}, loc);
         Ok(Some(p.new_expr(
@@ -242,6 +242,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
         if let Some(type_arguments) = type_arguments {
+            // `checkGrammarImportCallExpression`
+            p.lexer.ts_grammar_error(p.lexer.range_from(loc), 1326);
             p.note(
                 &mut call.loc,
                 crate::sema::Mark::TypeArguments,
@@ -471,6 +473,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_type_only: specifier.is_type_only,
                 property_name: specifier.property_name.map(ModuleExportName::syntax),
                 name: specifier.name.syntax(),
+                end: p.lexer.full_start(),
             });
             let other = specifier.property_name.unwrap_or(specifier.name);
             // The name in this file, and the name in the other module or for other modules.

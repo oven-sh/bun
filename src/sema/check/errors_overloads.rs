@@ -267,7 +267,7 @@ impl Checker<'_> {
             }
             _ => self.error_range_of_declaration(file, decl)?,
         };
-        Some(self.error((file, start, end), code, args))
+        Some(self.error_at((file, start, end), code, args))
     }
 
     /// The function that a function declaration, a method, a method signature or a constructor is.
@@ -537,7 +537,7 @@ impl Checker<'_> {
             };
             if let Some(at) = self.place_of_declaration(file, d) {
                 let name = Arg::Bytes(&hir.text[at.1 as usize..at.2 as usize]);
-                self.error(at, code, &[name]);
+                self.error_at(at, code, &[name]);
             }
         }
     }

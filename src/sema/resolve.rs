@@ -341,8 +341,6 @@ pub struct Options {
     pub rewrite_relative_import_extensions: bool,
     /// `allowUmdGlobalAccess`
     pub allow_umd_global_access: bool,
-    /// `noEmit`
-    pub no_emit_is_set: bool,
     /// `erasableSyntaxOnly`
     pub erasable_syntax_only: bool,
     /// `isolatedDeclarations`, where declaration files are written (`GetEmitDeclarations`): its errors come of writing them.
@@ -361,8 +359,6 @@ pub struct Options {
     pub import_helpers: bool,
     /// `allowArbitraryExtensions`
     pub allow_arbitrary_extensions: bool,
-    /// `noEmit`
-    pub nothing_is_emitted: bool,
     /// `jsxFactory`, `jsxFragmentFactory`, `reactNamespace`, as written. Empty if they are not.
     pub jsx_factory: String,
     pub jsx_fragment_factory: String,
@@ -522,7 +518,6 @@ impl Options {
         options.emit_decorator_metadata = flag("emitDecoratorMetadata");
         options.import_helpers = flag("importHelpers");
         options.allow_arbitrary_extensions = flag("allowArbitraryExtensions");
-        options.nothing_is_emitted = flag("noEmit");
         options.reports_unreachable_code =
             compiler.get("allowUnreachableCode").and_then(Json::as_bool) == Some(false);
         options.reports_unused_labels =
@@ -687,7 +682,6 @@ impl Options {
         options.verbatim_module_syntax = flag("verbatimModuleSyntax");
         options.isolated_modules = options.isolated_modules_said || options.verbatim_module_syntax;
         options.preserve_const_enums = flag("preserveConstEnums");
-        options.no_emit_is_set = flag("noEmit");
         options.rewrite_relative_import_extensions = flag("rewriteRelativeImportExtensions");
         options.allow_importing_ts_extensions =
             flag("allowImportingTsExtensions") || options.rewrite_relative_import_extensions;

@@ -236,6 +236,8 @@ pub struct Expression {
     pub kind: ExpressionKind,
     /// Where it starts. One that is missing: where the token that is no expression starts.
     pub pos: u32,
+    /// `node.End()`
+    pub end: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -346,7 +348,7 @@ impl Expression {
             expressions.pop()?
         } else {
             let start = expressions.first().map_or(0, |first| first.pos as usize);
-            at(start, ExpressionKind::Array(expressions))
+            p.at(start, ExpressionKind::Array(expressions))
         };
         p.errors.append(&mut p.invalid);
         Some((expression, p.errors))
@@ -368,11 +370,6 @@ enum Token {
     /// An identifier or a keyword.
     Word(String),
     EndOfFile,
-}
-
-fn at(start: usize, kind: ExpressionKind) -> Expression {
-    let pos = start as u32;
-    Expression { kind, pos }
 }
 
 /// `PCObjectLiteralMembers`, `PCArrayLiteralMembers`
@@ -465,6 +462,15 @@ struct TolerantParser<'a> {
 }
 
 impl TolerantParser<'_> {
+    /// `finishNode`
+    fn at(&self, start: usize, kind: ExpressionKind) -> Expression {
+        Expression {
+            kind,
+            pos: start as u32,
+            end: self.full_start as u32,
+        }
+    }
+
     /// `parseErrorAtRange`: an error where the last one is adds nothing.
     fn error_at(&mut self, start: usize, end: usize, code: u32, expected: &'static str) {
         let (start, end) = (start as u32, end as u32);
@@ -738,7 +744,7 @@ impl TolerantParser<'_> {
         if is_single_quoted {
             self.refuse(start, 1327);
         }
-        Some(at(start, literal))
+        Some(self.at(start, literal))
     }
 
     /// `parsePrefixUnaryExpression`, of `-` before a number.
@@ -753,7 +759,7 @@ impl TolerantParser<'_> {
         if self.token == Token::OpenBracket {
             return None;
         }
-        Some(at(start, ExpressionKind::Number(-n)))
+        Some(self.at(start, ExpressionKind::Number(-n)))
     }
 
     fn enter(&mut self) -> Option<()> {
@@ -780,14 +786,14 @@ impl TolerantParser<'_> {
             self.error_at_token(1005, "]");
         }
         self.scanner.depth -= 1;
-        Some(at(start, ExpressionKind::Array(elements)))
+        Some(self.at(start, ExpressionKind::Array(elements)))
     }
 
     /// `parseArgumentOrArrayLiteralElement`
     fn parse_argument_or_array_literal_element(&mut self) -> Option<Expression> {
         if self.token == Token::Comma {
             self.refuse(self.token_start, 1328);
-            return Some(at(self.token_start, ExpressionKind::Missing));
+            return Some(self.at(self.token_start, ExpressionKind::Missing));
         }
         self.parse_assignment_expression_or_higher()
     }
@@ -809,7 +815,7 @@ impl TolerantParser<'_> {
             self.error_at_token(1005, "}");
         }
         self.scanner.depth -= 1;
-        Some(at(start, ExpressionKind::Object(properties)))
+        Some(self.at(start, ExpressionKind::Object(properties)))
     }
 
     /// `parseObjectLiteralElement`
@@ -901,7 +907,7 @@ impl TolerantParser<'_> {
                 } else {
                     self.next_token()?;
                     self.refuse(start, 1328);
-                    at(start, ExpressionKind::Identifier(word))
+                    self.at(start, ExpressionKind::Identifier(word))
                 }
             }
             // `parseIdentifier(Expression_expected)`: no token is taken. `createIdentifierWithDiagnostic`: at the end of the file it is said
@@ -913,7 +919,7 @@ impl TolerantParser<'_> {
                     self.error_at_token(1109, "");
                 }
                 self.refuse(start, 1328);
-                return Some(at(start, ExpressionKind::Missing));
+                return Some(self.at(start, ExpressionKind::Missing));
             }
         };
         // The expression goes on: an element access, an operator, an assertion.

@@ -3870,10 +3870,10 @@ impl<'f> Binder<'f> {
                 }
                 self.expr(e, me);
             }
-            ExprKind::ImportCall { args, type_args } => {
+            ExprKind::ImportCall { args } => {
                 // `checkImportCallExpression` never looks at them.
                 let around = std::mem::replace(&mut self.is_unchecked, true);
-                self.tys(type_args);
+                self.tys(self.f.type_args_of_import_call(args));
                 self.is_unchecked = around;
                 self.exprs(args, me);
             }

@@ -381,6 +381,8 @@ pub struct TupleElement {
     pub is_optional: bool,
     pub is_rest: bool,
     pub loc: Loc,
+    /// `node.End()`
+    pub end: Loc,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -494,6 +496,8 @@ pub enum SignatureKind {
 pub struct FunctionBody {
     /// Of the `{`.
     pub loc: Loc,
+    /// `node.End()`
+    pub end: Loc,
     pub stmts: StoreSlice<Stmt>,
 }
 
@@ -554,6 +558,8 @@ impl Param {
 pub struct Pattern {
     pub data: PatternData,
     pub loc: Loc,
+    /// `node.End()`
+    pub end: Loc,
 }
 
 #[derive(Copy, Clone)]
@@ -572,6 +578,8 @@ pub struct PatternProperty {
     pub default: Option<Expr>,
     pub is_rest: bool,
     pub loc: Loc,
+    /// `node.End()`
+    pub end: Loc,
 }
 
 #[derive(Copy, Clone)]
@@ -581,6 +589,8 @@ pub struct PatternElement {
     pub is_rest: bool,
     /// Of its first token: the `...`, or the pattern.
     pub loc: Loc,
+    /// `node.End()`
+    pub end: Loc,
 }
 
 /// A statement that only exists in TypeScript. The parser leaves an `S::TypeScript` placeholder in the statement list, which refers to
@@ -659,6 +669,8 @@ pub struct Specifier {
     pub is_type_only: bool,
     pub property_name: Option<ModuleExportName>,
     pub name: ModuleExportName,
+    /// `node.End()`
+    pub end: Loc,
 }
 
 /// `* as name`
@@ -847,8 +859,8 @@ impl Syntax {
     }
 
     #[inline]
-    pub fn add_pattern(&mut self, data: PatternData, loc: Loc) -> PatternId {
-        self.add_pattern_node(Pattern { data, loc })
+    pub fn add_pattern(&mut self, data: PatternData, loc: Loc, end: Loc) -> PatternId {
+        self.add_pattern_node(Pattern { data, loc, end })
     }
 
     #[inline]

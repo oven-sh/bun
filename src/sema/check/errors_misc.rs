@@ -37,7 +37,7 @@ impl Checker<'_> {
                 self.start_of(file, mixed),
                 self.end_of_expr(file, mixed),
             );
-            self.grammar_error_on_node(at, 5076, &[Arg::Text(first), Arg::Text(second)]);
+            self.grammar_error_at(at, 5076, &[Arg::Text(first), Arg::Text(second)]);
         }
         // `checkNullishCoalesceOperandLeft`
         let target = self.skip_outer_expressions(file, left);
@@ -51,7 +51,7 @@ impl Checker<'_> {
             self.error_start_inside_parentheses(file, target),
             self.error_end_inside_parentheses(file, target),
         );
-        self.error(at, code, &[]);
+        self.error_at(at, code, &[]);
     }
 
     /// `checkSwitchStatement`, of one `case test:` of a `switch (expr)`: 2678.
@@ -90,7 +90,7 @@ impl Checker<'_> {
             },
             _ => return,
         };
-        self.error((file, start, end), 2378, &[]);
+        self.error_at((file, start, end), 2378, &[]);
     }
 
     /// `checkNullishCoalesceOperands`: the binary expression that mixes `||` or `&&` with the `??` of `e`, which is `left ?? right`,
@@ -171,7 +171,7 @@ impl Checker<'_> {
                 _ => return,
             }
         };
-        self.error(self.place_of_written_expr(file, node), code, &[]);
+        self.error_at(self.place_of_written_expr(file, node), code, &[]);
     }
 
     /// `GetErrorRangeForNode`, for an expression as it is written: where an error about the whole of `e` goes. In parentheses it is
@@ -331,13 +331,13 @@ impl Checker<'_> {
             }
             // A missing operand is an identifier without text, which is no access expression either.
             _ => {
-                self.error((file, start, end), 2703, &[]);
+                self.error_at((file, start, end), 2703, &[]);
                 return;
             }
         };
         let Some(name) = name else { return };
         if self.is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. }) {
-            self.error((file, start, end), 18011, &[]);
+            self.error_at((file, start, end), 18011, &[]);
         }
         let object = self.type_of_expr(file, obj);
         if !self.is_known(object) || self.is_any(object) {
@@ -346,7 +346,7 @@ impl Checker<'_> {
         let object = self.non_nullable(object);
         // `getIndexedAccessTypeOrUndefined`: whatever is in the brackets then stands for any string, and no property is looked for.
         if matches!(hir[operand].kind, ExprKind::Index { .. })
-            && self.has_only_a_string_index_signature(object)
+            && self.is_string_index_signature_only(object)
         {
             return;
         }
@@ -372,7 +372,7 @@ impl Checker<'_> {
             types.push(self.type_of_prop(&prop, mapper));
         }
         if is_readonly {
-            self.error((file, start, end), 2704, &[]);
+            self.error_at((file, start, end), 2704, &[]);
             return;
         }
         // `checkDeleteExpressionMustBeOptional`
@@ -391,67 +391,19 @@ impl Checker<'_> {
                     m.is_undefined() || m == TypeId::VOID || c.is_deferred(m)
                 });
         if !is_optional {
-            self.error((file, start, end), 2790, &[]);
-        }
-    }
-
-    /// `isStringIndexSignatureOnlyType`
-    fn has_only_a_string_index_signature(&mut self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => parts
-                .iter()
-                .all(|&p| self.has_only_a_string_index_signature(p)),
-            _ => {
-                self.is_object_type(ty)
-                    && !self.is_generic(ty)
-                    && self.members(ty).is_some_and(|m| {
-                        m.shape().props.is_empty()
-                            && matches!(
-                                m.shape().index[..],
-                                [IndexInfo {
-                                    key: TypeId::STRING,
-                                    ..
-                                }]
-                            )
-                    })
-            }
+            self.error_at((file, start, end), 2790, &[]);
         }
     }
 
     /// `isReadonlySymbol`: of what a namespace or a module exports, constants and the members of enums.
     fn is_read_only(&self, prop: &Prop) -> bool {
         match prop.source {
-            PropSource::Symbol(export) => {
-                self.files()
-                    .resolve_alias_if_needed(export)
-                    .is_some_and(|target| {
-                        self.files().flags(target).contains(SymFlags::ENUM_MEMBER)
-                            || self
-                                .files()
-                                .decls(target)
-                                .first()
-                                .is_some_and(|&(of, decl)| {
-                                    let crate::bind::Decl::Var(mut root) = decl else {
-                                        return false;
-                                    };
-                                    loop {
-                                        match self.bound(of).pat_parent[root.idx()] {
-                                            crate::bind::PatParent::Prop(outer, _)
-                                            | crate::bind::PatParent::Elem(outer, _) => {
-                                                root = outer
-                                            }
-                                            crate::bind::PatParent::Var(d) => {
-                                                return !matches!(
-                                                    self.hir(of)[d].kind,
-                                                    VarKind::Var | VarKind::Let
-                                                );
-                                            }
-                                            _ => return false,
-                                        }
-                                    }
-                                })
-                    })
-            }
+            PropSource::Symbol(export) => (self.files().resolve_alias_if_needed(export))
+                .is_some_and(|target| {
+                    let flags = self.files().flags(target);
+                    flags.contains(SymFlags::ENUM_MEMBER)
+                        || flags.intersects(SymFlags::VARIABLE) && flags.contains(SymFlags::CONST)
+                }),
             _ => prop.flags.contains(PropFlags::READONLY),
         }
     }

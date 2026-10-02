@@ -6,23 +6,20 @@
 //! checker.go and grammarchecks.go, `IsValidTypeOnlyAliasUseSite` of its ast/utilities.go, and what `declareSymbolEx` of its binder.go
 //! says of default exports.
 
-use super::errors::{Diagnostic, is_close};
+use super::errors::is_close;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, PatParent, ScopeId};
-use crate::util::number_repeated;
-use smallvec::SmallVec;
 
 impl Checker<'_> {
-    pub(super) fn check_names_and_exports(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        self.check_computed_names(file, out);
-        self.check_object_literal_names(file, out);
-        self.check_exports(file, out);
-        self.check_ambient_export_assignments(file, out);
-        self.check_type_only_names_used_as_values(file, out);
+    pub(super) fn check_names_and_exports(&mut self, file: FileId) {
+        self.check_computed_names(file);
+        self.check_exports(file);
+        self.check_ambient_export_assignments(file);
+        self.check_type_only_names_used_as_values(file);
     }
 
     /// `checkComputedPropertyName`
-    fn check_computed_names(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_computed_names(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut keys: Vec<(ExprId, u32)> = Vec::new();
         keys.extend(hir.props.iter().filter_map(|p| match p.key {
@@ -52,8 +49,7 @@ impl Checker<'_> {
             let is_nullable = ty.is_null() || ty.is_undefined();
             let wanted = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
             if is_nullable || !self.is_assignable(ty, wanted) {
-                out.push(Diagnostic { start, code: 2464 });
-                self.note(start, self.end_of_name_at(file, start), 2464, Vec::new());
+                self.error_at((file, start, self.end_of_name_at(file, start)), 2464, &[]);
             }
         }
     }
@@ -91,7 +87,6 @@ impl Checker<'_> {
         names: &[Atom],
         start: u32,
         meaning: SymFlags,
-        out: &mut Vec<Diagnostic>,
     ) {
         let (files, hir) = (self.files(), self.hir(file));
         let Some(mut namespace) = files.resolve_name(file, scope, names[0], SymFlags::NAMESPACE)
@@ -156,21 +151,19 @@ impl Checker<'_> {
             };
             let is_misspelt = exports.iter().any(is_candidate);
             if is_misspelt {
-                out.push(Diagnostic {
-                    start: at,
-                    code: 2724,
-                });
-                self.explain(at, 2724, |c| {
+                {
                     let candidates = exports.iter().filter(|&candidate| is_candidate(candidate));
                     let get_name = |candidate: &(Atom, Sym)| files.atoms.bytes(candidate.0);
                     let suggested =
                         get_spelling_suggestion(text, candidates, get_name, |a, b| a.1.cmp(&b.1));
-                    vec![
-                        fully_qualified_name(c, resolved),
-                        c.atom_text(name),
-                        suggested.map_or_else(String::new, |s| c.symbol_to_string(s.1)),
-                    ]
-                });
+                    let arg0 = fully_qualified_name(self, resolved);
+                    let arg1 = suggested.map_or_else(String::new, |s| self.symbol_to_string(s.1));
+                    self.error_at(
+                        (file, at, 0),
+                        2724,
+                        &[Arg::Text(&arg0), Arg::Atom(name), Arg::Text(&arg1)],
+                    );
+                }
                 return;
             }
             // After `implements`, and after the `extends` of an interface, the names are a property access and no `QualifiedName`.
@@ -186,7 +179,7 @@ impl Checker<'_> {
                 if wanted.intersects(SymFlags::TYPE) {
                     match self.is_qualified_name_a_value(file, scope, names) {
                         Some(true) => {
-                            out.push(Diagnostic { start, code: 2749 });
+                            self.error_at((file, start, 0), 2749, &[]);
                             // `getContainingQualifiedNameNode`: all of the names.
                             let mut end = at + text.len() as u32;
                             for &later in &names[i + 1..] {
@@ -211,27 +204,22 @@ impl Checker<'_> {
                     let is_missing =
                         names[i + 1] == known::empty && hir.text.get(dot) == Some(&b'.');
                     let right = if is_missing { dot as u32 + 1 } else { next };
-                    out.push(Diagnostic {
-                        start: right,
-                        code: 2713,
-                    });
                     let right_name = names[i + 1];
-                    self.explain(right, 2713, |c| {
-                        vec![
-                            exported.map_or_else(String::new, |m| c.symbol_to_string(m)),
-                            c.atom_text(right_name),
-                        ]
-                    });
+                    {
+                        let arg0 = exported.map_or_else(String::new, |m| self.symbol_to_string(m));
+                        self.error_at(
+                            (file, right, 0),
+                            2713,
+                            &[Arg::Text(&arg0), Arg::Atom(right_name)],
+                        );
+                    }
                     return;
                 }
             }
-            out.push(Diagnostic {
-                start: at,
-                code: 2694,
-            });
-            self.explain(at, 2694, |c| {
-                vec![fully_qualified_name(c, resolved), c.atom_text(name)]
-            });
+            {
+                let arg0 = fully_qualified_name(self, resolved);
+                self.error_at((file, at, 0), 2694, &[Arg::Text(&arg0), Arg::Atom(name)]);
+            }
             return;
         }
     }
@@ -274,104 +262,6 @@ impl Checker<'_> {
             };
         }
         Some(true)
-    }
-
-    /// `checkGrammarObjectLiteralExpression`, as far as one name written twice goes.
-    fn check_object_literal_names(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        const GET: u8 = 1;
-        const SET: u8 = 2;
-        const PROPERTY: u8 = 4;
-        const METHOD: u8 = 8;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.has_errors {
-            return;
-        }
-        let index = self.exprs_by_kind(file);
-        for &literal in index.of(ExprTag::Object) {
-            let ExprKind::Object(props) = hir[literal].kind else {
-                continue;
-            };
-            if props.len() < 2
-                || bound.is_unchecked(literal.idx())
-                || self.is_assignment_target(file, literal)
-            {
-                continue;
-            }
-            // Of names that are all written out and all different there is nothing to say.
-            let mut written: SmallVec<[Atom; 16]> = SmallVec::new();
-            let mut is_all_written = true;
-            for p in props.iter() {
-                let prop = &hir[p];
-                if prop.kind == PropKind::Spread {
-                    continue;
-                }
-                match prop.key {
-                    PropKey::Name(name) | PropKey::Private(name) => written.push(name),
-                    PropKey::Computed(_) => {
-                        is_all_written = false;
-                        break;
-                    }
-                    PropKey::None => {}
-                }
-            }
-            if is_all_written && number_repeated(&written).is_empty() {
-                continue;
-            }
-            let container = bound.expr_symbol[literal.idx()];
-            if !is_all_written && container.is_some() {
-                let container = self.files().sym(file, container);
-                self.report_conflicts_of_late_bound_members(file, container, false, out);
-            }
-            let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
-            for p in props.iter() {
-                let prop = &hir[p];
-                let current = match prop.kind {
-                    PropKind::Init | PropKind::Shorthand => PROPERTY,
-                    PropKind::Method => METHOD,
-                    PropKind::Getter => GET,
-                    PropKind::Setter => SET,
-                    PropKind::Spread => continue,
-                };
-                let Some(name) = self.member_name(file, prop.key) else {
-                    continue;
-                };
-                let Some(entry) = seen.iter_mut().find(|s| s.0 == name) else {
-                    seen.push((name, current));
-                    continue;
-                };
-                let existing = entry.1;
-                let code = if current & METHOD != 0 && existing & METHOD != 0 {
-                    2300
-                } else if current & PROPERTY != 0 && existing & PROPERTY != 0 {
-                    1117
-                } else if current & (GET | SET) != 0 && existing & (GET | SET) != 0 {
-                    if existing != GET | SET && current != existing {
-                        entry.1 |= current;
-                        continue;
-                    }
-                    1118
-                } else {
-                    1119
-                };
-                out.push(Diagnostic {
-                    start: prop.pos,
-                    code,
-                });
-                // `[1]` and `["a"]` are kept as plain names.
-                if matches!(prop.key, PropKey::Computed(_)) || code != 2300 {
-                    let end = self.end_of_prop_name(file, p);
-                    let args = if code == 2300 {
-                        vec![self.source_text(file, prop.pos, end)]
-                    } else {
-                        Vec::new()
-                    };
-                    self.note(prop.pos, end, code, args);
-                }
-                if code == 1118 || code == 1119 {
-                    break;
-                }
-            }
-        }
     }
 
     /// `IsGlobalSourceFile(GetDeclarationContainer(symbol.Declarations[0]))`
@@ -419,7 +309,7 @@ impl Checker<'_> {
         container == Parent::File
     }
 
-    fn check_exports(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_exports(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // What is exported by name, without saying from where, has to be the module's own.
         for (x, export) in hir.exports.iter().enumerate() {
@@ -449,16 +339,13 @@ impl Checker<'_> {
                             .resolve_name(file, bound.export_scope[x], name, all)
                             .is_none()
                 {
-                    out.push(Diagnostic {
-                        start: hir[s].local_pos,
-                        code: 2661,
-                    });
+                    self.error_at((file, hir[s].local_pos, 0), 2661, &[]);
                 }
             }
         }
         // And `export =` all by itself.
         if self.files().module(file).is_module() {
-            self.check_export_equals_alone(file, self.files().file_symbol(file), out);
+            self.check_export_equals_alone(file, self.files().file_symbol(file));
             return;
         }
         // At the top of a module `declare module "m"` adds to `m`, and is let off: `isTopLevelInExternalModuleAugmentation`.
@@ -470,14 +357,13 @@ impl Checker<'_> {
                 self.check_export_equals_alone(
                     file,
                     self.files().sym(file, bound.module_symbol[m.idx()]),
-                    out,
                 );
             }
         }
     }
 
     /// `checkExportAssignment`: 2714, what `export =` or `export default` names in an ambient context is an entity name.
-    fn check_ambient_export_assignments(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_ambient_export_assignments(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_declaration_file = hir.kind == FileKind::Declaration;
         for (i, s) in hir.stmts.iter().enumerate() {
@@ -494,8 +380,7 @@ impl Checker<'_> {
             };
             if is_ambient && e.is_some() && !is_entity_name_expression(self.hir(file), e) {
                 let start = self.start_of(file, e);
-                out.push(Diagnostic { start, code: 2714 });
-                self.note(start, self.end_of_expr(file, e), 2714, Vec::new());
+                self.error_at((file, start, self.end_of_expr(file, e)), 2714, &[]);
             }
         }
     }
@@ -504,26 +389,22 @@ impl Checker<'_> {
     /// `GetNameOfDeclaration(node)`, or of the node if it has no name.
     pub(super) fn export_assignment_name_start(&self, file: FileId, s: StmtId) -> u32 {
         let hir = self.hir(file);
-        let (e, token) = match hir[s].kind {
-            StmtKind::ExportDefault(e) => (e, &b"default"[..]),
-            StmtKind::ExportAssign(e) => (e, &b"="[..]),
-            _ => return hir[s].pos,
-        };
         // `GetNonAssignedNameOfDeclaration`: an Identifier is the name of the declaration. Any other expression leaves it without one.
-        match hir[e].kind {
-            _ if is_parenthesized(self.hir(file), e) => hir[s].pos,
-            ExprKind::Ident(_) => hir[e].pos,
-            // `createMissingIdentifier`: an empty Identifier at the end of the previous token. `GetErrorRangeForNode` skips no trivia
-            // before a missing node.
-            ExprKind::Missing => {
-                token_end_after_export(&hir.text, hir[s].pos, token).unwrap_or(hir[s].pos)
+        match hir[s].kind {
+            StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) if !is_parenthesized(hir, e) => {
+                match hir[e].kind {
+                    ExprKind::Ident(_) => hir[e].pos,
+                    // `createMissingIdentifier`. `GetErrorRangeForNode` skips no trivia before a missing node.
+                    ExprKind::Missing => self.end_of_expr(file, e),
+                    _ => hir[s].start,
+                }
             }
-            _ => hir[s].pos,
+            _ => hir[s].start,
         }
     }
 
     /// `checkExternalModuleExports`: `export =` stands alone among values, and with types next to it it names no namespace that has types.
-    fn check_export_equals_alone(&self, file: FileId, module: Sym, out: &mut Vec<Diagnostic>) {
+    fn check_export_equals_alone(&mut self, file: FileId, module: Sym) {
         let files = self.files();
         // The first there is, which for a module declared in several places may be written in another file.
         let Some(equals) = files
@@ -534,7 +415,7 @@ impl Checker<'_> {
         };
         // `module.exports = e` is one too.
         let written = files.symbol(equals).decls.iter().find_map(|d| match *d {
-            Decl::ExportExpr(statement) => Some((self.hir(file)[statement].pos, *d)),
+            Decl::ExportExpr(statement) => Some((self.hir(file)[statement].start, *d)),
             Decl::ModuleExports(e) => Some((self.start_of(file, e), *d)),
             _ => None,
         });
@@ -564,23 +445,18 @@ impl Checker<'_> {
                 })
         };
         if exports_values || shadows_a_namespace() {
-            out.push(Diagnostic { start, code: 2309 });
             let end = match declaration {
                 Decl::ExportExpr(statement) => self.end_of_stmt(file, statement),
                 Decl::ModuleExports(e) => self.end_of_expr(file, e),
                 _ => 0,
             };
-            self.note(start, end, 2309, Vec::new());
+            self.error_at((file, start, end), 2309, &[]);
         }
     }
 
     /// `addTypeOnlyDeclarationRelatedInfo`, of `getTypeOnlyAliasDeclarationEx(sym, SymbolFlagsValue)`. `name`: what the alias goes by
     /// where the error is.
-    pub(super) fn type_only_declaration_related(
-        &self,
-        sym: Sym,
-        name: String,
-    ) -> Vec<super::explain::Related> {
+    pub(super) fn type_only_declaration_related(&self, sym: Sym, name: String) -> Vec<Reported> {
         let type_only = self
             .files()
             .type_only_alias_declaration_ex(sym, SymFlags::VALUE);
@@ -590,7 +466,7 @@ impl Checker<'_> {
     }
 
     /// The end of `onSuccessfullyResolvedSymbol`: 1361, 1362.
-    fn check_type_only_names_used_as_values(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_type_only_names_used_as_values(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration
             // In JavaScript `const a = require("m")` declares an alias too.
@@ -681,10 +557,7 @@ impl Checker<'_> {
             if self.is_only_declared(file, e) {
                 continue;
             }
-            out.push(Diagnostic {
-                start: hir[e].pos,
-                code,
-            });
+            self.error_at((file, hir[e].pos, 0), code, &[]);
             self.relate(hir[e].pos, code, |c| {
                 let name = c.atom_text(bound.symbols[local.idx()].name);
                 c.type_only_declaration_related(c.files().sym(file, local), name)
@@ -751,18 +624,4 @@ fn next_name(text: &[u8], end: u32) -> u32 {
     } else {
         end + 1
     }
-}
-
-/// The end of `token` in the statement `export <token> ..` that starts at `pos`. `None` without the text.
-fn token_end_after_export(text: &[u8], pos: u32, token: &[u8]) -> Option<u32> {
-    let words: [&[u8]; 2] = [b"export", token];
-    let mut at = pos as usize;
-    for word in words {
-        at = skip_trivia(text, at);
-        if !text.get(at..)?.starts_with(word) {
-            return None;
-        }
-        at += word.len();
-    }
-    Some(at as u32)
 }

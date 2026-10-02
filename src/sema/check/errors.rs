@@ -3,37 +3,35 @@
 //!
 //! The codes are the TypeScript compiler's. An error that would rest on something the resolver could not work out is not
 //! reported: better to miss one than to make one up.
-//!
-//! Nothing here allocates per node: one list of diagnostics is handed down, the arenas are gone through by index, and a
-//! diagnostic is a place and a number until somebody wants to read it.
 
 use super::errors_modules::fully_qualified_name;
 use super::errors_x_operators::{has_empty_object_intersection, type_of_property_of_type};
 use super::errors_x_statements::{is_said_by_the_binder, is_said_by_the_parser};
+use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
 use smallvec::SmallVec;
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Diagnostic {
-    /// Where what is wrong starts, in bytes.
-    pub start: u32,
-    pub code: u32,
-}
-
-/// What `check_file` found. `finish_file` makes the errors of the file of it.
+/// What `check_file` found. What a question that was under way reported is in the sink. `finish_file` makes the errors of the file of it.
 pub struct Checked {
     /// `GetSyntacticDiagnostics`
-    syntactic: Vec<Diagnostic>,
-    /// `getBindAndCheckDiagnostics`. `None`: the file is not checked.
-    semantic: Option<Vec<Diagnostic>>,
+    syntactic: Vec<Reported>,
+    /// `getBindAndCheckDiagnostics`, as far as it was reported with no question under way: what is never checked has been taken back.
+    /// `None`: the file is not checked.
+    semantic: Option<Vec<Reported>>,
     /// `GetDeclarationDiagnostics`
-    declaration: Vec<Diagnostic>,
+    declaration: Vec<Reported>,
     has_parse_diagnostics: bool,
     never_checked: Vec<(u32, u32)>,
-    notes: Vec<explain::Note>,
-    suggestions: Vec<(u32, u32)>,
+}
+
+impl Checked {
+    pub(super) fn is_empty(&self) -> bool {
+        self.syntactic.is_empty()
+            && self.declaration.is_empty()
+            && self.semantic.as_ref().is_none_or(Vec::is_empty)
+    }
 }
 
 /// What `getControlFlowContainer` finds.
@@ -65,91 +63,84 @@ impl PartialEq for Container {
 impl Checker<'_> {
     /// All that asks a question about `file`. What it leads other files, or other files lead this one, to report is in the sink.
     pub fn check_file(&mut self, file: FileId) -> Checked {
-        self.notes.borrow_mut().clear();
-        self.suggestions.borrow_mut().clear();
+        self.noted_ahead.clear();
+        self.deferred_diagnostics.clear();
+        self.node_check_flags.clear();
         self.never_checked.borrow_mut().clear();
         self.reported.clear();
         self.release_shapes_for_now();
         self.is_type_checked = false;
         let hir = self.hir(file);
         if hir.kind == FileKind::Json {
-            let syntactic = self.check_json_file(file);
-            return self.checked(syntactic, None, Vec::new(), false);
+            self.check_json_file(file);
+            return self.checked(None, false);
         }
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate: only the second depends on whether the
         // file is checked.
-        let (mut syntactic, early): (Vec<Diagnostic>, Vec<Diagnostic>) = hir
-            .early_errors
-            .iter()
-            .map(|&(start, code)| Diagnostic { start, code })
-            .partition(|d| is_syntactic_early_error(hir, d.start, d.code));
-        if self.explains {
-            for &(start, code) in hir.early_errors.iter().chain(hir.jsdoc_errors.iter()) {
-                explain_early_error(self, file, start, code);
-            }
-            // `parseExpectedMatchingBrackets`
-            for &(start, open, bracket) in hir.opening_brackets.iter() {
-                let closing = match bracket {
-                    b'(' => ")",
-                    b'[' => "]",
-                    _ => "}",
-                };
-                self.relate(start, 1005, |_| {
-                    vec![super::explain::Related {
-                        at: Some((file, open, open)),
-                        code: 1007,
-                        args: vec![char::from(bracket).to_string(), closing.to_owned()],
-                    }]
-                });
-            }
+        self.checking = Some(file);
+        let is_syntactic = |d: &Reported| {
+            is_syntactic_early_error(hir, d.start, d.code)
+                // `checkJSDecoratorSyntax`: the parser's `jsDiagnostics`, which `hasParseDiagnostics` does not count.
+                || hir.is_js && matches!(d.code, 1206 | 8038)
+        };
+        for &(start, code) in hir.early_errors.iter() {
+            self.error_at((file, start, 0), code, &[]);
+            explain_early_error(self, file, start, code);
         }
-        if self.explains {
-            self.relate_early_errors(file);
+        // `parseExpectedMatchingBrackets`
+        for &(start, open, bracket) in hir.opening_brackets.iter() {
+            let closing = match bracket {
+                b'(' => ")",
+                b'[' => "]",
+                _ => "}",
+            };
+            self.relate(start, 1005, |_| {
+                vec![Reported::new(
+                    (file, open, open),
+                    1007,
+                    held(vec![char::from(bracket).to_string(), closing.to_owned()]),
+                )]
+            });
         }
+        self.relate_early_errors(file, &hir.early_errors);
         // `hasParseDiagnostics`: in a file with parser or scanner errors, `grammarErrorOnNode` and its like report nothing, and neither do
         // the binder's `checkContextualIdentifier` and `checkPrivateIdentifier`. Early errors with their codes are dropped as well.
         // Errors the checker reports with a plain `error` stay.
-        let has_parse_diagnostics = hir.has_parse_diagnostics || !syntactic.is_empty();
-        let mut out: Vec<Diagnostic> = Vec::new();
+        let has_parse_diagnostics = hir.has_parse_diagnostics
+            || self
+                .reported
+                .iter()
+                .any(|d| is_syntactic_early_error(hir, d.start, d.code));
+        let (syntactic, early): (Vec<Reported>, Vec<Reported>) = std::mem::take(&mut self.reported)
+            .into_iter()
+            .partition(is_syntactic);
+        self.reported = syntactic;
+        self.check_js_syntax(file);
+        if self.only_syntax || !self.reports_semantic_errors(file) {
+            return self.checked(None, false);
+        }
+        self.settle_what_was_noted_ahead();
+        let syntactic = std::mem::take(&mut self.reported);
         for d in early {
             if d.code == 1212 || d.code == 1359 {
                 if !has_parse_diagnostics && hir.syntax_errors == 0 {
-                    self.check_contextual_identifier(file, d.start, d.code, &mut out);
+                    self.check_contextual_identifier(file, d.start, d.code);
+                    explain_early_error(self, file, d.start, d.code);
                 }
-            } else if hir.is_js && matches!(d.code, 1206 | 8038) {
-                // `checkJSDecoratorSyntax`: the parser's `jsDiagnostics`, which `hasParseDiagnostics` does not count.
-                syntactic.push(d);
             } else if !has_parse_diagnostics || !is_grammar_error(d.code) {
-                out.push(d);
+                self.reported.push(d);
             }
         }
-        out.extend(
-            hir.checker_errors
-                .iter()
-                .map(|&(start, code)| Diagnostic { start, code }),
-        );
-        if self.explains {
-            for &(start, code) in hir.checker_errors.iter() {
-                explain_early_error(self, file, start, code);
-            }
+        for &(start, code) in hir.checker_errors.iter() {
+            self.error_at((file, start, 0), code, &[]);
+            explain_early_error(self, file, start, code);
         }
         // `checkUnmatchedJSDocParameters`
-        out.extend(
-            self.bound(file)
-                .jsdoc_param_errors
-                .iter()
-                .map(|&(start, code)| Diagnostic { start, code }),
-        );
-        if self.explains {
-            for &(start, code) in self.bound(file).jsdoc_param_errors.iter() {
-                if code == 8032 {
-                    explain_qualified_parameter_name(self, file, start);
-                }
+        for &(start, code) in self.bound(file).jsdoc_param_errors.iter() {
+            self.error_at((file, start, 0), code, &[]);
+            if code == 8032 {
+                explain_qualified_parameter_name(self, file, start);
             }
-        }
-        self.check_js_syntax(file, &mut syntactic);
-        if self.only_syntax || !self.reports_semantic_errors(file) {
-            return self.checked(syntactic, None, Vec::new(), false);
         }
         self.checking = Some(file);
         self.emit_resolver_links = Default::default();
@@ -157,157 +148,166 @@ impl Checker<'_> {
             self.inline_const_enums(file);
         }
         self.check_source_file(file);
-        self.check_declare_modifiers(file, &mut out);
-        self.check_empty_declaration_lists(file, &mut out);
-        self.check_modules(file, &mut out);
-        self.check_names(file, &mut out);
-        self.check_type_argument_counts(file, &mut out);
-        self.check_properties_initialized(file, &mut out);
-        self.check_writes(file, &mut out);
-        self.check_property_accesses(file, &mut out);
-        self.check_calls(file, &mut out);
-        self.check_unused(file, &mut out);
-        self.check_grammar(file, &mut out);
-        self.check_grammar_modifiers(file, &mut out);
-        self.check_duplicates(file, &mut out);
-        self.check_heritage(file, &mut out);
-        self.check_jsx(file, &mut out);
+        self.check_declare_modifiers(file);
+        self.check_empty_declaration_lists(file);
+        self.check_modules(file);
+        self.check_names(file);
+        self.check_type_argument_counts(file);
+        self.check_properties_initialized(file);
+        self.check_writes(file);
+        self.check_property_accesses(file);
+        self.check_calls(file);
+        self.check_unused(file);
+        self.check_grammar(file);
+        self.check_grammar_modifiers(file);
+        self.check_duplicates(file);
+        self.check_heritage(file);
+        self.check_jsx(file);
         self.check_overloads(file);
-        self.check_use_before_declaration(file, &mut out);
-        self.check_iteration(file, &mut out);
-        self.check_names_and_exports(file, &mut out);
-        self.check_jumps_and_labels(file, &mut out);
-        self.check_declarations(file, &mut out);
-        self.check_small_things(file, &mut out);
-        self.check_circularities(file, &mut out);
-        self.check_assignments(file, &mut out);
-        self.check_x_aliases(file, &mut out);
+        self.check_use_before_declaration(file);
+        self.check_iteration(file);
+        self.check_names_and_exports(file);
+        self.check_jumps_and_labels(file);
+        self.check_declarations(file);
+        self.check_small_things(file);
+        self.check_circularities(file);
+        self.check_assignments(file);
+        self.check_x_aliases(file);
         // It takes back what has been said of specifiers that are never resolved.
-        self.check_x_modules(file, &mut out);
-        self.check_x_classes(file, &mut out);
-        self.check_x_collisions(file, &mut out);
-        self.check_x_properties_jsx(file, &mut out);
+        self.check_x_modules(file);
+        self.check_x_classes(file);
+        self.produce_deferred_diagnostics(file);
+        self.check_type_modifier_in_type_only_clauses(file);
         // `checkGrammarRegularExpressionLiteral`
         if !has_parse_diagnostics {
-            self.check_x_regexp_scanner(file, &mut out);
+            self.check_x_regexp_scanner(file);
         }
-        self.check_x_typenodes(file, &mut out);
-        self.recount_type_arguments_of_circular_aliases(file, &mut out);
+        self.check_x_typenodes(file);
+        self.recount_type_arguments_of_circular_aliases(file);
         // The last two put other words in the place of what has been said: of what is assigned, of names that are not found.
-        self.check_x_signatures(file, &mut out);
-        self.check_x_operators(file, &mut out);
-        self.check_x_enums_names(file, &mut out);
-        self.check_external_emit_helpers(file, &mut out);
+        self.check_x_signatures(file);
+        self.check_x_operators(file);
+        self.check_x_enums_names(file);
+        self.check_external_emit_helpers(file);
         // It takes back what has been said of decorators that are out of place.
-        self.report_decorators(file, &mut out);
+        self.report_decorators(file);
+        self.check_targets_of_loops(file);
+        self.check_strict_mode_statements(file);
+        self.check_modifiers_of_merged_declarations(file);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: what they never look at is taken back, whoever said it.
-        self.check_x_statements(file, &mut out);
-        self.take_back_export_assignments_in_namespaces(file, &mut out);
+        self.take_back_what_is_never_checked(file);
+        self.take_back_export_assignments_in_namespaces(file);
         // These name a type, which is not asked for before everything has been checked.
-        if self.explains {
-            for &(start, code) in &hir.early_errors {
-                if matches!(code, 17019 | 17020) {
-                    explain_jsdoc_nullable_type(self, file, start, code);
-                }
+        for &(start, code) in &hir.early_errors {
+            if matches!(code, 17019 | 17020) {
+                explain_jsdoc_nullable_type(self, file, start, code);
             }
         }
         // `GetDeclarationDiagnostics`: no comment directive takes these back, and plain JavaScript has them too.
-        let semantic = std::mem::take(&mut out);
-        self.check_module_exports_assignments(file, &mut out);
-        if self.files().options.emits_declaration_files {
-            self.check_declaration_emit(file, &mut out);
-        }
+        self.settle_what_was_noted_ahead();
+        // What is reported of another file goes where that file finds it.
+        let (semantic, elsewhere) = (std::mem::take(&mut self.reported).into_iter())
+            .partition(|d: &Reported| d.file == file);
+        self.reported = elsewhere;
         self.commit_reported_from(0);
+        self.check_module_exports_assignments(file);
+        if self.files().options.emits_declaration_files {
+            self.check_declaration_emit(file);
+        }
         self.is_type_checked = true;
-        self.checked(syntactic, Some(semantic), out, has_parse_diagnostics)
+        let mut checked = self.checked(Some(semantic), has_parse_diagnostics);
+        checked.declaration = std::mem::replace(&mut checked.syntactic, syntactic);
+        checked
     }
 
-    fn checked(
-        &self,
-        syntactic: Vec<Diagnostic>,
-        semantic: Option<Vec<Diagnostic>>,
-        declaration: Vec<Diagnostic>,
-        has_parse_diagnostics: bool,
-    ) -> Checked {
+    /// What has been reported and not committed is `GetSyntacticDiagnostics`.
+    fn checked(&mut self, semantic: Option<Vec<Reported>>, has_parse_diagnostics: bool) -> Checked {
+        self.settle_what_was_noted_ahead();
         Checked {
-            syntactic,
+            syntactic: std::mem::take(&mut self.reported),
             semantic,
-            declaration,
+            declaration: Vec::new(),
             has_parse_diagnostics,
             never_checked: self.never_checked.take(),
-            notes: self.notes.take(),
-            suggestions: self.suggestions.take(),
         }
     }
 
     /// The errors of `file`, once every file whose checker may report in it has been through `check_file`.
     pub fn finish_file(&mut self, file: FileId, checked: Checked) -> Vec<explain::Explained> {
         let hir = self.hir(file);
-        *self.notes.borrow_mut() = checked.notes;
-        *self.suggestions.borrow_mut() = checked.suggestions;
         (self.checking, self.is_type_checked) = (Some(file), true);
-        let is_checked = checked.semantic.is_some();
-        let mut out = checked.semantic.unwrap_or_default();
-        if is_checked {
-            self.drain_sink(file, &checked.never_checked, &mut out);
+        self.reported.clear();
+        self.noted_ahead.clear();
+        if let Some(semantic) = checked.semantic {
+            self.reported = semantic;
+            let settled = self.drain_sink(file, &checked.never_checked);
+            self.reported.extend(settled);
             if checked.has_parse_diagnostics {
                 // `bindNamespaceExportDeclaration` reports 1184 whether or not the file parses.
-                out.retain(|d| {
+                self.reported.retain(|d| {
                     !is_grammar_error(d.code)
                         || d.code == 1184 && is_before_namespace_export(hir, d.start)
                 });
             }
             let is_plain_js = self.is_plain_js(file);
             if is_plain_js {
-                out.retain(|d| errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_ok());
+                self.reported
+                    .retain(|d| errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_ok());
             }
-            self.include_processor_diagnostics(file, &mut out);
+            self.include_processor_diagnostics(file);
             if !is_plain_js {
                 // `JSDocDiagnostics`
-                out.extend(
-                    hir.jsdoc_errors
-                        .iter()
-                        .map(|&(start, code)| Diagnostic { start, code }),
-                );
+                for &(start, code) in hir.jsdoc_errors.iter() {
+                    self.error_at((file, start, 0), code, &[]);
+                    explain_early_error(self, file, start, code);
+                }
+                self.relate_early_errors(file, &hir.jsdoc_errors);
                 // Last: it goes by all that is left. `getDiagnosticsWithPrecedingDirectives`: not by what the parser says.
-                self.check_x_comment_directives(file, &mut out);
+                self.check_x_comment_directives(file);
             }
         }
+        self.settle_what_was_noted_ahead();
         // `GetSyntacticDiagnostics`, `GetDeclarationDiagnostics`: no comment directive takes these back.
+        let mut out = std::mem::take(&mut self.reported);
         out.extend(checked.declaration);
         out.extend(checked.syntactic);
-        out.sort_unstable();
-        out.dedup();
-        self.explain_errors(file, out)
+        // What is reported bare is the same error as what is reported with its arguments.
+        let said: Vec<(u32, u32)> = out
+            .iter()
+            .filter(|d| !d.is_bare())
+            .map(|d| (d.start, d.code))
+            .collect();
+        out.retain(|d| !d.is_bare() || !said.contains(&(d.start, d.code)));
+        for d in &mut out {
+            self.settle_place(d);
+        }
+        self.sort_and_deduplicate_diagnostics(&mut out);
+        out.into_iter().map(|d| self.explained(d)).collect()
     }
 
     /// `GetSyntacticDiagnostics` of a JSON file. `getBindAndCheckDiagnostics` has nothing to say of one.
-    fn check_json_file(&self, file: FileId) -> Vec<Diagnostic> {
+    fn check_json_file(&mut self, file: FileId) {
         let parsed = crate::json::Expression::parse_with_errors(&self.hir(file).text);
-        let mut out = Vec::new();
         for error in parsed.map_or_else(Vec::new, |parsed| parsed.1) {
-            let (start, code) = (error.start, error.code);
-            out.push(Diagnostic { start, code });
-            let end = if error.end > start {
+            let end = if error.end > error.start {
                 error.end
             } else {
                 super::explain::NO_LENGTH
             };
-            let arguments = match error.expected {
-                "" => Vec::new(),
-                token => vec![token.to_owned()],
+            let expected = [Arg::Text(error.expected)];
+            let args = if error.expected.is_empty() {
+                &[][..]
+            } else {
+                &expected[..]
             };
-            self.note(start, end, code, arguments);
+            self.error_at((file, error.start, end), error.code, args);
         }
-        out.sort_unstable();
-        out.dedup();
-        out
     }
 
     /// `AddRelatedInfo`, of what arrives as an early error.
-    fn relate_early_errors(&mut self, file: FileId) {
+    fn relate_early_errors(&mut self, file: FileId, errors: &[(u32, u32)]) {
         let hir = self.hir(file);
-        for &(start, code) in hir.early_errors.iter().chain(hir.jsdoc_errors.iter()) {
+        for &(start, code) in errors {
             let (from, to, related) = match code {
                 // `parseTypedefTag`: it does not say where.
                 8033 => (0, 0, 8034),
@@ -336,24 +336,14 @@ impl Checker<'_> {
                 _ => continue,
             };
             self.relate(start, code, |_| {
-                vec![super::explain::Related {
-                    at: Some((file, from, to)),
-                    code: related,
-                    args: Vec::new(),
-                }]
+                vec![Reported::bare((file, from, to), related)]
             });
         }
     }
 
     /// `checkContextualIdentifier`: 1212 1213 1214, 1262 1359, of a reserved word the parser came upon at `start` where a name goes.
     /// `code`: 1359 if it says the word is `await`.
-    fn check_contextual_identifier(
-        &self,
-        file: FileId,
-        start: u32,
-        code: u32,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_contextual_identifier(&mut self, file: FileId, start: u32, code: u32) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // The name of a member can be any word.
         if hir.enum_members.iter().any(|m| m.pos == start) {
@@ -461,10 +451,12 @@ impl Checker<'_> {
                 hir[f].flags.contains(Flags::ASYNC) || hir[f].kind == FnKind::StaticBlock
             });
             if is_module && is_at_top {
-                out.push(Diagnostic { start, code: 1262 });
+                self.error_at((file, start, 0), 1262, &[]);
             } else if can_await || matches!(around, Parent::None) {
-                out.push(Diagnostic { start, code: 1359 });
-                self.note(start, 0, 1359, vec![word_at(self, file, start)]);
+                {
+                    let arg0 = word_at(self, file, start);
+                    self.error_at((file, start, 0), 1359, &[Arg::Text(&arg0)]);
+                }
             }
             return;
         }
@@ -477,13 +469,15 @@ impl Checker<'_> {
         } else {
             1212
         };
-        out.push(Diagnostic { start, code });
-        self.note(start, 0, code, vec![word_at(self, file, start)]);
+        {
+            let arg0 = word_at(self, file, start);
+            self.error_at((file, start, 0), code, &[Arg::Text(&arg0)]);
+        }
     }
 
     /// `checkExportAssignment` is done with an `export =` or an `export default` in a namespace (1063 1319) before it gets to the
     /// expression. All that is said of that is what the parser and the binder say.
-    fn take_back_export_assignments_in_namespaces(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn take_back_export_assignments_in_namespaces(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for (i, s) in hir.stmts.iter().enumerate() {
             let (StmtKind::ExportAssign(e) | StmtKind::ExportDefault(e)) = s.kind else {
@@ -494,12 +488,9 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let (from, to) = (
-                self.start_of(file, e),
-                self.start_of_what_follows(file, StmtId(i as u32)),
-            );
+            let (from, to) = (self.start_of(file, e), s.loc.end);
             self.never_checked.borrow_mut().push((from, to));
-            out.retain(|d| {
+            self.reported.retain(|d| {
                 !(from..to).contains(&d.start)
                     || is_said_by_the_binder(d.code)
                     || is_said_by_the_parser(d.code)
@@ -534,7 +525,7 @@ impl Checker<'_> {
             };
             return super::explain::Line {
                 code: 6278,
-                args: vec![types, package],
+                args: held(vec![types, package]),
                 level: 1,
             };
         }
@@ -559,13 +550,13 @@ impl Checker<'_> {
         };
         super::explain::Line {
             code,
-            args,
+            args: held(args),
             level: 1,
         }
     }
 
     /// Who asks `resolveExternalModule` besides the import and export declarations. 2322 2880 for the options of `import()`.
-    fn check_modules(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_modules(&mut self, file: FileId) {
         let hir = self.hir(file);
         let is_ambient = hir.kind == FileKind::Declaration;
         // `getTypeFromImportTypeNode`
@@ -670,11 +661,7 @@ impl Checker<'_> {
                 let wanted = self.declared_type(sym);
                 let wanted = self.optional(wanted);
                 let at = self.start_of(file, options);
-                let end = if self.explains {
-                    self.end_of_expr(file, options)
-                } else {
-                    0
-                };
+                let end = self.end_of_expr(file, options);
                 self.check_type_assignable_to(given, wanted, Some((file, at, end)), None);
             }
         }
@@ -692,12 +679,12 @@ impl Checker<'_> {
                         && !matches!(hir.text.get(prop.pos as usize), None | Some(b'"' | b'\'' | b'['))
                 })
             {
-                out.push(Diagnostic { start: prop.pos, code: 2880 });
+                self.error_at((file, prop.pos, 0), 2880, &[]);
             }
         }
         for x in 0..hir.exports.len() {
             if hir.exports[x].spec.is_none() {
-                self.check_exported_names_are_there(file, x, out);
+                self.check_exported_names_are_there(file, x);
             }
         }
     }
@@ -746,7 +733,7 @@ impl Checker<'_> {
             && files.is_only_importable_as_default(usage, module)
         {
             let at = self.place_of_token(file, start);
-            self.error(at, 1544, &[Arg::Text(files.options.module.name())]);
+            self.error_at(at, 1544, &[Arg::Text(files.options.module.name())]);
         } else if files.alias_links(sym).immediate_target.is_none()
             && self.symbol_from_variable(sym).is_none()
         {
@@ -758,15 +745,15 @@ impl Checker<'_> {
     fn report_non_default_export(&mut self, file: FileId, import: ImportId, module: Sym) {
         let import = &self.hir(file)[import];
         if self.files().export(module, import.default).is_some() {
-            let end = end_of_import_clause(self, file, import);
+            let end = import.clause_end;
             let args = [Arg::Sym(module), Arg::Atom(import.default)];
-            self.error((file, import.clause_start, end), 2613, &args);
+            self.error_at((file, import.clause_start, end), 2613, &args);
             return;
         }
         let export_star = self.export_star_past_a_default(module);
         let related = export_star.map(|at| self.new_diagnostic(at, 1195, &[]));
         let at = self.place_of_token(file, import.default_pos);
-        self.error(at, 1192, &[Arg::Sym(module)])
+        self.error_at(at, 1192, &[Arg::Sym(module)])
             .related_information
             .extend(related);
     }
@@ -819,7 +806,7 @@ impl Checker<'_> {
             _ => &[module_name, written],
         };
         let at = self.place_of_token(from, start);
-        self.error(at, code, args).related_information = related;
+        self.error_at(at, code, args).related_information = related;
     }
 
     /// `moduleSymbol.ValueDeclaration.Locals()[name]`: what the file, or the first `declare module "m"`, declares for itself.
@@ -853,7 +840,7 @@ impl Checker<'_> {
                         && let Some(target) = files.module_of_specifier(part.file, spec)
                         && files.export(target, known::default).is_some()
                     {
-                        return Some((part.file, hir[s].pos, self.end_of_stmt(part.file, s)));
+                        return Some((part.file, hir[s].start, self.end_of_stmt(part.file, s)));
                     }
                 }
             }
@@ -862,12 +849,7 @@ impl Checker<'_> {
     }
 
     /// `getTargetOfExportSpecifier`, `markExportSpecifierAliasReferenced`: what the `x`th `export { a }` of the file names has to be there.
-    fn check_exported_names_are_there(
-        &mut self,
-        file: FileId,
-        x: usize,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_exported_names_are_there(&mut self, file: FileId, x: usize) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (export, scope) = (&hir.exports[x], bound.export_scope[x]);
         // `checkGrammarModuleElementContext`: anywhere but at the top of a file or a namespace it is left at that.
@@ -905,11 +887,11 @@ impl Checker<'_> {
                 continue;
             }
             let code = self.not_found(file, scope, name, all, start);
-            out.push(Diagnostic { start, code });
+            self.error_at((file, start, 0), code, &[]);
             // `markIdentifierAliasReferenced`: what is kept is looked up once more, as a value.
             if is_marked && !type_only {
                 let code = self.not_found(file, scope, name, SymFlags::VALUE, start);
-                out.push(Diagnostic { start, code });
+                self.error_at((file, start, 0), code, &[]);
             }
         }
     }
@@ -1196,7 +1178,7 @@ impl Checker<'_> {
 
     /// 2564: a property that has to hold something is left without a value by its declaration and by the constructor.
     /// `checkPropertyInitialization`
-    fn check_properties_initialized(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_properties_initialized(&mut self, file: FileId) {
         let options = &self.p.files.options;
         if !options.strict_null_checks || !options.strict_property_initialization {
             return;
@@ -1273,16 +1255,10 @@ impl Checker<'_> {
                     _ => false,
                 };
                 if !is_assigned {
-                    out.push(Diagnostic {
-                        start: member.name_pos,
-                        code: 2564,
-                    });
-                    if hir.text.get(member.name_pos as usize) == Some(&b'[') {
-                        let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
-                        self.explain_to(start, end, 2564, |c| {
-                            vec![c.source_text(file, start, end)]
-                        });
-                    }
+                    // `DeclarationNameToString`
+                    let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
+                    let name = Arg::Bytes(&hir.text[start as usize..end as usize]);
+                    self.error_at((file, start, end), 2564, &[name]);
                 }
             }
         }
@@ -1369,7 +1345,7 @@ impl Checker<'_> {
 
     // ───────────────────────────── names nothing goes by ─────────────────────────────
 
-    fn check_names(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_names(&mut self, file: FileId) {
         let hir = self.hir(file);
         let bound = self.bound(file);
         for &(e, scope) in &bound.free_idents {
@@ -1441,10 +1417,7 @@ impl Checker<'_> {
                 }
                 Ok(_) => self.why_no_value(file, Some(e), scope, name, hir[e].pos),
             };
-            out.push(Diagnostic {
-                start: hir[e].pos,
-                code,
-            });
+            self.error_at((file, hir[e].pos, 0), code, &[]);
         }
         // `getSymbol`: an alias is what it stands for. One that stands for no value is not there where a value is wanted, and the search
         // goes on further out.
@@ -1496,15 +1469,12 @@ impl Checker<'_> {
                 continue;
             }
             let code = self.why_no_value(file, Some(e), scope, name, hir[e].pos);
-            out.push(Diagnostic {
-                start: hir[e].pos,
-                code,
-            });
+            self.error_at((file, hir[e].pos, 0), code, &[]);
         }
         for i in 0..hir.types.len() {
             if let TypeNodeKind::Import { name, .. } = hir.types[i].kind {
                 if !bound.is_unchecked_type(i) && !name.is_empty() {
-                    self.check_import_type_names(file, TypeNodeId(i as u32), out);
+                    self.check_import_type_names(file, TypeNodeId(i as u32));
                 }
                 continue;
             }
@@ -1532,19 +1502,19 @@ impl Checker<'_> {
             }
             if name.len() > 1 {
                 let names: SmallVec<[Atom; 8]> = hir.texts(name).collect();
-                self.check_entity_name(file, scope, &names, start, SymFlags::TYPE, out);
+                self.check_entity_name(file, scope, &names, start, SymFlags::TYPE);
                 continue;
             }
             let found = match self.resolve(file, scope, first, SymFlags::TYPE, true) {
                 Ok(found) => found,
                 // 2302 2467 2562
                 Err((code, property)) if property.is_none() => {
-                    out.push(Diagnostic { start, code });
+                    self.error_at((file, start, 0), code, &[]);
                     continue;
                 }
                 Err(invalid) => {
                     let code = self.why_invalid_initializer(file, None, start, first, invalid);
-                    out.push(Diagnostic { start, code });
+                    self.error_at((file, start, 0), code, &[]);
                     continue;
                 }
             };
@@ -1564,7 +1534,7 @@ impl Checker<'_> {
                 } else {
                     self.why_no_type(file, scope, first, start)
                 };
-                out.push(Diagnostic { start, code });
+                self.error_at((file, start, 0), code, &[]);
             }
         }
         // After `implements` the names of the primitive types are names like any other, and nothing goes by them.
@@ -1593,10 +1563,7 @@ impl Checker<'_> {
                     }
                     _ => continue,
                 };
-                out.push(Diagnostic {
-                    start: hir[node].pos,
-                    code,
-                });
+                self.error_at((file, hir[node].pos, 0), code, &[]);
             }
         }
         // `checkImportEqualsDeclaration`: what `import a = A.B.C` names.
@@ -1641,18 +1608,17 @@ impl Checker<'_> {
                 continue;
             }
             let start = start as u32;
-            let before = out.len();
+            let before = self.reported.len();
             self.check_entity_name(
                 file,
                 scope,
                 &names,
                 start,
                 SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
-                out,
             );
             // What was found and is a value is in a namespace that is one: only an alias that stands for nothing is looked at further.
             // `markLinkedReferences`: not where nothing is emitted, nor when imports stay as they are written.
-            if out.len() == before
+            if self.reported.len() == before
                 || import.flags.contains(Flags::AMBIENT)
                 || self.p.files.options.verbatim_module_syntax
             {
@@ -1685,7 +1651,7 @@ impl Checker<'_> {
                     .is_none()
             {
                 let code = self.why_no_value(file, None, scope, names[0], start);
-                out.push(Diagnostic { start, code });
+                self.error_at((file, start, 0), code, &[]);
             }
         }
     }
@@ -1699,7 +1665,6 @@ impl Checker<'_> {
         names: &[Atom],
         start: u32,
         meaning: SymFlags,
-        out: &mut Vec<Diagnostic>,
     ) {
         let first = names[0];
         if first == known::globalThis {
@@ -1711,7 +1676,7 @@ impl Checker<'_> {
             .is_some()
         {
             if names.len() > 1 {
-                self.check_qualified_name(file, scope, names, start, meaning, out);
+                self.check_qualified_name(file, scope, names, start, meaning);
             }
             return;
         }
@@ -1721,7 +1686,7 @@ impl Checker<'_> {
             .resolve(file, scope, first, SymFlags::NAMESPACE, true)
         {
             let code = self.why_invalid_initializer(file, None, start, first, invalid);
-            out.push(Diagnostic { start, code });
+            self.error_at((file, start, 0), code, &[]);
             return;
         }
         // `checkAndReportErrorForUsingTypeAsNamespace`
@@ -1740,7 +1705,7 @@ impl Checker<'_> {
             }
             _ => self.not_found(file, scope, first, SymFlags::NAMESPACE, start),
         };
-        out.push(Diagnostic { start, code });
+        self.error_at((file, start, 0), code, &[]);
         // It is said of the `QualifiedName` the first two names make.
         if code == 2713 {
             let (text, atoms) = (&self.hir(file).text, &self.files().atoms);
@@ -1751,19 +1716,12 @@ impl Checker<'_> {
             } else {
                 0
             };
-            self.explain_to(start, end, code, |c| {
-                vec![c.atom_text(first), c.atom_text(property)]
-            });
+            self.note(start, end, code, &[Arg::Atom(first), Arg::Atom(property)]);
         }
     }
 
     /// `getTypeFromImportTypeNode`: 2694, each name after `import("m")` has to be there.
-    fn check_import_type_names(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_import_type_names(&mut self, file: FileId, node: TypeNodeId) {
         let hir = self.hir(file);
         let TypeNodeKind::Import {
             spec,
@@ -1893,10 +1851,7 @@ impl Checker<'_> {
                 None => false,
             };
             if !is_there {
-                out.push(Diagnostic {
-                    start: at as u32,
-                    code: 2694,
-                });
+                self.error_at((file, at as u32, 0), 2694, &[]);
                 if let Some((namespace, exported_by)) = namespace {
                     self.explain(at as u32, 2694, |c| {
                         let qualified = match exported_by {
@@ -1917,7 +1872,7 @@ impl Checker<'_> {
 
     /// 2314, 2707, 2315: a reference to a type with the wrong number of type arguments. 8026, 8027 for a heritage clause element in
     /// JavaScript. `getTypeReferenceType`
-    fn check_type_argument_counts(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_type_argument_counts(&mut self, file: FileId) {
         let hir = self.hir(file);
         let bound = self.bound(file);
         // `isJsImplicitAny`
@@ -2017,10 +1972,7 @@ impl Checker<'_> {
             } else {
                 code
             };
-            out.push(Diagnostic {
-                start: hir.types[i].pos,
-                code,
-            });
+            self.error_at((file, hir.types[i].pos, 0), code, &[]);
             let end = self.end_of_type_node(file, TypeNodeId(i as u32));
             explain_type_argument_count(self, hir.types[i].pos, end, code, sym);
         }
@@ -2060,7 +2012,7 @@ impl Checker<'_> {
                     code => code,
                 };
                 let start = self.start_of(file, class.extends);
-                out.push(Diagnostic { start, code });
+                self.error_at((file, start, 0), code, &[]);
                 let end = end_of_extends(self, file, class);
                 explain_type_argument_count(self, start, end, code, base);
             }
@@ -2084,11 +2036,7 @@ impl Checker<'_> {
 
     /// `getDeclaredTypeOfTypeAlias`: an alias that circularly references itself (2456) never gets its type parameters, so
     /// `getTypeFromTypeAliasReference` takes it for one that is not generic: 2315 with type arguments, nothing without.
-    fn recount_type_arguments_of_circular_aliases(
-        &mut self,
-        file: FileId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn recount_type_arguments_of_circular_aliases(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut circular: Vec<Sym> = Vec::new();
         for (a, alias) in hir.aliases.iter().enumerate() {
@@ -2119,12 +2067,10 @@ impl Checker<'_> {
             if !found.is_some_and(|sym| circular.contains(&sym)) {
                 continue;
             }
-            out.retain(|d| d.start != node.pos || !matches!(d.code, 2314 | 2707));
+            self.reported
+                .retain(|d| d.start != node.pos || !matches!(d.code, 2314 | 2707));
             if !args.is_empty() {
-                out.push(Diagnostic {
-                    start: node.pos,
-                    code: 2315,
-                });
+                self.error_at((file, node.pos, 0), 2315, &[]);
                 if let Some(sym) = found {
                     let end = self.end_of_type_node(file, TypeNodeId(i as u32));
                     explain_type_argument_count(self, node.pos, end, 2315, sym);
@@ -2199,7 +2145,12 @@ impl Checker<'_> {
             && self.is_extending_interface(file, e)
         {
             let start = self.hir(file)[e].pos;
-            self.explain(start, 2689, |c| vec![c.entity_name_around(file, e)]);
+            self.note(
+                start,
+                0,
+                2689,
+                &[Arg::Text(&self.entity_name_around(file, e))],
+            );
             return Some(2689);
         }
         if self
@@ -2423,12 +2374,12 @@ impl Checker<'_> {
                 }
                 arguments
             });
-        } else if self.explains {
+        } else {
             // `DeclarationNameToString`: a name with an escape in it is said as it is written.
             let end = self.end_of_token_at(file, start);
             let written = self.source_text(file, start, end);
             if written.contains('\\') {
-                self.note(start, end, code, vec![written]);
+                self.note(start, end, code, &[Arg::Text(&written)]);
             }
         }
         code
@@ -2513,9 +2464,7 @@ impl Checker<'_> {
                 let class = self.class_sym(file, class);
                 let constructor = self.type_of_symbol(class);
                 if self.has_property(constructor, name) {
-                    self.explain(hir[e].pos, 2662, |c| {
-                        vec![c.atom_text(name), c.symbol_to_string(class)]
-                    });
+                    self.note(hir[e].pos, 0, 2662, &[Arg::Atom(name), Arg::Sym(class)]);
                     return Some(2662);
                 }
                 if location == container && !hir.is_static(location) {
@@ -2534,8 +2483,8 @@ impl Checker<'_> {
 /// Whether an entry of `early_errors` is a parser or scanner diagnostic (`SourceFile.Diagnostics()`).
 fn is_syntactic_early_error(hir: &hir::File, start: u32, code: u32) -> bool {
     // `parse_for_sema` sets the flag by who logged each error. Without it, a code the parser shares with the checker (1005 18016 ..) is
-    // the checker's. It is not set for declaration files.
-    if !hir.has_parse_diagnostics && hir.kind != FileKind::Declaration {
+    // the checker's.
+    if !hir.has_parse_diagnostics {
         return false;
     }
     match code {
@@ -2567,19 +2516,12 @@ fn is_grammar_error(code: u32) -> bool {
         )
 }
 
-/// Whether only modifiers are written from `start` to an `export as namespace` statement, whose `pos` is at `export`.
+/// Whether an `export as namespace` statement that has modifiers starts at `start`.
 fn is_before_namespace_export(hir: &hir::File, start: u32) -> bool {
     hir.stmts.iter().any(|s| {
         matches!(s.kind, StmtKind::ExportAsNamespace(_))
-            && start < s.pos
-            && hir
-                .text
-                .get(start as usize..s.pos as usize)
-                .is_some_and(|between| {
-                    between
-                        .iter()
-                        .all(|c| c.is_ascii_alphabetic() || c.is_ascii_whitespace())
-                })
+            && s.start == start
+            && !s.modifiers.is_empty()
     })
 }
 
@@ -2661,63 +2603,8 @@ fn get_candidate_name(name: &[u8]) -> &[u8] {
 
 // ───────────────────────────── what goes into the messages ─────────────────────────────
 
-/// Where the element of a tuple type that `start` is in ends: before the `,` or the `]` that comes next and is in no brackets.
-fn end_of_tuple_element(c: &Checker<'_>, file: FileId, start: u32) -> u32 {
-    let text = &c.hir(file).text[..];
-    let (mut end, mut angles) = (start, 0u32);
-    loop {
-        let at = c.skip_trivia_from(file, end);
-        let next = match text.get(at as usize) {
-            None | Some(b']' | b')' | b'}') => return end,
-            Some(b',' | b';') if angles == 0 => return end,
-            Some(b'(' | b'[' | b'{') => c.end_of_bracket_at(file, at),
-            Some(b'<') => {
-                angles += 1;
-                at + 1
-            }
-            Some(b'>') => {
-                angles = angles.saturating_sub(1);
-                at + 1
-            }
-            Some(_) => c.end_of_token_at(file, at),
-        };
-        if next <= at {
-            return end;
-        }
-        end = next;
-    }
-}
-
-/// `node.End()` of the member of a type literal that `from` is in: past the `;` or the `,` that comes next and is in no brackets, or
-/// before the `}`.
-fn end_of_type_member_from(c: &Checker<'_>, file: FileId, from: u32) -> u32 {
-    let text = &c.hir(file).text[..];
-    let (mut end, mut angles) = (from, 0u32);
-    loop {
-        let at = c.skip_trivia_from(file, end);
-        let next = match text.get(at as usize) {
-            None | Some(b'}' | b')' | b']') => return end,
-            Some(b';' | b',') if angles == 0 => return at + 1,
-            Some(b'(' | b'[' | b'{') => c.end_of_bracket_at(file, at),
-            Some(b'<') => {
-                angles += 1;
-                at + 1
-            }
-            Some(b'>') => {
-                angles = angles.saturating_sub(1);
-                at + 1
-            }
-            Some(_) => c.end_of_token_at(file, at),
-        };
-        if next <= at {
-            return end;
-        }
-        end = next;
-    }
-}
-
 /// `checkUnmatchedJSDocParameters`: 8032 is said of all of the `a.b.c` written at `start`, and names it and `a.b`.
-fn explain_qualified_parameter_name(c: &Checker<'_>, file: FileId, start: u32) {
+fn explain_qualified_parameter_name(c: &mut Checker<'_>, file: FileId, start: u32) {
     let text = &c.hir(file).text[..];
     let (mut end, mut last_dot) = (word_end(text, start as usize), None);
     while text.get(end) == Some(&b'.') && word_end(text, end + 1) > end + 1 {
@@ -2727,7 +2614,12 @@ fn explain_qualified_parameter_name(c: &Checker<'_>, file: FileId, start: u32) {
     if let Some(dot) = last_dot {
         let whole = c.source_text(file, start, end as u32);
         let left = c.source_text(file, start, dot as u32);
-        c.note(start, end as u32, 8032, vec![whole, left]);
+        c.note(
+            start,
+            end as u32,
+            8032,
+            &[Arg::Text(&whole), Arg::Text(&left)],
+        );
     }
 }
 
@@ -2997,22 +2889,6 @@ fn module_name_as_imported(c: &mut Checker<'_>, module: Sym, spec: Atom) -> Stri
     }
 }
 
-/// `node.End()` of the clause of `import a, { b } from "m"`, which has a default name.
-fn end_of_import_clause(c: &Checker<'_>, file: FileId, import: &Import) -> u32 {
-    let text = &c.hir(file).text;
-    let name_end = c.end_of_name_at(file, import.default_pos);
-    let comma = skip_trivia(text, name_end as usize);
-    if text.get(comma) != Some(&b',') {
-        return name_end;
-    }
-    let bindings = skip_trivia(text, comma + 1);
-    match text.get(bindings) {
-        Some(b'{') => c.end_of_bracket_at(file, bindings as u32),
-        Some(b'*') => c.end_of_name_at(file, import.namespace_pos),
-        _ => name_end,
-    }
-}
-
 /// `node.End()` of the `ExpressionWithTypeArguments` that `class` extends. 0: it cannot be told.
 fn end_of_extends(c: &Checker<'_>, file: FileId, class: &Class) -> u32 {
     if class.extends_args.is_empty() {
@@ -3070,21 +2946,18 @@ fn explain_readonly_element(
         return;
     };
     let end = error_end_if_read(c, file, index);
-    c.explain_to(at, end, 2540, |c| {
-        vec![match prop {
+    {
+        let arg0 = match prop {
             Some(prop) => c.prop_to_string(prop),
             None => c.atom_text(name),
-        }]
-    });
+        };
+        c.note(at, end, 2540, &[Arg::Text(&arg0)])
+    };
 }
 
 /// `error_end_of`, if it is going to be read.
 fn error_end_if_read(c: &Checker<'_>, file: FileId, e: ExprId) -> u32 {
-    if c.explains {
-        c.error_end_of(file, e)
-    } else {
-        0
-    }
+    c.error_end_of(file, e)
 }
 
 /// `entityNameToString`
@@ -3174,89 +3047,6 @@ pub(super) fn can_be_equal(c: &mut Checker<'_>, left: TypeId, right: TypeId) -> 
     nullable(left) || nullable(right) || c.are_comparable(left, right)
 }
 
-/// `GetViableKeywordSuggestions`
-const VIABLE_KEYWORD_SUGGESTIONS: &[&str] = &[
-    "abstract",
-    "accessor",
-    "any",
-    "asserts",
-    "assert",
-    "bigint",
-    "boolean",
-    "break",
-    "case",
-    "catch",
-    "class",
-    "continue",
-    "const",
-    "constructor",
-    "debugger",
-    "declare",
-    "default",
-    "defer",
-    "delete",
-    "else",
-    "enum",
-    "export",
-    "extends",
-    "false",
-    "finally",
-    "for",
-    "from",
-    "function",
-    "get",
-    "immediate",
-    "implements",
-    "import",
-    "infer",
-    "instanceof",
-    "interface",
-    "intrinsic",
-    "keyof",
-    "let",
-    "module",
-    "namespace",
-    "never",
-    "new",
-    "null",
-    "number",
-    "object",
-    "package",
-    "private",
-    "protected",
-    "public",
-    "override",
-    "out",
-    "readonly",
-    "require",
-    "global",
-    "return",
-    "satisfies",
-    "set",
-    "static",
-    "string",
-    "super",
-    "switch",
-    "symbol",
-    "this",
-    "throw",
-    "true",
-    "try",
-    "type",
-    "typeof",
-    "undefined",
-    "unique",
-    "unknown",
-    "using",
-    "var",
-    "void",
-    "while",
-    "with",
-    "yield",
-    "async",
-    "await",
-];
-
 /// `checkJSDocTypeIsInJsFile`: 17019 of `T?` or `T!`, 17020 of `?T` or `!T`, which starts at `start`.
 fn explain_jsdoc_nullable_type(c: &mut Checker<'_>, file: FileId, start: u32, code: u32) {
     let hir = c.hir(file);
@@ -3315,461 +3105,15 @@ fn explain_jsdoc_nullable_type(c: &mut Checker<'_>, file: FileId, start: u32, co
     });
 }
 
-/// Past the `>` that closes the list whose `<` is at `open`. The parser took it for a list of types.
-fn end_of_angle_brackets(c: &Checker<'_>, file: FileId, open: u32) -> Option<u32> {
-    let text = &c.hir(file).text[..];
-    if text.get(open as usize) != Some(&b'<') {
-        return None;
-    }
-    let (mut at, mut depth) = (open, 0u32);
-    loop {
-        match text.get(at as usize)? {
-            b'<' => {
-                depth += 1;
-                at += 1;
-            }
-            b'>' => {
-                depth -= 1;
-                at += 1;
-                if depth == 0 {
-                    return Some(at);
-                }
-            }
-            b'(' | b'[' | b'{' => at = c.end_of_bracket_at(file, at).max(at + 1),
-            // `=>` is one token.
-            _ => at = c.end_of_token_at(file, at).max(at + 1),
-        }
-        at = c.skip_trivia_from(file, at);
-    }
-}
-
-/// What goes with an entry of `early_errors`, which is a place and a code, where the source or the tree says it.
-fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
-    let hir = c.hir(file);
-    let (text, at) = (&hir.text[..], start as usize);
-    match code {
-        // `parseExpected`, `parseJsxElementOrSelfClosingElementOrFragment`, `parseNewExpressionOrNewDotTarget`
-        1005 | 1209 | 17002 => {
-            let mut named: Vec<&str> = hir
-                .error_arguments
-                .iter()
-                .filter(|e| e.0 == start)
-                .map(|e| &*e.1)
-                .collect();
-            // `parseErrorAtPosition` keeps a second error at a place if another lies between the two. Which code an argument goes with
-            // is not kept.
-            let mut here = hir.early_errors.iter().filter(|e| e.0 == start);
-            if code == 1005 && here.all(|e| e.1 == 1005) {
-                named.sort_unstable();
-                named.dedup();
-            } else {
-                named.truncate(1);
-            }
-            for (i, named) in named.into_iter().enumerate() {
-                c.note(start, 0, code, vec![named.to_owned()]);
-                if i > 0 {
-                    c.explain_as_another(start);
-                }
-            }
-        }
-        // `parseJsxElementOrSelfClosingElementOrFragment`: from the first of the elements, which commas join, to the end of the last.
-        2657 => {
-            let joined = hir.exprs.iter().position(|x| {
-                matches!(x.kind, ExprKind::Binary { op: BinOp::Comma, left, .. }
-                    if hir[left].pos == start && matches!(hir[left].kind, ExprKind::Jsx(_)))
-            });
-            let Some(joined) = joined else {
-                return;
-            };
-            let mut last = ExprId(joined as u32);
-            while let ExprKind::Binary {
-                op: BinOp::Comma,
-                right,
-                ..
-            } = hir[last].kind
-            {
-                last = right;
-            }
-            c.note(start, c.end_of_expr(file, last), code, Vec::new());
-        }
-        // `checkGrammarModifiers`, `checkJSDecoratorSyntax`: all of a decorator the class keeps, which is one after `export`.
-        // `reportObviousDecoratorErrors` points at the `@`.
-        1206 | 8038 => {
-            let kept = hir.decorators.iter().find(|decorator| {
-                matches!(decorator.0, DecoratorOwner::Class(_))
-                    && start_of_token_before(text, c.start_of(file, decorator.1), b"@")
-                        == Some(start)
-            });
-            if let Some(decorator) = kept {
-                c.note(start, c.end_of_expr(file, decorator.1), code, Vec::new());
-            }
-        }
-        // `checkGrammarTaggedTemplateChain`, `parseErrorForMissingSemicolonAfter`: said of `node.Template`.
-        1358 | 1443 => c.note(start, c.end_of_template_at(file, start), code, Vec::new()),
-        // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `parseErrorForInvalidName`: these name the word they are reported at.
-        1359 | 1389 | 1390 | 2819 => c.note(start, 0, code, vec![word_at(c, file, start)]),
-        // What is made of a tag is as long as the tag, which goes on to the next one: the `?` of `makeQuestionIfOptional`, the type
-        // parameters of `@template`.
-        1047 | 1051 | 1092 if hir.is_in_jsdoc(start) => {
-            let comment = hir.jsdoc_comments.partition_point(|c| c.0 <= start) - 1;
-            let last = (hir.jsdoc_comments[comment].1 as usize)
-                .saturating_sub(2)
-                .min(text.len());
-            let end = text[(at + 1).min(last)..last]
-                .iter()
-                .position(|&b| b == b'@')
-                .map_or(last, |next| at + 1 + next);
-            c.note(start, end as u32, code, Vec::new());
-        }
-        // `checkGrammarHeritageClause`: reported where the keyword ends.
-        1097 => {
-            let end = text[..at.min(text.len())].trim_ascii_end().len();
-            let from = text[..end]
-                .iter()
-                .rposition(|b| !b.is_ascii_alphabetic())
-                .map_or(0, |before| before + 1);
-            let keyword = c.source_text(file, from as u32, end as u32);
-            c.note(start, super::explain::NO_LENGTH, code, vec![keyword]);
-        }
-        // `Scanner.error`, `parseElementAccessExpressionRest`, `checkGrammarVariableDeclarationList`: said of a place, whatever is there.
-        1002 | 1011 | 1123 | 1124 | 1125 | 1177 | 1178 | 1199 => {
-            c.note(start, super::explain::NO_LENGTH, code, Vec::new());
-        }
-        // `createIdentifierWithDiagnostic`: at the end of the file it is said where the last token ends.
-        1110 if skip_trivia(text, at) >= text.len() => {
-            c.note(start, super::explain::NO_LENGTH, code, Vec::new());
-        }
-        // `checkGrammarImportClause`: said of the clause, which ends before the `from`.
-        1363 => {
-            let specifier = hir
-                .specifier_uses
-                .iter()
-                .filter(|used| !used.kind.is_call())
-                .map(|used| used.pos)
-                .filter(|&pos| pos > start)
-                .min();
-            if let Some(specifier) = specifier {
-                let end = super::errors_x_modules::import_clause_end(text, specifier);
-                c.note(start, end, code, Vec::new());
-            }
-        }
-        // `scanNumber`: after a `-` the error starts one character before the literal.
-        1121 => {
-            let with_minus = text.get(at) != Some(&b'0');
-            let zero = at + usize::from(with_minus);
-            if text.get(zero) != Some(&b'0') {
-                return;
-            }
-            let mut end = zero + 1;
-            while text.get(end).is_some_and(u8::is_ascii_digit) {
-                end += 1;
-            }
-            let digits = c.source_text(file, zero as u32 + 1, end as u32);
-            let digits = match digits.trim_start_matches('0') {
-                "" => "0",
-                digits => digits,
-            };
-            let sign = if with_minus { "-" } else { "" };
-            c.note(start, end as u32, code, vec![format!("{sign}0o{digits}")]);
-        }
-        // `scanNumberFragment`, `scanHexDigits`: the `_`.
-        6188 | 6189 => c.note(start, start + 1, code, Vec::new()),
-        // `Scan`: the `#!`.
-        18026 => c.note(start, start + 2, code, Vec::new()),
-        // `scanConflictMarkerTrivia`: the seven characters of the marker.
-        1185 => c.note(start, start + 7, code, Vec::new()),
-        // `parseFunctionOrConstructorTypeToError`: said of the type and the blanks before it.
-        1385..=1388 => {
-            let head = skip_trivia(text, at);
-            let written = hir
-                .types
-                .iter()
-                .position(|t| t.pos as usize == head && matches!(t.kind, TypeNodeKind::Fn(_)));
-            if let Some(node) = written {
-                let end = c.end_of_type_node(file, TypeNodeId(node as u32));
-                c.note(start, end, code, Vec::new());
-            }
-        }
-        // `checkGrammarVariableDeclaration`
-        1155 | 1492 => {
-            let Some(decl) = hir.var_decls.iter().find(|d| hir[d.pat].pos == start) else {
-                return;
-            };
-            let keyword = match decl.kind {
-                VarKind::AwaitUsing => "await using",
-                VarKind::Using => "using",
-                _ => "const",
-            };
-            let end = c.end_of_pat(file, decl.pat);
-            c.note(start, end, code, vec![keyword.to_owned()]);
-        }
-        // `parseParameterEx`: said of the first decorator or modifier and the blanks before it.
-        1433 => {
-            let first = skip_trivia(text, at);
-            let end = if text.get(first) == Some(&b'@') {
-                let written = skip_trivia(text, first + 1) as u32;
-                // Those of a first parameter are statements of their own.
-                let statements = hir.stmts.iter().filter_map(|s| match s.kind {
-                    StmtKind::Expr(e) if e.is_some() => Some(e),
-                    _ => None,
-                });
-                hir.decorators
-                    .iter()
-                    .map(|decorator| decorator.1)
-                    .chain(statements)
-                    .find(|&e| c.start_of(file, e) == written)
-                    .map_or(0, |e| c.end_of_expr(file, e))
-            } else {
-                c.end_of_name_at(file, first as u32)
-            };
-            c.note(start, end, code, Vec::new());
-        }
-        // `parseErrorForMissingSemicolonAfter`
-        1435 => {
-            let word = word_at(c, file, start);
-            let keywords = VIABLE_KEYWORD_SUGGESTIONS.iter().map(|k| k.as_bytes());
-            let suggestion = match spelling_suggestion(word.as_bytes(), keywords) {
-                Some(keyword) => keyword,
-                // `getSpaceSuggestion`
-                _ => match VIABLE_KEYWORD_SUGGESTIONS
-                    .iter()
-                    .find(|k| word.len() > k.len() + 2 && word.starts_with(**k))
-                {
-                    Some(keyword) => format!("{keyword} {}", &word[keyword.len()..]),
-                    None => return,
-                },
-            };
-            c.note(start, 0, code, vec![suggestion]);
-        }
-        // `checkGrammarTypeParameterList`, `checkGrammarForAtLeastOneTypeArgument`: from the `<` to what comes after the empty list.
-        1098 | 1099 if text.get(at) == Some(&b'<') => {
-            c.note(
-                start,
-                skip_trivia(text, at + 1) as u32 + 1,
-                code,
-                Vec::new(),
-            );
-        }
-        // `parsePropertyAccessExpressionRest`: the type arguments and their brackets.
-        1477 => {
-            if let Some(end) = end_of_angle_brackets(c, file, start) {
-                c.note(start, end, code, Vec::new());
-            }
-        }
-        // `parseSuperExpression`: from where `super` ends to where its type arguments do.
-        2754 => {
-            if let Some(end) = end_of_angle_brackets(c, file, skip_trivia(text, at) as u32) {
-                c.note(start, end, code, Vec::new());
-            }
-        }
-        // `checkGrammarExpressionWithTypeArguments`: `import<T>`. `checkGrammarImportCallExpression`: all of `import<T>(x)`.
-        1326 => {
-            let open = skip_trivia(text, at + b"import".len()) as u32;
-            if let Some(end) = end_of_angle_brackets(c, file, open) {
-                let next = c.skip_trivia_from(file, end);
-                let end = if text.get(next as usize) == Some(&b'(') {
-                    c.end_of_bracket_at(file, next)
-                } else {
-                    end
-                };
-                c.note(start, end, code, Vec::new());
-            }
-        }
-        // `scanEscapeSequence`: up to three octal digits, two after `4` to `7`.
-        1487 => {
-            let longest = if matches!(text.get(at + 1), Some(b'0'..=b'3')) {
-                at + 4
-            } else {
-                at + 3
-            };
-            let mut end = at + 2;
-            while end < longest && matches!(text.get(end), Some(b'0'..=b'7')) {
-                end += 1;
-            }
-            let digits = c.source_text(file, start + 1, end as u32);
-            if let Ok(value) = u32::from_str_radix(&digits, 8) {
-                c.note(start, end as u32, code, vec![format!("\\x{value:02x}")]);
-            }
-        }
-        // `checkGrammarIndexSignatureParameters`: without a parameter it is said of the signature.
-        1096 => {
-            let signature = hir
-                .members
-                .iter()
-                .position(|m| m.kind == MemberKind::IndexSignature && m.start == start);
-            if let Some(m) = signature {
-                let end = hir.members[m].loc.end;
-                c.note(start, end, code, Vec::new());
-            }
-        }
-        // `checkGrammarAccessor`: in an interface or a type literal it is said of the body. `checkGrammarStatementInAmbientContext` points
-        // at the `{`.
-        1183 => {
-            let bound = c.bound(file);
-            let is_in_a_type = hir.members.iter().enumerate().any(|(m, member)| {
-                matches!(member.kind, MemberKind::Getter | MemberKind::Setter)
-                    && member.func.is_some()
-                    && !matches!(bound.member_owner[m], MemberOwner::Class(_))
-                    && skip_trivia(text, c.end_of_signature(file, member.func) as usize) == at
-            });
-            if is_in_a_type {
-                c.note(start, c.end_of_bracket_at(file, start), code, Vec::new());
-            }
-        }
-        1488 => c.note(
-            start,
-            start + 2,
-            code,
-            vec![c.source_text(file, start, start + 2)],
-        ),
-        // `processPragmasIntoFields`: said of the comment, which ends with its line.
-        1084 => {
-            let rest = text.get(at..).unwrap_or_default();
-            let length = rest
-                .iter()
-                .position(|&b| matches!(b, b'\n' | b'\r'))
-                .unwrap_or(rest.len());
-            c.note(start, start + length as u32, code, Vec::new());
-        }
-        // `GetErrorRangeForNode` of a clause: up to its `:`.
-        1113 => {
-            let colon = c.skip_trivia_from(file, c.end_of_token_at(file, start));
-            if text.get(colon as usize) == Some(&b':') {
-                c.note(start, colon + 1, code, Vec::new());
-            }
-        }
-        // `checkGrammarComputedPropertyName`: said of all that is between the brackets.
-        1171 => {
-            if let Some(open) = start_of_token_before(text, start, b"[") {
-                let close = c.end_of_bracket_at(file, open);
-                c.note(
-                    start,
-                    c.end_of_token_before(file, close - 1),
-                    code,
-                    Vec::new(),
-                );
-            }
-        }
-        // `checkGrammarClassDeclarationHeritageClauses`: the tag, the last name in it, the last name of what the class extends.
-        8023 => {
-            let word = |from: usize| c.source_text(file, from as u32, word_end(text, from) as u32);
-            let Some(tag) = text[..at.min(text.len())].iter().rposition(|&b| b == b'@') else {
-                return;
-            };
-            // The comment is on the class that comes next.
-            let class = hir
-                .classes
-                .iter()
-                .filter(|class| class.name_pos >= start && class.extends.is_some())
-                .min_by_key(|class| class.name_pos);
-            let extended = match class.map(|class| hir[class.extends].kind) {
-                Some(ExprKind::Ident(name) | ExprKind::Dot { name, .. }) => c.atom_text(name),
-                _ => return,
-            };
-            let name = word(at);
-            let end = if name.is_empty() {
-                super::explain::NO_LENGTH
-            } else {
-                start + name.len() as u32
-            };
-            c.note(start, end, code, vec![word(tag + 1), name, extended]);
-        }
-        // `parseIdentifierNameErrorOnUnicodeEscapeSequence`: said of the token, which `ScanJsxIdentifier` carries on through every `-`.
-        17021 => c.note(start, jsx_identifier_end(text, at) as u32, code, Vec::new()),
-        // `parseUnaryExpressionOrHigher`: said of all that is on the left of the `**`.
-        17006 | 17007 => {
-            let end = hir.exprs.iter().find_map(|x| match x.kind {
-                ExprKind::Binary {
-                    op: BinOp::Pow,
-                    left,
-                    ..
-                } if c.start_of(file, left) == start => Some(c.end_of_expr(file, left)),
-                _ => None,
-            });
-            let arguments = if code == 17006 {
-                vec![c.source_text(file, start, c.end_of_token_at(file, start))]
-            } else {
-                Vec::new()
-            };
-            c.note(start, end.unwrap_or(0), code, arguments);
-        }
-        // `checkGrammarMappedType`: on the first member there is besides. `GetErrorRangeForNode` takes the name of a property, and the
-        // whole of a method signature.
-        7061 => {
-            let mut after = c.skip_trivia_from(file, c.end_of_name_at(file, start));
-            if text.get(after as usize) == Some(&b'?') {
-                after = c.skip_trivia_from(file, after + 1);
-            }
-            if matches!(text.get(after as usize), Some(b'(' | b'<')) {
-                c.note(
-                    start,
-                    end_of_type_member_from(c, file, after),
-                    code,
-                    Vec::new(),
-                );
-            }
-        }
-        // `parseJsxElementOrSelfClosingElementOrFragment`, `parseJsxChild`: the name in the opening tag.
-        17008 => {
-            let name = skip_trivia(text, at) as u32;
-            let end = jsx_tag_name_end(text, name as usize) as u32;
-            // A name that is missing is where the `<` ends, before any blanks.
-            let reaches = if end == name {
-                super::explain::NO_LENGTH
-            } else {
-                end
-            };
-            c.note(start, reaches, code, vec![c.source_text(file, name, end)]);
-        }
-        // `getTypeFromImportTypeNode`: said of what `import(..)` is given. `checkExternalImportOrExportDeclaration`: of the expression where
-        // the module specifier goes.
-        1141 => {
-            let argument = hir.types.iter().find_map(|t| match t.kind {
-                TypeNodeKind::Import { spec, args, .. } if spec.is_none() && !args.is_empty() => {
-                    let argument = hir.id_at(args, 0);
-                    (hir[argument].pos == start).then_some(argument)
-                }
-                _ => None,
-            });
-            let specifier = hir
-                .specifier_expressions
-                .iter()
-                .find(|&&e| c.start_of(file, e) == start);
-            if let Some(argument) = argument {
-                c.note(start, c.end_of_type_node(file, argument), code, Vec::new());
-            } else if let Some(&specifier) = specifier {
-                c.note(start, c.end_of_expr(file, specifier), code, Vec::new());
-            }
-        }
-        // `checkNamedTupleMember`: said of the member or of its type, which end where the element of the tuple does.
-        5085..=5087 => c.note(
-            start,
-            end_of_tuple_element(c, file, start),
-            code,
-            Vec::new(),
-        ),
-        // `checkGrammarMetaProperty`
-        17012 => {
-            let Some(dot) = start_of_token_before(text, start, b".") else {
-                return;
-            };
-            let (keyword, meant) = if start_of_token_before(text, dot, b"new").is_some() {
-                ("new", "target")
-            } else {
-                ("import", "meta")
-            };
-            c.note(
-                start,
-                0,
-                code,
-                vec![
-                    word_at(c, file, start),
-                    keyword.to_owned(),
-                    meant.to_owned(),
-                ],
-            );
-        }
-        _ => {}
+/// What the message of an error of the parser names. `settle_place` has where it ends.
+fn explain_early_error(c: &mut Checker<'_>, file: FileId, start: u32, code: u32) {
+    let said = c.hir(file).error_arguments.iter();
+    let mut said: Vec<_> = said.filter(|e| (e.0, e.1) == (start, code)).collect();
+    // `parseErrorAtPosition` keeps a second error at a place if another lies between the two.
+    said.sort_unstable();
+    said.dedup();
+    for (_, _, args) in said {
+        c.note_printed(start, 0, code, args.clone());
     }
 }
 
@@ -3852,7 +3196,7 @@ impl Checker<'_> {
         if self.check_type_assignable_to(object, TypeId::OBJECT, Some(at), None)
             && has_empty_object_intersection(self, right_type)
         {
-            self.error(at, 2638, &[Arg::Type(right_type)]);
+            self.error_at(at, 2638, &[Arg::Type(right_type)]);
         }
     }
 
@@ -3883,7 +3227,7 @@ impl Checker<'_> {
         args: &[Arg<'_>],
     ) {
         let did_you_forget = self.new_diagnostic(at, 2773, &[]);
-        let diagnostic = self.error(at, code, args);
+        let diagnostic = self.error_at(at, code, args);
         if maybe_missing_await {
             diagnostic.add_related_info(did_you_forget);
         }
@@ -3978,7 +3322,7 @@ impl Checker<'_> {
         let (from, to) = self.error_range_of_expr(file, location);
         let did_you_mean = self.new_diagnostic((file, from, to), 1369, &[Arg::Text(&suggestion)]);
         let always = if is_equality { "false" } else { "true" };
-        let diagnostic = self.error(self.place_of_expr(file, e), 2845, &[Arg::Text(always)]);
+        let diagnostic = self.error_at(self.place_of_expr(file, e), 2845, &[Arg::Text(always)]);
         if !(is_left_nan && is_right_nan) {
             diagnostic.add_related_info(did_you_mean);
         }
@@ -4006,7 +3350,7 @@ impl Checker<'_> {
             Some(start) => (file, start, start + operator.len() as u32),
             None => self.place_of_token(file, self.start_inside_parentheses(file, e)),
         };
-        self.error(at, 2447, &[Arg::Text(&operator), Arg::Text(suggested)]);
+        self.error_at(at, 2447, &[Arg::Text(&operator), Arg::Text(suggested)]);
     }
 
     /// 6807: `errorOrSuggestion`, an error in the initializer of a member of an enum and a suggestion anywhere else.
@@ -4049,18 +3393,19 @@ impl Checker<'_> {
         l: TypeId,
         r: TypeId,
     ) -> bool {
-        let mut may_be_symbol =
-            |t| self.maybe_type_of_kind_considering_base_constraint(t, Self::is_symbol_like);
-        let offending = if may_be_symbol(l) {
+        let may_be_symbol = |c: &mut Self, t| {
+            c.maybe_type_of_kind_considering_base_constraint(t, Self::is_symbol_like)
+        };
+        let offending = if may_be_symbol(self, l) {
             left
-        } else if may_be_symbol(r) {
+        } else if may_be_symbol(self, r) {
             right
         } else {
             return true;
         };
         let at = self.place_of_written_expr(file, offending);
         let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
-        self.error(at, 2469, &[Arg::Text(&operator_text(op, is_assignment))]);
+        self.error_at(at, 2469, &[Arg::Text(&operator_text(op, is_assignment))]);
         false
     }
 
@@ -4113,7 +3458,7 @@ impl Checker<'_> {
             return true;
         };
         let at = self.place_of_written_expr(file, e);
-        self.error(at, code, &[]);
+        self.error_at(at, code, &[]);
         false
     }
 
@@ -4213,27 +3558,12 @@ impl Checker<'_> {
         })
     }
 
-    /// `checkNonNullType`, for a pass.
-    pub(super) fn check_not_nullish(
-        &mut self,
-        file: FileId,
-        node: ExprId,
-        ty: TypeId,
-        out: &mut Vec<Diagnostic>,
-    ) -> TypeId {
-        self.check_non_null_type_with_reporter(ty, |c, error| {
-            let ((_, start, end), code, name) = c.object_possibly_null_error(file, node, error);
-            out.push(Diagnostic { start, code });
-            c.note(start, end, code, name.into_iter().collect());
-        })
-    }
-
     /// `checkNonNullType`: what is left of the type of `node` once `null` and `undefined` are ruled out, which they have to be here.
     pub(super) fn check_non_null_type(&mut self, file: FileId, node: ExprId, ty: TypeId) -> TypeId {
         self.check_non_null_type_with_reporter(ty, |c, error| {
             let (at, code, name) = c.object_possibly_null_error(file, node, error);
             let args: Vec<Arg> = name.iter().map(|name| Arg::Text(name)).collect();
-            c.error(at, code, &args);
+            c.error_at(at, code, &args);
         })
     }
 
@@ -4460,7 +3790,7 @@ impl Checker<'_> {
     }
 
     /// 2628 to 2632, 2539, 2588: a name that cannot be assigned to. 2540: a property that can only be read.
-    fn check_writes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_writes(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let index = self.exprs_by_kind(file);
         let (assignments, unaries) = (index.of(ExprTag::Assign), index.of(ExprTag::Unary));
@@ -4516,10 +3846,7 @@ impl Checker<'_> {
                         continue;
                     }
                     if let Some(code) = self.why_not_assignable(file, e, name) {
-                        out.push(Diagnostic {
-                            start: hir.exprs[i].pos,
-                            code,
-                        });
+                        self.error_at((file, hir.exprs[i].pos, 0), code, &[]);
                     }
                 }
                 ExprKind::Dot {
@@ -4527,10 +3854,8 @@ impl Checker<'_> {
                     name,
                     name_pos,
                     ..
-                } => self.check_property_write(file, e, obj, name, name_pos, out),
-                ExprKind::Index { obj, index, .. } => {
-                    self.check_element_write(file, e, obj, index, out)
-                }
+                } => self.check_property_write(file, e, obj, name, name_pos),
+                ExprKind::Index { obj, index, .. } => self.check_element_write(file, e, obj, index),
                 _ => {}
             }
         }
@@ -4553,7 +3878,6 @@ impl Checker<'_> {
         obj: ExprId,
         name: Atom,
         at: u32,
-        out: &mut Vec<Diagnostic>,
     ) {
         if self.write_kind(file, e).is_none() {
             return;
@@ -4577,10 +3901,7 @@ impl Checker<'_> {
         let apparent = self.reduced(apparent);
         if let TypeData::Union(parts) = self.data(apparent) {
             if self.is_readonly_in_union(parts, name) == Some(true) {
-                out.push(Diagnostic {
-                    start: at,
-                    code: 2540,
-                });
+                self.error_at((file, at, 0), 2540, &[]);
                 explain_readonly_element(self, file, e, at, None, name);
             }
             return;
@@ -4620,10 +3941,7 @@ impl Checker<'_> {
                 }
             }
             if is_refused || self.is_namespace_import_name(file, obj) {
-                out.push(Diagnostic {
-                    start: at,
-                    code: 2540,
-                });
+                self.error_at((file, at, 0), 2540, &[]);
                 explain_readonly_element(self, file, e, at, Some(prop), name);
             }
             return;
@@ -4636,10 +3954,7 @@ impl Checker<'_> {
             self.is_namespace_import_name(file, obj)
         };
         if is_refused {
-            out.push(Diagnostic {
-                start: at,
-                code: 2540,
-            });
+            self.error_at((file, at, 0), 2540, &[]);
             explain_readonly_element(self, file, e, at, Some(prop), name);
         }
     }
@@ -4652,7 +3967,6 @@ impl Checker<'_> {
         e: ExprId,
         obj: ExprId,
         index: ExprId,
-        out: &mut Vec<Diagnostic>,
     ) {
         if self.write_kind(file, e).is_none() {
             return;
@@ -4669,7 +3983,7 @@ impl Checker<'_> {
         for &key in self.parts(keys) {
             // `getPropertyNameFromIndex`
             if let Some(name) = self.property_name_of_type(key) {
-                self.check_property_write(file, e, obj, name, at, out);
+                self.check_property_write(file, e, obj, name, at);
             }
         }
     }

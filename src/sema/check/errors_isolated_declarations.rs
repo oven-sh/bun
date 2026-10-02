@@ -13,8 +13,7 @@
 
 use super::decl::Predicate;
 use super::enclosing_declaration::Enclosing;
-use super::errors::Diagnostic;
-use super::explain::Related;
+use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent};
 
@@ -113,7 +112,7 @@ struct Said {
     end: u32,
     code: u32,
     args: Vec<String>,
-    related: Vec<Related>,
+    related: Vec<Reported>,
     /// It was reported more than once.
     is_merged: bool,
 }
@@ -146,13 +145,13 @@ impl<'p> Checker<'p> {
     }
 
     /// What the transformer has reported is said.
-    pub(super) fn finish_isolated_declarations(&mut self, tx: Emit, out: &mut Vec<Diagnostic>) {
-        self.iso_say_all(tx.said, out);
+    pub(super) fn finish_isolated_declarations(&mut self, tx: Emit) {
+        self.iso_say_all(tx.said);
     }
 
     /// `SortAndDeduplicateDiagnostics`, `compactAndMergeRelatedInfos`: what is reported twice is one error, with the related
     /// information of both in the order of the file.
-    fn iso_say_all(&mut self, mut said: Vec<Said>, out: &mut Vec<Diagnostic>) {
+    fn iso_say_all(&mut self, mut said: Vec<Said>) {
         said.sort_by(|a, b| {
             (a.start, a.end, a.code)
                 .cmp(&(b.start, b.end, b.code))
@@ -174,17 +173,18 @@ impl<'p> Checker<'p> {
         for mut one in all {
             if one.is_merged {
                 one.related.sort_by(|a, b| {
-                    a.at.cmp(&b.at)
+                    (a.file, a.start, a.end)
+                        .cmp(&(b.file, b.start, b.end))
                         .then(a.code.cmp(&b.code))
                         .then_with(|| a.args.cmp(&b.args))
                 });
                 one.related.dedup();
             }
-            out.push(Diagnostic {
-                start: one.start,
-                code: one.code,
-            });
-            self.note(one.start, one.end, one.code, one.args);
+            self.add_diagnostic(Reported::new(
+                (self.checking.unwrap(), one.start, one.end),
+                one.code,
+                held(one.args),
+            ));
             let related = one.related;
             if !related.is_empty() {
                 self.relate(one.start, one.code, move |_| related);
@@ -536,13 +536,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn iso_related(&self, file: FileId, node: Node, code: u32, args: Vec<String>) -> Related {
+    fn iso_related(&self, file: FileId, node: Node, code: u32, args: Vec<String>) -> Reported {
         let (start, end) = self.iso_range(file, node);
-        Related {
-            at: Some((file, start, end)),
-            code,
-            args,
-        }
+        Reported::new((file, start, end), code, held(args))
     }
 
     /// `GetTextOfNode(node.Name())`, of a variable, a parameter or a property.
@@ -593,7 +589,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The suggestion at `declaration`: `Add a type annotation to the variable {0}.` and the like.
-    fn iso_suggestion(&self, file: FileId, declaration: Node) -> Option<Related> {
+    fn iso_suggestion(&self, file: FileId, declaration: Node) -> Option<Reported> {
         let code = self.iso_codes_of_declaration(file, declaration).1;
         let args = match code {
             0 => return None,
@@ -1784,7 +1780,7 @@ impl<'p> Checker<'p> {
                 constant,
                 regular,
             } => {
-                return if self.is_const_by_contextual_type(file, *at, true) {
+                return if self.is_const_context(file, *at) {
                     self.iso_type_of_pseudo(file, constant)
                 } else {
                     self.iso_type_of_pseudo(file, regular)
@@ -2217,7 +2213,7 @@ impl<'p> Checker<'p> {
         }
         if import.named.is_empty() {
             // `import "mod"` and `import a from "mod"` have no list, `import {} from "mod"` has.
-            let after = self.skip_trivia_from(file, hir[s].pos + 6);
+            let after = self.skip_trivia_from(file, self.start_after_modifiers(file, s) + 6);
             if import.default.is_some() || hir.text.get(after as usize) != Some(&b'{') {
                 return;
             }

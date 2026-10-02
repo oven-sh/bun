@@ -2544,6 +2544,7 @@ impl<'p> Checker<'p> {
                 Intrinsic::Never
                 | Intrinsic::SilentNever
                 | Intrinsic::UnreachableNever
+                | Intrinsic::ImplicitNever
                 | Intrinsic::Unresolved,
             ) => ty,
             // `TypeFlagsStringLiteral`, which a member of an enum that is a string has too: what comes of it is a plain string.

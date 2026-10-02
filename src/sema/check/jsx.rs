@@ -58,7 +58,7 @@ impl<'p> Checker<'p> {
                 [only] => JsxName::Name(only.name),
                 _ => {
                     if let Some(at) = self.place_of_symbol(symbol) {
-                        self.error(at, 2608, &[Arg::Atom(container)]);
+                        self.error_at(at, 2608, &[Arg::Atom(container)]);
                     }
                     JsxName::Missing
                 }
@@ -129,7 +129,7 @@ impl<'p> Checker<'p> {
                     };
                     let at = (file, hir[caller].pos, hir[j].opening_end);
                     let container = Arg::Text("JSX.IntrinsicElements");
-                    self.error(at, 2339, &[Arg::Atom(name), container]);
+                    self.error_at(at, 2339, &[Arg::Atom(name), container]);
                     return Some((Vec::new(), false));
                 }
                 Err(()) => TypeId::ANY,
@@ -388,7 +388,7 @@ impl<'p> Checker<'p> {
                         && !hir[j].attrs.is_empty()
                     {
                         let at = (file, hir[e].pos, hir[j].opening_end);
-                        self.error(at, 2607, &[Arg::Atom(name)]);
+                        self.error_at(at, 2607, &[Arg::Atom(name)]);
                     }
                     return TypeId::UNKNOWN;
                 }
@@ -534,10 +534,11 @@ impl<'p> Checker<'p> {
                 continue;
             };
             pending.props.retain(|x| x.name != name);
+            let (source, flags) = self.source_of_literal_member(file, p, name);
             pending.props.push(Prop {
                 name,
-                flags: PropFlags::empty(),
-                source: PropSource::Literal(file, p),
+                flags,
+                source,
                 mapper: MapperId::IDENTITY,
             });
         }
@@ -553,7 +554,7 @@ impl<'p> Checker<'p> {
                         && self.member_name(file, hir[p].key) == Some(name)
                 })
             {
-                self.error(
+                self.error_at(
                     (file, hir[first].start, hir[last].end),
                     2710,
                     &[Arg::Atom(name)],
@@ -565,8 +566,11 @@ impl<'p> Checker<'p> {
                 let types: Vec<TypeId> = children.iter().map(|c| c.1).collect();
                 // `getApparentTypeOfContextualType`: the attributes narrow a union of props types first.
                 let expected = self
-                    .jsx_props_type(file, e)
-                    .map(|props| self.discriminate_by_jsx_attributes(file, e, props))
+                    .apparent_type_of_contextual_type_of_jsx_attributes(
+                        file,
+                        e,
+                        ContextFlags::empty(),
+                    )
                     .and_then(|props| self.contextual_property(props, name));
                 let mut is_tuple_expected = false;
                 if let Some(expected) = expected {

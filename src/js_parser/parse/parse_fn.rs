@@ -315,7 +315,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let parameter_full_start = p.lexer.full_start();
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             // Where the first decorator or modifier starts, and whether a modifier keyword is among them.
-            let mut modifiers: Option<(bun_ast::Loc, bool)> = None;
+            let mut modifiers: Option<(bun_ast::Range, bool)> = None;
             let mut modifiers_base = 0;
             if takes_any_modifiers {
                 modifiers_base = p.pushed_modifiers();
@@ -518,7 +518,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // shadows any variable called "arguments" in any parent scopes. But only do
         // this if it wasn't already declared above because arguments are allowed to
         // be called "arguments", in which case the real "arguments" is inaccessible.
-        if !p.current_scope().members.contains_key(arguments_str) {
+        if !p.keeps_type_syntax() && !p.current_scope().members.contains_key(arguments_str) {
             func.arguments_ref = p
                 .declare_symbol(
                     js_ast::symbol::Kind::Arguments,
@@ -588,19 +588,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `parseModifiersEx` at the start of a parameter: decorators, which are added to `decorators`, and modifier keywords.
-    /// `None` if there are none. Otherwise where the first one starts (`nodePos`), and whether any of them is a keyword.
+    /// `None` if there are none. Otherwise `Loc` of the first one, and whether any of them is a keyword.
     #[cold]
     #[inline(never)]
     fn parse_parameter_modifiers(
         &mut self,
         outer_await: AwaitOrYield,
         decorators: &mut js_ast::ExprNodeList,
-    ) -> Result<Option<(bun_ast::Loc, bool)>, Error> {
+    ) -> Result<Option<(bun_ast::Range, bool)>, Error> {
         let p = self;
         if p.lexer.token != T::TAt && !p.is_modifier_kind() {
             return Ok(None);
         }
         let full_start = p.lexer.full_start();
+        let mut first_end = p.lexer.range().end();
         let mut has_any = false;
         let mut has_keyword = false;
         let mut has_trailing_decorator = false;
@@ -613,7 +614,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.fn_or_arrow_data_parse.allow_await = outer_await;
                 let parsed = p.parse_type_script_decorators();
                 p.fn_or_arrow_data_parse.allow_await = inner_await;
-                decorators.append(&mut parsed?);
+                let parsed = parsed?;
+                if !has_any
+                    && let Some(first) = parsed.slice().first()
+                    && let Some(end) = p.noted(first.loc, Mark::DecoratorEnd)
+                {
+                    first_end.start = end as i32;
+                }
+                decorators.append(&mut { parsed });
                 has_trailing_decorator |= has_keyword;
             } else {
                 if !p.is_at_modifier(has_static) {
@@ -628,7 +636,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             has_any = true;
         }
-        Ok(has_any.then_some((full_start, has_keyword)))
+        let first = bun_ast::Range {
+            loc: full_start,
+            len: first_end.start - full_start.start,
+        };
+        Ok(has_any.then_some((first, has_keyword)))
     }
 
     /// `parseAnyContextualModifier`, without consuming anything: whether the current token is a modifier keyword followed by
@@ -714,7 +726,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `parseParameterEx` at "this": the name and an optional type, nothing else. `open_parens_loc` is that of the function.
     /// Only the first parameter is the "this" parameter (`getSignatureFromDeclaration`). Any other is returned as a parameter
     /// named "this", which the checker objects to (2680). `start`, `full_start`: where the first token of the parameter is, and its
-    /// `TokenFullStart`. `first_modifier`: `nodePos` of its modifiers, if it has any: those pushed since there were `modifiers_base`.
+    /// `TokenFullStart`. `first_modifier`: `Loc` of the first of its modifiers, if it has any: those pushed since there were `modifiers_base`.
     #[cold]
     #[inline(never)]
     fn parse_this_parameter(
@@ -723,7 +735,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_first: bool,
         decorators: js_ast::ExprNodeList,
         (start, full_start): (bun_ast::Loc, bun_ast::Loc),
-        first_modifier: Option<bun_ast::Loc>,
+        first_modifier: Option<bun_ast::Range>,
         modifiers_base: usize,
     ) -> Result<Option<G::Arg>, Error> {
         let p = self;
@@ -734,15 +746,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
         }
-        if let Some(node_pos) = first_modifier {
+        if let Some(first) = first_modifier {
             // Neither decorators nor modifiers may be applied to "this" parameters.
-            p.lexer.ts_error(
-                bun_ast::Range {
-                    loc: node_pos,
-                    len: 0,
-                },
-                1433,
-            );
+            p.lexer.ts_error(first, 1433);
         }
         if is_first {
             p.drop_modifiers(modifiers_base);

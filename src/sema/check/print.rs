@@ -447,7 +447,10 @@ fn with_printer<'p, T>(
         checker.relation_too_complex,
         checker.union_too_complex,
     );
-    checker.eager.push(checker.stack.len());
+    let is_barrier = !std::mem::take(&mut checker.printing_closes_circles);
+    if is_barrier {
+        checker.eager.push(checker.stack.len());
+    }
     let result = {
         let mut printer = Printer {
             c: &mut *checker,
@@ -480,7 +483,9 @@ fn with_printer<'p, T>(
         printer.exit_context_check();
         result
     };
-    checker.eager.pop();
+    if is_barrier {
+        checker.eager.pop();
+    }
     (
         checker.relation_gave_up,
         checker.relation_too_complex,
@@ -1052,9 +1057,10 @@ impl<'p> Printer<'_, 'p> {
                     }
                     Intrinsic::IntrinsicMarker => (b"intrinsic", 3),
                     Intrinsic::Unknown => (b"unknown", 0),
-                    Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever => {
-                        (b"never", 5)
-                    }
+                    Intrinsic::Never
+                    | Intrinsic::SilentNever
+                    | Intrinsic::UnreachableNever
+                    | Intrinsic::ImplicitNever => (b"never", 5),
                     Intrinsic::Void => (b"void", 4),
                     Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedDeclared => {
                         (b"undefined", 9)

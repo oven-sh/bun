@@ -7,46 +7,13 @@
 //! the one it got when the call was resolved, where they look at it again for each candidate (`arg_type_under`). Whenever that
 //! leaves it open whether a candidate fits, nothing is said.
 
-use super::call::{Arg, Args, CallLike, CallState, ResolvedCall};
-use super::errors::Diagnostic;
+use super::call::{Arg, CallLike, CallState};
 use super::explain::Line;
 use super::relate::Relation;
+use super::sink::held;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
 use smallvec::SmallVec;
-
-#[derive(PartialEq, Eq)]
-pub(super) enum Applicable {
-    Yes,
-    /// Something is known not to fit.
-    No,
-    /// It depends on something that could not be found out.
-    Unknown,
-}
-
-impl Applicable {
-    /// `None`: it cannot be told.
-    pub(super) fn known(self) -> Option<bool> {
-        match self {
-            Applicable::Yes => Some(true),
-            Applicable::No => Some(false),
-            Applicable::Unknown => None,
-        }
-    }
-}
-
-/// What `chooseOverload` leaves behind when no candidate will do, and what it held the candidates against.
-struct Failed {
-    args: Args,
-    type_args: Vec<TypeId>,
-    this_arg: Option<ExprId>,
-    /// `candidatesForArgumentError`
-    for_argument_error: Vec<SigId>,
-    /// `candidateForArgumentArityError`
-    for_arity_error: Option<SigId>,
-    /// `candidateForTypeArgumentError`
-    for_type_argument_error: Option<SigId>,
-}
 
 /// How many arguments the candidates of a call take.
 pub(super) struct ArgumentCounts {
@@ -73,7 +40,7 @@ impl ArgumentCounts {
 }
 
 impl Checker<'_> {
-    pub(super) fn check_calls(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_calls(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in 0..hir.exprs.len() {
             if !matches!(
@@ -92,35 +59,26 @@ impl Checker<'_> {
             }
             let e = ExprId(i as u32);
             match hir.exprs[i].kind {
-                ExprKind::Call(c) => self.check_call(file, e, c, false, out),
-                ExprKind::New(c) => self.check_call(file, e, c, true, out),
-                ExprKind::TaggedTemplate(c) => self.check_tagged_template(file, e, c, out),
+                ExprKind::Call(c) => self.check_call(file, e, c, false),
+                ExprKind::New(c) => self.check_call(file, e, c, true),
+                ExprKind::TaggedTemplate(c) => self.check_tagged_template(file, e, c),
                 _ => {}
             }
         }
     }
 
-    fn check_call(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        c: CallId,
-        is_new: bool,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_call(&mut self, file: FileId, e: ExprId, c: CallId, is_new: bool) {
         let hir = self.hir(file);
         let data = hir[c];
-        let node = CallLike::Call(c);
         // The `super` of `new super()` is that of `super.x`: an instance of the base.
         if !is_new && matches!(hir[data.callee].kind, ExprKind::Super) {
-            self.check_super_call(file, e, c, out);
+            self.check_super_call(file, e, c);
             return;
         }
         // Everything about the call is worked out for good before candidates are tried again.
-        let resolved = self.resolve_call(file, e);
-        if let Some((said, notes)) = self.p.said_of_calls_resolved_again.get_ref(&(file, e)) {
-            out.extend_from_slice(said);
-            self.notes.borrow_mut().extend_from_slice(notes);
+        let resolved = self.resolved_signature(file, e);
+        if let Some(said) = self.p.said_of_calls_resolved_again.get_ref(&(file, e)) {
+            self.reported.extend_from_slice(said);
         }
         let called = if is_new {
             self.type_of_expr(file, data.callee)
@@ -130,11 +88,11 @@ impl Checker<'_> {
         if !self.is_known(called) {
             return;
         }
-        let mut said = Vec::new();
-        let called = self.check_not_nullish(file, data.callee, called, &mut said);
-        for d in said {
-            let code = match d.code {
-                _ if is_new => d.code,
+        let from = self.reported.len();
+        let called = self.check_non_null_type(file, data.callee, called);
+        for i in from..self.reported.len() {
+            let code = match self.reported[i].code {
+                other if is_new => other,
                 18047 | 2531 => 2721,
                 18048 | 2532 => 2722,
                 18049 | 2533 => 2723,
@@ -142,13 +100,10 @@ impl Checker<'_> {
                 18050 => 2722,
                 other => other,
             };
-            out.push(Diagnostic {
-                start: d.start,
-                code,
-            });
-            if code != d.code {
+            if code != self.reported[i].code {
                 let end = self.error_end_of(file, data.callee);
-                self.note(d.start, end, code, Vec::new());
+                let d = &mut self.reported[i];
+                (d.code, d.end, d.args) = (code, end, Default::default());
             }
         }
         let apparent = self.apparent_type(called);
@@ -178,15 +133,10 @@ impl Checker<'_> {
             ) {
                 if has_type_args && !self.is_error_type(called) {
                     let node_start = self.start_inside_parentheses(file, e);
-                    out.push(Diagnostic {
-                        start: node_start,
-                        code: 2347,
-                    });
-                    self.note(
-                        node_start,
-                        self.end_inside_parentheses(file, e),
+                    self.error_at(
+                        (file, node_start, self.end_inside_parentheses(file, e)),
                         2347,
-                        Vec::new(),
+                        &[],
                     );
                 }
                 return;
@@ -198,12 +148,8 @@ impl Checker<'_> {
                 }
                 if !construct_sigs.is_empty() {
                     let node_start = self.start_inside_parentheses(file, e);
-                    out.push(Diagnostic {
-                        start: node_start,
-                        code: 2348,
-                    });
                     let end = self.end_inside_parentheses(file, e);
-                    self.explain_to(node_start, end, 2348, |c| vec![c.type_to_string(called)]);
+                    self.error_at((file, node_start, end), 2348, &[sink::Arg::Type(called)]);
                     return;
                 }
                 // `invocationErrorDetails`: an access in parentheses is not an access that is called.
@@ -220,14 +166,13 @@ impl Checker<'_> {
                 } else {
                     2349
                 };
-                out.push(Diagnostic { start, code });
                 let end = match hir[data.callee].kind {
                     ExprKind::Dot { name_pos, .. } if is_bare => {
                         self.end_of_name_at(file, name_pos)
                     }
                     _ => self.error_end_of(file, data.callee),
                 };
-                self.note(start, end, code, Vec::new());
+                self.error_at((file, start, end), code, &[]);
                 self.explain_chain(start, code, |c| c.invocation_error_lines(apparent, false));
                 self.relate(start, code, |c| {
                     let has_one_argument = data.args.len() == 1;
@@ -241,22 +186,17 @@ impl Checker<'_> {
                 });
                 return;
             }
-            self.report_call_resolution(file, e, node, &call_sigs, resolved, None, out);
-            self.check_assertion_target(file, e, c, resolved.sig, out);
+            self.report_call_resolution(file, e);
+            self.check_assertion_target(file, e, c, resolved.sig);
             return;
         }
         if self.is_any(apparent) {
             if has_type_args {
                 let node_start = self.start_inside_parentheses(file, e);
-                out.push(Diagnostic {
-                    start: node_start,
-                    code: 2347,
-                });
-                self.note(
-                    node_start,
-                    self.end_inside_parentheses(file, e),
+                self.error_at(
+                    (file, node_start, self.end_inside_parentheses(file, e)),
                     2347,
-                    Vec::new(),
+                    &[],
                 );
             }
             return;
@@ -264,36 +204,27 @@ impl Checker<'_> {
         if !construct_sigs.is_empty() {
             if let Some((code, class)) = self.inaccessible_constructor(file, e, construct_sigs[0]) {
                 let node_start = self.start_inside_parentheses(file, e);
-                out.push(Diagnostic {
-                    start: node_start,
-                    code,
-                });
                 let end = self.end_inside_parentheses(file, e);
-                self.explain_to(node_start, end, code, |c| {
-                    let declaring = c.declared_type(class);
-                    vec![c.type_to_string(declaring)]
-                });
+                {
+                    let declaring = self.declared_type(class);
+                    self.error_at((file, node_start, end), code, &[sink::Arg::Type(declaring)]);
+                }
                 return;
             }
             if self.has_abstract_construct_signature(reduced) {
                 let node_start = self.start_inside_parentheses(file, e);
-                out.push(Diagnostic {
-                    start: node_start,
-                    code: 2511,
-                });
-                self.note(
-                    node_start,
-                    self.end_inside_parentheses(file, e),
+                self.error_at(
+                    (file, node_start, self.end_inside_parentheses(file, e)),
                     2511,
-                    Vec::new(),
+                    &[],
                 );
                 return;
             }
-            self.report_call_resolution(file, e, node, &construct_sigs, resolved, None, out);
+            self.report_call_resolution(file, e);
             return;
         }
         if !call_sigs.is_empty() {
-            self.report_call_resolution(file, e, node, &call_sigs, resolved, None, out);
+            self.report_call_resolution(file, e);
             let node_start = self.start_inside_parentheses(file, e);
             let only = match call_sigs[..] {
                 [only] => Some(only),
@@ -307,15 +238,10 @@ impl Checker<'_> {
             if self.p.files.options.no_implicit_any {
                 // `checkCallExpression`
                 if has_declaration != Some(false) {
-                    out.push(Diagnostic {
-                        start: node_start,
-                        code: 7009,
-                    });
-                    self.note(
-                        node_start,
-                        self.end_inside_parentheses(file, e),
+                    self.error_at(
+                        (file, node_start, self.end_inside_parentheses(file, e)),
                         7009,
-                        Vec::new(),
+                        &[],
                     );
                 }
             } else if let Some(sig) = sig {
@@ -324,39 +250,27 @@ impl Checker<'_> {
                     && returned != TypeId::VOID
                     && has_declaration == Some(true)
                 {
-                    out.push(Diagnostic {
-                        start: node_start,
-                        code: 2350,
-                    });
-                    self.note(
-                        node_start,
-                        self.end_inside_parentheses(file, e),
+                    self.error_at(
+                        (file, node_start, self.end_inside_parentheses(file, e)),
                         2350,
-                        Vec::new(),
+                        &[],
                     );
                 }
                 if self.sig_this_type(sig) == Some(TypeId::VOID) {
-                    out.push(Diagnostic {
-                        start: node_start,
-                        code: 2679,
-                    });
-                    self.note(
-                        node_start,
-                        self.end_inside_parentheses(file, e),
+                    self.error_at(
+                        (file, node_start, self.end_inside_parentheses(file, e)),
                         2679,
-                        Vec::new(),
+                        &[],
                     );
                 }
             }
             return;
         }
         let start = self.start_of(file, data.callee);
-        out.push(Diagnostic { start, code: 2351 });
-        self.note(
-            start,
-            self.error_end_of(file, data.callee),
+        self.error_at(
+            (file, start, self.error_end_of(file, data.callee)),
             2351,
-            Vec::new(),
+            &[],
         );
         self.explain_chain(start, 2351, |c| c.invocation_error_lines(apparent, true));
         self.relate(start, 2351, |c| {
@@ -373,14 +287,10 @@ impl Checker<'_> {
         apparent: TypeId,
         construct: bool,
         has_one_argument: bool,
-    ) -> Vec<super::explain::Related> {
+    ) -> Vec<Reported> {
         let hir = self.hir(file);
         let (from, to) = self.error_range_of_expr(file, target);
-        let here = |code: u32| super::explain::Related {
-            at: Some((file, from, to)),
-            code,
-            args: Vec::new(),
-        };
+        let here = |code: u32| Reported::bare((file, from, to), code);
         let mut related = Vec::new();
         // `invocationErrorDetails`
         if let Some(awaited) = self.awaited_or_none(apparent) {
@@ -407,7 +317,7 @@ impl Checker<'_> {
 
     /// `exportTypeLinks.Get(t.symbol)`, of a type `import * as ns` made: its `target`, which is what is imported, and 7038 at its
     /// `originatingImport`.
-    fn originating_import(&self, ty: TypeId) -> Option<(Sym, super::explain::Related)> {
+    fn originating_import(&self, ty: TypeId) -> Option<(Sym, Reported)> {
         let TypeData::Anon {
             origin:
                 Origin::Namespace {
@@ -436,11 +346,14 @@ impl Checker<'_> {
             .iter()
             .position(|s| matches!(s.kind, StmtKind::Import(i) if i == import))?;
         let statement = StmtId(index as u32);
-        let import = super::explain::Related {
-            at: Some((file, hir[statement].pos, self.end_of_stmt(file, statement))),
-            code: 7038,
-            args: Vec::new(),
-        };
+        let import = Reported::bare(
+            (
+                file,
+                hir[statement].start,
+                self.end_of_stmt(file, statement),
+            ),
+            7038,
+        );
         Some((module, import))
     }
 
@@ -452,7 +365,7 @@ impl Checker<'_> {
     ) -> Vec<Line> {
         let line = |code: u32, name: String, level: u32| Line {
             code,
-            args: vec![name],
+            args: held(vec![name]),
             level,
         };
         let (none_of_type, not_all, no_constituent, incompatible) = if construct {
@@ -493,14 +406,7 @@ impl Checker<'_> {
     }
 
     /// `checkCallExpression`: 2776 and 2775, of a call that is a statement and asserts something.
-    fn check_assertion_target(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        c: CallId,
-        sig: Option<SigId>,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_assertion_target(&mut self, file: FileId, e: ExprId, c: CallId, sig: Option<SigId>) {
         let hir = self.hir(file);
         let data = hir[c];
         let Some(sig) = sig else { return };
@@ -519,8 +425,11 @@ impl Checker<'_> {
             return;
         };
         let start = self.start_of(file, data.callee);
-        out.push(Diagnostic { start, code });
-        self.note(start, self.end_of_expr(file, data.callee), code, Vec::new());
+        self.error_at(
+            (file, start, self.end_of_expr(file, data.callee)),
+            code,
+            &[],
+        );
         if code == 2775 {
             self.relate(start, code, |checker| {
                 checker
@@ -533,11 +442,7 @@ impl Checker<'_> {
 
     /// `getTypeOfDottedName`, given the diagnostic: the first name of `e` that `getExplicitTypeOfSymbol` cannot tell the type of because
     /// it is a variable or a property whose declaration does not say it. 2782
-    fn name_in_need_of_a_type_annotation(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-    ) -> Option<super::explain::Related> {
+    fn name_in_need_of_a_type_annotation(&mut self, file: FileId, e: ExprId) -> Option<Reported> {
         if self.explicit_type(file, e).is_some() {
             return None;
         }
@@ -566,11 +471,7 @@ impl Checker<'_> {
             }
             _ => return None,
         };
-        Some(super::explain::Related {
-            at: Some(at),
-            code: 2782,
-            args: vec![name],
-        })
+        Some(self.new_diagnostic(at, 2782, &[sink::Arg::Text(&name)]))
     }
 
     /// The same of what a name or an export of a namespace stands for: where it is declared, and `symbolToString`.
@@ -586,7 +487,7 @@ impl Checker<'_> {
     }
 
     /// `resolveCallExpression`, where what is called is `super`.
-    fn check_super_call(&mut self, file: FileId, e: ExprId, c: CallId, out: &mut Vec<Diagnostic>) {
+    fn check_super_call(&mut self, file: FileId, e: ExprId, c: CallId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `checkSuperExpression`: anywhere but right in the body of a constructor, with no function, arrow or not, in between,
         // `super` is in error, and nothing more is said.
@@ -614,7 +515,7 @@ impl Checker<'_> {
         if hir[class].extends.is_none() {
             return;
         }
-        let resolved = self.resolve_call(file, e);
+        self.resolved_signature(file, e);
         // Whether the class has a base type depends on the return type of the first base constructor (`resolveBaseTypesOfClass`),
         // which has to be known.
         let sym = self.class_sym(file, class);
@@ -655,21 +556,15 @@ impl Checker<'_> {
             sigs.push(self.instantiate_sig(sig, mapper));
         }
         if !sigs.is_empty() {
-            self.report_call_resolution(file, e, CallLike::Call(c), &sigs, resolved, None, out);
+            self.report_call_resolution(file, e);
         }
     }
 
     /// `resolveTaggedTemplateExpression`
-    fn check_tagged_template(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        c: CallId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_tagged_template(&mut self, file: FileId, e: ExprId, c: CallId) {
         let hir = self.hir(file);
         let data = hir[c];
-        let resolved = self.resolve_call(file, e);
+        self.resolved_signature(file, e);
         let tag = self.type_of_expr(file, data.callee);
         if !self.is_known(tag) {
             return;
@@ -694,12 +589,10 @@ impl Checker<'_> {
                 && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
             let start = self.start_of(file, data.callee);
             let code = if is_element { 2796 } else { 2349 };
-            out.push(Diagnostic { start, code });
-            self.note(
-                start,
-                self.error_end_of(file, data.callee),
+            self.error_at(
+                (file, start, self.error_end_of(file, data.callee)),
                 code,
-                Vec::new(),
+                &[],
             );
             if !is_element {
                 self.explain_chain(start, code, |c| c.invocation_error_lines(apparent, false));
@@ -709,7 +602,7 @@ impl Checker<'_> {
             }
             return;
         }
-        self.report_call_resolution(file, e, CallLike::Call(c), &call_sigs, resolved, None, out);
+        self.report_call_resolution(file, e);
     }
 
     /// `isUntypedFunctionCall`
@@ -875,6 +768,7 @@ impl Checker<'_> {
             CallLike::Call(c) => hir[c].callee,
             CallLike::Decorator(_) if hir.legacy_decorators => return None,
             CallLike::Decorator(_) => e,
+            CallLike::Jsx { .. } => return None,
         };
         // `SkipOuterExpressions(expression, OEKAll)`
         loop {
@@ -905,292 +799,62 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the types of the arguments were all found out. `params`: what the signature they are held against takes. Empty: the
-    /// call is resolved, and they are what they are kept as.
-    fn are_argument_types_known(
-        &mut self,
-        file: FileId,
-        args: &[Arg],
-        params: &[SigParam],
-    ) -> bool {
-        args.iter().enumerate().all(|(i, &arg)| {
-            let ty = match self.param_type_at(params, i) {
-                Some(param) => self.arg_type_under(file, arg, param),
-                None => self.arg_type(file, arg),
-            };
-            self.is_known(ty)
-        })
+    /// What `resolveCall` said of the call `e` when it was resolved for good.
+    pub(super) fn report_call_resolution(&mut self, file: FileId, e: ExprId) {
+        if let Some(said) = self.p.said_of_calls.get_ref(&(file, e)) {
+            self.reported.extend_from_slice(said);
+        }
     }
 
-    /// Whether it is certain that none of `sigs` takes the arguments of `node`, which `e` stands for and which may still be in
-    /// the middle of being resolved. `resolved.sig`: where there is one signature and that is generic, it as inferred from
-    /// all of the arguments (the `checkCandidate` of `chooseOverload`), never what `getCandidateForOverloadFailure` makes of it.
-    pub(super) fn no_candidate_applies(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        node: CallLike,
-        sigs: &[SigId],
-        resolved: ResolvedCall,
-    ) -> bool {
-        self.failed_candidates(file, e, node, sigs, resolved)
-            .is_some()
-    }
-
-    /// `chooseOverload`, by assignability. `None`: a candidate applies, or it cannot be told.
-    fn failed_candidates(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        node: CallLike,
-        sigs: &[SigId],
-        resolved: ResolvedCall,
-    ) -> Option<Failed> {
-        let candidates = self.candidates_in_order(sigs);
-        let args = self.effective_call_arguments(file, e, node);
-        // A call that is being resolved cannot say what it expects of an argument. The candidate at hand does, in
-        // `is_signature_applicable`. The arguments of any other call are what they are, whatever they are held against.
-        let is_under_way = self.stack.contains(&Query::Call(file, e));
-        if !is_under_way && !self.are_argument_types_known(file, &args, &[]) {
-            return None;
-        }
-        let type_args = match node {
-            CallLike::Call(_) => {
-                let nodes = self.type_arguments_of_call(file, e);
-                self.types_from_nodes(file, nodes)
-            }
-            _ => Vec::new(),
-        };
-        if type_args.iter().any(|&t| !self.is_known(t)) {
-            return None;
-        }
-        let this_arg = self.this_argument_of_call(file, e, node);
-        let s = CallState {
-            file,
-            call: e,
-            node,
-            type_args: &type_args,
-            args: &args,
-            this_arg,
-        };
-        let mut for_argument_error: Vec<SigId> = Vec::new();
-        let mut for_arity_error = None;
-        let mut for_type_argument_error = None;
-        for &candidate in &candidates {
-            let type_params = self.sig_type_params(candidate);
-            let params = self.sig_params(candidate);
-            if !self.has_correct_type_argument_arity(&type_params, type_args.len())
-                || !self.has_correct_arity(s, &params)
-            {
-                continue;
-            }
-            let mut check = candidate;
-            if !type_params.is_empty() {
-                if !type_args.is_empty() {
-                    match self.failing_type_argument(candidate, &type_params, &type_args) {
-                        Ok(None) => {}
-                        Ok(Some(_)) => {
-                            for_type_argument_error = Some(candidate);
-                            continue;
-                        }
-                        Err(()) => return None,
-                    }
-                }
-                check = match resolved.sig {
-                    Some(sig) if candidates.len() == 1 => sig,
-                    _ => {
-                        let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-                        let sig = self.instantiate_for_call(s, candidate, false);
-                        self.keeps_arg_contexts = outer;
-                        sig
-                    }
-                };
-                // With a rest parameter that is a type parameter, how many it takes is only known now.
-                if self.non_array_rest_type(&params).is_some() {
-                    let instantiated = self.sig_params(check);
-                    if !self.has_correct_arity(s, &instantiated) {
-                        for_arity_error = Some(check);
-                        continue;
-                    }
-                }
-            }
-            match self.is_signature_applicable(s, check, None) {
-                Applicable::Yes | Applicable::Unknown => return None,
-                Applicable::No => for_argument_error.push(check),
-            }
-        }
-        Some(Failed {
-            args,
-            type_args,
-            this_arg,
-            for_argument_error,
-            for_arity_error,
-            for_type_argument_error,
-        })
-    }
-
-    /// `getResolvedSignature`: a call that is asked for while it is being resolved is resolved once more, and `resolveCall` reports what
-    /// is wrong with it as things stand then. `check`, `ret`: its entry of `failed_calls` that time, and what it returned. Only the
-    /// first time is looked at. `check_call` says what is kept here.
-    pub(super) fn report_call_resolved_again(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        check: SigId,
-        ret: TypeId,
-    ) {
-        let p = self.p;
-        let hir = self.hir(file);
-        let ExprKind::Call(c) = hir[e].kind else {
-            return;
-        };
-        let data = hir[c];
-        if self.provisional > 0
-            || matches!(hir[data.callee].kind, ExprKind::Super)
-            || p.said_of_calls_resolved_again.get_ref(&(file, e)).is_some()
-        {
-            return;
-        }
-        let called = self.chain_receiver(file, data.callee, data.chain).0;
-        if !self.is_known(called) {
-            return;
-        }
-        let apparent = self.apparent_type(called);
-        let reduced = self.reduced(apparent);
-        let sigs = self.signatures(reduced, false);
-        if sigs.is_empty() {
-            return;
-        }
-        let noted = self.notes.borrow().len();
-        let mut said = Vec::new();
-        let (node, sig) = (CallLike::Call(c), Some(check));
-        let check = ResolvedCall { sig, ret };
-        self.report_call_resolution_errors(file, e, node, &sigs, check, None, &mut said);
-        let notes = self.notes.borrow_mut().split_off(noted);
-        p.said_of_calls_resolved_again
-            .insert_ref((file, e), (said, notes));
-    }
-
-    /// `resolveCall`, for what it reports of a call that `resolve_call` resolved to `resolved`. `head`: `headMessage`.
-    pub(super) fn report_call_resolution(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        node: CallLike,
-        sigs: &[SigId],
-        resolved: ResolvedCall,
-        head: Option<u32>,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        // A resolution that is not kept left nothing behind.
-        let sig = if self.p.calls.get(&(file, e)).is_some() {
-            // `chooseOverload` found a candidate.
-            let Some(check) = self.p.failed_calls.get(&(file, e)) else {
-                return;
-            };
-            Some(check)
-        } else {
-            None
-        };
-        let check = ResolvedCall { sig, ..resolved };
-        self.report_call_resolution_errors(file, e, node, sigs, check, head, out);
-    }
-
-    /// `reportCallResolutionErrors`, and before that `chooseOverload` once more for what it left in `CallState`. `check.sig`: the
-    /// entry of `failed_calls`.
+    /// `reportCallResolutionErrors`
     pub(super) fn report_call_resolution_errors(
         &mut self,
-        file: FileId,
-        e: ExprId,
-        node: CallLike,
+        s: &CallState<'_>,
         sigs: &[SigId],
-        check: ResolvedCall,
         head: Option<u32>,
-        out: &mut Vec<Diagnostic>,
     ) {
+        let (file, node, type_args) = (s.file, s.node, s.type_args);
         let hir = self.hir(file);
-        // `resolveCall`: with several candidates the errors come from the assignable pass. The subtype pass has checked every function
-        // among the arguments (`NodeCheckFlagsContextChecked`), so no attempt of the assignable pass infers from their annotations.
-        let mut previous = Vec::new();
-        if sigs.len() > 1
-            && let CallLike::Call(c) = node
-            && self.type_arguments_of_call(file, e).is_empty()
-        {
-            for arg in hir.ids(hir[c].args) {
-                self.mark_context_checked(file, arg, &mut previous);
-            }
-        }
-        let failed = self.failed_candidates(file, e, node, sigs, check);
-        for (function, entry) in previous {
-            match entry {
-                Some(entry) => self.context_checked_for.insert((file, function), entry),
-                None => self.context_checked_for.remove(&(file, function)),
-            };
-        }
-        let Some(failed) = failed else { return };
-        let Failed {
-            args,
-            type_args,
-            this_arg,
-            for_argument_error,
-            for_arity_error,
-            for_type_argument_error,
-        } = failed;
-        let s = CallState {
-            file,
-            call: e,
-            node,
-            type_args: &type_args,
-            args: &args,
-            this_arg,
-        };
-        // `reportCallResolutionErrors`
-        if let Some(&last) = for_argument_error.last() {
-            let mut said = Vec::new();
-            self.is_signature_applicable(s, last, Some(&mut said));
-            let is_overloaded = for_argument_error.len() > 1;
+        if let Some(&last) = s.candidates_for_argument_error.last() {
+            let from = self.reported.len();
+            self.is_signature_applicable(s, last, Relation::Assignable, CheckMode::empty(), true);
+            let said: Vec<(u32, u32)> = self.reported[from..]
+                .iter()
+                .map(|d| (d.start, d.code))
+                .collect();
+            let is_overloaded = s.candidates_for_argument_error.len() > 1;
             let related = if said.is_empty() {
                 Vec::new()
             } else {
                 self.related_to_failed_candidate(s, last, is_overloaded)
             };
-            for d in said {
-                let mut code = d.code;
+            for (start, mut code) in said {
                 if is_overloaded {
-                    self.explain_under(d.start, code, 2770, Vec::new());
-                    self.explain_under(d.start, 2770, 2769, Vec::new());
+                    self.explain_under(start, code, 2770, &[]);
+                    self.explain_under(start, 2770, 2769, &[]);
                     code = 2769;
                 }
                 if let Some(head) = head {
-                    self.explain_under(d.start, code, head, Vec::new());
+                    self.explain_under(start, code, head, &[]);
                     code = head;
                 }
                 if !related.is_empty() {
-                    self.relate(d.start, code, |_| related.clone());
+                    self.relate(start, code, |_| related.clone());
                 }
-                out.push(Diagnostic {
-                    start: d.start,
-                    code,
-                });
             }
-        } else if let Some(sig) = for_arity_error {
-            self.report_argument_arity(s, &[sig], head, out);
-        } else if let (Some(candidate), CallLike::Call(c)) = (for_type_argument_error, node) {
+        } else if let Some(sig) = s.candidate_for_argument_arity_error {
+            self.report_argument_arity(s, &[sig], head);
+        } else if let (Some(candidate), CallLike::Call(c)) =
+            (s.candidate_for_type_argument_error, node)
+        {
             let type_params = self.sig_type_params(candidate);
             if let Ok(Some((index, given, constraint))) =
-                self.failing_type_argument(candidate, &type_params, &type_args)
+                self.failing_type_argument(candidate, &type_params, type_args)
             {
                 let node = hir.ids(hir[c].type_args).nth(index).unwrap();
                 let end = self.end_of_type_node(file, node);
                 // 2344, or what says more.
-                self.report_not_assignable_with_end(
-                    given,
-                    constraint,
-                    hir[node].pos,
-                    end,
-                    2344,
-                    out,
-                );
+                self.report_not_assignable_with_end(given, constraint, hir[node].pos, end, 2344);
             }
         } else {
             let mut fitting = Vec::new();
@@ -1201,9 +865,9 @@ impl Checker<'_> {
                 }
             }
             if !fitting.is_empty() {
-                self.report_argument_arity(s, &fitting, head, out);
+                self.report_argument_arity(s, &fitting, head);
             } else if let CallLike::Call(c) = node {
-                self.report_type_argument_arity(file, hir[c].type_args, sigs, out);
+                self.report_type_argument_arity(file, hir[c].type_args, sigs);
             }
         }
     }
@@ -1224,24 +888,20 @@ impl Checker<'_> {
     }
 
     /// `The last overload is declared here.`, of the candidate `last`. Nothing if it has no declaration.
-    pub(super) fn last_overload_declared_here(
-        &mut self,
-        last: SigId,
-    ) -> Vec<super::explain::Related> {
+    pub(super) fn last_overload_declared_here(&mut self, last: SigId) -> Vec<Reported> {
         let declared = self.declared_sig(last);
         match self.sig_decl(declared) {
-            Some((file, func, _)) => vec![super::explain::Related {
-                at: Some(self.place_of_signature_declaration(file, func)),
-                code: 2771,
-                args: Vec::new(),
-            }],
+            Some((file, func, _)) => vec![Reported::bare(
+                self.place_of_signature_declaration(file, func),
+                2771,
+            )],
             None => Vec::new(),
         }
     }
 
     /// `addImplementationSuccessElaboration`: the first declaration with a body of what declares the overload `failed`, as
     /// `getSignatureFromDeclaration` has it. `None`: there is none, or nothing else declares what `failed` declares.
-    fn implementation_of_overload(&mut self, failed: SigId) -> Option<SigId> {
+    pub(super) fn implementation_of_overload(&mut self, failed: SigId) -> Option<SigId> {
         let declared = self.declared_sig(failed);
         let SigData::Construct {
             class, file, func, ..
@@ -1289,117 +949,29 @@ impl Checker<'_> {
         }))
     }
 
-    /// `addImplementationSuccessElaboration`: whether `chooseOverload` takes `implementation` as the only candidate. `false`
-    /// where it cannot be told.
-    fn does_implementation_apply(&mut self, s: CallState<'_>, implementation: SigId) -> bool {
-        let type_args = s.type_args;
-        let (type_params, params) = (
-            self.sig_type_params(implementation),
-            self.sig_params(implementation),
-        );
-        if !self.has_correct_type_argument_arity(&type_params, type_args.len())
-            || !self.has_correct_arity(s, &params)
-        {
-            return false;
-        }
-        let mut check = implementation;
-        if !type_params.is_empty() {
-            if !type_args.is_empty()
-                && !matches!(
-                    self.failing_type_argument(implementation, &type_params, type_args),
-                    Ok(None)
-                )
-            {
-                return false;
-            }
-            let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-            check = self.instantiate_for_call(s, implementation, false);
-            self.keeps_arg_contexts = outer;
-            // With a rest parameter that is a type parameter, how many it takes is only known now.
-            if self.non_array_rest_type(&params).is_some() {
-                let instantiated = self.sig_params(check);
-                if !self.has_correct_arity(s, &instantiated) {
-                    return false;
-                }
-            }
-        }
-        self.is_signature_applicable(s, check, None) == Applicable::Yes
-    }
-
     /// What `reportCallResolutionErrors` relates to each thing it says of `last`, the last of `candidatesForArgumentError`.
     /// `is_overloaded`: there are more of those.
     fn related_to_failed_candidate(
         &mut self,
-        s: CallState<'_>,
+        s: &CallState<'_>,
         last: SigId,
         is_overloaded: bool,
-    ) -> Vec<super::explain::Related> {
-        let (file, e) = (s.file, s.call);
-        if !self.explains {
-            return Vec::new();
-        }
+    ) -> Vec<Reported> {
+        let implementation = self.add_implementation_success_elaboration(s, last);
         let mut related = if is_overloaded {
             self.last_overload_declared_here(last)
         } else {
             Vec::new()
         };
-        if !self.stack.contains(&Query::Call(file, e))
-            && let Some(implementation) = self.implementation_of_overload(last)
-            && self.does_implementation_apply(s, implementation)
+        if let Some(implementation) = implementation
             && let Some((of, func, _)) = self.sig_decl(implementation)
         {
-            related.push(super::explain::Related {
-                at: Some(self.place_of_signature_declaration(of, func)),
-                code: 2793,
-                args: Vec::new(),
-            });
+            related.push(Reported::bare(
+                self.place_of_signature_declaration(of, func),
+                2793,
+            ));
         }
         related
-    }
-
-    /// Records in `context_checked_for` that an attempt that has ended checked the function expressions in the argument `e`.
-    /// Descends into the same kinds of expression as `infer_from_annotated_functions`. Pushes each function and its previous entry
-    /// to `previous`.
-    fn mark_context_checked(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        previous: &mut Vec<(ExprId, Option<Option<SigId>>)>,
-    ) {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Fn(_) => previous.push((e, self.context_checked_for.insert((file, e), None))),
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    if hir[p].value.is_some() {
-                        self.mark_context_checked(file, hir[p].value, previous);
-                    }
-                }
-            }
-            ExprKind::Array(items) => {
-                for item in hir.ids(items) {
-                    self.mark_context_checked(file, item, previous);
-                }
-            }
-            ExprKind::Cond { yes, no, .. } => {
-                self.mark_context_checked(file, yes, previous);
-                self.mark_context_checked(file, no, previous);
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.mark_context_checked(file, left, previous);
-                self.mark_context_checked(file, right, previous);
-            }
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Comma,
-                right,
-                ..
-            } => self.mark_context_checked(file, right, previous),
-            _ => {}
-        }
     }
 
     /// `checkTypeArguments`: the first type argument that does not satisfy its constraint, and the two types. `Err`: it cannot be told.
@@ -1430,56 +1002,25 @@ impl Checker<'_> {
         Ok(None)
     }
 
-    /// `isSignatureApplicable`, of a call that may still be in the middle of being resolved.
+    /// `isSignatureApplicable`. Where something could not be found out it is, but for the subtype pass.
     pub(super) fn is_signature_applicable(
         &mut self,
-        s: CallState<'_>,
-        sig: SigId,
-        report: Option<&mut Vec<Diagnostic>>,
-    ) -> Applicable {
-        let (file, e, args) = (s.file, s.call, s.args);
-        // `checkExpressionWithContextualType`: a call that is being resolved cannot say what it expects of an argument, so `sig`
-        // does, but for what is settled already.
-        let settled = self.contextual.len();
-        let expected = self.sig_params(sig);
-        if self.stack.contains(&Query::Call(file, e)) {
-            for (i, &arg) in args.iter().enumerate() {
-                if let Arg::Expr(x) = arg
-                    && self.explicit_context(file, x).is_none()
-                    && let Some(param) = self.context_of_arg_at(&expected, i, Some(args.len()))
-                    && param != TypeId::UNRESOLVED
-                {
-                    let param = self.without_no_infer(param);
-                    self.contextual.push((file, x, param));
-                }
-            }
-        }
-        // Nothing is decided on the strength of an argument that could not be found out.
-        let applicable = if self.are_argument_types_known(file, args, &expected) {
-            self.signature_applicability(s, sig, Relation::Assignable, false, report)
-        } else {
-            Applicable::Unknown
-        };
-        self.contextual.truncate(settled);
-        applicable
-    }
-
-    /// `isSignatureApplicable`, once the arguments know what is expected of them. `skips_context_sensitive`:
-    /// `CheckModeSkipContextSensitive`.
-    pub(super) fn signature_applicability(
-        &mut self,
-        s: CallState<'_>,
+        s: &CallState<'_>,
         sig: SigId,
         relation: Relation,
-        skips_context_sensitive: bool,
-        mut report: Option<&mut Vec<Diagnostic>>,
-    ) -> Applicable {
+        check_mode: CheckMode,
+        report: bool,
+    ) -> bool {
+        let in_doubt = relation != Relation::Subtype;
+        if let CallLike::Jsx { construct } = s.node {
+            return self.jsx_fits(s.file, s.call, sig, construct, relation, check_mode);
+        }
         let (file, e, node, args, this_arg) = (s.file, s.call, s.node, s.args, s.this_arg);
         let hir = self.hir(file);
         let params = self.sig_params(sig);
         // What a decorator is applied to is made up (`createSyntheticExpression`): an error about it is at the expression.
         let decorator = match node {
-            CallLike::Decorator(_) if report.is_some() => Some(self.where_decorator_is(file, e)),
+            CallLike::Decorator(_) if report => Some(self.where_decorator_is(file, e)),
             _ => None,
         };
         if let Some(wanted) = self.sig_this_type(sig)
@@ -1488,10 +1029,10 @@ impl Checker<'_> {
         {
             let given = self.this_argument_type(file, this_arg);
             if !self.is_known(given) || !self.is_known(wanted) {
-                return Applicable::Unknown;
+                return in_doubt;
             }
             if !self.related(given, wanted, relation) {
-                if let Some(out) = report.as_deref_mut() {
+                if report {
                     let (start, end) = match (this_arg, decorator) {
                         (None, Some(written)) => (written.at_sign, written.end),
                         _ => (
@@ -1500,9 +1041,9 @@ impl Checker<'_> {
                         ),
                     };
                     // 2684, or what says more.
-                    self.report_not_assignable_with_end(given, wanted, start, end, 2684, out);
+                    self.report_not_assignable_with_end(given, wanted, start, end, 2684);
                 }
-                return Applicable::No;
+                return false;
             }
         }
         let rest = self.non_array_rest_type(&params);
@@ -1511,38 +1052,25 @@ impl Checker<'_> {
         } else {
             args.len()
         };
-        // The mode is set by a context sensitive argument, and applies to the functions in all of them.
-        let skips_operand_functions = skips_context_sensitive
-            && args
-                .iter()
-                .any(|a| matches!(a, Arg::Expr(x) if self.is_context_sensitive(file, *x)));
         for (i, &arg) in args.iter().enumerate().take(count) {
             let node = arg.node();
             if matches!(hir[node].kind, ExprKind::Missing) {
                 continue;
             }
-            if skips_context_sensitive && let Arg::Expr(x) = arg {
-                if self.is_context_sensitive(file, x) {
-                    if let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
-                        && !self.is_context_sensitive_argument_related(file, x, param, relation)
-                    {
-                        return Applicable::No;
-                    }
-                    continue;
-                }
-                if skips_operand_functions && self.has_context_sensitive_right_operand(file, x) {
-                    continue;
-                }
-            }
             let Some(wanted) = self.param_type_at(&params, i) else {
                 continue;
             };
-            let given = self.arg_type_under(file, arg, wanted);
+            let given = match arg {
+                Arg::Expr(x) if s.checks_arguments_once => {
+                    self.arg_type_kept_under(file, x, wanted)
+                }
+                _ => self.arg_type_under(file, arg, wanted, check_mode),
+            };
             if !self.is_known(given) || !self.is_known(wanted) {
-                return Applicable::Unknown;
+                return in_doubt;
             }
             // `getRegularTypeOfObjectLiteral`: properties there are too many of do not count before everything is looked at.
-            let given = if skips_context_sensitive {
+            let given = if check_mode.contains(CheckMode::SKIP_CONTEXT_SENSITIVE) {
                 self.regular_type_of_object_literal(given)
             } else {
                 given
@@ -1556,54 +1084,41 @@ impl Checker<'_> {
             } else {
                 ExprId::NONE
             };
-            if let Some(out) = report.as_deref_mut() {
-                let jsdoc_type_assertion = self.start_of_jsdoc_type_assertion(file, check_node);
+            if report {
+                let jsdoc_type_assertion = self.range_of_jsdoc_type_assertion(file, check_node);
                 let (at, end) = match (decorator, jsdoc_type_assertion) {
                     (Some(written), _) => (written.start, written.end),
-                    (None, Some(open)) => (open, self.end_of_bracket_at(file, open)),
+                    (None, Some(range)) => range,
                     (None, None) => (
                         self.start_inside_parentheses(file, check_node),
                         self.error_end_inside_parentheses(file, check_node),
                     ),
                 };
-                let said = out.len();
-                self.check_assignable_with_end(file, given, wanted, at, end, inner, 2345, out);
+                let said = self.reported.len();
+                self.check_assignable_with_end(file, given, wanted, at, end, inner, 2345);
                 let (from, to) = self.error_range_of_expr(file, node);
-                let first = out.get(said).copied();
+                let first = self.reported.get(said).map(|d| (d.start, d.code));
                 self.maybe_add_missing_await_info((file, from, to), given, wanted, first);
                 // `checkTypeRelatedToEx`: what `import * as ns` imports would have done.
-                if self.explains
-                    && let Some((module, import)) = self.originating_import(given)
-                {
+                if let Some((module, import)) = self.originating_import(given) {
                     let imported = self.type_of_symbol(module);
                     if self.is_assignable(imported, wanted) {
                         self.relate(at, 2345, |_| vec![import]);
                     }
                 }
             }
-            return Applicable::No;
+            return false;
         }
         if let Some(rest) = rest {
             if !self.is_known(rest) {
-                return Applicable::Unknown;
+                return in_doubt;
             }
-            // What is left out is not looked at.
-            let taken_for: SmallVec<[Option<TypeId>; 8]> = args
-                .iter()
-                .map(|a| {
-                    (skips_operand_functions
-                        && matches!(a, Arg::Expr(x) if self.is_context_sensitive(file, *x)
-                            || self.has_context_sensitive_right_operand(file, *x)))
-                    .then_some(TypeId::UNRESOLVED)
-                })
-                .collect();
-            let given =
-                self.spread_argument_type(file, args, count, rest, &taken_for, MapperId::IDENTITY);
+            let given = self.spread_argument_type(file, args, count, rest, None, check_mode);
             if !self.is_known(given) {
-                return Applicable::Unknown;
+                return in_doubt;
             }
             if !self.related(given, rest, relation) {
-                if let Some(out) = report {
+                if report {
                     let (at, end) = match decorator {
                         Some(written) if count == args.len() => (written.at_sign, written.end),
                         Some(written) => (written.start, written.end),
@@ -1614,8 +1129,8 @@ impl Checker<'_> {
                             ),
                             [only] => {
                                 let check_node = self.effective_check_node(file, only.node());
-                                match self.start_of_jsdoc_type_assertion(file, check_node) {
-                                    Some(open) => (open, self.end_of_bracket_at(file, open)),
+                                match self.range_of_jsdoc_type_assertion(file, check_node) {
+                                    Some(range) => range,
                                     None => (
                                         self.start_inside_parentheses(file, check_node),
                                         self.error_end_inside_parentheses(file, check_node),
@@ -1628,24 +1143,15 @@ impl Checker<'_> {
                             ),
                         },
                     };
-                    let said = out.len();
-                    self.check_assignable_with_end(
-                        file,
-                        given,
-                        rest,
-                        at,
-                        end,
-                        ExprId::NONE,
-                        2345,
-                        out,
-                    );
-                    let first = out.get(said).copied();
+                    let said = self.reported.len();
+                    self.check_assignable_with_end(file, given, rest, at, end, ExprId::NONE, 2345);
+                    let first = self.reported.get(said).map(|d| (d.start, d.code));
                     self.maybe_add_missing_await_info((file, at, end), given, rest, first);
                 }
-                return Applicable::No;
+                return false;
             }
         }
-        Applicable::Yes
+        true
     }
 
     /// `maybeAddMissingAwaitInfo`. `place`: the argument. `said`: the first thing that was said of it.
@@ -1654,12 +1160,9 @@ impl Checker<'_> {
         place: (FileId, u32, u32),
         source: TypeId,
         target: TypeId,
-        said: Option<Diagnostic>,
+        said: Option<(u32, u32)>,
     ) {
         let Some(d) = said else { return };
-        if !self.explains {
-            return;
-        }
         // `getAwaitedTypeOfPromise`
         let awaited_of_promise = |c: &mut Self, ty: TypeId| {
             let promised = c.thenable_value(ty)?;
@@ -1672,13 +1175,7 @@ impl Checker<'_> {
             return;
         };
         if self.is_known(awaited) && self.is_assignable(awaited, target) {
-            self.relate(d.start, d.code, |_| {
-                vec![super::explain::Related {
-                    at: Some(place),
-                    code: 2773,
-                    args: Vec::new(),
-                }]
-            });
+            self.relate(d.0, d.1, |_| vec![Reported::bare(place, 2773)]);
         }
     }
 
@@ -1748,7 +1245,7 @@ impl Checker<'_> {
         &mut self,
         sigs: &[SigId],
         given: usize,
-    ) -> Vec<super::explain::Related> {
+    ) -> Vec<Reported> {
         let mut closest: Option<(usize, SigId)> = None;
         for &sig in sigs {
             let params = self.sig_params(sig);
@@ -1792,30 +1289,18 @@ impl Checker<'_> {
         } else {
             self.end_of_param(file, param)
         };
-        vec![super::explain::Related {
-            at: Some((file, start, end)),
-            code,
-            args,
-        }]
+        vec![Reported::new((file, start, end), code, held(args))]
     }
 
     /// `getArgumentArityError`: 2554 2555 2556 2575 2794 2810, and 1278 1279 of a decorator. `head`: `headMessage`.
-    fn report_argument_arity(
-        &mut self,
-        s: CallState<'_>,
-        sigs: &[SigId],
-        head: Option<u32>,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn report_argument_arity(&mut self, s: &CallState<'_>, sigs: &[SigId], head: Option<u32>) {
         let (file, e, node, args) = (s.file, s.call, s.node, s.args);
         if let Some(spread) = args.iter().find(|a| matches!(a, Arg::Spread(..))) {
             let start = self.start_of(file, spread.node());
-            out.push(Diagnostic { start, code: 2556 });
-            self.note(
-                start,
-                self.end_of_expr(file, spread.node()),
+            self.error_at(
+                (file, start, self.end_of_expr(file, spread.node())),
                 2556,
-                Vec::new(),
+                &[],
             );
             return;
         }
@@ -1860,12 +1345,12 @@ impl Checker<'_> {
             let end = self.end_of_expr(file, args[args.len() - 1].node());
             ((start, end), code, vec![expected, given])
         };
-        self.note(start, end, code, counted);
+        self.note_printed(start, end, code, held(counted));
         let top = head.unwrap_or(code);
         if let Some(head) = head {
-            self.explain_under(start, code, head, Vec::new());
+            self.explain_under(start, code, head, &[]);
         }
-        out.push(Diagnostic { start, code: top });
+        self.error_at((file, start, 0), top, &[]);
         if args.len() < least && code != 2810 {
             self.relate(start, top, |c| {
                 c.parameter_without_argument(sigs, args.len())
@@ -1932,7 +1417,6 @@ impl Checker<'_> {
         file: FileId,
         type_args: IdList<TypeNodeId>,
         sigs: &[SigId],
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         let Some(first) = hir.ids(type_args).next() else {
@@ -1979,12 +1463,12 @@ impl Checker<'_> {
             });
             counts.push(given.to_string());
         }
-        out.push(Diagnostic {
-            start: hir[first].pos,
-            code,
-        });
         let end = self.end_of_type_argument_list(file, type_args);
-        self.note(hir[first].pos, end, code, counts);
+        self.add_diagnostic(Reported::new(
+            (file, hir[first].pos, end),
+            code,
+            held(counts),
+        ));
     }
 }
 

@@ -5,113 +5,22 @@
 //! `getSymbolFlags`, `getExternalModuleMember`, `checkTypeForDuplicateIndexSignatures` and
 //! `checkVariableLikeDeclaration` of TypeScript 7.0.2's checker.go, and `Resolve` of its nameresolver.go.
 
-use super::errors::Diagnostic;
+use super::sink::held;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, SymbolId, flags_of_member};
+use crate::bind::{Decl, MemberOwner, SymbolId, flags_of_member};
 use smallvec::SmallVec;
 
 impl Checker<'_> {
-    pub(super) fn check_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        self.check_parameters(file, out);
-        self.check_parameter_references(file, out);
-        self.check_merged_declarations(file, out);
-        self.check_subsequent_property_declarations(file, out);
-        self.check_index_signatures(file, out);
-    }
-
-    /// `checkParameter`
-    fn check_parameters(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for f in 0..hir.fns.len() {
-            let func = &hir.fns[f];
-            if matches!(bound.fns[f].owner, FnOwner::None) {
-                continue;
-            }
-            // `NodeIsPresent(fn.Body())`: written, whether or not it is kept.
-            let has_body = has_body(&func);
-            for p in func.params.iter() {
-                let param = &hir[p];
-                if param.flags.contains(Flags::PARAMETER_PROPERTY)
-                    && !(func.kind == FnKind::Constructor && has_body)
-                {
-                    out.push(Diagnostic {
-                        start: param.pos,
-                        code: 2369,
-                    });
-                    let end = self.end_of_param(file, p);
-                    self.explain_to(param.pos, end, 2369, |_| vec![]);
-                }
-                // A leading `this` parameter is `this_ty`, so one listed in `params` is never the first.
-                if matches!(hir[param.pat].kind, PatKind::Ident(known::this)) {
-                    out.push(Diagnostic {
-                        start: param.pos,
-                        code: 2680,
-                    });
-                    let end = self.end_of_param(file, p);
-                    self.explain_to(param.pos, end, 2680, |_| vec!["this".to_owned()]);
-                }
-                if !has_body {
-                    self.check_element_initializers(file, param.pat, out);
-                    if param.default.is_some() {
-                        out.push(Diagnostic {
-                            start: param.pos,
-                            code: 2371,
-                        });
-                        let end = self.end_of_param(file, p);
-                        self.explain_to(param.pos, end, 2371, |_| vec![]);
-                    }
-                }
-                let is_pattern =
-                    matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_));
-                // `fn.Body() != nil`, which holds for a block whose `{` is missing.
-                let is_body_non_nil = has_body || func.flags.contains(Flags::MISSING_BODY);
-                if param.default.is_none()
-                    && param.flags.contains(Flags::OPTIONAL)
-                    && is_pattern
-                    && is_body_non_nil
-                {
-                    out.push(Diagnostic {
-                        start: param.pos,
-                        code: 2463,
-                    });
-                    let end = self.end_of_param(file, p);
-                    self.explain_to(param.pos, end, 2463, |_| vec![]);
-                }
-                if param.flags.contains(Flags::REST) && !is_pattern {
-                    let mut ty = self.type_of_param(file, p);
-                    // `assignParameterType`: by the time it is checked, a parameter of a context sensitive function expression has
-                    // had its `?` added.
-                    if param.flags.contains(Flags::OPTIONAL)
-                        && param.ty.is_none()
-                        && param.default.is_none()
-                        && func.type_params.is_empty()
-                        && matches!(func.kind, FnKind::Expr | FnKind::Arrow | FnKind::Method)
-                        && matches!(bound.fns[f].owner, FnOwner::Expr(_))
-                        && self.is_known(ty)
-                    {
-                        ty = self.optional(ty);
-                    }
-                    let ty = self.reduced(ty);
-                    let list = self.readonly_array_of(TypeId::ANY);
-                    if self.is_known(ty)
-                        && !matches!(self.data(ty), TypeData::Cond { .. })
-                        && !self.is_assignable(ty, list)
-                    {
-                        out.push(Diagnostic {
-                            start: param.pos,
-                            code: 2370,
-                        });
-                        let end = self.end_of_param(file, p);
-                        self.explain_to(param.pos, end, 2370, |_| vec![]);
-                    }
-                }
-            }
-        }
+    pub(super) fn check_declarations(&mut self, file: FileId) {
+        self.check_parameter_references(file);
+        self.check_merged_declarations(file);
+        self.check_subsequent_property_declarations(file);
+        self.check_index_signatures(file);
     }
 
     /// `checkVariableLikeDeclaration`, of the elements of the pattern `pat` of a parameter of a function without a body: 2371, at what
     /// the element binds.
-    fn check_element_initializers(&self, file: FileId, pat: PatId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_element_initializers(&mut self, file: FileId, pat: PatId) {
         let hir = self.hir(file);
         let elements: SmallVec<[(PatId, ExprId); 8]> = match hir[pat].kind {
             PatKind::Object(props) => props
@@ -129,23 +38,21 @@ impl Checker<'_> {
             _ => return,
         };
         for (binding, initializer) in elements {
-            self.check_element_initializers(file, binding, out);
+            self.check_element_initializers(file, binding);
             if initializer.is_some() {
-                let start = hir[binding].pos;
-                out.push(Diagnostic { start, code: 2371 });
-                self.note(start, self.end_of_pat(file, binding), 2371, vec![]);
+                self.error(file, binding, 2371, &[]);
             }
         }
     }
 
     /// The end of `onSuccessfullyResolvedSymbol`: the default of a parameter, and the names in its pattern, are worked out before the
     /// parameter, and what the function declares after it, are there.
-    fn check_parameter_references(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_parameter_references(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Only what is written in one of these is in the default or in the pattern of a parameter: told by its position, no walk.
         let has_more_than_a_name =
             |p: &&Param| p.default.is_some() || !matches!(hir[p.pat].kind, PatKind::Ident(_));
-        let parameters = super::errors_order::Places::new(
+        let parameters = Places::new(
             hir.params
                 .iter()
                 .filter(has_more_than_a_name)
@@ -188,19 +95,19 @@ impl Checker<'_> {
                 continue;
             }
             if declared == within {
-                out.push(Diagnostic {
-                    start: hir.exprs[i].pos,
-                    code: 2372,
-                });
+                self.error_at((file, hir.exprs[i].pos, 0), 2372, &[Arg::Atom(name)]);
             } else if declared_pos > hir[within].pos {
-                out.push(Diagnostic {
-                    start: hir.exprs[i].pos,
-                    code: 2373,
-                });
-                self.explain(hir.exprs[i].pos, 2373, |c| {
-                    let end = c.end_of_pat(file, within);
-                    vec![c.source_text(file, hir[within].pos, end), c.atom_text(name)]
-                });
+                {
+                    let end = self.end_of_pat(file, within);
+                    self.error_at(
+                        (file, hir.exprs[i].pos, 0),
+                        2373,
+                        &[
+                            Arg::Text(&self.source_text(file, hir[within].pos, end)),
+                            Arg::Atom(name),
+                        ],
+                    );
+                }
             }
         }
     }
@@ -260,7 +167,7 @@ impl Checker<'_> {
     }
 
     /// What several declarations make together: 2428 2374.
-    fn check_merged_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_merged_declarations(&mut self, file: FileId) {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
             let symbol = &bound.symbols[i];
@@ -284,8 +191,8 @@ impl Checker<'_> {
                 let is_one =
                     |d: &&(FileId, Decl)| matches!(d.1, Decl::Class(_) | Decl::Interface(_));
                 if decls.iter().filter(is_one).count() > 1 {
-                    self.check_type_parameter_lists_identical(file, sym, &decls, out);
-                    self.check_merged_index_signatures(file, &decls, out);
+                    self.check_type_parameter_lists_identical(file, sym, &decls);
+                    self.check_merged_index_signatures(file, &decls);
                 }
             }
         }
@@ -297,7 +204,6 @@ impl Checker<'_> {
         file: FileId,
         sym: Sym,
         decls: &[(FileId, Decl)],
-        out: &mut Vec<Diagnostic>,
     ) {
         let lists: Vec<(FileId, Span<TypeParamId>, u32)> = decls
             .iter()
@@ -349,16 +255,15 @@ impl Checker<'_> {
             }
         }
         if !identical {
-            out.extend(lists.iter().filter(|l| l.0 == file).map(|l| Diagnostic {
-                start: l.2,
-                code: 2428,
-            }));
+            for l in lists.iter().filter(|l| l.0 == file) {
+                self.error_at((file, l.2, 0), 2428, &[Arg::Sym(sym)]);
+            }
         }
     }
 
     /// `checkVariableLikeDeclaration`, of a property that is not the first declaration of its symbol: 2717, and 2403 of a parameter
     /// property. In every class, interface and type literal of the file.
-    fn check_subsequent_property_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_subsequent_property_declarations(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let properties = (0..hir.members.len() as u32)
             .map(MemberId)
@@ -374,7 +279,7 @@ impl Checker<'_> {
         for declaration in properties.chain(parameter_properties) {
             let declarations = self.declarations_of_member(file, declaration);
             if declarations.len() > 1 {
-                self.compare_with_value_declaration(file, declaration, &declarations, out);
+                self.compare_with_value_declaration(file, declaration, &declarations);
             }
         }
     }
@@ -404,7 +309,6 @@ impl Checker<'_> {
         file: FileId,
         declaration: Decl,
         declarations: &[(FileId, Decl)],
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         let is_value =
@@ -459,14 +363,15 @@ impl Checker<'_> {
             Decl::Member(m) => (hir[m].name_pos, self.end_of_member_name(file, m), 2717),
             _ => return,
         };
-        out.push(Diagnostic { start, code });
-        self.explain_to(start, end, code, |c| {
-            vec![
-                c.source_text(file, start, end),
-                c.type_to_string(of_symbol),
-                c.type_to_string(again),
-            ]
-        });
+        self.error_at(
+            (file, start, end),
+            code,
+            &[
+                Arg::Text(&self.source_text(file, start, end)),
+                Arg::Type(of_symbol),
+                Arg::Type(again),
+            ],
+        );
         self.relate(start, code, |c| {
             // `GetErrorRangeForNode`: all of a parameter, the name of a member.
             let at = match first {
@@ -483,16 +388,16 @@ impl Checker<'_> {
                 }
                 (of, _) => (of, 0, 0),
             };
-            vec![super::explain::Related {
-                at: Some(at),
-                code: 6203,
-                args: vec![c.source_text(file, start, end)],
-            }]
+            vec![Reported::new(
+                at,
+                6203,
+                held(vec![c.source_text(file, start, end)]),
+            )]
         });
     }
 
     /// `checkTypeForDuplicateIndexSignatures`: 2374, within each class, interface and type literal of the file.
-    fn check_index_signatures(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_index_signatures(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir
             .members
@@ -522,17 +427,12 @@ impl Checker<'_> {
                 continue;
             }
             self.collect_index_signatures(file, members, is_class, &mut seen);
-            self.report_duplicate_index_signatures(file, &mut seen, out);
+            self.report_duplicate_index_signatures(file, &mut seen);
         }
     }
 
     /// The same over `decls`, the declarations a class or an interface is put together from: they share one `__index`.
-    fn check_merged_index_signatures(
-        &mut self,
-        file: FileId,
-        decls: &[(FileId, Decl)],
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_merged_index_signatures(&mut self, file: FileId, decls: &[(FileId, Decl)]) {
         let mut seen = Vec::new();
         for &(of, decl) in decls {
             let (members, is_class) = match decl {
@@ -542,7 +442,7 @@ impl Checker<'_> {
             };
             self.collect_index_signatures(of, members, is_class, &mut seen);
         }
-        self.report_duplicate_index_signatures(file, &mut seen, out);
+        self.report_duplicate_index_signatures(file, &mut seen);
     }
 
     /// `getIndexSymbol`: adds the index signatures among `members` to `seen`, which has where they are by the type of the key. A key
@@ -589,16 +489,14 @@ impl Checker<'_> {
         &mut self,
         file: FileId,
         seen: &mut Vec<(TypeId, Vec<(FileId, MemberId)>)>,
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         for (key, places) in seen.drain(..) {
             if places.len() > 1 {
                 for (_, m) in places.into_iter().filter(|place| place.0 == file) {
                     let start = hir[m].start;
-                    out.push(Diagnostic { start, code: 2374 });
                     let end = hir[m].loc.end;
-                    self.explain_another(start, end, 2374, |c| vec![c.type_to_string(key)]);
+                    self.error_at((file, start, end), 2374, &[Arg::Type(key)]);
                 }
             }
         }

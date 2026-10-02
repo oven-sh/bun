@@ -385,16 +385,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         // `parseComputedPropertyName` takes any expression; `checkGrammarComputedPropertyName`
                         // objects to the comma. In a class other checks of the member come first.
-                        if !opts.is_class {
-                            p.lexer.ts_error(
-                                bun_ast::Range {
-                                    loc: p.real_loc(expr.loc),
-                                    len: 1,
-                                },
-                                1171,
-                            );
-                        }
+                        let start = p.real_loc(expr.loc);
                         p.parse_suffix(&mut expr, Level::Lowest, None, js_ast::expr::EFlags::None)?;
+                        if !opts.is_class {
+                            p.lexer.ts_grammar_error(p.lexer.range_from(start), 1171);
+                        }
                     }
 
                     if Self::IS_TYPESCRIPT_ENABLED {
@@ -758,6 +753,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && kind == PropertyKind::Normal
                         && p.lexer.tolerant
                     {
+                        p.note_loc(&mut key.loc, crate::sema::Mark::PostfixToken, p.lexer.loc());
                         p.lexer.next()?;
                         has_postfix_token = true;
                     }
@@ -863,6 +859,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && p.lexer.tolerant
                 {
                     // `parseObjectLiteralElement`, after a name that is a literal, computed or missing.
+                    p.note_loc(&mut key.loc, crate::sema::Mark::PostfixToken, p.lexer.loc());
                     p.lexer.next()?;
                 }
 

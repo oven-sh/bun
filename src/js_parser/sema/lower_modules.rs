@@ -87,6 +87,7 @@ impl Lower<'_, '_> {
                 is_type_only,
                 property_name,
                 name,
+                end,
             } = self.b.ts[specifier];
             let imported = property_name.unwrap_or(name);
             named.push(ImportSpec {
@@ -101,6 +102,7 @@ impl Lower<'_, '_> {
                 pos: pos(name.loc),
                 type_only: is_type_only,
                 imported_pos: pos(imported.loc),
+                end: pos(end),
                 import: declaration,
             });
         }
@@ -237,6 +239,7 @@ impl Lower<'_, '_> {
                 is_type_only,
                 property_name,
                 name,
+                end,
             } = self.b.ts[specifier];
             let local = property_name.unwrap_or(name);
             items.push(ExportSpec {
@@ -246,6 +249,7 @@ impl Lower<'_, '_> {
                 pos: pos(name.loc),
                 type_only: is_type_only,
                 local_pos: pos(local.loc),
+                end: pos(end),
                 export: declaration,
             });
         }

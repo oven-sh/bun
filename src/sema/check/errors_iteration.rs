@@ -5,14 +5,14 @@
 //! calls, `checkVariableLikeDeclaration` as far as patterns go, `checkYieldExpression`, and `checkSignatureDeclaration` for what a
 //! generator says it returns, of TypeScript 7.0.2's checker.go.
 
-use super::errors::Diagnostic;
+use super::sink::held;
 use super::symbols::IterationUse;
 use super::*;
 use crate::bind::{FnOwner, Parent, PatParent};
 use smallvec::SmallVec;
 
 impl Checker<'_> {
-    pub(super) fn check_iteration(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_iteration(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let strict = self.p.files.options.strict_null_checks;
         // Without `Iterable` other things are said of what is gone through, in other words.
@@ -35,7 +35,7 @@ impl Checker<'_> {
                     let mut iterated = None;
                     if self.is_known(given) {
                         // `checkRightHandSideOfForOf`: `checkNonNullExpression` comes first.
-                        let given = self.check_not_nullish(file, expr, given, out);
+                        let given = self.check_non_null_type(file, expr, given);
                         // Where `null` and `undefined` are not told apart nothing has been said of them, or taken out.
                         if !self.is_nothing_but_nullish(given) {
                             let usage = if is_await {
@@ -57,7 +57,6 @@ impl Checker<'_> {
                             file,
                             target,
                             iterated.unwrap_or(TypeId::UNRESOLVED),
-                            out,
                         );
                     } else if let Some(iterated) = iterated
                         // What a literal in parentheses comes to is not looked into.
@@ -95,10 +94,7 @@ impl Checker<'_> {
                             && self.is_known(keys)
                             && !self.is_assignable(keys, wanted)
                         {
-                            let start = self.error_start_of(file, target);
-                            out.push(Diagnostic { start, code: 2405 });
-                            let end = self.error_end_of(file, target);
-                            self.explain_to(start, end, 2405, |_| vec![]);
+                            self.error(file, self.hir(file).child(target), 2405, &[]);
                         }
                     }
                     // `isTypeAssignableToKind(rightType, NonPrimitive | InstantiableNonPrimitive)`. `keyof T` is an instantiable
@@ -109,10 +105,7 @@ impl Checker<'_> {
                             && !matches!(self.data(given), TypeData::Keyof(_))
                         || self.is_assignable(given, TypeId::OBJECT);
                     if given.is_never() || !is_object {
-                        let start = self.error_start_of(file, expr);
-                        out.push(Diagnostic { start, code: 2407 });
-                        let end = self.error_end_of(file, expr);
-                        self.explain_to(start, end, 2407, |c| vec![c.type_to_string(given)]);
+                        self.error(file, self.hir(file).child(expr), 2407, &[Arg::Type(given)]);
                     }
                 }
                 _ => {}
@@ -155,7 +148,7 @@ impl Checker<'_> {
                 ExprKind::Spread(inner) => {
                     let given = self.type_of_expr(file, inner);
                     if !self.is_nothing_but_nullish(given)
-                        && !self.is_spread_taken_whole(file, e, given, &out[..])
+                        && !self.is_spread_taken_whole(file, e, given)
                     {
                         let error_node = self.place_of_written_expr(file, inner);
                         self.check_iterated(
@@ -168,7 +161,7 @@ impl Checker<'_> {
                 }
                 ExprKind::Assign { target, value, .. } => {
                     let given = self.type_of_expr(file, value);
-                    self.check_destructuring_assignment(file, target, given, out);
+                    self.check_destructuring_assignment(file, target, given);
                 }
                 ExprKind::Yield { value, star } => self.check_yield(file, e, value, star),
                 _ => {}
@@ -229,7 +222,7 @@ impl Checker<'_> {
                 continue;
             }
             if Self::pattern_binds_nothing(self.hir(file), pat) {
-                self.check_pattern_without_names(file, pat, out);
+                self.check_pattern_without_names(file, pat);
                 continue;
             }
             let PatKind::Array(elems) = hir.pats[p].kind else {
@@ -323,7 +316,6 @@ impl Checker<'_> {
                                 allows_missing,
                                 hir[name].pos,
                                 |c| c.end_of_pat(file, name),
-                                out,
                             );
                         }
                     }
@@ -340,12 +332,12 @@ impl Checker<'_> {
                         self.past_the_end_of_tuples(given, self.number_name(index as f64))
                 {
                     let start = hir[elem.pat].pos;
-                    out.push(Diagnostic { start, code });
                     let end = self.end_of_pat(file, elem.pat);
                     let name = self.number_name(index as f64);
-                    self.explain_to(start, end, code, |c| {
-                        past_the_end_arguments(c, code, given, name)
-                    });
+                    {
+                        let args = past_the_end_arguments(self, code, given, name);
+                        self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
+                    }
                 }
             }
         }
@@ -399,20 +391,14 @@ impl Checker<'_> {
     /// Whether `isArrayLikeType` keeps `spread`, which spreads a `given`, from `checkIteratedTypeOrElementType`: what is like an array
     /// is taken as it is. `never` is like one, and cannot be gone through.
     /// `said`: the errors of the file so far.
-    fn is_spread_taken_whole(
-        &mut self,
-        file: FileId,
-        spread: ExprId,
-        given: TypeId,
-        said: &[Diagnostic],
-    ) -> bool {
+    fn is_spread_taken_whole(&mut self, file: FileId, spread: ExprId, given: TypeId) -> bool {
         let Parent::Expr(parent) = self.bound(file).expr_parent[spread.idx()] else {
             return false;
         };
         // `checkArrayLiteral`, `getSpreadArgumentType`
         let asks = matches!(self.hir(file)[parent].kind, ExprKind::Array(_))
             || !self.is_array_or_tuple(given)
-                && self.is_spread_left_to_rest_parameter(file, parent, spread, said);
+                && self.is_spread_left_to_rest_parameter(file, parent, spread);
         asks && self.is_known(given) && self.is_array_like(given)
     }
 
@@ -423,13 +409,12 @@ impl Checker<'_> {
         file: FileId,
         call: ExprId,
         spread: ExprId,
-        said: &[Diagnostic],
     ) -> bool {
         let hir = self.hir(file);
         let (ExprKind::Call(id) | ExprKind::New(id)) = hir[call].kind else {
             return false;
         };
-        let Some(sig) = self.resolve_call(file, call).sig else {
+        let Some(sig) = self.resolved_signature(file, call).sig else {
             return false;
         };
         let params = self.sig_params(sig);
@@ -448,9 +433,12 @@ impl Checker<'_> {
             return false;
         }
         // `getCandidateForOverloadFailure`, `resolveUntypedCall`: in a call that does not go through every argument is looked at by
-        // itself after all. What is wrong with the call has been said.
+        // itself after all. What is wrong with the call has been out.
         let (start, end) = (self.start_of(file, call), self.end_of_expr(file, call));
-        !said.iter().any(|d| (start..end).contains(&d.start))
+        !self
+            .reported
+            .iter()
+            .any(|d| (start..end).contains(&d.start))
     }
 
     /// `checkIteratedTypeOrElementType`. `None`: it cannot be gone through, or it cannot be told.
@@ -474,13 +462,7 @@ impl Checker<'_> {
     }
 
     /// `checkDestructuringAssignment`: `source` is taken apart into `target`, or assigned to it.
-    fn check_destructuring_assignment(
-        &mut self,
-        file: FileId,
-        mut target: ExprId,
-        source: TypeId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_destructuring_assignment(&mut self, file: FileId, mut target: ExprId, source: TypeId) {
         let hir = self.hir(file);
         let strict = self.p.files.options.strict_null_checks;
         let mut source = source;
@@ -494,7 +476,7 @@ impl Checker<'_> {
         {
             let default = self.type_of_expr(file, value);
             if self.is_assignment_pattern(file, inner) {
-                self.check_destructuring_assignment(file, inner, default, out);
+                self.check_destructuring_assignment(file, inner, default);
             } else {
                 self.check_reference_assignment(file, inner, default, value);
             }
@@ -510,12 +492,7 @@ impl Checker<'_> {
             source = TypeId::UNRESOLVED;
         }
         if !self.is_assignment_pattern(file, target) {
-            let said = out.len();
             self.check_reference_assignment(file, target, source, ExprId::NONE);
-            // What is said of a default is said at the same name, and both stand.
-            if let Some(&said) = out.get(said) {
-                self.explain_apart(said.start, said.code);
-            }
             return;
         }
         match hir[target].kind {
@@ -523,7 +500,7 @@ impl Checker<'_> {
                 // `checkObjectLiteralAssignment`: one that takes nothing out still needs something to be there.
                 if props.is_empty() {
                     if strict {
-                        self.check_not_nullish(file, target, source, out);
+                        self.check_non_null_type(file, target, source);
                     }
                     return;
                 }
@@ -549,7 +526,7 @@ impl Checker<'_> {
                             // `getRestType`
                             let omitted = self.union(&keys);
                             let rest = self.rest_of_object(source, &named, omitted, None);
-                            self.check_destructuring_assignment(file, prop.value, rest, out);
+                            self.check_destructuring_assignment(file, prop.value, rest);
                         }
                         continue;
                     }
@@ -599,7 +576,7 @@ impl Checker<'_> {
                             _ if past_the_end.is_some() => {
                                 if !has_default && let Some(code) = past_the_end {
                                     let start = self.start_of_index_node(file, prop.key, prop.pos);
-                                    out.push(Diagnostic { start, code });
+                                    self.error_at((file, start, 0), code, &[]);
                                     if let Some(name) = name {
                                         let end = self.end_of_index_node(file, prop.key);
                                         self.explain_to(start, end, code, |c| {
@@ -619,14 +596,17 @@ impl Checker<'_> {
                                     object,
                                     name,
                                 ) {
-                                    out.push(Diagnostic {
-                                        start: prop.pos,
-                                        code,
-                                    });
                                     let end = self.end_of_prop_name(file, p);
-                                    self.explain_to(prop.pos, end, code, |c| {
-                                        accessibility_arguments(c, file, target, code, object, name)
-                                    });
+                                    {
+                                        let args = accessibility_arguments(
+                                            self, file, target, code, object, name,
+                                        );
+                                        self.add_diagnostic(Reported::new(
+                                            (file, prop.pos, end),
+                                            code,
+                                            held(args),
+                                        ));
+                                    }
                                 }
                                 ty
                             }
@@ -643,7 +623,6 @@ impl Checker<'_> {
                                     has_default && is_literal,
                                     at,
                                     |c| c.end_of_index_node(file, prop.key),
-                                    out,
                                 )
                             }
                         };
@@ -654,7 +633,7 @@ impl Checker<'_> {
                             ty
                         }
                     };
-                    self.check_destructuring_assignment(file, prop.value, ty, out);
+                    self.check_destructuring_assignment(file, prop.value, ty);
                 }
             }
             ExprKind::Array(items) => {
@@ -683,7 +662,7 @@ impl Checker<'_> {
                                 }
                                 Some(iterated) => self.array_of(iterated),
                             };
-                            self.check_destructuring_assignment(file, rest, ty, out);
+                            self.check_destructuring_assignment(file, rest, ty);
                         }
                         // `checkArrayLiteralDestructuringElementAssignment`
                         _ => {
@@ -699,12 +678,16 @@ impl Checker<'_> {
                                     )
                                 {
                                     let start = self.start_of(file, item);
-                                    out.push(Diagnostic { start, code });
                                     let end = self.end_of_expr(file, item);
                                     let name = self.number_name(index as f64);
-                                    self.explain_to(start, end, code, |c| {
-                                        past_the_end_arguments(c, code, source, name)
-                                    });
+                                    {
+                                        let args = past_the_end_arguments(self, code, source, name);
+                                        self.add_diagnostic(Reported::new(
+                                            (file, start, end),
+                                            code,
+                                            held(args),
+                                        ));
+                                    }
                                 }
                                 let ty = self.element_of_destructured(source, index, false);
                                 let ty = if has_default {
@@ -719,7 +702,7 @@ impl Checker<'_> {
                                     ty
                                 }
                             };
-                            self.check_destructuring_assignment(file, item, ty, out);
+                            self.check_destructuring_assignment(file, item, ty);
                         }
                     }
                 }
@@ -782,11 +765,7 @@ impl Checker<'_> {
             return ty;
         }
         match self.hir(file)[target].kind {
-            // `checkIdentifier`: `IArguments`
-            ExprKind::Ident(_) if self.bound(file).is_arguments_object(target) => ty,
-            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                self.declared_type_of_reference(file, target)
-            }
+            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => ty,
             // Whatever else is written there is what it is.
             _ => ty,
         }
@@ -830,7 +809,6 @@ impl Checker<'_> {
         allows_missing: bool,
         at: u32,
         end: impl Fn(&Self) -> u32,
-        out: &mut Vec<Diagnostic>,
     ) -> TypeId {
         // `getReducedApparentType`: what is generic is looked into as what it extends. What is generic even so is put off.
         let object = self.apparent_type(source);
@@ -867,25 +845,28 @@ impl Checker<'_> {
                     } else {
                         2538
                     };
-                    out.push(Diagnostic { start: at, code });
                     let until = end(&*self);
-                    self.explain_to(at, until, code, |c| {
-                        let object = c.reduced(object);
-                        match code {
-                            2339 => vec![literal_value_text(c, part), c.type_to_string(object)],
-                            2537 => vec![c.type_to_string(object), c.type_to_string(part)],
+                    {
+                        let object = self.reduced(object);
+                        let args = match code {
+                            2339 => {
+                                vec![literal_value_text(self, part), self.type_to_string(object)]
+                            }
+                            2537 => vec![self.type_to_string(object), self.type_to_string(part)],
                             // `indexNode.Kind == KindBigIntLiteral`
-                            _ if matches!(c.data(part), TypeData::BigIntLit { .. })
-                                && c.hir(file)
+                            _ if matches!(self.data(part), TypeData::BigIntLit { .. })
+                                && self
+                                    .hir(file)
                                     .text
                                     .get(at as usize)
                                     .is_some_and(|b| b.is_ascii_digit()) =>
                             {
                                 vec!["bigint".to_owned()]
                             }
-                            _ => vec![c.type_to_string(part)],
-                        }
-                    });
+                            _ => vec![self.type_to_string(part)],
+                        };
+                        self.add_diagnostic(Reported::new((file, at, until), code, held(args)));
+                    }
                     is_missing = true;
                 }
             }
@@ -899,7 +880,7 @@ impl Checker<'_> {
 
     /// `checkVariableLikeDeclaration`, of a declaration whose name is a pattern in which nothing has a name: no element asks what is
     /// taken apart, so it is asked here. 2531 2532 2533 2571, 2488.
-    fn check_pattern_without_names(&mut self, file: FileId, pat: PatId, out: &mut Vec<Diagnostic>) {
+    fn check_pattern_without_names(&mut self, file: FileId, pat: PatId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let initializer = match bound.pat_parent[pat.idx()] {
             PatParent::None => return,
@@ -965,7 +946,7 @@ impl Checker<'_> {
         let strict = self.p.files.options.strict_null_checks;
         if strict && initializer.is_some() {
             let ty = self.type_of_expr(file, initializer);
-            self.check_not_null_nor_void(ty, at, end, out);
+            self.check_not_null_nor_void(ty, at, end);
         }
         if is_put_off {
             return;
@@ -981,20 +962,14 @@ impl Checker<'_> {
                 let usage = IterationUse::Destructuring;
                 self.check_iterated(usage, widened, TypeId::UNDEFINED, error_node);
             }
-            _ if strict => self.check_not_null_nor_void(widened, at, end, out),
+            _ if strict => self.check_not_null_nor_void(widened, at, end),
             _ => {}
         }
     }
 
     /// `checkNonNullNonVoidType`, said of a declaration, which is no entity name, where `null` and `undefined` are told apart:
     /// 2571, 2531 to 2533.
-    fn check_not_null_nor_void(
-        &mut self,
-        ty: TypeId,
-        at: u32,
-        end: impl FnOnce(&Self) -> u32,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_not_null_nor_void(&mut self, ty: TypeId, at: u32, end: impl FnOnce(&Self) -> u32) {
         if !self.is_known(ty) || self.is_any(ty) {
             return;
         }
@@ -1018,9 +993,8 @@ impl Checker<'_> {
             _ if ty == TypeId::VOID => 2532,
             _ => return,
         };
-        out.push(Diagnostic { start: at, code });
         let end = end(&*self);
-        self.explain_to(at, end, code, |_| vec![]);
+        self.error_at((self.checking.unwrap(), at, end), code, &[]);
     }
 
     /// `checkYieldExpression`: what is yielded against what the generator says it yields.

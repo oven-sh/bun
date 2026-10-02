@@ -66,7 +66,25 @@ pub(crate) struct Notes {
     pub(crate) ranges: Vec<[u32; 2]>,
 }
 
+thread_local! {
+    /// The notes of the last file, empty: they have about the room the next needs.
+    static ROOM: core::cell::Cell<Notes> = Default::default();
+}
+
 impl Notes {
+    /// None, with the room the last file of this thread left.
+    pub(crate) fn with_room() -> Notes {
+        ROOM.take()
+    }
+
+    /// They have served.
+    pub(crate) fn leave_room(mut self) {
+        self.nodes.clear();
+        self.notes.clear();
+        self.ranges.clear();
+        ROOM.set(self);
+    }
+
     /// Where the node whose `loc` is `loc` is.
     #[inline]
     pub(crate) fn real_loc(&self, loc: Loc) -> Loc {
@@ -85,6 +103,12 @@ impl Notes {
         } else {
             None
         }
+    }
+
+    /// Whether anything but its range is noted of the node whose `loc` is `loc`.
+    #[inline]
+    pub(crate) fn has_notes(&self, loc: Loc) -> bool {
+        self.node(loc).is_some_and(|node| node.last_note != NO_NOTE)
     }
 
     /// The notes of the node whose `loc` is `loc`, the last one first.
@@ -338,6 +362,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parameters: Option<ts::Span<ts::TypeParam>>,
         less_than: Loc,
     ) {
+        self.note_token_full_start(&mut operand.loc, Mark::End);
         self.note_loc(&mut operand.loc, Mark::LessThan, less_than);
         if let Some(syntax) = &mut self.type_syntax {
             syntax
@@ -385,7 +410,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// type arguments are taken. Type arguments that are unusable are as good as none.
     #[inline]
     pub(crate) fn note_type_arguments(&mut self, operand: &mut Expr, less_than: Loc) {
-        let next = self.lexer.loc();
+        let (next, end) = (self.lexer.loc(), self.lexer.full_start());
         if TYPESCRIPT && let Some(syntax) = &mut self.type_syntax {
             syntax.pending_type_arguments = None;
             if let Some(arguments) = syntax.last_type_args.take() {
@@ -393,6 +418,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let payload = syntax.notes.ranges.len() as u32 - 1;
                 syntax.pending_type_arguments = Some((payload, next));
                 let less_than = less_than.start.max(0) as u32;
+                syntax
+                    .notes
+                    .add(&mut operand.loc, Mark::End, end.start.max(0) as u32);
                 syntax
                     .notes
                     .add(&mut operand.loc, Mark::InstantiationStart, less_than);
@@ -417,6 +445,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Nothing was parsed since they were noted.
             if syntax.notes.take_back(Mark::Instantiation) {
                 syntax.notes.take_back(Mark::InstantiationStart);
+                syntax.notes.take_back(Mark::End);
             }
             return Some(payload);
         }
@@ -455,12 +484,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .find(|what| what.is_cast())
     }
 
-    /// `(inside)`, whose `(` is at `open`. `full_start`: `TokenFullStart` of the `(`, or nothing.
+    /// `(inside)`, whose `(` is at `open` and whose `)` has been taken. `full_start`: `TokenFullStart` of the `(`, or nothing.
     #[inline]
     pub(crate) fn mark_paren(&mut self, inside: &mut Expr, open: Loc, full_start: Loc) {
         if self.has_comments_before(open, full_start) {
             self.note_loc(&mut inside.loc, Mark::ParenFullStart, full_start);
         }
+        self.note_token_full_start(&mut inside.loc, Mark::End);
         self.note_loc(&mut inside.loc, Mark::Paren, open);
     }
 
@@ -500,21 +530,68 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         assignment
     }
 
-    /// `P::finish_expr`
-    #[cold]
-    #[inline(never)]
+    /// `P::finish_expr`. Inlined into `new_expr`, which knows the kind: one arm is left of the `match`.
+    #[inline(always)]
     pub(crate) fn note_expr_end(&mut self, expr: &mut Expr, end: Loc) {
-        let is_after_start = end.start > self.real_loc(expr.loc).start;
+        use bun_ast::ExprData as E;
+        // Most expressions end with their last part, with a word of a known length or with a token whose place the tree has. The
+        // lowering works that out (`Lower::expr_without_casts`), and they need no entry.
+        let follows = match expr.data {
+            E::EBinary(_) | E::EIf(_) | E::ESpread(_) | E::EAwait(_) => true,
+            E::ESuper(_) | E::ENull(_) | E::EBoolean(_) => true,
+            // Tokens may have been skipped where the operand is missed.
+            E::EUnary(unary) => {
+                !matches!(
+                    unary.op,
+                    bun_ast::OpCode::UnPostDec | bun_ast::OpCode::UnPostInc
+                ) && !matches!(unary.value.data, E::EMissing(_))
+            }
+            E::EDot(dot) => self.real_loc(dot.name_loc).start + dot.name.len() as i32 == end.start,
+            E::ECall(call) => self.real_loc(call.close_paren_loc).start + 1 == end.start,
+            E::EArray(array) => self.real_loc(array.close_bracket_loc).start + 1 == end.start,
+            E::EObject(object) => self.real_loc(object.close_brace_loc).start + 1 == end.start,
+            // It is made before its token is taken.
+            E::EString(string) => {
+                end_of_quoted(self.source.contents(), string.data.slice()) == Some(self.lexer.end)
+                    && self.lexer.start as i32 == expr.loc.start
+            }
+            _ => false,
+        };
+        if !follows {
+            self.note_expr_end_as_given(expr, end);
+        }
+    }
+
+    #[inline(never)]
+    fn note_expr_end_as_given(&mut self, expr: &mut Expr, end: Loc) {
+        let start = self.real_loc(expr.loc).start;
         match expr.data {
             // `createMissingNode`: it takes no room, where the token before it ends. One that is made late does not know where.
-            bun_ast::ExprData::EMissing(_) if is_after_start => {}
-            bun_ast::ExprData::EMissing(_) => self.note_end(&mut expr.loc, end),
+            bun_ast::ExprData::EMissing(_) if end.start > start => {}
             // `parse_jsx_element` returns before the last ">" is taken, and text is no trivia: `hir::Jsx::end`.
             bun_ast::ExprData::EJsxElement(_) => {}
+            bun_ast::ExprData::EMissing(_) => self.note_end(&mut expr.loc, end),
+            _ if end.start > start => self.note_end(&mut expr.loc, end),
             // A literal is made before its token is taken.
-            _ if !is_after_start => {}
-            _ => self.note_end(&mut expr.loc, end),
+            _ if self.lexer.start as i32 == start => {
+                let end = bun_ast::usize2loc(self.lexer.end);
+                self.note_end(&mut expr.loc, end)
+            }
+            _ => {}
         }
+    }
+
+    /// `node.End()` of the array or object literal `literal`, which may not have been noted (`note_expr_end`).
+    pub(crate) fn end_of_literal(&self, literal: &Expr) -> Option<Loc> {
+        let close = match literal.data {
+            bun_ast::ExprData::EArray(array) => array.close_bracket_loc,
+            bun_ast::ExprData::EObject(object) => object.close_brace_loc,
+            _ => return self.noted_end(literal.loc),
+        };
+        let after = Loc {
+            start: self.real_loc(close).start + 1,
+        };
+        Some(self.noted_end(literal.loc).unwrap_or(after))
     }
 
     /// `new_expr`, of an expression that is put together when tokens after it have been taken. It ends at `end`.
@@ -525,9 +602,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         T: bun_ast::expr::IntoExprData,
     {
         let mut expr = Expr::init(t, self.real_loc(loc));
-        if self.log().errors != 0 {
-            self.note_expr_end(&mut expr, end);
-        }
+        self.note_expr_end(&mut expr, end);
         expr
     }
 
@@ -535,6 +610,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     pub(crate) fn noted(&self, at: Loc, what: Mark) -> Option<u32> {
         self.type_syntax.as_ref()?.notes.get(at, what)
+    }
+
+    /// `node.End()` of the node whose `loc` is `at`, if it was noted.
+    #[inline]
+    pub(crate) fn noted_end(&self, at: Loc) -> Option<Loc> {
+        let end = self.type_syntax.as_ref()?.notes.node(at)?.end;
+        (!end.is_empty()).then_some(end)
     }
 
     /// `node.Pos()` of the node whose `loc` is `at`.
@@ -646,4 +728,11 @@ impl TypeSyntax {
         self.unclosed_literals
             .truncate(snapshot.unclosed_literals as usize);
     }
+}
+
+/// Where the string literal ends whose characters are `inside`, if they are a piece of `source`: after the quote that follows them.
+#[inline]
+pub(crate) fn end_of_quoted(source: &[u8], inside: &[u8]) -> Option<usize> {
+    let offset = (inside.as_ptr() as usize).checked_sub(source.as_ptr() as usize)?;
+    (offset + inside.len() < source.len()).then_some(offset + inside.len() + 1)
 }

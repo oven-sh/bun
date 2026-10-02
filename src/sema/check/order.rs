@@ -16,7 +16,7 @@ impl Checker<'_> {
     /// Whether nothing is being worked out: what is asked now is asked from outside.
     #[inline]
     fn is_asked_from_outside(&self) -> bool {
-        self.stack.is_empty() && self.resolving.is_empty()
+        self.stack.is_empty() && self.contextual.is_empty()
     }
 
     #[inline]

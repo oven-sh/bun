@@ -4,7 +4,6 @@
 //! a function are the ones there. `REPORT` is `reportErrors`. What only serves error messages is in `explain_relation.rs`. Left out:
 //! `isEmptyArrayLiteralType` (the type of `[]` is not told from a `never[]` that is written).
 
-use super::explain::Related;
 use super::explain_relation::{
     Chain, ErrorState, chain_depth, is_same_chain, visibility_to_string,
 };
@@ -205,7 +204,7 @@ pub(super) struct Relater {
     /// `errorChain`
     pub(super) error_chain: Chain,
     /// `relatedInfo`
-    pub(super) related_info: Vec<Related>,
+    pub(super) related_info: Vec<Reported>,
 }
 
 impl Relater {
@@ -320,6 +319,7 @@ fn is_primitive_kind(data: &TypeData) -> bool {
                 | Intrinsic::Never
                 | Intrinsic::SilentNever
                 | Intrinsic::UnreachableNever
+                | Intrinsic::ImplicitNever
                 | Intrinsic::Object
         ),
         TypeData::StringLit { .. }
@@ -518,7 +518,10 @@ impl<'p> Checker<'p> {
         data: &'p TypeData,
         writing: bool,
     ) -> (TypeId, &'p TypeData) {
-        if is_normalized_kind(data) {
+        // FOR SPEED: `len(getMembersOfSymbol(t.symbol)) != 0` first. The binder makes the table with the first member (`GetMembers`).
+        if is_normalized_kind(data)
+            && !matches!(data, TypeData::Ref { target, .. } if self.files().symbol(*target).members.is_none())
+        {
             return (ty, data);
         }
         if matches!(data, TypeData::Union(_)) && !self.may_be_reduced(ty) {
@@ -1328,9 +1331,11 @@ impl<'p> Checker<'p> {
                     self.substitution_intersection(base, constraint)
                 }
                 // `createTypeReference(t.Target(), getTypeArguments(t))`, of a deferred type reference.
-                TypeData::Ref { .. } | TypeData::Tuple { .. } => {
-                    return self.without_alias_of_reference(t);
-                }
+                TypeData::Tuple { .. } => return self.without_alias_of_reference(t),
+                TypeData::Ref { .. } => match self.without_alias_of_reference(t) {
+                    n if n != t => n,
+                    _ => self.single_base_for_non_augmenting_subtype(t).unwrap_or(t),
+                },
                 data if is_fresh_literal_kind(data) => self.with_freshness(t, false),
                 _ => return t,
             };
@@ -2307,7 +2312,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getTypeParameterModifiers`: what any of the declarations of `sym` says of its type parameter `param`.
-    fn type_param_modifiers(&self, sym: Sym, param: TypeId) -> Flags {
+    pub(super) fn type_param_modifiers(&self, sym: Sym, param: TypeId) -> Flags {
         let TypeData::TypeParam(of, id, ..) = *self.data(param) else {
             return Flags::empty();
         };
@@ -2319,10 +2324,11 @@ impl<'p> Checker<'p> {
             .filter_map(|(file, decl)| match decl {
                 crate::bind::Decl::Class(c) => Some((file, self.hir(file)[c].type_params)),
                 crate::bind::Decl::Interface(i) => Some((file, self.hir(file)[i].type_params)),
+                crate::bind::Decl::Alias(a) => Some((file, self.hir(file)[a].type_params)),
                 _ => None,
             })
             .collect();
-        // One that is declared around `sym`, or by an alias, is declared once.
+        // One that is declared around `sym` is declared once.
         if !lists
             .iter()
             .any(|&(file, params)| file == of && params.range().contains(&id.idx()))
@@ -2339,6 +2345,29 @@ impl<'p> Checker<'p> {
             }
         }
         modifiers
+    }
+
+    /// `createMarkerType`: `sym` of its type parameters `params`, with `marker` in the place of the one at `index`.
+    pub(super) fn create_marker_type(
+        &mut self,
+        sym: Sym,
+        params: &[TypeId],
+        index: usize,
+        marker: TypeId,
+    ) -> TypeId {
+        let mut args = params.to_vec();
+        args[index] = marker;
+        let flags = self.files().flags(sym);
+        if flags.contains(SymFlags::TYPE_ALIAS)
+            && !flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+        {
+            self.type_reference(sym, &args)
+        } else {
+            self.intern(TypeData::Ref {
+                target: sym,
+                args: args.into(),
+            })
+        }
     }
 
     /// `getVariances`, `getAliasVariances`: how instantiations of `sym` compare, going by how their type arguments do. Empty while
@@ -2386,23 +2415,8 @@ impl<'p> Checker<'p> {
                 CONTRAVARIANT
             } else {
                 let saved = std::mem::replace(&mut self.reliability, 0);
-                let with = |c: &mut Self, marker: TypeId| {
-                    let mut args = params.to_vec();
-                    args[i] = marker;
-                    // `createMarkerType`
-                    if is_alias {
-                        c.type_reference(sym, &args)
-                    } else {
-                        c.intern(TypeData::Ref {
-                            target: sym,
-                            args: args.into(),
-                        })
-                    }
-                };
-                let (with_super, with_sub) = (
-                    with(self, TypeId::MARKER_SUPER),
-                    with(self, TypeId::MARKER_SUB),
-                );
+                let with_super = self.create_marker_type(sym, &params, i, TypeId::MARKER_SUPER);
+                let with_sub = self.create_marker_type(sym, &params, i, TypeId::MARKER_SUB);
                 let mut variance = if self.is_marker_assignable(with_sub, with_super) {
                     COVARIANT
                 } else {
@@ -2413,7 +2427,7 @@ impl<'p> Checker<'p> {
                 }
                 // Either way: perhaps because it is nowhere to be seen.
                 if variance == BIVARIANT {
-                    let with_other = with(self, TypeId::MARKER_OTHER);
+                    let with_other = self.create_marker_type(sym, &params, i, TypeId::MARKER_OTHER);
                     if self.is_marker_assignable(with_other, with_super) {
                         variance = INDEPENDENT;
                     }
@@ -2550,16 +2564,8 @@ impl<'p> Checker<'p> {
             );
             return Ternary::FALSE;
         }
-        let ((source, sd), (mut target, mut td)) = if REPORT {
-            let source = self.normalized_for_report(original_source, false);
-            let target = self.normalized_for_report(original_target, true);
-            ((source, self.data(source)), (target, self.data(target)))
-        } else {
-            (
-                self.normalized_as(original_source, original_sd, false),
-                self.normalized_as(original_target, original_td, true),
-            )
-        };
+        let (source, sd) = self.normalized_as(original_source, original_sd, false);
+        let (mut target, mut td) = self.normalized_as(original_target, original_td, true);
         // `getRegularTypeOfObjectLiteral` goes into the properties that are object literals themselves and no further.
         let state = if state & STATE_REGULAR != 0 && !is_object_literal_kind(sd) {
             state & !STATE_REGULAR
@@ -2598,11 +2604,7 @@ impl<'p> Checker<'p> {
                 .copied()
                 .filter(|t| !t.is_null() && !t.is_undefined());
             if let (Some(candidate), None) = (others.next(), others.next()) {
-                target = if REPORT {
-                    self.normalized_for_report(candidate, true)
-                } else {
-                    self.normalized(candidate, true)
-                };
+                target = self.normalized(candidate, true);
                 if source == target {
                     return Ternary::TRUE;
                 }
@@ -4445,14 +4447,6 @@ impl<'p> Checker<'p> {
         // ── by what the target is ──
         match *td {
             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
-                // `getNormalizedType`: a class that adds nothing to its base type is compared as that type. `normalized` leaves it as
-                // it is.
-                if matches!(sd, TypeData::Ref { .. })
-                    && let Some(base) = self.single_base_for_non_augmenting_subtype(source)
-                {
-                    return self
-                        .is_related_to_ex::<REPORT>(r, base, target, REC_SOURCE, STATE_NONE);
-                }
                 // `{ [P in Q]: X }` fits `T` if `keyof T` fits `Q` and `X` fits `T[Q]`.
                 if is_mapped_kind(sd) && self.mapped_name_type(source).is_none() {
                     let (keys, covered) = (self.keyof(target), self.mapped_keys(source));

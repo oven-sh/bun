@@ -177,9 +177,7 @@ pub enum JsDeclarationKind {
 fn string_literal_text(hir: &File, e: ExprId) -> Atom {
     match hir[e].kind {
         ExprKind::String(text) => text,
-        ExprKind::Template { exprs, texts } if exprs.is_empty() => {
-            hir.ids(texts).next().unwrap_or(Atom::NONE)
-        }
+        ExprKind::Template { exprs } if exprs.is_empty() => hir.id_at(hir.template_texts(exprs), 0),
         _ => Atom::NONE,
     }
 }

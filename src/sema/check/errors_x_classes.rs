@@ -7,10 +7,8 @@
 //! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration`, `checkClassNameCollisionWithObject`,
 //! `checkConstructorDeclaration` and `checkPropertyAccessibilityAtLocation` of TypeScript 7.0.2's checker.go.
 
-use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent};
-use crate::resolve::ModuleKind;
 use smallvec::SmallVec;
 
 /// What `getBaseConstructorTypeOfClass` and `getBaseTypes` come to for a class with an `extends` clause.
@@ -111,7 +109,7 @@ fn js_override_code(code: u32) -> u32 {
 }
 
 impl Checker<'_> {
-    pub(super) fn check_x_classes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_x_classes(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Of a file that could not be made sense of only parts are there: what is missing from them may well be written.
         if hir.has_errors {
@@ -119,23 +117,16 @@ impl Checker<'_> {
         }
         for i in 0..hir.interfaces.len() {
             if bound.interface_symbol[i].is_some() {
-                self.check_bases_of_interface(file, InterfaceId(i as u32), out);
+                self.check_bases_of_interface(file, InterfaceId(i as u32));
             }
         }
-        // `checkClassLikeDeclaration`: 2500 is said when the tree is made.
-        for &(start, code) in hir.checker_errors.iter() {
-            if code == 2500 {
-                let end = self.end_of_heritage_expression(file, start);
-                self.note(start, end, 2500, Vec::new());
-            }
-        }
-        self.check_super_call_placement(file, out);
+        self.check_super_call_placement(file);
         // The rest is about `this`.
         let index = self.exprs_by_kind(file);
         if index.of(ExprTag::This).is_empty() {
             return;
         }
-        self.check_abstract_properties_in_constructors(file, &index, out);
+        self.check_abstract_properties_in_constructors(file, &index);
     }
 
     // ───────────────────────────── what a class extends and implements ─────────────────────────────
@@ -148,14 +139,6 @@ impl Checker<'_> {
             return;
         }
         let class = &hir[c];
-        if class.name == known::Object
-            && !class.flags.contains(Flags::AMBIENT)
-            && self.emits_module_format_before_es2015(file)
-        {
-            let module = self.p.files.options.module.name();
-            let at = self.place_of_token(file, class.name_pos);
-            self.error(at, 2725, &[Arg::Text(module)]);
-        }
         let base = self.base_of_class(file, c, sym);
         if let ClassBase::Is { constructor, base } = base {
             let static_base_type = self.apparent_type(constructor);
@@ -166,14 +149,14 @@ impl Checker<'_> {
                 // `GetErrorRangeForNode`
                 let at = self.place_of_token(file, class.name_pos);
                 if !self.is_mixin_constructor_type(&own) {
-                    self.error(at, 2545, &[]);
+                    self.error_at(at, 2545, &[]);
                 } else if !class.flags.contains(Flags::ABSTRACT)
                     && self
                         .signatures(constructor, true)
                         .iter()
                         .any(|&sig| self.is_abstract_signature(sig))
                 {
-                    self.error(at, 2797, &[]);
+                    self.error_at(at, 2797, &[]);
                 }
             } else if !matches!(
                 self.data(static_base_type),
@@ -197,7 +180,7 @@ impl Checker<'_> {
                     && all_the_same == Some(false)
                     && let Some(at) = self.place_to_report_base_at(file, c)
                 {
-                    self.error(at, 2510, &[]);
+                    self.error_at(at, 2510, &[]);
                 }
             }
         }
@@ -211,28 +194,9 @@ impl Checker<'_> {
             let implemented = self.reduced_base_type(implemented);
             if self.is_settled_base(implemented) && !self.is_valid_base_type(implemented) {
                 let at = (file, hir[node].pos, self.end_of_type_node(file, node));
-                self.error(at, 2422, &[]);
+                self.error_at(at, 2422, &[]);
             }
         }
-    }
-
-    /// Whether `GetEmitModuleFormatOfFile` gives something older than ES2015: CommonJS, AMD, UMD or System.
-    fn emits_module_format_before_es2015(&self, file: FileId) -> bool {
-        let module = self.files().module(file);
-        let kind = self.p.files.options.module;
-        // `GetImpliedNodeFormatForEmitWorker`
-        if kind.is_node() {
-            return !module.is_esm;
-        }
-        let path = module.path.as_str();
-        if path.ends_with(".cts") || path.ends_with(".cjs") {
-            return true;
-        }
-        // Of what `package.json` says, only `"type": "module"` is kept.
-        if module.says_esm || path.ends_with(".mts") || path.ends_with(".mjs") {
-            return false;
-        }
-        kind < ModuleKind::Es2015
     }
 
     /// `getBaseConstructorTypeOfClass` and `getBaseTypes(classType)[0]`, of the class `c` of `sym`.
@@ -315,7 +279,7 @@ impl Checker<'_> {
                 last_argument + close.map_or(0, |at| at as u32 + 1)
             };
             let name = super::errors_modules::fully_qualified_name(self, class);
-            self.error((file, start, end), 2675, &[Arg::Text(&name)]);
+            self.error_at((file, start, end), 2675, &[Arg::Text(&name)]);
         }
     }
 
@@ -387,55 +351,19 @@ impl Checker<'_> {
 
     // ───────────────────────────── what an interface extends ─────────────────────────────
 
-    /// `parseLeftHandSideExpressionOrHigher`: where the expression after `extends` or `implements` that starts at `start` ends. Of one
-    /// that is no `A.B` only the start is kept.
-    fn end_of_heritage_expression(&self, file: FileId, start: u32) -> u32 {
-        let text = &self.hir(file).text;
-        let mut end = match text.get(start as usize) {
-            Some(b'(' | b'[' | b'{') => self.end_of_bracket_at(file, start),
-            _ => self.end_of_token_at(file, start),
-        };
-        loop {
-            let next = self.skip_trivia_from(file, end);
-            end = match text.get(next as usize..) {
-                Some([b'(' | b'[', ..]) => self.end_of_bracket_at(file, next),
-                Some([b'?', b'.', ..]) => {
-                    let after = self.skip_trivia_from(file, next + 2);
-                    match text.get(after as usize) {
-                        Some(b'(' | b'[') => self.end_of_bracket_at(file, after),
-                        _ => self.end_of_token_at(file, after),
-                    }
-                }
-                Some([b'.', ..]) => {
-                    self.end_of_token_at(file, self.skip_trivia_from(file, next + 1))
-                }
-                Some([b'!', ..]) => next + 1,
-                _ => return end,
-            };
-        }
-    }
-
     /// The end of `checkInterfaceDeclaration`: 2499.
-    fn check_bases_of_interface(
-        &mut self,
-        file: FileId,
-        i: InterfaceId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_bases_of_interface(&mut self, file: FileId, i: InterfaceId) {
         let hir = self.hir(file);
         for node in hir.ids(hir[i].extends) {
-            // NEEDS: `parse_interface` to keep what is written after `extends` and is no `A.B.C<Args>` as a `TypeNodeKind::Error`
-            // placed where it starts, where today it gives up on the whole interface.
             if matches!(
                 hir[node].kind,
                 TypeNodeKind::Error | TypeNodeKind::Heritage(_)
             ) {
-                out.push(Diagnostic {
-                    start: hir[node].pos,
-                    code: 2499,
-                });
-                let end = self.end_of_heritage_expression(file, hir[node].pos);
-                self.note(hir[node].pos, end, 2499, Vec::new());
+                let end = match hir[node].kind {
+                    TypeNodeKind::Heritage(expression) => self.end_of_expr(file, expression),
+                    _ => hir[node].end,
+                };
+                self.error_at((file, hir[node].pos, end), 2499, &[]);
             }
         }
     }
@@ -524,7 +452,7 @@ impl Checker<'_> {
                 if has_override {
                     let class_type = self.declared_type(sym);
                     let at = self.place_of_overrider(file, member);
-                    self.error(at, code(4112), &[Arg::Type(class_type)]);
+                    self.error_at(at, code(4112), &[Arg::Type(class_type)]);
                 }
                 return;
             }
@@ -537,7 +465,7 @@ impl Checker<'_> {
                 Some(false) => {
                     if has_override {
                         let at = self.place_of_overrider(file, member);
-                        self.error(at, code(4127), &[]);
+                        self.error_at(at, code(4127), &[]);
                     }
                     return;
                 }
@@ -573,10 +501,10 @@ impl Checker<'_> {
                     Some(suggestion) => {
                         let suggestion = self.prop_to_string(&suggestion);
                         let args = [Arg::Type(base), Arg::Text(&suggestion)];
-                        self.error(at, code(4117), &args);
+                        self.error_at(at, code(4117), &args);
                     }
                     None => {
-                        self.error(at, code(4113), &[Arg::Type(base)]);
+                        self.error_at(at, code(4113), &[Arg::Type(base)]);
                     }
                 }
             }
@@ -591,9 +519,9 @@ impl Checker<'_> {
         let at = self.place_of_overrider(file, member);
         if !is_abstract {
             let must = if member.param.is_some() { 4115 } else { 4114 };
-            self.error(at, code(must), &[Arg::Type(base)]);
+            self.error_at(at, code(must), &[Arg::Type(base)]);
         } else if member.flags.contains(Flags::ABSTRACT) {
-            self.error(at, 4116, &[Arg::Type(base)]);
+            self.error_at(at, 4116, &[Arg::Type(base)]);
         }
     }
 
@@ -726,7 +654,7 @@ impl Checker<'_> {
     /// Where fields are set up by assignments put in the constructor, they
     /// go right after the call of `super`, which therefore has to be a statement of the constructor itself, and the first
     /// that has to do with `this`.
-    fn check_super_call_placement(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_super_call_placement(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_super_call = |e: ExprId| matches!(hir[e].kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Super));
         for f in 0..hir.fns.len() {
@@ -753,13 +681,13 @@ impl Checker<'_> {
                 if !class_extends_null {
                     // `GetErrorRangeForNode`: up to the keyword.
                     let end = self.end_of_name_at(file, hir[m].name_pos);
-                    self.error((file, hir[m].start, end), 2377, &[]);
+                    self.error_at((file, hir[m].start, end), 2377, &[]);
                 }
                 continue;
             };
             if class_extends_null && let ExprKind::Call(call) = hir[first].kind {
                 let end = self.end_inside_parentheses(file, first);
-                self.error((file, hir[hir[call].callee].pos, end), 17005, &[]);
+                self.error_at((file, hir[hir[call].callee].pos, end), 17005, &[]);
             }
             if self.p.files.options.emit_standard_class_fields {
                 continue;
@@ -790,12 +718,8 @@ impl Checker<'_> {
                 .any(|s| matches!(hir[s].kind, StmtKind::Expr(x) if x == first))
             {
                 if let ExprKind::Call(call) = hir[first].kind {
-                    out.push(Diagnostic {
-                        start: hir[hir[call].callee].pos,
-                        code: 2401,
-                    });
                     let end = self.end_inside_parentheses(file, first);
-                    self.note(hir[hir[call].callee].pos, end, 2401, Vec::new());
+                    self.error_at((file, hir[hir[call].callee].pos, end), 2401, &[]);
                 }
                 continue;
             }
@@ -821,13 +745,10 @@ impl Checker<'_> {
             }
             if !is_first {
                 let start = hir[m].start;
-                out.push(Diagnostic { start, code: 2376 });
-                // `GetErrorRangeForNode`: up to the keyword.
-                self.note(
-                    start,
-                    self.end_of_name_at(file, hir[m].name_pos),
+                self.error_at(
+                    (file, start, self.end_of_name_at(file, hir[m].name_pos)),
                     2376,
-                    Vec::new(),
+                    &[],
                 );
             }
         }
@@ -881,12 +802,7 @@ impl Checker<'_> {
 
     /// 2715, of `checkPropertyAccessibilityAtLocation`: `this.p`, `const { p } = this` and `({ p } = this)` in a constructor or
     /// in the initializer of a property, where `p` is declared `abstract`: nothing has given it a value by then.
-    fn check_abstract_properties_in_constructors(
-        &mut self,
-        file: FileId,
-        index: &ExprsByKind,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_abstract_properties_in_constructors(&mut self, file: FileId, index: &ExprsByKind) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_this =
             |e: ExprId| matches!(hir[e].kind, ExprKind::This) && !is_parenthesized(hir, e);
@@ -937,10 +853,7 @@ impl Checker<'_> {
                             _ => false,
                         });
                     if self.is_abstract_property_of_class(file, obj, name, is_written) {
-                        out.push(Diagnostic {
-                            start: name_pos,
-                            code: 2715,
-                        });
+                        self.error_at((file, name_pos, 0), 2715, &[]);
                         self.explain_abstract_property_access(file, name_pos, obj, name);
                     }
                 }
@@ -954,10 +867,7 @@ impl Checker<'_> {
                             && let Some(name) = self.member_name(file, prop.key)
                             && self.is_abstract_property_of_class(file, value, name, true)
                         {
-                            out.push(Diagnostic {
-                                start: prop.pos,
-                                code: 2715,
-                            });
+                            self.error_at((file, prop.pos, 0), 2715, &[]);
                             self.explain_abstract_property_access(file, prop.pos, value, name);
                         }
                     }
@@ -990,7 +900,7 @@ impl Checker<'_> {
                 if let Some(name) = name
                     && self.is_abstract_property_of_class(file, decl.init, name, false)
                 {
-                    out.push(Diagnostic { start, code: 2715 });
+                    self.error_at((file, start, 0), 2715, &[]);
                     self.explain_abstract_property_access(file, start, decl.init, name);
                 }
             }

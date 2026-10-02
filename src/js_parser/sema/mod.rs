@@ -116,10 +116,23 @@ pub(crate) enum Mark {
     OtherArgument,
     /// Of `new.target`: what is written instead of `target`, as a string (`ts::Id<Expr>`).
     MetaPropertyName,
+    /// Of a binding: `node.End()` of the pattern, or of a name that is written with an escape. What is noted of the node at that `loc` is
+    /// the range of the declaration.
+    PatternEnd,
+    /// Of the name of a member of an object literal: where its `PostfixToken` is, a `?` or a `!`.
+    PostfixToken,
+    /// Of what is in the braces of a `JsxExpression`: where the `{` is.
+    JsxExpression,
+    /// Of the same, among the children of an element: `node.End()` of the `JsxExpression`.
+    JsxExpressionEnd,
     /// Of the expression of a decorator: where its `@` is.
     AtSign,
+    /// Of the same: `node.End()` of the decorator.
+    DecoratorEnd,
 
     // What is made of an expression that is only the expression in the tree. In the order it is made: `(e) as T` is not `(e as T)`.
+    /// `node.End()` of what the next note but `LessThan` and `InstantiationStart` makes.
+    End,
     /// `e as T`, `<T>e`: the type (`ts::TypeId`).
     As,
     /// `<T>(e)` that was read as the type parameters of an arrow function: those (`ts::Span<ts::TypeParam>`, in `Notes::ranges`).
@@ -190,8 +203,19 @@ pub(crate) fn early_error(text: &[u8], at: &[u8]) -> Option<(u32, i32)> {
     early_error_in_place(text).map(|code| (code, 0))
 }
 
-/// `hir::File::error_arguments`, of an error the parser logged as `text`.
-pub(crate) fn error_argument(text: &[u8]) -> Option<Box<str>> {
+/// `hir::File::error_arguments`, of the error `code` the parser logged as `said`.
+pub(crate) fn error_arguments(
+    said: &bun_ast::Data,
+    code: u32,
+    source: &[u8],
+) -> Option<Box<[Box<[u8]>]>> {
+    let text = &said.text[..];
+    // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `parseErrorForInvalidName`: these name the token they are reported at.
+    if matches!(code, 1359 | 1389 | 1390 | 2819) {
+        let at = said.location.as_ref()?;
+        let token = source.get(at.offset..at.offset + at.length)?;
+        return Some(Box::new([token.into()]));
+    }
     // `Lexer::ts_error_about`
     let said = (text.starts_with(b"TS") || text.starts_with(b"TG"))
         .then(|| bun_core::strings::index_of_char_usize(text, b' '))
@@ -209,11 +233,11 @@ pub(crate) fn error_argument(text: &[u8]) -> Option<Box<str>> {
                 .unwrap_or(token)
         }
     };
-    Some(bstr::BStr::new(token).to_string().into_boxed_str())
+    // `Lexer::ts_error_about`: a NUL between two.
+    Some(token.split(|&b| b == 0).map(Box::from).collect())
 }
 
-/// `hir::File::error_ends`, of the error the parser logged as `said`: its start, its code and its end. `None`: where it ends is read
-/// off the source. `has_jsx`: `LanguageVariantJSX`.
+/// `hir::File::error_ends`, of the error the parser logged as `said`: its start, its code and its end. `has_jsx`: `LanguageVariantJSX`.
 pub(crate) fn error_end(
     said: &bun_ast::Data,
     source: &[u8],
@@ -225,32 +249,11 @@ pub(crate) fn error_end(
     let Some((code, 0)) = early_error(&said.text, at) else {
         return None;
     };
-    // Those that are logged with the range `parseErrorAtCurrentToken` or `parseErrorAt` reports.
-    if !matches!(
-        code,
-        1003 | 1005
-            | 1068
-            | 1109
-            | 1128..=1140
-            | 1144..=1146
-            | 1161
-            | 1179..=1181
-            | 1185
-            | 1436
-            | 1441
-            | 1442
-            | 1478
-            | 1490
-            | 2499
-            | 17014
-    ) {
-        return None;
-    }
     match at {
         // `Scan` makes one token of `</`, unless the `/` starts a comment. This lexer makes two.
         [b'<', b'/', rest @ ..] if has_jsx && len == 1 && rest.first() != Some(&b'*') => len = 2,
         // `Scan` makes a token of `>` whatever follows. `reScanGreaterThanToken` is asked after an operand, where a token is missed.
-        [b'>', b'>' | b'=', ..] if code != 1005 => len = len.min(1),
+        [b'>', b'>' | b'=', ..] if !matches!(code, 1005 | 1185) => len = len.min(1),
         _ => {}
     }
     Some((start as u32, code, (start + len) as u32))
@@ -285,8 +288,8 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         || matches!(refused_name, Some(b"eval" | b"\"eval\"" | b"arguments" | b"\"arguments\""))
         // `reportObviousDecoratorErrors`: the decorators are kept, and refused with all that cannot be decorated.
         || text == b"TypeScript does not allow decorators on class constructors"
-        // `checkGrammarVariableDeclaration`: a pattern in a `using` declaration gets 1492 and nothing else.
-        || text == b"This declaration must be initialized"
+        // `checkGrammarVariableDeclaration`: 1492 1182 1155.
+        || ends(b" must be initialized")
         // `ReScanSlashToken` reports nothing about flags while parsing. `checkGrammarRegularExpressionLiteral`: 1499 1500 1501 1502.
         || (starts(b"Invalid flag \"") || starts(b"Duplicate flag \"")) && ends(b" in regular expression")
         // The parser accepts any member name. `checkGrammarProperty`: 18006. `checkObjectTypeForDuplicateDeclarations`: 2699.
@@ -302,10 +305,6 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         || text == b"A rest argument cannot have a default initializer"
         {
             0
-        } else if (starts(b"The constant ") || starts(b"The declaration "))
-            && ends(b" must be initialized")
-        {
-            1155
         } else if ends(b" outside a generator function") {
             1163
         } else if text == b"Cannot use \"await\" outside an async function" {
@@ -316,8 +315,6 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
             1359
         } else if text == b"A return statement cannot be used here" {
             18041
-        } else if text == b"This constant must be initialized" {
-            1182
         } else if refused_name.is_some() {
             1212
         } else if text == b"Invalid field name \"#constructor\""
@@ -333,7 +330,8 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
             if found
                 .strip_prefix(b"\"")
                 .and_then(|word| word.strip_suffix(b"\""))
-                .is_some_and(is_reserved_word)
+                // `isReservedWord`
+                .is_some_and(|word| bun_ast::lexer_tables::keyword(word).is_some())
             {
                 1359
             } else {
@@ -352,49 +350,6 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         } else {
             return None;
         },
-    )
-}
-
-/// `isReservedWord`
-fn is_reserved_word(word: &[u8]) -> bool {
-    matches!(
-        word,
-        b"break"
-            | b"case"
-            | b"catch"
-            | b"class"
-            | b"const"
-            | b"continue"
-            | b"debugger"
-            | b"default"
-            | b"delete"
-            | b"do"
-            | b"else"
-            | b"enum"
-            | b"export"
-            | b"extends"
-            | b"false"
-            | b"finally"
-            | b"for"
-            | b"function"
-            | b"if"
-            | b"import"
-            | b"in"
-            | b"instanceof"
-            | b"new"
-            | b"null"
-            | b"return"
-            | b"super"
-            | b"switch"
-            | b"this"
-            | b"throw"
-            | b"true"
-            | b"try"
-            | b"typeof"
-            | b"var"
-            | b"void"
-            | b"while"
-            | b"with"
     )
 }
 
@@ -427,9 +382,8 @@ pub fn summarize(
         bun_ast::Loader::Ts
     };
     // Parses the file once. Also returns whether it must be parsed again with `await` as a name at the top level.
-    let parse = |await_is_a_name: bool| -> (bun_sema::hir::File, bool) {
-        let arena = bun_alloc::Arena::new();
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let parse = |await_is_a_name: bool, arena: &bun_alloc::Arena| -> (bun_sema::hir::File, bool) {
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
         let source = bun_ast::Source::init_path_string(path, text);
         let mut options = crate::ParserOptions::init(Default::default(), loader);
@@ -440,7 +394,7 @@ pub fn summarize(
         options.tolerant = true;
         let define = crate::Define::default();
         let mut log = bun_ast::Log::init();
-        let (file, awaited) = match crate::Parser::init(options, &mut log, &source, &define, &arena)
+        let (file, awaited) = match crate::Parser::init(options, &mut log, &source, &define, arena)
         {
             Ok(parser) => {
                 parser.parse_for_sema(atoms, is_declaration_file, await_is_a_name, &parsing)
@@ -467,14 +421,31 @@ pub fn summarize(
                 .any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta));
         (file, parse_again)
     };
-    let (mut file, parse_again) = parse(false);
-    if parse_again {
-        file = parse(true).0;
+    // What is left of a file in the arena is dead. It is given back after this much source, not after every file.
+    const SOURCE_AT_MOST: usize = 256 << 10;
+    thread_local! {
+        static ARENA: core::cell::RefCell<(bun_alloc::Arena, usize)> = Default::default();
     }
+    let mut file = ARENA.with_borrow_mut(|(arena, parsed)| {
+        if *parsed >= SOURCE_AT_MOST {
+            arena.reset();
+            *parsed = 0;
+        }
+        *parsed += text.len();
+        let (file, parse_again) = parse(false, arena);
+        match parse_again {
+            true => parse(true, arena).0,
+            false => file,
+        }
+    });
     file.legacy_decorators = experimental_decorators;
     file.is_js = is_js;
     file.shrink_to_fit();
     file.finish_nodes();
+    // One that is very long would leave its room to all that come after.
+    if text.len() < 4 << 20 {
+        builder::leave_room(&mut file);
+    }
     (file, parsing.get())
 }
 
@@ -534,7 +505,7 @@ pub(crate) struct TypeSyntax {
 impl TypeSyntax {
     pub(crate) fn new() -> Self {
         TypeSyntax {
-            notes: Default::default(),
+            notes: notes::Notes::with_room(),
             after_skipped: Vec::new(),
             stray_decorators: Vec::new(),
             unclosed_literals: Vec::new(),
@@ -590,24 +561,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> crate::P<'a, TYPESCRIPT,
         }
     }
 
-    /// Logs an error that TypeScript's checker reports through `grammarErrorOnNode`. Dropped if the file has syntax errors.
-    /// Same message as `Lexer::ts_grammar_error`. Does nothing outside tolerant mode or during a speculative parse.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn ts_grammar_error(&mut self, loc: bun_ast::Loc, code: u32) {
-        if self.lexer.tolerant && !self.lexer.is_log_disabled {
-            self.log()
-                .add_error_fmt(Some(self.source), loc, format_args!("TG{code}"));
-        }
-    }
-
     /// Logs an error that TypeScript's checker reports with a plain `c.error` about syntax only the parser sees. Always reported.
     #[cold]
     #[inline(never)]
-    pub(crate) fn ts_checker_error(&mut self, loc: bun_ast::Loc, code: u32) {
+    pub(crate) fn ts_checker_error(&mut self, r: bun_ast::Range, code: u32) {
         if self.lexer.tolerant && !self.lexer.is_log_disabled {
             self.log()
-                .add_error_fmt(Some(self.source), loc, format_args!("TC{code}"));
+                .add_range_error_fmt(Some(self.source), r, format_args!("TC{code}"));
         }
     }
 

@@ -150,6 +150,8 @@ pub(crate) struct Import {
     pub(crate) namespace: Option<Name>,
     /// Where the first token of the import clause is, and the `*` of `* as namespace`.
     pub(crate) clause_start: u32,
+    /// `importClause.End()`
+    pub(crate) clause_end: u32,
     pub(crate) namespace_start: u32,
     pub(crate) named: Vec<ImportSpecifier>,
     /// The module specifier and where it is. `None` if it is no string.
@@ -176,7 +178,8 @@ pub(crate) enum TagKind {
     Import(Import),
     Implements(ClassName),
     /// `@augments`, `@extends`
-    Augments(ClassName),
+    /// With the word the tag is.
+    Augments(ClassName, StoreStr),
     /// `@public`, `@private`, `@protected`, `@readonly`, `@override`
     Modifier(Flags),
     /// Any other. Nothing is made of it.
@@ -204,7 +207,7 @@ pub(crate) struct JsDoc {
     /// What the checker objects to in its syntax, which it only sees once that is reparsed.
     pub(crate) checker_errors: Vec<(u32, u32)>,
     /// `hir::File::error_arguments`
-    pub(crate) error_arguments: Vec<(u32, Box<str>)>,
+    pub(crate) error_arguments: Vec<(u32, u32, Box<[Box<[u8]>]>)>,
     /// `hir::File::error_ends`
     pub(crate) error_ends: Vec<(u32, u32, u32)>,
 }
@@ -502,7 +505,7 @@ impl<'p, 'a> Reader<'p, 'a> {
     ) -> (
         Vec<(u32, u32)>,
         Vec<(u32, u32)>,
-        Vec<(u32, Box<str>)>,
+        Vec<(u32, u32, Box<[Box<[u8]>]>)>,
         Vec<(u32, u32, u32)>,
     ) {
         let source = self.p.source.contents();
@@ -531,8 +534,8 @@ impl<'p, 'a> Reader<'p, 'a> {
                     };
                     let start = (offset as i64 + i64::from(delta)).max(0) as u32;
                     list.push((start, code));
-                    if let Some(token) = super::error_argument(&msg.data.text) {
-                        error_arguments.push((start, token));
+                    if let Some(args) = super::error_arguments(&msg.data, code, source) {
+                        error_arguments.push((start, code, args));
                     }
                     // `ScanJSDocToken` makes no token of `</`.
                     error_ends.extend(super::error_end(&msg.data, source, false));
@@ -945,6 +948,7 @@ impl<'p, 'a> Reader<'p, 'a> {
                 }
                 p.lexer.skips_jsdoc_asterisks = false;
             }
+            import.clause_end = p.lexer.full_start().to_usize() as u32;
             p.lexer.expect_contextual_keyword(b"from")?;
         }
         // `parseModuleSpecifier`, `tryParseImportAttributes`
@@ -1244,7 +1248,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             b"augments" | b"extends" => {
                 let class = self.class_name();
                 self.trailing_comments(start, margin, indent_text);
-                TagKind::Augments(class)
+                TagKind::Augments(class, name.text)
             }
             word @ (b"public" | b"private" | b"protected" | b"readonly" | b"override") => {
                 self.trailing_comments(start, margin, indent_text);
@@ -1467,7 +1471,9 @@ impl<'p, 'a> Reader<'p, 'a> {
             };
             match child.kind {
                 TagKind::Param(_) | TagKind::Property(_) => properties.push(child),
-                TagKind::Template(_) => self.error(child.name_pos as usize, 0, 8039),
+                TagKind::Template(_) => {
+                    self.error(child.name_pos as usize, b"template".len(), 8039)
+                }
                 _ => {}
             }
         }
@@ -1592,7 +1598,9 @@ impl<'p, 'a> Reader<'p, 'a> {
                 };
                 has_children = true;
                 match child.kind {
-                    TagKind::Template(_) => self.error(child.name_pos as usize, 0, 8039),
+                    TagKind::Template(_) => {
+                        self.error(child.name_pos as usize, b"template".len(), 8039)
+                    }
                     TagKind::Type(expr) if child_type.is_none() => child_type = Some(expr),
                     TagKind::Type(_) => self.error_at_token(8033),
                     _ => properties.push(child),
@@ -1629,7 +1637,9 @@ impl<'p, 'a> Reader<'p, 'a> {
                 break;
             };
             match child.kind {
-                TagKind::Template(_) => self.error(child.name_pos as usize, 0, 8039),
+                TagKind::Template(_) => {
+                    self.error(child.name_pos as usize, b"template".len(), 8039)
+                }
                 _ => params.push(child),
             }
         }

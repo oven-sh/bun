@@ -403,6 +403,8 @@ pub struct Files {
     /// `reportMergeSymbolError`: the pairs `mergeSymbol` refused to make one symbol of. What was there, what was to be added, and how many
     /// `parts` the first had by then.
     pub refused_merges: Vec<(Sym, Sym, u32)>,
+    /// See `has_refused_merges`.
+    files_of_refused_merges: std::sync::OnceLock<FxHashSet<FileId>>,
     /// The aliases `resolveAlias` found to be circular (2303) while `mergeSymbol` resolved the target of a merge. Their `aliasTarget`
     /// stays `unknownSymbol`, even if the merge breaks the cycle.
     pub circular_at_merge: Vec<Sym>,
@@ -622,7 +624,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
         end: u32,
         atoms: &Interner,
     ) -> ExprId {
-        let pos = place.map_or(end, |place| place.from);
+        let (pos, to) = place.map_or((end, end), |place| (place.from, place.to));
         let kind = match json {
             Json::Null => ExprKind::Null,
             Json::Bool(true) => ExprKind::True,
@@ -632,7 +634,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                 let number = f.number(-*n);
                 ExprKind::Unary {
                     op: UnOp::Minus,
-                    operand: f.expr(ExprKind::Number(number), (pos + 1).min(end)),
+                    operand: f.expr(ExprKind::Number(number), (pos + 1).min(end), to),
                 }
             }
             Json::Number(n) => ExprKind::Number(f.number(*n)),
@@ -667,13 +669,14 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                             pos,
                             start: pos,
                             end: 0,
+                            postfix_token: 0,
                         }
                     })
                     .collect();
                 ExprKind::Object(f.add_props(&props))
             }
         };
-        f.expr(kind, pos)
+        f.expr(kind, pos, to)
     }
     // The same for a file with syntax errors, as TypeScript's parser recovers from them.
     fn expression(f: &mut hir::File, e: &Expression, atoms: &Interner) -> ExprId {
@@ -711,9 +714,16 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                             }
                             (None, PropKey::Name(name)) => (
                                 PropKind::Shorthand,
-                                f.expr(ExprKind::Ident(name), p.name_pos),
+                                f.expr(
+                                    ExprKind::Ident(name),
+                                    p.name_pos,
+                                    p.name_pos + atoms.bytes(name).len() as u32,
+                                ),
                             ),
-                            (None, _) => (PropKind::Init, f.expr(ExprKind::Missing, p.name_pos)),
+                            (None, _) => (
+                                PropKind::Init,
+                                f.expr(ExprKind::Missing, p.name_pos, p.name_pos),
+                            ),
                         };
                         Prop {
                             kind,
@@ -723,13 +733,14 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
                             pos: p.name_pos,
                             start: p.name_pos,
                             end: 0,
+                            postfix_token: 0,
                         }
                     })
                     .collect();
                 ExprKind::Object(f.add_props(&props))
             }
         };
-        f.expr(kind, e.pos)
+        f.expr(kind, e.pos, e.end)
     }
     let mut f = hir::File {
         kind: FileKind::Json,
@@ -1966,6 +1977,7 @@ impl Files {
             merged_exports: FxHashMap::default(),
             merged_members: FxHashMap::default(),
             refused_merges: Vec::new(),
+            files_of_refused_merges: Default::default(),
             circular_at_merge: Vec::new(),
             resolved_at_merge: Vec::new(),
 
@@ -3067,6 +3079,20 @@ impl Files {
     fn refuse_merge(&mut self, target: Sym, source: Sym) {
         let parts = self.parts(target).len() as u32;
         self.refused_merges.push((target, source, parts));
+    }
+
+    /// Whether `file` declares one of `refused_merges`. There may be thousands of those, and every file asks.
+    pub fn has_refused_merges(&self, file: FileId) -> bool {
+        let files = self.files_of_refused_merges.get_or_init(|| {
+            let mut files = FxHashSet::default();
+            for &(target, source, _) in &self.refused_merges {
+                for sym in [target, source] {
+                    files.extend(self.parts(self.canonical(sym)).iter().map(|part| part.file));
+                }
+            }
+            files
+        });
+        files.contains(&file)
     }
 
     /// `symbol.Exports`

@@ -138,7 +138,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parameter.end = self.lexer.full_start();
         if let Some(syntax) = &mut self.type_syntax {
             let this = ts::PatternData::Identifier(bun_ast::StoreStr::new(b"this"));
-            parameter.pattern = syntax.ast.add_pattern(this, name);
+            let name_end = Loc {
+                start: name.start + b"this".len() as i32,
+            };
+            parameter.pattern = syntax.ast.add_pattern(this, name, name_end);
             if has_type {
                 parameter.ty = syntax.last_type_or_error();
             }

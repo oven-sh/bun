@@ -55,6 +55,21 @@ impl Eq for Reference {}
 pub(super) struct FlowMemo {
     /// `getEffectsSignature`, by call.
     effects_signatures: FxHashMap<(FileId, ExprId), Option<SigId>>,
+    /// See `index_narrowing_subjects`: of which file; by symbol, the first flow node with a test, a `switch` or an assignment that is about
+    /// it (empty: the file has no such filter); a bit by symbol, for calls that are statements and have not all been found idle;
+    /// those calls, by symbol.
+    narrowing_index_file: Option<FileId>,
+    first_narrowing_node: Vec<u32>,
+    in_call_statements: Vec<u64>,
+    call_statements_by_symbol: Vec<(SymbolId, FlowId)>,
+    /// By flow node: no node with a higher number is on any way back from it. (Only the back edge of a loop leads to a higher one.)
+    max_antecedent: Vec<u32>,
+    /// By symbol: the flow node at which its declaration gives it its value.
+    declaration_node: Vec<u32>,
+    /// `sig.resolvedTypePredicate`, of a function that does not say what it returns.
+    type_predicates_from_body: FxHashMap<(FileId, FnId), Option<Predicate>>,
+    /// `links.contextFreeType`
+    context_free_types: FxHashMap<(FileId, ExprId), TypeId>,
     /// `flowNodeReachable`, `flowNodePostSuper`
     flow_node_reachable: FxHashMap<(FileId, FlowId), bool>,
     flow_node_post_super: FxHashMap<(FileId, FlowId), bool>,
@@ -209,6 +224,58 @@ struct About {
     /// What `narrow` compares a reference with: the `root_key` of what each starts with, and the number of the property it goes on
     /// with plus one, `ALONE` if it does not go on, 0 if that cannot be told or makes no difference.
     chains: [(u32, u32); 3],
+}
+
+/// Who `note_test` and `note_chain` tell what a test is about.
+trait NarrowingSubjects {
+    fn add(&mut self, root: u32, first: u32);
+    /// Nothing more need be said.
+    fn is_full(&self) -> bool {
+        false
+    }
+    /// A key that it takes asking to know the name of. `true`: that is the end of it.
+    fn gives_up_on_key(&mut self) -> bool {
+        false
+    }
+}
+
+impl NarrowingSubjects for About {
+    fn add(&mut self, root: u32, first: u32) {
+        About::add(self, root, first);
+    }
+
+    fn is_full(&self) -> bool {
+        self.state & About::ANYTHING != 0
+    }
+
+    fn gives_up_on_key(&mut self) -> bool {
+        self.state |= About::ANYTHING;
+        true
+    }
+}
+
+/// By symbol: the first flow node that is about something that starts with it, however it goes on. The second: the node at hand.
+struct FirstNarrowingNodes<'a>(&'a mut [u32], u32);
+
+impl NarrowingSubjects for FirstNarrowingNodes<'_> {
+    fn add(&mut self, root: u32, _: u32) {
+        if root & 3 == 1 {
+            let first = &mut self.0[(root >> 2) as usize];
+            *first = (*first).min(self.1);
+        }
+    }
+}
+
+/// The symbols a call that is a statement mentions, each once: by symbol, the last call that did; the call at hand; the list.
+struct CallStatementSubjects<'a>(&'a mut [u32], u32, &'a mut Vec<(SymbolId, FlowId)>);
+
+impl NarrowingSubjects for CallStatementSubjects<'_> {
+    fn add(&mut self, root: u32, _: u32) {
+        if root & 3 == 1 && self.0[(root >> 2) as usize] != self.1 {
+            self.0[(root >> 2) as usize] = self.1;
+            self.2.push((SymbolId(root >> 2), FlowId(self.1)));
+        }
+    }
 }
 
 impl About {
@@ -623,7 +690,10 @@ impl<'p> Checker<'p> {
                 of(OF_OBJECT, true, false)
             }
             TypeData::Intrinsic(
-                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+                Intrinsic::Never
+                | Intrinsic::SilentNever
+                | Intrinsic::UnreachableNever
+                | Intrinsic::ImplicitNever,
             ) => 0,
             TypeData::Union(parts) => parts
                 .iter()
@@ -1047,8 +1117,7 @@ impl<'p> Checker<'p> {
     /// How high `stack` was when the top of `flowLoopStack` was pushed, if that was after `stack[since]` was entered.
     pub(super) fn flow_loop_pushed_since(&self, since: usize) -> Option<usize> {
         let depth = self.flow_loops.last()?.5;
-        (self.flow_depth <= 12 && depth > since && self.is_flow_loop_visible(depth))
-            .then_some(depth)
+        (depth > since && self.is_flow_loop_visible(depth)).then_some(depth)
     }
 
     /// Whether `e` is something `reference` goes through: `x` or `x.a` for `x.a.b`.
@@ -1553,37 +1622,42 @@ impl<'p> Checker<'p> {
             _ => return declared,
         };
         let flow = bound.expr_flow[e.idx()];
-        if len < 2
-            || flow == UNREACHABLE
-            || self.flow_depth > 12
-            || !self.is_constant_pattern(file, parent)
-        {
+        if len < 2 || flow == UNREACHABLE || !self.is_constant_pattern(file, parent) {
             return declared;
         }
-        let parent_ty = self.type_of_pat(file, parent);
-        let parent_ty = self.map_type(parent_ty, |c, m| {
-            if c.is_deferred(m) {
-                c.base_constraint(m)
-            } else {
-                m
+        // `NodeCheckFlagsInCheckIdentifier`
+        if self.in_check_identifier.contains(&(file, parent)) {
+            return declared;
+        }
+        self.in_check_identifier.push((file, parent));
+        let ty = 'checked: {
+            let parent_ty = self.type_of_pat(file, parent);
+            let parent_ty = self.map_type(parent_ty, |c, m| {
+                if c.is_deferred(m) {
+                    c.base_constraint(m)
+                } else {
+                    m
+                }
+            });
+            if !self.is_union(parent_ty) {
+                break 'checked declared;
             }
-        });
-        if !self.is_union(parent_ty) {
-            return declared;
-        }
-        let reference = Reference {
-            file,
-            root: Root::Pattern(parent),
-            path: SmallVec::new(),
-            at: ExprId::NONE,
-            has_key: true,
+            let reference = Reference {
+                file,
+                root: Root::Pattern(parent),
+                path: SmallVec::new(),
+                at: ExprId::NONE,
+                has_key: true,
+            };
+            let walk = Walk::new(reference, parent_ty, parent_ty, true);
+            let narrowed = self.get_flow_type_of_reference(walk, flow);
+            if narrowed.is_never() {
+                break 'checked TypeId::NEVER;
+            }
+            self.type_of_binding_element(file, pat, narrowed)
         };
-        let walk = Walk::new(reference, parent_ty, parent_ty, true);
-        let narrowed = self.get_flow_type_of_reference(walk, flow);
-        if narrowed.is_never() {
-            return TypeId::NEVER;
-        }
-        self.type_of_binding_element(file, pat, narrowed)
+        self.in_check_identifier.pop();
+        ty
     }
 
     /// `getNarrowedTypeOfSymbol`, of the parameter `p` at `e`. Where nothing is written of its type and the function is expected to
@@ -1613,7 +1687,6 @@ impl<'p> Checker<'p> {
             )
             || !hir[func].type_params.is_empty()
             || flow == UNREACHABLE
-            || self.flow_depth > 12
         {
             return declared;
         }
@@ -1633,8 +1706,19 @@ impl<'p> Checker<'p> {
         if !rest.rest {
             return declared;
         }
+        let declared_rest = rest.ty;
+        let instantiated = self
+            .takes_context(file, func)
+            .and_then(|owner| self.get_inference_context(file, owner))
+            .and_then(|level| {
+                self.with_inference_context(level, |c, context| {
+                    let mapper = c.non_fixing_mapper(context, declared_rest);
+                    c.instantiate(declared_rest, mapper)
+                })
+            })
+            .unwrap_or(declared_rest);
         // `getReducedApparentType`
-        let rest_ty = self.apparent_type(rest.ty);
+        let rest_ty = self.apparent_type(instantiated);
         let rest_ty = self.reduced(rest_ty);
         if !self.is_union(rest_ty) || !self.every_type(rest_ty, |c, m| c.is_tuple(m)) {
             return declared;
@@ -1889,8 +1973,8 @@ impl<'p> Checker<'p> {
 
     /// Adds to `about` all that `narrow` compares a reference with when it is given the test `e`. `level`: how many constants that
     /// hold a test have been looked through.
-    fn note_test(&self, file: FileId, e: ExprId, level: u32, about: &mut About) {
-        if about.state & About::ANYTHING != 0 {
+    fn note_test(&self, file: FileId, e: ExprId, level: u32, about: &mut impl NarrowingSubjects) {
+        if about.is_full() {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -1976,7 +2060,7 @@ impl<'p> Checker<'p> {
         e: ExprId,
         mut is_whole: bool,
         mut first: u32,
-        about: &mut About,
+        about: &mut impl NarrowingSubjects,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
@@ -2024,8 +2108,9 @@ impl<'p> Checker<'p> {
                 }
                 ExprKind::Index { obj, index, .. } => {
                     // `access_key` asks what such a key holds.
-                    if matches!(hir[index].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) {
-                        about.state |= About::ANYTHING;
+                    if matches!(hir[index].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
+                        && about.gives_up_on_key()
+                    {
                         return;
                     }
                     is_whole = false;
@@ -2801,7 +2886,7 @@ impl<'p> Checker<'p> {
         match sigs[..] {
             [only] if self.sig_type_params(only).is_empty() => Some(only),
             _ if sigs.iter().any(|&s| self.sig_predicate(s).is_some()) => {
-                self.resolve_call(file, e).sig
+                self.resolved_signature(file, e).sig
             }
             _ => None,
         }
@@ -3278,7 +3363,11 @@ impl<'p> Checker<'p> {
                 let receiver = self.non_nullable(ty);
                 self.type_of_property(receiver, name)?
             }
-            _ => self.type_of_expr(file, data.callee),
+            // `getEffectsSignature`: `checkNonNullType(getOptionalExpressionType(..))`, which reports.
+            _ => {
+                let callee = self.chain_receiver(file, data.callee, data.chain).0;
+                self.check_non_null_type(file, data.callee, callee)
+            }
         };
         let callee = self.non_nullable(callee);
         if self.is_any(callee) {
@@ -3291,7 +3380,7 @@ impl<'p> Checker<'p> {
                 if !sigs.iter().any(|&s| self.sig_predicate(s).is_some()) {
                     return None;
                 }
-                self.resolve_call(file, call).sig?
+                self.resolved_signature(file, call).sig?
             }
         };
         let predicate = self.sig_predicate(sig)?;
@@ -3753,9 +3842,14 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getNarrowableTypeForReference`: `declared` with what its type variables extend in their place, where that is what will count
-    /// anyway and is a union: as a type variable it could not be narrowed.
-    fn narrowable_type(&mut self, file: FileId, e: ExprId, declared: TypeId) -> TypeId {
+    /// `getNarrowableTypeForReference`
+    fn get_narrowable_type_for_reference(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        declared: TypeId,
+        check_mode: CheckMode,
+    ) -> TypeId {
         let declared = match *self.data(declared) {
             TypeData::Substitution {
                 base,
@@ -3763,13 +3857,8 @@ impl<'p> Checker<'p> {
             } => base,
             _ => declared,
         };
-        // `CheckModeInferential`: what type arguments are inferred from stays as it is declared. It is said of this one question, not
-        // of what is assigned to the reference on the way here.
-        if self.inferential == Some((file, e)) {
-            self.inferential = None;
-            return declared;
-        }
-        if !self.has_type_variables(declared)
+        if check_mode.contains(CheckMode::INFERENTIAL)
+            || !self.has_type_variables(declared)
             || !self
                 .parts(declared)
                 .iter()
@@ -3778,17 +3867,14 @@ impl<'p> Checker<'p> {
             return declared;
         }
         if !self.is_constraint_position(file, e, declared) {
-            match self.contextual_type(file, e) {
-                // `CheckModeInferential` goes down into a literal, and the literal is then held against what was inferred from it, which
-                // has the type variables. Unless that does not fit what the type parameter extends: then it is held against that.
-                Some(expected) if !self.is_generic(expected) => {
-                    if self.is_in_literal_inferred_from(file, e)
-                        && self.is_assignable(declared, expected)
-                        || self.is_candidate_despite_return_mapper(file, e, declared)
-                    {
-                        return declared;
-                    }
-                }
+            // `hasContextualTypeWithNoGenericTypes`
+            let context_flags = if check_mode.contains(CheckMode::REST_BINDING_ELEMENT) {
+                ContextFlags::SKIP_BINDING_PATTERNS
+            } else {
+                ContextFlags::empty()
+            };
+            match self.contextual_type(file, e, context_flags) {
+                Some(expected) if !self.is_generic(expected) => {}
                 _ => return declared,
             }
         }
@@ -3802,144 +3888,6 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// Whether `e` stands in an array or object literal that is expected to be a type parameter of the function it is passed to: what
-    /// is expected of `e` was read off what that type parameter extends. Such a type parameter is not in scope where `e` is.
-    fn is_in_literal_inferred_from(&mut self, file: FileId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let scope = self.scope_of_expr(file, e);
-        let in_scope = self.type_params_in_scope(file, scope);
-        let mut at = e;
-        loop {
-            let parent = match bound.expr_parent[at.idx()] {
-                Parent::Prop(p) if hir[p].value == at => bound.prop_owner[p.idx()],
-                Parent::Expr(parent) => parent,
-                _ => return false,
-            };
-            match hir[parent].kind {
-                ExprKind::Array(_) | ExprKind::Object(_) => {
-                    let Some(expected) = self.contextual_type(file, parent) else {
-                        return false;
-                    };
-                    if self.parts(expected).iter().any(|m| {
-                        matches!(self.data(*m), TypeData::TypeParam(..)) && !in_scope.contains(m)
-                    }) {
-                        return true;
-                    }
-                }
-                ExprKind::Cond { test, .. } if test != at => {}
-                ExprKind::Binary {
-                    op: BinOp::Or | BinOp::Nullish,
-                    ..
-                } => {}
-                ExprKind::Binary {
-                    op: BinOp::And | BinOp::Comma,
-                    right,
-                    ..
-                } if right == at => {}
-                _ => return false,
-            }
-            at = parent;
-        }
-    }
-
-    /// Whether the type of `e` is a candidate for a type parameter of the call that `e` is in a literal argument of, though
-    /// `returnMapper` has replaced that type parameter in the contextual type recorded for the argument.
-    /// `getNarrowableTypeForReference` asks for no contextual type under `CheckModeInferential`, and `isSignatureApplicable` then
-    /// checks the argument against the parameter type with what was inferred from it, which outranks `returnMapper`.
-    fn is_candidate_despite_return_mapper(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        declared: TypeId,
-    ) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (mut arg, mut is_in_literal) = (e, false);
-        let (call, args) = loop {
-            let parent = match bound.expr_parent[arg.idx()] {
-                Parent::Prop(p) if hir[p].value == arg => bound.prop_owner[p.idx()],
-                Parent::Expr(parent) => parent,
-                _ => return false,
-            };
-            if parent.is_none() {
-                return false;
-            }
-            match hir[parent].kind {
-                ExprKind::Array(_) | ExprKind::Object(_) => is_in_literal = true,
-                ExprKind::Cond { test, .. } if test != arg => {}
-                ExprKind::Binary {
-                    op: BinOp::Or | BinOp::Nullish,
-                    ..
-                } => {}
-                ExprKind::Binary {
-                    op: BinOp::And | BinOp::Comma,
-                    right,
-                    ..
-                } if right == arg => {}
-                ExprKind::Call(c) | ExprKind::New(c) if is_in_literal && hir[c].callee != arg => {
-                    break (parent, hir[c].args);
-                }
-                _ => return false,
-            }
-            arg = parent;
-        };
-        if hir
-            .ids(args)
-            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
-        {
-            return false;
-        }
-        let Some(index) = hir.ids(args).position(|a| a == arg) else {
-            return false;
-        };
-        let resolving = self
-            .resolving
-            .iter()
-            .rev()
-            .find(|r| r.file == file && r.call == call)
-            .map(|r| (r.sig, r.params.clone(), r.return_mapper));
-        // The type parameters that are inferred. The signature of a resolved call has what was inferred in their place.
-        let (params, type_params) = match resolving {
-            Some((Some(sig), params, return_mapper)) if return_mapper != MapperId::IDENTITY => {
-                (params, Some(self.sig_type_params(sig)))
-            }
-            Some(_) => return false,
-            None => {
-                let Some(resolved) = self.p.calls.get(&(file, call)) else {
-                    return false;
-                };
-                let Some(sig) = resolved.sig else {
-                    return false;
-                };
-                (self.sig_params(sig), None)
-            }
-        };
-        let Some(param) = self.context_of_arg_at(&params, index, Some(args.len())) else {
-            return false;
-        };
-        self.contextual.push((file, arg, param));
-        let expected = self.contextual_type(file, e);
-        let is_candidate = match (expected, &type_params) {
-            (Some(expected), None) => self.is_generic(expected),
-            (None, None) => true,
-            (Some(expected), Some(type_params)) if self.is_generic(expected) => {
-                // `getInferredType`: a candidate that does not fit the constraint gives way to the constraint.
-                self.parts(expected)
-                    .iter()
-                    .any(|member| type_params.contains(member))
-                    && {
-                        let constraint = self.base_constraint(expected);
-                        self.is_assignable(declared, constraint)
-                    }
-            }
-            (Some(expected), Some(_)) => {
-                self.is_in_literal_inferred_from(file, e) && self.is_assignable(declared, expected)
-            }
-            (None, Some(_)) => self.is_in_literal_inferred_from(file, e),
-        };
-        self.contextual.pop();
-        is_candidate
-    }
-
     /// The end of `checkIdentifier`, from `getNarrowableTypeForReference` on: 7034 7005, 2454. `sym`: what `e` names.
     pub(super) fn narrow_reference(
         &mut self,
@@ -3951,7 +3899,7 @@ impl<'p> Checker<'p> {
         if declared == TypeId::UNRESOLVED {
             return declared;
         }
-        let declared = self.narrowable_type(file, e, declared);
+        let declared = self.get_narrowable_type_for_reference(file, e, declared, self.check_mode());
         let ty = self.flow_type_of(file, e, declared, Start::Unsettled);
         let hir = self.hir(file);
         if self.is_automatic_type(declared) && !self.is_evolving_array_operation_target(file, e) {
@@ -3959,9 +3907,9 @@ impl<'p> Checker<'p> {
             if self.is_automatic_type(ty) && !hir.is_in_with(hir[e].pos) {
                 let args = [Arg::Sym(sym), Arg::Type(ty)];
                 if let Some(name) = self.place_of_symbol(sym) {
-                    self.error(name, 7034, &args);
+                    self.error_at(name, 7034, &args);
                 }
-                self.error(self.place_of_token(file, hir[e].pos), 7005, &args);
+                self.error_at(self.place_of_token(file, hir[e].pos), 7005, &args);
             }
             return self.convert_auto_to_any(ty);
         }
@@ -3970,7 +3918,7 @@ impl<'p> Checker<'p> {
             && !self.contains_undefined(declared)
             && !self.assumes_initialized(file, e, declared)
         {
-            self.error(
+            self.error_at(
                 self.place_of_token(file, hir[e].pos),
                 2454,
                 &[Arg::Sym(sym)],
@@ -4013,7 +3961,8 @@ impl<'p> Checker<'p> {
         if prop_type == TypeId::UNRESOLVED {
             return prop_type;
         }
-        let prop_type = self.narrowable_type(file, e, prop_type);
+        let prop_type =
+            self.get_narrowable_type_for_reference(file, e, prop_type, self.check_mode());
         let uninitialized = prop.filter(|prop| self.assumes_uninitialized(file, e, prop));
         let start = match uninitialized {
             Some(_) => Start::Unassigned,
@@ -4025,7 +3974,7 @@ impl<'p> Checker<'p> {
             && self.contains_undefined(flow_type)
         {
             let name = self.prop_to_string(prop);
-            self.error(error_node, 2565, &[Arg::Text(&name)]);
+            self.error_at(error_node, 2565, &[Arg::Text(&name)]);
             // "Return the declared type to reduce follow-on errors"
             return prop_type;
         }
@@ -4145,46 +4094,12 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
-        self.type_of_initializer_part_for_rest(file, e)
-    }
-
-    /// `e` is such an initializer, or one of the alternatives it is. `hasContextualTypeWithNoGenericTypes`: in this mode what a pattern
-    /// implies is not expected of its initializer, so nothing is expected of `e`. Nor is it in a constraint position. Hence
-    /// `getNarrowableTypeForReference` leaves a reference its type variables, as it does where type arguments are inferred from it.
-    fn type_of_initializer_part_for_rest(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        match self.hir(file)[e].kind {
-            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                // In the ordinary way first: that is what is kept of `e` and of all it is made of.
-                let ordinary = self.type_of_expr(file, e);
-                if !self.is_known(ordinary) || self.is_any(ordinary) {
-                    return None;
-                }
-                let around = self.inferential.replace((file, e));
-                let ty = self.type_of_expr_uncached(file, e);
-                self.inferential = around;
-                (ty != ordinary && self.is_known(ty)).then_some(ty)
-            }
-            // `checkConditionalExpression` hands the mode on.
-            ExprKind::Cond { yes, no, .. } => {
-                let (for_yes, for_no) = (
-                    self.type_of_initializer_part_for_rest(file, yes),
-                    self.type_of_initializer_part_for_rest(file, no),
-                );
-                if for_yes.is_none() && for_no.is_none() {
-                    return None;
-                }
-                let yes = match for_yes {
-                    Some(ty) => ty,
-                    None => self.type_of_expr(file, yes),
-                };
-                let no = match for_no {
-                    Some(ty) => ty,
-                    None => self.type_of_expr(file, no),
-                };
-                Some(self.union_reduced(&[yes, no]))
-            }
-            _ => None,
+        let ordinary = self.type_of_expr(file, e);
+        if !self.is_known(ordinary) || self.is_any(ordinary) {
+            return None;
         }
+        let ty = self.check_expression_cached_ex(file, e, CheckMode::REST_BINDING_ELEMENT);
+        (ty != ordinary && self.is_known(ty)).then_some(ty)
     }
 
     /// Whether `e` is the `x` of `x!`. Not of `(x)!`: what is written right around it is what counts.
@@ -4274,6 +4189,231 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// OURS. The symbols of `file` that something in its flow graph is about: a test (`note_test`, as for `is_test_about`), a `switch`,
+    /// the target of an assignment, what a `for in` goes over. Nothing else can change what a reference that starts with a name is,
+    /// but a call that asserts: see `FlowMemo::in_call_statements`. Empty: some way back through the graph may be `MAX_FLOW_DEPTH`
+    /// long, and the walk that finds that out reports it.
+    #[inline(never)]
+    fn index_narrowing_subjects(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let words = bound.symbols.len() / 64 + 1;
+        let mut first_nodes = vec![u32::MAX; bound.symbols.len()];
+        let mut last_call_statement = vec![u32::MAX; bound.symbols.len()];
+        let mut declaration_node = vec![u32::MAX; bound.symbols.len()];
+        let mut mentioned_in_calls = vec![0u64; words];
+        let mut call_statements_by_symbol = Vec::new();
+        let mut lengths = vec![0u32; bound.flow.len()];
+        let mut highest = vec![0u32; bound.flow.len()];
+        let mut longest = 0;
+        for (i, &node) in bound.flow.iter().enumerate() {
+            let about = &mut FirstNarrowingNodes(&mut first_nodes, i as u32);
+            // What comes before it: a run of edges, or one node.
+            let before = match node {
+                Flow::Unreachable => &[][..],
+                Flow::Label { start, len } | Flow::Loop { start, len } => bound.edges(start, len),
+                Flow::Start {
+                    outer: ref before, ..
+                }
+                | Flow::StartInvoked {
+                    outer: ref before, ..
+                }
+                | Flow::Reduce { ref before, .. }
+                | Flow::ArrayMutation { ref before, .. }
+                | Flow::Cond { ref before, .. }
+                | Flow::Switch { ref before, .. }
+                | Flow::Assign { ref before, .. }
+                | Flow::Call { ref before, .. } => std::slice::from_ref(before),
+            };
+            (highest[i], lengths[i]) = (i as u32, 1);
+            for before in before.iter().filter(|before| before.is_some()) {
+                highest[i] = highest[i].max(before.0).max(highest[before.idx()]);
+                // 0 for the back edge of a loop, which has a higher number.
+                lengths[i] = lengths[i].max(lengths[before.idx()] + 1);
+            }
+            longest = longest.max(lengths[i]);
+            match node {
+                Flow::Cond { expr, .. } => self.note_test(file, expr, 0, about),
+                Flow::Switch { stmt, .. } => {
+                    if let StmtKind::Switch { expr, cases } = hir[stmt].kind {
+                        // `switch (x)`, `switch (x.kind)`, `switch (typeof x)`, and `switch (true) { case test: }`
+                        self.note_test(file, expr, 0, about);
+                        if let ExprKind::Unary { operand, .. } = hir[expr].kind {
+                            self.note_test(file, operand, 0, about);
+                        }
+                        for case in cases.iter() {
+                            if hir[case].test.is_some() {
+                                self.note_test(file, hir[case].test, 0, about);
+                            }
+                        }
+                    }
+                }
+                Flow::Assign { target, .. } => match target {
+                    FlowTarget::Expr(e) => self.note_chain(file, e, false, About::ALONE, about),
+                    FlowTarget::Var(d) => {
+                        if let Some(at) =
+                            declaration_node.get_mut(bound.pat_symbol[hir[d].pat.idx()].idx())
+                        {
+                            *at = i as u32;
+                        }
+                        let stmt = bound.var_stmt[d.idx()];
+                        if stmt.is_some()
+                            && let Parent::Stmt(owner) = bound.stmt_parent[stmt.idx()]
+                            && let StmtKind::ForIn { left, expr, .. } = hir[owner].kind
+                            && left == stmt
+                        {
+                            self.note_chain(file, expr, false, About::ALONE, about);
+                        }
+                    }
+                    FlowTarget::Pat(p) => {
+                        if let Some(at) = declaration_node.get_mut(bound.pat_symbol[p.idx()].idx())
+                        {
+                            *at = i as u32;
+                        }
+                    }
+                },
+                // `asserts x`: the argument is a test. `asserts x is T`, `asserts this`: an argument, what it is called on.
+                Flow::Call { call, .. } => {
+                    if let ExprKind::Call(c) = hir[call].kind {
+                        let about = &mut CallStatementSubjects(
+                            &mut last_call_statement,
+                            i as u32,
+                            &mut call_statements_by_symbol,
+                        );
+                        self.note_test(file, call, 0, about);
+                        for argument in hir.ids(hir[c].args) {
+                            self.note_test(file, argument, 0, about);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if longest >= MAX_FLOW_DEPTH {
+            first_nodes.clear();
+        }
+        for &(symbol, _) in &call_statements_by_symbol {
+            mentioned_in_calls[symbol.idx() / 64] |= 1 << (symbol.idx() % 64);
+        }
+        call_statements_by_symbol.sort_unstable_by_key(|&(symbol, flow)| (symbol.0, flow.0));
+        let memo = &mut self.flow_memo;
+        memo.narrowing_index_file = Some(file);
+        (
+            memo.first_narrowing_node,
+            memo.in_call_statements,
+            memo.call_statements_by_symbol,
+        ) = (first_nodes, mentioned_in_calls, call_statements_by_symbol);
+        (memo.max_antecedent, memo.declaration_node) = (highest, declaration_node);
+    }
+
+    /// Whether every call that is a statement, mentions `s` and has a number up to `highest` has been found idle BY A WALK. None is
+    /// asked here: that may well lead back to what is being worked out, and tsgo asks when a walk gets there.
+    #[inline(never)]
+    fn are_call_statements_idle(&mut self, file: FileId, s: SymbolId, highest: u32) -> bool {
+        let memo = &self.flow_memo;
+        let from = memo
+            .call_statements_by_symbol
+            .partition_point(|about| about.0.0 < s.0);
+        let calls = memo.call_statements_by_symbol[from..]
+            .iter()
+            .take_while(|about| about.0 == s);
+        let mut is_all = true;
+        for &(_, flow) in calls {
+            if !memo.is_idle_call(file, flow) {
+                if flow.0 <= highest {
+                    return false;
+                }
+                is_all = false;
+            }
+        }
+        if is_all {
+            self.flow_memo.in_call_statements[s.idx() / 64] &= !(1 << (s.idx() % 64));
+        }
+        true
+    }
+
+    /// OURS. Whether `getFlowTypeOfReference` can only come to `declared` for `reference`, written `e`: see `index_narrowing_subjects`.
+    fn is_never_narrowed(
+        &mut self,
+        reference: &Reference,
+        e: ExprId,
+        declared: TypeId,
+        start: Start,
+    ) -> bool {
+        let (Root::Symbol(s), file) = (reference.root, reference.file) else {
+            return false;
+        };
+        if self.checking != Some(file) || self.is_automatic_type(declared) {
+            return false;
+        }
+        if self.flow_memo.narrowing_index_file != Some(file) {
+            self.index_narrowing_subjects(file);
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let memo = &self.flow_memo;
+        let Some(&first_about) = memo.first_narrowing_node.get(s.idx()) else {
+            return false;
+        };
+        let symbol = &bound.symbols[s.idx()];
+        // `let`, `const` or `using` with an initializer, in a list of statements, and `e` comes after: every way back from `e` comes
+        // to the declaration. (Not in a `case`, nor `if (a) const b = 1`, which is an error and parses.)
+        let is_dominated_by_declaration = match symbol.decls[..] {
+            [Decl::Var(_)] => match self.root_declaration(file, s) {
+                PatParent::Var(d) => {
+                    let stmt = bound.var_stmt[d.idx()];
+                    hir[d].kind != VarKind::Var
+                        && hir[d].init.is_some()
+                        && e.0 > hir[d].init.0
+                        && stmt.is_some()
+                        && match bound.stmt_parent[stmt.idx()] {
+                            Parent::Stmt(owner) => matches!(hir[owner].kind, StmtKind::Block(_)),
+                            Parent::FnBody(_) | Parent::File | Parent::Module(_) => true,
+                            _ => false,
+                        }
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        // No node with a higher number is on a way back from here that counts. A walk that ends at the declaration goes round
+        // a loop only if the loop is inside what the declaration is in.
+        let flow = bound.expr_flow[e.idx()];
+        let mut highest = memo.max_antecedent[flow.idx()];
+        if is_dominated_by_declaration
+            && let Some(&around) = memo
+                .max_antecedent
+                .get(memo.declaration_node[s.idx()] as usize)
+            && highest <= around.max(flow.0)
+        {
+            highest = flow.0;
+        }
+        if first_about <= highest {
+            return false;
+        }
+        // Whatever declares the name again on the way back leaves `a.b` what it is declared as.
+        let is_plain = if !reference.path.is_empty() {
+            start == Start::Known
+        } else if symbol.flags.contains(SymFlags::ASSIGNED) || self.is_union(declared) {
+            false
+        } else {
+            match symbol.decls[..] {
+                // `isAlias`: taken to hold a value where the file starts.
+                [
+                    Decl::ImportDefault(_)
+                    | Decl::ImportNamespace(_)
+                    | Decl::ImportSpec(_)
+                    | Decl::ImportEquals(_),
+                ] => true,
+                [Decl::Param(pat)] => {
+                    matches!(bound.pat_parent[pat.idx()], PatParent::Param(p) if hir[p].default.is_none())
+                }
+                _ => is_dominated_by_declaration,
+            }
+        };
+        is_plain
+            && (self.flow_memo.in_call_statements[s.idx() / 64] & 1 << (s.idx() % 64) == 0
+                || self.are_call_statements_idle(file, s, highest))
+    }
+
     /// `start`: `initialType`. `Known`: `declared`.
     fn flow_type_of(&mut self, file: FileId, e: ExprId, declared: TypeId, start: Start) -> TypeId {
         if self.is_flow_analysis_disabled(file) {
@@ -4288,6 +4428,9 @@ impl<'p> Checker<'p> {
         let Some(reference) = self.reference_of(file, e) else {
             return declared;
         };
+        if self.is_never_narrowed(&reference, e, declared, start) {
+            return declared;
+        }
         let is_automatic = self.is_automatic_type(declared);
         // Nothing but `[]` was ever assigned to it: where it is being filled it is an array of anything, whatever is in it
         // by then. Not looking spares asking what is being put in it while working out what that is expected to be.
@@ -4370,14 +4513,9 @@ impl<'p> Checker<'p> {
         if self.is_flow_analysis_disabled(file) {
             return TypeId::ERROR;
         }
-        if self.flow_depth > 12 {
-            return declared;
-        }
-        self.flow_depth += 1;
         let outer = std::mem::replace(&mut self.walk_declared, declared);
         let evolved = self.flow_type(&mut walk, flow).ty;
         self.walk_declared = outer;
-        self.flow_depth -= 1;
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
             self.disable_flow_analysis(file);
@@ -4588,7 +4726,7 @@ impl<'p> Checker<'p> {
                 UntypedProperty::Member(_) => self.source_text(file, at.1, at.2),
                 UntypedProperty::Assignment(_) => self.atom_text(name),
             };
-            self.error(at, 7008, &[Arg::Text(&written), Arg::Type(ty)]);
+            self.error_at(at, 7008, &[Arg::Text(&written), Arg::Type(ty)]);
         }
         if self.is_every_type_nullable(ty) {
             return None;
@@ -4736,7 +4874,7 @@ impl<'p> Checker<'p> {
             match at {
                 Parent::None | Parent::File | Parent::FnBody(_) | Parent::Module(_) => return pos,
                 Parent::Stmt(stmt) if stmt.is_some() => {
-                    if hir[stmt].pos <= declaration {
+                    if hir[stmt].start <= declaration {
                         return pos;
                     }
                     if matches!(
@@ -4929,6 +5067,24 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getContextFreeTypeOfExpression`
+    fn context_free_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
+        if let Some(&kept) = self.flow_memo.context_free_types.get(&(file, e)) {
+            return kept;
+        }
+        let level = self.inference_contexts.len() + 1;
+        let outer = std::mem::replace(&mut self.context_free_level, level);
+        let (ty, is_memoizable) = self.run_memoizable(|c| {
+            let mode = CheckMode::SKIP_CONTEXT_SENSITIVE;
+            c.check_expression_with_contextual_type(file, e, TypeId::ANY, None, mode)
+        });
+        self.context_free_level = outer;
+        if is_memoizable && !self.is_stack_low() {
+            self.flow_memo.context_free_types.insert((file, e), ty);
+        }
+        ty
+    }
+
     /// `addEvolvingArrayElementType`: the array `ty`, still being filled, after `value` was put in it.
     fn add_evolving_element(&mut self, file: FileId, ty: TypeId, value: ExprId) -> TypeId {
         let TypeData::EvolvingArray(element) = *self.data(ty) else {
@@ -4937,10 +5093,10 @@ impl<'p> Checker<'p> {
         let hir = self.hir(file);
         let added = match hir[value].kind {
             ExprKind::Spread(inner) => {
-                let spread = self.type_of_expr(file, inner);
+                let spread = self.context_free_type_of_expression(file, inner);
                 self.iterated_type(spread, false)
             }
-            _ => self.type_of_expr(file, value),
+            _ => self.context_free_type_of_expression(file, value),
         };
         let added = self.base_type_of_literal_type(added);
         let added = self.regular_type_of_object_literal(added);
@@ -5257,7 +5413,6 @@ impl<'p> Checker<'p> {
                     walk.remember(flow, result);
                     // What rests on a trial, a guess or a walk that gave up is nobody else's answer.
                     if !incomplete
-                        && self.provisional == 0
                         && !walk.too_deep
                         && walk.steps < MAX_STEPS
                         && self.is_known(result.ty)
@@ -5527,7 +5682,7 @@ impl<'p> Checker<'p> {
         };
         let ty = ty.unwrap_or(TypeId::ERROR);
         match walk.reference.at.some() {
-            Some(at) => self.narrowable_type(file, at, ty),
+            Some(at) => self.get_narrowable_type_for_reference(file, at, ty, CheckMode::empty()),
             None => ty,
         }
     }
@@ -5541,19 +5696,14 @@ impl<'p> Checker<'p> {
         value: ExprId,
         is_initializer: bool,
     ) -> TypeId {
-        let is_automatic = self.is_automatic_type(walk.declared);
-        let in_loop = !is_automatic && !is_initializer && !walk.round_labels.is_empty();
-        if is_automatic || in_loop {
-            self.eager.push(self.stack.len());
-        }
+        let in_loop = !is_initializer && !walk.round_labels.is_empty();
         if in_loop {
+            self.eager.push(self.stack.len());
             self.loop_values.push(self.stack.len());
         }
         let ty = self.type_of_declaration_initializer(walk.reference.file, value);
         if in_loop {
             self.loop_values.pop();
-        }
-        if is_automatic || in_loop {
             self.eager.pop();
         }
         ty
@@ -6004,7 +6154,7 @@ impl<'p> Checker<'p> {
                     return None;
                 }
                 *took_resolving = true;
-                self.resolve_call(file, call).sig?
+                self.resolved_signature(file, call).sig?
             }
         };
         self.asserts_or_never_returns(sig).then_some(sig)
@@ -6054,7 +6204,7 @@ impl<'p> Checker<'p> {
                     predicate
                 } else {
                     match self
-                        .resolve_call(file, call)
+                        .resolved_signature(file, call)
                         .sig
                         .and_then(|s| self.sig_predicate(s))
                     {
@@ -6339,144 +6489,6 @@ impl<'p> Checker<'p> {
         self.map_type(ty, |c, m| c.base_of_literal(m))
     }
 
-    /// What can be assigned to `target`, the left of `=`, `||=`, `&&=` or `??=`, a place in a pattern that is assigned to, or the `x`
-    /// of `for (x of xs)`: its type before any narrowing. UNRESOLVED stands for errorType. Of something that is not written to, or
-    /// by `+=` and the like, what it is declared as.
-    pub(super) fn declared_type_of_reference(&mut self, file: FileId, target: ExprId) -> TypeId {
-        let hir = self.hir(file);
-        let parent = self.bound(file).expr_parent[target.idx()];
-        let is_target = self.is_assignment_target(file, target);
-        // `AssignmentKindDefinite`
-        let is_definite = is_target
-            || matches!(parent, Parent::Expr(p)
-                if matches!(hir[p].kind, ExprKind::Assign { op: Some(BinOp::Or | BinOp::And | BinOp::Nullish), target: written, .. } if written == target));
-        // `IsWriteOnlyAccess`: `a.b ||= v` reads `a.b` as well, and the `a.b` of `[...a.b] = v` and `({ ...a.b } = v)` goes for read.
-        let is_write_only = is_target
-            && !match parent {
-                Parent::Expr(p) => matches!(hir[p].kind, ExprKind::Spread(_)),
-                Parent::Prop(p) => hir[p].kind == PropKind::Spread,
-                _ => false,
-            };
-        // `getWidenedType(leftType)`: the property of an assignment target or of a callee is looked up in the widened object type.
-        let is_widened = self.is_written_or_called(file, target);
-        match hir[target].kind {
-            ExprKind::Ident(name) => match self.symbol_of_identifier(file, target, name) {
-                Some(sym) => {
-                    let declared = self.type_of_symbol(sym);
-                    if self.is_in_compound_like_assignment(file, target) {
-                        self.base_type_of_literal_type(declared)
-                    } else {
-                        declared
-                    }
-                }
-                None => TypeId::UNRESOLVED,
-            },
-            // `checkPropertyAccessExpressionOrQualifiedName`
-            ExprKind::Dot { obj, name, .. } => {
-                let object = self.type_of_expr(file, obj);
-                if !is_definite {
-                    let object = self.non_nullable(object);
-                    let object = if is_widened {
-                        self.regular_object(object)
-                    } else {
-                        object
-                    };
-                    return self
-                        .type_of_property(object, name)
-                        .unwrap_or(TypeId::UNRESOLVED);
-                }
-                let object = self.non_null_type(object);
-                let object = self.regular_object(object);
-                if self.is_assignment_to_readonly_property(file, target, obj, name) {
-                    return TypeId::UNRESOLVED;
-                }
-                // `isThisPropertyAccessInConstructor`
-                if self
-                    .auto_this_property(file, target, object, name)
-                    .is_some()
-                {
-                    return TypeId::AUTO;
-                }
-                // Through what a type parameter extends no index signature is written to.
-                if self.is_generic_object_type(object)
-                    && !matches!(self.data(object), TypeData::ThisParam(_))
-                    && !self.finds_property(object, name)
-                {
-                    return TypeId::UNRESOLVED;
-                }
-                // What is only written to is what its setter takes. Either way an index signature takes what it says.
-                let found = if is_write_only {
-                    self.write_type_of_property(object, name)
-                } else {
-                    self.type_of_property_for_write(object, name)
-                };
-                match found {
-                    // `getFlowTypeOfAccessExpression`: `removeMissingType`. Only what may be left out has it.
-                    Some(ty) => self.remove_missing_type(ty, true),
-                    None => TypeId::UNRESOLVED,
-                }
-            }
-            // `checkElementAccessExpression`
-            ExprKind::Index { obj, index, .. } => {
-                let (object, key) = (self.type_of_expr(file, obj), self.type_of_expr(file, index));
-                // `isForInVariableForNumericPropertyNames`: the key is `number`.
-                let key = if self.is_for_in_variable_for_numeric_names(file, index) {
-                    TypeId::NUMBER
-                } else {
-                    key
-                };
-                if !is_definite {
-                    let object = if is_widened {
-                        self.regular_object(object)
-                    } else {
-                        object
-                    };
-                    return self.indexed_access(object, key);
-                }
-                let object = self.non_null_type(object);
-                let object = self.regular_object(object);
-                if !self.is_known(object) || !self.is_known(key) {
-                    return TypeId::UNRESOLVED;
-                }
-                // `shouldDeferIndexedAccessType`: in an expression it is the key that puts the answer off, or a tuple with a `...T` in
-                // it that is asked for more than it has whatever `T` is.
-                if self.is_generic(key) {
-                    return self.indexed_access(object, key);
-                }
-                if self.is_tuple(object) && self.is_generic(object) {
-                    let waiting = self.indexed_access(object, key);
-                    if matches!(self.data(waiting), TypeData::IndexedAccess { .. }) {
-                        return waiting;
-                    }
-                }
-                for &k in self.parts(key) {
-                    if let Some(name) = self.property_name_of_type(k)
-                        && self.is_assignment_to_readonly_property(file, target, obj, name)
-                    {
-                        return TypeId::UNRESOLVED;
-                    }
-                }
-                // `getPropertyTypeForIndexType`, `isThisPropertyAccessInConstructor`
-                if hir.is_js
-                    && let Some(name) = self.property_name_of_type(key)
-                    && self
-                        .auto_this_property(file, target, object, name)
-                        .is_some()
-                {
-                    return TypeId::AUTO;
-                }
-                // `AccessFlagsWriting`, and `AccessFlagsNoIndexSignatures` for what waits for type parameters, `this` aside.
-                let no_index_signatures = self.is_generic_object_type(object)
-                    && !matches!(self.data(object), TypeData::ThisParam(_));
-                match self.indexed_access_for_writing(object, key, no_index_signatures) {
-                    Some(ty) => self.remove_missing_type(ty, true),
-                    None => TypeId::UNRESOLVED,
-                }
-            }
-            _ => TypeId::UNRESOLVED,
-        }
-    }
-
     /// `isAssignmentToReadonlyEntity`, of the property `name` of `obj`, which `target` writes to.
     pub(super) fn is_assignment_to_readonly_property(
         &mut self,
@@ -6485,9 +6497,11 @@ impl<'p> Checker<'p> {
         obj: ExprId,
         name: Atom,
     ) -> bool {
-        let mut said = Vec::new();
-        self.check_property_write(file, target, obj, name, 0, &mut said);
-        !said.is_empty()
+        let from = self.reported.len();
+        self.check_property_write(file, target, obj, name, 0);
+        // What is asked on the way may report too, and that stays.
+        let said = (self.reported[from..].iter()).rposition(|d| d.code == 2540 && d.start == 0);
+        said.map(|i| self.reported.remove(from + i)).is_some()
     }
 
     /// Whether `getPropertyOfType` finds `name` in what `ty` is seen as: what an index signature stands in for is not found.
@@ -6560,12 +6574,34 @@ impl<'p> Checker<'p> {
         ) {
             return None;
         }
-        // What is tested on the way may call the function itself. To `getTypePredicateOfSignature` it has no predicate while one is
-        // being looked for; here the looking stops once it has gone round often enough.
-        if self.flow_depth > 12 {
-            return None;
+        let kept = &mut self.flow_memo.type_predicates_from_body;
+        if let Some(&kept) = kept.get(&(file, func)) {
+            return kept;
         }
-        // `functionHasImplicitReturn`
+        // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`: what is tested on the way may call the function.
+        kept.insert((file, func), None);
+        let (predicate, is_memoizable) = self.run_memoizable(|c| {
+            c.check_if_expression_refines_any_parameter(file, func, body, before)
+        });
+        let kept = &mut self.flow_memo.type_predicates_from_body;
+        if is_memoizable {
+            kept.insert((file, func), predicate);
+        } else {
+            kept.remove(&(file, func));
+        }
+        predicate
+    }
+
+    /// `checkIfExpressionRefinesAnyParameter`, and `functionHasImplicitReturn` before it.
+    fn check_if_expression_refines_any_parameter(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        body: ExprId,
+        before: FlowId,
+    ) -> Option<Predicate> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (f, info) = (&hir[func], bound.fns[func.idx()]);
         if info.end.is_some() && info.end != UNREACHABLE && self.is_reachable(file, info.end) {
             return None;
         }
@@ -6601,7 +6637,6 @@ impl<'p> Checker<'p> {
                 has_key: true,
             };
             let outer = std::mem::replace(&mut self.walk_declared, declared);
-            self.flow_depth += 1;
             let when_true =
                 self.param_type_past_test(&reference, declared, declared, before, body, true);
             // It has to be "if and only if": nothing of the narrowed type may fail the test.
@@ -6612,7 +6647,6 @@ impl<'p> Checker<'p> {
                     self.param_type_past_test(&reference, declared, when_true, before, body, false);
                 self.reduced(left)
             };
-            self.flow_depth -= 1;
             self.walk_declared = outer;
             // `x is never` is a type guard like any other, unless that nothing is left rests on something unknown.
             if when_true == declared || !leftover.is_never() {

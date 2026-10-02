@@ -1,6 +1,5 @@
 //! Where what is expected of a part of an expression comes from: the related information `elaborateError` adds to its errors.
 
-use super::explain::Related;
 use super::related::Place;
 use super::*;
 use crate::bind::Decl;
@@ -8,7 +7,7 @@ use crate::bind::Decl;
 impl Checker<'_> {
     /// The end of `elaborateElement`: the related information of the error about the property or the element `name` of what is held
     /// against `target`.
-    pub(super) fn expected_property(&mut self, target: TypeId, name: Atom) -> Option<Related> {
+    pub(super) fn expected_property(&mut self, target: TypeId, name: Atom) -> Option<Reported> {
         // What is compared on the way says nothing about the comparison that is being reported.
         let (gave_up, too_complex) = (self.relation_gave_up, self.relation_too_complex);
         let related = self.where_expected_property_comes_from(target, name);
@@ -23,17 +22,13 @@ impl Checker<'_> {
         &mut self,
         target: TypeId,
         name: Atom,
-    ) -> Option<Related> {
+    ) -> Option<Reported> {
         let property = self.first_declaration_of_property(target, name, 0);
         if property.is_none()
             && let Some(signature) = self.declaration_of_applicable_index_signature(target, name)
             && !self.files().module(signature.0).is_lib
         {
-            return Some(Related {
-                at: Some(signature),
-                code: 6501,
-                args: Vec::new(),
-            });
+            return Some(Reported::bare(signature, 6501));
         }
         let place = match property.flatten() {
             Some(place) => place,
@@ -49,11 +44,11 @@ impl Checker<'_> {
             self.atom_text(name)
         };
         let on_type = self.type_to_string(target);
-        Some(Related {
-            at: Some(place),
-            code: 6500,
-            args: vec![property_name, on_type],
-        })
+        Some(self.new_diagnostic(
+            place,
+            6500,
+            &[Arg::Text(&property_name), Arg::Text(&on_type)],
+        ))
     }
 
     /// What starts at `start` in `file`, from where to where `range` says. The text of the default library is not kept, so there

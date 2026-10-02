@@ -51,6 +51,7 @@ mod explain_table;
 mod expr;
 mod fix_t7;
 mod flow;
+mod grammarchecks;
 mod in_order;
 mod infer;
 mod instantiate;
@@ -64,7 +65,7 @@ mod related;
 mod related_expected;
 mod shape;
 mod sink;
-mod spans;
+pub(crate) mod spans;
 pub mod symbol_writer;
 mod symbols;
 pub mod type_writer;
@@ -82,13 +83,13 @@ use crate::types::*;
 use crate::util::{FxHashMap, List};
 use errors_modules::{root_declaration, root_pattern};
 use errors_x_aliases::SpecifierSite;
-use errors_x_regexp_scanner::{get_spelling_suggestion, spelling_suggestion};
+pub use errors_x_regexp_scanner::get_spelling_suggestion;
+use errors_x_regexp_scanner::spelling_suggestion;
 use errors_x_typenodes::array_element_type_node;
 use errors_x_typenodes::has_parse_diagnostics;
 use sink::{Arg, Reported};
 use spans::end_of_brackets;
 use spans::is_identifier_part;
-use spans::jsx_identifier_end;
 use spans::jsx_tag_name_end;
 use spans::skip_trivia;
 use spans::start_of_token_before;
@@ -104,14 +105,6 @@ pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
 
 const RECENT_SIGS: usize = 256;
-
-/// What trying a candidate for a call came to, if none of the arguments waits for the others.
-struct Trial {
-    candidate: SigId,
-    result: SigId,
-    /// `what_only_holds_for_now` at the end of it.
-    held: (u64, u64),
-}
 
 /// An answer that holds while the question at `depth` on the stack is the one numbered `serial`.
 #[derive(Copy, Clone)]
@@ -211,16 +204,14 @@ pub struct Program {
     identity_mappers: ByNode<(FileId, crate::bind::ScopeId), MapperId>,
     base_types: ByNodeKept<Sym, Arc<[TypeId]>>,
     calls: ByNode<(FileId, ExprId), ResolvedCall>,
-    /// The calls for which `chooseOverload` found no candidate, or it could not be told: the signature that the errors are reported
-    /// against (`checkCandidate` if there is one signature). `calls` holds what `getCandidateForOverloadFailure` made.
-    failed_calls: ByNode<(FileId, ExprId), SigId>,
+    /// What `resolveCall` reported of a call when it was resolved for good, with the notes.
+    said_of_calls: ByNodeKept<(FileId, ExprId), Vec<Reported>>,
+    /// `NodeCheckFlagsContextChecked`, with what `assignContextualParameterTypes` was given. `None`: it was not called.
+    context_checked: ByNode<(FileId, FnId), Option<SigId>>,
+    /// `contextFreeTypes`, of a function.
+    context_free_types: ByNode<(FileId, FnId), TypeId>,
     /// What `resolveCall` reported of a call the first time it was resolved again while it was being resolved, with the notes.
-    said_of_calls_resolved_again:
-        ByNodeKept<(FileId, ExprId), (Vec<errors::Diagnostic>, Vec<explain::Note>)>,
-    /// The contextual type of an argument that has to wait for the others, once the call knows it.
-    arg_contexts: ByNode<(FileId, ExprId), TypeId>,
-    /// Calls with a `const` type parameter in some overload that are resolved to an overload before it, or that it does not apply to.
-    calls_outside_const_context: NodeSet<(FileId, ExprId)>,
+    said_of_calls_resolved_again: ByNodeKept<(FileId, ExprId), Vec<Reported>>,
     relations: ByKey<(TypeId, TypeId, u8), u8>,
     variances: ByNodeKept<Sym, Arc<[u8]>>,
     member_types: ByNode<(FileId, MemberId), TypeId>,
@@ -246,6 +237,8 @@ pub struct Program {
     tuple_bases: ById<TypeId, TypeId>,
     /// `global_ref` of a name, without type arguments.
     plain_global_refs: ById<Atom, TypeId>,
+    /// `CachedTypeKindEquivalentBaseType`
+    equivalent_base_types: ById<TypeId, Option<TypeId>>,
     /// The types whose base constraint depends on itself (`circularConstraintType`).
     circular_constraints: IdSet<TypeId>,
     /// `constraint_of_type_param` of a type parameter, once it holds for good.
@@ -343,10 +336,10 @@ impl Program {
             identity_mappers: ByNode::new(&scopes),
             base_types: ByNodeKept::new(&symbols),
             calls: ByNode::new(&exprs),
-            failed_calls: ByNode::new(&exprs),
+            said_of_calls: ByNodeKept::new(&exprs),
+            context_checked: ByNode::new(&fns),
+            context_free_types: ByNode::new(&fns),
             said_of_calls_resolved_again: ByNodeKept::new(&exprs),
-            arg_contexts: ByNode::new(&exprs),
-            calls_outside_const_context: NodeSet::new(&exprs),
             relations: Default::default(),
             variances: ByNodeKept::new(&symbols),
             member_types: ByNode::new(&members),
@@ -363,6 +356,7 @@ impl Program {
             constraints: Default::default(),
             tuple_bases: Default::default(),
             plain_global_refs: Default::default(),
+            equivalent_base_types: Default::default(),
             circular_constraints: Default::default(),
             type_param_constraints: Default::default(),
             enum_values: ByNodeKept::new(&enum_members),
@@ -434,16 +428,20 @@ impl Program {
             file_at_hand,
             exprs_at_hand,
             stack: Vec::new(),
+            under_way: [0; 1024],
             frames: Vec::new(),
             pending_circular_mapped_props: Vec::new(),
             last_enter: EnterOutcome::Entered,
             resolution_start: 0,
-            asking_for_context: false,
             eager: Vec::new(),
             loop_values: Vec::new(),
             contextual_binding_patterns: Vec::new(),
             late_bound_members: FxHashMap::default(),
             reporting_nonexistent: Vec::new(),
+            serialization_level: 0,
+            non_existent_properties: Default::default(),
+            printing_closes_circles: false,
+            context_free_level: usize::MAX,
             came_full_circle: false,
             left_a_circle: false,
             cycles: 0,
@@ -486,8 +484,6 @@ impl Program {
             recent_intersected_props: Box::new(
                 [((TypeId(u32::MAX), Atom::NONE), TypeId::NEVER); shape::RECENT_PROPS],
             ),
-            keeps_arg_contexts: false,
-            context_checked_for: FxHashMap::default(),
             union_too_complex: false,
             recent_unions: Default::default(),
             deadline: None,
@@ -498,16 +494,14 @@ impl Program {
             exprs_by_kind: None,
             shapes_for_now: Vec::new(),
             held_for_now: FxHashMap::default(),
-            trials: FxHashMap::default(),
             enclosing_module_specifier_mode: None,
             emit_resolver_links: Default::default(),
-            explains: false,
             only_syntax: false,
-            notes: Default::default(),
-            suggestions: Default::default(),
+            has_ambient_context: false,
+            parsed_again_for_await: None,
+            noted_ahead: Vec::new(),
             timed_out: false,
             ticks: 0,
-            flow_depth: 0,
             flow_analysis_disabled_in: None,
             inline_level: 0,
             walk_declared: TypeId::NEVER,
@@ -518,42 +512,37 @@ impl Program {
             last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
             undefined_properties: FxHashMap::default(),
             iife_resolving: Vec::new(),
-            inferential: None,
             flow_loops: Vec::new(),
             reverse_mapped_source_stack: Vec::new(),
             reverse_mapped_target_stack: Vec::new(),
             reverse_expanding: 0,
             discriminants: FxHashMap::default(),
             flow_memo: Default::default(),
-            skip_binding_patterns: 0,
-            keeps_boolean_in_arg_contexts: false,
             discriminated: FxHashMap::default(),
-            optional_member: false,
             contextual_properties: FxHashMap::default(),
-            candidate_holes: Vec::new(),
-            trace_cycles: std::env::var_os("BUN_SEMA_TRACE_CYCLES").is_some(),
+            trace_cycles: *TRACE_CYCLES,
             looked_at: Default::default(),
             deferred_nodes: Default::default(),
+            is_deferred_node: Default::default(),
+            shares_nothing: false,
+            deferred_diagnostics: Vec::new(),
+            node_check_flags: Default::default(),
             within_unreachable_code: false,
             reported_unreachable_nodes: Vec::new(),
-            resolving: Vec::new(),
-            pending_failed_call: None,
+            call_resolution_errors: None,
+            context_checking: Vec::new(),
+            in_check_identifier: Vec::new(),
+            resolved_meanwhile: Vec::new(),
             own_of_compared_sigs: Vec::new(),
             restrictive_operands: Vec::new(),
             jsx_resolving: Vec::new(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
-            provisional: 0,
-            provisional_floor: 0,
-            provisional_arg_contexts: FxHashMap::default(),
             stack_base: stack_pointer(),
             stack_limit: 6 << 20,
             work: 0,
-            work_trap: std::env::var("BUN_SEMA_WORK_TRAP")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(u64::MAX),
+            work_trap: *WORK_TRAP,
         };
         checker.auto_array_type = match checker.array_of(TypeId::AUTO) {
             // It is a marker: without a global `Array` it is a type of its own all the same.
@@ -567,6 +556,14 @@ impl Program {
     }
 }
 
+/// Read once: a checker is made for every file.
+static TRACE_CYCLES: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var_os("BUN_SEMA_TRACE_CYCLES").is_some());
+static WORK_TRAP: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
+    let trap = std::env::var("BUN_SEMA_WORK_TRAP").ok();
+    trap.and_then(|v| v.parse().ok()).unwrap_or(u64::MAX)
+});
+
 /// See `Checker::begin_taint_scope`.
 struct TaintScope {
     outer: usize,
@@ -574,7 +571,7 @@ struct TaintScope {
 }
 
 /// A question that may come back to itself.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Query {
     Expr(FileId, ExprId),
     Symbol(Sym),
@@ -622,6 +619,17 @@ bitflags::bitflags! {
     }
 }
 
+bitflags::bitflags! {
+    /// `ContextFlags`
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    struct ContextFlags: u8 {
+        const SIGNATURE = 1 << 0;
+        const NO_CONSTRAINTS = 1 << 1;
+        const IGNORE_NODE_INFERENCES = 1 << 2;
+        const SKIP_BINDING_PATTERNS = 1 << 3;
+    }
+}
+
 /// `InferenceContextInfo`
 struct InferenceContextInfo {
     file: FileId,
@@ -666,7 +674,10 @@ pub(super) enum CurrentNode {
     TypeNode(FileId, TypeNodeId),
 }
 
-const MAX_DEPTH: usize = 220;
+/// For recursion that does not end. tsgo has no limit, and what is refused here costs dear: `gave_up` lets nothing that is under way be
+/// kept. A chain of 36 functions that each return what the next returns is 220 questions deep. One question takes some 2.3 KB of
+/// stack, `is_stack_low` sees to that.
+const MAX_DEPTH: usize = 1000;
 
 /// What goes with an entry of `Checker::stack`.
 #[derive(Copy, Clone)]
@@ -683,6 +694,8 @@ struct QueryFrame {
     drops_reported: bool,
     /// How long `Checker::reported` was when it was pushed. What comes after is reported for it.
     reported_from: u32,
+    /// Where it is counted in `Checker::under_way`.
+    class: u16,
 }
 
 pub struct Checker<'p> {
@@ -695,6 +708,8 @@ pub struct Checker<'p> {
     stack: Vec<Query>,
     /// For each entry of `stack`.
     frames: Vec<QueryFrame>,
+    /// How many entries of `stack` fall into each class. A question whose class is empty is not under way.
+    under_way: [u16; 1024],
     /// For each open `Query::MappedProp` that is part of a cycle: its index in `stack` and the type node to report 2615 at.
     /// `circular_mapped_property` commits the entry when the query is left.
     pending_circular_mapped_props: Vec<(usize, (FileId, TypeNodeId))>,
@@ -707,14 +722,20 @@ pub struct Checker<'p> {
     late_bound_members: FxHashMap<(Sym, bool), late_bound::LateBoundMembers>,
     /// `nonExistentProperties`: property accesses whose 2339 message is being printed, with `stack.len()` when printing started.
     reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
+    /// `c.serializationLevel`: how many `TypeToString` are under way, of those whose resolutions are made at once.
+    serialization_level: u32,
+    /// `NodeCheckFlagsTypeChecked` on the name of a property access: its 2339 has been made. `true`: and discarded.
+    non_existent_properties: crate::util::FxHashMap<(FileId, ExprId), bool>,
+    /// The next `with_printer` is no barrier to circles: it prints when and what tsgo prints.
+    printing_closes_circles: bool,
+    /// How high `inference_contexts` is while `getContextFreeTypeOfExpression` checks something afresh: what is reported then stands.
+    context_free_level: usize,
     /// How deep the stack was wherever something was asked that TypeScript would not have asked at that point, or not yet.
     /// A circle that goes through there may be nobody's fault but the resolver's: it is unknown, not an error.
     eager: Vec<usize>,
     /// The entries of `eager` that stand for the value assigned on the back edge of a loop that is being worked out. TypeScript asks
     /// for that value there as well: see `is_circle_of_initializers`.
     loop_values: Vec<usize>,
-    /// A call is being asked what it expects of an argument, not what it gives.
-    asking_for_context: bool,
     /// From where in `stack` on a question counts as under way.
     resolution_start: usize,
     /// Why the last `enter` refused: what was asked is one of TypeScript's own resolutions and is under way.
@@ -742,7 +763,7 @@ pub struct Checker<'p> {
     rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
     rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
     /// `arg_type_under`: the type of a literal argument under a parameter type.
-    literals_checked_under: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
+    literals_checked_under: FxHashMap<(FileId, ExprId, TypeId, u8), TypeId>,
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
     instantiation_depth: u32,
@@ -789,12 +810,6 @@ pub struct Checker<'p> {
     recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
     recent_signatures: Box<[(TypeId, &'p [SigId]); shape::RECENT_SIGNATURES]>,
     recent_intersected_props: Box<[((TypeId, Atom), TypeId); shape::RECENT_PROPS]>,
-    /// A call that is resolved is gone over again, for its errors: what its arguments are expected to be stays what it is.
-    pub(super) keeps_arg_contexts: bool,
-    /// `NodeCheckFlagsContextChecked` for function expressions among the arguments of a call with several candidates: the candidate
-    /// whose attempt checked the function first. Only that attempt infers from the function's annotations. `None` once the attempt
-    /// has ended.
-    pub(super) context_checked_for: FxHashMap<(FileId, ExprId), Option<SigId>>,
     /// Set when `union_reduced` or `intersection_ex` gives up on a union that is too complex to represent (2590). The caller
     /// clears it first.
     pub(super) union_too_complex: bool,
@@ -817,22 +832,20 @@ pub struct Checker<'p> {
     shapes_for_now: Vec<Box<shape::Resolved>>,
     /// The types of properties of object literals that only hold for now: see `hold_for_now`.
     held_for_now: FxHashMap<(FileId, PropId), Held>,
-    /// The last candidate tried for a call that is being resolved: see `instantiate_for_call_as`.
-    trials: FxHashMap<(FileId, ExprId), Trial>,
     /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`, while the name of an import or an
     /// export is printed.
     enclosing_module_specifier_mode: Option<ResolutionMode>,
     emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
-    /// What is noted of errors is kept: somebody is going to read it.
-    explains: bool,
     /// `GetSyntacticDiagnostics`: only what the parser and the scanner say is reported.
     only_syntax: bool,
-    notes: std::cell::RefCell<Vec<explain::Note>>,
-    /// The errors that are no more than suggestions: where they start, and the code.
-    suggestions: std::cell::RefCell<Vec<(u32, u32)>>,
+    /// Whether anything in the file that is being checked is in an ambient context.
+    has_ambient_context: bool,
+    /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted. Found out when first asked for.
+    parsed_again_for_await: Option<Vec<StmtId>>,
+    /// See `note`.
+    noted_ahead: Vec<Reported>,
     timed_out: bool,
     ticks: u32,
-    flow_depth: u32,
     /// `flowAnalysisDisabled`: the file whose nodes the writer of `.types` checks again with the flag set.
     flow_analysis_disabled_in: Option<FileId>,
     /// How many `const ok = test` are being looked through.
@@ -853,8 +866,6 @@ pub struct Checker<'p> {
     undefined_properties: FxHashMap<Atom, Prop>,
     /// The calls of functions written on the spot whose arguments are being looked at to type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
-    /// The argument whose type is asked for in order to infer from it: its type variables stay (`CheckModeInferential`).
-    pub(super) inferential: Option<(FileId, ExprId)>,
     /// The loops being worked out, by whichever walk (`flowLoopStack`): the loop, what is narrowed, its declared and its initial
     /// type, what has reached the loop so far, and how deep `stack` was when the round began.
     flow_loops: Vec<(
@@ -876,29 +887,34 @@ pub struct Checker<'p> {
     /// With `trace_cycles`: the expressions that have been looked at.
     looked_at: crate::util::FxHashSet<(FileId, ExprId)>,
     /// `deferredNodes` of the file being checked.
-    deferred_nodes: std::collections::VecDeque<in_order::DeferredNode>,
+    /// `deferredNodes`, an ordered set.
+    deferred_nodes: std::collections::VecDeque<ExprId>,
+    is_deferred_node: crate::util::FxHashSet<ExprId>,
+    /// It is the only checker of its `Program`, as every checker of tsgo's is.
+    shares_nothing: bool,
+    /// `deferredDiagnosticCallbacks`: the declarations `checkWeakMapSetCollision` or `checkReflectCollision` is put off for.
+    deferred_diagnostics: Vec<Node>,
+    /// `nodeLinks.flags`, of the file that is being checked.
+    node_check_flags: FxHashMap<Node, u8>,
     /// `withinUnreachableCode`
     within_unreachable_code: bool,
     /// `reportedUnreachableNodes`, of the file being checked.
     reported_unreachable_nodes: Vec<StmtId>,
-    /// Asking what is expected regardless of what patterns imply.
-    skip_binding_patterns: u32,
-    /// `inferTypeArguments` is reading the contextual type of a call: see `arg_context_keeping_boolean`.
-    keeps_boolean_in_arg_contexts: bool,
     /// `discriminatedContextualTypes`: what `discriminate_by_object_members` makes of an object literal and a union, where
     /// that holds for good.
     discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
-    /// The member `infer_from_member` is about to look at may be left out.
-    optional_member: bool,
     /// See `contextual_property_of_value`.
     contextual_properties: FxHashMap<(TypeId, Atom), Option<TypeId>>,
-    /// For each overloaded call being resolved: the type parameters of its candidates, as holes.
-    candidate_holes: Vec<call::CandidateHoles>,
     /// The next target to be related to is a member of an intersection.
-    resolving: Vec<call::Resolving<'p>>,
-    /// The `failed_calls` entry of the call that `resolve_among` just resolved. `resolve_call` takes it, and stores it only together
-    /// with the entry of `calls`.
-    pending_failed_call: Option<SigId>,
+    /// What `resolveCall` has just reported. `resolved_signature` takes it, and stores it only together with the entry of `calls`.
+    call_resolution_errors: Option<Vec<Reported>>,
+    /// The functions whose first look is under way, see `context_checked`. They are in `Program::context_checked`, for every thread,
+    /// once what the first look works out is: whoever found the one without the other would go on without a first look of its own.
+    context_checking: Vec<((FileId, crate::hir::FnId), Option<SigId>)>,
+    /// `NodeCheckFlagsInCheckIdentifier`: the patterns `getNarrowedTypeOfSymbol` is at.
+    in_check_identifier: Vec<(FileId, crate::hir::PatId)>,
+    /// `resolvedSignature = result`, while `resolveCall` reports the errors of a call that nothing takes.
+    resolved_meanwhile: Vec<(FileId, ExprId, call::ResolvedCall)>,
     /// The type parameters of the generic signatures that the permissive comparison under way is inside of.
     own_of_compared_sigs: Vec<TypeId>,
     /// The two types of each restrictive comparison under way, innermost last: what `getRestrictiveInstantiation` was called with.
@@ -910,11 +926,6 @@ pub struct Checker<'p> {
     last_prepared: (FileId, FnId),
     /// A file, and which of its expressions have been through `prepare_around`.
     prepared_exprs: (FileId, Vec<bool>),
-    /// Non-zero while types are computed under assumptions that may not hold: nothing is kept.
-    provisional: u32,
-    /// How many questions were open when the outermost trial began.
-    provisional_floor: usize,
-    provisional_arg_contexts: FxHashMap<(FileId, ExprId), TypeId>,
     /// Where the stack was when the checker was made, and how far below that it may go.
     stack_base: usize,
     stack_limit: usize,
@@ -1129,13 +1140,13 @@ impl<'p> Checker<'p> {
         if self.is_out_of_time() || self.work == self.work_trap || self.is_stack_low() {
             return self.refuse_for_lack_of_time_or_stack();
         }
-        // To one who asks what it expects of an argument, a call under way is under way however long ago it was begun.
-        let from = if matches!(q, Query::Call(..)) && self.asking_for_context {
-            0
-        } else {
-            self.resolution_start
-        };
-        if let Some(i) = self.stack[from..].iter().rposition(|x| *x == q)
+        let class = (crate::util::fx_hash(&q) >> 54) as u16;
+        let from = self.resolution_start;
+        // `checkExpression` and `checkPropertyAssignment` have no guard: what is checked by value is checked again while it is being
+        // checked.
+        if !(matches!(q, Query::Expr(..) | Query::LiteralProp(..)) && self.is_rechecking())
+            && self.under_way[class as usize] != 0
+            && let Some(i) = self.stack[from..].iter().rposition(|x| *x == q)
             && self.comes_back_to(q, i + from)
         {
             return false;
@@ -1145,12 +1156,19 @@ impl<'p> Checker<'p> {
         }
         self.last_enter = EnterOutcome::Entered;
         self.stack.push(q);
+        self.under_way[class as usize] += 1;
+        // What is asked under what a question that only holds for now has pushed only holds for now.
+        let tainted = !self.inference_contexts.is_empty() && self.is_innermost_tainted();
+        // What is reported under a loop that is under way stands (`taint_from`).
+        let drops_reported =
+            tainted && self.frames.last().is_some_and(|frame| frame.drops_reported);
         self.frames.push(QueryFrame {
+            class,
             serial: self.work,
             entry_depth: self.instantiation_depth,
-            tainted: false,
+            tainted,
             circular: false,
-            drops_reported: false,
+            drops_reported,
             reported_from: self.reported.len() as u32,
         });
         true
@@ -1200,9 +1218,7 @@ impl<'p> Checker<'p> {
         // same way once more, and the first resolution on that way is the one to come back to itself.
         // A call that is asked what it expects of an argument while it is being resolved is another matter
         // (`resolvingSignature`): whoever asks goes without an answer, and nothing is wrong. So are members that are in place.
-        let marked = !(matches!(q, Query::Call(..)) && self.asking_for_context)
-            && !self.has_members_in_place(q)
-            && self.mark_circle_from(i);
+        let marked = !self.has_members_in_place(q) && self.mark_circle_from(i);
         self.came_full_circle = marked && self.is_resolution(q);
         if marked && self.is_runaway(i) {
             self.last_enter = EnterOutcome::Runaway;
@@ -1670,6 +1686,7 @@ impl<'p> Checker<'p> {
         self.stack.pop();
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
+        self.under_way[frame.class as usize] -= 1;
         self.left_a_circle = frame.circular;
         if self.reported.len() > frame.reported_from as usize {
             self.settle_reported(frame);
@@ -1700,6 +1717,15 @@ impl<'p> Checker<'p> {
         (
             std::mem::replace(&mut self.pulls_contextual_types_at, height),
             std::mem::replace(&mut self.rechecks_at, height),
+        )
+    }
+
+    /// From here, and as long as `stack` is as high as it is, expressions are checked once (`checkExpressionCached`). Returns what
+    /// `end_recheck` takes.
+    fn suspend_recheck(&mut self) -> (usize, usize) {
+        (
+            std::mem::replace(&mut self.pulls_contextual_types_at, usize::MAX),
+            std::mem::replace(&mut self.rechecks_at, usize::MAX),
         )
     }
 
@@ -1810,16 +1836,6 @@ impl<'p> Checker<'p> {
         Some(held.ty)
     }
 
-    /// Something that only holds while a candidate is tried out was just read: what is being computed from it, up to
-    /// where the trial began, does not hold afterwards. Everything else computed meanwhile does, and is kept.
-    fn note_provisional_read(&mut self) {
-        if self.provisional == 0 {
-            return;
-        }
-        self.mark_tainted_from(self.provisional_floor.min(self.frames.len()));
-        self.cycles += 1;
-    }
-
     /// Something that only holds for now was just read, put there when `stack` was `depth` deep: the answers to the questions
     /// begun since are not kept. So of a loop under way: `getResolvedSignature` stores nothing while `flowLoopStack` has
     /// something on it, and `checkExpressionCached` empties it first. What they report stands: `getTypeOfExpression` reports as ever.
@@ -1832,13 +1848,6 @@ impl<'p> Checker<'p> {
             frame.tainted = true;
         }
         self.cycles += 1;
-    }
-
-    /// Whether what is being computed right now depends on a trial.
-    fn is_provisional_here(&self) -> bool {
-        self.provisional > 0
-            && self.frames.len() > self.provisional_floor
-            && self.is_innermost_tainted()
     }
 
     // ───────────────────────────── kinds of types ─────────────────────────────

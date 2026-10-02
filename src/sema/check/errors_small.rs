@@ -4,72 +4,12 @@
 //! `checkTypeNameIsReserved` and `checkEnumDeclaration` of TypeScript 7.0.2's checker.go, and `checkStrictModeLabeledStatement` of
 //! its binder.go.
 
-use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeKind, SymbolId};
-use smallvec::SmallVec;
-
-/// The expressions of `lists`, each of which is in the order of the file, all together in that order.
-pub(super) fn in_file_order<const N: usize>(
-    mut lists: [&[ExprId]; N],
-) -> impl Iterator<Item = ExprId> + '_ {
-    // Takes the first of a list off it. `u32::MAX`: there is none left.
-    fn take_first(list: &mut &[ExprId]) -> u32 {
-        match list.split_first() {
-            Some((first, rest)) => {
-                *list = rest;
-                first.0
-            }
-            None => u32::MAX,
-        }
-    }
-    let mut firsts = [u32::MAX; N];
-    for (first, list) in firsts.iter_mut().zip(lists.iter_mut()) {
-        *first = take_first(list);
-    }
-    std::iter::from_fn(move || {
-        let mut least = 0;
-        for i in 1..N {
-            if firsts[i] < firsts[least] {
-                least = i;
-            }
-        }
-        let e = firsts[least];
-        if e == u32::MAX {
-            return None;
-        }
-        firsts[least] = take_first(&mut lists[least]);
-        Some(ExprId(e))
-    })
-}
-
-/// Whether `checkGrammarParameterList` objects to the parameters of `func`: 1014 1047 1048, 1015, 1016.
-pub(super) fn has_parameter_list_error(hir: &hir::File, func: &Func) -> bool {
-    let mut seen_optional = false;
-    for (i, p) in func.params.iter().enumerate() {
-        let param = &hir[p];
-        if param.flags.contains(Flags::REST) {
-            if i + 1 != func.params.len()
-                || param.flags.contains(Flags::OPTIONAL)
-                || param.default.is_some()
-            {
-                return true;
-            }
-        } else if param.flags.contains(Flags::OPTIONAL) {
-            seen_optional = true;
-            if param.default.is_some() && !param.flags.contains(Flags::REPARSED) {
-                return true;
-            }
-        } else if seen_optional && param.default.is_none() {
-            return true;
-        }
-    }
-    false
-}
+use crate::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent, ScopeKind, SymbolId};
 
 impl Checker<'_> {
     /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot get past a `let` or a `const` of the same name on its way up.
-    fn check_vars_not_shadowed(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_vars_not_shadowed(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &(pat, written_in) in &bound.hoisted_vars {
             let PatKind::Ident(name) = hir[pat].kind else {
@@ -102,10 +42,8 @@ impl Checker<'_> {
                             }
                         });
                     if is_lexical {
-                        out.push(Diagnostic {
-                            start: hir[pat].pos,
-                            code: 2481,
-                        });
+                        let name = Arg::Atom(name);
+                        self.error_at((file, hir[pat].pos, 0), 2481, &[name, name]);
                     }
                     break;
                 }
@@ -114,19 +52,18 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkGrammarNameInLetOrConstDeclarations`: 2480. What `checkContextualIdentifier` of binder.go says of what is declared
-    /// by the name of `await` at the top of a module: 1262.
-    fn check_names_that_are_keywords(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    /// What `checkContextualIdentifier` of binder.go says of what is declared by the name of `await` at the top of a module: 1262.
+    fn check_names_that_are_keywords(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration {
             return;
         }
-        let atoms = &self.files().atoms;
-        let (r#let, r#await) = (atoms.lookup(b"let"), atoms.lookup(b"await"));
-        if r#let.is_none() && r#await.is_none() {
+        let Some(r#await) = self.files().atoms.lookup(b"await") else {
+            return;
+        };
+        if !self.files().module(file).is_module() {
             return;
         }
-        let is_module = self.files().module(file).is_module();
         // Not in a function, a member of a class or a namespace.
         let is_at_the_top = |mut s: StmtId| loop {
             match bound.stmt_parent[s.idx()] {
@@ -137,7 +74,7 @@ impl Checker<'_> {
             }
         };
         for symbol in &bound.symbols {
-            if Some(symbol.name) != r#let && Some(symbol.name) != r#await {
+            if symbol.name != r#await {
                 continue;
             }
             for &decl in &symbol.decls {
@@ -155,15 +92,6 @@ impl Checker<'_> {
                             }
                         };
                         if d.is_none() || hir[d].flags.contains(Flags::AMBIENT) {
-                            continue;
-                        }
-                        if Some(symbol.name) == r#let {
-                            if matches!(hir[d].kind, VarKind::Let | VarKind::Const) {
-                                out.push(Diagnostic {
-                                    start: hir[pat].pos,
-                                    code: 2480,
-                                });
-                            }
                             continue;
                         }
                         let stmt = bound.var_stmt[d.idx()];
@@ -190,361 +118,66 @@ impl Checker<'_> {
                     Decl::ImportEquals(i) => at_the_top_of_the_file(hir[i].name_pos),
                     _ => continue,
                 };
-                if Some(symbol.name) == r#await && is_module && at_the_top {
-                    out.push(Diagnostic { start, code: 1262 });
+                if at_the_top {
+                    self.error_at((file, start, 0), 1262, &[]);
                 }
             }
         }
     }
 
-    pub(super) fn check_small_things(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        self.check_spreads(file, out);
-        self.check_instanceof(file, out);
-        self.check_reserved_type_names(file, out);
-        self.check_enum_declarations(file, out);
-        self.check_accessor_parameters(file, out);
-        self.check_names_that_are_keywords(file, out);
-        self.check_vars_not_shadowed(file, out);
-        if self.p.files.options.strict_null_checks {
-            self.check_known_truthy_tests(file, out);
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let parses = !has_parse_diagnostics(hir);
-        for s in 0..hir.stmts.len() {
-            if matches!(bound.stmt_parent[s], Parent::None) {
-                continue;
-            }
-            match hir.stmts[s].kind {
-                // A declaration cannot be jumped to.
-                StmtKind::Labeled { body, .. }
-                    if matches!(
-                        hir[body].kind,
-                        StmtKind::Var(_)
-                            | StmtKind::Fn(_)
-                            | StmtKind::Class(_)
-                            | StmtKind::Interface(_)
-                            | StmtKind::TypeAlias(_)
-                            | StmtKind::Enum(_)
-                            | StmtKind::Module(_)
-                            | StmtKind::Import(_)
-                            | StmtKind::ImportEquals(_)
-                            | StmtKind::ExportNamed(_)
-                            | StmtKind::ExportStar { .. }
-                            | StmtKind::ExportDefault(_)
-                            | StmtKind::ExportAssign(_)
-                            | StmtKind::ExportAsNamespace(_)
-                    ) =>
-                {
-                    out.push(Diagnostic {
-                        start: hir.stmts[s].pos,
-                        code: 1344,
-                    });
-                }
-                // `checkGrammarForDisallowedBlockScopedVariableStatement`. `checkVariableStatement` only calls it when
-                // `checkGrammarModifiers` reported nothing: a modifier in such a place is 1184, unless the file has parse diagnostics.
-                StmtKind::Var(decls)
-                    if decls.iter().next().is_some_and(|d| {
-                        hir[d].kind != VarKind::Var
-                            && !(parses && hir[d].flags.intersects(Flags::EXPORT | Flags::AMBIENT))
-                    }) =>
-                {
-                    let mut parent = bound.stmt_parent[s];
-                    while let Parent::Stmt(p) = parent
-                        && p.is_some()
-                        && matches!(hir[p].kind, StmtKind::Labeled { .. })
-                    {
-                        parent = bound.stmt_parent[p.idx()];
-                    }
-                    let me = StmtId(s as u32);
-                    if let Parent::Stmt(p) = parent
-                        && p.is_some()
-                        && match hir[p].kind {
-                            StmtKind::If { .. }
-                            | StmtKind::While { .. }
-                            | StmtKind::DoWhile { .. } => true,
-                            // Not what a loop starts with.
-                            StmtKind::For { init, .. } => init != me,
-                            StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
-                                left != me
-                            }
-                            _ => false,
-                        }
-                    {
-                        out.push(Diagnostic {
-                            start: hir.stmts[s].pos,
-                            code: 1156,
-                        });
-                        let keyword = match decls.iter().next().map(|d| hir[d].kind) {
-                            Some(VarKind::Let) => "let",
-                            Some(VarKind::Const) => "const",
-                            Some(VarKind::Using) => "using",
-                            _ => "await using",
-                        };
-                        let end = self.end_of_stmt(file, me);
-                        self.explain_to(hir.stmts[s].pos, end, 1156, |_| vec![keyword.to_owned()]);
-                    }
-                }
-                // `checkTypeAliasDeclaration`, `checkInterfaceDeclaration`: `containerAllowsBlockScopedVariable`. A matter of grammar.
-                StmtKind::TypeAlias(_) | StmtKind::Interface(_) if parses => {
-                    let mut parent = bound.stmt_parent[s];
-                    while let Parent::Stmt(p) = parent
-                        && p.is_some()
-                        && matches!(hir[p].kind, StmtKind::Labeled { .. })
-                    {
-                        parent = bound.stmt_parent[p.idx()];
-                    }
-                    if let Parent::Stmt(p) = parent
-                        && p.is_some()
-                        && matches!(
-                            hir[p].kind,
-                            StmtKind::If { .. }
-                                | StmtKind::While { .. }
-                                | StmtKind::DoWhile { .. }
-                                | StmtKind::For { .. }
-                                | StmtKind::ForIn { .. }
-                                | StmtKind::ForOf { .. }
-                        )
-                    {
-                        let (start, keyword) = match hir.stmts[s].kind {
-                            StmtKind::TypeAlias(a) => (hir[a].name_pos, "type"),
-                            StmtKind::Interface(i) => (hir[i].name_pos, "interface"),
-                            _ => continue,
-                        };
-                        out.push(Diagnostic { start, code: 1156 });
-                        self.explain(start, 1156, |_| vec![keyword.to_owned()]);
-                    }
-                }
-                StmtKind::ForOf { left, .. } if matches!(hir[left].kind, StmtKind::Var(_)) => {
-                    self.check_loop_declaration(file, left, false, out);
-                }
-                // The keys of an object are strings: there is nothing to take apart.
-                StmtKind::ForIn { left, .. } => match hir[left].kind {
-                    StmtKind::Var(decls) => {
-                        self.check_loop_declaration(file, left, true, out);
-                        if let Some(d) = decls.iter().next()
-                            && matches!(
-                                hir[hir[d].pat].kind,
-                                PatKind::Object(_) | PatKind::Array(_)
-                            )
-                        {
-                            out.push(Diagnostic {
-                                start: hir[hir[d].pat].pos,
-                                code: 2491,
-                            });
-                            let end = self.end_of_pat(file, hir[d].pat);
-                            self.explain_to(hir[hir[d].pat].pos, end, 2491, |_| vec![]);
-                        }
-                    }
-                    StmtKind::Expr(x)
-                        if matches!(hir[x].kind, ExprKind::Object(_) | ExprKind::Array(_)) =>
-                    {
-                        out.push(Diagnostic {
-                            start: hir[x].pos,
-                            code: 2491,
-                        });
-                        let end = self.end_inside_parentheses(file, x);
-                        self.explain_to(hir[x].pos, end, 2491, |_| vec![]);
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-    }
-
-    /// `checkGrammarForInOrForOfStatement`, of the variable a loop declares: 1091 1188, 1189 1190, 2404 2483.
-    fn check_loop_declaration(
-        &mut self,
-        file: FileId,
-        left: StmtId,
-        is_for_in: bool,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        let StmtKind::Var(decls) = hir[left].kind else {
-            return;
-        };
-        let mut all = decls.iter();
-        let Some(first) = all.next() else { return };
-        if let Some(second) = all.next() {
-            out.push(Diagnostic {
-                start: hir[hir[second].pat].pos,
-                code: if is_for_in { 1091 } else { 1188 },
-            });
-        } else if hir[first].init.is_some() {
-            let code = if is_for_in { 1189 } else { 1190 };
-            out.push(Diagnostic {
-                start: hir[hir[first].pat].pos,
-                code,
-            });
-            let end = self.end_of_pat(file, hir[first].pat);
-            self.explain_to(hir[hir[first].pat].pos, end, code, |_| vec![]);
-        } else if hir[first].ty.is_some() {
-            let code = if is_for_in { 2404 } else { 2483 };
-            out.push(Diagnostic {
-                start: hir[hir[first].pat].pos,
-                code,
-            });
-            let end = self.end_of_pat(file, hir[first].pat);
-            self.explain_to(hir[hir[first].pat].pos, end, code, |_| vec![]);
-        }
-    }
-
-    /// `checkGrammarAccessor`, as far as parameters go: 1054 1049, 1053 1051 1052, 1095, 1094.
-    fn check_accessor_parameters(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if has_parse_diagnostics(hir) {
-            return;
-        }
-        for f in 0..hir.fns.len() {
-            let func = &hir.fns[f];
-            if !matches!(func.kind, FnKind::Getter | FnKind::Setter)
-                || matches!(bound.fns[f].owner, FnOwner::None)
-            {
-                continue;
-            }
-            // `checkAccessorDeclaration`: it is only asked once `checkGrammarFunctionLikeDeclaration` has found nothing.
-            if has_parameter_list_error(hir, func) {
-                continue;
-            }
-            // Of a body that is missing or out of place something else is said, and nothing more: 1005, 1318, 1183.
-            let is_in_type = matches!(bound.fns[f].owner, FnOwner::Member(m) if !matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)));
-            let has_body = has_body(&func);
-            let needs_none = func.flags.contains(Flags::ABSTRACT) || is_in_type;
-            let is_body_wrong = if has_body {
-                needs_none
-            } else {
-                !needs_none && !func.flags.contains(Flags::AMBIENT)
-            };
-            if is_body_wrong {
-                continue;
-            }
-            let start = match bound.fns[f].owner {
-                FnOwner::Member(m) => hir[m].name_pos,
-                _ => func.name_pos,
-            };
-            let params: SmallVec<[ParamId; 4]> = func
-                .params
-                .iter()
-                .filter(|&p| !matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this)))
-                .collect();
-            let is_getter = func.kind == FnKind::Getter;
-            // `doesAccessorHaveCorrectParameterCount`: `this` is a parameter like another when it is the only one.
-            let has_only_this = !is_getter && params.is_empty() && func.this_ty(hir).is_some();
-            let code = if !func.type_params.is_empty() {
-                1094
-            } else if params.len() != usize::from(!is_getter) && !has_only_this {
-                if is_getter { 1054 } else { 1049 }
-            } else if is_getter {
-                continue;
-            } else if func.ret.is_some() {
-                1095
-            } else if has_only_this {
-                continue;
-            } else if hir[params[0]].flags.contains(Flags::REST) {
-                // At the dots, which come after what decorates the parameter.
-                let before = hir
-                    .text
-                    .get(..hir[hir[params[0]].pat].pos as usize)
-                    .unwrap_or_default()
-                    .trim_ascii_end();
-                let start = if before.ends_with(b"...") {
-                    before.len() as u32 - 3
-                } else {
-                    hir[params[0]].pos
-                };
-                out.push(Diagnostic { start, code: 1053 });
-                continue;
-            } else if hir[params[0]].flags.contains(Flags::OPTIONAL) {
-                // At the `?`, which comes after the name or the pattern.
-                let (mut at, mut depth) = (hir[hir[params[0]].pat].pos as usize, 0u32);
-                while let Some(&byte) = hir.text.get(at) {
-                    match byte {
-                        b'[' | b'{' => depth += 1,
-                        b']' | b'}' => depth = depth.saturating_sub(1),
-                        b'?' | b':' | b'=' | b',' | b')' if depth == 0 => break,
-                        _ => {}
-                    }
-                    at += 1;
-                }
-                if hir.text.get(at) == Some(&b'?') {
-                    out.push(Diagnostic {
-                        start: at as u32,
-                        code: 1051,
-                    });
-                }
-                continue;
-            } else if hir[params[0]].default.is_some() {
-                1052
-            } else {
-                continue;
-            };
-            out.push(Diagnostic { start, code });
-            let end = self.end_of_name_at(file, start);
-            self.explain_to(start, end, code, |_| vec![]);
-        }
+    pub(super) fn check_small_things(&mut self, file: FileId) {
+        self.check_enum_declarations(file);
+        self.check_names_that_are_keywords(file);
+        self.check_vars_not_shadowed(file);
     }
 
     /// `checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType`: 2774 2801 2845
-    fn check_known_truthy_tests(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_testing_known_truthy_callable_or_awaitable_or_enum_member_type(
+        &mut self,
+        file: FileId,
+        cond_expr: ExprId,
+        body: Parent,
+    ) {
+        if self.p.files.options.strict_null_checks {
+            self.check_known_truthy_types(file, cond_expr, cond_expr, body);
+        }
+    }
+
+    /// From `checkBinaryLikeExpression`, of `e`, which is `left && ..`, `left || ..` or `left ?? ..`.
+    pub(super) fn check_testing_known_truthy_left_operand(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_and: bool,
+        left: ExprId,
+    ) {
+        if !self.p.files.options.strict_null_checks {
+            return;
+        }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for s in 0..hir.stmts.len() {
-            if let StmtKind::If { test, yes, .. } = hir.stmts[s].kind
-                && !matches!(bound.stmt_parent[s], Parent::None)
-            {
-                self.check_known_truthy_types(file, test, test, Parent::Stmt(yes), out);
-            }
-        }
-        let index = self.exprs_by_kind(file);
-        for e in in_file_order([index.of(ExprTag::Cond), index.of(ExprTag::Binary)]) {
-            let i = e.idx();
-            if bound.is_unchecked(i) {
-                continue;
-            }
-            match hir.exprs[i].kind {
-                ExprKind::Cond { test, yes, .. } => {
-                    self.check_known_truthy_types(file, test, test, Parent::Expr(yes), out)
-                }
+        // Out of the chain it is part of.
+        let mut parent = bound.expr_parent[e.idx()];
+        while let Parent::Expr(p) = parent
+            && matches!(
+                hir[p].kind,
                 ExprKind::Binary {
-                    op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
-                    left,
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
                     ..
-                } => {
-                    // Out of the chain it is part of.
-                    let mut parent = bound.expr_parent[i];
-                    while let Parent::Expr(p) = parent
-                        && matches!(
-                            hir[p].kind,
-                            ExprKind::Binary {
-                                op: BinOp::And | BinOp::Or | BinOp::Nullish,
-                                ..
-                            }
-                        )
-                    {
-                        parent = bound.expr_parent[p.idx()];
-                    }
-                    let body = match parent {
-                        Parent::Stmt(s) if s.is_some() => match hir[s].kind {
-                            StmtKind::If { yes, .. } => Some(Parent::Stmt(yes)),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    if op == BinOp::And || body.is_some() {
-                        self.check_known_truthy_types(
-                            file,
-                            left,
-                            left,
-                            body.unwrap_or(Parent::None),
-                            out,
-                        );
-                    }
                 }
-                _ => {}
-            }
+            )
+        {
+            parent = bound.expr_parent[p.idx()];
         }
-        out.sort_unstable_by_key(|d| (d.start, d.code));
-        out.dedup_by_key(|d| (d.start, d.code));
+        let body = match parent {
+            Parent::Stmt(s) if s.is_some() => match hir[s].kind {
+                StmtKind::If { yes, .. } => Some(Parent::Stmt(yes)),
+                _ => None,
+            },
+            _ => None,
+        };
+        if is_and || body.is_some() {
+            self.check_known_truthy_types(file, left, left, body.unwrap_or(Parent::None));
+        }
     }
 
     /// `checkTestingKnownTruthyTypes`. `whole`: the condition that was first asked about, whose type is `condType`.
@@ -554,11 +187,10 @@ impl Checker<'_> {
         test: ExprId,
         whole: ExprId,
         body: Parent,
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         let mut test = test;
-        self.check_known_truthy_type(file, test, whole, body, out);
+        self.check_known_truthy_type(file, test, whole, body);
         while let ExprKind::Binary {
             op: BinOp::Or | BinOp::Nullish,
             left,
@@ -566,19 +198,12 @@ impl Checker<'_> {
         } = hir[test].kind
         {
             test = left;
-            self.check_known_truthy_type(file, test, whole, body, out);
+            self.check_known_truthy_type(file, test, whole, body);
         }
     }
 
     /// `checkTestingKnownTruthyType`
-    fn check_known_truthy_type(
-        &mut self,
-        file: FileId,
-        test: ExprId,
-        whole: ExprId,
-        body: Parent,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_known_truthy_type(&mut self, file: FileId, test: ExprId, whole: ExprId, body: Parent) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_logical = |e: ExprId| {
             matches!(
@@ -598,7 +223,7 @@ impl Checker<'_> {
             _ => test,
         };
         if is_logical(location) {
-            return self.check_known_truthy_types(file, location, whole, body, out);
+            return self.check_known_truthy_types(file, location, whole, body);
         }
         // Only a right operand is judged by its own type: anything else by that of the whole condition.
         let judged_by = if location == test { whole } else { location };
@@ -612,7 +237,6 @@ impl Checker<'_> {
             (self.data(ty), hir[location].kind)
             && self.is_resolved_to_an_enum(file, obj)
         {
-            out.push(Diagnostic { start, code: 2845 });
             // `evaluator.IsTruthy`
             let is_truthy = match *value {
                 EnumValue::String(text) => !self.files().atoms.bytes(text).is_empty(),
@@ -622,7 +246,11 @@ impl Checker<'_> {
                 }
             };
             let end = self.end_inside_parentheses(file, location);
-            self.explain_to(start, end, 2845, |_| vec![is_truthy.to_string()]);
+            self.error_at(
+                (file, start, end),
+                2845,
+                &[Arg::Text(&is_truthy.to_string())],
+            );
             return;
         }
         // `isPropertyExpressionCast`
@@ -674,7 +302,7 @@ impl Checker<'_> {
         };
         if !is_used {
             let code = if is_promise { 2801 } else { 2774 };
-            out.push(Diagnostic { start, code });
+            self.error_at((file, start, 0), code, &[]);
             let end = self.end_inside_parentheses(file, location);
             self.explain_to(start, end, code, |c| {
                 if code != 2801 {
@@ -686,11 +314,7 @@ impl Checker<'_> {
             // `errorAndMaybeSuggestAwait`
             if is_promise {
                 self.relate(start, code, |_| {
-                    vec![super::explain::Related {
-                        at: Some((file, start, end)),
-                        code: 2773,
-                        args: Vec::new(),
-                    }]
+                    vec![Reported::bare((file, start, end), 2773)]
                 });
             }
         }
@@ -918,57 +542,47 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkObjectLiteral`, `createJsxAttributesTypeFromAttributesProperty`: 2698
-    fn check_spreads(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for p in 0..hir.props.len() {
-            let prop = &hir.props[p];
-            if prop.kind != PropKind::Spread || prop.value.is_none() {
-                continue;
-            }
-            let owner = bound.prop_owner[p];
-            if owner.is_none()
-                || bound.is_unchecked(owner.idx())
-                || self.is_assignment_target(file, owner)
-            {
-                continue;
-            }
-            let ty = self.type_of_expr(file, prop.value);
-            if !self.is_known(ty) {
-                continue;
-            }
-            let ty = self.reduced(ty);
-            if self.is_valid_spread_type(ty) {
-                continue;
-            }
-            // In JSX it is what is spread that is pointed at, in an object literal the dots.
-            let start = if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
-                self.error_start_of(file, prop.value)
-            } else {
-                let value = self.start_of(file, prop.value);
-                let before = hir
-                    .text
-                    .get(..value as usize)
-                    .unwrap_or_default()
-                    .trim_ascii_end();
-                if before.ends_with(b"...") {
-                    before.len() as u32 - 3
-                } else {
-                    value.saturating_sub(3)
-                }
-            };
-            out.push(Diagnostic { start, code: 2698 });
-            let end = if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
-                self.error_end_of(file, prop.value)
-            } else {
-                self.end_of_expr(file, prop.value)
-            };
-            self.explain_to(start, end, 2698, |_| vec![]);
+    /// `checkObjectLiteral`, `createJsxAttributesTypeFromAttributesProperty`: 2698, of the spread `p` in `owner`.
+    pub(super) fn check_spread(&mut self, file: FileId, owner: ExprId, p: PropId) {
+        let hir = self.hir(file);
+        let prop = &hir[p];
+        if prop.value.is_none() || self.is_assignment_target(file, owner) {
+            return;
         }
+        let ty = self.type_of_expr(file, prop.value);
+        if !self.is_known(ty) {
+            return;
+        }
+        let ty = self.reduced(ty);
+        if self.is_valid_spread_type(ty) {
+            return;
+        }
+        // In JSX it is what is spread that is pointed at, in an object literal the dots.
+        let start = if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
+            self.error_start_of(file, prop.value)
+        } else {
+            let value = self.start_of(file, prop.value);
+            let before = hir
+                .text
+                .get(..value as usize)
+                .unwrap_or_default()
+                .trim_ascii_end();
+            if before.ends_with(b"...") {
+                before.len() as u32 - 3
+            } else {
+                value.saturating_sub(3)
+            }
+        };
+        let end = if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
+            self.error_end_of(file, prop.value)
+        } else {
+            self.end_of_expr(file, prop.value)
+        };
+        self.error_at((file, start, end), 2698, &[]);
     }
 
     /// `allTypesAssignableToKind(ty, TypeFlagsPrimitive)`
-    fn is_all_assignable_to_primitives(&mut self, ty: TypeId) -> bool {
+    pub(super) fn is_all_assignable_to_primitives(&mut self, ty: TypeId) -> bool {
         const KINDS: [TypeId; 8] = [
             TypeId::NUMBER,
             TypeId::BIGINT,
@@ -987,111 +601,8 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkInstanceOfExpression`, `resolveInstanceofExpression`: 2358 2359
-    fn check_instanceof(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let index = self.exprs_by_kind(file);
-        for &e in index.of(ExprTag::Binary) {
-            let ExprKind::Binary {
-                op: BinOp::Instanceof,
-                left,
-                right,
-            } = hir[e].kind
-            else {
-                continue;
-            };
-            if bound.is_unchecked(e.idx()) {
-                continue;
-            }
-            let (l, r) = (
-                self.type_of_expr(file, left),
-                self.type_of_expr(file, right),
-            );
-            if self.is_known(l) && !self.is_any(l) && self.is_all_assignable_to_primitives(l) {
-                let start = self.error_start_of(file, left);
-                out.push(Diagnostic { start, code: 2358 });
-                let end = self.error_end_of(file, left);
-                self.explain_to(start, end, 2358, |_| vec![]);
-            }
-            if !self.is_known(r)
-                || self.is_any(r)
-                || self.symbol_has_instance_method_of_object_type(r).is_some()
-            {
-                continue;
-            }
-            let function = self.global_ref(known::Function, &[]);
-            if self.signatures(r, false).is_empty()
-                && self.signatures(r, true).is_empty()
-                && !self.is_subtype(r, function)
-            {
-                let start = self.error_start_of(file, right);
-                out.push(Diagnostic { start, code: 2359 });
-                let end = self.error_end_of(file, right);
-                self.explain_to(start, end, 2359, |_| vec![]);
-            }
-        }
-    }
-
-    /// `checkTypeNameIsReserved`
-    fn check_reserved_type_names(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let hir = self.hir(file);
-        let is_reserved = |c: &Self, name: Atom| {
-            name.is_some()
-                && matches!(
-                    c.files().atoms.bytes(name),
-                    b"any"
-                        | b"unknown"
-                        | b"never"
-                        | b"number"
-                        | b"bigint"
-                        | b"boolean"
-                        | b"string"
-                        | b"symbol"
-                        | b"void"
-                        | b"object"
-                        | b"undefined"
-                )
-        };
-        out.extend(
-            hir.classes
-                .iter()
-                .filter(|c| is_reserved(self, c.name))
-                .map(|c| Diagnostic {
-                    start: c.name_pos,
-                    code: 2414,
-                }),
-        );
-        out.extend(
-            hir.interfaces
-                .iter()
-                .filter(|i| is_reserved(self, i.name))
-                .map(|i| Diagnostic {
-                    start: i.name_pos,
-                    code: 2427,
-                }),
-        );
-        out.extend(
-            hir.enums
-                .iter()
-                .filter(|e| is_reserved(self, e.name))
-                .map(|e| Diagnostic {
-                    start: e.name_pos,
-                    code: 2431,
-                }),
-        );
-        out.extend(
-            hir.aliases
-                .iter()
-                .filter(|a| is_reserved(self, a.name))
-                .map(|a| Diagnostic {
-                    start: a.name_pos,
-                    code: 2457,
-                }),
-        );
-    }
-
     /// `checkEnumDeclaration`, as far as several declarations of one enum go.
-    fn check_enum_declarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_enum_declarations(&mut self, file: FileId) {
         // Only what an enum of this file starts with is objected to.
         if self.hir(file).enums.is_empty() {
             return;
@@ -1126,12 +637,8 @@ impl Checker<'_> {
                 let member = &self.hir(f)[member];
                 if member.init.is_none() {
                     if seen_without_initializer && f == file {
-                        out.push(Diagnostic {
-                            start: member.pos,
-                            code: 2432,
-                        });
                         let end = self.end_of_name_at(file, member.pos);
-                        self.explain_to(member.pos, end, 2432, |_| vec![]);
+                        self.error_at((file, member.pos, end), 2432, &[]);
                     }
                     seen_without_initializer = true;
                 }

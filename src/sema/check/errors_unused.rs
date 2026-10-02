@@ -3,7 +3,7 @@
 //! Follows `checkUnusedIdentifiers` and what it calls in TypeScript 7.0.2's checker.go. They note what is referred to while
 //! checking; here a file is gone through once for that.
 
-use super::errors::Diagnostic;
+use super::sink::held;
 use super::*;
 use crate::bind::{
     Bound, ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind, SymbolId,
@@ -59,7 +59,7 @@ enum Reported {
 }
 
 impl Checker<'_> {
-    pub(super) fn check_unused(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_unused(&mut self, file: FileId) {
         let options = &self.p.files.options;
         let (locals, parameters) = (options.no_unused_locals, options.no_unused_parameters);
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -162,7 +162,7 @@ impl Checker<'_> {
         if locals {
             self.note_private_reads(file, &mut u);
         }
-        u.report(out);
+        u.report(&mut self.reported);
         for (start, code, node) in u.reported_on.take() {
             let mut args = Vec::new();
             let end = match node {
@@ -187,7 +187,7 @@ impl Checker<'_> {
                     end
                 }
             };
-            self.note(start, end, code, args);
+            self.note_printed(start, end, code, held(args));
         }
     }
 
@@ -372,7 +372,7 @@ impl Checker<'_> {
                 ..
             } = s.kind
                 && !matches!(bound.stmt_parent[i], Parent::None)
-                && !hir.is_in_with(s.pos)
+                && !hir.is_in_with(s.start)
                 && let StmtKind::Expr(target) = hir[left].kind
                 && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
             {
@@ -1274,7 +1274,7 @@ impl Unused<'_> {
 
     // ───────────────────────────── what is said ─────────────────────────────
 
-    fn report(&self, out: &mut Vec<Diagnostic>) {
+    fn report(&self, out: &mut Vec<super::sink::Reported>) {
         let (hir, bound) = (self.hir, self.bound);
         for (i, scope) in bound.scopes.iter().enumerate() {
             let checks_locals = match scope.kind {
@@ -1339,10 +1339,10 @@ impl Unused<'_> {
                     && self.is_unreferenced_type_parameter(param)
                     && !self.is_ambient_scope(bound.type_param_scope[param.idx()])
                 {
-                    out.push(Diagnostic {
-                        start: hir[param].pos,
-                        code: 6196,
-                    });
+                    out.push(super::sink::Reported::bare(
+                        (self.file, hir[param].pos, 0),
+                        6196,
+                    ));
                 }
             }
         }
@@ -1402,7 +1402,7 @@ impl Unused<'_> {
     }
 
     /// `checkUnusedLocalsAndParameters`
-    fn report_locals_and_parameters(&self, scope: ScopeId, out: &mut Vec<Diagnostic>) {
+    fn report_locals_and_parameters(&self, scope: ScopeId, out: &mut Vec<super::sink::Reported>) {
         let (hir, bound) = (self.hir, self.bound);
         let s = &bound.scopes[scope.idx()];
         let mut var_stmts: Vec<StmtId> = Vec::new();
@@ -1513,9 +1513,9 @@ impl Unused<'_> {
             // `reportUnusedVariables`
             if decls.len() > 1 && decls.iter().all(|d| self.is_unreferenced(hir[d].pat)) {
                 if !(0..decls.len()).any(|i| self.variable_has_syntax_error(stmt, decls, i)) {
-                    self.local(hir[stmt].pos, 6199, out);
+                    self.local(hir[stmt].start, 6199, out);
                     self.reported_on.borrow_mut().push((
-                        hir[stmt].pos,
+                        hir[stmt].start,
                         6199,
                         Reported::VariableDeclarationList(decls),
                     ));
@@ -1553,9 +1553,9 @@ impl Unused<'_> {
             if stmt.is_some() && self.statement_has_syntax_error(stmt) {
                 // The error may be in another part of the import than the one that is unused: node ends are not kept.
             } else if declared > 1 && declared == end - i && stmt.is_some() {
-                self.local(hir[stmt].pos, 6192, out);
+                self.local(hir[stmt].start, 6192, out);
                 self.reported_on.borrow_mut().push((
-                    hir[stmt].pos,
+                    hir[stmt].start,
                     6192,
                     Reported::Statement(stmt),
                 ));
@@ -1579,9 +1579,9 @@ impl Unused<'_> {
         }
     }
 
-    fn local(&self, start: u32, code: u32, out: &mut Vec<Diagnostic>) {
+    fn local(&self, start: u32, code: u32, out: &mut Vec<super::sink::Reported>) {
         if self.locals {
-            out.push(Diagnostic { start, code });
+            out.push(super::sink::Reported::bare((self.file, start, 0), code));
         }
     }
 
@@ -1634,7 +1634,7 @@ impl Unused<'_> {
                     } else if update.is_some() {
                         hir[update].pos
                     } else {
-                        hir[body].pos
+                        hir[body].start
                     };
                     return (next, false);
                 }
@@ -1650,8 +1650,11 @@ impl Unused<'_> {
             _ => None,
         };
         match next {
-            Some(next) => (hir[next].pos, true),
-            None => (closing_bracket_after(&hir.text, hir[s].pos as usize), false),
+            Some(next) => (hir[next].start, true),
+            None => (
+                closing_bracket_after(&hir.text, hir[s].start as usize),
+                false,
+            ),
         }
     }
 
@@ -1659,7 +1662,7 @@ impl Unused<'_> {
         if self.syntax_errors.is_empty() {
             return false;
         }
-        let start = self.hir[stmt].pos;
+        let start = self.hir[stmt].start;
         // An error at the start of the next statement belongs to that statement.
         let end = match self.start_of_next(stmt) {
             (next, true) => next.saturating_sub(1),
@@ -1764,7 +1767,7 @@ impl Unused<'_> {
         &self,
         pat: PatId,
         is_parameter: bool,
-        out: &mut Vec<Diagnostic>,
+        out: &mut Vec<super::sink::Reported>,
     ) {
         let hir = self.hir;
         let wanted = if is_parameter {
@@ -1776,10 +1779,10 @@ impl Unused<'_> {
             PatKind::Missing => return,
             PatKind::Ident(_) => {
                 if wanted && self.is_unreferenced(pat) {
-                    out.push(Diagnostic {
-                        start: hir[pat].pos,
-                        code: 6133,
-                    });
+                    out.push(super::sink::Reported::bare(
+                        (self.file, hir[pat].pos, 0),
+                        6133,
+                    ));
                 }
                 return;
             }
@@ -1789,10 +1792,10 @@ impl Unused<'_> {
         // `reportUnusedBindingElements`
         if elements.len() > 1 && elements.iter().all(|&e| self.is_unreferenced(e)) {
             if wanted {
-                out.push(Diagnostic {
-                    start: hir[pat].pos,
-                    code: 6198,
-                });
+                out.push(super::sink::Reported::bare(
+                    (self.file, hir[pat].pos, 0),
+                    6198,
+                ));
                 self.reported_on
                     .borrow_mut()
                     .push((hir[pat].pos, 6198, Reported::Pattern(pat)));
@@ -1847,7 +1850,11 @@ impl Unused<'_> {
     }
 
     /// `checkUnusedTypeParameters`
-    fn report_type_parameters(&self, params: Span<TypeParamId>, out: &mut Vec<Diagnostic>) {
+    fn report_type_parameters(
+        &self,
+        params: Span<TypeParamId>,
+        out: &mut Vec<super::sink::Reported>,
+    ) {
         // `reportUnused` is given the declaration they belong to, which contains the syntax error of a missing name.
         if params.iter().any(|p| self.hir[p].name == known::empty) {
             return;
@@ -1870,7 +1877,7 @@ impl Unused<'_> {
                 before.iter().rposition(|&c| c == b'<')
             };
             let start = open.map_or(first.saturating_sub(1), |at| at as u32);
-            out.push(Diagnostic { start, code: 6205 });
+            out.push(super::sink::Reported::bare((self.file, start, 0), 6205));
             self.reported_on
                 .borrow_mut()
                 .push((start, 6205, Reported::TypeParameters(params)));
@@ -1879,7 +1886,7 @@ impl Unused<'_> {
         for p in params.iter() {
             if self.is_unreferenced_type_parameter(p) {
                 let start = self.hir[p].start;
-                out.push(Diagnostic { start, code: 6196 });
+                out.push(super::sink::Reported::bare((self.file, start, 0), 6196));
                 self.reported_on
                     .borrow_mut()
                     .push((start, 6196, Reported::TypeParameter(p)));
@@ -1895,7 +1902,7 @@ impl Unused<'_> {
     }
 
     /// `checkUnusedClassMembers`
-    fn report_class_members(&self, out: &mut Vec<Diagnostic>) {
+    fn report_class_members(&self, out: &mut Vec<super::sink::Reported>) {
         let (hir, bound) = (self.hir, self.bound);
         if self.reads_unknown_members {
             return;
@@ -1943,10 +1950,10 @@ impl Unused<'_> {
                         && !self.read_members.contains(&m)
                         && !self.member_has_syntax_error(class, m)
                     {
-                        out.push(Diagnostic {
-                            start: member.name_pos,
-                            code: 6133,
-                        });
+                        out.push(super::sink::Reported::bare(
+                            (self.file, member.name_pos, 0),
+                            6133,
+                        ));
                         self.reported_on.borrow_mut().push((
                             member.name_pos,
                             6133,
@@ -1961,10 +1968,10 @@ impl Unused<'_> {
                             && !self.read_parameter_properties.contains(&p)
                             && !self.parameter_has_syntax_error(p)
                         {
-                            out.push(Diagnostic {
-                                start: hir[hir[p].pat].pos,
-                                code: 6138,
-                            });
+                            out.push(super::sink::Reported::bare(
+                                (self.file, hir[hir[p].pat].pos, 0),
+                                6138,
+                            ));
                         }
                     }
                 }

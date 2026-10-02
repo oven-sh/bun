@@ -1,11 +1,10 @@
-//! What goes into the messages of errors, and where errors end.
+//! Errors that are reported in two steps, and errors as they are shown.
 //!
-//! A [`Diagnostic`] is a place and a code, which is all that deciding whether there is an error takes. What a person reads besides is
-//! noted on the side, where the error is reported, and only if somebody is going to read it.
+//! `error` makes an `ast.Diagnostic` whole. What is here finds the one last reported at a place again and adds to it, for whoever
+//! does not have it all at hand where it reports.
 
 use super::Checker;
-use super::errors::Diagnostic;
-use super::sink::Reported;
+use super::sink::{Arg, Args, Reported, held};
 use crate::messages::{self, Category};
 use crate::program::FileId;
 
@@ -13,43 +12,16 @@ use crate::program::FileId;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Line {
     pub code: u32,
-    pub args: Vec<String>,
+    pub args: Args,
     /// How far it is indented under the first line, which is at 0.
     pub level: u32,
 }
 
-/// `DiagnosticRelatedInformation`: something, mostly elsewhere, that has to do with an error. `'x' is declared here.`
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Related {
-    /// The file, and from where to where in it. `None`: it is nowhere.
-    pub at: Option<(FileId, u32, u32)>,
-    pub code: u32,
-    pub args: Vec<String>,
-}
-
-impl Related {
-    /// As `ast.Diagnostic`. `None`: it is nowhere.
-    pub(super) fn into_reported(self) -> Option<Reported> {
-        Some(Reported::new(self.at?, self.code, self.args))
-    }
-}
+/// The place of what has none: a line of a chain, related information that does not say where.
+pub(super) const NOWHERE: (FileId, u32, u32) = (FileId(u32::MAX), 0, 0);
 
 /// Given as the end of an error: it ends where it starts. TypeScript reports such errors on nodes that are missing and at bare positions.
 pub(super) const NO_LENGTH: u32 = u32::MAX;
-
-/// What is noted of the error `code` at `start`.
-#[derive(Clone, Debug)]
-pub(super) struct Note {
-    start: u32,
-    code: u32,
-    /// `0`: not said.
-    end: u32,
-    args: Vec<String>,
-    chain: Vec<Line>,
-    related: Vec<Related>,
-    /// It is an error of its own, though another with the same code is at the same place.
-    is_another: bool,
-}
 
 /// `chain` and what hangs on it, each line under the one it is a reason for. The first is at level 1.
 pub(super) fn lines_of(chain: Vec<Reported>) -> Vec<Line> {
@@ -68,42 +40,21 @@ pub(super) fn lines_of(chain: Vec<Reported>) -> Vec<Line> {
     lines
 }
 
-impl From<Reported> for Note {
-    fn from(reported: Reported) -> Note {
-        Note {
-            start: reported.start,
-            code: reported.code,
-            end: match reported.end {
-                0 if reported.start > 0 => 0,
-                end if end > reported.start => end,
-                _ => NO_LENGTH,
-            },
-            args: reported.args,
-            chain: lines_of(reported.message_chain),
-            related: reported
-                .related_information
-                .into_iter()
-                .map(|related| {
-                    // An argument that starts on a new line is a line under the message.
-                    let mut args = related.args;
-                    args.extend(lines_of(related.message_chain).iter().map(|line| {
-                        let template = messages::message(line.code).map_or("", |m| m.1);
-                        let said = messages::format(template, &line.args);
-                        format!("\n{}{said}", "  ".repeat(line.level as usize))
-                    }));
-                    Related {
-                        at: Some((related.file, related.start, related.end)),
-                        code: related.code,
-                        args,
-                    }
-                })
-                .collect(),
-            is_another: true,
+/// `lines_of`, the other way.
+fn add_lines(chain: &mut Vec<Reported>, lines: Vec<Line>) {
+    for line in lines {
+        let mut under = &mut *chain;
+        for _ in 1..line.level {
+            if under.is_empty() {
+                break;
+            }
+            under = &mut under.last_mut().unwrap().message_chain;
         }
+        under.push(Reported::new(NOWHERE, line.code, line.args));
     }
 }
 
-/// [`Related`] as it is shown.
+/// Related information as it is shown.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RelatedExplained {
     pub at: Option<(FileId, u32, u32)>,
@@ -125,12 +76,14 @@ pub struct Explained {
 }
 
 impl Checker<'_> {
-    /// From now on what is noted of errors is kept.
-    pub fn set_explains(&mut self, explains: bool) {
-        self.explains = explains;
+    /// What was last reported as `code` at `start`, by no question that is settled, or else what has been noted of it ahead.
+    fn last_reported(&mut self, start: u32, code: u32) -> Option<&mut Reported> {
+        (self.reported.iter_mut().rev())
+            .chain(self.noted_ahead.iter_mut().rev())
+            .find(|d| d.start == start && d.code == code)
     }
 
-    /// Notes the arguments of the message of the error `code` reported at `start`. `args` is only called if they will be read.
+    /// The arguments of the message of the error `code` reported at `start`.
     pub(super) fn explain(
         &mut self,
         start: u32,
@@ -148,172 +101,113 @@ impl Checker<'_> {
         code: u32,
         args: impl FnOnce(&mut Self) -> Vec<String>,
     ) {
-        if !self.explains {
-            return;
-        }
-        let args = args(self);
-        self.note(start, end, code, args);
+        let args = held(args(self));
+        self.note_printed(start, end, code, args);
     }
 
-    /// The same for a place that only has `&self`: the arguments are at hand, and no type has to be printed for them.
-    pub(super) fn note(&self, start: u32, end: u32, code: u32, args: Vec<String>) {
-        if !self.explains {
-            return;
-        }
-        self.notes.borrow_mut().push(Note {
-            start,
-            code,
-            end,
-            args,
-            chain: Vec::new(),
-            related: Vec::new(),
-            is_another: false,
-        });
+    /// The same, of arguments that are at hand. Of an error that has its arguments it is another error.
+    pub(super) fn note(&mut self, start: u32, end: u32, code: u32, args: &[Arg<'_>]) {
+        let args = self.stringify_args(args);
+        self.note_printed(start, end, code, args);
     }
 
-    /// Notes an error that is reported besides another with the same code, from the same place to the same place, and says something else.
-    /// TypeScript keeps both. Without this the first one noted is the one.
-    pub(super) fn explain_another(
-        &mut self,
-        start: u32,
-        end: u32,
-        code: u32,
-        args: impl FnOnce(&mut Self) -> Vec<String>,
-    ) {
-        if !self.explains {
-            return;
-        }
-        let args = args(self);
-        self.note(start, end, code, args);
-        if let Some(note) = self.notes.borrow_mut().last_mut() {
-            note.is_another = true;
+    pub(super) fn note_printed(&mut self, start: u32, end: u32, code: u32, args: Args) {
+        let last = self.last_reported_or_ahead(start, code);
+        if last.is_bare() {
+            (last.end, last.args) = (end, args);
+        } else if last.file != NOWHERE.0 {
+            let another = Reported::new((last.file, start, end), code, args);
+            self.reported.push(another);
+        } else if last.end != end {
+            let ahead = Reported::new((NOWHERE.0, start, end), code, args);
+            self.noted_ahead.push(ahead);
         }
     }
 
-    /// The error `code` last noted at `start` is an error of its own if another says something else there: see `explain_another`.
-    pub(super) fn explain_apart(&self, start: u32, code: u32) {
-        if let Some(note) = self
-            .notes
-            .borrow_mut()
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start && n.code == code)
-        {
-            note.is_another = true;
+    /// `last_reported`. Who works out the code may say what goes with it, and whoever asked reports it afterwards.
+    fn last_reported_or_ahead(&mut self, start: u32, code: u32) -> &mut Reported {
+        if self.last_reported(start, code).is_none() {
+            let ahead = Reported::bare((NOWHERE.0, start, 0), code);
+            self.noted_ahead.push(ahead);
+        }
+        self.last_reported(start, code).unwrap()
+    }
+
+    /// What was noted of an error before it was reported goes with it. What was noted of none goes.
+    pub(super) fn settle_what_was_noted_ahead(&mut self) {
+        self.settle_what_was_noted_ahead_since(0, 0);
+        self.noted_ahead.clear();
+    }
+
+    /// The same, of what has been reported since there were `reported` reports and noted since there were `noted` notes. What is noted
+    /// of none of these waits.
+    pub(super) fn settle_what_was_noted_ahead_since(&mut self, reported: usize, noted: usize) {
+        for ahead in self.noted_ahead.split_off(noted) {
+            let is_it = |d: &&mut Reported| d.start == ahead.start && d.code == ahead.code;
+            match self.reported[reported..].iter_mut().find(is_it) {
+                Some(d) if d.is_bare() || ahead.is_bare() => {
+                    if !ahead.is_bare() {
+                        (d.end, d.args) = (ahead.end, ahead.args);
+                        d.message_chain = ahead.message_chain;
+                    }
+                    d.related_information.extend(ahead.related_information);
+                    d.is_suggestion |= ahead.is_suggestion;
+                }
+                // It was said first, and the first of two errors in one place is kept.
+                Some(d) if ahead.end == 0 || ahead.end == d.end => {
+                    (d.args, d.message_chain) = (ahead.args, ahead.message_chain);
+                    d.related_information = ahead.related_information;
+                }
+                Some(d) => {
+                    let file = d.file;
+                    self.reported.push(Reported { file, ..ahead });
+                }
+                None => self.noted_ahead.push(ahead),
+            }
         }
     }
 
-    /// `AddRelatedInfo`: adds to what was last noted of the error `code` at `start`. `related` is only called if it will be read.
+    /// `AddRelatedInfo`, to what was last reported as `code` at `start`.
     pub(super) fn relate(
         &mut self,
         start: u32,
         code: u32,
-        related: impl FnOnce(&mut Self) -> Vec<Related>,
+        related: impl FnOnce(&mut Self) -> Vec<Reported>,
     ) {
-        if !self.explains {
-            return;
-        }
         let related = related(self);
-        let mut notes = self.notes.borrow_mut();
-        match notes
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start && n.code == code)
-        {
-            Some(note) => note.related.extend(related),
-            // Nothing was noted of a message whose arguments are read off the source.
-            None => notes.push(Note {
-                start,
-                code,
-                end: 0,
-                args: Vec::new(),
-                chain: Vec::new(),
-                related,
-                is_another: false,
-            }),
-        }
+        let last = self.last_reported_or_ahead(start, code);
+        last.related_information.extend(related);
     }
 
-    /// `relate` for a place that only has `&self`.
-    pub(super) fn relate_by_ref(
-        &self,
-        start: u32,
-        code: u32,
-        related: impl FnOnce(&Self) -> Vec<Related>,
-    ) {
-        if !self.explains {
-            return;
-        }
-        let related = related(self);
-        let mut notes = self.notes.borrow_mut();
-        match notes
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start && n.code == code)
-        {
-            Some(note) => note.related.extend(related),
-            None => notes.push(Note {
-                start,
-                code,
-                end: 0,
-                args: Vec::new(),
-                chain: Vec::new(),
-                related,
-                is_another: false,
-            }),
-        }
-    }
-
-    /// `compactAndMergeRelatedInfos`: adds related information to what was first noted of the error `code` at `start`, which is what is
+    /// `compactAndMergeRelatedInfos`: adds related information to what was first reported as `code` at `start`, which is what is
     /// shown. `is_again`: the error has been reported before. Then what goes with any of the reports is put in the order of errors,
     /// each thing once.
     pub(super) fn relate_reports_merged(
-        &self,
+        &mut self,
         start: u32,
         code: u32,
         is_again: bool,
-        related: Vec<Related>,
+        related: Vec<Reported>,
     ) {
-        let files = self.files();
-        let mut notes = self.notes.borrow_mut();
-        let Some(note) = notes
-            .iter_mut()
-            .find(|n| n.start == start && n.code == code)
+        let Some(first) = self
+            .reported
+            .iter()
+            .position(|d| d.start == start && d.code == code)
         else {
             return;
         };
-        note.related.extend(related);
+        let mut all = std::mem::take(&mut self.reported[first].related_information);
+        all.extend(related);
         if is_again {
-            let place = |r: &Related| {
-                r.at.map(|(file, from, to)| (&files.module(file).path[..], from, to))
-            };
-            note.related
-                .sort_by(|a, b| (place(a), a.code, &a.args).cmp(&(place(b), b.code, &b.args)));
-            note.related.dedup();
+            all.sort_by(|a, b| self.compare_diagnostics(a, b));
+            all.dedup();
         }
-    }
-
-    /// What was last noted at `start` is an error of its own as well: see `explain_another`.
-    pub(super) fn explain_as_another(&self, start: u32) {
-        if let Some(note) = self
-            .notes
-            .borrow_mut()
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start)
-        {
-            note.is_another = true;
-        }
+        self.reported[first].related_information = all;
     }
 
     /// Whether `GetSuggestionDiagnostics` are reported as well.
     pub(super) fn captures_suggestions(&self) -> bool {
         self.files().options.captures_suggestions
-    }
-
-    /// `errorOrSuggestion`: the error `code` reported at `start` is no more than a suggestion.
-    pub(super) fn note_suggestion(&self, start: u32, code: u32) {
-        self.suggestions.borrow_mut().push((start, code));
     }
 
     /// `name` as it is written in a message.
@@ -328,159 +222,71 @@ impl Checker<'_> {
         String::from_utf8_lossy(&text[(start as usize).min(end)..end]).into_owned()
     }
 
-    /// Adds lines under the message last noted for the error `code` at `start`: the reasons, outermost first.
+    /// Adds lines under the message last reported as `code` at `start`: the reasons, outermost first.
     pub(super) fn explain_chain(
         &mut self,
         start: u32,
         code: u32,
         lines: impl FnOnce(&mut Self) -> Vec<Line>,
     ) {
-        if !self.explains {
-            return;
-        }
         let lines = lines(self);
-        if let Some(note) = self
-            .notes
-            .borrow_mut()
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start && n.code == code)
-        {
-            note.chain.extend(lines);
+        if let Some(last) = self.last_reported(start, code) {
+            add_lines(&mut last.message_chain, lines);
         }
     }
 
-    /// `NewDiagnosticChain`: puts the message `head` on top of what was last noted for the error `code` at `start`. The error goes by
+    /// `NewDiagnosticChain`: puts the message `head` on top of what was last reported as `code` at `start`. The error goes by
     /// `head` from now on, and what it said is the first of its reasons.
-    pub(super) fn explain_under(&self, start: u32, code: u32, head: u32, args: Vec<String>) {
-        if !self.explains {
-            return;
-        }
-        let mut notes = self.notes.borrow_mut();
-        match notes
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start && n.code == code)
-        {
-            Some(note) => {
-                for line in &mut note.chain {
-                    line.level += 1;
-                }
-                let said = Line {
-                    code,
-                    args: std::mem::replace(&mut note.args, args),
-                    level: 1,
-                };
-                note.chain.insert(0, said);
-                note.code = head;
-            }
-            // Nothing was noted of a message that takes no arguments.
-            None => notes.push(Note {
-                start,
-                code: head,
-                end: 0,
-                args,
-                chain: vec![Line {
-                    code,
-                    args: Vec::new(),
-                    level: 1,
-                }],
-                related: Vec::new(),
-                is_another: false,
-            }),
+    pub(super) fn explain_under(&mut self, start: u32, code: u32, head: u32, args: &[Arg<'_>]) {
+        let args = self.stringify_args(args);
+        if let Some(last) = self.last_reported(start, code) {
+            let mut said = Reported::new(NOWHERE, code, std::mem::replace(&mut last.args, args));
+            said.message_chain = std::mem::take(&mut last.message_chain);
+            last.message_chain.push(said);
+            last.code = head;
         }
     }
 
-    /// `errors` as they are shown, with what has been noted of them.
-    pub(super) fn explain_errors(
-        &mut self,
-        file: FileId,
-        errors: Vec<Diagnostic>,
-    ) -> Vec<Explained> {
-        let notes = self.notes.take();
-        let mut explained: Vec<Explained> = Vec::with_capacity(errors.len());
-        for d in errors {
-            let from = explained.len();
-            // Errors are the same if they also reach as far: `(a, b, c)` has one about `a` and one about `a, b`. Of those that do, the
-            // first one noted: TypeScript keeps the first of two errors that are the same.
-            for note in notes
-                .iter()
-                .filter(|n| n.start == d.start && n.code == d.code)
-            {
-                let one = self.explained(file, d, Some(note));
-                if !explained[from..]
-                    .iter()
-                    .any(|e| e.end == one.end && (!note.is_another || e.text == one.text))
-                {
-                    explained.push(one);
-                }
-            }
-            if explained.len() == from {
-                explained.push(self.explained(file, d, None));
-            }
-        }
-        let suggestions = self.suggestions.take();
-        for one in &mut explained {
-            if suggestions.contains(&(one.start, one.code)) {
-                one.category = Category::Suggestion;
-            }
-        }
-        explained
+    /// `check_file` and `finish_file`, for whoever checks one file by itself.
+    pub fn check_file_explained(&mut self, file: FileId) -> Vec<Explained> {
+        let checked = self.check_file(file);
+        self.finish_file(file, checked)
     }
 
-    fn explained(&self, file: FileId, d: Diagnostic, note: Option<&Note>) -> Explained {
-        let text = &self.hir(file).text;
-        let (category, template) =
-            messages::message(d.code).unwrap_or((Category::Error, "Unknown error."));
-        // What is reported where a line ends is reported between two tokens, and is empty. In a JSDoc comment the end of a line is a token.
-        let token_end = match text.get(d.start as usize) {
-            Some(b'\n' | b'\r') if !self.hir(file).is_in_jsdoc(d.start) => d.start,
-            _ => self.end_of_token_at(file, d.start),
-        };
-        let mut message = match note {
-            Some(note) if !note.args.is_empty() => messages::format(template, &note.args),
-            _ => messages::format(
-                template,
-                &args_from_source(text, d.start, token_end, d.code),
-            ),
-        };
-        for line in note.map_or(&[][..], |n| &n.chain) {
-            message.push('\n');
-            for _ in 0..line.level {
-                message.push_str("  ");
+    /// `d` as it is shown.
+    pub(super) fn explained(&self, d: Reported) -> Explained {
+        // The message of `d` and the lines under it, each indented by two spaces for each level.
+        fn said(d: &mut Reported, otherwise: Category) -> (Category, String) {
+            let (category, template) =
+                messages::message(d.code).unwrap_or((otherwise, "Unknown error."));
+            let mut text = Vec::new();
+            messages::format(&mut text, template, &d.args);
+            for line in lines_of(std::mem::take(&mut d.message_chain)) {
+                text.push(b'\n');
+                text.extend(std::iter::repeat_n(b' ', 2 * line.level as usize));
+                let template = messages::message(line.code).map_or("", |m| m.1);
+                messages::format(&mut text, template, &line.args);
             }
-            let template = messages::message(line.code).map_or("", |m| m.1);
-            message.push_str(&messages::format(template, &line.args));
+            (category, super::print::to_valid_utf8(text))
         }
+        let mut d = d;
+        let (category, text) = said(&mut d, Category::Error);
         Explained {
             start: d.start,
-            end: match note {
-                Some(note) if note.end == NO_LENGTH => d.start,
-                Some(note) if note.end > d.start => note.end,
-                // What the parser reported it on, if it is one of its errors.
-                _ => self
-                    .hir(file)
-                    .error_ends
-                    .iter()
-                    .find(|e| e.0 == d.start && e.1 == d.code)
-                    .map_or(token_end, |e| e.2),
-            },
+            end: d.end,
             code: d.code,
-            category,
-            text: message,
-            related: note
-                .map_or(&[][..], |n| &n.related)
-                .iter()
-                .map(|related| {
-                    let (category, template) = messages::message(related.code)
-                        .unwrap_or((Category::Message, "Unknown error."));
-                    let mut text = messages::format(template, &related.args);
-                    // An argument that starts on a new line is a line under the message.
-                    for line in related.args.iter().filter(|arg| arg.starts_with('\n')) {
-                        text.push_str(line);
-                    }
+            category: if d.is_suggestion {
+                Category::Suggestion
+            } else {
+                category
+            },
+            text,
+            related: (d.related_information.into_iter())
+                .map(|mut related| {
+                    let (category, text) = said(&mut related, Category::Message);
+                    let at = (related.file, related.start, related.end);
                     RelatedExplained {
-                        at: related.at,
+                        at: (related.file != NOWHERE.0).then_some(at),
                         code: related.code,
                         category,
                         text,
@@ -489,25 +295,44 @@ impl Checker<'_> {
                 .collect(),
         }
     }
+
+    /// Where `d` ends, if that has not been said, and the arguments of its message, if they can be read off the source.
+    pub(super) fn settle_place(&self, d: &mut Reported) {
+        let hir = self.hir(d.file);
+        // What is reported where a line ends is reported between two tokens, and is empty. In a JSDoc comment the end of a line is a token.
+        let token_end = match hir.text.get(d.start as usize) {
+            Some(b'\n' | b'\r') if !hir.is_in_jsdoc(d.start) => d.start,
+            _ => self.end_of_token_at(d.file, d.start),
+        };
+        if d.args.is_empty() {
+            d.args = args_from_source(&hir.text, d.start, token_end, d.code);
+        }
+        d.end = match d.end {
+            NO_LENGTH => d.start,
+            end if end != 0 && end >= d.start => end,
+            // Nobody has said. What the parser reported it on, if it is one of its errors.
+            _ => hir
+                .error_ends
+                .iter()
+                .find(|e| e.0 == d.start && e.1 == d.code)
+                .map_or(token_end, |e| e.2),
+        };
+    }
 }
 
 /// The arguments of a message that nothing was noted for, where they can be read off the source: the name or the string the error is
 /// reported on.
-fn args_from_source(text: &[u8], start: u32, end: u32, code: u32) -> Vec<String> {
+fn args_from_source(text: &[u8], start: u32, end: u32, code: u32) -> Args {
     use super::explain_table::Source;
     let token = &text[(start as usize).min(text.len())..(end as usize).min(text.len())];
     super::explain_table::sources(code)
         .iter()
         .map(|source| match source {
-            Source::Name => String::from_utf8_lossy(token).into_owned(),
-            Source::StringContents => {
-                let inner = match token {
-                    [q @ (b'"' | b'\'' | b'`'), inner @ .., last] if last == q => inner,
-                    _ => token,
-                };
-                String::from_utf8_lossy(inner).into_owned()
-            }
-            Source::Const(text) => (*text).to_owned(),
+            Source::Name => token.into(),
+            Source::StringContents => match token {
+                [q @ (b'"' | b'\'' | b'`'), inner @ .., last] if last == q => inner.into(),
+                _ => token.into(),
+            },
         })
         .collect()
 }

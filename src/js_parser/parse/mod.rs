@@ -460,15 +460,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             | T::TNoSubstitutionTemplateLiteral
                             | T::TTemplateHead
                     ) {
-                        // `checkClassLikeDeclaration`: only `A.B<C>` can be implemented.
-                        p.ts_checker_error(start.loc, 2500);
-                        if !p.parse_optional_chain_of_implemented(implemented)? {
+                        // `checkClassLikeDeclaration`: only `A.B<C>` can be implemented. It is said of the expression.
+                        let expression = if p.parse_optional_chain_of_implemented(implemented)? {
+                            p.lexer.range_from(start.loc)
+                        } else {
                             implemented = bun_ast::ts_syntax::TypeId::NONE;
-                            p.parse_rest_of_implemented(start.loc)?;
-                        }
+                            p.parse_rest_of_implemented(start.loc)?
+                        };
+                        p.ts_checker_error(expression, 2500);
                     } else if !p.is_kept_entity_name(implemented) {
                         // What reads as a type and is no `isEntityNameExpression`: `(I)`, `string[]`.
-                        p.ts_checker_error(start.loc, 2500);
+                        p.ts_checker_error(p.lexer.range_from(start.loc), 2500);
                         implemented = bun_ast::ts_syntax::TypeId::NONE;
                     }
                     p.note_implemented(class_keyword, clause, implemented, start.loc);
@@ -490,13 +492,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(comma) = trailing_comma {
                     p.lexer.ts_grammar_error(comma, 1009);
                 } else if count == 0 {
-                    p.lexer.ts_grammar_error(
-                        bun_ast::Range {
-                            loc: keyword.end(),
-                            len: 0,
-                        },
-                        1097,
-                    );
+                    let after = bun_ast::Range {
+                        loc: keyword.end(),
+                        len: 0,
+                    };
+                    let keyword: &[u8] = if is_extends {
+                        b"extends"
+                    } else {
+                        b"implements"
+                    };
+                    p.lexer.ts_grammar_error_about(after, 1097, keyword);
                 }
             }
             if is_extends {
@@ -509,16 +514,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(extends)
     }
 
-    /// `parseExpressionWithTypeArguments` after `implements`, from where the expression no longer reads as a type (2500).
+    /// `parseExpressionWithTypeArguments` after `implements`, from where the expression no longer reads as a type (2500). From where
+    /// to where the expression goes.
     #[cold]
     #[inline(never)]
-    fn parse_rest_of_implemented(&mut self, start: bun_ast::Loc) -> Result<(), Error> {
+    fn parse_rest_of_implemented(&mut self, start: bun_ast::Loc) -> Result<bun_ast::Range, Error> {
         let scope_index = self.scopes_in_order.len();
         let mut value = self.new_expr(E::Missing {}, start);
         self.parse_suffix(&mut value, Level::New, None, EFlags::None)?;
+        let expression = self.lexer.range_from(start);
         self.skip_type_script_type_arguments::<false, false>()?;
         self.discard_scopes_up_to(scope_index);
-        Ok(())
+        Ok(expression)
     }
 
     pub(crate) fn parse_template_parts(
@@ -682,9 +689,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TCloseBrace && p.lexer.tolerant {
                 // `parseJsxExpression`: there may be nothing between the braces. What is missing is put where they open.
                 p.lexer.next_inside_jsx_element()?;
-                return Ok(Some(p.new_expr(E::Missing {}, open_brace)));
+                let mut missing = p.new_expr(E::Missing {}, open_brace);
+                p.note_loc(
+                    &mut missing.loc,
+                    crate::sema::Mark::JsxExpression,
+                    open_brace,
+                );
+                return Ok(Some(missing));
             }
-            let value = p.parse_expr(Level::Lowest)?;
+            let mut value = p.parse_expr(Level::Lowest)?;
+            p.note_loc(&mut value.loc, crate::sema::Mark::JsxExpression, open_brace);
 
             if p.lexer.token != T::TCloseBrace && p.lexer.tolerant {
                 // `parseExpected`: it is missed, and nothing is consumed.
@@ -748,8 +762,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(Error::Backtrack);
         }
         let rest = p.parse_jsx_elements_in_attribute_value(first)?;
-        p.lexer
-            .ts_error(bun_ast::Range { loc: first, len: 1 }, 2657);
+        p.lexer.ts_error(p.lexer.range_from(first), 2657);
         Ok(p.join_with_comma(element, rest))
     }
 
@@ -1354,12 +1367,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if opts.is_async {
             p.log_expr_errors(&mut errors);
             let async_ref = p.store_name_in_ref(b"async");
-            let async_expr = p.new_expr(
+            let async_expr = p.new_expr_ending_at(
                 E::Identifier {
                     ref_: async_ref,
                     ..Default::default()
                 },
                 loc,
+                bun_ast::Loc {
+                    start: p.real_loc(loc).start + b"async".len() as i32,
+                },
             );
             return Ok(p.new_expr(
                 E::Call {
@@ -1926,14 +1942,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TAsteriskAsterisk {
                 if p.lexer.tolerant && !p.lexer.is_log_disabled {
                     // `parseUnaryExpressionOrHigher`: the await expression is on the left of "**".
-                    let len = p.lexer.start as i32 - token_range.loc.start;
-                    p.lexer.ts_error(
-                        bun_ast::Range {
-                            loc: token_range.loc,
-                            len,
-                        },
-                        17006,
-                    );
+                    let range = p.lexer.range_from(token_range.loc);
+                    p.lexer.ts_error_about(range, 17006, b"await");
                 } else {
                     p.lexer.unexpected()?;
                 }
@@ -1995,7 +2005,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let ref_ = p.store_name_in_ref(name);
                 p.lexer.next()?;
-                return Ok(p.b(B::Identifier { r#ref: ref_ }, loc));
+                let mut binding = p.b(B::Identifier { r#ref: ref_ }, loc);
+                if Self::IS_TYPESCRIPT_ENABLED && !ref_.is_source_contents_slice() {
+                    p.note_token_full_start(&mut binding.loc, Mark::PatternEnd);
+                }
+                return Ok(binding);
             }
             T::TOpenBracket => {
                 // `parseVariableDeclarationWorker` takes a pattern after "using" too.
@@ -2022,7 +2036,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 data: B::B::BMissing(B::Missing {}),
                                 loc: p.lexer.loc(),
                             };
-                            p.note_flag(&mut hole.loc, Mark::OmittedExpression);
+                            p.note_token_full_start(&mut hole.loc, Mark::OmittedExpression);
                             items.push(ArrayBinding {
                                 binding: hole,
                                 default_value: None,
@@ -2101,14 +2115,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_single_line = false;
                     }
                     p.lexer.expect(T::TCloseBracket)?;
-                    return Ok(p.b(
+                    let mut binding = p.b(
                         B::Array {
                             items: bun_ast::StoreSlice::new_mut(items.into_bump_slice_mut()),
                             has_spread,
                             is_single_line,
                         },
                         loc,
-                    ));
+                    );
+                    p.note_token_full_start(&mut binding.loc, Mark::PatternEnd);
+                    return Ok(binding);
                 }
             }
             T::TOpenBrace => {
@@ -2175,7 +2191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     p.lexer.expect(T::TCloseBrace)?;
 
-                    return Ok(p.b(
+                    let mut binding = p.b(
                         B::Object {
                             properties: bun_ast::StoreSlice::new_mut(
                                 properties.into_bump_slice_mut(),
@@ -2183,7 +2199,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_single_line,
                         },
                         loc,
-                    ));
+                    );
+                    p.note_token_full_start(&mut binding.loc, Mark::PatternEnd);
+                    return Ok(binding);
                 }
             }
             _ => {}
@@ -2463,11 +2481,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `parseVariableDeclarationWorker`
                 private_name_code: 18029,
             })?;
-            // Only tolerant mode parses a pattern here.
-            if opts.is_using_statement && matches!(local.data, B::B::BArray(_) | B::B::BObject(_)) {
-                // `checkGrammarVariableDeclaration`
-                p.ts_grammar_error(p.real_loc(local.loc), 1492);
-            }
             p.declare_binding(kind, &mut local, opts)
                 .expect("unreachable");
 
@@ -2678,7 +2691,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // is missing. `checkGrammarModuleElementContext` returns first in a block or a function.
             let value = p.parse_expr(Level::Lowest)?;
             if !value.is_missing() && p.current_scope().kind == js_ast::scope::Kind::Entry {
-                p.ts_checker_error(path.loc, 1141);
+                p.ts_checker_error(p.lexer.range_from(path.loc), 1141);
             }
             p.keep_module_specifier(None, Some(value), path.loc);
         }

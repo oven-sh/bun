@@ -8,7 +8,7 @@
 //! jsx.go, and `markJsxAliasReferenced`, `checkSpreadPropOverrides`, `getTypeArgumentArityError` and
 //! `getCandidateForOverloadFailure` of its checker.go.
 
-use super::errors::Diagnostic;
+use super::explain::NOWHERE;
 use super::jsx::JsxName;
 use super::relate::Relation;
 use super::*;
@@ -16,7 +16,7 @@ use crate::bind::ScopeId;
 use crate::resolve::JsxEmit;
 
 impl Checker<'_> {
-    pub(super) fn check_jsx(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_jsx(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.jsx.is_empty() {
             return;
@@ -103,12 +103,12 @@ impl Checker<'_> {
                 self.check_grammar_jsx_element(file, j);
             }
             if jsx == JsxEmit::None {
-                self.error((file, start, end), 17004, &[]);
+                self.error_at((file, start, end), 17004, &[]);
             }
             if runtime_is_missing && first == Some(e) {
                 // `checkJsxElement` passes the whole element to `getJsxElementTypeAt`. In a file that is emitted before it is checked,
                 // `MarkLinkedReferencesRecursively` comes first, where `markJsxAliasReferenced` passes the opening element.
-                let is_whole_element = self.p.files.options.no_emit_is_set
+                let is_whole_element = self.p.files.options.no_emit
                     && element.tag.is_some()
                     && element.close_pos != u32::MAX;
                 let end = if is_whole_element { element.end } else { end };
@@ -120,9 +120,9 @@ impl Checker<'_> {
                     match self.files().module(file).imported_file(spec) {
                         Some(found) => {
                             let path = self.files().module(found).path.as_bytes();
-                            self.error((file, start, end), 2306, &[Arg::Bytes(path)])
+                            self.error_at((file, start, end), 2306, &[Arg::Bytes(path)])
                         }
-                        None => self.error((file, start, end), 2875, &[Arg::Atom(spec)]),
+                        None => self.error_at((file, start, end), 2875, &[Arg::Atom(spec)]),
                     };
                 }
             }
@@ -137,25 +137,25 @@ impl Checker<'_> {
                     && is_missing(self, scope, fragment_factory);
                 if checks_factory && fragment_factory_is_missing {
                     let code = self.why_no_jsx_factory(file, scope, fragment_factory, 2874);
-                    out.push(Diagnostic { start, code });
+                    self.error_at((file, start, 0), code, &[]);
                     let name = fragment_factory;
                     self.explain_missing_jsx_factory(file, scope, (start, end), code, name);
                 }
                 if factory_is_missing {
                     let code = self.why_no_jsx_factory(file, scope, factory, 2874);
-                    out.push(Diagnostic { start, code });
+                    self.error_at((file, start, 0), code, &[]);
                     self.explain_missing_jsx_factory(file, scope, (start, end), code, factory);
                 }
                 if gives_fragment_type && fragment_factory_is_missing {
                     let code = self.why_no_jsx_factory(file, scope, fragment_factory, 2879);
-                    out.push(Diagnostic { start, code });
+                    self.error_at((file, start, 0), code, &[]);
                     let name = fragment_factory;
                     self.explain_missing_jsx_factory(file, scope, (start, end), code, name);
                 }
                 self.check_jsx_fragment(file, e);
                 if lacks_fragment_factory {
                     let at = (file, start, self.end_inside_parentheses(file, e));
-                    self.error(at, if says_factory { 17016 } else { 17017 }, &[]);
+                    self.error_at(at, if says_factory { 17016 } else { 17017 }, &[]);
                 }
                 for child in hir.ids(element.children) {
                     self.check_jsx_expression(file, child);
@@ -165,10 +165,10 @@ impl Checker<'_> {
             if factory_is_missing {
                 let at = (tag_name_start(hir, e), tag_name_end(hir, e));
                 let code = self.why_no_jsx_factory(file, scope, factory, 2874);
-                out.push(Diagnostic { start: at.0, code });
+                self.error_at((file, at.0, 0), code, &[]);
                 self.explain_missing_jsx_factory(file, scope, at, code, factory);
             }
-            self.check_jsx_attributes(file, e, out);
+            self.check_jsx_attributes(file, e);
             // `resolveUntypedCall`, `resolveErrorCall`: the attributes are looked at whatever becomes of the tag.
             if !element.attrs.is_empty() && !element.children.is_empty() {
                 self.jsx_attributes_type(file, e);
@@ -199,13 +199,13 @@ impl Checker<'_> {
                 let at = (file, start, if is_closing { element.end } else { end });
                 match intrinsic_elements {
                     None if no_implicit_any => {
-                        self.error(at, 7026, &[Arg::Bytes(b"IntrinsicElements")]);
+                        self.error_at(at, 7026, &[Arg::Bytes(b"IntrinsicElements")]);
                     }
                     Some(elements)
                         if self.is_known(elements)
                             && self.type_of_property(elements, name).is_none() =>
                     {
-                        self.error(
+                        self.error_at(
                             at,
                             2339,
                             &[Arg::Atom(name), Arg::Bytes(b"JSX.IntrinsicElements")],
@@ -233,7 +233,7 @@ impl Checker<'_> {
             {
                 let start = hir[jsx.tag].pos;
                 let end = jsx_tag_name_end(&hir.text, start as usize) as u32;
-                self.grammar_error_on_node((file, start, end), 2639, &[]);
+                self.grammar_error_at((file, start, end), 2639, &[]);
             }
         }
         let mut seen: Vec<PropKey> = Vec::new();
@@ -244,14 +244,13 @@ impl Checker<'_> {
             }
             if seen.contains(&attr.key) {
                 let at = (file, attr.pos, self.end_of_jsx_attr_name(file, p));
-                return self.grammar_error_on_node(at, 17001, &[]);
+                return self.grammar_error_at(at, 17001, &[]);
             }
             seen.push(attr.key);
             // The parser places the `Missing` of `name={}` at the `{`.
             if attr.value.is_some() && matches!(hir[attr.value].kind, ExprKind::Missing) {
-                let start = hir[attr.value].pos;
-                let at = (file, start, self.end_of_bracket_at(file, start));
-                return self.grammar_error_on_node(at, 17000, &[]);
+                let at = (file, hir[attr.value].pos, attr.end);
+                return self.grammar_error_at(at, 17000, &[]);
             }
         }
         false
@@ -271,7 +270,7 @@ impl Checker<'_> {
             );
         is_comma_sequence && {
             let at = (file, self.start_of(file, x), self.end_of_expr(file, x));
-            self.grammar_error_on_node(at, 18007, &[])
+            self.grammar_error_at(at, 18007, &[])
         }
     }
 
@@ -287,13 +286,9 @@ impl Checker<'_> {
         if self.is_known(ty)
             && ty != TypeId::ANY
             && !self.is_array(ty)
-            && let Some(brace) = brace_before(hir, self.start_of(file, spread), true)
+            && let Some((brace, end)) = jsx_expression_around(hir, child)
         {
-            self.error(
-                (file, brace, self.end_of_bracket_at(file, brace)),
-                2609,
-                &[],
-            );
+            self.error_at((file, brace, end), 2609, &[]);
         }
     }
 
@@ -327,7 +322,7 @@ impl Checker<'_> {
         }
         let at = (file, hir[e].pos, hir[j].opening_end);
         if sigs.is_empty() {
-            self.error(at, 2604, &[Arg::Bytes(text_of(hir, at.1, at.2))]);
+            self.error_at(at, 2604, &[Arg::Bytes(text_of(hir, at.1, at.2))]);
             return;
         }
         let [sig] = sigs[..] else {
@@ -377,7 +372,7 @@ impl Checker<'_> {
     }
 
     /// `resolveJsxOpeningLikeElement` and `checkApplicableSignatureForJsxCallLikeElement`: 2322 and what says more, 2558 2604 2743 2769.
-    fn check_jsx_attributes(&mut self, file: FileId, e: ExprId, out: &mut Vec<Diagnostic>) {
+    fn check_jsx_attributes(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
             return;
@@ -394,7 +389,7 @@ impl Checker<'_> {
                 if !jsx.type_args.is_empty() {
                     let fake =
                         self.jsx_intrinsic_signature(file, attributes.unwrap_or(TypeId::ERROR));
-                    self.report_type_argument_arity(file, jsx.type_args, &[fake], out);
+                    self.report_type_argument_arity(file, jsx.type_args, &[fake]);
                 }
                 match attributes {
                     Some(attributes) => vec![attributes],
@@ -423,7 +418,7 @@ impl Checker<'_> {
                     return;
                 }
                 if sigs.is_empty() {
-                    self.error(at, 2604, &[Arg::Bytes(text_of(hir, tag_name, tag_end))]);
+                    self.error_at(at, 2604, &[Arg::Bytes(text_of(hir, tag_name, tag_end))]);
                     return;
                 }
                 // `chooseOverload` skips every signature then, so `reportCallResolutionErrors` has no argument error to report.
@@ -432,7 +427,7 @@ impl Checker<'_> {
                     self.has_correct_type_argument_arity(&type_params, jsx.type_args.len())
                 });
                 if !has_correct_arity {
-                    self.report_type_argument_arity(file, jsx.type_args, &sigs, out);
+                    self.report_type_argument_arity(file, jsx.type_args, &sigs);
                     return;
                 }
                 let candidates = self.candidates_in_order(&sigs).into_vec();
@@ -541,7 +536,7 @@ impl Checker<'_> {
                 diagnostic = self.new_diagnostic_chain(Some(diagnostic), at, 2770, &[]);
                 diagnostic = self.new_diagnostic_chain(Some(diagnostic), at, 2769, &[]);
                 let related = related.iter().cloned();
-                let related = related.filter_map(super::explain::Related::into_reported);
+                let related = related.filter(|related| related.file != NOWHERE.0);
                 diagnostic.related_information.extend(related);
             }
             self.add_diagnostic(diagnostic);
@@ -556,10 +551,7 @@ impl Checker<'_> {
         e: ExprId,
         last: SigId,
         given: TypeId,
-    ) -> Vec<super::explain::Related> {
-        if !self.explains {
-            return Vec::new();
-        }
+    ) -> Vec<Reported> {
         let mut related = self.last_overload_declared_here(last);
         // `addImplementationSuccessElaboration`. Only a function has an implementation that is found here.
         if let Some(implementation) = self.implementation_signature(last)
@@ -569,11 +561,10 @@ impl Checker<'_> {
             && self.is_assignable(given, props)
             && let Some((of, func, _)) = self.sig_decl(implementation)
         {
-            related.push(super::explain::Related {
-                at: Some(self.place_of_signature_declaration(of, func)),
-                code: 2793,
-                args: Vec::new(),
-            });
+            related.push(Reported::bare(
+                self.place_of_signature_declaration(of, func),
+                2793,
+            ));
         }
         related
     }
@@ -716,12 +707,11 @@ impl Checker<'_> {
             // `elaborateDidYouMeanToCallOrConstruct` is asked of the braces around the value before it is asked of the value: what it
             // says, which is all that is said where the value starts, is said where they start.
             let value = prop.value.some().map(|value| self.start_of(file, value));
-            let brace = value.and_then(|value| brace_before(hir, value, false));
+            let braces = (prop.value.some()).and_then(|value| jsx_expression_around(hir, value));
             for mut diagnostic in diags {
-                if let Some(brace) = brace
+                if let Some((brace, end)) = braces
                     && Some(diagnostic.start) == value
                 {
-                    let end = self.end_of_bracket_at(file, brace);
                     (diagnostic.start, diagnostic.end) = (brace, end);
                     for related in &mut diagnostic.related_information {
                         if matches!(related.code, 6212 | 6213) && Some(related.start) == value {
@@ -781,15 +771,13 @@ impl Checker<'_> {
         } else if children.len() == 1 && !others.is_never() {
             // `getElaborationElementForJsxChild`
             let (child, _) = children[0];
-            let Some(start) = self.jsx_child_start(file, e, &children, 0) else {
-                return reported;
-            };
-            if !is_jsx_text(hir, e, child) {
+            let (start, end) = range_of_jsx_child(hir, child);
+            if !is_jsx_text(hir, child) {
                 let inner = match hir[child].kind {
                     ExprKind::Spread(x) => x,
                     _ => child,
                 };
-                let at = (file, start, self.jsx_child_end(file, child, start));
+                let at = (file, start, end);
                 let output = diagnostic_output;
                 return reported
                     | self.elaborate_element(source, target, at, inner, false, name, None, output);
@@ -803,9 +791,9 @@ impl Checker<'_> {
                 return reported;
             }
             let mut diagnostic =
-                self.invalid_textual_child_diagnostic(file, e, start, (name, wanted));
+                self.invalid_textual_child_diagnostic(file, e, (start, end), (name, wanted));
             let related = self.expected_property(target, name);
-            let related = related.and_then(super::explain::Related::into_reported);
+            let related = related.filter(|related| related.file != NOWHERE.0);
             diagnostic.related_information.extend(related);
             diagnostic
         } else if !is_related(self) {
@@ -819,13 +807,13 @@ impl Checker<'_> {
         true
     }
 
-    /// `getInvalidTextualChildDiagnostic`, of the text that starts at `start` in the element `e`. `expected`: the name the children go
+    /// `getInvalidTextualChildDiagnostic`, of the text from `start` to `end` in the element `e`. `expected`: the name the children go
     /// by, and what the tag takes under that name.
     fn invalid_textual_child_diagnostic(
         &mut self,
         file: FileId,
         e: ExprId,
-        start: u32,
+        (start, end): (u32, u32),
         expected: (Atom, TypeId),
     ) -> Reported {
         let hir = self.hir(file);
@@ -835,7 +823,7 @@ impl Checker<'_> {
             Arg::Atom(expected.0),
             Arg::Type(expected.1),
         ];
-        self.new_diagnostic((file, start, jsx_text_end(hir, start)), 2747, &args)
+        self.new_diagnostic((file, start, end), 2747, &args)
     }
 
     /// `elaborateIterableOrArrayLikeTargetElementwise` over `generateJsxChildren`: each of the `children` of `e` is held against what
@@ -882,12 +870,9 @@ impl Checker<'_> {
             {
                 continue;
             }
-            // Where a child cannot be pointed at, the tag is.
-            let Some(at) = self.jsx_child_start(file, e, children, i) else {
-                return false;
-            };
-            if is_jsx_text(hir, e, child) {
-                said.push(self.invalid_textual_child_diagnostic(file, e, at, expected));
+            let (at, end) = range_of_jsx_child(hir, child);
+            if is_jsx_text(hir, child) {
+                said.push(self.invalid_textual_child_diagnostic(file, e, (at, end), expected));
                 continue;
             }
             let inner = match hir[child].kind {
@@ -895,7 +880,6 @@ impl Checker<'_> {
                 _ => child,
             };
             if !self.elaborate_error(file, inner, false, given, wanted, None, Some(&mut said)) {
-                let end = self.jsx_child_end(file, child, at);
                 // `removeMissingType`
                 let name = self.number_name(i as f64);
                 let apparent = self.apparent_type(arrays);
@@ -918,64 +902,6 @@ impl Checker<'_> {
             self.report_diagnostic(diagnostic, diagnostic_output.as_deref_mut());
         }
         reported
-    }
-
-    /// Where the error node that `getElaborationElementForJsxChild` gives for child `i` of `e` starts. `None`: the text does not tell.
-    fn jsx_child_start(
-        &self,
-        file: FileId,
-        e: ExprId,
-        children: &[(ExprId, TypeId)],
-        i: usize,
-    ) -> Option<u32> {
-        let hir = self.hir(file);
-        let ExprKind::Jsx(j) = hir[e].kind else {
-            return None;
-        };
-        let child = children[i].0;
-        if !is_jsx_text(hir, e, child) {
-            let (inner, is_spread) = match hir[child].kind {
-                ExprKind::Spread(x) => (x, true),
-                _ => (child, false),
-            };
-            // `{ x }`: the brace. An element that is written bare: its `<`.
-            return match brace_before(hir, self.start_of(file, inner), is_spread) {
-                None if matches!(hir[child].kind, ExprKind::Jsx(_)) => Some(hir[child].pos),
-                brace => brace,
-            };
-        }
-        // Text goes from the end of what comes before it, white space and all, to where what follows it starts.
-        let mut end = match children.get(i + 1) {
-            Some(_) => self.jsx_child_start(file, e, children, i + 1)?,
-            None if hir[j].close_pos == u32::MAX => return None,
-            None => hir[j].close_pos,
-        };
-        loop {
-            let before = hir.text.get(..end as usize)?;
-            let start = before.iter().rposition(|&c| c == b'>' || c == b'}')? + 1;
-            // White space is text too, unless a line ends in it (`JsxTextAllWhiteSpaces`).
-            let text = &before[start..];
-            let is_trivia = text.trim_ascii().is_empty()
-                && (text.is_empty() || text.contains(&b'\n') || text.contains(&b'\r'));
-            if !is_trivia {
-                return Some(start as u32);
-            }
-            // `{}` is not kept: the text is before it.
-            let inside = trim_trivia_end(&before[..start - 1]);
-            if before[start - 1] != b'}' || !inside.ends_with(b"{") {
-                return None;
-            }
-            end = inside.len() as u32 - 1;
-        }
-    }
-
-    /// Where that node ends, for a `child` that is not text and starts at `at`: `{ x }`, or an element that is written bare.
-    fn jsx_child_end(&self, file: FileId, child: ExprId, at: u32) -> u32 {
-        if self.hir(file).text.get(at as usize) == Some(&b'{') {
-            self.end_of_bracket_at(file, at)
-        } else {
-            self.end_of_expr(file, child)
-        }
     }
 
     /// `checkSpreadPropOverrides`: 2783, what is written only to be overwritten by what is spread after it.
@@ -1035,7 +961,7 @@ impl Checker<'_> {
                     // The spread starts at its `...`, that of an attribute at the `{`.
                     let spread = (file, prop.start, self.end_of_prop(file, p));
                     let spread = self.new_diagnostic(spread, 2785, &[]);
-                    self.error((file, start, end), 2783, &[Arg::Atom(name)])
+                    self.error_at((file, start, end), 2783, &[Arg::Atom(name)])
                         .add_related_info(spread);
                 }
             }
@@ -1271,27 +1197,12 @@ fn tag_name_end(hir: &hir::File, e: ExprId) -> u32 {
     jsx_tag_name_end(&hir.text, tag_name_start(hir, e) as usize) as u32
 }
 
-/// Where the text among the children of an element that starts at `start` ends: at the next `{` or `<`.
-fn jsx_text_end(hir: &hir::File, start: u32) -> u32 {
-    let rest = hir.text.get(start as usize..).unwrap_or_default();
-    let length = rest
-        .iter()
-        .position(|&c| c == b'{' || c == b'<')
-        .unwrap_or(rest.len());
-    start + length as u32
+/// Whether the `child` of an element is `JsxText`: a string that is in no braces.
+fn is_jsx_text(hir: &hir::File, child: ExprId) -> bool {
+    matches!(hir[child].kind, ExprKind::String(_)) && jsx_expression_around(hir, child).is_none()
 }
 
-/// Whether `child` of the element `e` is text. Text is kept as a string that is where the element it is in starts, which a string in
-/// braces is not.
-fn is_jsx_text(hir: &hir::File, e: ExprId, child: ExprId) -> bool {
-    matches!(hir[child].kind, ExprKind::String(_)) && hir[child].pos == hir[e].pos
-}
-
-/// Where the `{` of `{x}`, or of `{...x}`, is, given where `x` starts.
-fn brace_before(hir: &hir::File, start: u32, is_spread: bool) -> Option<u32> {
-    let mut before = trim_trivia_end(hir.text.get(..start as usize)?);
-    if is_spread {
-        before = trim_trivia_end(before.strip_suffix(b"...")?);
-    }
-    before.ends_with(b"{").then(|| before.len() as u32 - 1)
+/// From where to where the `child` of an element goes: its braces, if it is in any.
+fn range_of_jsx_child(hir: &hir::File, child: ExprId) -> (u32, u32) {
+    jsx_expression_around(hir, child).unwrap_or((hir[child].pos, hir[child].end))
 }

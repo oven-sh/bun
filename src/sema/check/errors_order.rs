@@ -1,12 +1,11 @@
 //! What is used before it is there: 2448 2449 2450 2729.
 
-use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
 use std::ops::ControlFlow::{Break, Continue};
 
 impl Checker<'_> {
-    pub(super) fn check_use_before_declaration(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_use_before_declaration(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration {
             return;
@@ -21,6 +20,9 @@ impl Checker<'_> {
                 continue;
             }
             if declared_by[local.idx()] == 0 {
+                declared_by[local.idx()] = self.end_of_declaring_statement(file, local);
+            }
+            if declared_by[local.idx()] == 0 {
                 let statement = hir
                     .find_ancestor(self.block_scoped_declaration(file, local), |n| {
                         matches!(hir.data(n), NodeData::Stmt(_))
@@ -33,7 +35,7 @@ impl Checker<'_> {
                 };
             }
             if hir[e].pos + 1 < declared_by[local.idx()] && !bound.is_unchecked(e.idx()) {
-                self.check_resolved_block_scoped_variable(file, e, out);
+                self.check_resolved_block_scoped_variable(file, e);
             }
         }
         // Without a class only what is in the initializer of a member or in a static block is looked at.
@@ -47,9 +49,59 @@ impl Checker<'_> {
         for &e in index.of(ExprTag::Dot) {
             if !bound.is_unchecked(e.idx()) {
                 let may_be_in_place = places.contain(hir[e].pos);
-                self.check_property_not_used_before_declaration(file, e, may_be_in_place, out);
+                self.check_property_not_used_before_declaration(file, e, may_be_in_place);
             }
         }
+    }
+
+    /// Where the statement ends that declares `local`, plus one, by the binder's tables: of what has one declaration, which is a
+    /// variable, a class statement or an enum. 0: they do not tell.
+    fn end_of_declaring_statement(&self, file: FileId, local: SymbolId) -> u32 {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let symbol = &bound.symbols[local.idx()];
+        let is_block_scoped = SymFlags::BLOCK_SCOPED_VARIABLE | SymFlags::CLASS | SymFlags::ENUM;
+        if !symbol.flags.intersects(is_block_scoped) {
+            return 1;
+        }
+        let &[declaration] = &symbol.decls[..] else {
+            return 0;
+        };
+        // What `block_scoped_declaration` has more to say about.
+        let is_more = SymFlags::MERGED
+            | SymFlags::FUNCTION
+            | SymFlags::FUNCTION_SCOPED_VARIABLE
+            | SymFlags::ASSIGNMENT;
+        if symbol.flags.intersects(is_more) {
+            return 0;
+        }
+        let mut statement = match declaration {
+            Decl::Var(mut name) => loop {
+                match bound.pat_parent[name.idx()] {
+                    PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => name = outer,
+                    PatParent::Var(d) => break bound.var_stmt[d.idx()],
+                    PatParent::Param(_) | PatParent::None => return 0,
+                }
+            },
+            Decl::Class(c) => match bound.class_owner[c.idx()] {
+                ClassOwner::Stmt(s) => s,
+                ClassOwner::Expr(_) => return 0,
+            },
+            Decl::Enum(e) => hir[e].stmt,
+            _ => return 0,
+        };
+        if statement.is_none() {
+            return 0;
+        }
+        // The head of a `for` is in that statement.
+        if let Parent::Stmt(around) = bound.stmt_parent[statement.idx()]
+            && matches!(
+                hir[around].kind,
+                StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. }
+            )
+        {
+            statement = around;
+        }
+        hir[statement].loc.end + 1
     }
 
     /// The declaration `checkResolvedBlockScopedVariable` looks at. `NONE`: it looks at none.
@@ -95,12 +147,7 @@ impl Checker<'_> {
     }
 
     /// `checkResolvedBlockScopedVariable`, of a name that is not written after the statement that declares it.
-    fn check_resolved_block_scoped_variable(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_resolved_block_scoped_variable(&mut self, file: FileId, e: ExprId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.expr_symbol[e.idx()];
         let (flags, declaration) = (
@@ -122,7 +169,7 @@ impl Checker<'_> {
             return;
         };
         let name = hir.start(hir.name(declaration));
-        self.report_use_before_declaration(file, hir[e].pos, code, name, declaration, out);
+        self.report_use_before_declaration(file, hir[e].pos, code, name, declaration);
     }
 
     /// The error `code` at `start`, which names what is written at `name`, and `'{0}' is declared here.` at `declaration`.
@@ -133,10 +180,12 @@ impl Checker<'_> {
         code: u32,
         name: u32,
         declaration: Node,
-        out: &mut Vec<Diagnostic>,
     ) {
-        out.push(Diagnostic { start, code });
-        self.explain(start, code, |c| vec![c.declaration_name_at(file, name)]);
+        self.error_at(
+            (file, start, 0),
+            code,
+            &[Arg::Text(&self.declaration_name_at(file, name))],
+        );
         self.relate(start, code, |c| {
             let (from, to) = c.get_error_range_for_node(file, declaration);
             vec![c.declared_here((file, from, to), c.declaration_name_at(file, name))]
@@ -436,7 +485,6 @@ impl Checker<'_> {
         file: FileId,
         e: ExprId,
         may_be_in_place: bool,
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         let ExprKind::Dot {
@@ -505,7 +553,7 @@ impl Checker<'_> {
         } else {
             return;
         };
-        self.report_use_before_declaration(file, name_pos, code, name_pos, declaration, out);
+        self.report_use_before_declaration(file, name_pos, code, name_pos, declaration);
     }
 
     /// `isPropertyDeclaredInAncestorClass`, of the property `name` that `declaration` declares.
@@ -568,32 +616,6 @@ impl Checker<'_> {
             },
             _ => self.parent_of(file, parent),
         }
-    }
-}
-
-/// Stretches of a file, for telling by a position what would take a walk up the tree.
-pub(super) struct Places(Vec<TextRange>);
-
-impl Places {
-    /// What lies in another, or overlaps it, is one with it.
-    pub(super) fn new(ranges: impl Iterator<Item = TextRange>) -> Places {
-        let mut ranges: Vec<TextRange> = ranges.collect();
-        ranges.sort_unstable_by_key(|range| range.pos);
-        ranges.dedup_by(|next, kept| {
-            let is_in_it = next.pos < kept.end;
-            kept.end = if is_in_it {
-                kept.end.max(next.end)
-            } else {
-                kept.end
-            };
-            is_in_it
-        });
-        Places(ranges)
-    }
-
-    pub(super) fn contain(&self, pos: u32) -> bool {
-        let after = self.0.partition_point(|range| range.pos <= pos);
-        after > 0 && pos < self.0[after - 1].end
     }
 }
 

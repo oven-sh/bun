@@ -31,33 +31,28 @@ pub fn message(code: u32) -> Option<(Category, &'static str)> {
         .map(|i| (MESSAGES[i].1, MESSAGES[i].2))
 }
 
-/// `Message.Format`: `text` with `{n}` replaced by `args[n]`. What has no argument stays as it is written.
-pub fn format(text: &str, args: &[String]) -> String {
-    let mut out = String::with_capacity(text.len() + args.iter().map(String::len).sum::<usize>());
-    let mut rest = text;
-    while let Some(open) = rest.find('{') {
+/// `Message.Format`: writes `text` with `{n}` replaced by `args[n]`. What has no argument stays as it is written.
+pub fn format(out: &mut Vec<u8>, text: &str, args: &[impl AsRef<[u8]>]) {
+    let mut rest = text.as_bytes();
+    while let Some(open) = bun_core::strings::index_of_char_usize(rest, b'{') {
         let after = &rest[open + 1..];
-        match after.find('}') {
-            Some(close) if close > 0 && after[..close].bytes().all(|b| b.is_ascii_digit()) => {
-                out.push_str(&rest[..open]);
-                match after[..close]
-                    .parse::<usize>()
-                    .ok()
-                    .and_then(|n| args.get(n))
-                {
-                    Some(arg) => out.push_str(arg),
-                    None => out.push_str(&rest[open..open + close + 2]),
-                }
-                rest = &after[close + 1..];
+        let digits = after.iter().take_while(|b| b.is_ascii_digit()).count();
+        let number = after[..digits]
+            .iter()
+            .fold(0, |n, b| n * 10 + usize::from(b - b'0'));
+        match args.get(number) {
+            Some(arg) if digits > 0 && after.get(digits) == Some(&b'}') => {
+                out.extend_from_slice(&rest[..open]);
+                out.extend_from_slice(arg.as_ref());
+                rest = &after[digits + 1..];
             }
             _ => {
-                out.push_str(&rest[..=open]);
+                out.extend_from_slice(&rest[..=open]);
                 rest = after;
             }
         }
     }
-    out.push_str(rest);
-    out
+    out.extend_from_slice(rest);
 }
 
 use Category::{Error as E, Message as M};

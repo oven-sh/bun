@@ -260,7 +260,11 @@ fn global(code: u32, args: &[String]) -> Diagnostic {
         end_column: 0,
         code,
         category,
-        text: messages::format(template, args),
+        text: {
+            let mut text = Vec::new();
+            messages::format(&mut text, template, args);
+            String::from_utf8_lossy(&text).into_owned()
+        },
         source: Vec::new(),
         source_line: 0,
         related: Vec::new(),
@@ -871,7 +875,6 @@ fn check_what_is_named(
     };
     let new_checker = |only_syntax: bool| {
         let mut checker = program.checker();
-        checker.set_explains(true);
         checker.set_only_syntax(only_syntax);
         // What the thread really has left, whatever thread it is and however it was built.
         checker.set_stack_limit(bun_core::StackCheck::init().remaining());
@@ -917,7 +920,9 @@ fn check_what_is_named(
             .collect();
         for_each_parallel(threads, unfinished.len(), &|i| {
             let (file, checked) = unfinished[i].lock().unwrap().take().unwrap();
-            show(file, new_checker(false).finish_file(file, checked));
+            if !program.has_nothing_to_finish(file, &checked) {
+                show(file, new_checker(false).finish_file(file, checked));
+            }
         });
     };
     let take = |i: usize| {

@@ -647,7 +647,9 @@ impl<'c, 'p> SymbolWriter<'c, 'p> {
         let name = match hir[e].kind {
             ExprKind::String(text) => text,
             ExprKind::Number(number) => self.c.number_name(hir.numbers[number as usize]),
-            ExprKind::Template { exprs, texts } if exprs.is_empty() => hir.ids(texts).next()?,
+            ExprKind::Template { exprs } if exprs.is_empty() => {
+                hir.id_at(hir.template_texts(exprs), 0)
+            }
             _ => return None,
         };
         match hir[parent].kind {

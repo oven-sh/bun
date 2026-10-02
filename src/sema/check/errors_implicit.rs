@@ -41,7 +41,7 @@ impl Checker<'_> {
             if is_the_one_to_be_told {
                 let end = self.end_of_name_at(file, start);
                 let name = Arg::Bytes(&hir.text[start as usize..end as usize]);
-                self.error((file, start, end), code, &[name]);
+                self.error_at((file, start, end), code, &[name]);
             }
             return;
         }
@@ -51,10 +51,10 @@ impl Checker<'_> {
         let start = self.error_range_of_fn(file, func).0;
         match decl.kind {
             FnKind::ConstructSignature => {
-                self.error((file, start, self.end_of_fn(file, func)), 7013, &[]);
+                self.error_at((file, start, self.end_of_fn(file, func)), 7013, &[]);
             }
             FnKind::CallSignature => {
-                self.error((file, start, self.end_of_fn(file, func)), 7020, &[]);
+                self.error_at((file, start, self.end_of_fn(file, func)), 7020, &[]);
             }
             // `checkObjectLiteralMethod`, unlike `checkFunctionOrMethodDeclaration`, says nothing of a missing body.
             FnKind::Method if matches!(owner, FnOwner::Expr(_)) => {}
@@ -85,14 +85,14 @@ impl Checker<'_> {
                 let (node, any) = ((file, start, end), Arg::Type(TypeId::ANY));
                 // `reportImplicitAny`: one without a name is spoken of as a function expression is.
                 if decl.kind == FnKind::Decl && decl.name.is_none() {
-                    self.error(node, 7011, &[any]);
+                    self.error_at(node, 7011, &[any]);
                 } else if decl.flags.contains(Flags::REPARSED) {
-                    self.error(node, 7012, &[any]);
+                    self.error_at(node, 7012, &[any]);
                 } else if is_missing {
-                    self.error(node, 7010, &[Arg::Text("(Missing)"), any]);
+                    self.error_at(node, 7010, &[Arg::Text("(Missing)"), any]);
                 } else {
                     let name = Arg::Bytes(&hir.text[start as usize..name_end as usize]);
-                    self.error(node, 7010, &[name, any]);
+                    self.error_at(node, 7010, &[name, any]);
                 }
             }
             _ => {}
@@ -121,11 +121,7 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let f = &hir[func];
         match f.kind {
-            FnKind::Getter => {
-                f.ret.is_none()
-                    && matches!(f.body, FnBody::None)
-                    && !f.flags.contains(Flags::BODY_DROPPED)
-            }
+            FnKind::Getter => f.ret.is_none() && matches!(f.body, FnBody::None),
             _ => f.params.iter().next().is_none_or(|p| hir[p].ty.is_none()),
         }
     }
@@ -195,7 +191,6 @@ impl Checker<'_> {
         let (f, symbol) = (&hir[func], bound.fn_symbol[func.idx()]);
         f.kind == FnKind::Decl
             && matches!(f.body, FnBody::None)
-            && !f.flags.contains(Flags::BODY_DROPPED)
             && matches!(hir[hir[p].pat].kind, PatKind::Object(props) if props.iter().all(|q| self.is_renamed_binding_element(file, q)))
             && symbol.is_some()
             && bound.symbols[symbol.idx()].decls.len() == 1
@@ -210,6 +205,9 @@ impl Checker<'_> {
                 Parent::Prop(p) => e = bound.prop_owner[p.idx()],
                 Parent::Expr(parent) => match hir[parent].kind {
                     ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee != e => {
+                        if matches!(hir[hir[c].callee].kind, ExprKind::Fn(_)) {
+                            return true;
+                        }
                         let callee = self.type_of_expr(file, hir[c].callee);
                         return self.is_known(callee);
                     }
@@ -227,7 +225,7 @@ impl Checker<'_> {
                     // `getContextualTypeForAssignmentExpression`: nothing, where the assignment declares its target.
                     ExprKind::Assign { .. } => {
                         return self
-                            .contextual_type(file, e)
+                            .contextual_type(file, e, ContextFlags::empty())
                             .is_none_or(|ty| self.is_known(ty));
                     }
                     ExprKind::Jsx(j) => {
@@ -263,7 +261,7 @@ impl Checker<'_> {
                 }
                 Parent::Stmt(_) | Parent::FnBody(_) => {
                     // What is returned is expected to be what the function around returns.
-                    return match self.contextual_type(file, e) {
+                    return match self.contextual_type(file, e, ContextFlags::empty()) {
                         Some(ty) => self.is_known(ty),
                         None => true,
                     };

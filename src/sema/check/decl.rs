@@ -129,8 +129,8 @@ impl<'p> Checker<'p> {
                 ..Evaluated::default()
             },
             // `evaluateTemplateExpression`
-            ExprKind::Template { exprs, texts } => {
-                let atoms = &self.files().atoms;
+            ExprKind::Template { exprs } => {
+                let (atoms, texts) = (&self.files().atoms, hir.template_texts(exprs));
                 let mut text = atoms.bytes(hir.id_at(texts, 0)).to_vec();
                 let mut result = Evaluated {
                     is_syntactically_string: true,
@@ -199,7 +199,9 @@ impl<'p> Checker<'p> {
         if let ExprKind::Index { obj, index, .. } = hir[e].kind {
             let name = match hir[index].kind {
                 ExprKind::String(name) => name,
-                ExprKind::Template { exprs, texts } if exprs.is_empty() => hir.id_at(texts, 0),
+                ExprKind::Template { exprs } if exprs.is_empty() => {
+                    hir.id_at(hir.template_texts(exprs), 0)
+                }
                 _ => return Evaluated::default(),
             };
             // Neither `(a)["b"]` nor `a[("b")]`.
@@ -276,12 +278,12 @@ impl<'p> Checker<'p> {
             declaration.filter(|&(of, member)| Location::Member(of, member) != location)
         else {
             let at = self.place_of_expr(file, e);
-            self.error(at, 2565, &[Arg::Sym(symbol)]);
+            self.error_at(at, 2565, &[Arg::Sym(symbol)]);
             return Evaluated::default();
         };
         if !is_declared_before_use(self, Location::Member(of, member), location) {
             let at = self.place_of_expr(file, e);
-            self.error(at, 2651, &[]);
+            self.error_at(at, 2651, &[]);
             return Evaluated::number(0.0);
         }
         let value = self.enum_member_value_at(of, member, location);
@@ -541,7 +543,7 @@ impl<'p> Checker<'p> {
                         && hir
                             .ids(stmts)
                             .next()
-                            .is_some_and(|first| pos >= hir[first].pos)
+                            .is_some_and(|first| pos >= hir[first].start)
                     {
                         return self.type_params_in_scope(file, scope).len();
                     }
@@ -652,7 +654,7 @@ impl<'p> Checker<'p> {
                     FnBody::Block(stmts) => hir
                         .ids(stmts)
                         .next()
-                        .is_some_and(|first| pos >= hir[first].pos),
+                        .is_some_and(|first| pos >= hir[first].start),
                     FnBody::Expr(body) => pos >= hir[body].pos,
                     FnBody::None => false,
                 }
@@ -1893,7 +1895,7 @@ impl<'p> Checker<'p> {
         let at = (file, pos, self.end_of_name_at(file, pos));
         // `IsComputedNonLiteralName`: `["a"]` and `[1]` are named by their literal, any other `[e]` has no name.
         if hir.text.get(pos as usize) == Some(&b'[') && (name.is_none() || name == known::empty) {
-            self.error(at, 1164, &[]);
+            self.error_at(at, 1164, &[]);
         } else if is_bigint_literal_at(hir, pos)
             || name.is_some()
                 && self.is_numeric_name(name)
@@ -1902,7 +1904,7 @@ impl<'p> Checker<'p> {
                     b"Infinity" | b"-Infinity" | b"NaN"
                 )
         {
-            self.error(at, 2452, &[]);
+            self.error_at(at, 2452, &[]);
         }
         if hir[member].init.is_some() {
             return self.compute_constant_enum_member_value(file, member);
@@ -1917,14 +1919,14 @@ impl<'p> Checker<'p> {
         let previous = EnumMemberId(member.0 - 1);
         let before = self.get_enum_member_value(file, previous);
         let Some(EnumValue::Number(bits)) = before.value else {
-            self.error(at, 1061, &[]);
+            self.error_at(at, 1061, &[]);
             return Evaluated::default();
         };
         if self.p.files.options.isolated_modules
             && hir[previous].init.is_some()
             && before.resolved_other_files
         {
-            self.error(at, 18056, &[]);
+            self.error_at(at, 18056, &[]);
         }
         Evaluated::number(f64::from_bits(bits) + 1.0)
     }
@@ -1952,7 +1954,7 @@ impl<'p> Checker<'p> {
                     && !f64::from_bits(n).is_finite()
                 {
                     let is_nan = f64::from_bits(n).is_nan();
-                    self.error(at, if is_nan { 2478 } else { 2477 }, &[]);
+                    self.error_at(at, if is_nan { 2478 } else { 2477 }, &[]);
                 }
                 if self.p.files.options.isolated_modules
                     && matches!(value, EnumValue::String(_))
@@ -1963,14 +1965,14 @@ impl<'p> Checker<'p> {
                         self.atom_text(hir[en].name),
                         self.atom_text(hir[member].name)
                     );
-                    self.error(at, 18055, &[Arg::Text(&name)]);
+                    self.error_at(at, 18055, &[Arg::Text(&name)]);
                 }
             }
             None if is_const => {
-                self.error(at, 2474, &[]);
+                self.error_at(at, 2474, &[]);
             }
             None if is_ambient_enum(hir, en) => {
-                self.error(at, 1066, &[]);
+                self.error_at(at, 1066, &[]);
             }
             None => {
                 let ty = self.type_of_expr(file, initializer);
@@ -2698,7 +2700,7 @@ impl<'p> Checker<'p> {
         // `checkNoTypeArguments`
         if !args.is_empty() {
             let at = (file, hir[node].pos, self.end_of_type_node(file, node));
-            self.error(at, 2315, &[Arg::Atom(name)]);
+            self.error_at(at, 2315, &[Arg::Atom(name)]);
         }
         Some(ty)
     }
@@ -2757,7 +2759,7 @@ impl<'p> Checker<'p> {
                             return TypeId::ERROR;
                         };
                         // Of a constructor only the body will do. Parameters and body share the one scope.
-                        let is_in_body = matches!(hir[f].body, FnBody::Block(body) if hir.ids(body).next().is_some_and(|first| hir[first].pos <= pos));
+                        let is_in_body = matches!(hir[f].body, FnBody::Block(body) if hir.ids(body).next().is_some_and(|first| hir[first].start <= pos));
                         if hir[m].flags.contains(Flags::STATIC)
                             || !matches!(
                                 bound.member_owner[m.idx()],
@@ -3425,7 +3427,9 @@ impl<'p> Checker<'p> {
             )
             && hir[func].params.iter().all(|p| hir[p].ty.is_none())
             && match bound.fns[func.idx()].owner {
-                crate::bind::FnOwner::Expr(e) => self.contextual_type(file, e).is_none(),
+                crate::bind::FnOwner::Expr(e) => self
+                    .contextual_type(file, e, ContextFlags::empty())
+                    .is_none(),
                 _ => true,
             };
         for (i, p) in hir[func].params.iter().enumerate() {

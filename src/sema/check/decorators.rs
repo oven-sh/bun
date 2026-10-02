@@ -3,8 +3,7 @@
 //! Follows `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`, `checkDecorator` and what
 //! `checkGrammarModifiers` says of decorators, of TypeScript 7.0.2's checker.go and grammarchecks.go.
 
-use super::call::{CallLike, ResolvedCall};
-use super::errors::Diagnostic;
+use super::call::CallLike;
 use super::*;
 use crate::bind::MemberOwner;
 
@@ -350,26 +349,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Where the decorator with the expression `e` is written. The parentheses of a standard `@(x)` are only in the text.
+    /// Where the decorator with the expression `e` is written.
     pub(super) fn where_decorator_is(&self, file: FileId, e: ExprId) -> Written {
         let start = self.start_of(file, e);
-        let before = self
-            .hir(file)
-            .text
-            .get(..start as usize)
-            .unwrap_or_default()
-            .trim_ascii_end();
-        if let Some(rest) = before.strip_suffix(b"(").map(<[u8]>::trim_ascii_end)
-            && rest.ends_with(b"@")
-        {
-            let start = before.len() as u32 - 1;
-            return Written {
-                at_sign: rest.len() as u32 - 1,
-                start,
-                end: self.end_of_bracket_at(file, start),
-                is_parenthesized: true,
-            };
-        }
         Written {
             at_sign: start.saturating_sub(1),
             start,
@@ -378,12 +360,12 @@ impl<'p> Checker<'p> {
         }
     }
 
-    pub(super) fn report_decorators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn report_decorators(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Those of a missing declaration or of a `this` parameter: `checkDecorators` never looks at them.
         for &(start, end) in &hir.stray_decorators {
             self.never_checked.borrow_mut().push((start, end));
-            out.retain(|d| d.start < start || d.start >= end);
+            self.reported.retain(|d| d.start < start || d.start >= end);
         }
         let mut refused: Vec<DecoratorOwner> = Vec::new();
         for i in 0..hir.decorators.len() {
@@ -401,17 +383,15 @@ impl<'p> Checker<'p> {
                     DecoratorOwner::Param(p) => hir[hir[p].pat].pos,
                 };
                 self.never_checked.borrow_mut().push((at_sign + 1, end));
-                out.retain(|d| d.start <= at_sign || d.start >= end);
+                self.reported
+                    .retain(|d| d.start <= at_sign || d.start >= end);
                 if !refused.contains(&owner) {
                     refused.push(owner);
                     let is_overload = matches!(owner, DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Method && matches!(hir[hir[m].func].body, FnBody::None));
                     // `grammarErrorOnFirstToken`
                     if !hir.has_parse_diagnostics {
                         let code = if is_overload { 1249 } else { 1206 };
-                        out.push(Diagnostic {
-                            start: at_sign,
-                            code,
-                        });
+                        self.error_at((file, at_sign, 0), code, &[]);
                     }
                 }
                 continue;
@@ -430,11 +410,7 @@ impl<'p> Checker<'p> {
                         && matches!(hir[m].key, PropKey::Private(_))
                 })
             {
-                out.push(Diagnostic {
-                    start: at_sign,
-                    code: 18036,
-                });
-                self.note(at_sign, written.end, 18036, Vec::new());
+                self.error_at((file, at_sign, written.end), 18036, &[]);
             }
             // The two accessors of a property are one thing to decorate.
             if hir.legacy_decorators
@@ -459,10 +435,7 @@ impl<'p> Checker<'p> {
                 {
                     refused.push(owner);
                     if !hir.has_parse_diagnostics {
-                        out.push(Diagnostic {
-                            start: at_sign,
-                            code: 1207,
-                        });
+                        self.error_at((file, at_sign, 0), 1207, &[]);
                     }
                 }
             }
@@ -470,23 +443,15 @@ impl<'p> Checker<'p> {
                 && !written.is_parenthesized
                 && self.invalid_syntax_in_decorator(file, e).is_some()
             {
-                out.push(Diagnostic {
-                    start: written.start,
-                    code: 1497,
-                });
-                self.note(written.start, written.end, 1497, Vec::new());
+                self.error_at((file, written.start, written.end), 1497, &[]);
                 self.relate(written.start, 1497, |c| {
                     c.invalid_syntax_in_decorator(file, e)
-                        .map(|(from, to)| super::explain::Related {
-                            at: Some((file, from, to)),
-                            code: 1498,
-                            args: Vec::new(),
-                        })
+                        .map(|(from, to)| Reported::bare((file, from, to), 1498))
                         .into_iter()
                         .collect()
                 });
             }
-            self.check_decorator(file, owner, e, written, out);
+            self.check_decorator(file, owner, e, written);
         }
     }
 
@@ -537,7 +502,6 @@ impl<'p> Checker<'p> {
         owner: DecoratorOwner,
         e: ExprId,
         written: Written,
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         let Written {
@@ -579,18 +543,18 @@ impl<'p> Checker<'p> {
                     && params.len() < self.decorator_argument_count(file, owner, params)
             })
         {
-            out.push(Diagnostic {
-                start: at_sign,
-                code: 1329,
-            });
-            self.note(at_sign, end, 1329, vec![self.source_text(file, start, end)]);
+            self.error_at(
+                (file, at_sign, end),
+                1329,
+                &[Arg::Text(&self.source_text(file, start, end))],
+            );
             return;
         }
         if sigs.is_empty() {
-            out.push(Diagnostic { start, code: head });
-            self.note(start, end, 2349, Vec::new());
+            self.error_at((file, start, 0), head, &[]);
+            self.note(start, end, 2349, &[]);
             self.explain_chain(start, 2349, |c| c.invocation_error_lines(apparent, false));
-            self.explain_under(start, 2349, head, Vec::new());
+            self.explain_under(start, 2349, head, &[]);
             return;
         }
         let Some(expected) = self.decorator_call_signature(file, owner) else {
@@ -603,16 +567,23 @@ impl<'p> Checker<'p> {
         let node = CallLike::Decorator(owner);
         let args = self.effective_call_arguments(file, e, node);
         let this_arg = self.this_argument_of_call(file, e, node);
-        let resolved = self.resolve_among(file, e, node, &sigs, &[], &args, this_arg, true);
+        let resolved = self.resolve_call(
+            file,
+            e,
+            node,
+            &sigs,
+            &[],
+            &args,
+            this_arg,
+            true,
+            true,
+            Some(head),
+        );
         // A decorator has no entry in `calls`.
-        if let Some(check) = self.pending_failed_call.take() {
-            let check = ResolvedCall {
-                sig: Some(check),
-                ..resolved
-            };
-            self.report_call_resolution_errors(file, e, node, &sigs, check, Some(head), out);
+        if let Some(said) = self.call_resolution_errors.take() {
+            self.reported.extend(said);
         }
-        let returned = resolved.ret;
+        let returned = self.with_return_type(resolved).ret;
         let wanted = self.sig_return(expected);
         if !self.is_known(returned)
             || self.is_any(returned)
@@ -630,19 +601,24 @@ impl<'p> Checker<'p> {
             }
             _ => 1270,
         };
-        out.push(Diagnostic { start, code });
-        if self.explains {
-            // `checkTypeAssignableTo`, for what it says.
-            let mut said = Vec::new();
-            self.report_not_assignable_with_end(returned, wanted, start, end, code, &mut said);
-            if !said.iter().any(|d| d.start == start && d.code == code) {
-                self.explain_to(start, end, code, |c| {
-                    let (returned, wanted) = c.type_names_for_error_display(returned, wanted);
-                    vec![returned, wanted]
-                });
-                self.explain_chain(start, code, |c| c.assignability_chain(returned, wanted));
-                self.relate(start, code, |c| c.assignability_related(returned, wanted));
+        // `checkTypeAssignableTo`
+        let from = self.reported.len();
+        self.report_not_assignable_with_end(returned, wanted, start, end, code);
+        let mut said = self.reported.split_off(from);
+        said.retain(|d| d.start == start && d.code == code);
+        if said.is_empty() {
+            {
+                let (returned, wanted) = self.type_names_for_error_display(returned, wanted);
+                self.error_at(
+                    (file, start, end),
+                    code,
+                    &[Arg::Text(&returned), Arg::Text(&wanted)],
+                );
             }
+            self.explain_chain(start, code, |c| c.assignability_chain(returned, wanted));
+            self.relate(start, code, |c| c.assignability_related(returned, wanted));
+        } else {
+            self.reported.append(&mut said);
         }
     }
 }

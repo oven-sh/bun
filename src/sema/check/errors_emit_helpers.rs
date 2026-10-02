@@ -8,7 +8,7 @@
 //! collected and put in the order it gets to them: as they are written, but for what `checkNodeDeferred` puts off until all else
 //! is checked. An expression that is checked ahead of its turn, because its type is asked for, is taken in its turn here.
 
-use super::errors::Diagnostic;
+use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
 use crate::resolve::{ModuleKind, ScriptTarget};
@@ -76,7 +76,7 @@ struct Request {
 }
 
 impl Checker<'_> {
-    pub(super) fn check_external_emit_helpers(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
         let files = self.files();
         let (options, module) = (&files.options, files.module(file));
         // `IsEffectiveExternalModule`. All of a declaration file is ambient.
@@ -98,7 +98,7 @@ impl Checker<'_> {
                 continue;
             }
             let found =
-                *resolved.get_or_insert_with(|| self.eh_resolve_helpers_module(file, request, out));
+                *resolved.get_or_insert_with(|| self.eh_resolve_helpers_module(file, request));
             let Some(helpers_module) = found else {
                 return;
             };
@@ -128,12 +128,11 @@ impl Checker<'_> {
                             2807
                         }
                     };
-                    out.push(Diagnostic {
-                        start: request.start,
+                    self.add_diagnostic(Reported::new(
+                        (file, request.start, request.end),
                         code,
-                    });
-                    // One place may miss several helpers.
-                    self.explain_another(request.start, request.end, code, |_| args);
+                        held(args),
+                    ));
                 }
             }
         }
@@ -141,12 +140,7 @@ impl Checker<'_> {
 
     /// `resolveHelpersModule`, and `resolveExternalModule` for the import of `tslib` the loader made up. Nothing is said of a `tslib`
     /// that is JavaScript nothing declares the types of (`errorOnImplicitAnyModule`).
-    fn eh_resolve_helpers_module(
-        &self,
-        file: FileId,
-        request: Request,
-        out: &mut Vec<Diagnostic>,
-    ) -> Option<Sym> {
+    fn eh_resolve_helpers_module(&mut self, file: FileId, request: Request) -> Option<Sym> {
         let files = self.files();
         let (tslib, module) = (files.atoms.intern_str(TSLIB), files.module(file));
         let mode = module.default_mode;
@@ -158,11 +152,11 @@ impl Checker<'_> {
             None if module.untyped_imports.contains(&(tslib, mode)) => return None,
             None => (2354, vec![TSLIB.to_owned()]),
         };
-        out.push(Diagnostic {
-            start: request.start,
+        self.add_diagnostic(Reported::new(
+            (file, request.start, request.end),
             code,
-        });
-        self.note(request.start, request.end, code, args);
+            held(args),
+        ));
         None
     }
 
@@ -187,7 +181,12 @@ impl Checker<'_> {
             let Decl::Fn(f) = decl else {
                 continue;
             };
-            if i > 0 && self.eh_implements_what_is_before(file, f, decls[i - 1]) {
+            if i > 0
+                && let (of, Decl::Fn(previous)) = decls[i - 1]
+                && of == file
+                && !matches!(self.hir(file)[f].body, FnBody::None)
+                && self.is_next_statement(file, previous, f)
+            {
                 continue;
             }
             let sig = self.sig_of_declaration(file, f);
@@ -197,31 +196,6 @@ impl Checker<'_> {
             }
         }
         false
-    }
-
-    /// `getSignaturesOfSymbol`: whether the function `f` has a body and starts where `previous`, another declaration of it, ends.
-    fn eh_implements_what_is_before(
-        &self,
-        file: FileId,
-        f: FnId,
-        previous: (FileId, Decl),
-    ) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if previous.0 != file || matches!(hir[f].body, FnBody::None) {
-            return false;
-        }
-        let Decl::Fn(before) = previous.1 else {
-            return false;
-        };
-        let (FnOwner::Stmt(before), FnOwner::Stmt(s)) =
-            (bound.fns[before.idx()].owner, bound.fns[f.idx()].owner)
-        else {
-            return false;
-        };
-        before.is_some()
-            && s.is_some()
-            && bound.stmt_parent[before.idx()] == bound.stmt_parent[s.idx()]
-            && self.end_of_stmt(file, before) == self.end_of_token_before(file, hir[s].pos)
     }
 
     // ───────────────────────────── who asks ─────────────────────────────
@@ -413,7 +387,7 @@ impl Checker<'_> {
             let is_module_element = is_commonjs && around == Parent::File;
             let mut ask = |put_off: u32, (start, end): (u32, u32), helpers: u32| {
                 requests.push(Request {
-                    order: (put_off, stmt.pos),
+                    order: (put_off, stmt.start),
                     start,
                     end,
                     helpers,
@@ -425,7 +399,7 @@ impl Checker<'_> {
                     if !self.eh_import_clause_is_checked(file, s, &import) {
                         continue;
                     }
-                    let whole = (stmt.pos, self.end_of_stmt(file, s));
+                    let whole = (stmt.start, self.end_of_stmt(file, s));
                     if import.namespace.is_some() {
                         ask(0, whole, IMPORT_STAR);
                         continue;
@@ -471,7 +445,7 @@ impl Checker<'_> {
                 }
                 StmtKind::ExportStar { spec, alias, .. } if is_module_element && spec.is_some() => {
                     if self.eh_has_only_string_attributes(file, s) {
-                        let whole = (stmt.pos, self.end_of_stmt(file, s));
+                        let whole = (stmt.start, self.end_of_stmt(file, s));
                         ask(
                             0,
                             whole,
@@ -490,7 +464,11 @@ impl Checker<'_> {
                         .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
                         && let Some(put_off) = self.eh_place(file, around)
                     {
-                        ask(put_off, (stmt.pos, self.end_of_stmt(file, s)), ASYNC_VALUES);
+                        ask(
+                            put_off,
+                            (stmt.start, self.end_of_stmt(file, s)),
+                            ASYNC_VALUES,
+                        );
                     }
                 }
                 StmtKind::Var(decls) if target < ScriptTarget::ESNext => {
@@ -503,18 +481,12 @@ impl Checker<'_> {
                     let Some(put_off) = self.eh_place(file, Parent::VarInit(first)) else {
                         continue;
                     };
-                    // The list comes after the modifiers of the statement.
-                    let mut start = stmt.pos;
-                    while matches!(
-                        hir.text
-                            .get(start as usize..self.end_of_token_at(file, start) as usize),
-                        Some(b"export" | b"declare")
-                    ) {
-                        start = self.skip_trivia_from(file, self.end_of_token_at(file, start));
-                    }
                     ask(
                         put_off,
-                        (start, self.end_of_var_decl_list(file, decls)),
+                        (
+                            self.start_after_modifiers(file, s),
+                            self.end_of_var_decl_list(file, decls),
+                        ),
                         ADD_DISPOSABLE_RESOURCE_AND_DISPOSE_RESOURCES,
                     );
                 }
@@ -539,14 +511,7 @@ impl Checker<'_> {
             return !(import.default.is_some() && has_bindings)
                 && !import.named.iter().any(|spec| hir[spec].type_only);
         }
-        // `import defer * as ns`. `import defer from "m"` imports something called `defer`.
-        let word = self.skip_trivia_from(file, self.end_of_token_at(file, hir[s].pos));
-        let says_defer = hir
-            .text
-            .get(word as usize..self.end_of_token_at(file, word) as usize)
-            == Some(&b"defer"[..])
-            && !(import.default.is_some() && import.default_pos == word);
-        !says_defer
+        !import.is_deferred
             || import.default.is_none()
                 && import.namespace.is_some()
                 && matches!(
@@ -561,7 +526,7 @@ impl Checker<'_> {
         if hir.import_attributes.is_empty() {
             return true;
         }
-        let written = hir[s].pos..self.end_of_stmt(file, s);
+        let written = hir[s].start..self.end_of_stmt(file, s);
         hir.import_attributes
             .iter()
             .filter(|attributes| written.contains(&attributes.0))
@@ -674,24 +639,10 @@ impl Checker<'_> {
         }
     }
 
-    /// From the `@` of the decorator whose expression is `e` to where it ends. The parentheses of `@(x)` are only in the text.
+    /// From the `@` of the decorator whose expression is `e` to where it ends.
     fn eh_range_of_decorator(&self, file: FileId, e: ExprId) -> (u32, u32) {
-        let start = self.start_of(file, e);
-        let before = self
-            .hir(file)
-            .text
-            .get(..start as usize)
-            .unwrap_or_default()
-            .trim_ascii_end();
-        if let Some(rest) = before.strip_suffix(b"(").map(<[u8]>::trim_ascii_end)
-            && rest.ends_with(b"@")
-        {
-            return (
-                rest.len() as u32 - 1,
-                self.end_of_bracket_at(file, before.len() as u32 - 1),
-            );
-        }
-        (start.saturating_sub(1), self.end_of_expr(file, e))
+        let written = self.where_decorator_is(file, e);
+        (written.at_sign, written.end)
     }
 
     /// `checkDecorators`, `markDecoratorAliasReferenced`

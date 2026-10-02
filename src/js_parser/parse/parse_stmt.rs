@@ -260,9 +260,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn more_decorators(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<()> {
-        let at = p.lexer.range();
+        let mut at = p.lexer.range();
         let scope_index = p.scopes_in_order.len();
         let more = p.parse_type_script_decorators()?;
+        if let Some(first) = more.slice().first()
+            && let Some(end) = p.noted(first.loc, crate::sema::Mark::DecoratorEnd)
+        {
+            at.len = end as i32 - at.loc.start;
+        }
         match opts.ts_decorators.take() {
             // Before `export` and after it.
             Some(first) => {
@@ -426,8 +431,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(root_if.unwrap());
             }
 
-            // Continue with else if
+            // Continue with else if. It ends where the whole does.
             current_loc = p.lexer.loc();
+            let full_start = p.lexer.full_start();
+            p.note_range(&mut current_loc, full_start, bun_ast::Loc::EMPTY);
         }
     }
 
@@ -573,17 +580,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                             return Err(crate::Error::SyntaxError);
                         }
-                        // `checkSwitchStatement` objects to the second one, once for each `switch`.
-                        if !said_default {
-                            said_default = true;
-                            let range = p.lexer.range();
-                            Self::grammar_error(p, range, 1113);
-                        }
                     }
-
-                    found_default = true;
                     p.lexer.next()?;
                     p.lexer.expect(T::TColon)?;
+                    // `checkSwitchStatement` objects to the second one, once for each `switch`. `GetErrorRangeForNode`: up to its `:`.
+                    if found_default && !said_default {
+                        said_default = true;
+                        let range = p.lexer.range_from(clause_start);
+                        Self::grammar_error(p, range, 1113);
+                    }
+                    found_default = true;
                 } else {
                     // `parseCaseBlock`
                     if p.lexer.token != T::TCase && p.lexer.tolerant && !p.lexer.is_log_disabled {
@@ -637,6 +643,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
+                p.note_end(&mut clause_loc, p.lexer.full_start());
                 cases.push(js_ast::Case {
                     value,
                     body: bun_ast::StoreSlice::from_bump(body),
@@ -2227,6 +2234,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         if has_bindings {
                                             Self::bindings_after_type_only_name(p)?;
                                         }
+                                        let clause_end = p.lexer.full_start();
                                         p.lexer.expect_contextual_keyword(b"from")?;
                                         if p.lexer.tolerant && !Self::is_at_string_specifier(p) {
                                             return Self::import_with_expression_specifier(p, loc);
@@ -2240,7 +2248,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             p.lexer.ts_grammar_error(
                                                 bun_ast::Range {
                                                     loc: type_keyword,
-                                                    len: 4,
+                                                    len: clause_end.start - type_keyword.start,
                                                 },
                                                 1363,
                                             );
@@ -2394,7 +2402,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn import_with_expression_specifier(p: &mut Self, loc: bun_ast::Loc) -> Result<Stmt> {
         let specifier = p.parse_expr(Level::Lowest)?;
         if !matches!(specifier.data, js_ast::ExprData::EMissing(_)) {
-            p.ts_checker_error(p.real_loc(specifier.loc), 1141);
+            let start = p.real_loc(specifier.loc);
+            p.ts_checker_error(p.lexer.range_from(start), 1141);
         }
         p.keep_module_specifier(None, Some(specifier), p.real_loc(specifier.loc));
         p.lexer.expect_or_insert_semicolon()?;
@@ -2578,7 +2587,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
                         {
                             if p.lexer.tolerant {
-                                Self::ts_keyword_was_taken(p, loc, name, ts_stmt);
+                                let end = p.noted_end(expr.loc);
+                                Self::ts_keyword_was_taken(p, loc, end, name, ts_stmt);
                             }
                             return Ok(stmt);
                         }
@@ -2664,15 +2674,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 if let Some(backtick) = p.noted(expr.loc, crate::sema::Mark::Backtick) {
                     let before = p.lexer.prev_error_loc;
-                    p.lexer.ts_error(
-                        bun_ast::Range {
-                            loc: bun_ast::Loc {
-                                start: backtick as i32,
-                            },
-                            len: 1,
-                        },
-                        1443,
-                    );
+                    let backtick = bun_ast::Loc {
+                        start: backtick as i32,
+                    };
+                    p.lexer.ts_error(p.lexer.range_from(backtick), 1443);
                     p.lexer.put_up_with(before)?;
                     return Ok(());
                 }
@@ -2704,6 +2709,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             len: word.len() as i32,
         };
         let token = p.lexer.token;
+        let mut suggestion = None;
         let (range, code) = match word {
             b"const" | b"let" | b"var" => (name, 1440),
             b"declare" => return Ok(()),
@@ -2712,23 +2718,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             b"is" => (name, 1228),
             b"module" | b"namespace" => (here, if token == T::TOpenBrace { 1437 } else { 2819 }),
             b"type" => (here, if token == T::TEquals { 1439 } else { 2457 }),
-            _ if has_keyword_suggestion(word) => (name, 1435),
+            _ if {
+                suggestion = keyword_suggestion(word);
+                suggestion.is_some()
+            } =>
+            {
+                (name, 1435)
+            }
             // The scanner has reported the invalid character.
             _ if token == T::TSyntaxError => return Ok(()),
             _ => (name, 1434),
         };
-        p.lexer.ts_error(range, code);
+        match suggestion {
+            Some(suggestion) => p.lexer.ts_error_about(range, code, &suggestion),
+            None => p.lexer.ts_error(range, code),
+        }
         p.lexer.put_up_with(before)?;
         Ok(())
     }
 
-    /// The word at `loc`, which spells `name`, was taken for the keyword of the statement that has just been parsed. `nextToken`
+    /// The word from `loc` to `end`, which spells `name`, was taken for the keyword of the statement that has just been parsed. `nextToken`
     /// objects to a keyword that is written with an escape. `global` is read as a name (`parseAmbientExternalModuleDeclaration`).
     #[cold]
     #[inline(never)]
     fn ts_keyword_was_taken(
         p: &mut Self,
         loc: bun_ast::Loc,
+        end: Option<bun_ast::Loc>,
         name: &[u8],
         ts_stmt: js_lexer::TypescriptStmtKeyword,
     ) {
@@ -2737,7 +2753,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             // It comes before all that was said of the rest of the statement.
             let last = p.lexer.prev_error_loc;
-            p.lexer.ts_error(bun_ast::Range { loc, len: 0 }, 1260);
+            let len = end.map_or(0, |end| end.start - loc.start);
+            p.lexer.ts_error(bun_ast::Range { loc, len }, 1260);
             p.lexer.prev_error_loc = last;
         }
     }
@@ -2798,13 +2815,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (opts.scope != StatementScope::Nested || p.lexer.tolerant)
                     && (p.lexer.token == T::TIdentifier
+                        // `nextTokenIsIdentifierOrStringLiteralOnSameLine`. `checkModuleDeclaration` reports the missing `declare` (1035).
                         || (p.lexer.token == T::TStringLiteral
-                            && (opts.is_typescript_declare
-                                // `parseModuleDeclaration`: `checkModuleDeclaration` reports the missing `declare` (1035).
-                                || (p.lexer.tolerant
-                                    && ts_stmt == js_lexer::TypescriptStmtKeyword::TsStmtModule))))
+                            && (opts.is_typescript_declare || p.lexer.tolerant)))
                 {
-                    return Ok(Some(p.parse_type_script_namespace_stmt(loc, opts)?));
+                    let is_module = ts_stmt == js_lexer::TypescriptStmtKeyword::TsStmtModule;
+                    return Ok(Some(
+                        p.parse_type_script_namespace_stmt(loc, opts, is_module)?,
+                    ));
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtInterface => {
@@ -3211,60 +3229,16 @@ const KEYWORD_SUGGESTIONS: &[&[u8]] = &[
     b"await",
 ];
 
-/// Whether `parseErrorForMissingSemicolonAfter` finds a keyword to suggest for `word` (`GetSpellingSuggestionForStrings`,
-/// `getSpaceSuggestion`).
+/// What `parseErrorForMissingSemicolonAfter` suggests for `word` (`GetSpellingSuggestionForStrings`, `getSpaceSuggestion`).
 #[cold]
 #[inline(never)]
-fn has_keyword_suggestion(word: &[u8]) -> bool {
-    // One byte per code point. Keywords are ASCII, so the first byte of a longer code point equals none of their letters.
-    let name: Vec<u8> = word
-        .iter()
-        .copied()
-        .filter(|byte| byte & 0xC0 != 0x80)
-        .collect();
-    let max_length_difference = (name.len() * 34 / 100).max(2);
-    // In tenths.
-    let max_distance = name.len() * 4 / 10 * 10 + 9;
-    KEYWORD_SUGGESTIONS.iter().any(|&keyword| {
-        keyword != word
-            && name.len().abs_diff(keyword.len()) <= max_length_difference
-            && is_within_edit_distance(&name, keyword, max_distance)
-    }) || KEYWORD_SUGGESTIONS
-        .iter()
-        .any(|&keyword| word.len() > keyword.len() + 2 && word.starts_with(keyword))
-}
-
-/// `levenshteinWithMax`, in tenths: whether the distance between `s1` and `s2` is at most `max`.
-fn is_within_edit_distance(s1: &[u8], s2: &[u8], max: usize) -> bool {
-    let big = max + 1;
-    let mut previous: Vec<usize> = (0..=s2.len()).map(|j| j * 10).collect();
-    let mut current = vec![0usize; s2.len() + 1];
-    for i in 1..=s1.len() {
-        let c1 = s1[i - 1];
-        let min_j = (i * 10).saturating_sub(max).div_ceil(10).max(1);
-        let max_j = ((max + i * 10) / 10).min(s2.len());
-        let mut column_min = i * 10;
-        current[0] = column_min;
-        current[1..min_j.min(s2.len() + 1)].fill(big);
-        for j in min_j..=max_j {
-            let c2 = s2[j - 1];
-            let distance = if c1 == c2 {
-                previous[j - 1]
-            } else {
-                let substitution =
-                    previous[j - 1] + if c1.eq_ignore_ascii_case(&c2) { 1 } else { 20 };
-                (previous[j] + 10)
-                    .min(current[j - 1] + 10)
-                    .min(substitution)
-            };
-            current[j] = distance;
-            column_min = column_min.min(distance);
-        }
-        current[max_j + 1..].fill(big);
-        if column_min > max {
-            return false;
-        }
-        core::mem::swap(&mut previous, &mut current);
+fn keyword_suggestion(word: &[u8]) -> Option<Vec<u8>> {
+    let keywords = KEYWORD_SUGGESTIONS.iter().copied();
+    match bun_sema::check::get_spelling_suggestion(word, keywords, |c| c, |a, b| a.cmp(b)) {
+        Some(keyword) => Some(keyword.to_vec()),
+        None => KEYWORD_SUGGESTIONS
+            .iter()
+            .find(|keyword| word.len() > keyword.len() + 2 && word.starts_with(keyword))
+            .map(|keyword| [keyword, &b" "[..], &word[keyword.len()..]].concat()),
     }
-    previous[s2.len()] <= max
 }

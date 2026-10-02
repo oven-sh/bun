@@ -4,7 +4,7 @@
 //! A port of `canIncludeBindAndCheckDiagnostics`, `getBindAndCheckDiagnosticsWithChecker` and `getAdditionalJSSyntacticDiagnostics`
 //! (TypeScript 7.0.2, compiler/program.go), and of `checkJSSyntax` (parser/parser.go).
 
-use super::errors::Diagnostic;
+use super::sink::held;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
 
@@ -77,7 +77,7 @@ impl Checker<'_> {
     }
 
     /// `transformSourceFile` of the declaration transformer: 6424, on each `module.exports = ..` of a module that has several.
-    pub(super) fn check_module_exports_assignments(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_module_exports_assignments(&mut self, file: FileId) {
         let files = self.files();
         if !self.hir(file).is_js || !files.options.emits_declarations {
             return;
@@ -94,8 +94,7 @@ impl Checker<'_> {
                 && let crate::bind::Decl::ModuleExports(assignment) = declaration
             {
                 let start = self.start_of(file, assignment);
-                out.push(Diagnostic { start, code: 6424 });
-                self.note(start, self.end_of_expr(file, assignment), 6424, Vec::new());
+                self.error_at((file, start, self.end_of_expr(file, assignment)), 6424, &[]);
             }
         }
     }
@@ -160,7 +159,7 @@ fn module_keyword(text: &[u8], name: u32) -> &[u8] {
 impl Checker<'_> {
     /// `checkGrammarSourceFile`: 1046. At the top of a declaration file, what declares a value says `declare` or `export`. Only the
     /// first that does not is objected to.
-    pub(super) fn check_declare_modifiers(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_declare_modifiers(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.kind != FileKind::Declaration {
             return;
@@ -180,7 +179,7 @@ impl Checker<'_> {
             ) && !hir.modifier_list(hir[s].modifiers).iter().any(is_declared)
             {
                 let start = hir[s].start;
-                out.push(Diagnostic { start, code: 1046 });
+                self.error_at((file, start, 0), 1046, &[]);
                 return;
             }
         }
@@ -188,30 +187,25 @@ impl Checker<'_> {
 
     /// `checkGrammarVariableDeclarationList`: 1123. `var ;` is a list of no declarations to the parser. It is said where the list would
     /// start: right after the keyword.
-    pub(super) fn check_empty_declaration_lists(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_empty_declaration_lists(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.text.is_empty() {
             return;
         }
-        for stmt in &hir.stmts {
+        for (s, stmt) in hir.stmts.iter().enumerate() {
             if !matches!(stmt.kind, StmtKind::Var(decls) if decls.is_empty()) {
                 continue;
             }
-            let mut at = stmt.pos as usize;
+            let mut at = self.start_after_modifiers(file, StmtId(s as u32)) as usize;
             loop {
                 let word = word_at(&hir.text, at);
                 let end = at + word.len();
                 match word {
                     b"var" | b"let" | b"const" | b"using" => {
-                        out.push(Diagnostic {
-                            start: end as u32,
-                            code: 1123,
-                        });
-                        // The list is empty, and so is the error.
-                        self.note(end as u32, super::explain::NO_LENGTH, 1123, Vec::new());
+                        self.error_at((file, end as u32, end as u32), 1123, &[]);
                         break;
                     }
-                    b"export" | b"declare" | b"await" => at = skip_trivia(&hir.text, end),
+                    b"await" => at = skip_trivia(&hir.text, end),
                     _ => break,
                 }
             }
@@ -221,28 +215,31 @@ impl Checker<'_> {
     /// `checkJSSyntax`, `checkJSDecoratorSyntax` and `getAdditionalJSSyntacticDiagnostics`. tsgo's parser calls `checkJSSyntax` when it
     /// finishes a declaration, a class element, a parameter or an expression, but not for a node that is part of a type: the members
     /// of an interface get no diagnostics of their own.
-    pub(super) fn check_js_syntax(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_js_syntax(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !hir.is_js || hir.text.is_empty() {
             return;
         }
         let text = &hir.text[..];
         // `jsErrorAtRange`. What is made from a tag of a comment is not written in the file. An end of 0: that of the token at the start.
-        let mut error = |(start, end): (u32, u32), code: u32, argument: &str| {
+        let error = |c: &mut Self, (start, end): (u32, u32), code: u32, argument: &str| {
             if !hir.is_in_jsdoc(start) {
-                out.push(Diagnostic { start, code });
                 let argument = (!argument.is_empty()).then(|| argument.to_owned());
-                self.note(start, end, code, argument.into_iter().collect());
+                c.add_diagnostic(Reported::new(
+                    (file, start, end),
+                    code,
+                    held(argument.into_iter().collect()),
+                ));
             }
         };
-        let type_loc = |ty: TypeNodeId| (hir[ty].pos, self.end_of_type_node(file, ty));
-        let type_argument_list_loc = |list: IdList<TypeNodeId>| {
+        let type_loc = |c: &Self, ty: TypeNodeId| (hir[ty].pos, c.end_of_type_node(file, ty));
+        let type_argument_list_loc = |c: &Self, list: IdList<TypeNodeId>| {
             let first = hir[hir.id_at(list, 0)].pos;
-            (first, self.end_of_type_args(file, list))
+            (first, c.end_of_type_args(file, list))
         };
-        let type_parameter_list_loc = |list: Span<TypeParamId>| {
+        let type_parameter_list_loc = |c: &Self, list: Span<TypeParamId>| {
             let last = list.iter().next_back()?;
-            Some((hir[list.at(0)].pos, self.end_of_type_param(file, last)))
+            Some((hir[list.at(0)].pos, c.end_of_type_param(file, last)))
         };
         // The start of the `?` token that follows the property name or binding pattern at `start`.
         let question_token = |start: u32| {
@@ -270,16 +267,6 @@ impl Checker<'_> {
             (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => false,
             _ => true,
         };
-        // Where the decorator whose `@` is at `at_sign` ends. The parentheses of `@(x)` are only in the text.
-        let decorator_end = |at_sign: usize, expression: ExprId| {
-            let end = self.end_of_expr(file, expression);
-            let open = skip_trivia(text, at_sign + 1);
-            if text.get(open) == Some(&b'(') {
-                end.max(self.end_of_bracket_at(file, open as u32))
-            } else {
-                end
-            }
-        };
         for (index, param) in hir.params.iter().enumerate() {
             if is_part_of_a_type(bound.param_fn[index]) {
                 continue;
@@ -287,10 +274,10 @@ impl Checker<'_> {
             if param.flags.contains(Flags::OPTIONAL)
                 && let Some(at) = question_token(hir[param.pat].pos)
             {
-                error((at, 0), 8009, "?");
+                error(self, (at, 0), 8009, "?");
             }
             if param.ty.is_some() {
-                error(type_loc(param.ty), 8010, "");
+                error(self, type_loc(self, param.ty), 8010, "");
             }
             // `node.Modifiers().Loc`
             let modifiers = hir.modifier_list(hir.param_modifiers(ParamId(index as u32)));
@@ -302,13 +289,13 @@ impl Checker<'_> {
                     ModifierKind::Keyword(flag) => {
                         last.pos + super::errors_grammar_modifiers::modifier_text(flag).len() as u32
                     }
-                    ModifierKind::Decorator(it) => decorator_end(last.pos as usize, it),
+                    ModifierKind::Decorator(it) => self.end_of_expr(file, it),
                 };
-                error((param.pos, end), 8012, "");
+                error(self, (param.pos, end), 8012, "");
             }
         }
         for decl in hir.var_decls.iter().filter(|decl| decl.ty.is_some()) {
-            error(type_loc(decl.ty), 8010, "");
+            error(self, type_loc(self, decl.ty), 8010, "");
         }
         for (index, func) in hir.fns.iter().enumerate() {
             let id = FnId(index as u32);
@@ -318,7 +305,7 @@ impl Checker<'_> {
                 (FnKind::IndexSignature, FnOwner::Member(m))
                     if matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)) =>
                 {
-                    error((hir[m].start, hir[m].loc.end), 8017, "");
+                    error(self, (hir[m].start, hir[m].loc.end), 8017, "");
                     continue;
                 }
                 _ if is_part_of_a_type(id) || func.kind == FnKind::StaticBlock => continue,
@@ -327,15 +314,15 @@ impl Checker<'_> {
                 _ => Span::default(),
             };
             if matches!(func.body, FnBody::None) {
-                error((func.start, self.end_of_fn(file, id)), 8017, "");
+                error(self, (func.start, self.end_of_fn(file, id)), 8017, "");
             } else if func.ret.is_some() {
-                error(type_loc(func.ret), 8010, "");
+                error(self, type_loc(self, func.ret), 8010, "");
             }
-            if let Some(loc) = type_parameter_list_loc(func.type_params) {
-                error(loc, 8004, "");
+            if let Some(loc) = type_parameter_list_loc(self, func.type_params) {
+                error(self, loc, 8004, "");
             }
             for (at, token) in typescript_modifiers(hir, modifiers) {
-                error((at, 0), 8009, token);
+                error(self, (at, 0), 8009, token);
             }
         }
         for (index, member) in hir.members.iter().enumerate() {
@@ -346,14 +333,14 @@ impl Checker<'_> {
                 && member.flags.contains(Flags::OPTIONAL)
                 && let Some(at) = question_token_after_key(member.key, member.name_pos)
             {
-                error((at, 0), 8009, "?");
+                error(self, (at, 0), 8009, "?");
             }
             if member.kind == MemberKind::Property {
                 if member.ty.is_some() {
-                    error(type_loc(member.ty), 8010, "");
+                    error(self, type_loc(self, member.ty), 8010, "");
                 }
                 for (at, token) in typescript_modifiers(hir, member.modifiers) {
-                    error((at, 0), 8009, token);
+                    error(self, (at, 0), 8009, token);
                 }
             }
         }
@@ -362,7 +349,7 @@ impl Checker<'_> {
             if prop.kind == PropKind::Method
                 && let Some(at) = question_token_after_key(prop.key, prop.pos)
             {
-                error((at, 0), 8009, "?");
+                error(self, (at, 0), 8009, "?");
             }
         }
         // `hir.decorators` keeps the decorators of one owner together, in source order. Only the first one is reported.
@@ -380,7 +367,8 @@ impl Checker<'_> {
                     if let Some(at_sign) = text[..expression_start].iter().rposition(|&b| b == b'@')
                     {
                         error(
-                            (at_sign as u32, decorator_end(at_sign, decorator)),
+                            self,
+                            (at_sign as u32, self.end_of_expr(file, decorator)),
                             1206,
                             "",
                         );
@@ -389,21 +377,17 @@ impl Checker<'_> {
                 // `getAdditionalJSSyntacticDiagnostics` reports `decorator.Loc`, which starts where the previous token ends.
                 DecoratorOwner::Param(p) if reports_parameter_decorators => {
                     let start = skip_trivia_back(text, hir[p].pos as usize) as u32;
-                    error(
-                        (start, decorator_end(hir[p].pos as usize, decorator)),
-                        1206,
-                        "",
-                    );
+                    error(self, (start, self.end_of_expr(file, decorator)), 1206, "");
                 }
                 _ => {}
             }
         }
         for class in &hir.classes {
-            if let Some(loc) = type_parameter_list_loc(class.type_params) {
-                error(loc, 8004, "");
+            if let Some(loc) = type_parameter_list_loc(self, class.type_params) {
+                error(self, loc, 8004, "");
             }
             for (at, token) in typescript_modifiers(hir, class.modifiers) {
-                error((at, 0), 8009, token);
+                error(self, (at, 0), 8009, token);
             }
             if !class.implements.is_empty() {
                 let first = hir[hir.id_at(class.implements, 0)].pos as usize;
@@ -411,6 +395,7 @@ impl Checker<'_> {
                 if word_before(text, end) == b"implements" {
                     let start = (end - b"implements".len()) as u32;
                     error(
+                        self,
                         (start, self.end_of_type_args(file, class.implements)),
                         8005,
                         "",
@@ -418,69 +403,76 @@ impl Checker<'_> {
                 }
             }
             if !class.extends_args.is_empty() {
-                error(type_argument_list_loc(class.extends_args), 8011, "");
+                error(
+                    self,
+                    type_argument_list_loc(self, class.extends_args),
+                    8011,
+                    "",
+                );
             }
         }
         for (index, stmt) in hir.stmts.iter().enumerate() {
-            let to_its_end = |start: u32| (start, self.end_of_stmt(file, StmtId(index as u32)));
+            let to_its_end =
+                |c: &Self, start: u32| (start, c.end_of_stmt(file, StmtId(index as u32)));
             match stmt.kind {
                 StmtKind::Var(_) => {
                     for (at, token) in typescript_modifiers(hir, stmt.modifiers) {
-                        error((at, 0), 8009, token);
+                        error(self, (at, 0), 8009, token);
                     }
                 }
                 StmtKind::Import(i) if hir[i].type_only => {
-                    error(to_its_end(stmt.pos), 8006, "import type")
+                    error(self, to_its_end(self, stmt.start), 8006, "import type")
                 }
                 StmtKind::ExportNamed(e) if hir[e].type_only => {
-                    error(to_its_end(stmt.pos), 8006, "export type")
+                    error(self, to_its_end(self, stmt.start), 8006, "export type")
                 }
                 StmtKind::ExportStar {
                     type_only: true, ..
-                } => error(to_its_end(stmt.pos), 8006, "export type"),
-                StmtKind::ImportEquals(_) => error(to_its_end(stmt.start), 8002, ""),
-                StmtKind::ExportAssign(_) => error(to_its_end(stmt.pos), 8003, ""),
-                StmtKind::Interface(i) => error((hir[i].name_pos, 0), 8006, "interface"),
+                } => error(self, to_its_end(self, stmt.start), 8006, "export type"),
+                StmtKind::ImportEquals(_) => error(self, to_its_end(self, stmt.start), 8002, ""),
+                StmtKind::ExportAssign(_) => error(self, to_its_end(self, stmt.start), 8003, ""),
+                StmtKind::Interface(i) => error(self, (hir[i].name_pos, 0), 8006, "interface"),
                 // `parseAmbientExternalModuleDeclaration` (`module "m"`, `global`) does not call `checkJSSyntax`.
                 StmtKind::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)) => {
                     let keyword = match module_keyword(text, hir[m].name_pos) {
                         b"namespace" => "namespace",
                         _ => "module",
                     };
-                    error((hir[m].name_pos, 0), 8006, keyword);
+                    error(self, (hir[m].name_pos, 0), 8006, keyword);
                 }
-                StmtKind::Enum(e) => error((hir[e].name_pos, 0), 8006, "enum"),
-                StmtKind::TypeAlias(a) => error((hir[a].name_pos, 0), 8008, ""),
+                StmtKind::Enum(e) => error(self, (hir[e].name_pos, 0), 8006, "enum"),
+                StmtKind::TypeAlias(a) => error(self, (hir[a].name_pos, 0), 8008, ""),
                 _ => {}
             }
         }
         for (index, spec) in hir.import_specs.iter().enumerate() {
             if spec.type_only {
                 let end = self.end_of_import_spec(file, ImportSpecId(index as u32));
-                error((spec.start, end), 8006, "import...type");
+                error(self, (spec.start, end), 8006, "import...type");
             }
         }
         for (index, spec) in hir.export_specs.iter().enumerate() {
             if spec.type_only {
                 let end = self.end_of_export_spec(file, ExportSpecId(index as u32));
-                error((spec.start, end), 8006, "export...type");
+                error(self, (spec.start, end), 8006, "export...type");
             }
         }
         for (index, e) in hir.exprs.iter().enumerate() {
             let id = ExprId(index as u32);
             match e.kind {
                 ExprKind::NonNull(_) => error(
+                    self,
                     (self.start_of(file, id), self.end_of_expr(file, id)),
                     8013,
                     "",
                 ),
-                ExprKind::As { ty, .. } => error(type_loc(ty), 8016, ""),
-                ExprKind::Satisfies { ty, .. } => error(type_loc(ty), 8037, ""),
+                ExprKind::As { ty, .. } => error(self, type_loc(self, ty), 8016, ""),
+                ExprKind::Satisfies { ty, .. } => error(self, type_loc(self, ty), 8037, ""),
                 _ => {}
             }
         }
         for call in hir.calls.iter().filter(|call| !call.type_args.is_empty()) {
-            error(type_argument_list_loc(call.type_args), 8011, "");
+            error(self, type_argument_list_loc(self, call.type_args), 8011, "");
         }
     }
 }

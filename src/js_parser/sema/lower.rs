@@ -40,6 +40,10 @@ pub(crate) struct Lower<'p, 'a> {
     pub(super) member_modifiers: Vec<(Flags, u32)>,
     /// `parsingContexts&(1<<PCObjectLiteralMembers)`: how many object literals what is being lowered is written in.
     pub(super) object_literals_around: u32,
+    /// `node.End()` of what `expr` made last, as it is written: with the parentheses around it.
+    written_end: u32,
+    /// `GetTokenPosOfNode` of what `expr` made last, as it is written: with the parentheses around it.
+    written_start: u32,
     /// The functions that have a `FullSignature`.
     pub(super) full_signatures: bun_collections::HashMap<u32, ()>,
     /// The functions whose `@param` tags were compared with their parameters.
@@ -65,7 +69,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         };
         let p: &'p P<'a, true, false> = p;
         let source_len = p.source.contents().len();
-        let mut b = Builder::new(source_len, p.lexer.is_javascript_file(), atoms);
+        let mut b = Builder::new(p.lexer.is_javascript_file(), atoms);
 
         b.ts = syntax.ast;
         let mut this = Lower {
@@ -84,6 +88,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             reparsed_members: Vec::new(),
             member_modifiers: Vec::new(),
             object_literals_around: 0,
+            written_end: 0,
+            written_start: 0,
             full_signatures: Default::default(),
             documented_functions: Default::default(),
             is_ambient: is_declaration_file,
@@ -120,15 +126,27 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         this.b.file.body = body;
         this.fill_in_pending_parts();
+        // A body in a type is filled in last.
+        if !this.b.file.body_starts.is_sorted_by_key(|body| body.0.0) {
+            this.b
+                .file
+                .body_starts
+                .sort_unstable_by_key(|body| body.0.0);
+        }
         // Those of import types come last, and a type in a comment is cloned for each node it is the type of.
         if this.b.file.import_attributes.len() > 1 {
             let import_attributes = &mut this.b.file.import_attributes;
             import_attributes.sort_by_key(|attributes| attributes.0);
             import_attributes.dedup_by_key(|attributes| attributes.0);
         }
-        this.b.file.parens.sort_unstable_by_key(|p| p.0.0);
+        this.b.file.parens.sort_by_key(|p| p.0.0);
+        this.b
+            .file
+            .jsx_expressions
+            .sort_unstable_by_key(|braces| braces.0.0);
         this.finish_jsdoc();
-        this.b.file
+        std::mem::take(&mut this.noted).leave_room();
+        std::mem::take(&mut this.b.file)
     }
 
     /// Converts the expressions and function bodies that are written inside types. Converting one can clone more types, which can add
@@ -142,6 +160,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                     self.b.file.members[member.idx()].init = initializer;
                 }
                 PendingPart::FunctionBody(func, body) => {
+                    let open = self.pos_of(body.loc);
+                    self.b.file.body_starts.push((func, open));
                     let body = FnBody::Block(self.stmts(body.stmts.slice(), false));
                     self.b.file.fns[func.idx()].body = body;
                 }
@@ -177,6 +197,13 @@ impl<'p, 'a> Lower<'p, 'a> {
     #[inline]
     pub(super) fn pos_of(&self, loc: ast::Loc) -> u32 {
         self.noted.real_loc(loc).start.max(0) as u32
+    }
+
+    /// `node.End()` of the node whose `loc` is `loc`.
+    #[inline]
+    fn noted_end(&self, loc: ast::Loc) -> Option<u32> {
+        let end = self.noted.node(loc)?.end;
+        (!end.is_empty()).then_some(end.start as u32)
     }
 
     /// What the parser noted as `what` of the node whose `loc` is `loc`.
@@ -242,7 +269,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }
             }
         };
-        self.b.file.ty(kind, self.pos_of(param.loc))
+        let pos = self.pos_of(param.loc);
+        self.b.file.ty(kind, pos, pos + param.name.len() as u32)
     }
 
     /// `<T>(x)` was first parsed as the type parameters of an arrow function and turned out to be a cast. Builds the cast's type from
@@ -438,6 +466,15 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         let stmt = &mut self.b.file[id];
         (stmt.start, stmt.loc) = (start, range);
+        // `else if`: `t_if` makes the chain in a loop, and every `if` of it ends where the first does.
+        let mut last = id;
+        while let StmtKind::If { no, .. } = self.b.file[last].kind
+            && no.is_some()
+            && matches!(self.b.file[no].kind, StmtKind::If { .. })
+        {
+            self.b.file[no].loc.end = range.end;
+            last = no;
+        }
         id
     }
 
@@ -730,7 +767,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                     // `parseCaseClause`, `parseDefaultClause`
                     let full_start = self.full_start_of(case.loc);
                     self.with_noted_jsdoc(full_start, pos, false, &mut Host::Other);
-                    cases.push(Case { test, body, pos });
+                    let end = self.noted_end(case.loc).unwrap_or(0);
+                    cases.push(Case {
+                        test,
+                        body,
+                        pos,
+                        end,
+                    });
                 }
                 StmtKind::Switch {
                     expr,
@@ -952,12 +995,26 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn binding(&mut self, binding: &ast::Binding) -> PatId {
         let pos = self.pos_of(binding.loc);
         if !self.stack_check.is_safe_to_recurse() {
-            return self.b.file.pat(PatKind::Missing, pos);
+            return self.b.file.pat(PatKind::Missing, pos, pos);
         }
+        // A name that is a piece of the text is as long as it is written.
+        if let B::B::BIdentifier(id) = &binding.data
+            && id.r#ref.is_source_contents_slice()
+        {
+            let kind = PatKind::Ident(self.name(id.r#ref));
+            return self.b.file.pat(kind, pos, pos + id.r#ref.inner_index());
+        }
+        let mut end = self.note(binding.loc, Mark::PatternEnd).unwrap_or(pos);
         let kind = match &binding.data {
             // `createMissingIdentifier`: a name of no length, where the token before it ends.
             B::B::BMissing(_) => PatKind::Ident(self.b.atom(b"")),
-            B::B::BIdentifier(id) => PatKind::Ident(self.name(id.r#ref)),
+            B::B::BIdentifier(id) => {
+                // A name without an escape is as long as it is written.
+                if end == pos {
+                    end += self.p.load_name_from_ref(id.r#ref).len() as u32;
+                }
+                PatKind::Ident(self.name(id.r#ref))
+            }
             B::B::BArray(array) => {
                 let items = array.items();
                 let mut elems = Vec::with_capacity(items.len());
@@ -966,18 +1023,20 @@ impl<'p, 'a> Lower<'p, 'a> {
                     let dots = self.note(item.binding.loc, Mark::DotDotDot);
                     let is_rest = dots.is_some();
                     // `[a, , b]`: only an element that is left out has no name. It is said to be where its comma is.
-                    let is_hole = matches!(item.binding.data, B::B::BMissing(_))
-                        && !is_rest
-                        && item.default_value.is_none()
-                        && self
-                            .note(item.binding.loc, Mark::OmittedExpression)
-                            .is_some();
-                    let pat = if is_hole {
-                        self.b
-                            .file
-                            .pat(PatKind::Missing, self.pos_of(item.binding.loc))
-                    } else {
-                        self.binding(&item.binding)
+                    let hole = self
+                        .note(item.binding.loc, Mark::OmittedExpression)
+                        .filter(|_| {
+                            matches!(item.binding.data, B::B::BMissing(_))
+                                && !is_rest
+                                && item.default_value.is_none()
+                        });
+                    let pat = match hole {
+                        // `finishNode(NewOmittedExpression(), nodePos())`
+                        Some(full_start) => {
+                            let comma = self.pos_of(item.binding.loc);
+                            self.b.file.pat(PatKind::Missing, comma, full_start)
+                        }
+                        None => self.binding(&item.binding),
                     };
                     let default = self.optional_expr(item.default_value.as_ref());
                     elems.push(PatElem {
@@ -985,6 +1044,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                         default,
                         is_rest,
                         start: dots.unwrap_or(self.b.file[pat].pos),
+                        end: match default.is_some() {
+                            true => self.written_end,
+                            false => self.b.file[pat].end,
+                        },
                     });
                 }
                 PatKind::Array(self.b.file.add_pat_elems(&elems))
@@ -1019,12 +1082,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                         is_rest,
                         pos,
                         key_pos,
+                        end: match default.is_some() {
+                            true => self.written_end,
+                            false => self.b.file[value].end,
+                        },
                     });
                 }
                 PatKind::Object(self.b.file.add_pat_props(&props))
             }
         };
-        self.b.file.pat(kind, pos)
+        self.b.file.pat(kind, pos, end)
     }
 
     /// Sets the key of an object type member that the parser kept with `[name]` still as an expression.
@@ -1227,7 +1294,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             Some(list) => list.saturating_sub(1),
             None => self.pos_of(open),
         };
-        self.b.file.add_fn(Func {
+        let made = self.b.file.add_fn(Func {
             kind,
             flags,
             name: func.name.as_ref().map_or(Atom::NONE, |n| self.name(n.ref_)),
@@ -1239,7 +1306,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             body,
             anchor,
             start,
-        })
+        });
+        if matches!(body, FnBody::Block(_)) {
+            let open = self.pos_of(func.body.loc);
+            self.b.file.body_starts.push((made, open));
+        }
+        made
     }
 
     fn arrow(&mut self, arrow: &ast::E::Arrow, loc: ast::Loc) -> FnId {
@@ -1278,7 +1350,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
         };
         let anchor = arrow_token.unwrap_or(pos);
-        self.b.file.add_fn(Func {
+        let made = self.b.file.add_fn(Func {
             kind: FnKind::Arrow,
             flags: if arrow.is_async {
                 Flags::ASYNC
@@ -1294,7 +1366,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             body,
             anchor,
             start: pos,
-        })
+        });
+        if matches!(body, FnBody::Block(_)) {
+            let open = self.pos_of(arrow.body.loc);
+            self.b.file.body_starts.push((made, open));
+        }
+        made
     }
 
     fn class(&mut self, class: &G::Class, flags: Flags, pos: u32, start: u32) -> ClassId {
@@ -1589,8 +1666,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         } = self.b.file[argument];
         let spec = match literal {
             ExprKind::String(text) => text,
-            ExprKind::Template { exprs, texts } if exprs.is_empty() => {
-                self.b.file.ids(texts).next().unwrap_or(Atom::NONE)
+            ExprKind::Template { exprs } if exprs.is_empty() => {
+                self.b.file.id_at(self.b.file.template_texts(exprs), 0)
             }
             _ => return,
         };
@@ -1634,17 +1711,20 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     pub(super) fn expr(&mut self, expr: &Expr) -> ExprId {
-        // Where what has been made of it so far starts.
-        let mut pos = self.pos_of(expr.loc);
         if !self.stack_check.is_safe_to_recurse() {
+            let pos = self.pos_of(expr.loc);
             self.b.file.syntax_errors += 1;
-            return self.b.file.expr(ExprKind::Missing, pos);
+            self.written_end = pos;
+            self.written_start = pos;
+            return self.b.file.expr(ExprKind::Missing, pos, pos);
         }
+        self.written_end = 0;
         let mut id = self.expr_without_casts(expr);
-        if let Some(&node) = self.noted.node(expr.loc) {
-            if !node.end.is_empty() {
-                self.b.file.set_expr_end(id, node.end.start as u32);
-            }
+        // Where what has been made of it so far starts.
+        let mut pos = self.b.file[id].pos;
+        // Where what has been made of it so far ends.
+        let mut end = self.b.file[id].end;
+        if self.noted.has_notes(expr.loc) {
             // What is made of it, from the inside out.
             let mut made: SmallVec<[(Mark, u32); 4]> = self
                 .noted
@@ -1655,6 +1735,10 @@ impl<'p, 'a> Lower<'p, 'a> {
             let mut paren_full_start = None;
             for (what, kept) in made {
                 let kind = match what {
+                    Mark::End => {
+                        end = kept;
+                        continue;
+                    }
                     Mark::ParenFullStart => {
                         paren_full_start = Some(kept);
                         continue;
@@ -1670,11 +1754,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                             }
                         }
                         pos = open;
-                        // Of parentheses within parentheses, the outermost.
-                        match self.b.file.parens.last_mut() {
-                            Some(last) if last.0 == id => last.1 = open,
-                            _ => self.b.file.parens.push((id, open)),
-                        }
+                        self.b.file.parens.push((id, open, end));
                         continue;
                     }
                     Mark::NonNull => ExprKind::NonNull(id),
@@ -1715,9 +1795,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                     // Said of the node, and makes nothing of it.
                     _ => continue,
                 };
-                id = self.b.file.expr(kind, pos);
+                id = self.b.file.expr(kind, pos, end);
             }
         }
+        self.written_end = end;
+        self.written_start = pos;
         id
     }
 
@@ -1766,7 +1848,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             && self.last_cast(target) == Some(Mark::Instantiation)
             && let Some(less_than) = self.note(target.loc, Mark::InstantiationStart)
         {
-            self.b.file.early_errors.push((less_than, 1477));
+            let end = self.b.file[obj].end;
+            self.b.file.error(less_than, end, 1477);
         }
     }
 
@@ -1798,28 +1881,56 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     fn expr_without_casts(&mut self, expr: &Expr) -> ExprId {
-        let pos = self.pos_of(expr.loc);
+        // What starts with a part starts where that is written to start, parentheses and all (`GetTokenPosOfNode`).
+        let (mut pos, mut end) = match self.noted.node(expr.loc) {
+            Some(node) => (node.loc.start.max(0) as u32, node.end.start.max(0) as u32),
+            None => (expr.loc.start.max(0) as u32, 0),
+        };
         let kind = match &expr.data {
             Data::EInlinedEnum(e) => return self.expr(&e.value),
-            Data::EIdentifier(e) => ExprKind::Ident(self.name(e.ref_)),
+            Data::EIdentifier(e) => {
+                // A name that is a piece of the text is as long as it is written.
+                if e.ref_.is_source_contents_slice() {
+                    end = pos + e.ref_.inner_index();
+                }
+                ExprKind::Ident(self.name(e.ref_))
+            }
             Data::EImportIdentifier(e) => ExprKind::Ident(self.name(e.ref_)),
             Data::ECommonjsExportIdentifier(e) => ExprKind::Ident(self.name(e.ref_)),
             Data::ENameOfSymbol(e) => ExprKind::Ident(self.name(e.ref_)),
             Data::EPrivateIdentifier(e) => ExprKind::String(self.name(e.ref_)),
-            Data::EThis(_) => ExprKind::This,
-            Data::ESuper(_) => ExprKind::Super,
-            Data::ENull(_) => ExprKind::Null,
+            Data::EThis(_) => {
+                end = pos + b"this".len() as u32;
+                ExprKind::This
+            }
+            Data::ESuper(_) => {
+                end = pos + b"super".len() as u32;
+                ExprKind::Super
+            }
+            Data::ENull(_) => {
+                end = pos + b"null".len() as u32;
+                ExprKind::Null
+            }
             Data::EUndefined(_) => ExprKind::Ident(bun_sema::atom::known::undefined),
             Data::EBoolean(e) | Data::EBranchBoolean(e) => {
                 if e.value {
+                    end = pos + b"true".len() as u32;
                     ExprKind::True
                 } else {
+                    end = pos + b"false".len() as u32;
                     ExprKind::False
                 }
             }
             Data::ENumber(e) => ExprKind::Number(self.b.file.number(e.value())),
             Data::EBigInt(e) => ExprKind::BigInt(self.b.atom(e.value.slice())),
-            Data::EString(e) => ExprKind::String(self.string(e)),
+            Data::EString(e) => {
+                if end == 0 {
+                    let quoted =
+                        super::notes::end_of_quoted(self.p.source.contents(), e.data.slice());
+                    end = quoted.unwrap_or(0) as u32;
+                }
+                ExprKind::String(self.string(e))
+            }
             Data::ERegExp(_) => ExprKind::Regex,
             Data::ENewTarget(_) => {
                 // `parseMetaProperty` takes any word for the name, or none.
@@ -1846,7 +1957,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     let tail = self.template_text(&part.tail);
                     self.list_ids.push(tail.0);
                 }
-                let texts = self.take_ids(base);
+                // `File::template_texts`
+                let texts: IdList<Atom> = self.take_ids(base);
+                debug_assert_eq!(texts.start, exprs.start + exprs.len);
                 match &e.tag {
                     Some(tag) => {
                         let type_args = match self.note(expr.loc, Mark::TagTypeArguments) {
@@ -1854,6 +1967,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                             None => IdList::EMPTY,
                         };
                         let callee = self.expr(tag);
+                        pos = pos.min(self.written_start);
                         // `callIsIncomplete`: the checker takes a `close_pos` where no `)` is for an incomplete call.
                         let close_pos = if self.note(expr.loc, Mark::IncompleteTemplate).is_some() {
                             u32::MAX - 1
@@ -1864,10 +1978,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                         let template = if exprs.is_empty() {
                             ExprKind::String(head)
                         } else {
-                            ExprKind::Template { exprs, texts }
+                            ExprKind::Template { exprs }
                         };
                         let template_pos = self.note(expr.loc, Mark::Backtick).unwrap_or(pos);
-                        let template = self.b.file.expr(template, template_pos);
+                        let template = self.b.file.expr(template, template_pos, end);
                         ExprKind::TaggedTemplate(self.b.file.add_call(Call {
                             callee,
                             args: exprs,
@@ -1877,11 +1991,21 @@ impl<'p, 'a> Lower<'p, 'a> {
                             template,
                         }))
                     }
-                    None => ExprKind::Template { exprs, texts },
+                    None => ExprKind::Template { exprs },
                 }
             }
-            Data::EArray(e) => ExprKind::Array(self.exprs(e.items.iter())),
-            Data::EObject(e) => ExprKind::Object(self.props(e.properties.as_slice(), true)),
+            Data::EArray(e) => {
+                if end == 0 {
+                    end = self.pos_of(e.close_bracket_loc) + 1;
+                }
+                ExprKind::Array(self.exprs(e.items.iter()))
+            }
+            Data::EObject(e) => {
+                if end == 0 {
+                    end = self.pos_of(e.close_brace_loc) + 1;
+                }
+                ExprKind::Object(self.props(e.properties.as_slice(), true))
+            }
             Data::ESpread(e) => ExprKind::Spread(self.expr(&e.value)),
             Data::EFunction(e) => {
                 let func = self.func(&e.func, FnKind::Expr, Flags::empty(), pos, pos);
@@ -1903,16 +2027,22 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             Data::EDot(e) => {
                 let obj = self.expr(&e.target);
+                pos = pos.min(self.written_start);
                 self.refuse_access_to_instantiation(&e.target, obj);
+                let name_pos = self.pos_of(e.name_loc);
+                if end == 0 {
+                    end = name_pos + e.name.len() as u32;
+                }
                 ExprKind::Dot {
                     obj,
                     name: self.b.atom(e.name.slice()),
-                    name_pos: self.pos_of(e.name_loc),
+                    name_pos,
                     chain: Self::chain(e.optional_chain),
                 }
             }
             Data::EIndex(e) => {
                 let obj = self.expr(&e.target);
+                pos = pos.min(self.written_start);
                 let chain = Self::chain(e.optional_chain);
                 match &e.index.data {
                     Data::EPrivateIdentifier(id) => {
@@ -1933,6 +2063,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             Data::ECall(e) => {
                 let callee = self.expr(&e.target);
+                pos = pos.min(self.written_start);
                 // `IsRequireCall`. `File::parens` is not in order yet: what was lowered last is at its end.
                 let is_require = self.b.is_js
                     && matches!(
@@ -1946,6 +2077,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     if self.b.file.parens.last().is_none_or(|p| p.0 != argument) {
                         self.call_specifier(argument, SpecifierKind::RequireCall);
                     }
+                }
+                if end == 0 {
+                    end = self.pos_of(e.close_paren_loc) + 1;
                 }
                 ExprKind::Call(self.call(
                     callee,
@@ -1974,14 +2108,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                     OpCode::UnPostDec => UnOp::PostDec,
                     _ => UnOp::PostInc,
                 };
-                ExprKind::Unary {
-                    op,
-                    operand: self.expr(&e.value),
-                }
+                let operand = self.expr(&e.value);
+                pos = pos.min(self.written_start);
+                ExprKind::Unary { op, operand }
             }
             Data::EBinary(_) => return self.binary(expr),
             Data::EIf(e) => {
                 let test = self.expr(&e.test);
+                pos = pos.min(self.written_start);
                 let yes = self.expr(&e.yes);
                 let no = self.expr(&e.no);
                 ExprKind::Cond { test, yes, no }
@@ -2007,24 +2141,38 @@ impl<'p, 'a> Lower<'p, 'a> {
                     let specifier = self.b.file.id_at(args, 0);
                     self.b.file.deferred_import_calls.push((specifier, close));
                 }
-                let type_args = match self.note(expr.loc, Mark::TypeArguments) {
-                    Some(at) => self.type_args_at(at),
-                    None => IdList::EMPTY,
-                };
-                ExprKind::ImportCall { args, type_args }
+                if let Some(at) = self.note(expr.loc, Mark::TypeArguments) {
+                    let type_args = self.type_args_at(at);
+                    self.b
+                        .file
+                        .import_call_type_args
+                        .push((specifier, type_args));
+                }
+                ExprKind::ImportCall { args }
             }
             Data::EJsxElement(e) => {
                 let tag = self.optional_expr(e.tag.as_ref());
                 self.jsx_tag_name(tag);
                 let attrs = self.props(e.properties.as_slice(), false);
-                let children = self.exprs(e.children.iter());
+                let base = self.list_ids.len();
+                for child in e.children.iter() {
+                    let id = self.expr(child);
+                    if let Some(open) = self.note(child.loc, Mark::JsxExpression) {
+                        let end = self.note(child.loc, Mark::JsxExpressionEnd);
+                        let braces = (id, open, end.unwrap_or(self.written_end));
+                        self.b.file.jsx_expressions.push(braces);
+                    }
+                    self.list_ids.push(id.0);
+                }
+                let children = self.take_ids(base);
                 let ts::Jsx {
                     closing_tag,
                     opening_end,
                     closing_start,
-                    end,
+                    end: element_end,
                     type_arguments,
                 } = self.b.ts[e.syntax];
+                end = self.pos_of(element_end);
                 let type_args = self.b.clone_type_list(type_arguments);
                 let close_pos = if closing_start == ast::Loc::EMPTY {
                     u32::MAX
@@ -2041,7 +2189,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     type_args,
                     opening_end: self.pos_of(opening_end),
                     close_pos,
-                    end: self.pos_of(end),
+                    end,
                 }))
             }
             Data::EObjectJSON(_)
@@ -2054,7 +2202,13 @@ impl<'p, 'a> Lower<'p, 'a> {
             | Data::ERequireMain
             | Data::ESpecial(_) => ExprKind::Missing,
         };
-        self.b.file.expr(kind, pos)
+        let end = match kind {
+            // `createMissingNode`: where the token before it ends. One that is made late does not know where.
+            ExprKind::Missing if end != 0 => end,
+            // It ends no earlier than its last part: JSX text that is left open is no trivia.
+            _ => end.max(pos).max(self.written_end),
+        };
+        self.b.file.expr(kind, pos, end)
     }
 
     /// `a + b + c + ...` is as deep to the left as it is long.
@@ -2071,12 +2225,13 @@ impl<'p, 'a> Lower<'p, 'a> {
             leftmost = &e.left;
         }
         let mut left = self.expr(leftmost);
+        let start = self.written_start;
         while let Some(node) = spine.pop() {
             let Data::EBinary(e) = &node.data else {
                 unreachable!()
             };
             let right = self.expr(&e.right);
-            let pos = self.pos_of(node.loc);
+            let pos = self.pos_of(node.loc).min(start);
             let kind = match binary_op(e.op) {
                 Ok(op) => ExprKind::Binary { op, left, right },
                 Err(op) => {
@@ -2090,7 +2245,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     }
                 }
             };
-            left = self.b.file.expr(kind, pos);
+            // What is put together of two expressions ends with the second.
+            let end = self.noted_end(node.loc).unwrap_or(0).max(self.written_end);
+            left = self.b.file.expr(kind, pos, end);
         }
         left
     }
@@ -2166,11 +2323,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.list_props.push(Prop {
                     kind: PropKind::Spread,
                     key: PropKey::None,
-                    name_kind: NameKind::Identifier,
+                    name_kind: if is_literal {
+                        NameKind::Identifier
+                    } else {
+                        NameKind::Jsx
+                    },
                     value,
                     pos,
                     start,
-                    end: self.note(from, Mark::MemberEnd).unwrap_or(0),
+                    end: self.note(from, Mark::MemberEnd).unwrap_or(self.written_end),
+                    postfix_token: 0,
                 });
                 continue;
             }
@@ -2221,7 +2383,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                         self.func(&f.func, fn_kind, Flags::empty(), self.pos_of(*loc), start);
                     self.b.file[func].name = key.name().unwrap_or(Atom::NONE);
                     self.b.file[func].name_pos = pos;
-                    self.b.file.expr(ExprKind::Fn(func), self.pos_of(*loc))
+                    let end = self.noted_end(*loc).unwrap_or(0);
+                    self.b.file.expr(ExprKind::Fn(func), self.pos_of(*loc), end)
                 }
                 (value, _) => self.optional_expr(value.as_ref()),
             };
@@ -2235,17 +2398,33 @@ impl<'p, 'a> Lower<'p, 'a> {
                         value: default,
                     },
                     pos,
+                    self.written_end,
                 );
             }
             let mut prop = Prop {
                 kind,
                 key,
-                name_kind: self.name_kind(written_key, is_computed),
+                name_kind: if is_literal {
+                    self.name_kind(written_key, is_computed)
+                } else {
+                    NameKind::Jsx
+                },
                 value,
                 pos,
                 start,
-                end: self.note(written_key.loc, Mark::MemberEnd).unwrap_or(0),
+                // An import attribute ends with its value.
+                end: self
+                    .note(written_key.loc, Mark::MemberEnd)
+                    .unwrap_or(self.written_end),
+                postfix_token: self.note(written_key.loc, Mark::PostfixToken).unwrap_or(0),
             };
+            // `parseJsxAttributeValue`: the attribute ends with its `JsxExpression`.
+            if !is_literal
+                && let Some(inside) = &property.value
+                && let Some(open) = self.note(inside.loc, Mark::JsxExpression)
+            {
+                self.b.file.jsx_expressions.push((value, open, prop.end));
+            }
             // `parseObjectLiteralElement`
             if is_literal && !self.jsdoc.list.is_empty() {
                 let mut host = Host::Property(prop, TypeNodeId::NONE);

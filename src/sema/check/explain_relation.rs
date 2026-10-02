@@ -6,9 +6,11 @@
 //! reports. What that comes to is the error: its code, its node, its text (`relation_diagnostic`). It can come to a yes, and then there
 //! is no error. Nothing it finds out goes into the cache of relations.
 
-use super::explain::{Line, Related};
+use super::explain::Line;
+use super::explain::NOWHERE;
 use super::relate::{REC_BOTH, Relater, Relation, STATE_NONE, Ternary};
 use super::related::Place;
+use super::sink::held;
 use super::*;
 use std::rc::Rc;
 
@@ -145,11 +147,13 @@ fn lines_of(chain: &Chain, level: u32) -> Vec<Line> {
         if !matches!(entry.code, 2202..=2205) {
             lines.push(Line {
                 code: entry.code,
-                args: entry
-                    .args
-                    .iter()
-                    .map(|arg| String::from_utf8_lossy(arg).into_owned())
-                    .collect(),
+                args: held(
+                    entry
+                        .args
+                        .iter()
+                        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+                        .collect(),
+                ),
                 level: level + lines.len() as u32,
             });
         }
@@ -211,7 +215,7 @@ pub(super) struct RelationDiagnostic {
     pub(super) at: Place,
     /// The first, at level 0, is the message.
     pub(super) lines: Vec<Line>,
-    pub(super) related: Vec<Related>,
+    pub(super) related: Vec<Reported>,
 }
 
 impl RelationDiagnostic {
@@ -224,7 +228,9 @@ impl RelationDiagnostic {
         }
         let mut diagnostic = diagnostic?;
         let related = self.related.into_iter();
-        diagnostic.related_information = related.filter_map(Related::into_reported).collect();
+        diagnostic.related_information = related
+            .filter(|related| related.file != NOWHERE.0)
+            .collect();
         Some(diagnostic)
     }
 }
@@ -414,8 +420,8 @@ impl<'p> Checker<'p> {
         head: Option<u32>,
     ) {
         let (original_source, original_target) = (source, target);
-        let source = self.normalized_for_report(original_source, false);
-        let target = self.normalized_for_report(original_target, true);
+        let source = self.normalized(original_source, false);
+        let target = self.normalized(original_target, true);
         self.report_error_results(r, original_source, original_target, source, target, head);
     }
 
@@ -427,7 +433,11 @@ impl<'p> Checker<'p> {
     }
 
     /// The `relatedInfo` of the error `checkTypeAssignableTo(source, target, node, head)` reports, whatever the `head`.
-    pub(super) fn assignability_related(&mut self, source: TypeId, target: TypeId) -> Vec<Related> {
+    pub(super) fn assignability_related(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Vec<Reported> {
         self.relation_lines_with_related(source, target, Relation::Assignable, None, 0)
             .1
     }
@@ -478,7 +488,7 @@ impl<'p> Checker<'p> {
         relation: Relation,
         head: Option<u32>,
         level: u32,
-    ) -> (Vec<Line>, Vec<Related>) {
+    ) -> (Vec<Line>, Vec<Reported>) {
         // No node: only the lines are asked for.
         let nowhere = (self.checking.unwrap_or(FileId(0)), 0, 0);
         match self.relation_diagnostic(source, target, relation, nowhere, head) {
@@ -646,38 +656,39 @@ impl<'p> Checker<'p> {
 
     /// `getSingleBaseForNonAugmentingSubtype`
     pub(super) fn single_base_for_non_augmenting_subtype(&mut self, ty: TypeId) -> Option<TypeId> {
-        if !self.has_single_base_for_non_augmenting_subtype(ty) {
-            return None;
-        }
-        let TypeData::Ref { target, .. } = self.data(ty) else {
+        let TypeData::Ref { target, .. } = *self.data(ty) else {
             return None;
         };
-        let args = self.type_arguments(ty);
-        let mut base = *self.base_types(*target).first()?;
-        let params = self.all_type_params_of_symbol(*target);
-        if !params.is_empty() && args.len() >= params.len() {
-            let mapper = self.mapper_from(&params, &args[..params.len()]);
-            base = self.instantiate(base, mapper);
+        // `CachedTypeKindEquivalentBaseType`
+        if let Some(known) = self.p.equivalent_base_types.get(&ty) {
+            return known;
         }
-        if args.len() > params.len()
-            && let Some(&this_argument) = args.last()
-        {
-            base = self.reference_with_this(base, this_argument);
+        if !self.is_non_augmenting_declaration(target) {
+            return self.p.equivalent_base_types.insert(ty, None);
         }
-        Some(base)
-    }
-
-    /// `getNormalizedType`. `normalized` leaves a class or an interface that adds nothing to the one type it extends as it is, which
-    /// makes no difference to the relation. It does to what the lines further in call the type.
-    pub(super) fn normalized_for_report(&mut self, ty: TypeId, writing: bool) -> TypeId {
-        let mut t = self.normalized(ty, writing);
-        for _ in 0..16 {
-            let Some(base) = self.single_base_for_non_augmenting_subtype(t) else {
-                break;
-            };
-            t = self.normalized(base, writing);
+        let bases = self.base_types(target);
+        let base = match bases[..] {
+            [mut base] if self.is_declared_as_reference(target, 0) => {
+                let args = self.type_arguments(ty);
+                let params = self.all_type_params_of_symbol(target);
+                if !params.is_empty() && args.len() >= params.len() {
+                    let mapper = self.mapper_from(&params, &args[..params.len()]);
+                    base = self.instantiate(base, mapper);
+                }
+                if args.len() > params.len()
+                    && let Some(&this_argument) = args.last()
+                {
+                    base = self.reference_with_this(base, this_argument);
+                }
+                Some(base)
+            }
+            _ => None,
+        };
+        // While the base types are being worked out there are none, which holds only for now.
+        if self.p.base_types.get(&target).is_none() {
+            return base;
         }
-        t
+        self.p.equivalent_base_types.insert(ty, base)
     }
 
     /// `reportErrorResults`
@@ -691,14 +702,18 @@ impl<'p> Checker<'p> {
         head: Option<u32>,
     ) {
         let source = if self.has_alias(original_source)
-            || self.has_single_base_for_non_augmenting_subtype(original_source)
+            || self
+                .single_base_for_non_augmenting_subtype(original_source)
+                .is_some()
         {
             original_source
         } else {
             source
         };
         let target = if self.has_alias(original_target)
-            || self.has_single_base_for_non_augmenting_subtype(original_target)
+            || self
+                .single_base_for_non_augmenting_subtype(original_target)
+                .is_some()
         {
             original_target
         } else {
@@ -740,11 +755,8 @@ impl<'p> Checker<'p> {
         {
             let constraint = self.type_to_string(target);
             let at = self.place_of_type_parameter_declaration(file, tp);
-            r.related_info.push(Related {
-                at: Some(at),
-                code: 2208,
-                args: vec![constraint],
-            });
+            r.related_info
+                .push(self.new_diagnostic(at, 2208, &[Arg::Text(&constraint)]));
         }
     }
 

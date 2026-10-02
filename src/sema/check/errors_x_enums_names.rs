@@ -11,12 +11,11 @@
 //!
 //! Comes after the passes that say that a name cannot be found: some of what they say is put in other words here.
 
-use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, ScopeKind};
 
 impl Checker<'_> {
-    pub(super) fn check_x_enums_names(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_x_enums_names(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.has_errors || hir.kind == FileKind::Json {
             return;
@@ -24,23 +23,23 @@ impl Checker<'_> {
         // `checkEnumDeclaration`, `initializeChecker` and `checkAndReportErrorForUsingTypeAsValue` apply to declaration files too. The
         // other passes only support source files.
         if hir.kind == FileKind::Declaration {
-            self.check_x_built_in_global_names(file, out);
-            self.check_x_mapped_types_meant(file, out);
+            self.check_x_built_in_global_names(file);
+            self.check_x_mapped_types_meant(file);
             return;
         }
-        self.check_x_const_enum_accesses(file, out);
-        self.check_x_built_in_global_names(file, out);
-        self.check_x_names_from_other_files(file, out);
-        self.check_x_words_for_missing_names(file, out);
-        self.check_x_mapped_types_meant(file, out);
-        self.check_x_umd_globals(file, out);
+        self.check_x_const_enum_accesses(file);
+        self.check_x_built_in_global_names(file);
+        self.check_x_names_from_other_files(file);
+        self.check_x_words_for_missing_names(file);
+        self.check_x_mapped_types_meant(file);
+        self.check_x_umd_globals(file);
     }
 
     // ───────────────────────────── `const` enums ─────────────────────────────
 
     /// `checkConstEnumAccess`: 2475, of every expression that is the object a `const` enum would be if there were one.
     /// `checkElementAccessExpression`: 2476.
-    fn check_x_const_enum_accesses(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_x_const_enum_accesses(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in 0..hir.exprs.len() {
             let parent = bound.expr_parent[i];
@@ -62,8 +61,7 @@ impl Checker<'_> {
                         if let Some(start) =
                             open_parenthesis(hir, index).or_else(|| error_start(self, file, index))
                         {
-                            out.push(Diagnostic { start, code: 2476 });
-                            self.note(start, self.error_end_of(file, index), 2476, Vec::new());
+                            self.error_at((file, start, self.error_end_of(file, index)), 2476, &[]);
                         }
                         // It is in error, and what is in error can be anything.
                         continue;
@@ -100,29 +98,25 @@ impl Checker<'_> {
                     || matches!(hir.exprs[i].kind, ExprKind::Ident(_))
                         && matches!(parent, Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)));
                 if !ok && let Some(start) = own {
-                    out.push(Diagnostic { start, code: 2475 });
                     let end = self.error_end_inside_parentheses(file, e);
-                    self.note(start, end, 2475, Vec::new());
+                    self.error_at((file, start, end), 2475, &[]);
                 }
                 continue;
             };
             // Each pair of parentheses is an expression of that type too, and only the outermost is where `e` seems to be.
-            out.extend(own.map(|start| Diagnostic { start, code: 2475 }));
+            self.reported
+                .extend(own.map(|start| Reported::bare((file, start, 0), 2475)));
             if let Some(start) = own {
                 let end = self.error_end_inside_parentheses(file, e);
-                self.note(start, end, 2475, Vec::new());
+                self.note(start, end, 2475, &[]);
             }
             let inside = self.start_inside_parentheses(file, e) as usize;
             let mut at = open as usize;
             let mut is_outermost = true;
             while at < inside && hir.text.get(at) == Some(&b'(') {
                 if !(is_outermost && is_object_of_access) {
-                    out.push(Diagnostic {
-                        start: at as u32,
-                        code: 2475,
-                    });
                     let end = self.end_of_expr_from(file, e, at as u32);
-                    self.note(at as u32, end, 2475, Vec::new());
+                    self.error_at((file, at as u32, end), 2475, &[]);
                 }
                 is_outermost = false;
                 at = skip_trivia(&hir.text, at + 1);
@@ -133,18 +127,19 @@ impl Checker<'_> {
     // ───────────────────────────── names that are taken ─────────────────────────────
 
     /// `initializeChecker`, `addUndefinedToGlobalsOrErrorOnRedeclaration`: 2397
-    fn check_x_built_in_global_names(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_x_built_in_global_names(&mut self, file: FileId) {
         let (bound, files) = (self.bound(file), self.files());
-        let mut report = |decl: Decl| {
-            let range = self.error_range_of_declaration(file, decl);
-            out.extend(range.map(|(start, _)| Diagnostic { start, code: 2397 }));
+        let report = |c: &mut Self, decl: Decl| {
+            let range = c.error_range_of_declaration(file, decl);
+            c.reported
+                .extend(range.map(|(start, _)| Reported::bare((file, start, 0), 2397)));
         };
         // A script has no `globalThis` of its own, of whatever kind.
         if !files.module(file).is_module()
             && let Some(symbol) = bound.lookup(bound.scopes[0].locals, known::globalThis)
         {
             for &decl in bound.symbols[symbol.idx()].decls.iter() {
-                report(decl);
+                report(self, decl);
             }
         }
         if let Some(&symbol) = files.globals.get(&known::undefined) {
@@ -155,7 +150,7 @@ impl Checker<'_> {
                     Decl::Class(_) | Decl::Interface(_) | Decl::Alias(_) | Decl::Enum(_)
                 );
                 if of == file && !is_type {
-                    report(decl);
+                    report(self, decl);
                 }
             }
         }
@@ -165,7 +160,7 @@ impl Checker<'_> {
 
     /// The names nothing in the file declares that mean what another file adds to an enum or a namespace they are written in.
     /// `Resolve`, at an enum declaration: 1281.
-    fn check_x_names_from_other_files(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_x_names_from_other_files(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         if hir.enums.is_empty() && hir.modules.is_empty() {
             return;
@@ -206,13 +201,13 @@ impl Checker<'_> {
                     continue;
                 }
                 let start = hir[e].pos;
-                out.retain(|d| d.start != start || !is_name_not_found(d.code));
+                self.reported
+                    .retain(|d| d.start != start || !is_name_not_found(d.code));
                 if let ScopeKind::Enum(en) = s.kind
                     && files.options.isolated_modules
                     && !hir[en].flags.contains(Flags::AMBIENT)
                     && files.decls(found).first().is_some_and(|d| d.0 != file)
                 {
-                    out.push(Diagnostic { start, code: 1281 });
                     let option = if files.options.verbatim_module_syntax {
                         "verbatimModuleSyntax"
                     } else {
@@ -220,7 +215,15 @@ impl Checker<'_> {
                     };
                     let name = self.atom_text(name);
                     let qualified = format!("{}.{name}", self.atom_text(hir[en].name));
-                    self.note(start, 0, 1281, vec![name, option.to_owned(), qualified]);
+                    self.error_at(
+                        (file, start, 0),
+                        1281,
+                        &[
+                            Arg::Text(&name),
+                            Arg::Text(&option.to_owned()),
+                            Arg::Text(&qualified),
+                        ],
+                    );
                 }
                 break;
             }
@@ -230,9 +233,9 @@ impl Checker<'_> {
     // ───────────────────────────── names that are not found ─────────────────────────────
 
     /// `getCannotFindNameDiagnosticForName`: 2311 18004, where nothing more telling is known than that the name cannot be found.
-    fn check_x_words_for_missing_names(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_x_words_for_missing_names(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !out.iter().any(|d| is_name_not_found(d.code)) {
+        if !self.reported.iter().any(|d| is_name_not_found(d.code)) {
             return;
         }
         for &(e, _) in &bound.free_idents {
@@ -250,7 +253,8 @@ impl Checker<'_> {
                 {
                     // `checkShorthandPropertyAssignment`: outside a destructuring pattern only the initializer is checked.
                     if !self.is_assignment_target(file, x) {
-                        out.retain(|d| d.start != start || !is_name_not_found(d.code));
+                        self.reported
+                            .retain(|d| d.start != start || !is_name_not_found(d.code));
                         continue;
                     }
                     true
@@ -258,7 +262,11 @@ impl Checker<'_> {
                 Parent::Expr(_) => false,
                 _ => is_shorthand(parent),
             };
-            let Some(said) = out.iter().position(|d| d.start == start && d.code == 2304) else {
+            let Some(said) = self
+                .reported
+                .iter()
+                .position(|d| d.start == start && d.code == 2304)
+            else {
                 continue;
             };
             if is_parenthesized(hir, e) {
@@ -267,10 +275,10 @@ impl Checker<'_> {
             if self.files().atoms.bytes(name) == b"await"
                 && matches!(parent, Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(_)))
             {
-                out[said].code = 2311;
+                self.reported[said].code = 2311;
             } else if names_shorthand_property {
-                out[said].code = 18004;
-                self.note(start, 0, 18004, vec![self.atom_text(name)]);
+                self.reported[said].code = 18004;
+                self.note(start, 0, 18004, &[Arg::Atom(name)]);
             }
         }
     }
@@ -278,9 +286,9 @@ impl Checker<'_> {
     /// `checkAndReportErrorForUsingTypeAsValue` with `maybeMappedType`: 2690 replaces the 2693 at `K` in `{ [K]: T }` and in
     /// `{ a: T = K }`, where `{ [P in K]: T }` may have been meant. `onFailedToResolveSymbol` stops at the first handler that reports
     /// and does not run for a name that resolves to a value, so a `K` without a 2693 is left alone.
-    fn check_x_mapped_types_meant(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_x_mapped_types_meant(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !out.iter().any(|d| d.code == 2693) {
+        if !self.reported.iter().any(|d| d.code == 2693) {
             return;
         }
         for i in 0..hir.types.len() {
@@ -314,19 +322,22 @@ impl Checker<'_> {
                     continue;
                 };
                 let start = hir[e].pos;
-                if !out.iter().any(|d| d.start == start && d.code == 2693)
+                if !self
+                    .reported
+                    .iter()
+                    .any(|d| d.start == start && d.code == 2693)
                     || !self.is_union_of_property_names(file, scope, name)
                 {
                     continue;
                 }
-                for d in out.iter_mut() {
+                for d in self.reported.iter_mut() {
                     if d.start == start && d.code == 2693 {
                         d.code = 2690;
                     }
                 }
                 let name = self.atom_text(name);
                 let parameter = if name == "K" { "P" } else { "K" };
-                self.note(start, 0, 2690, vec![name, parameter.to_owned()]);
+                self.note(start, 0, 2690, &[Arg::Text(&name), Arg::Text(parameter)]);
             }
         }
     }
@@ -371,7 +382,7 @@ impl Checker<'_> {
     // ───────────────────────────── names that are found where they should not be looked for ─────────────────────────────
 
     /// `onSuccessfullyResolvedSymbol`: 2686, the name a module goes by globally is for scripts.
-    fn check_x_umd_globals(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_x_umd_globals(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         // NEEDS: `Options::allow_umd_global_access` (`allowUmdGlobalAccess`), see requests/X-enums_names.md
         if files.options.allow_umd_global_access || !files.module(file).is_module() {
@@ -391,10 +402,7 @@ impl Checker<'_> {
                 && !bound.is_unchecked(e.idx())
                 && means_umd_global(name, scope, SymFlags::VALUE)
             {
-                out.push(Diagnostic {
-                    start: hir[e].pos,
-                    code: 2686,
-                });
+                self.error_at((file, hir[e].pos, 0), 2686, &[]);
             }
         }
         // `import a = N.b`
@@ -436,10 +444,7 @@ impl Checker<'_> {
             }
             let start = skip_trivia(text, equals + 1);
             if text[start..].starts_with(files.atoms.bytes(first)) {
-                out.push(Diagnostic {
-                    start: start as u32,
-                    code: 2686,
-                });
+                self.error_at((file, start as u32, 0), 2686, &[]);
             }
         }
         // `export { N }`, `export type { N }`: it is declared in a module, so that it is not the module's own is not what is wrong.
@@ -455,11 +460,9 @@ impl Checker<'_> {
                     scope,
                     SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
                 ) {
-                    out.retain(|d| d.start != item.local_pos || d.code != 2661);
-                    out.push(Diagnostic {
-                        start: item.local_pos,
-                        code: 2686,
-                    });
+                    self.reported
+                        .retain(|d| d.start != item.local_pos || d.code != 2661);
+                    self.error_at((file, item.local_pos, 0), 2686, &[]);
                 }
             }
         }
@@ -496,29 +499,24 @@ impl Checker<'_> {
                 continue;
             }
             if hir[jsx].tag.is_none() {
-                out.push(Diagnostic {
-                    start: x.pos,
-                    code: 2686,
-                });
                 let looked_up = if is_umd_global(fragment_factory) {
                     fragment_factory
                 } else {
                     factory
                 };
                 let end = hir[jsx].opening_end;
-                self.note(x.pos, end, 2686, vec![self.atom_text(looked_up)]);
+                self.error_at((file, x.pos, end), 2686, &[Arg::Atom(looked_up)]);
             } else if of_elements {
                 // The name of the tag, which follows the `<`.
                 let start = skip_trivia(&hir.text, x.pos as usize + 1);
-                out.push(Diagnostic {
-                    start: start as u32,
-                    code: 2686,
-                });
-                self.note(
-                    start as u32,
-                    jsx_tag_name_end(&hir.text, start) as u32,
+                self.error_at(
+                    (
+                        file,
+                        start as u32,
+                        jsx_tag_name_end(&hir.text, start) as u32,
+                    ),
                     2686,
-                    vec![self.atom_text(factory)],
+                    &[Arg::Atom(factory)],
                 );
             }
         }

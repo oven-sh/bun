@@ -598,44 +598,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let pattern = Pattern {
             data: PatternData::Identifier(self.token_text()),
             loc: self.lexer.loc(),
+            end: self.lexer.range().end(),
         };
         let syntax = self.type_syntax_mut();
         syntax.last_binding = syntax.ast.add_pattern_node(pattern);
     }
 
-    /// `{ name }`
+    /// `{ name }`, after the name.
     pub(crate) fn emit_shorthand_binding(&mut self, property: &PatternProperty) {
+        let end = self.lexer.full_start();
         let syntax = self.type_syntax_mut();
         syntax.last_binding = match property.key {
-            PropertyKey::Name(name) => syntax
-                .ast
-                .add_pattern(PatternData::Identifier(name), property.loc),
+            PropertyKey::Name(name) => {
+                (syntax.ast).add_pattern(PatternData::Identifier(name), property.loc, end)
+            }
             _ => PatternId::NONE,
         };
     }
 
     /// Called on the comma of an elided array element.
     pub(crate) fn emit_array_hole(&mut self) -> PatternElement {
-        let loc = self.lexer.loc();
+        let (loc, end) = (self.lexer.loc(), self.lexer.full_start());
         PatternElement {
             pattern: self
                 .type_syntax_mut()
                 .ast
-                .add_pattern(PatternData::Missing, loc),
+                .add_pattern(PatternData::Missing, loc, end),
             default: None,
             is_rest: false,
             loc,
+            end,
         }
     }
 
     pub(crate) fn emit_array_binding(&mut self, elements: &[PatternElement], pos: u32) {
+        let end = self.lexer.full_start();
         let syntax = self.type_syntax_mut();
         syntax.last_binding = PatternId::NONE;
         if elements.iter().all(|element| element.pattern.is_some()) {
             let elements = syntax.ast.add_pattern_elements(elements);
-            syntax.last_binding = syntax
-                .ast
-                .add_pattern(PatternData::Array(elements), loc(pos));
+            syntax.last_binding =
+                syntax
+                    .ast
+                    .add_pattern(PatternData::Array(elements), loc(pos), end);
         }
     }
 
@@ -656,6 +661,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn emit_object_binding(&mut self, properties: &[PatternProperty], pos: u32) {
+        let end = self.lexer.full_start();
         let syntax = self.type_syntax_mut();
         syntax.last_binding = PatternId::NONE;
         if properties.iter().all(|property| {
@@ -663,9 +669,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (property.is_rest || !matches!(property.key, PropertyKey::None))
         }) {
             let properties = syntax.ast.add_pattern_properties(properties);
-            syntax.last_binding = syntax
-                .ast
-                .add_pattern(PatternData::Object(properties), loc(pos));
+            syntax.last_binding =
+                syntax
+                    .ast
+                    .add_pattern(PatternData::Object(properties), loc(pos), end);
         }
     }
 
@@ -873,8 +880,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .last()
             .filter(|accessor| kept.is_complete && accessor.signature.is_some())
         {
+            let end = self.lexer.full_start();
             self.type_syntax_mut().ast[accessor.signature].body = Some(FunctionBody {
                 loc: body.loc,
+                end,
                 stmts: body.stmts,
             });
         }
@@ -1018,7 +1027,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     made.flags |= flags;
                     made.modifiers = modifiers;
                     let ast = &mut self.type_syntax_mut().ast;
-                    let pattern = ast.add_pattern(PatternData::Identifier(name), name_loc);
+                    let name_end = Loc {
+                        start: name_loc.start + name.len() as i32,
+                    };
+                    let pattern =
+                        ast.add_pattern(PatternData::Identifier(name), name_loc, name_end);
                     let params = ast.add_params(&[Param {
                         pattern,
                         ty: key_type,

@@ -5,10 +5,11 @@
 //! the body of an arrow function that is to blame. And what is said: that something is missing, that something is too much,
 //! or just that it does not fit.
 
-use super::errors::Diagnostic;
+use super::explain::NOWHERE;
 use super::explain_relation::RelationDiagnostic;
 use super::relate::Relation;
 use super::related::Place;
+use super::sink::held;
 use super::*;
 use crate::bind::{FnOwner, Parent};
 
@@ -24,6 +25,8 @@ fn unwrap_unary_tuples(
         name: Atom::NONE,
         optional: false,
         rest: false,
+        start: hir[ty].pos,
+        end: hir[ty].end,
     };
     let is_plain =
         |elem: &TupleElem| elem.ty.is_some() && elem.name.is_none() && !elem.optional && !elem.rest;
@@ -67,7 +70,7 @@ fn is_covariant_below(
 }
 
 impl Checker<'_> {
-    pub(super) fn check_assignments(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_assignments(&mut self, file: FileId) {
         let hir = self.hir(file);
         let bound = self.bound(file);
         let strict = self.p.files.options.strict_null_checks;
@@ -209,7 +212,7 @@ impl Checker<'_> {
             let target = self.type_from_node(file, node);
             let source = self.type_of_expr(file, value);
             // `checkExpressionForMutableLocation`, where `target` is what is expected.
-            let source = if self.in_const_context(file, value) {
+            let source = if self.is_const_context(file, value) {
                 self.regular(source)
             } else if matches!(hir[value].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
                 source
@@ -227,9 +230,9 @@ impl Checker<'_> {
                 None,
             );
         }
-        self.check_assertions(file, out);
-        self.check_literals_against_patterns(file, out);
-        self.check_redeclared_variables(file, out);
+        self.check_assertions(file);
+        self.check_literals_against_patterns(file);
+        self.check_redeclared_variables(file);
         self.check_type_argument_constraints(file);
         self.check_mapped_type_keys(file);
         // `checkExportAssignment`: what is exported is held against the type of its `@type` tag.
@@ -327,23 +330,11 @@ impl Checker<'_> {
             {
                 continue;
             }
-            // `checkIdentifier`: in a function `arguments` is its arguments object, whatever else goes by the name further out.
-            let is_arguments = bound.is_arguments_object(reference);
             // `checkExpression(left)`: what cannot be written to has the error type, and anything goes into that.
             let left = self.type_of_expr(file, target);
             if self.is_error_type(left) {
                 continue;
             }
-            let wanted = if reference != target {
-                // What it is asserted to be.
-                let asserted = self.type_of_expr(file, target);
-                asserted
-            } else if is_arguments {
-                // `IArguments`. In the initializer of a property it is an error, and what is in error can be anything.
-                self.type_of_expr(file, target)
-            } else {
-                self.declared_type_of_reference(file, target)
-            };
             let source = self.type_of_expr(file, value);
             // `checkAssignmentOperator`: `undefined` assigned to a CommonJS export with more than one declaration is not checked. The
             // declarations counted are those of the symbol the left side resolves to.
@@ -364,12 +355,11 @@ impl Checker<'_> {
             self.check_assignable_with_end(
                 file,
                 source,
-                wanted,
+                left,
                 self.start_of(file, target),
                 self.end_of_expr(file, target),
                 value,
                 2322,
-                out,
             );
         }
     }
@@ -418,14 +408,7 @@ impl Checker<'_> {
         // `getContextuallyTypedParameterType` sees the callee's signature before its type arguments are inferred. The adjustments of
         // `assignContextualParameterTypes` and `assignParameterType` only reach the symbol's type.
         let index = (p.0 - hir[func].params.start) as usize;
-        let expected = match self.open_contextual_signature(file, func) {
-            Some(open) => {
-                let params = self.sig_params(open);
-                self.param_type_at(&params, index)
-            }
-            None => self.contextual_param_type(file, func, index),
-        };
-        match expected {
+        match self.contextual_param_type(file, func, index) {
             Some(ty) if is_optional => self.optional(ty),
             Some(ty) => ty,
             None => resolved,
@@ -455,7 +438,7 @@ impl Checker<'_> {
     }
 
     /// `checkAssertionDeferred`: 2352, `x as T` where neither is anything like the other, or what is said in its place.
-    fn check_assertions(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_assertions(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let by_kind = self.exprs_by_kind(file);
         for &assertion in by_kind.of(ExprTag::As) {
@@ -490,13 +473,13 @@ impl Checker<'_> {
                 )
             };
             let comparable = Relation::Comparable;
-            self.report_unrelated(given, target, comparable, (at, end), 2352, out);
+            self.report_unrelated(given, target, comparable, (at, end), 2352);
         }
     }
 
     /// `checkObjectLiteral`, `contextualTypeHasPattern`: what a pattern takes apart may only have what the pattern takes out of it.
     /// 2353.
-    fn check_literals_against_patterns(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_literals_against_patterns(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_pattern =
             |pat: PatId| matches!(hir[pat].kind, PatKind::Object(_) | PatKind::Array(_));
@@ -507,7 +490,7 @@ impl Checker<'_> {
                 && bound.var_stmt[d].is_some()
                 && is_pattern(decl.pat)
             {
-                self.check_literals_expected_by_pattern(file, decl.init, out);
+                self.check_literals_expected_by_pattern(file, decl.init);
             }
         }
         for p in 0..hir.params.len() {
@@ -519,7 +502,7 @@ impl Checker<'_> {
                 && func.is_some()
                 && !matches!(hir[func].body, FnBody::None)
             {
-                self.check_literals_expected_by_pattern(file, param.default, out);
+                self.check_literals_expected_by_pattern(file, param.default);
             }
         }
         // The default of an element that is a pattern itself.
@@ -549,14 +532,14 @@ impl Checker<'_> {
             let is_known = self.is_known(taken_apart);
             for (pat, default) in defaults {
                 if is_known {
-                    self.check_literals_expected_by_pattern(file, default, out);
+                    self.check_literals_expected_by_pattern(file, default);
                 }
                 // `getTypeFromBindingElement`: for what the whole pattern implies, it is looked at as what its own pattern implies.
                 if is_whole_implied
                     && let Some(implied) = self.context_implied_by_pattern(file, pat)
                 {
                     self.contextual.push((file, default, implied));
-                    self.check_literals_expected_by_pattern(file, default, out);
+                    self.check_literals_expected_by_pattern(file, default);
                     self.contextual.pop();
                 }
             }
@@ -580,7 +563,7 @@ impl Checker<'_> {
             }
             let expected = self.type_of_expr(file, target);
             self.contextual.push((file, value, expected));
-            self.check_literals_expected_by_pattern(file, value, out);
+            self.check_literals_expected_by_pattern(file, value);
             self.contextual.pop();
         }
     }
@@ -618,33 +601,28 @@ impl Checker<'_> {
     /// The object literals in `e` that what is expected of `e` comes down to as it is (`getContextualType`): through literals, `?:`,
     /// `&&`, `,` and the left of `||` and `??`, and into a function that is called on the spot. What a call infers from what is
     /// expected of it is widened (`getCovariantInference`) and no pattern any more.
-    fn check_literals_expected_by_pattern(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_literals_expected_by_pattern(&mut self, file: FileId, e: ExprId) {
         if e.is_none() {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[e].kind {
             ExprKind::Object(props) => {
-                self.check_literal_against_pattern(file, e, props, out);
+                self.check_literal_against_pattern(file, e, props);
                 for p in props.iter() {
                     if matches!(hir[p].kind, PropKind::Init | PropKind::Spread) {
-                        self.check_literals_expected_by_pattern(file, hir[p].value, out);
+                        self.check_literals_expected_by_pattern(file, hir[p].value);
                     }
                 }
             }
             ExprKind::Array(items) => {
                 for item in hir.ids(items) {
-                    self.check_literals_expected_by_pattern(file, item, out);
+                    self.check_literals_expected_by_pattern(file, item);
                 }
             }
             ExprKind::Cond { yes, no, .. } => {
-                self.check_literals_expected_by_pattern(file, yes, out);
-                self.check_literals_expected_by_pattern(file, no, out);
+                self.check_literals_expected_by_pattern(file, yes);
+                self.check_literals_expected_by_pattern(file, no);
             }
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Comma,
@@ -657,18 +635,18 @@ impl Checker<'_> {
                 ..
             }
             | ExprKind::NonNull(x)
-            | ExprKind::AsConst(x) => self.check_literals_expected_by_pattern(file, x, out),
+            | ExprKind::AsConst(x) => self.check_literals_expected_by_pattern(file, x),
             // `getContextualReturnType`, `GetImmediatelyInvokedFunctionExpression`
             ExprKind::Call(c) => {
                 let ExprKind::Fn(func) = hir[hir[c].callee].kind else {
                     return;
                 };
                 match hir[func].body {
-                    FnBody::Expr(body) => self.check_literals_expected_by_pattern(file, body, out),
+                    FnBody::Expr(body) => self.check_literals_expected_by_pattern(file, body),
                     _ => {
                         for s in bound.ids(bound.fns[func.idx()].returns) {
                             if let StmtKind::Return(returned) = hir[s].kind {
-                                self.check_literals_expected_by_pattern(file, returned, out);
+                                self.check_literals_expected_by_pattern(file, returned);
                             }
                         }
                     }
@@ -679,15 +657,10 @@ impl Checker<'_> {
     }
 
     /// The literal `e`, if what is expected of it is what a pattern implies.
-    fn check_literal_against_pattern(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        props: Span<PropId>,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    fn check_literal_against_pattern(&mut self, file: FileId, e: ExprId, props: Span<PropId>) {
         let hir = self.hir(file);
-        let Some(context) = self.contextual_type_for_object_literal(file, e) else {
+        let Some(context) = self.apparent_type_of_contextual_type(file, e, ContextFlags::empty())
+        else {
             return;
         };
         // `Some(false)`: made from a pattern all of whose names are known.
@@ -719,17 +692,15 @@ impl Checker<'_> {
             };
             // `getPropertyOfType`: what every object has counts.
             if !name.is_some_and(|name| self.property_of_type(&members, name).is_some()) {
-                out.push(Diagnostic {
-                    start: prop.pos,
-                    code: 2353,
-                });
                 let end = self.end_of_prop_name(file, p);
-                self.explain_to(prop.pos, end, 2353, |c| {
-                    vec![
-                        c.source_text(file, prop.pos, end),
-                        c.type_to_string(context),
-                    ]
-                });
+                self.error_at(
+                    (file, prop.pos, end),
+                    2353,
+                    &[
+                        Arg::Text(&self.source_text(file, prop.pos, end)),
+                        Arg::Type(context),
+                    ],
+                );
             }
         }
     }
@@ -786,7 +757,7 @@ impl Checker<'_> {
     }
 
     /// `checkVariableLikeDeclaration`, of a declaration that is not the first of its symbol: 2403, `var x: A` and later `var x: B`.
-    fn check_redeclared_variables(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_redeclared_variables(&mut self, file: FileId) {
         use crate::bind::{Decl, SymbolId};
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
@@ -854,15 +825,16 @@ impl Checker<'_> {
                     continue;
                 }
                 let start = self.hir(of)[pat].pos;
-                out.push(Diagnostic { start, code: 2403 });
                 let end = self.end_of_pat(of, pat);
-                self.explain_to(start, end, 2403, |c| {
-                    vec![
-                        c.source_text(of, start, end),
-                        c.type_to_string(declared),
-                        c.type_to_string(here),
-                    ]
-                });
+                self.error_at(
+                    (file, start, end),
+                    2403,
+                    &[
+                        Arg::Text(&self.source_text(of, start, end)),
+                        Arg::Type(declared),
+                        Arg::Type(here),
+                    ],
+                );
                 let (first_of, first_name) = value_declaration;
                 self.relate(start, 2403, |c| {
                     // `GetErrorRangeForNode`: all of a parameter, the name of anything else.
@@ -874,11 +846,11 @@ impl Checker<'_> {
                         ),
                         _ => c.place_of_token(first_of, c.hir(first_of)[first_name].pos),
                     };
-                    vec![super::explain::Related {
-                        at: Some(at),
-                        code: 6203,
-                        args: vec![c.source_text(of, start, end)],
-                    }]
+                    vec![Reported::new(
+                        at,
+                        6203,
+                        held(vec![c.source_text(of, start, end)]),
+                    )]
                 });
             }
         }
@@ -1349,23 +1321,20 @@ impl Checker<'_> {
         }
     }
 
-    /// `IsJSDocTypeAssertion`: where the parenthesis opens that a `@type` tag makes a type assertion of, if `e` is that assertion.
+    /// `IsJSDocTypeAssertion`: the parentheses that a `@type` tag makes a type assertion of, if `e` is that assertion.
     /// `getEffectiveCheckNode` stops at it (`OEKExcludeJSDocTypeAssertion`).
-    pub(super) fn start_of_jsdoc_type_assertion(&self, file: FileId, e: ExprId) -> Option<u32> {
+    pub(super) fn range_of_jsdoc_type_assertion(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<(u32, u32)> {
         let hir = self.hir(file);
-        let ExprKind::As { ty, .. } = hir[e].kind else {
-            return None;
-        };
-        let pos = hir[ty].pos;
-        let after = hir
-            .jsdoc_comments
-            .partition_point(|comment| comment.0 <= pos);
-        let &(_, comment_end) = hir.jsdoc_comments.get(after.checked_sub(1)?)?;
-        if pos >= comment_end {
-            return None;
+        match hir[e].kind {
+            ExprKind::As { ty, .. } if hir.is_in_jsdoc(hir[ty].pos) => {
+                hir::parentheses_around(hir, e).first().map(|p| (p.1, p.2))
+            }
+            _ => None,
         }
-        let open = self.skip_trivia_from(file, comment_end);
-        (hir.text.get(open as usize) == Some(&b'(')).then_some(open)
     }
 
     /// `checkReturnStatement`, of the `return e` at `s` in `container`: 2408, 2409, or that what is returned does not fit.
@@ -1378,7 +1347,7 @@ impl Checker<'_> {
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `GetErrorRangeForNode`: the keyword.
-        let node = self.place_of_token(file, hir[s].pos);
+        let node = (file, hir[s].start, hir[s].start + b"return".len() as u32);
         if e.is_none() && !self.p.files.options.strict_null_checks {
             let returned = self.return_type_of_fn(file, container);
             if !returned.is_never() {
@@ -1387,7 +1356,7 @@ impl Checker<'_> {
                     && !self
                         .is_unwrapped_return_type_undefined_void_or_any(file, container, returned)
                 {
-                    self.error(node, 7030, &[]);
+                    self.error_at(node, 7030, &[]);
                 }
                 return;
             }
@@ -1395,7 +1364,7 @@ impl Checker<'_> {
         match hir[container].kind {
             FnKind::Setter => {
                 if e.is_some() {
-                    self.error(node, 2408, &[]);
+                    self.error_at(node, 2408, &[]);
                 }
             }
             // What a constructor returns takes the place of the instance.
@@ -1416,7 +1385,7 @@ impl Checker<'_> {
                         None,
                         None,
                     ) {
-                        self.error(node, 2409, &[]);
+                        self.error_at(node, 2409, &[]);
                     }
                 }
             }
@@ -1538,8 +1507,8 @@ impl Checker<'_> {
         }
         let error_node = if in_return_statement && !in_conditional_expression {
             node
-        } else if let Some(open) = self.start_of_jsdoc_type_assertion(file, e) {
-            (file, open, self.end_of_bracket_at(file, open))
+        } else if let Some((open, end)) = self.range_of_jsdoc_type_assertion(file, e) {
+            (file, open, end)
         } else {
             (
                 file,
@@ -1569,7 +1538,6 @@ impl Checker<'_> {
         end: u32,
         e: ExprId,
         head: u32,
-        out: &mut Vec<Diagnostic>,
     ) -> bool {
         let (at, expr, mut diags) = ((file, at, end), e.some().map(|e| (file, e)), Vec::new());
         let head = Some(head).filter(|&head| head != 2322);
@@ -1583,7 +1551,7 @@ impl Checker<'_> {
             head,
             output,
         );
-        self.put_out(diags, out);
+        self.put_out(diags);
         is_assignable
     }
 
@@ -1644,17 +1612,9 @@ impl Checker<'_> {
         is_assignable
     }
 
-    /// What went to a `diagnosticOutput`, for who still has an `out`.
-    fn put_out(&mut self, reported: Vec<Reported>, out: &mut Vec<Diagnostic>) {
-        for diagnostic in reported {
-            out.push(Diagnostic {
-                start: diagnostic.start,
-                code: diagnostic.code,
-            });
-            if self.explains {
-                self.notes.borrow_mut().push(diagnostic.into());
-            }
-        }
+    /// What went to a `diagnosticOutput`.
+    fn put_out(&mut self, reported: Vec<Reported>) {
+        self.reported.extend(reported);
     }
 
     /// `elaborateError`: takes the complaint that `e`, of type `source`, does not fit `target` to the part of `e` that is to blame.
@@ -1908,7 +1868,7 @@ impl Checker<'_> {
                     }
                 }
                 // The mode goes down with the elements.
-                ExprKind::Array(inner_items) if !self.in_const_context(file, item) => {
+                ExprKind::Array(inner_items) if !self.is_const_context(file, item) => {
                     elems.push(self.forced_tuple(file, inner_items, is_spread)?);
                     flags.push(ElemFlags::REQUIRED);
                 }
@@ -1917,12 +1877,12 @@ impl Checker<'_> {
                     let ty = self.type_of_expr(file, item);
                     elems.push(if is_spread {
                         self.widen_literal_for_context(ty, None)
-                    } else if self.in_const_context(file, item) {
+                    } else if self.is_const_context(file, item) {
                         self.regular(ty)
                     } else if matches!(hir[item].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
                         ty
                     } else {
-                        let expected = self.contextual_type(file, item);
+                        let expected = self.contextual_type(file, item, ContextFlags::empty());
                         self.widen_literal_for_context(ty, expected)
                     });
                     flags.push(ElemFlags::REQUIRED);
@@ -2005,7 +1965,7 @@ impl Checker<'_> {
                 }
                 _ => self.type_of_expr(file, next),
             };
-            let specific = if self.in_const_context(file, next) {
+            let specific = if self.is_const_context(file, next) {
                 self.regular(written)
             } else if matches!(
                 self.hir(file)[next].kind,
@@ -2047,7 +2007,7 @@ impl Checker<'_> {
         let related = self.expected_property(target, name);
         diagnostic
             .related_information
-            .extend(related.and_then(super::explain::Related::into_reported));
+            .extend(related.filter(|related| related.file != NOWHERE.0));
         self.report_diagnostic(diagnostic, diagnostic_output);
         true
     }
@@ -2212,7 +2172,7 @@ impl Checker<'_> {
         let related = related.into_iter();
         diagnostic
             .related_information
-            .extend(related.filter_map(super::explain::Related::into_reported));
+            .extend(related.filter(|related| related.file != NOWHERE.0));
         self.report_diagnostic(diagnostic, diagnostic_output);
         true
     }
@@ -2226,14 +2186,10 @@ impl Checker<'_> {
         given: TypeId,
         target: TypeId,
         wanted: TypeId,
-    ) -> Vec<super::explain::Related> {
+    ) -> Vec<Reported> {
         let mut related = Vec::new();
         if let Some(signature) = self.first_declaration_of_type_symbol(target) {
-            related.push(super::explain::Related {
-                at: Some(signature),
-                code: 6502,
-                args: Vec::new(),
-            });
+            related.push(Reported::bare(signature, 6502));
         }
         if !self.hir(file)[func].flags.contains(Flags::ASYNC)
             && self.type_of_property(given, known::then).is_none()
@@ -2249,11 +2205,7 @@ impl Checker<'_> {
             self.relation_too_complex = too_complex;
             if is_meant_to_be_async {
                 let (start, end) = self.error_range_of_fn(file, func);
-                related.push(super::explain::Related {
-                    at: Some((file, start, end)),
-                    code: 1356,
-                    args: Vec::new(),
-                });
+                related.push(Reported::bare((file, start, end), 1356));
             }
         }
         related
@@ -2269,7 +2221,6 @@ impl Checker<'_> {
         at: u32,
         end: u32,
         head: u32,
-        out: &mut Vec<Diagnostic>,
     ) {
         // 2678 is what `reportRelationError` says without a head message under the comparable relation.
         let relation = if head == 2678 {
@@ -2277,7 +2228,7 @@ impl Checker<'_> {
         } else {
             Relation::Assignable
         };
-        self.report_unrelated(source, target, relation, (at, end), head, out);
+        self.report_unrelated(source, target, relation, (at, end), head);
     }
 
     /// `checkTypeRelatedToEx(source, target, relation, errorNode, headMessage)`, of two types that the caller has found not to be
@@ -2289,8 +2240,7 @@ impl Checker<'_> {
         relation: Relation,
         place: (u32, u32),
         head: u32,
-        out: &mut Vec<Diagnostic>,
-    ) -> Option<Diagnostic> {
+    ) -> Option<(u32, u32)> {
         let place = (self.checking?, place.0, place.1);
         let (is_related, diagnostic) =
             self.relation_diagnostic(source, target, relation, place, Some(head));
@@ -2310,26 +2260,15 @@ impl Checker<'_> {
             return None;
         }
         let first = lines.remove(0);
-        let said = Diagnostic {
-            start,
-            code: first.code,
-        };
-        out.push(said);
-        self.note(start, end, said.code, first.args);
-        self.explain_chain(start, said.code, |_| lines);
-        self.relate(start, said.code, |_| related);
-        Some(said)
-    }
-
-    /// `getSingleBaseForNonAugmentingSubtype`, whether there is one: a class or an interface that extends one type and adds nothing
-    /// to it. It is compared as that type.
-    pub(super) fn has_single_base_for_non_augmenting_subtype(&mut self, ty: TypeId) -> bool {
-        let TypeData::Ref { target, .. } = *self.data(ty) else {
-            return false;
-        };
-        self.is_non_augmenting_declaration(target)
-            && self.base_types(target).len() == 1
-            && self.is_declared_as_reference(target, 0)
+        let code = first.code;
+        self.add_diagnostic(Reported::new(
+            (self.checking.unwrap(), start, end),
+            code,
+            first.args,
+        ));
+        self.explain_chain(start, code, |_| lines);
+        self.relate(start, code, |_| related);
+        Some((start, code))
     }
 
     /// What `getSingleBaseForNonAugmentingSubtype` tells from the declarations of the class or interface `target`: the symbol has no
@@ -2387,7 +2326,7 @@ impl Checker<'_> {
     /// Whether the declared type of the class or interface `sym` is a type reference, one with a `this` type
     /// (`getDeclaredTypeOfClassOrInterface`): all are but the interfaces without type parameters, their own or from around them,
     /// that are sure not to mention `this` (`isThislessInterface`).
-    fn is_declared_as_reference(&mut self, sym: Sym, depth: u32) -> bool {
+    pub(super) fn is_declared_as_reference(&mut self, sym: Sym, depth: u32) -> bool {
         use crate::bind::Decl;
         if depth > 32 || self.files().flags(sym).contains(SymFlags::CLASS) {
             return true;

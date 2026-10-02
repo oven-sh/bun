@@ -462,7 +462,7 @@ impl<'p> Printer<'_, 'p> {
                 constant,
                 regular,
             } => {
-                if self.c.is_const_by_contextual_type(file, *at, true) {
+                if self.c.is_const_context(file, *at) {
                     self.pseudo_type_to_node(file, constant)
                 } else {
                     self.pseudo_type_to_node(file, regular)
@@ -549,8 +549,9 @@ impl<'p> Printer<'_, 'p> {
                         };
                         Node::simple(quoted(self.c.files().atoms.bytes(value), quote, false))
                     }
-                    ExprKind::Template { texts, .. } if texts.len() == 1 => {
-                        Node::simple(quoted(&self.text(hir.id_at(texts, 0)), b'`', false))
+                    ExprKind::Template { exprs } if exprs.is_empty() => {
+                        let text = hir.id_at(hir.template_texts(exprs), 0);
+                        Node::simple(quoted(&self.text(text), b'`', false))
                     }
                     // A number is written in its canonical form, as its type is.
                     _ => self.type_of_pseudo_type_to_node(file, pt),
@@ -717,7 +718,7 @@ impl<'p> Printer<'_, 'p> {
         };
         let hir = self.c.hir(file);
         let literal = self.c.bound(file).prop_owner[first.prop.idx()];
-        let is_const = literal.is_some() && self.c.is_const_by_contextual_type(file, literal, true);
+        let is_const = literal.is_some() && self.c.is_const_context(file, literal);
         let saved_flags = self.flags;
         self.flags |= IN_OBJECT_TYPE_LITERAL;
         let mut members = Vec::with_capacity(elements.len());

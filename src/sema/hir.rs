@@ -5,7 +5,7 @@
 //! from then on. Positions are byte offsets into the source.
 
 use crate::atom::Atom;
-pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, ToNode};
+pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, Places, ToNode};
 use std::marker::PhantomData;
 
 macro_rules! define_id {
@@ -286,8 +286,6 @@ bitflags::bitflags! {
         const PARAMETER_PROPERTY = 1 << 20;
         /// A member whose name is written as a string or a number: `"a": T`, `0: T`.
         const LITERAL_NAME = 1 << 21;
-        /// A function whose body was written where none belongs (`declare function f() { .. }`) and is not kept: `body` is `None` all the same.
-        const BODY_DROPPED = 1 << 22;
         /// A member whose name is written as a string: `"0": T`, `["0"]: T`.
         const STRING_NAME = 1 << 23;
         /// A function whose `{` is missing. tsgo gives it a zero-width block (`NodeIsMissing(body)`, but `body != nil`): `body` is
@@ -358,6 +356,8 @@ pub enum BinOp {
 pub struct Expr {
     pub kind: ExprKind,
     pub pos: u32,
+    /// `node.End()`, not counting parentheses around it.
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -374,10 +374,10 @@ pub enum ExprKind {
     String(Atom),
     BigInt(Atom),
     Regex,
-    /// The substitutions; `texts` has one more element than there are of them.
+    /// The substitutions. The texts between them, one more than there are of them, come right after them in [`File::ids`]:
+    /// [`File::template_texts`].
     Template {
         exprs: IdList<ExprId>,
-        texts: IdList<Atom>,
     },
     /// The tag is the callee, what is substituted the arguments.
     TaggedTemplate(CallId),
@@ -443,10 +443,9 @@ pub enum ExprKind {
     },
     Jsx(JsxId),
     /// `import(specifier, ..)`. `args` is never empty: the first is the specifier, a missing expression if there is none.
-    /// `checkImportCallExpression` never looks at `type_args`, which are an error (1326).
+    /// Type arguments are an error (1326): [`File::type_args_of_import_call`].
     ImportCall {
         args: IdList<ExprId>,
-        type_args: IdList<TypeNodeId>,
     },
     ImportMeta,
     /// `new.target`, and the name as it is written: any word makes a meta property.
@@ -633,6 +632,8 @@ pub enum NameKind {
     ComputedString,
     /// `[0]`
     ComputedNumber,
+    /// Of a JSX attribute: `a`, `a-b`, `a:b`. A spread attribute has it too.
+    Jsx,
 }
 
 /// A property of an object literal, or an attribute of a JSX element.
@@ -647,6 +648,8 @@ pub struct Prop {
     pub start: u32,
     /// `node.End()`. 0 where the parser did not say.
     pub end: u32,
+    /// Where `PostfixToken` is, the `?` or the `!` after the name. 0: there is none.
+    pub postfix_token: u32,
 }
 
 /// `IsIntrinsicJsxName`
@@ -677,6 +680,8 @@ pub struct Jsx {
 pub struct Pat {
     pub kind: PatKind,
     pub pos: u32,
+    /// `node.End()`
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -698,6 +703,8 @@ pub struct PatProp {
     pub pos: u32,
     /// Where the name of the property is. After `...` a name is an error (2566).
     pub key_pos: u32,
+    /// `node.End()`
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -708,6 +715,8 @@ pub struct PatElem {
     pub is_rest: bool,
     /// Where its first token is: the `...`, or `pat`.
     pub start: u32,
+    /// `node.End()`
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -746,7 +755,6 @@ pub struct Modifier {
 #[derive(Copy, Clone, Debug)]
 pub struct Stmt {
     pub kind: StmtKind,
-    pub pos: u32,
     /// Where its first token is, decorators and modifiers included.
     pub start: u32,
     pub loc: TextRange,
@@ -843,6 +851,8 @@ pub struct Case {
     pub test: ExprId,
     pub body: IdList<StmtId>,
     pub pos: u32,
+    /// `node.End()`
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1140,6 +1150,8 @@ pub struct ImportSpec {
     pub pos: u32,
     pub type_only: bool,
     pub imported_pos: u32,
+    /// `node.End()`
+    pub end: u32,
     /// `node.Parent.Parent.Parent`
     pub import: ImportId,
 }
@@ -1191,6 +1203,8 @@ pub struct ExportSpec {
     pub pos: u32,
     pub type_only: bool,
     pub local_pos: u32,
+    /// `node.End()`
+    pub end: u32,
     /// `node.Parent.Parent`
     pub export: ExportId,
 }
@@ -1217,7 +1231,7 @@ pub enum Keyword {
 pub struct TypeNode {
     pub kind: TypeNodeKind,
     pub pos: u32,
-    /// `node.End()`, not counting parentheses around it. 0: the parser did not make it.
+    /// `node.End()`, not counting parentheses around it.
     pub end: u32,
 }
 
@@ -1269,6 +1283,10 @@ pub struct TupleElem {
     pub name: Atom,
     pub optional: bool,
     pub rest: bool,
+    /// Where its first token is: the `...`, the name, or the type.
+    pub start: u32,
+    /// `node.End()`
+    pub end: u32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1432,9 +1450,8 @@ pub struct File {
     pub legacy_decorators: bool,
     /// What the parser objected to and went on from, the tree being whole: where, and the code it goes by.
     pub early_errors: Vec<(u32, u32)>,
-    /// What an error of the parser names (`{0}`) that cannot be told from where it is: the token in `'{0}' expected.`, say. By where the
-    /// error is.
-    pub error_arguments: Few<(u32, Box<str>)>,
+    /// What the message of an error of the parser names (`{0}`, `{1}` ..): the start and the code of the error, and the arguments.
+    pub error_arguments: Few<(u32, u32, Box<[Box<[u8]>]>)>,
     /// Where the errors of the parser end that say what was expected: start, code and end. `parseErrorAtCurrentToken` reports the token
     /// the parser is at, as its scanner sees it there, and `parseErrorAt` what it is given, which can be nothing at all.
     pub error_ends: Few<(u32, u32, u32)>,
@@ -1462,15 +1479,10 @@ pub struct File {
     pub comment_directives: Few<CommentDirective>,
     /// The statement of each `with (e) statement`, from right after the `)` to where it ends.
     pub with_bodies: Few<(u32, u32)>,
+    /// Where the `{` is of each function whose body is a block, but for a static block, whose `anchor` it is. Sorted.
+    pub body_starts: Vec<(FnId, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
     pub after_skipped: Few<u32>,
-    /// Where the parser stood when it finished an expression (`finishNode`), by `ExprId`: of those it finished after the first syntax
-    /// error of the file. 0, or past the end of the list: nothing is noted. Empty in a file that parses.
-    /// It says what the parts of an expression cannot: that recovery took tokens after the last part. So it can only lengthen what
-    /// check/spans.rs works out from the parts, which is exact where nothing was recovered from.
-    /// This is NOT tsgo's data model, where every node has an `end`, and that is on purpose: an `end` on every expression is paid by
-    /// every program, and only recovery needs it.
-    pub expr_ends: Vec<u32>,
     /// `node.Modifiers()` of a parameter, by `ParamId`: see `param_modifiers`. No longer than the last parameter that has any needs,
     /// and empty in most files. A column and not a field of `Param`, on purpose: few parameters have a modifier, and a field is paid
     /// by all of them.
@@ -1489,12 +1501,17 @@ pub struct File {
 
     /// The specifier of each `import.defer(..)`, and where the `)` of the call is.
     pub deferred_import_calls: Few<(ExprId, u32)>,
+    /// The specifier of each `import<T>(..)`, and the type arguments.
+    pub import_call_type_args: Few<(ExprId, IdList<TypeNodeId>)>,
     /// `with { .. }` of imports and exports: the start of `with`, and the attributes as an `ExprKind::Object`.
     pub import_attributes: Few<(u32, ExprId)>,
     /// The module specifiers of imports and exports that are no string literals. They are bound, and nothing in them is checked.
     pub specifier_expressions: Few<ExprId>,
-    /// The expressions written in parentheses, in order, and where the parentheses open. Nothing else is kept of them.
-    pub parens: Vec<(ExprId, u32)>,
+    /// `ParenthesizedExpression`: what is in the parentheses, where they open and where they end. In the order of the expressions, and
+    /// of those around one expression the innermost first.
+    pub parens: Vec<(ExprId, u32, u32)>,
+    /// `JsxExpression`: what is in the braces, where they open and where they end. In the order of the expressions.
+    pub jsx_expressions: Vec<(ExprId, u32, u32)>,
     /// What comments at the top say about JSX in this file.
     pub jsx_pragmas: JsxPragmas,
     /// The JSDoc comments of a JavaScript file, from where to where. Sorted. A node whose position is in one is made from a tag.
@@ -1548,6 +1565,8 @@ pub struct File {
     pub class_nodes: Vec<Node>,
     /// `node.Parent`, by `Node`: `File::parent`.
     pub parents: std::sync::OnceLock<crate::node::Parents>,
+    /// `File::is_in_ambient_or_type_node`
+    pub ambient_or_type_places: std::sync::OnceLock<Places>,
 }
 
 macro_rules! arenas {
@@ -1638,22 +1657,27 @@ impl File {
         }
         self.modifiers_of_params[p.idx()] = list;
     }
+    /// The texts of the template whose substitutions are `exprs`.
     #[inline]
-    pub fn set_expr_end(&mut self, e: ExprId, end: u32) {
-        if self.expr_ends.len() <= e.idx() {
-            self.expr_ends.resize(e.idx() + 1, 0);
-        }
-        self.expr_ends[e.idx()] = end;
+    pub fn template_texts(&self, exprs: IdList<ExprId>) -> IdList<Atom> {
+        IdList::new(exprs.start + exprs.len, exprs.len + 1)
+    }
+    /// The type arguments of the import call whose arguments are `args`.
+    pub fn type_args_of_import_call(&self, args: IdList<ExprId>) -> IdList<TypeNodeId> {
+        let specifier = self.id_at(args, 0);
+        let mut written = self.import_call_type_args.iter();
+        written
+            .find(|of| of.0 == specifier)
+            .map_or(IdList::EMPTY, |of| of.1)
     }
     #[inline]
-    pub fn expr(&mut self, kind: ExprKind, pos: u32) -> ExprId {
-        self.add_expr_node(Expr { kind, pos })
+    pub fn expr(&mut self, kind: ExprKind, pos: u32, end: u32) -> ExprId {
+        self.add_expr_node(Expr { kind, pos, end })
     }
     #[inline]
     pub fn stmt(&mut self, kind: StmtKind, pos: u32) -> StmtId {
         let stmt = self.add_stmt_node(Stmt {
             kind: StmtKind::Empty,
-            pos,
             start: pos,
             loc: TextRange::default(),
             modifiers: Span::EMPTY,
@@ -1687,12 +1711,24 @@ impl File {
             .map(|modifier| modifier.pos)
     }
     #[inline]
-    pub fn ty(&mut self, kind: TypeNodeKind, pos: u32) -> TypeNodeId {
-        self.add_type_node(TypeNode { kind, pos, end: 0 })
+    /// `code` is said of what goes from `start` to `end`.
+    pub fn error(&mut self, start: u32, end: u32, code: u32) {
+        self.early_errors.push((start, code));
+        self.error_ends.push((start, code, end));
+    }
+    /// The same, and the message names `args`.
+    pub fn error_about(&mut self, start: u32, end: u32, code: u32, args: &[&[u8]]) {
+        self.error(start, end, code);
+        let args = args.iter().map(|&arg| arg.into()).collect();
+        self.error_arguments.push((start, code, args));
     }
     #[inline]
-    pub fn pat(&mut self, kind: PatKind, pos: u32) -> PatId {
-        self.add_pat_node(Pat { kind, pos })
+    pub fn ty(&mut self, kind: TypeNodeKind, pos: u32, end: u32) -> TypeNodeId {
+        self.add_type_node(TypeNode { kind, pos, end })
+    }
+    #[inline]
+    pub fn pat(&mut self, kind: PatKind, pos: u32, end: u32) -> PatId {
+        self.add_pat_node(Pat { kind, pos, end })
     }
     /// `GetThisParameter`: the first of `params` if it is named `this`, and the others.
     pub fn split_this_parameter(&self, params: Span<ParamId>) -> (ParamId, Span<ParamId>) {
@@ -1815,23 +1851,9 @@ impl File {
     }
 }
 
-/// Leaves `list` no room it does not use. `shrink_to_fit` will not do: the allocator leaves a block that is at least half used as it is,
-/// and that is every list that has grown by doubling. So what is in it moves to a block of its size.
-pub(crate) fn fit<T>(list: &mut Vec<T>) {
-    if list.capacity() > list.len() {
-        let mut exact = Vec::with_capacity(list.len());
-        exact.append(list);
-        *list = exact;
-    }
-}
-
-impl File {
-    /// `fit`, for a file that is kept.
-    pub fn fit(&mut self) {
-        macro_rules! each {
-            ($($f:ident),*) => { $(fit(&mut self.$f);)* };
-        }
-        each!(
+macro_rules! long_lists {
+    ($each:ident) => {
+        $each!(
             ids,
             numbers,
             exprs,
@@ -1857,9 +1879,43 @@ impl File {
             export_specs,
             specifier_uses,
             parens,
+            jsx_expressions,
             modifiers,
-            names
+            names,
+            body_starts
         );
+    };
+}
+
+/// Leaves `list` no room it does not use. `shrink_to_fit` will not do: the allocator leaves a block that is at least half used as it is,
+/// and that is every list that has grown by doubling. So what is in it moves to a block of its size.
+pub(crate) fn fit<T>(list: &mut Vec<T>) {
+    if list.capacity() > list.len() {
+        let mut exact = Vec::with_capacity(list.len());
+        exact.append(list);
+        *list = exact;
+    }
+}
+
+impl File {
+    /// `fit`, for a file that is kept.
+    pub fn fit(&mut self) {
+        macro_rules! each {
+            ($($f:ident),*) => { $(fit(&mut self.$f);)* };
+        }
+        long_lists!(each);
+    }
+
+    /// The same for a file that was made in vectors that serve again: `room` gets them, empty.
+    pub fn fit_leaving_room(&mut self, room: &mut File) {
+        macro_rules! each {
+            ($($f:ident),*) => { $(
+                let exact = self.$f.as_slice().to_vec();
+                room.$f = std::mem::replace(&mut self.$f, exact);
+                room.$f.clear();
+            )* };
+        }
+        long_lists!(each);
     }
 }
 
@@ -1872,40 +1928,34 @@ pub fn is_parenthesized(hir: &File, e: ExprId) -> bool {
 /// Where the outermost parenthesis around `e` opens, if it is in any.
 #[inline]
 pub fn open_parenthesis(hir: &File, e: ExprId) -> Option<u32> {
-    let at = hir.parens.binary_search_by_key(&e.0, |p| p.0.0).ok()?;
-    Some(hir.parens[at].1)
+    parentheses_around(hir, e).last().map(|p| p.1)
 }
 
-/// Where `e` starts, not counting parentheses around the whole of it. It starts where what it starts with starts.
-pub fn start_inside_parentheses(hir: &File, mut e: ExprId) -> u32 {
-    let mut is_outermost = true;
-    loop {
-        if !std::mem::take(&mut is_outermost)
-            && let Some(open) = open_parenthesis(hir, e)
-        {
-            return open;
-        }
-        e = match hir[e].kind {
-            ExprKind::Binary { left, .. } => left,
-            ExprKind::Assign { target, .. } => target,
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-            ExprKind::Call(c) | ExprKind::TaggedTemplate(c) => hir[c].callee,
-            ExprKind::Cond { test, .. } => test,
-            // Its decorators are part of it.
-            ExprKind::Class(c) => return hir[c].start,
-            // `x as T`. `<T>x` and `<const>x` are put at the `<` they start with.
-            ExprKind::As { expr, ty } if hir[ty].pos > hir[expr].pos => expr,
-            ExprKind::AsConst(x) if hir[e].pos < hir[x].pos => return hir[e].pos,
-            ExprKind::NonNull(x)
-            | ExprKind::AsConst(x)
-            | ExprKind::Satisfies { expr: x, .. }
-            | ExprKind::Instantiation { expr: x, .. } => x,
-            ExprKind::Unary {
-                op: UnOp::PostInc | UnOp::PostDec,
-                operand,
-            } => operand,
-            _ => return hir[e].pos,
-        };
+/// The parentheses around `e`, the innermost first.
+#[inline]
+pub fn parentheses_around(hir: &File, e: ExprId) -> &[(ExprId, u32, u32)] {
+    let first = hir.parens.partition_point(|p| p.0.0 < e.0);
+    let count = hir.parens[first..].partition_point(|p| p.0 == e);
+    &hir.parens[first..first + count]
+}
+
+/// From where to where the `JsxExpression` goes that `e` is all there is in.
+pub fn jsx_expression_around(hir: &File, e: ExprId) -> Option<(u32, u32)> {
+    let found = hir
+        .jsx_expressions
+        .binary_search_by_key(&e.0, |braces| braces.0.0);
+    found
+        .ok()
+        .map(|i| (hir.jsx_expressions[i].1, hir.jsx_expressions[i].2))
+}
+
+/// `GetTokenPosOfNode`: where `e` starts, not counting parentheses around the whole of it.
+#[inline]
+pub fn start_inside_parentheses(hir: &File, e: ExprId) -> u32 {
+    match hir[e].kind {
+        // Its decorators are part of it.
+        ExprKind::Class(c) => hir[c].start,
+        _ => hir[e].pos,
     }
 }
 
@@ -1993,9 +2043,9 @@ pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
     }
 }
 
-/// `NodeIsPresent(node.Body())`: a body written where none belongs is not kept, but it counts.
+/// `NodeIsPresent(node.Body())`
 pub fn has_body(func: &Func) -> bool {
-    !matches!(func.body, FnBody::None) || func.flags.contains(Flags::BODY_DROPPED)
+    !matches!(func.body, FnBody::None)
 }
 
 /// `node.Body() != nil`: a block whose `{` is missing is a body node, though not a present one.
@@ -2030,10 +2080,9 @@ pub fn names_bound_by(hir: &File, pat: PatId, into: &mut Vec<(Atom, PatId)>) {
     }
 }
 
-/// `NodeFlagsNestedNamespace`: the statement `s` is the `B` of `namespace A.B`. It is put at the dot, or at its name.
+/// `NodeFlagsNestedNamespace`: the statement `s` is the `B` of `namespace A.B`. It starts with its name.
 pub fn is_nested_namespace(hir: &File, s: StmtId) -> bool {
-    matches!(hir[s].kind, StmtKind::Module(m)
-        if hir[s].pos == hir[m].name_pos || hir.text.get(hir[s].pos as usize) == Some(&b'.'))
+    matches!(hir[s].kind, StmtKind::Module(m) if hir[s].start == hir[m].name_pos)
 }
 
 const _: () = assert!(std::mem::size_of::<Expr>() <= 24);

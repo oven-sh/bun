@@ -9,9 +9,8 @@
 //! - the answer rests on a circle, a trial or a guess (`drops_reported`): dropped, and reported when it is worked out again;
 //! - the answer is not kept only because a loop is under way (`taint_from`): it stays, and is settled with the question around.
 //!
-//! What is reported with no question under way goes to the sink when `check_file` ends.
+//! What is reported with no question under way stays there until `check_file` ends, and is handed to `finish_file`.
 
-use super::errors::Diagnostic;
 use super::*;
 use std::sync::Mutex;
 
@@ -32,14 +31,26 @@ pub(super) enum Arg<'a> {
     Text(&'a str),
 }
 
+/// The arguments of a message, printed.
+pub(super) type Args = Box<[Box<[u8]>]>;
+
+/// For who still prints the arguments by itself, into `String`s. It goes with its last caller: a diagnostic takes `&[Arg]`.
+pub(super) fn held(args: Vec<String>) -> Args {
+    (args.into_iter().map(|arg| arg.into_bytes().into())).collect()
+}
+
+/// `maxSerializationLevel`
+pub(super) const MAX_SERIALIZATION_LEVEL: u32 = 2;
+
 /// `ast.Diagnostic`
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct Reported {
     pub(super) file: FileId,
     pub(super) start: u32,
+    /// Until `finish_file`, 0: where the token at `start` ends. `NO_LENGTH`: at `start`.
     pub(super) end: u32,
     pub(super) code: u32,
-    pub(super) args: Vec<String>,
+    pub(super) args: Args,
     pub(super) message_chain: Vec<Reported>,
     pub(super) related_information: Vec<Reported>,
     /// `CategorySuggestion`
@@ -48,7 +59,12 @@ pub(super) struct Reported {
 
 impl Reported {
     /// `NewDiagnostic`, of arguments that are printed.
-    pub(super) fn new(at: (FileId, u32, u32), code: u32, args: Vec<String>) -> Reported {
+    /// Of a message that takes no arguments.
+    pub(super) fn bare(at: (FileId, u32, u32), code: u32) -> Reported {
+        Reported::new(at, code, Args::default())
+    }
+
+    pub(super) fn new(at: (FileId, u32, u32), code: u32, args: Args) -> Reported {
         Reported {
             file: at.0,
             start: at.1,
@@ -59,6 +75,11 @@ impl Reported {
             related_information: Vec::new(),
             is_suggestion: false,
         }
+    }
+
+    /// Nothing but the place and the code has been said of it.
+    pub(super) fn is_bare(&self) -> bool {
+        self.end == 0 && self.args.is_empty() && self.message_chain.is_empty()
     }
 
     /// `AddRelatedInfo`
@@ -88,8 +109,8 @@ fn compare_message_chain_content(a: &[Reported], b: &[Reported]) -> std::cmp::Or
         })
 }
 
-/// For each file what has been reported in it, and the file that the checker that reported it was checking.
-pub(super) struct Sink(Box<[Mutex<Vec<(Reported, Option<FileId>)>>]>);
+/// For each file what has been reported in it.
+pub(super) struct Sink(Box<[Mutex<Vec<Reported>>]>);
 
 impl Sink {
     pub(super) fn new(files: usize) -> Sink {
@@ -97,23 +118,39 @@ impl Sink {
     }
 }
 
+impl super::Program {
+    /// Whether `finish_file` would come back with nothing. Most files are like that, and no checker is made to hear it.
+    pub fn has_nothing_to_finish(&self, file: FileId, checked: &super::errors::Checked) -> bool {
+        let (hir, files) = (self.files.hir(file), &self.files);
+        checked.is_empty()
+            && hir.comment_directives.is_empty()
+            && hir.jsdoc_errors.is_empty()
+            && files.module(file).missing_references.is_empty()
+            && files.include_problems_in(file).next().is_none()
+            && self.sink.0[file.idx()].lock().unwrap().is_empty()
+    }
+}
+
 impl Checker<'_> {
     /// `StringifyArgs`. They are printed at once, as they are there: printing asks questions.
-    pub(super) fn stringify_args(&mut self, args: &[Arg<'_>]) -> Box<[Box<[u8]>]> {
+    pub(super) fn stringify_args(&mut self, args: &[Arg<'_>]) -> Args {
         args.iter()
-            .map(|arg| -> Box<[u8]> {
+            .map(|arg| {
+                let mut out = Vec::new();
                 match *arg {
-                    Arg::Type(ty) => self.type_to_string(ty).into_bytes().into(),
-                    Arg::Sym(symbol) => self.symbol_to_string(symbol).into_bytes().into(),
-                    Arg::Prop(prop) => self.prop_to_string(prop).into_bytes().into(),
-                    Arg::Sig(signature) => self.signature_to_string(signature).into_bytes().into(),
-                    Arg::Atom(name) => self.files().atoms.bytes(name).into(),
-                    Arg::Number(number) => {
-                        bun_core::fmt::itoa(&mut bun_core::fmt::ItoaBuf::new(), number).into()
-                    }
-                    Arg::Bytes(bytes) => bytes.into(),
-                    Arg::Text(text) => text.as_bytes().into(),
+                    Arg::Type(ty) => self.write_type(&mut out, ty, super::print::TYPE_TO_STRING),
+                    Arg::Sym(symbol) => self.write_symbol(&mut out, symbol),
+                    Arg::Prop(prop) => self.write_prop(&mut out, prop),
+                    Arg::Sig(signature) => self.write_signature(&mut out, signature),
+                    Arg::Atom(name) => out.extend_from_slice(self.files().atoms.bytes(name)),
+                    Arg::Number(number) => out.extend_from_slice(bun_core::fmt::itoa(
+                        &mut bun_core::fmt::ItoaBuf::new(),
+                        number,
+                    )),
+                    Arg::Bytes(bytes) => out.extend_from_slice(bytes),
+                    Arg::Text(text) => out.extend_from_slice(text.as_bytes()),
                 }
+                out.into_boxed_slice()
             })
             .collect()
     }
@@ -125,11 +162,7 @@ impl Checker<'_> {
         code: u32,
         args: &[Arg<'_>],
     ) -> Reported {
-        let args = self.stringify_args(args);
-        let args = args
-            .iter()
-            .map(|arg| String::from_utf8_lossy(arg).into_owned());
-        Reported::new(at, code, args.collect())
+        Reported::new(at, code, self.stringify_args(args))
     }
 
     /// `NewDiagnosticChainForNode`
@@ -151,7 +184,21 @@ impl Checker<'_> {
     }
 
     /// `c.error`
+    #[cold]
     pub(super) fn error(
+        &mut self,
+        file: FileId,
+        node: impl ToNode,
+        code: u32,
+        args: &[Arg<'_>],
+    ) -> &mut Reported {
+        let (start, end) = self.get_error_range_for_node(file, self.hir(file).node(node));
+        self.error_at((file, start, end), code, args)
+    }
+
+    /// `c.error`, for who has no node to report it on.
+    #[cold]
+    pub(super) fn error_at(
         &mut self,
         at: (FileId, u32, u32),
         code: u32,
@@ -161,8 +208,8 @@ impl Checker<'_> {
         self.add_diagnostic(diagnostic)
     }
 
-    /// `grammarErrorOnNode`: whether it reported, which it does not in a file that does not parse.
-    pub(super) fn grammar_error_on_node(
+    /// `grammarErrorAtPos`: whether it reported, which it does not in a file that does not parse.
+    pub(super) fn grammar_error_at(
         &mut self,
         at: (FileId, u32, u32),
         code: u32,
@@ -171,7 +218,7 @@ impl Checker<'_> {
         if has_parse_diagnostics(self.hir(at.0)) {
             return false;
         }
-        self.error(at, code, args);
+        self.error_at(at, code, args);
         true
     }
 
@@ -215,12 +262,12 @@ impl Checker<'_> {
         self.p.sink.0[diagnostic.file.idx()]
             .lock()
             .unwrap()
-            .push((diagnostic, self.checking));
+            .push(diagnostic);
     }
 
     /// `CompareDiagnostics`
-    fn compare_diagnostics(&self, a: &Reported, b: &Reported) -> std::cmp::Ordering {
-        let path = |file: FileId| &self.files().modules[file.idx()].path[..];
+    pub(super) fn compare_diagnostics(&self, a: &Reported, b: &Reported) -> std::cmp::Ordering {
+        let path = |file: FileId| self.files().modules.get(file.idx()).map(|m| &m.path[..]);
         (path(a.file), a.start, a.end, a.code, &a.args)
             .cmp(&(path(b.file), b.start, b.end, b.code, &b.args))
             .then_with(|| compare_message_chain_size(&a.message_chain, &b.message_chain))
@@ -235,35 +282,22 @@ impl Checker<'_> {
             })
     }
 
-    /// Adds what all the checkers have reported in `file`, but for where `checkSourceFile` never comes. Equal ones are one
-    /// (`DiagnosticsCollection.Add`): `explain_errors` sees to that. `BUN_SEMA_TRACE_SINK=1`: what only the checker of another file
-    /// has reported.
-    pub(super) fn drain_sink(
-        &self,
-        file: FileId,
-        never_checked: &[(u32, u32)],
-        out: &mut Vec<Diagnostic>,
-    ) {
+    /// What all the checkers have reported in `file`, but for where `checkSourceFile` never comes.
+    pub(super) fn drain_sink(&self, file: FileId, never_checked: &[(u32, u32)]) -> Vec<Reported> {
         let mut reported = std::mem::take(&mut *self.p.sink.0[file.idx()].lock().unwrap());
-        static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *TRACE.get_or_init(|| std::env::var_os("BUN_SEMA_TRACE_SINK").is_some()) {
-            let path = |file: FileId| &self.files().modules[file.idx()].path[..];
-            for (diagnostic, by) in reported.iter().filter(|one| one.1 != Some(file)) {
-                if !reported.contains(&(diagnostic.clone(), Some(file))) {
-                    eprintln!(
-                        "SINK\t{}\t{}\t{}\tonly by the checker of\t{}",
-                        path(file),
-                        diagnostic.start,
-                        diagnostic.code,
-                        by.map_or("no file", path),
-                    );
-                }
-            }
-        }
-        // `SortAndDeduplicateDiagnostics`: in what order the checkers got there does not show.
-        reported.sort_by(|a, b| self.compare_diagnostics(&a.0, &b.0));
+        reported.retain(|d| {
+            !never_checked
+                .iter()
+                .any(|&(from, to)| (from..to).contains(&d.start))
+        });
+        reported
+    }
+
+    /// `SortAndDeduplicateDiagnostics`: in what order the checkers got there does not show.
+    pub(super) fn sort_and_deduplicate_diagnostics(&self, reported: &mut Vec<Reported>) {
+        reported.sort_by(|a, b| self.compare_diagnostics(a, b));
         // `compactAndMergeRelatedInfos`: those that differ in nothing but what they are related to are one, related to all of it.
-        reported.dedup_by(|(next, _), (first, _)| {
+        reported.dedup_by(|next, first| {
             let is_same = (next.file, next.start, next.end, next.code)
                 == (first.file, first.start, first.end, first.code)
                 && next.args == first.args
@@ -276,22 +310,5 @@ impl Checker<'_> {
             }
             is_same
         });
-        let mut notes = self.notes.borrow_mut();
-        for (diagnostic, _) in reported {
-            if never_checked
-                .iter()
-                .any(|&(from, to)| (from..to).contains(&diagnostic.start))
-            {
-                continue;
-            }
-            out.push(Diagnostic {
-                start: diagnostic.start,
-                code: diagnostic.code,
-            });
-            if diagnostic.is_suggestion {
-                self.note_suggestion(diagnostic.start, diagnostic.code);
-            }
-            notes.push(diagnostic.into());
-        }
     }
 }

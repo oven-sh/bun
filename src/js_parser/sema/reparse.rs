@@ -50,7 +50,7 @@ struct Attached {
 
 /// The modifiers among `flags`, which an overload signature has in common with the implementation.
 fn modifiers_of(flags: Flags) -> Flags {
-    flags.difference(Flags::GENERATOR | Flags::OPTIONAL | Flags::BODY_DROPPED | Flags::MISSING_BODY)
+    flags.difference(Flags::GENERATOR | Flags::OPTIONAL | Flags::MISSING_BODY)
 }
 
 /// `IsValidIdentifier`
@@ -182,13 +182,11 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     /// Where the parenthesis around `e` opens, if `e` is written in parentheses.
-    fn paren_of(&self, e: ExprId) -> Option<u32> {
+    /// The outermost parentheses around `e`: where they open and where they end.
+    fn paren_of(&self, e: ExprId) -> Option<(u32, u32)> {
         // In the order they were made, which is that of their ids.
-        let parens = &self.b.file.parens;
-        parens
-            .binary_search_by_key(&e.0, |p| p.0.0)
-            .ok()
-            .map(|index| parens[index].1)
+        let outermost = parentheses_around(&self.b.file, e).last()?;
+        Some((outermost.1, outermost.2))
     }
 
     /// `IsPrivateIdentifier`, of the name of a property access.
@@ -357,16 +355,18 @@ impl<'p, 'a> Lower<'p, 'a> {
         let mut ty = self.b.clone_type(expr.ty);
         let file = &mut self.b.file;
         if ty.is_none() {
-            ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), expr.pos);
+            ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), expr.pos, expr.pos);
         }
+        let end = file[ty].end;
         // `getTypeFromTypeNodeWorker`: `...T` is an array of `T`, and `T=` is `T` with `addOptionality`.
         if expr.is_variadic {
-            ty = file.ty(TypeNodeKind::Array(ty), expr.pos);
+            ty = file.ty(TypeNodeKind::Array(ty), expr.pos, end);
         }
         if expr.is_optional {
-            let undefined = file.ty(TypeNodeKind::Keyword(Keyword::Undefined), expr.pos);
+            let undefined = TypeNodeKind::Keyword(Keyword::Undefined);
+            let undefined = file.ty(undefined, expr.pos, expr.pos);
             let members = file.list(&[ty, undefined]);
-            ty = file.ty(TypeNodeKind::Union(members), expr.pos);
+            ty = file.ty(TypeNodeKind::Union(members), expr.pos, end);
         }
         ty
     }
@@ -414,10 +414,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                 modifiers: Span::EMPTY,
             });
         }
+        let end = members.last().map_or(pos, |last| last.loc.end);
         let members = self.b.file.add_members(&members);
-        let literal = self.b.file.ty(TypeNodeKind::Object(members), pos);
+        let literal = self.b.file.ty(TypeNodeKind::Object(members), pos, end);
         if is_array {
-            self.b.file.ty(TypeNodeKind::Array(literal), pos)
+            self.b.file.ty(TypeNodeKind::Array(literal), pos, end)
         } else {
             literal
         }
@@ -481,7 +482,8 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// `makeNewCast`
     fn make_cast(&mut self, ty: TypeExpr, e: ExprId, is_assertion: bool) -> ExprId {
-        let pos = self.paren_of(e).unwrap_or_else(|| self.b.file[e].pos);
+        let Expr { pos, end, .. } = self.b.file[e];
+        let (pos, end) = self.paren_of(e).unwrap_or((pos, end));
         // `isConstTypeReference`
         let is_const = is_assertion
             && !ty.is_variadic
@@ -502,7 +504,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 ty: self.reparse_type(ty),
             }
         };
-        self.b.file.expr(kind, pos)
+        self.b.file.expr(kind, pos, end)
     }
 
     // ───────────────────────────── tags ─────────────────────────────
@@ -585,10 +587,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
             TagKind::Callback(callback) => {
                 let signature = self.reparse_signature(&callback.signature, None, doc, tag);
-                let ty = self
-                    .b
-                    .file
-                    .ty(TypeNodeKind::Fn(signature), callback.signature.pos);
+                let kind = TypeNodeKind::Fn(signature);
+                let ty = self.b.file.ty(kind, callback.signature.pos, tag.end);
                 self.reparse_alias(&callback.name, ty, tag, doc);
             }
             TagKind::Import(import) => {
@@ -627,6 +627,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         pos: specifier.local_pos,
                         type_only: false,
                         imported_pos: specifier.imported_pos,
+                        end: specifier.local_pos + specifier.local.len() as u32,
                         import: ImportId(self.b.file.imports.len() as u32),
                     })
                     .collect();
@@ -642,7 +643,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     namespace_pos: import.namespace.map_or(0, |name| name.start),
                     clause_start: import.clause_start,
                     // Only what is said of `import defer` asks.
-                    clause_end: import.clause_start,
+                    clause_end: import.clause_end,
                     namespace_start: import.namespace_start,
                     named: self.b.file.add_import_specs(&named),
                     type_only: true,
@@ -723,7 +724,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         // `thisIdent.Loc = thisTag.Loc`
                         let name = self.b.atom(text);
                         let this = Param {
-                            pat: self.b.file.pat(PatKind::Ident(name), param.pos),
+                            pat: self.b.file.pat(PatKind::Ident(name), param.pos, param.end),
                             ty: self.reparse_type(*ty),
                             default: ExprId::NONE,
                             flags: Flags::REPARSED,
@@ -782,7 +783,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.b.atom(&spelled)
             };
             params.push(Param {
-                pat: self.b.file.pat(PatKind::Ident(name_atom), name.start),
+                pat: self
+                    .b
+                    .file
+                    .pat(PatKind::Ident(name_atom), name.start, name.end),
                 ty,
                 default: ExprId::NONE,
                 flags,
@@ -800,7 +804,10 @@ impl<'p, 'a> Lower<'p, 'a> {
         let ret = match (signature.ret, like) {
             (Some(ret), _) => self.reparse_type(ret),
             (None, Some(_)) => TypeNodeId::NONE,
-            (None, None) => self.b.file.ty(TypeNodeKind::Keyword(Keyword::Any), pos),
+            (None, None) => self
+                .b
+                .file
+                .ty(TypeNodeKind::Keyword(Keyword::Any), pos, pos),
         };
         let (kind, flags, name) = match like {
             Some(like) => {
@@ -839,7 +846,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                         // `checkGrammarConstructorTypeParameters`: the list starts with its first tag.
                         if self.b.file[func].kind == FnKind::Constructor && !type_params.is_empty()
                         {
-                            self.b.file.early_errors.push((tag.pos, 1092));
+                            self.b.file.error(tag.pos, tag.end, 1092);
                         }
                     }
                 } else if let Host::Class(class) = *host
@@ -874,13 +881,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                         ..
                     } = self.b.file[func];
                     if self.b.file[param].flags.contains(Flags::REST) {
-                        self.b.file.early_errors.push((tag.pos, 1047));
+                        self.b.file.error(tag.pos, tag.end, 1047);
                     } else if kind == FnKind::Setter
                         && type_params.is_empty()
                         && params.len() == 1
                         && ret.is_none()
                     {
-                        self.b.file.early_errors.push((tag.pos, 1051));
+                        self.b.file.error(tag.pos, tag.end, 1051);
                     }
                 }
             }
@@ -889,7 +896,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if func.is_some() && self.b.file[func].this_param.is_none() {
                     // `finishReparsedNode(thisParam, tag.TagName())`
                     let this = Param {
-                        pat: self.b.file.pat(PatKind::Missing, tag.name_pos),
+                        pat: self
+                            .b
+                            .file
+                            .pat(PatKind::Missing, tag.name_pos, tag.name_pos),
                         ty: self.reparse_type(*ty),
                         default: ExprId::NONE,
                         flags: Flags::REPARSED,
@@ -941,9 +951,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                     self.b.file[class].implements = all;
                 }
             }
-            TagKind::Augments(class_name) => {
+            TagKind::Augments(class_name, tag_name) => {
                 if let Host::Class(class) = *host {
-                    self.reparse_augments_tag(class_name, class);
+                    self.reparse_augments_tag(class_name, tag_name.slice(), class);
                 }
             }
             _ => {}
@@ -960,7 +970,8 @@ impl<'p, 'a> Lower<'p, 'a> {
         let args = self.reparse_type_arguments(class_name);
         let name = self.b.file.entity_name(name.into_iter());
         let pos = class_name.name.first().map_or(0, |first| first.start);
-        self.b.file.ty(TypeNodeKind::Ref { name, args }, pos)
+        let kind = TypeNodeKind::Ref { name, args };
+        self.b.file.ty(kind, pos, class_name.end)
     }
 
     fn reparse_type_arguments(&mut self, class_name: &ClassName) -> IdList<TypeNodeId> {
@@ -973,7 +984,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     /// `@augments`, `@extends`: the type arguments go to the `extends` clause, if that names the same class.
-    fn reparse_augments_tag(&mut self, class_name: &ClassName, class: ClassId) {
+    fn reparse_augments_tag(&mut self, class_name: &ClassName, tag_name: &[u8], class: ClassId) {
         let Class {
             extends,
             extends_args,
@@ -1006,7 +1017,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             && let (Some(&target), Some(&source)) = (written.first(), class_name.name.last())
             && target != self.name_atom(source)
         {
-            self.b.file.early_errors.push((source.start, 8023));
+            let names = [tag_name, source.text.slice(), self.b.atoms.bytes(target)];
+            (self.b.file).error_about(source.start, source.end, 8023, &names);
         }
         // `HasSamePropertyAccessName`
         let is_same = is_entity_name

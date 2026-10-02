@@ -50,8 +50,33 @@ fn main() {
                     files.push(path)
                 }
             }
+            let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
+            if let Some(list) = flag("--list=") {
+                let list = std::fs::read_to_string(list).unwrap();
+                files.extend(list.lines().map(PathBuf::from));
+            }
             files.sort();
             let atoms = Interner::new();
+            // --repeat=n [--threads=n]: everything is read first, then parsed and lowered n times: what a pass of that alone takes.
+            if let Some(repeat) = flag("--repeat=").and_then(|n| n.parse::<u64>().ok()) {
+                let threads = flag("--threads=").and_then(|n| n.parse().ok());
+                let read = |file: &PathBuf| std::fs::read(file).unwrap_or_default();
+                let texts: Vec<Vec<u8>> = files.iter().map(read).collect();
+                let before = bun_sema_standalone::instructions_and_cycles().0;
+                for _ in 0..repeat {
+                    bun_sema_standalone::for_each_parallel(
+                        threads.unwrap_or(1),
+                        files.len(),
+                        |i| {
+                            let path = files[i].to_string_lossy();
+                            drop(bun_sema_standalone::parse(&path, &texts[i], &atoms, false));
+                        },
+                    );
+                }
+                let after = bun_sema_standalone::instructions_and_cycles().0;
+                let a_pass = (after - before) as f64 / 1e9 / repeat as f64;
+                return eprintln!("{} files: {a_pass:.3} G instructions a pass", files.len());
+            }
             let lines = std::sync::Mutex::new(Vec::<String>::new());
             bun_sema_standalone::for_each_parallel(4, files.len(), |i| {
                 let Ok(text) = std::fs::read(&files[i]) else {
@@ -88,6 +113,10 @@ fn main() {
             lines.sort();
             for line in &lines {
                 println!("{line}");
+            }
+            if args.iter().any(|a| a == "--quiet") {
+                let (instructions, _) = bun_sema_standalone::instructions_and_cycles();
+                eprintln!("instructions {:.3} G", instructions as f64 / 1e9);
             }
         }
         Some("cli") => {

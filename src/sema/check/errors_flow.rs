@@ -6,7 +6,6 @@
 //! `isPostSuperFlowNode` and
 //! `checkGrammarBreakOrContinueStatement` of TypeScript 7.0.2's checker.go, flow.go and grammarchecks.go.
 
-use super::errors::Diagnostic;
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};
 
@@ -116,7 +115,7 @@ impl Checker<'_> {
             self.reported_unreachable_nodes.push(next);
         }
         let end = self.end_of_stmt(file, last);
-        self.error((file, hir[s].start, end), 7027, &[]);
+        self.error_at((file, hir[s].start, end), 7027, &[]);
         true
     }
 
@@ -142,7 +141,7 @@ impl Checker<'_> {
         if self.is_known(ty) && self.contextual_call_signature(file, func, ty).is_none() {
             let start = start_of_return_type(hir, node);
             let end = self.end_of_type_node_from(file, node, start);
-            self.error((file, start, end), 8030, &[]);
+            self.error_at((file, start, end), 8030, &[]);
         }
     }
 
@@ -249,7 +248,7 @@ impl Checker<'_> {
                 _ => self.end_of_name_at(file, start),
             }
         };
-        self.error((file, start, end), code, &[]);
+        self.error_at((file, start, end), code, &[]);
     }
 
     /// `checkSignatureDeclaration`, `checkGeneratorInstantiationAssignabilityToReturnType`: the generator type built from the iteration
@@ -296,7 +295,7 @@ impl Checker<'_> {
     }
 
     /// `checkGrammarBreakOrContinueStatement`, and one label inside another of the same name.
-    pub(super) fn check_jumps_and_labels(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_jumps_and_labels(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.has_errors {
             return;
@@ -320,7 +319,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let start = hir.stmts[i].pos;
+            let start = hir.stmts[i].start;
             let (label, is_break) = match hir.stmts[i].kind {
                 StmtKind::Break(label) => (label, true),
                 StmtKind::Continue(label) => (label, false),
@@ -331,8 +330,7 @@ impl Checker<'_> {
                             Parent::Stmt(s) if s.is_some() => {
                                 if matches!(hir[s].kind, StmtKind::Labeled { label: outer, .. } if outer == label)
                                 {
-                                    out.push(Diagnostic { start, code: 1114 });
-                                    self.explain(start, 1114, |c| vec![c.atom_text(label)]);
+                                    self.error_at((file, start, 0), 1114, &[Arg::Atom(label)]);
                                     break;
                                 }
                                 parent = bound.stmt_parent[s.idx()];
@@ -374,9 +372,8 @@ impl Checker<'_> {
                 }
             };
             if let Some(code) = code {
-                out.push(Diagnostic { start, code });
                 let end = self.end_of_stmt(file, StmtId(i as u32));
-                self.explain_to(start, end, code, |_| vec![]);
+                self.error_at((file, start, end), code, &[]);
             }
         }
     }

@@ -391,10 +391,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match p.lexer.token {
                 T::TStringLiteral => {
                     let e_string = p.lexer.to_e_string()?;
-                    children.push(p.new_expr(e_string, loc));
+                    // `parseJsxText`
+                    let range = p.lexer.range();
+                    let text_loc = if p.lexer.tolerant { range.loc } else { loc };
+                    let mut text = p.new_expr(e_string, text_loc);
+                    p.note_end(&mut text.loc, range.end());
+                    children.push(text);
                     p.lexer.next_jsx_element_child()?;
                 }
                 T::TOpenBrace => {
+                    let open_brace = p.lexer.loc();
+                    let children_before = children.len();
                     // Use Next() instead of NextJSXElementChild() here since the next token is an expression
                     p.lexer.next()?;
 
@@ -417,6 +424,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         children.push(item);
                     }
 
+                    // `parseJsxExpression`
+                    let end = match p.lexer.token {
+                        T::TCloseBrace => p.lexer.range().end(),
+                        _ => p.lexer.full_start(),
+                    };
+                    if let Some(inside) = children[children_before..].last_mut() {
+                        p.note_loc(
+                            &mut inside.loc,
+                            crate::sema::Mark::JsxExpression,
+                            open_brace,
+                        );
+                        p.note_loc(&mut inside.loc, crate::sema::Mark::JsxExpressionEnd, end);
+                    }
                     // Use ExpectJSXElementChild() so we parse child strings
                     p.lexer.expect_jsx_element_child(T::TCloseBrace)?;
                 }
@@ -720,7 +740,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn report_unclosed_jsx_element(p: &mut Self, start: bun_ast::Loc, tag: &JSXTag<'a>) {
         p.jsx_children_met_end_of_file = true;
         if tag.data.as_expr().is_some() {
-            p.lexer.ts_error(tag.range, 17008);
+            p.lexer
+                .ts_error_about(tag.range, 17008, Self::jsx_tag_name_text(p, tag));
         } else {
             // The fragment's node starts at the full start of its `<`. It ends with its `>`, which is where `JSXTag::parse` says the tag is.
             let len = tag.range.loc.start + 1 - start.start;
@@ -728,6 +749,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let end_of_file = p.lexer.range();
         p.lexer.ts_expected(end_of_file, "</");
+    }
+
+    /// `GetTextOfNodeFromSourceText`, of the name of `tag`.
+    fn jsx_tag_name_text(p: &Self, tag: &JSXTag<'a>) -> &'a [u8] {
+        p.source
+            .contents()
+            .get(tag.range.loc.to_usize()..tag.range.end().to_usize())
+            .unwrap_or_default()
     }
 
     /// `parseJsxElementOrSelfClosingElementOrFragment`: the closing tag `end_tag`, just parsed, does not name the element `tag`.
@@ -758,14 +787,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 start: loc.start + 1,
             };
             let len = (tag.range.end().start - start.start).max(0);
-            p.lexer.ts_error(bun_ast::Range { loc: start, len }, 17008);
+            let range = bun_ast::Range { loc: start, len };
+            p.lexer
+                .ts_error_about(range, 17008, Self::jsx_tag_name_text(p, tag));
             return Ok(true);
         }
         let len = (end_tag.range.end().start - after_slash.start).max(0);
-        let opening = p.source.contents();
-        let opening = opening
-            .get(tag.range.loc.to_usize()..tag.range.end().to_usize())
-            .unwrap_or_default();
+        let opening = Self::jsx_tag_name_text(p, tag);
         p.lexer.ts_error_about(
             bun_ast::Range {
                 loc: after_slash,

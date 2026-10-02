@@ -1,7 +1,8 @@
 //! Related information: where the other things an error is about are. `'x' is declared here.`
 
 use super::Checker;
-use super::explain::Related;
+use super::sink::Reported;
+use super::sink::held;
 use crate::bind::Decl;
 use crate::program::{FileId, Sym};
 use crate::types::{Prop, PropSource};
@@ -126,11 +127,7 @@ impl Checker<'_> {
     }
 
     /// `'{0}' is declared here.`
-    pub(super) fn declared_here(&self, at: Place, name: String) -> Related {
-        Related {
-            at: Some(at),
-            code: 2728,
-            args: vec![name],
-        }
+    pub(super) fn declared_here(&self, at: Place, name: String) -> Reported {
+        Reported::new(at, 2728, held(vec![name]))
     }
 }

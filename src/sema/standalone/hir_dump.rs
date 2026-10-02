@@ -77,21 +77,23 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         source_len,
         text: _,
         unclosed_literals: _,
-        expr_ends: _,
         modifiers_of_params: _,
         body,
         references,
         comment_directives,
         with_bodies,
+        body_starts: _,
         after_skipped,
         stray_decorators,
         specifier_uses,
         deferred_import_calls,
+        import_call_type_args: _,
         import_attributes,
         specifier_expressions,
         has_parse_diagnostics,
         checker_errors,
         parens,
+        jsx_expressions,
         jsx_pragmas,
         jsdoc_comments,
         jsdoc_errors,
@@ -132,6 +134,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         names: _,
         bases: _,
         parents: _,
+        ambient_or_type_places: _,
         fn_nodes: _,
         class_nodes: _,
     } = file;
@@ -283,7 +286,9 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
             JsDocTypeOwner::Fn(id) => ("Fn", file.fns.get(id.idx()).map(|func| func.start)),
             JsDocTypeOwner::Prop(id) => ("Prop", file.props.get(id.idx()).map(|prop| prop.pos)),
             JsDocTypeOwner::Assign(id) => ("Assign", file.exprs.get(id.idx()).map(|expr| expr.pos)),
-            JsDocTypeOwner::Export(id) => ("Export", file.stmts.get(id.idx()).map(|stmt| stmt.pos)),
+            JsDocTypeOwner::Export(id) => {
+                ("Export", file.stmts.get(id.idx()).map(|stmt| stmt.start))
+            }
         };
         match pos {
             Some(pos) => put!(d, 0, "", "jsdoc_type of {kind} pos={pos}:"),
@@ -316,17 +321,22 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     }
 
     // An expression goes by where it starts and what it is.
-    let mut around: Vec<(u32, &str, u32)> = parens
+    let mut around: Vec<(u32, &str, u32, u32)> = parens
         .iter()
-        .map(|&(expr, open)| match file.exprs.get(expr.idx()) {
-            Some(expr) => (expr.pos, expr_kind_name(expr.kind), open),
-            None => (u32::MAX, NO_SUCH_NODE, open),
+        .map(|&(expr, open, end)| match file.exprs.get(expr.idx()) {
+            Some(expr) => (expr.pos, expr_kind_name(expr.kind), open, end),
+            None => (u32::MAX, NO_SUCH_NODE, open, end),
         })
         .collect();
     around.sort_unstable();
     put!(d, 0, "", "parens[{}]:", around.len());
-    for (pos, kind, open) in around {
-        put!(d, 1, "", "{kind} pos={pos} open={open}");
+    for (pos, kind, open, end) in around {
+        put!(d, 1, "", "{kind} pos={pos} open={open} end={end}");
+    }
+
+    put!(d, 0, "", "jsx_expressions[{}]:", jsx_expressions.len());
+    for &(_, open, end) in jsx_expressions {
+        put!(d, 1, "", "open={open} end={end}");
     }
 
     put!(d, 0, "", "decorators[{}]:", decorators.len());
@@ -368,7 +378,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         type_params.pos,
         pats.pos,
         exprs.pos,
-        stmts.pos
+        stmts.start
     );
     macro_rules! compare_walks {
         ($($vector:ident $id:ident),*) => {$(
@@ -536,11 +546,8 @@ impl Dump<'_> {
     }
 
     fn expr(&mut self, depth: usize, label: &str, id: ExprId) {
-        let Expr { kind, pos } = node!(self, depth, label, exprs, id);
-        let mut head = format!("Expr {} pos={pos}", expr_kind_name(kind));
-        if let Some(end) = self.file.expr_ends.get(id.idx()).filter(|&&end| end != 0) {
-            head += &format!(" end={end}");
-        }
+        let Expr { kind, pos, end } = node!(self, depth, label, exprs, id);
+        let head = format!("Expr {} pos={pos} end={end}", expr_kind_name(kind));
         let d = depth + 1;
         match kind {
             ExprKind::Missing
@@ -556,7 +563,8 @@ impl Dump<'_> {
                 put!(self, depth, label, "{head} {}", self.q(name))
             }
             ExprKind::Number(index) => put!(self, depth, label, "{head} {}", self.number(index)),
-            ExprKind::Template { exprs, texts } => {
+            ExprKind::Template { exprs } => {
+                let texts = self.file.template_texts(exprs);
                 put!(self, depth, label, "{head} texts={}", self.names(texts));
                 self.list(d, "exprs", exprs, Self::expr);
             }
@@ -627,7 +635,8 @@ impl Dump<'_> {
                 self.line(depth, label, &head);
                 self.expr(d, "expr", expr);
             }
-            ExprKind::ImportCall { args, type_args } => {
+            ExprKind::ImportCall { args } => {
+                let type_args = self.file.type_args_of_import_call(args);
                 self.line(depth, label, &head);
                 self.list(d, "type_args", type_args, Self::ty);
                 self.list(d, "args", args, Self::expr);
@@ -704,12 +713,13 @@ impl Dump<'_> {
             pos,
             start,
             end,
+            postfix_token,
         } = node!(self, depth, label, props, id);
         put!(
             self,
             depth,
             label,
-            "Prop kind={} pos={pos} start={start} end={end}",
+            "Prop kind={} pos={pos} start={start} end={end} postfix_token={postfix_token}",
             prop_kind_name(kind)
         );
         let d = depth + 1;
@@ -744,18 +754,19 @@ impl Dump<'_> {
     }
 
     fn pat(&mut self, depth: usize, label: &str, id: PatId) {
-        let Pat { kind, pos } = node!(self, depth, label, pats, id);
+        let Pat { kind, pos, end } = node!(self, depth, label, pats, id);
         match kind {
-            PatKind::Missing => put!(self, depth, label, "Pat Missing pos={pos}"),
+            PatKind::Missing => put!(self, depth, label, "Pat Missing pos={pos} end={end}"),
             PatKind::Ident(name) => {
-                put!(self, depth, label, "Pat Ident pos={pos} {}", self.q(name))
+                let name = self.q(name);
+                put!(self, depth, label, "Pat Ident pos={pos} end={end} {name}")
             }
             PatKind::Object(props) => {
-                put!(self, depth, label, "Pat Object pos={pos}");
+                put!(self, depth, label, "Pat Object pos={pos} end={end}");
                 self.span(depth + 1, "props", props, Self::pat_prop);
             }
             PatKind::Array(elems) => {
-                put!(self, depth, label, "Pat Array pos={pos}");
+                put!(self, depth, label, "Pat Array pos={pos} end={end}");
                 self.span(depth + 1, "elems", elems, Self::pat_elem);
             }
         }
@@ -770,12 +781,13 @@ impl Dump<'_> {
             is_rest,
             pos,
             key_pos,
+            end,
         } = node!(self, depth, label, pat_props, id);
         put!(
             self,
             depth,
             label,
-            "PatProp is_rest={is_rest} pos={pos} key_pos={key_pos}"
+            "PatProp is_rest={is_rest} pos={pos} key_pos={key_pos} end={end}"
         );
         let d = depth + 1;
         self.key(d, "key", key);
@@ -790,12 +802,13 @@ impl Dump<'_> {
             default,
             is_rest,
             start,
+            end,
         } = node!(self, depth, label, pat_elems, id);
         put!(
             self,
             depth,
             label,
-            "PatElem is_rest={is_rest} start={start}"
+            "PatElem is_rest={is_rest} start={start} end={end}"
         );
         let d = depth + 1;
         self.pat(d, "pat", pat);
@@ -828,13 +841,12 @@ impl Dump<'_> {
     fn stmt(&mut self, depth: usize, label: &str, id: StmtId) {
         let Stmt {
             kind,
-            pos,
             start,
             loc,
             modifiers,
         } = node!(self, depth, label, stmts, id);
         let mut head = format!(
-            "Stmt {} pos={pos} start={start} loc={}..{}",
+            "Stmt {} start={start} loc={}..{}",
             stmt_kind_name(kind),
             loc.pos,
             loc.end
@@ -989,8 +1001,13 @@ impl Dump<'_> {
     }
 
     fn case(&mut self, depth: usize, label: &str, id: CaseId) {
-        let Case { test, body, pos } = node!(self, depth, label, cases, id);
-        put!(self, depth, label, "Case pos={pos}");
+        let Case {
+            test,
+            body,
+            pos,
+            end,
+        } = node!(self, depth, label, cases, id);
+        put!(self, depth, label, "Case pos={pos} end={end}");
         let d = depth + 1;
         self.expr(d, "test", test);
         self.list(d, "body", body, Self::stmt);
@@ -1299,13 +1316,14 @@ impl Dump<'_> {
             pos,
             type_only,
             imported_pos,
+            end,
             import: _,
         } = node!(self, depth, label, import_specs, id);
         put!(
             self,
             depth,
             label,
-            "ImportSpec imported={} local={} pos={pos} type_only={type_only} imported_pos={imported_pos} start={start}",
+            "ImportSpec imported={} local={} pos={pos} type_only={type_only} imported_pos={imported_pos} start={start} end={end}",
             self.q(imported),
             self.q(local)
         );
@@ -1362,13 +1380,14 @@ impl Dump<'_> {
             pos,
             type_only,
             local_pos,
+            end,
             export: _,
         } = node!(self, depth, label, export_specs, id);
         put!(
             self,
             depth,
             label,
-            "ExportSpec local={} exported={} pos={pos} type_only={type_only} local_pos={local_pos} start={start}",
+            "ExportSpec local={} exported={} pos={pos} type_only={type_only} local_pos={local_pos} start={start} end={end}",
             self.q(local),
             self.q(exported)
         );
@@ -1529,12 +1548,14 @@ impl Dump<'_> {
             name,
             optional,
             rest,
+            start,
+            end,
         } = node!(self, depth, label, tuple_elems, id);
         put!(
             self,
             depth,
             label,
-            "TupleElem name={} optional={optional} rest={rest}",
+            "TupleElem name={} optional={optional} rest={rest} start={start} end={end}",
             self.q(name)
         );
         self.ty(depth + 1, "ty", ty);

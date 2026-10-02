@@ -369,26 +369,14 @@ impl Visitor<'_, '_> {
             let end = self.c.end_inside_parentheses(file, e);
             self.node(start, end, VisitedKind::Expression(e));
         }
-        for &(e, outermost) in &hir.parens {
-            if is_not_visited[e.idx()] {
-                continue;
-            }
-            // The type of a `satisfies` that is reparsed from a tag is written before the parenthesis.
-            let is_reparsed_satisfies = matches!(hir[e].kind, ExprKind::Satisfies { ty, .. }
-                if ty.is_some() && hir.is_in_jsdoc(hir[ty].pos));
-            let inside = self.c.start_inside_parentheses(file, e);
-            let mut open = outermost;
-            for depth in 0.. {
-                if open >= inside || hir.text.get(open as usize) != Some(&b'(') {
-                    break;
-                }
-                let end = if is_reparsed_satisfies {
-                    self.c.end_of_bracket_at(file, open)
-                } else {
-                    self.c.end_of_expr_from(file, e, open)
-                };
-                self.node(open, end, VisitedKind::Parenthesized(e, depth));
-                open = self.skip_trivia(open + 1);
+        for (index, &(e, open, end)) in hir.parens.iter().enumerate() {
+            if !is_not_visited[e.idx()] {
+                let around = hir.parens[index + 1..].iter().take_while(|p| p.0 == e);
+                self.node(
+                    open,
+                    end,
+                    VisitedKind::Parenthesized(e, around.count() as u32),
+                );
             }
         }
     }
@@ -500,21 +488,21 @@ impl Visitor<'_, '_> {
             not_visited.extend([jsx.tag, jsx.close_tag].into_iter().filter(|&tag| {
                 tag.is_some() && self.c.jsx_intrinsic_tag_name(self.file, tag).is_some()
             }));
-            // `JsxText`, which is put where its element starts, and `{...children}`, which is no `SpreadElement`.
+            // `JsxText`, and `{...children}`, which is no `SpreadElement`.
             not_visited.extend(
                 hir.ids(jsx.children)
                     .filter(|&child| match hir[child].kind {
-                        ExprKind::String(_) => hir.text.get(hir[child].pos as usize) == Some(&b'<'),
+                        ExprKind::String(_) => jsx_expression_around(hir, child).is_none(),
                         ExprKind::Spread(_) => true,
                         _ => false,
                     }),
             );
             // The string of `name="value"`, not of `name={"value"}`, is in no expression context.
-            not_visited.extend(values().filter(|&value| {
-                let before = self.c.end_of_token_before(self.file, hir[value].pos) as usize;
-                matches!(hir[value].kind, ExprKind::String(_))
-                    && before > 0
-                    && hir.text.get(before - 1) == Some(&b'=')
+            let initializers = (jsx.attrs.iter()).filter(|&p| hir[p].kind != PropKind::Spread);
+            not_visited.extend(initializers.map(|p| hir[p].value).filter(|&value| {
+                value.is_some()
+                    && matches!(hir[value].kind, ExprKind::String(_))
+                    && jsx_expression_around(hir, value).is_none()
             }));
         }
         // What nothing leads to is no node: the parser made it in an attempt it gave up.
@@ -755,14 +743,14 @@ impl Visitor<'_, '_> {
         let hir = self.hir;
         for (index, stmt) in hir.stmts.iter().enumerate() {
             let start = match stmt.kind {
-                StmtKind::Labeled { .. } => stmt.pos,
+                StmtKind::Labeled { .. } => stmt.start,
                 StmtKind::Break(known::empty) | StmtKind::Continue(known::empty) => {
-                    let keyword_end = self.c.end_of_token_at(self.file, stmt.pos);
+                    let keyword_end = self.c.end_of_token_at(self.file, stmt.start);
                     self.missing_identifier(keyword_end, VisitedKind::Label(StmtId(index as u32)));
                     continue;
                 }
                 StmtKind::Break(label) | StmtKind::Continue(label) if label.is_some() => {
-                    self.token_after(stmt.pos)
+                    self.token_after(stmt.start)
                 }
                 _ => continue,
             };

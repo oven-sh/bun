@@ -7,13 +7,12 @@
 //! (`checker/symbolaccessibility.go`, `checker/emitresolver.go`).
 
 use super::enclosing_declaration::Enclosing;
-use super::errors::Diagnostic;
 use super::errors_isolated_declarations::{Emit, Node as SyntaxNode};
-use super::explain::Related;
 use super::print::{
     DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker,
     WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, to_valid_utf8,
 };
+use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::json::Json;
@@ -183,7 +182,7 @@ struct Found {
     end: u32,
     code: u32,
     args: Vec<String>,
-    related: Vec<Related>,
+    related: Vec<Reported>,
 }
 
 /// Which statement of a file declares what.
@@ -232,7 +231,7 @@ impl Checker<'_> {
 
 impl<'p> Checker<'p> {
     /// `getDeclarationDiagnosticsForFile`
-    pub(super) fn check_declaration_emit(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_declaration_emit(&mut self, file: FileId) {
         let files = self.files();
         let module = files.module(file);
         // `sourceFileMayBeEmitted`
@@ -264,7 +263,7 @@ impl<'p> Checker<'p> {
             self.union_too_complex,
         ) = saved;
         if let Some(isolated_declarations) = isolated_declarations {
-            self.finish_isolated_declarations(isolated_declarations, out);
+            self.finish_isolated_declarations(isolated_declarations);
         }
         for error in found {
             let Found {
@@ -274,8 +273,7 @@ impl<'p> Checker<'p> {
                 args,
                 related,
             } = error;
-            out.push(Diagnostic { start, code });
-            self.explain_another(start, end, code, |_| args);
+            self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
             if !related.is_empty() {
                 self.relate(start, code, |_| related);
             }
@@ -2070,7 +2068,7 @@ impl SymbolTrackerImpl {
                     c.end_of_name_at(self.current_source_file, hir[i].name_pos),
                 ),
                 (
-                    hir[statement].pos,
+                    hir[statement].start,
                     c.end_of_stmt(self.current_source_file, statement),
                 ),
             ),
@@ -2201,11 +2199,11 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
                 if self.error_name_node.is_some_and(|name| name.of_variable)
                     && let Some(found) = self.diagnostics.last_mut()
                 {
-                    found.related.push(Related {
-                        at: Some((self.current_source_file, location.0, location.1)),
-                        code: 9027,
-                        args: vec![name],
-                    });
+                    found.related.push(c.new_diagnostic(
+                        (self.current_source_file, location.0, location.1),
+                        9027,
+                        &[Arg::Text(&name)],
+                    ));
                 }
             }
         }
@@ -3060,7 +3058,7 @@ impl<'p> DeclarationEmit<'_, 'p> {
             ExprKind::Fn(f) => return self.transform_signature(f),
             _ => {}
         }
-        let (start, end) = (hir[s].pos, self.c.end_of_stmt(self.file(), s));
+        let (start, end) = (hir[s].start, self.c.end_of_stmt(self.file(), s));
         self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(start, end);
         // `IsPrimitiveLiteralValue`: it is written as it is.
         if self.c.iso_is_primitive_literal(self.file(), e, true) {

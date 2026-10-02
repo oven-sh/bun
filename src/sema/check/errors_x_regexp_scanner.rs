@@ -7,7 +7,8 @@
 //!
 //! tsgo always allows for Annex B, so that its `anyUnicodeModeOrNonAnnexB` is `anyUnicodeMode`.
 
-use super::errors::Diagnostic;
+use super::explain::NOWHERE;
+use super::sink::held;
 use super::*;
 use crate::resolve::ScriptTarget;
 use bun_core::lexer::{is_identifier_part, is_identifier_start};
@@ -15,7 +16,7 @@ use std::borrow::Cow;
 
 impl Checker<'_> {
     /// `checkRegularExpressionLiteral`, `checkGrammarRegularExpressionLiteral`
-    pub(super) fn check_x_regexp_scanner(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_x_regexp_scanner(&mut self, file: FileId) {
         let hir = self.hir(file);
         if has_parse_diagnostics(hir) {
             return;
@@ -25,31 +26,21 @@ impl Checker<'_> {
             ScriptTarget::None => ScriptTarget::ES2025,
             target => target,
         };
-        let mut noted: Option<Vec<Noted>> = self.explains.then(Vec::new);
+        let mut noted: Vec<Noted> = Vec::new();
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::Regex) {
-            check_regular_expression_literal(
-                &hir.text,
-                hir[e].pos as usize,
-                target,
-                out,
-                noted.as_mut(),
-            );
+            check_regular_expression_literal(&hir.text, hir[e].pos as usize, target, &mut noted);
         }
         let mut said_last = 0;
-        for (start, end, code, args) in noted.into_iter().flatten() {
+        for (start, end, code, args) in noted {
             // `Did_you_mean_0` goes with the error before it, and is in no file.
             if code == 1369 {
                 self.relate(start, said_last, |_| {
-                    vec![super::explain::Related {
-                        at: None,
-                        code,
-                        args,
-                    }]
+                    vec![Reported::new(NOWHERE, code, held(args))]
                 });
             } else {
                 said_last = code;
-                self.note(start, end, code, args);
+                self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
             }
         }
     }
@@ -113,8 +104,7 @@ fn check_regular_expression_literal(
     text: &[u8],
     token_start: usize,
     target: ScriptTarget,
-    out: &mut Vec<Diagnostic>,
-    noted: Option<&mut Vec<Noted>>,
+    noted: &mut Vec<Noted>,
 ) {
     if text.get(token_start) != Some(&b'/') {
         return;
@@ -162,7 +152,6 @@ fn check_regular_expression_literal(
         nesting: 0,
         is_too_deep: false,
         last_error: None,
-        out,
         noted,
     };
     p += 1;
@@ -220,9 +209,7 @@ struct RegExpParser<'a> {
     is_too_deep: bool,
     /// Where the last error that was reported is.
     last_error: Option<usize>,
-    out: &'a mut Vec<Diagnostic>,
-    /// `None`: nobody reads the messages.
-    noted: Option<&'a mut Vec<Noted>>,
+    noted: &'a mut Vec<Noted>,
 }
 
 impl<'a> RegExpParser<'a> {
@@ -241,17 +228,11 @@ impl<'a> RegExpParser<'a> {
     ) {
         if self.last_error != Some(start) && !self.is_too_deep {
             self.last_error = Some(start);
-            self.out.push(Diagnostic {
-                start: start as u32,
-                code,
-            });
-            if let Some(noted) = self.noted.as_mut() {
-                let end = match length {
-                    0 => super::explain::NO_LENGTH,
-                    _ => (start + length) as u32,
-                };
-                noted.push((start as u32, end, code, args()));
-            }
+            let end = match length {
+                0 => super::explain::NO_LENGTH,
+                _ => (start + length) as u32,
+            };
+            self.noted.push((start as u32, end, code, args()));
         }
     }
 
@@ -265,13 +246,13 @@ impl<'a> RegExpParser<'a> {
         candidates: impl Iterator<Item = &'c [u8]>,
     ) {
         let (start, end) = (start as u32, (start + length) as u32);
-        if let Some(noted) = self.noted.as_mut()
-            && noted
-                .last()
-                .is_some_and(|last| (last.0, last.1) == (start, end))
+        if self
+            .noted
+            .last()
+            .is_some_and(|last| (last.0, last.1) == (start, end))
             && let Some(suggestion) = spelling_suggestion(name, candidates)
         {
-            noted.push((start, end, 1369, vec![suggestion]));
+            self.noted.push((start, end, 1369, vec![suggestion]));
         }
     }
 
@@ -1465,7 +1446,7 @@ fn decode_rune(text: &[u8]) -> (u32, usize) {
 }
 
 /// `GetSpellingSuggestion`
-pub(super) fn get_spelling_suggestion<'c, T: Copy>(
+pub fn get_spelling_suggestion<'c, T: Copy>(
     name: &[u8],
     candidates: impl Iterator<Item = T>,
     get_name: impl Fn(T) -> &'c [u8],

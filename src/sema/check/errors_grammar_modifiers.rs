@@ -1,6 +1,6 @@
 //! `checkGrammarModifiers` (TypeScript 7.0.2, grammarchecks.go), on `node.Modifiers()` as the tree has it.
 
-use super::errors::Diagnostic;
+use super::sink::held;
 use super::*;
 use crate::bind::{MemberOwner, Parent};
 
@@ -89,22 +89,20 @@ pub(super) fn modifier_text(modifier: Flags) -> &'static str {
 
 impl Checker<'_> {
     /// `checkGrammarModifiers`, of every statement, member, parameter and type parameter that has modifiers.
-    pub(super) fn check_grammar_modifiers(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_grammar_modifiers(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `grammarErrorOnNode`
         if has_parse_diagnostics(hir) {
             return;
         }
-        let report = |error: GrammarError, out: &mut Vec<Diagnostic>| {
+        let report = |c: &mut Self, error: GrammarError| {
             let (start, code) = (error.start, error.code);
-            out.push(Diagnostic { start, code });
             let args = error.args.iter().filter(|arg| !arg.is_empty());
-            self.note(
-                start,
-                error.end,
+            c.add_diagnostic(Reported::new(
+                (file, start, error.end),
                 code,
-                args.map(|&arg| arg.to_owned()).collect(),
-            );
+                held(args.map(|&arg| arg.to_owned()).collect()),
+            ));
         };
         for (s, statement) in hir.stmts.iter().enumerate() {
             if statement.modifiers.is_empty() || matches!(bound.stmt_parent[s], Parent::None) {
@@ -122,7 +120,9 @@ impl Checker<'_> {
                 };
                 let first_member = members.iter().next().map(|m| hir[m].start);
                 let header = statement.start..first_member.unwrap_or(statement.loc.end);
-                out.retain(|d| !matches!(d.code, 1097 | 1172..=1176) || !header.contains(&d.start));
+                self.reported.retain(|d| {
+                    !matches!(d.code, 1097 | 1172..=1176) || !header.contains(&d.start)
+                });
             }
             // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these take none.
             let takes_none = match (statement.kind, bound.stmt_parent[s]) {
@@ -141,7 +141,7 @@ impl Checker<'_> {
             };
             let takes_none = GrammarError::some(statement.start, 0, takes_none, ["", ""]);
             if let Some(error) = error.or(takes_none.filter(|error| error.code != 0)) {
-                report(error, out);
+                report(self, error);
             }
         }
         for (m, member) in hir.members.iter().enumerate() {
@@ -156,25 +156,25 @@ impl Checker<'_> {
             // end reports the parameters.
             if member.kind == MemberKind::IndexSignature {
                 let signature = member.start..member.loc.end;
-                out.retain(|d| {
+                self.reported.retain(|d| {
                     !matches!(d.code, 1017..=1020 | 1022 | 1025 | 1096)
                         || !signature.contains(&d.start)
                 });
             }
-            report(error, out);
+            report(self, error);
         }
         for p in 0..hir.modifiers_of_params.len() {
             if bound.param_fn[p].is_some()
                 && let Some(error) = self
                     .grammar_error_in_modifiers(file, HasModifiers::Parameter(ParamId(p as u32)))
             {
-                report(error, out);
+                report(self, error);
             }
         }
         for p in 0..hir.type_params.len() {
             let node = HasModifiers::TypeParameter(TypeParamId(p as u32));
             if let Some(error) = self.grammar_error_in_modifiers(file, node) {
-                report(error, out);
+                report(self, error);
             }
         }
     }

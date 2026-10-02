@@ -41,6 +41,8 @@ pub enum Intrinsic {
     /// `unreachableNeverType`: what control flow analysis has for a reference past an assignment control does not get to, or past
     /// a call that never returns. It has `TypeFlagsNever`. `getFlowTypeOfReference` turns it into the declared type.
     UnreachableNever,
+    /// `implicitNeverType`: what is in `[]` under `strictNullChecks`. It has `TypeFlagsNever`. `isEmptyLiteralType` knows it.
+    ImplicitNever,
     Void,
     Undefined,
     /// The `undefined` of a property or an element that is not there. `missingType`
@@ -1362,6 +1364,7 @@ well_known! {
     MARKER_SUB_FOR_CHECK = TypeData::Marker(4),
     SILENT_NEVER = TypeData::Intrinsic(Intrinsic::SilentNever),
     UNREACHABLE_NEVER = TypeData::Intrinsic(Intrinsic::UnreachableNever),
+    IMPLICIT_NEVER = TypeData::Intrinsic(Intrinsic::ImplicitNever),
     AUTO = TypeData::Intrinsic(Intrinsic::Auto),
     ERROR = TypeData::Intrinsic(Intrinsic::Error),
     INTRINSIC_MARKER = TypeData::Intrinsic(Intrinsic::IntrinsicMarker),
@@ -1394,12 +1397,15 @@ impl TypeId {
         )
     }
 
-    /// `TypeFlagsNever`: `neverType`, `silentNeverType` or `unreachableNeverType`.
+    /// `TypeFlagsNever`: `neverType`, `silentNeverType`, `unreachableNeverType` or `implicitNeverType`.
     #[inline]
     pub fn is_never(self) -> bool {
         matches!(
             self,
-            TypeId::NEVER | TypeId::SILENT_NEVER | TypeId::UNREACHABLE_NEVER
+            TypeId::NEVER
+                | TypeId::SILENT_NEVER
+                | TypeId::UNREACHABLE_NEVER
+                | TypeId::IMPLICIT_NEVER
         )
     }
 
@@ -1506,7 +1512,10 @@ impl TypeStore {
         match &record.made.0 {
             TypeData::Union(members) => members,
             TypeData::Intrinsic(
-                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+                Intrinsic::Never
+                | Intrinsic::SilentNever
+                | Intrinsic::UnreachableNever
+                | Intrinsic::ImplicitNever,
             ) => &[],
             _ => std::slice::from_ref(&record.id),
         }
@@ -1553,9 +1562,10 @@ impl TypeStore {
                 Intrinsic::BigInt => tf::BIGINT,
                 Intrinsic::Symbol => tf::ES_SYMBOL,
                 Intrinsic::Object => tf::NON_PRIMITIVE,
-                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever => {
-                    tf::NEVER
-                }
+                Intrinsic::Never
+                | Intrinsic::SilentNever
+                | Intrinsic::UnreachableNever
+                | Intrinsic::ImplicitNever => tf::NEVER,
             },
             TypeData::StringLit { .. } => tf::STRING_LITERAL,
             TypeData::NumberLit { .. } => tf::NUMBER_LITERAL,

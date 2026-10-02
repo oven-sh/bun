@@ -1,10 +1,9 @@
 //! Calls: which signature is meant, what its type parameters are, what comes back.
 
-use super::errors_call::Applicable;
-use super::infer::{Inference, PRIORITY_PARTIAL_HOMOMORPHIC, PRIORITY_RETURN};
+use super::infer::{Inference, PRIORITY_RETURN};
 use super::relate::Relation;
 use super::*;
-use crate::bind::{FnOwner, MemberOwner, Parent, UNREACHABLE};
+use crate::bind::{FnOwner, MemberOwner, Parent};
 use smallvec::{SmallVec, smallvec};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -67,10 +66,13 @@ pub(super) enum CallLike {
         right: ExprId,
     },
     Decorator(DecoratorOwner),
+    /// A JSX element. `construct`: its signatures are construct signatures.
+    Jsx {
+        construct: bool,
+    },
 }
 
-/// `CallState`: what `resolveCall` holds the candidates against.
-#[derive(Copy, Clone)]
+/// `CallState`
 pub(super) struct CallState<'a> {
     pub(super) file: FileId,
     /// What stands for `node` in the tables.
@@ -80,114 +82,19 @@ pub(super) struct CallState<'a> {
     pub(super) args: &'a [Arg],
     /// `getThisArgumentOfCall`
     pub(super) this_arg: Option<ExprId>,
+    pub(super) candidates: Sigs,
+    pub(super) arg_check_mode: CheckMode,
+    pub(super) is_single_non_generic_candidate: bool,
+    /// FOR SPEED: there is one candidate, it is not generic, and the call is not resolved once more. What is pushed for an argument is
+    /// what the resolved signature expects of it, so what tsgo checks by value and again in the deferred check is checked once.
+    pub(super) checks_arguments_once: bool,
+    pub(super) candidates_for_argument_error: Sigs,
+    pub(super) candidate_for_argument_arity_error: Option<SigId>,
+    pub(super) candidate_for_type_argument_error: Option<SigId>,
 }
 
 pub(super) type Args = SmallVec<[Arg; 8]>;
 pub(super) type Sigs = SmallVec<[SigId; 8]>;
-
-/// A call whose signature is being picked, and the one under consideration.
-pub(super) struct Resolving<'p> {
-    pub file: FileId,
-    /// `NONE`: the attributes of a JSX element, which nothing is looked up in this for.
-    pub call: ExprId,
-    /// Without a `call`: that JSX element (`inferJsxTypeArguments`).
-    pub node: ExprId,
-    /// The signature under consideration, as it is before its type parameters are filled in.
-    pub sig: Option<SigId>,
-    pub params: List<'p, SigParam>,
-    /// Its type parameters, as far as the arguments looked at so far say; `Unresolved` for those nothing is known of yet.
-    pub so_far: MapperId,
-    /// `returnMapper`: what is expected of its result says about its type parameters.
-    pub return_mapper: MapperId,
-    /// `outerReturnMapper`: every one of its type parameters, going by `return_mapper`, or else by what the arguments looked at
-    /// so far come to.
-    pub outer_return_mapper: MapperId,
-    /// A call among the arguments has gone by `outer_return_mapper`: it is made once, and stays as it was then.
-    pub is_outer_return_mapper_taken: bool,
-    /// The signature is only tried. It may be dropped, so what goes by what it expects of an argument is not kept.
-    pub is_trial: bool,
-    /// An argument, or a part of one, is being looked at to infer from (`CheckModeInferential`).
-    pub is_inferential: bool,
-    /// The type parameters that the generic functions inside that argument went by when they were instantiated, and what they were
-    /// taken to be. They are settled by that (`context.mapper`).
-    pub settles: Vec<(TypeId, TypeId)>,
-    /// The generic functions inside the array and object literal arguments that `instantiateTypeWithSingleGenericCallSignature`
-    /// applies to, in source order.
-    pub nested_generic_functions: Vec<NestedGenericFunction>,
-    /// `inferredTypeParameters`, while the second round of `inferTypeArguments` checks an argument with such a function in it.
-    pub inferred_type_params: Vec<TypeId>,
-    /// Where a type parameter of `sig` is in scope at the call (`Inference::calls_itself`: a function that calls itself, `new C` inside
-    /// the generic class `C`): the argument that `inferTypeArguments` is checking and the declared type of its parameter.
-    pub checked_arg: Option<(ExprId, TypeId)>,
-}
-
-/// A generic function inside an array or object literal argument whose contextual type has a single signature of the same kind
-/// without type parameters.
-#[derive(Copy, Clone)]
-pub(super) struct NestedGenericFunction {
-    arg_index: usize,
-    expr: ExprId,
-    sig: SigId,
-    is_construct: bool,
-    /// The contextual type of `expr`.
-    contextual: TypeId,
-    /// `None`: the function is skipped (`CheckModeSkipGenericFunctions`, `anyFunctionType`). `Some`: its type in the second round.
-    instantiated: Option<TypeId>,
-}
-
-impl<'p> Resolving<'p> {
-    fn new(
-        file: FileId,
-        call: ExprId,
-        sig: Option<SigId>,
-        params: List<'p, SigParam>,
-        return_mapper: MapperId,
-    ) -> Resolving<'p> {
-        Resolving {
-            file,
-            call,
-            node: ExprId::NONE,
-            sig,
-            params,
-            so_far: MapperId::IDENTITY,
-            return_mapper,
-            outer_return_mapper: MapperId::IDENTITY,
-            is_outer_return_mapper_taken: false,
-            is_trial: false,
-            is_inferential: false,
-            settles: Vec::new(),
-            nested_generic_functions: Vec::new(),
-            inferred_type_params: Vec::new(),
-
-            checked_arg: None,
-        }
-    }
-
-    /// For `candidate`, which is held against the arguments to see whether it will do. `params`: what it takes as far as is known.
-    fn trial(
-        file: FileId,
-        call: ExprId,
-        candidate: SigId,
-        params: List<'p, SigParam>,
-    ) -> Resolving<'p> {
-        Resolving {
-            is_trial: true,
-            ..Resolving::new(file, call, Some(candidate), params, MapperId::IDENTITY)
-        }
-    }
-}
-
-/// The state of `NodeCheckFlagsContextChecked` for a function expression in an argument of an overloaded call, as stored in
-/// `Checker::context_checked_for`.
-#[derive(Copy, Clone)]
-enum ContextChecked {
-    /// No attempt has checked the function (no entry).
-    No,
-    /// The attempt on this candidate was the first to check the function. The attempt is in progress or was accepted.
-    By(SigId),
-    /// The attempt that checked the function has ended. Every later attempt has a new inference context (`None`).
-    ByEndedAttempt,
-}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum SigSymbol {
@@ -268,50 +175,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether checking `e` checks a context sensitive expression that `isContextSensitive(e)` does not report. `isContextSensitive`
-    /// has no case for `&&` and `,`, but `checkBinaryLikeExpression` checks the right operand in the check mode of the whole
-    /// expression, with its contextual type (`getContextualTypeForBinaryOperand`).
-    pub(super) fn has_context_sensitive_right_operand(&self, file: FileId, e: ExprId) -> bool {
-        match self.hir(file)[e].kind {
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Comma,
-                right,
-                ..
-            } => {
-                self.is_context_sensitive(file, right)
-                    || self.has_context_sensitive_right_operand(file, right)
-            }
-            ExprKind::Cond {
-                yes: left,
-                no: right,
-                ..
-            }
-            | ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.has_context_sensitive_right_operand(file, left)
-                    || self.has_context_sensitive_right_operand(file, right)
-            }
-            _ => false,
-        }
-    }
-
-    /// The right operand of `&&` and `,`, repeatedly: it has the contextual type of `e`.
-    fn last_right_operand(&self, file: FileId, mut e: ExprId) -> ExprId {
-        let hir = self.hir(file);
-        while let ExprKind::Binary {
-            op: BinOp::And | BinOp::Comma,
-            right,
-            ..
-        } = hir[e].kind
-        {
-            e = right;
-        }
-        e
-    }
-
     /// Whether what is expected of `e` can change its type at all.
     pub(super) fn depends_on_context(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
@@ -338,9 +201,17 @@ impl<'p> Checker<'p> {
         }
     }
 
-    pub fn resolve_call(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
+    pub fn resolved_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
         if let Some(known) = self.p.calls.get(&(file, call)) {
             return known;
+        }
+        if let Some(&(.., resolved)) = self
+            .resolved_meanwhile
+            .iter()
+            .rev()
+            .find(|r| r.0 == file && r.1 == call)
+        {
+            return resolved;
         }
         if self.prepare_question_about_expr(file, call)
             && let Some(known) = self.p.calls.get(&(file, call))
@@ -352,13 +223,6 @@ impl<'p> Checker<'p> {
             .stack
             .iter()
             .any(|q| matches!(*q, Query::Call(f, c) if f == file && c == call));
-        if is_under_way && self.asking_for_context {
-            self.enter(Query::Call(file, call));
-            return ResolvedCall {
-                sig: None,
-                ret: TypeId::UNRESOLVED,
-            };
-        }
         if !self.enter(Query::Call(file, call)) {
             return ResolvedCall {
                 sig: None,
@@ -372,24 +236,32 @@ impl<'p> Checker<'p> {
         if !is_under_way {
             self.resolution_start = self.stack.len();
         }
-        let asking = std::mem::replace(&mut self.asking_for_context, false);
-        // A call that is resolved settles what its own arguments are expected to be, whatever is gone over again around it.
-        let keeps = std::mem::replace(&mut self.keeps_arg_contexts, false);
-        let keeps_boolean = std::mem::replace(&mut self.keeps_boolean_in_arg_contexts, false);
-        let around = self.pending_failed_call.take();
-        let resolved = self.resolve_call_uncached(file, call);
-        let failed = std::mem::replace(&mut self.pending_failed_call, around);
-        if is_under_way && let Some(check) = failed {
-            self.report_call_resolved_again(file, call, check, resolved.ret);
-        }
-        self.keeps_arg_contexts = keeps;
-        self.keeps_boolean_in_arg_contexts = keeps_boolean;
-        self.asking_for_context = asking;
+        let around = self.call_resolution_errors.take();
+        let resolved = self.resolve_signature(file, call);
+        let said = std::mem::replace(&mut self.call_resolution_errors, around);
         self.resolution_start = resolution_start;
-        if self.leave() && !is_under_way {
-            // Only together with a resolution that is kept, and first: another thread that finds the call resolved finds this too.
-            if let Some(check) = failed {
-                self.p.failed_calls.insert((file, call), check);
+        self.resolved_meanwhile.push((file, call, resolved));
+        let resolved = self.with_return_type(resolved);
+        self.resolved_meanwhile.pop();
+        let holds = self.leave();
+        // A call that is asked for while it is being resolved is resolved once more, and `resolveCall` reports what is wrong with it
+        // as things stand then. Only the first time is kept.
+        if is_under_way {
+            if let Some(said) = said
+                && self
+                    .p
+                    .said_of_calls_resolved_again
+                    .get_ref(&(file, call))
+                    .is_none()
+            {
+                self.p
+                    .said_of_calls_resolved_again
+                    .insert_ref((file, call), said);
+            }
+        } else if holds {
+            // First: another thread that finds the call resolved finds this too.
+            if let Some(said) = said {
+                self.p.said_of_calls.insert_ref((file, call), said);
             }
             self.p.calls.insert((file, call), resolved);
         }
@@ -540,8 +412,8 @@ impl<'p> Checker<'p> {
                 &args,
                 index,
                 TypeId::ANY,
-                &[],
-                MapperId::IDENTITY,
+                None,
+                CheckMode::empty(),
             ));
         }
         match args.get(index) {
@@ -573,8 +445,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `hasCorrectArity`
-    pub(super) fn has_correct_arity(&mut self, s: CallState<'_>, params: &[SigParam]) -> bool {
+    pub(super) fn has_correct_arity(&mut self, s: &CallState<'_>, params: &[SigParam]) -> bool {
         let (file, call, node, args) = (s.file, s.call, s.node, s.args);
+        // The attributes are one argument, whatever the component takes besides.
+        if matches!(node, CallLike::Jsx { .. }) {
+            return true;
+        }
         let given = match node {
             CallLike::Decorator(owner) => self.decorator_argument_count(file, owner, params),
             _ => args.len(),
@@ -627,7 +503,7 @@ impl<'p> Checker<'p> {
         true
     }
 
-    fn resolve_call_uncached(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
+    fn resolve_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
         let hir = self.hir(file);
         // `resolveTaggedTemplateExpression`: a call with the pieces of text for a first argument.
         if let ExprKind::TaggedTemplate(c) = hir[call].kind {
@@ -667,7 +543,9 @@ impl<'p> Checker<'p> {
             let node = CallLike::Call(c);
             let args = self.effective_call_arguments(file, call, node);
             let this_arg = self.this_argument_of_call(file, call, node);
-            return self.resolve_among(file, call, node, &sigs, &type_args, &args, this_arg, true);
+            return self.resolve_call(
+                file, call, node, &sigs, &type_args, &args, this_arg, true, true, None,
+            );
         }
         if let ExprKind::Binary {
             op: BinOp::Instanceof,
@@ -706,8 +584,14 @@ impl<'p> Checker<'p> {
     /// `resolveUntypedCall`: nothing is expected of the arguments, and they are looked at all the same. What leads back from there to
     /// something that is being worked out is a circle. The result is `anySignature`.
     fn resolve_untyped_call(&mut self, file: FileId, args: IdList<ExprId>) -> ResolvedCall {
+        // `getResolvedSignature` resets `resolutionStart` the first time only. Where the call is resolved once more the arguments are
+        // being looked at: they are checked again, by value, which has no guard.
+        let outer = (self.resolution_start != self.stack.len()).then(|| self.begin_recheck());
         for arg in self.hir(file).ids(args) {
             self.type_of_expr(file, arg);
+        }
+        if let Some(outer) = outer {
+            self.end_recheck(outer);
         }
         ResolvedCall {
             sig: None,
@@ -720,18 +604,6 @@ impl<'p> Checker<'p> {
         ResolvedCall {
             ret: TypeId::ERROR,
             ..self.resolve_untyped_call(file, args)
-        }
-    }
-
-    /// `resolveCall`, `s.typeArguments`: those of the call, `new` or tagged template `call`, but not of a `super` call (`isSuperCall`).
-    pub(super) fn type_arguments_of_call(&self, file: FileId, call: ExprId) -> IdList<TypeNodeId> {
-        let hir = self.hir(file);
-        match hir[call].kind {
-            ExprKind::Call(c) if matches!(hir[hir[c].callee].kind, ExprKind::Super) => {
-                IdList::EMPTY
-            }
-            ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => hir[c].type_args,
-            _ => IdList::EMPTY,
         }
     }
 
@@ -750,7 +622,7 @@ impl<'p> Checker<'p> {
             return self.resolve_untyped_call(file, self.hir(file)[id].args);
         }
         let args = self.effective_args(file, self.hir(file)[id].args);
-        self.resolve_among(
+        self.resolve_call(
             file,
             call,
             CallLike::Call(id),
@@ -759,6 +631,8 @@ impl<'p> Checker<'p> {
             &args,
             None,
             true,
+            true,
+            None,
         )
     }
 
@@ -885,7 +759,7 @@ impl<'p> Checker<'p> {
         let this_arg = self.this_argument_of_call(file, call, node);
         // `resolveNewExpression` reads the return type of a call signature invoked with `new` only without `noImplicitAny` (2350).
         let wants_return = !(is_call_by_new && self.p.files.options.no_implicit_any);
-        let resolved = self.resolve_among(
+        let resolved = self.resolve_call(
             file,
             call,
             node,
@@ -893,7 +767,9 @@ impl<'p> Checker<'p> {
             &type_args,
             &args,
             this_arg,
+            true,
             wants_return,
+            None,
         );
         // `checkCallExpression`: what `new` makes of something that is no constructor is anything.
         if is_call_by_new {
@@ -943,7 +819,18 @@ impl<'p> Checker<'p> {
         }
         let node = CallLike::InstanceOf { left, right };
         let args = self.effective_call_arguments(file, call, node);
-        self.resolve_among(file, call, node, &sigs, &[], &args, Some(right), true)
+        self.resolve_call(
+            file,
+            call,
+            node,
+            &sigs,
+            &[],
+            &args,
+            Some(right),
+            true,
+            true,
+            Some(2860),
+        )
     }
 
     /// `getSymbolHasInstanceMethodOfObjectType`
@@ -990,8 +877,8 @@ impl<'p> Checker<'p> {
         let ExprKind::New(c) = self.hir(file)[e].kind else {
             return None;
         };
-        let callee = self.type_of_expr(file, self.hir(file)[c].callee);
-        let callee = self.non_null_type(callee);
+        let called = self.type_of_expr(file, self.hir(file)[c].callee);
+        let callee = self.check_non_null_type(file, self.hir(file)[c].callee, called);
         let only = self.single_signature(callee, true, true)?;
         if !self.sig_type_params(only).is_empty() {
             return None;
@@ -1016,8 +903,8 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
-        let callee = self.type_of_expr(file, callee);
-        let callee = self.non_null_type(callee);
+        let called = self.type_of_expr(file, callee);
+        let callee = self.check_non_null_type(file, callee, called);
         let only = self.single_signature(callee, false, true)?;
         if !self.sig_type_params(only).is_empty() {
             return None;
@@ -1025,509 +912,505 @@ impl<'p> Checker<'p> {
         Some(self.sig_return(only))
     }
 
-    /// `chooseOverload` holds the arguments against a candidate though it is the only one. What leads back from there to something
-    /// that is being worked out is a circle. Unless they fit for sure, the call is one of `failed_calls`.
-    fn hold_arguments_against(&mut self, s: CallState<'_>, declared: SigId, sig: SigId) {
-        let (file, call) = (s.file, s.call);
-        let params = self.sig_params(sig);
-        self.resolving.push(Resolving::new(
-            file,
-            call,
-            Some(declared),
-            params,
-            MapperId::IDENTITY,
-        ));
-        let (applicable, is_certain) =
-            self.with_certainty(|c| c.is_signature_applicable(s, sig, None));
-        self.resolving.pop();
-        if applicable != Applicable::Yes || !is_certain {
-            self.pending_failed_call = Some(sig);
-        }
-    }
-
-    /// The end of `resolveCall`: which of `declared`, the signatures of what is called, `node`, which `call` stands for, is a
-    /// call of.
+    /// `resolveCall`. `report_errors`: `reportErrors`.
     /// `wants_return`: the caller reads `ret`. Otherwise `ret` is `any` and the return type of the signature is not resolved:
     /// `checkCallExpression` returns `anyType` for `new` of a call signature before it calls `getReturnTypeOfSignature`.
-    pub(super) fn resolve_among(
+    pub(super) fn resolve_call(
         &mut self,
         file: FileId,
         call: ExprId,
         node: CallLike,
-        declared: &[SigId],
+        signatures: &[SigId],
         type_args: &[TypeId],
         args: &[Arg],
         this_arg: Option<ExprId>,
+        report_errors: bool,
         wants_return: bool,
+        head_message: Option<u32>,
     ) -> ResolvedCall {
-        let s = CallState {
+        let candidates = self.candidates_in_order(signatures);
+        // `unknownSignature`
+        if candidates.is_empty() {
+            return ResolvedCall {
+                sig: None,
+                ret: TypeId::ERROR,
+            };
+        }
+        let mut s = CallState {
             file,
             call,
             node,
             type_args,
             args,
             this_arg,
+            candidates: SmallVec::from_slice(&candidates),
+            arg_check_mode: CheckMode::empty(),
+            is_single_non_generic_candidate: false,
+            checks_arguments_once: false,
+            candidates_for_argument_error: Sigs::new(),
+            candidate_for_argument_arity_error: None,
+            candidate_for_type_argument_error: None,
         };
-        let return_of = |c: &mut Self, sig: SigId| {
-            if wants_return {
-                c.sig_return(sig)
-            } else {
-                TypeId::ANY
-            }
+        s.is_single_non_generic_candidate =
+            s.candidates.len() == 1 && self.sig_type_params(s.candidates[0]).is_empty();
+        s.checks_arguments_once = s.is_single_non_generic_candidate
+            && matches!(node, CallLike::Call(_))
+            // `getResolvedSignature` resets `resolutionStart` the first time only.
+            && self.resolution_start == self.stack.len()
+            && self.stack.last() == Some(&Query::Call(file, call));
+        let has_context_sensitive_argument = match node {
+            CallLike::Decorator(_) => false,
+            CallLike::Jsx { .. } => !self.jsx_parts_that_wait(file, call).is_empty(),
+            _ => args
+                .iter()
+                .any(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e))),
         };
-        let sigs = self.candidates_in_order(declared);
-        // No attempt of this resolution has checked an argument yet. Only overloaded calls record which attempt did.
-        if sigs.len() > 1 {
-            for &arg in args {
-                if let Arg::Expr(e) = arg {
-                    self.set_context_checked(file, e, ContextChecked::No);
-                }
-            }
+        if has_context_sensitive_argument && !s.is_single_non_generic_candidate {
+            s.arg_check_mode = CheckMode::SKIP_CONTEXT_SENSITIVE;
         }
-        let mut candidates: Sigs = Sigs::new();
-        // What the last of `candidates` takes.
-        let mut taken: List<'p, SigParam> = List::default();
-        let mut is_const_left_out = false;
-        for &sig in &sigs {
-            // `chooseOverload` goes on to the next candidate on all three before it has looked at an argument.
-            let takes_type_args = type_args.is_empty() || {
-                let type_params = self.sig_type_params(sig);
-                self.has_correct_type_argument_arity(&type_params, type_args.len())
-            };
-            if takes_type_args {
-                let params = self.sig_params(sig);
-                if self.has_correct_arity(s, &params)
-                    && (type_args.is_empty() || self.do_type_arguments_fit(sig, type_args))
-                {
-                    candidates.push(sig);
-                    taken = params;
-                    continue;
-                }
-            }
-            is_const_left_out = is_const_left_out || self.has_const_type_parameter(sig);
+        let mut result = None;
+        if s.candidates.len() > 1 {
+            result = self.choose_overload(&mut s, Relation::Subtype);
         }
-        if candidates.is_empty() {
-            let sig = self.candidate_for_overload_failure(s, &sigs, false);
-            let ret = return_of(self, sig);
-            self.pending_failed_call = Some(sig);
-            return ResolvedCall {
-                sig: Some(sig),
-                ret,
-            };
+        if result.is_none() {
+            result = self.choose_overload(&mut s, Relation::Assignable);
         }
-        // No overload with a `const` type parameter takes this many arguments.
-        if is_const_left_out
-            && self.provisional == 0
-            && !candidates.iter().any(|&c| self.has_const_type_parameter(c))
-        {
-            self.p.calls_outside_const_context.insert((file, call), ());
-        }
-        // Where one is left there is nothing to choose, and nothing has been held against it.
-        let chosen = match candidates[..] {
-            [only] => Some(only),
-            _ => self.choose_overload(s, &candidates),
+        let is_chosen = result.is_some();
+        let sig = match result {
+            Some(sig) => sig,
+            None => self.candidate_for_overload_failure(&s),
         };
-        // The overload that is chosen has no `const` type parameter, and another has.
-        if self.provisional == 0
-            && let Some(chosen) = chosen
-            && !self.has_const_type_parameter(chosen)
-            && candidates.iter().any(|&c| self.has_const_type_parameter(c))
-        {
-            self.p.calls_outside_const_context.insert((file, call), ());
-        }
-        // Where what does not wait rules them all out, `chooseOverload` never gets to look at the functions among the arguments.
-        if chosen.is_none() && !self.is_provisional_here() {
-            let (ruled_out, is_certain) =
-                self.with_certainty(|c| c.ruled_out_by_plain_arguments(s, &candidates));
-            if let Some(last) = ruled_out
-                && is_certain
-            {
-                if let Some(last) = last
-                    && self.look_at_arguments_as_of(s, last) < args.len()
-                {
-                    // No candidate passed the first round, so `argCheckMode` is still `CheckModeSkipContextSensitive`.
-                    self.add_implementation_success_elaboration(s, last, true);
-                }
-                let sig = self.candidate_for_overload_failure(s, &sigs, false);
-                let ret = return_of(self, sig);
-                self.pending_failed_call = Some(sig);
-                return ResolvedCall {
-                    sig: Some(sig),
-                    ret,
-                };
-            }
-        }
-        let first = chosen.unwrap_or(candidates[0]);
-        let is_generic = !self.sig_type_params(first).is_empty();
-        // There is something to do from the second argument on. With a rest parameter questions are asked before that is found out.
-        if let [only] = candidates[..]
-            && (args.len() > 1 || taken.last().is_some_and(|p| p.rest))
-            && !self.is_provisional_here()
-        {
-            self.check_sole_candidate_in_order(s, only, &taken, is_generic, sigs.len() == 1);
-        }
-        let is_tested = candidates.len() > 1 && chosen.is_some();
-        let sig = self.instantiate_for_call(s, first, false);
-        let ret = return_of(self, sig);
         let resolved = ResolvedCall {
             sig: Some(sig),
-            ret,
-        };
-        // `chooseOverload` rejects a candidate before it holds the arguments against it: `hasCorrectArity` once more where a generic
-        // rest parameter has been instantiated. `choose_overload_among` has seen to it.
-        if !is_tested && {
-            let (declared_params, instantiated_params) =
-                (self.sig_params(first), self.sig_params(sig));
-            self.non_array_rest_type(&declared_params).is_some()
-                && !self.has_correct_arity(s, &instantiated_params)
-        } {
-            self.pending_failed_call = Some(sig);
-        }
-        // For a single signature, `getCandidateForOverloadFailure` returns a different signature only if the type arguments are
-        // inferred. The return type and the contextual types of the arguments can both depend on them.
-        let is_inferred = type_args.is_empty() && is_generic;
-        let can_differ = sigs.len() > 1 || is_inferred;
-        if self.is_provisional_here() {
-            self.pending_failed_call = Some(sig);
-            return resolved;
-        }
-        if !can_differ {
-            self.hold_arguments_against(s, first, sig);
-            return resolved;
-        }
-        // What is left is the round of `chooseOverload` in which no argument is left out.
-        let has_sensitive = args
-            .iter()
-            .any(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)));
-        let waits = has_sensitive || is_inferred && self.has_generic_function_argument(file, args);
-        if !waits && (sigs.len() == 1 || is_tested) {
-            if !is_tested {
-                self.hold_arguments_against(s, first, sig);
-            }
-            return resolved;
-        }
-        // While the call is under way its arguments go by what it has been taken for.
-        let params = self.sig_params(sig);
-        self.resolving.push(Resolving::new(
-            file,
-            call,
-            Some(first),
-            params,
-            MapperId::IDENTITY,
-        ));
-        let has_later_attempts =
-            sigs.len() > 1 && type_args.is_empty() && has_sensitive && chosen.is_some();
-        let ((accepted, is_applicable, fails), is_certain) = self.with_certainty(|c| {
-            let accepted = if has_later_attempts {
-                c.later_attempts(s, &candidates, first, sig)
+            // Not asked yet: see `with_return_type`.
+            ret: if wants_return {
+                TypeId::UNRESOLVED
             } else {
-                None
-            };
-            let mut is_applicable = accepted.is_some();
-            let fails = accepted.is_none() && {
-                // `chooseOverload` repeats the arity check after instantiating a candidate with a generic rest parameter, and rejects the
-                // candidate before `isSignatureApplicable`.
-                let (declared_params, instantiated_params) =
-                    (c.sig_params(first), c.sig_params(sig));
-                let has_wrong_arity = c.non_array_rest_type(&declared_params).is_some()
-                    && !c.has_correct_arity(s, &instantiated_params);
-                let applicable = if has_wrong_arity {
-                    Applicable::No
-                } else {
-                    c.is_signature_applicable(s, sig, None)
-                };
-                is_applicable = applicable == Applicable::Yes;
-                applicable == Applicable::No
-                    && c.no_candidate_applies(file, call, node, declared, resolved)
-            };
-            (accepted, is_applicable, fails)
-        });
-        self.resolving.pop();
-        if !is_certain || !is_applicable {
-            self.pending_failed_call = Some(sig);
+                TypeId::ANY
+            },
+        };
+        if !is_chosen && report_errors {
+            // `resolvedSignature = result`, before the errors are reported.
+            self.resolved_meanwhile.push((file, call, resolved));
+            let since = (self.reported.len(), self.noted_ahead.len());
+            // Whoever asks first resolves the call, from whatever file. What is reported is in the file of the call.
+            let checking = (self.checking, self.is_type_checked);
+            if self.checking != Some(file) {
+                (self.checking, self.is_type_checked) = (Some(file), false);
+            }
+            self.report_call_resolution_errors(&s, signatures, head_message);
+            (self.checking, self.is_type_checked) = checking;
+            self.resolved_meanwhile.pop();
+            // Another checker may be the one to report it.
+            self.settle_what_was_noted_ahead_since(since.0, since.1);
+            let said = self.reported.split_off(since.0);
+            if !said.is_empty() {
+                self.call_resolution_errors = Some(said);
+            }
         }
-        if !is_certain {
-            return resolved;
-        }
-        if let Some(sig) = accepted {
-            let ret = return_of(self, sig);
-            return ResolvedCall {
+        resolved
+    }
+
+    /// `checkCallExpression`: `getReturnTypeOfSignature(signature)`. It asks once `getResolvedSignature` has put `resolutionStart` back,
+    /// so what is being resolved around the call can be seen from there.
+    pub(super) fn with_return_type(&mut self, resolved: ResolvedCall) -> ResolvedCall {
+        match resolved {
+            ResolvedCall {
                 sig: Some(sig),
-                ret,
-            };
-        }
-        if !fails {
-            return resolved;
-        }
-        let failure = self.candidate_for_overload_failure(s, &sigs, true);
-        let ret = return_of(self, failure);
-        // The errors of a call of the only signature there is are told against `sig`: that stays what all the arguments come to.
-        self.pending_failed_call = Some(if sigs.len() == 1 { sig } else { failure });
-        ResolvedCall {
-            sig: Some(failure),
-            ret,
+                ret: TypeId::UNRESOLVED,
+            } => ResolvedCall {
+                ret: self.sig_return(sig),
+                ..resolved
+            },
+            _ => resolved,
         }
     }
 
-    /// What `ask` answers, and whether that rests on nothing that went unanswered. Nothing is made of an answer that does.
-    fn with_certainty<T>(&mut self, ask: impl FnOnce(&mut Self) -> T) -> (T, bool) {
-        let cycles_before = self.cycles;
-        let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
-        let answer = ask(self);
-        let is_certain =
-            self.cycles == cycles_before && !self.relation_gave_up && !self.timed_out();
-        self.relation_gave_up |= gave_up_before;
-        (answer, is_certain)
-    }
-
-    /// `chooseOverload` for as long as the functions that wait are left out (`CheckModeSkipContextSensitive`): whether what is left
-    /// of the arguments rules out every one of `candidates`, and then the last of `candidatesForArgumentError`, if there is any.
-    /// `None`: it does not, or it cannot be told.
-    fn ruled_out_by_plain_arguments(
-        &mut self,
-        s: CallState<'_>,
-        candidates: &[SigId],
-    ) -> Option<Option<SigId>> {
-        let (file, call, type_args, args) = (s.file, s.call, s.type_args, s.args);
-        if args.iter().any(|a| matches!(a, Arg::Spread(..))) {
-            return None;
+    /// `chooseOverload`
+    fn choose_overload(&mut self, s: &mut CallState<'_>, relation: Relation) -> Option<SigId> {
+        s.candidates_for_argument_error.clear();
+        s.candidate_for_argument_arity_error = None;
+        s.candidate_for_type_argument_error = None;
+        if s.is_single_non_generic_candidate {
+            let candidate = s.candidates[0];
+            let params = self.sig_params(candidate);
+            if !s.type_args.is_empty() || !self.has_correct_arity(s, &params) {
+                return None;
+            }
+            if !self.is_signature_applicable(s, candidate, relation, CheckMode::empty(), false) {
+                s.candidates_for_argument_error.push(candidate);
+                return None;
+            }
+            return Some(candidate);
         }
-        // A call that the first round defers is left out, and is not resolved before a candidate has passed that round.
-        if type_args.is_empty() {
-            for &candidate in candidates {
-                if self.sig_type_params(candidate).is_empty() {
-                    continue;
+        for index in 0..s.candidates.len() {
+            let candidate = s.candidates[index];
+            let type_params = self.sig_type_params(candidate);
+            let params = self.sig_params(candidate);
+            if !self.has_correct_type_argument_arity(&type_params, s.type_args.len())
+                || !self.has_correct_arity(s, &params)
+            {
+                continue;
+            }
+            let has_generic_rest = self.non_array_rest_type(&params).is_some();
+            let mut check_candidate = candidate;
+            let mut inference_context = None;
+            if !type_params.is_empty() {
+                if !s.type_args.is_empty() {
+                    if !self.do_type_arguments_fit(candidate, s.type_args) {
+                        s.candidate_for_type_argument_error = Some(candidate);
+                        continue;
+                    }
+                    let filled = self.fill_sig_type_args(candidate, &type_params, s.type_args);
+                    let mapper = self.mapper_from(&type_params, &filled);
+                    check_candidate = self.instantiate_sig(candidate, mapper);
+                } else {
+                    let mut context = Inference::for_params(&type_params, Some(candidate));
+                    context.any_default = self.hir(s.file).is_js;
+                    let check_mode = s.arg_check_mode | CheckMode::SKIP_GENERIC_FUNCTIONS;
+                    let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
+                    if context.skipped_generic_function {
+                        s.arg_check_mode |= CheckMode::SKIP_GENERIC_FUNCTIONS;
+                    }
+                    check_candidate = self.signature_instantiation(
+                        candidate,
+                        mapper,
+                        &context.inferred_type_params,
+                    );
+                    inference_context = Some(context);
                 }
-                let params = self.sig_params(candidate);
-                for (i, &arg) in args.iter().enumerate() {
-                    if let Arg::Expr(e) = arg
-                        && let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
-                        && self.is_deferred_generic_call(file, e, param)
-                    {
-                        return None;
+                // The instantiation of a generic rest type can change the arity.
+                if has_generic_rest {
+                    let instantiated = self.sig_params(check_candidate);
+                    if !self.has_correct_arity(s, &instantiated) {
+                        s.candidate_for_argument_arity_error = Some(check_candidate);
+                        continue;
                     }
                 }
             }
-        }
-        // A generic function may be left out as well. An argument that has not been told what is expected of it goes by the first
-        // candidate, which is the first that `chooseOverload` holds it against.
-        if type_args.is_empty()
-            && let Some(&first) = candidates.first()
-        {
-            let params = self.sig_params(first);
-            self.resolving
-                .push(Resolving::trial(file, call, first, params));
-            let has_generic_function = self.has_generic_function_argument(file, args);
-            self.resolving.pop();
-            if has_generic_function {
-                return None;
-            }
-        }
-        let mut last = None;
-        for &candidate in candidates {
-            if !type_args.is_empty() && !self.do_type_arguments_fit(candidate, type_args) {
+            if !self.is_signature_applicable(s, check_candidate, relation, s.arg_check_mode, false)
+            {
+                s.candidates_for_argument_error.push(check_candidate);
                 continue;
             }
-            let sig = self.instantiate_for_call(s, candidate, true);
-            let params = self.sig_params(sig);
-            let declared = self.sig_params(candidate);
-            if self.non_array_rest_type(&declared).is_some() {
-                // With `...args: T`, how many it takes is only known now.
-                if !self.has_correct_arity(s, &params) {
+            if !s.arg_check_mode.is_empty() {
+                s.arg_check_mode = CheckMode::empty();
+                if let Some(context) = &mut inference_context {
+                    let mapper =
+                        self.infer_type_arguments(s, candidate, CheckMode::empty(), context);
+                    check_candidate = self.signature_instantiation(
+                        candidate,
+                        mapper,
+                        &context.inferred_type_params,
+                    );
+                    if has_generic_rest {
+                        let instantiated = self.sig_params(check_candidate);
+                        if !self.has_correct_arity(s, &instantiated) {
+                            s.candidate_for_argument_arity_error = Some(check_candidate);
+                            continue;
+                        }
+                    }
+                }
+                if !self.is_signature_applicable(
+                    s,
+                    check_candidate,
+                    relation,
+                    CheckMode::empty(),
+                    false,
+                ) {
+                    s.candidates_for_argument_error.push(check_candidate);
                     continue;
                 }
-                // What goes into it is held against it all together, which is left to `is_signature_applicable`.
-                return None;
             }
-            self.resolving
-                .push(Resolving::trial(file, call, candidate, params));
-            let fits = self.signature_applicability(s, sig, Relation::Assignable, true, None);
-            self.resolving.pop();
-            if fits != Applicable::No {
-                return None;
-            }
-            last = Some(sig);
+            s.candidates[index] = check_candidate;
+            return Some(check_candidate);
         }
-        Some(last)
+        None
     }
 
-    /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`, of the context sensitive argument `arg`: a function in it
-    /// is `anyFunctionType`, and what is left has to be related to `param`. In doubt it is.
-    pub(super) fn is_context_sensitive_argument_related(
+    /// `inferTypeArguments`. The mapper is `getInferredTypes(context)`.
+    pub(super) fn infer_type_arguments(
         &mut self,
-        file: FileId,
-        arg: ExprId,
-        param: TypeId,
-        relation: Relation,
-    ) -> bool {
-        self.has_room_for_literal(file, arg, param)
-            && self.is_any_function_type_related_to(file, arg, param, relation)
-            && !self.literal_lacks_target_signatures(file, arg, param)
-            && self.do_plain_members_fit(file, arg, param, relation)
-    }
-
-    /// `reportCallResolutionErrors` holds the arguments against `last`, the last candidate they do not fit, one by one until it
-    /// comes to one that does not fit. The functions it gets to on the way take the types of their parameters from it.
-    /// Returns the number of arguments that were checked. Returns `args.len()` if `last` has a `this` type or the mismatch rests on an
-    /// unknown type: the caller then treats every argument as checked.
-    fn look_at_arguments_as_of(&mut self, s: CallState<'_>, last: SigId) -> usize {
+        s: &CallState<'_>,
+        signature: SigId,
+        check_mode: CheckMode,
+        context: &mut Inference,
+    ) -> MapperId {
         let (file, call, args) = (s.file, s.call, s.args);
-        // What it is called on comes first. Whether that fits is left open, and nothing is looked at.
-        if self.sig_this_type(last).is_some() {
-            return args.len();
+        if let CallLike::Jsx { construct } = s.node {
+            return self
+                .infer_jsx_type_arguments(file, call, signature, construct, check_mode, context);
         }
-        let params = self.sig_params(last);
-        let arg_count = if self.non_array_rest_type(&params).is_some() {
+        if matches!(s.node, CallLike::Call(_)) {
+            let mut skip_binding_patterns = true;
+            for i in 0..context.params.len() {
+                skip_binding_patterns =
+                    skip_binding_patterns && self.has_default(context.params[i]);
+            }
+            let context_flags = if skip_binding_patterns {
+                ContextFlags::SKIP_BINDING_PATTERNS
+            } else {
+                ContextFlags::empty()
+            };
+            if let Some(contextual_type) = self.contextual_type(file, call, context_flags) {
+                let inference_target_type = self.return_type_in_chain(file, call, signature);
+                if self.has_type_variables(inference_target_type) {
+                    let outer_context = self.get_inference_context(file, call);
+                    let is_from_binding_pattern = !skip_binding_patterns
+                        && self.contextual_type(file, call, ContextFlags::SKIP_BINDING_PATTERNS)
+                            != Some(contextual_type);
+                    if !is_from_binding_pattern {
+                        // `getMapperFromContext(cloneInferenceContext(outerContext, InferenceFlagsNoDefault))`
+                        let instantiated_type = outer_context
+                            .and_then(|level| {
+                                self.with_inference_context(level, |c, outer| {
+                                    let mut clone = Self::clone_inference_context(outer, true);
+                                    let outer_mapper = c.fixing_mapper(&mut clone, contextual_type);
+                                    c.instantiate(contextual_type, outer_mapper)
+                                })
+                            })
+                            .unwrap_or(contextual_type);
+                        let inference_source_type =
+                            match self.single_call_signature(instantiated_type, false) {
+                                Some(generic) if !self.sig_type_params(generic).is_empty() => {
+                                    let plain = self.without_filling_in_type_arguments(generic);
+                                    self.type_of_signature(plain, false)
+                                }
+                                _ => instantiated_type,
+                            };
+                        self.infer(
+                            context,
+                            inference_source_type,
+                            inference_target_type,
+                            PRIORITY_RETURN,
+                        );
+                    }
+                    let mut return_context =
+                        Inference::for_params(&context.params, Some(signature));
+                    return_context.any_default = context.any_default;
+                    return_context.from_pattern = is_from_binding_pattern;
+                    let return_source_type = match outer_context {
+                        Some(level) => {
+                            self.instantiate_with_outer_return_mapper(level, contextual_type)
+                        }
+                        None => contextual_type,
+                    };
+                    self.infer(
+                        &mut return_context,
+                        return_source_type,
+                        inference_target_type,
+                        0,
+                    );
+                    // `nonInferrableAnyType`: the names in a pattern can be anything, and nothing is inferred from that.
+                    if is_from_binding_pattern {
+                        for c in &mut return_context.candidates {
+                            c.covariant.retain(|t| !self.has_any_flag(*t));
+                            c.contravariant.retain(|t| !self.has_any_flag(*t));
+                        }
+                    }
+                    context.return_mapper = self.mapper_of_inferred_part(&return_context);
+                }
+            }
+        }
+        let params = self.sig_params(signature);
+        let rest_type = self.non_array_rest_type(&params);
+        let arg_count = if rest_type.is_some() {
             (self.parameter_count(&params) - 1).min(args.len())
         } else {
             args.len()
         };
-        self.resolving.push(Resolving::new(
-            file,
-            call,
-            None,
-            params.clone(),
-            MapperId::IDENTITY,
-        ));
-        let mut checked = args.len();
-        for (i, &arg) in args.iter().enumerate() {
-            if matches!(arg, Arg::Expr(e) if matches!(self.hir(file)[e].kind, ExprKind::Missing)) {
+        if let Some(rest) = rest_type
+            && let Some(k) = context.params.iter().position(|&p| p == rest)
+            && !args[arg_count..]
+                .iter()
+                .any(|a| matches!(a, Arg::Spread(..)))
+        {
+            context.candidates[k].implied_arity = Some(args.len() - arg_count);
+        }
+        if let Some(this_type) = self.sig_this_type(signature)
+            && self.has_type_variables(this_type)
+        {
+            let this_argument_type = self.this_argument_type(file, s.this_arg);
+            self.infer(context, this_argument_type, this_type, 0);
+        }
+        for (i, &arg) in args.iter().enumerate().take(arg_count) {
+            if matches!(self.hir(file)[arg.node()].kind, ExprKind::Missing) {
                 continue;
             }
-            let Some(param) = self.context_of_arg_at(&params, i, Some(args.len())) else {
-                break;
-            };
-            if let Arg::Expr(e) = arg
-                && self.is_context_sensitive(file, e)
+            if let Some(param_type) = self.param_type_at(&params, i)
+                && self.has_type_variables(param_type)
             {
-                self.set_context(file, e, param);
-            }
-            let ty = self.arg_type_under(file, arg, param);
-            // `getSpreadArgumentType`: what a rest parameter that is no plain array collects is all looked at before any of it is
-            // held against anything.
-            if i < arg_count && !self.is_assignable(ty, param) {
-                // A mismatch that rests on an unknown type says nothing about the arguments after it.
-                let is_reliable = self.is_known(ty) && self.is_known(param);
-                if is_reliable {
-                    checked = i + 1;
-                }
-                break;
+                let arg_type =
+                    self.check_argument(file, arg, param_type, Some(context), check_mode);
+                self.infer(context, arg_type, param_type, 0);
             }
         }
-        self.resolving.pop();
-        checked
+        if let Some(rest) = rest_type
+            && self.has_type_variables(rest)
+        {
+            let spread_type =
+                self.spread_argument_type(file, args, arg_count, rest, Some(context), check_mode);
+            self.infer(context, spread_type, rest, 0);
+        }
+        self.inference_mapper(context)
     }
 
-    /// `chooseOverload` and `reportCallResolutionErrors` for `candidate`, the only signature with the right arity, when its symbol also
-    /// declares an implementation. A context sensitive argument takes its parameter types from the first signature it is checked
-    /// against (`NodeCheckFlagsContextChecked`). `isSignatureApplicable` checks the arguments from left to right and stops at the
-    /// first mismatch, so `addImplementationSuccessElaboration` is the first to check the arguments after the mismatch.
-    /// `is_only_signature`: the callee has no other signature. Does nothing unless the order of the checks can be determined before
-    /// any contextual type is assigned: no argument is spread, and every argument is either context sensitive or independent of
-    /// its contextual type.
-    /// `declared`: what `candidate` takes. `is_generic`: it has type parameters.
-    fn check_sole_candidate_in_order(
+    /// `checkExpressionWithContextualType`, of an argument. What `createSyntheticExpression` made is its type.
+    pub(super) fn check_argument(
         &mut self,
-        s: CallState<'_>,
-        candidate: SigId,
-        declared: &[SigParam],
-        is_generic: bool,
-        is_only_signature: bool,
-    ) {
-        let (file, call, type_args, args) = (s.file, s.call, s.type_args, s.args);
-        let is_inferred = is_generic && type_args.is_empty();
-        let mut last_sensitive = None;
-        // `inferTypeArguments` checks an argument only if `couldContainTypeVariables(paramType)`.
-        let mut is_checked_by_inference = false;
-        for (i, &arg) in args.iter().enumerate() {
-            let e = match arg {
-                Arg::Expr(e) => e,
-                Arg::Type(..) => continue,
-                Arg::Spread(..) => return,
-            };
-            if !self.is_context_sensitive(file, e) {
-                if self.depends_on_context(file, e) {
-                    return;
-                }
-                continue;
+        file: FileId,
+        arg: Arg,
+        contextual_type: TypeId,
+        inference_context: Option<&mut Inference>,
+        check_mode: CheckMode,
+    ) -> TypeId {
+        match arg {
+            Arg::Expr(e) => {
+                let contextual_type = self.without_no_infer(contextual_type);
+                self.check_expression_with_contextual_type(
+                    file,
+                    e,
+                    contextual_type,
+                    inference_context,
+                    check_mode,
+                )
             }
-            let Some(param) = self.context_of_arg_at(declared, i, Some(args.len())) else {
-                return;
-            };
-            is_checked_by_inference |=
-                is_inferred && self.could_contain_type_variables_at(candidate, i, param);
-            last_sensitive = Some(i);
-        }
-        // The first argument is always checked against `candidate`.
-        if last_sensitive.is_none_or(|i| i == 0)
-            || self.non_array_rest_type(declared).is_some()
-            || self.implementation_signature(candidate).is_none()
-            || !type_args.is_empty() && !self.do_type_arguments_fit(candidate, type_args)
-            || is_inferred && self.has_generic_function_argument(file, args)
-        {
-            return;
-        }
-        let first_round = self.instantiate_for_call(s, candidate, true);
-        // `isSingleNonGenericCandidate`: `argCheckMode` is `CheckModeNormal` from the start, and there is no first round.
-        let mut is_rejected_in_first_round = false;
-        if is_generic || !is_only_signature {
-            let params = self.sig_params(first_round);
-            self.resolving
-                .push(Resolving::trial(file, call, candidate, params));
-            let is_applicable =
-                self.signature_applicability(s, first_round, Relation::Assignable, true, None);
-            self.resolving.pop();
-            let Some(is_applicable) = is_applicable.known() else {
-                return;
-            };
-            is_rejected_in_first_round = !is_applicable;
-        }
-        // The second round of inference assigns contextual types out of order.
-        if is_checked_by_inference && !is_rejected_in_first_round {
-            return;
-        }
-        // No context sensitive argument contributes to the inference, so the second round yields `first_round` again.
-        let (checked, is_certain) =
-            self.with_certainty(|c| c.look_at_arguments_as_of(s, first_round));
-        if is_certain && checked < args.len() {
-            self.add_implementation_success_elaboration(s, first_round, is_rejected_in_first_round);
+            Arg::Type(t, ..) | Arg::Spread(t, ..) => t,
         }
     }
 
-    /// `couldContainTypeVariables(getTypeAtPosition(candidate, index))`, where `param` is that type. The test is coarser than
-    /// `has_type_variables`: a function type or type literal written in place counts, a reference to a named type without type
-    /// arguments does not (`isNonGenericTopLevelType`, classes, interfaces). Types do not record their alias, so the type node of the
-    /// parameter decides. Returns true when in doubt.
-    fn could_contain_type_variables_at(
+    /// `getSignatureInstantiationWithoutFillingInTypeArguments(signature, signature.typeParameters)`
+    fn without_filling_in_type_arguments(&mut self, generic: SigId) -> SigId {
+        let (params, ret, this) = (
+            self.sig_params(generic),
+            self.sig_return(generic),
+            self.sig_this_type(generic),
+        );
+        self.p.types.intern_sig(SigData::Synth {
+            type_params: Box::new([]),
+            params: params.into(),
+            ret,
+            this,
+            of: Box::new([]),
+        })
+    }
+
+    /// `cloneInferenceContext`. `no_default`: `InferenceFlagsNoDefault` besides.
+    fn clone_inference_context(n: &Inference, no_default: bool) -> Inference {
+        let mut clone = Inference::for_params(&n.params, n.sig);
+        clone.candidates.clone_from(&n.candidates);
+        clone.any_default = n.any_default;
+        clone.no_default = n.no_default || no_default;
+        clone
+    }
+
+    /// `getMapperFromContext(cloneInferredPartOfContext(n))`. `IDENTITY`: nothing has candidates.
+    fn mapper_of_inferred_part(&mut self, n: &Inference) -> MapperId {
+        let (mut params, mut candidates) = (Vec::new(), Vec::new());
+        for (&param, c) in n.params.iter().zip(&n.candidates) {
+            if !c.covariant.is_empty() || !c.contravariant.is_empty() {
+                params.push(param);
+                candidates.push(c.clone());
+            }
+        }
+        if params.is_empty() {
+            return MapperId::IDENTITY;
+        }
+        let mut part = Inference::for_params(&params, n.sig);
+        part.candidates = candidates.into_iter().collect();
+        part.any_default = n.any_default;
+        part.no_default = n.no_default;
+        let mut pairs = Vec::with_capacity(params.len());
+        for (i, &param) in params.iter().enumerate() {
+            pairs.push((param, self.get_inferred_type(&part, i, true)));
+        }
+        self.p.types.mapper(pairs)
+    }
+
+    /// `createOuterReturnMapper(context)`, applied to `ty`. The clone is made once.
+    fn instantiate_with_outer_return_mapper(&mut self, level: usize, ty: TypeId) -> TypeId {
+        self.with_inference_context(level, |c, context| {
+            let mut clone = match context.outer_return_context.take() {
+                Some(clone) => clone,
+                None => Box::new(Self::clone_inference_context(context, false)),
+            };
+            // `MergedTypeMapper.Map`: `m2.Map(m1.Map(t))`, of a type parameter.
+            let mut pairs = Vec::new();
+            let mentioned = c.params_mentioned_in(ty, &context.params);
+            for (&param, _) in context.params.iter().zip(mentioned).filter(|m| m.1) {
+                let first = c.p.types.map(context.return_mapper, param).unwrap_or(param);
+                let second = if clone.params.contains(&first) {
+                    let mapper = c.fixing_mapper(&mut clone, first);
+                    c.instantiate(first, mapper)
+                } else {
+                    first
+                };
+                pairs.push((param, second));
+            }
+            context.outer_return_context = Some(clone);
+            let mapper = c.p.types.mapper(pairs);
+            c.instantiate(ty, mapper)
+        })
+        .unwrap_or(ty)
+    }
+
+    /// `getSignatureInstantiation`, with `inferredTypeParameters`
+    fn signature_instantiation(
         &mut self,
-        candidate: SigId,
-        index: usize,
-        param: TypeId,
-    ) -> bool {
-        if self.has_type_variables(param) {
-            return true;
+        signature: SigId,
+        mapper: MapperId,
+        inferred_type_params: &[TypeId],
+    ) -> SigId {
+        let sig = self.instantiate_sig(signature, mapper);
+        if inferred_type_params.is_empty() {
+            return sig;
         }
-        if self.is_any(param)
-            || param == TypeId::UNKNOWN
-            || self.every_type(param, |c, t| c.is_primitive(t))
-        {
-            return false;
-        }
-        let Some((file, func, _)) = self.sig_decl(self.p.types.sig_origin(candidate)) else {
-            return true;
+        let ret = self.sig_return(sig);
+        let Some((returned, construct)) = self.single_call_or_construct_signature(ret) else {
+            return sig;
         };
-        let hir = self.hir(file);
-        let Some(p) = hir[func]
-            .params
-            .iter()
-            .filter(|&p| !matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this)))
-            .nth(index)
-        else {
-            return true;
+        let (params, ret, this) = (
+            self.sig_params(returned),
+            self.sig_return(returned),
+            self.sig_this_type(returned),
+        );
+        // `cloneSignature`: it is declared where `returned` is.
+        let generalized = self.p.types.intern_sig(SigData::Synth {
+            type_params: inferred_type_params.into(),
+            params: params.into(),
+            ret,
+            this,
+            of: Box::new([returned]),
+        });
+        let ret = self.type_of_signature(generalized, construct);
+        let returned_type = self.sig_return(sig);
+        self.note_single_signature_type(ret, returned_type, mapper);
+        let (params, this) = (self.sig_params(sig), self.sig_this_type(sig));
+        self.p.types.intern_sig(SigData::Synth {
+            type_params: Box::new([]),
+            params: params.into(),
+            ret,
+            this,
+            of: Box::new([]),
+        })
+    }
+
+    /// `addImplementationSuccessElaboration`: the implementation behind the overload `failed`, if `chooseOverload` takes it.
+    pub(super) fn add_implementation_success_elaboration(
+        &mut self,
+        s: &CallState<'_>,
+        failed: SigId,
+    ) -> Option<SigId> {
+        let candidate = self.implementation_of_overload(failed)?;
+        let mut local_state = CallState {
+            candidates: smallvec![candidate],
+            is_single_non_generic_candidate: self.sig_type_params(candidate).is_empty(),
+            checks_arguments_once: false,
+            candidates_for_argument_error: s.candidates_for_argument_error.clone(),
+            ..*s
         };
-        hir[p].flags.contains(Flags::REST)
-            || hir[p].ty.is_none()
-            || !is_plain_type_reference(hir, hir[p].ty)
+        self.choose_overload(&mut local_state, Relation::Assignable)
+            .map(|_| candidate)
     }
 
     /// The signature of the first declaration with a body of the symbol that declares the overload `failed`, if the symbol has more
@@ -1586,67 +1469,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `addImplementationSuccessElaboration`: runs `chooseOverload` with the implementation behind the overload `failed` as the only
-    /// candidate. The related information it adds is not modelled. The attempt matters because it is the first to check the context
-    /// sensitive arguments that no earlier attempt reached, which then take their parameter types from the implementation.
-    /// `skips_sensitive`: `argCheckMode` is still `CheckModeSkipContextSensitive`.
-    fn add_implementation_success_elaboration(
-        &mut self,
-        s: CallState<'_>,
-        failed: SigId,
-        skips_sensitive: bool,
-    ) {
-        let (file, call, type_args, args) = (s.file, s.call, s.type_args, s.args);
-        let has_unchecked_argument =
-            args.iter().any(|&arg| matches!(arg, Arg::Expr(e) if self.is_context_sensitive(file, e) && self.explicit_context(file, e).is_none()));
-        if !has_unchecked_argument {
-            return;
-        }
-        let Some(implementation) = self.implementation_signature(failed) else {
-            return;
-        };
-        let (type_params, declared) = (
-            self.sig_type_params(implementation),
-            self.sig_params(implementation),
-        );
-        if !self.has_correct_type_argument_arity(&type_params, type_args.len())
-            || !self.has_correct_arity(s, &declared)
-        {
-            return;
-        }
-        // `isSingleNonGenericCandidate`: a single `isSignatureApplicable` under `CheckModeNormal`.
-        if type_params.is_empty() {
-            self.look_at_arguments_as_of(s, implementation);
-            return;
-        }
-        // A generic rest parameter needs a second arity check and a check of the collected arguments, which are not modelled here.
-        if self.non_array_rest_type(&declared).is_some()
-            || !type_args.is_empty() && !self.do_type_arguments_fit(implementation, type_args)
-        {
-            return;
-        }
-        if skips_sensitive {
-            let first_round = self.instantiate_for_call(s, implementation, true);
-            let params = self.sig_params(first_round);
-            self.resolving
-                .push(Resolving::trial(file, call, implementation, params));
-            let is_applicable =
-                self.signature_applicability(s, first_round, Relation::Assignable, true, None);
-            self.resolving.pop();
-            if is_applicable != Applicable::Yes {
-                return;
-            }
-        }
-        if type_args.is_empty() {
-            // The second round of `inferTypeArguments`. It assigns a contextual type to every remaining context sensitive argument,
-            // also to those `isSignatureApplicable` would not reach.
-            self.instantiate_for_call(s, implementation, false);
-        } else {
-            let instantiated = self.instantiate_for_call(s, implementation, true);
-            self.look_at_arguments_as_of(s, instantiated);
-        }
-    }
-
     /// `getEffectiveCallArguments`
     pub(super) fn effective_call_arguments(
         &mut self,
@@ -1665,6 +1487,7 @@ impl<'p> Checker<'p> {
                 args
             }
             CallLike::InstanceOf { left, .. } => smallvec![Arg::Expr(left)],
+            CallLike::Jsx { .. } => smallvec![Arg::Expr(call)],
             // `getEffectiveDecoratorArguments`
             CallLike::Decorator(owner) => match self.decorator_call_signature(file, owner) {
                 Some(expected) => {
@@ -1679,166 +1502,15 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether one of `args`, whatever it is written as, is a generic function, or something generic to construct: given where one
-    /// that is not generic is expected, it waits for the other arguments (`CheckModeSkipGenericFunctions`). What is expected of
-    /// the arguments has been said.
-    fn has_generic_function_argument(&mut self, file: FileId, args: &[Arg]) -> bool {
-        args.iter().any(
-            |&arg| matches!(arg, Arg::Expr(e) if self.contains_generic_function(file, e, true)),
-        )
-    }
-
-    /// Whether `e` has a single generic call or construct signature, or is an array or object literal with such an element or member,
-    /// or a `?:`, `||` or `??` with such an operand.
-    /// `checkExpressionEx` and `checkObjectLiteralMethod` call `instantiateTypeWithSingleGenericCallSignature` for every expression,
-    /// not only for arguments. `is_argument`: `e` is an argument, so its contextual type is already assigned.
-    fn contains_generic_function(&mut self, file: FileId, e: ExprId, is_argument: bool) -> bool {
-        // A context sensitive expression may not have a contextual type yet, so its type is not requested.
-        if e.is_none() || self.is_context_sensitive(file, e) {
-            return false;
-        }
-        let hir = self.hir(file);
-        // `checkConditionalExpression` and `checkBinaryLikeExpression` pass the check mode on to their operands.
-        if let ExprKind::Cond {
-            yes: left,
-            no: right,
-            ..
-        }
-        | ExprKind::Binary {
-            op: BinOp::Or | BinOp::Nullish,
-            left,
-            right,
-        } = hir[e].kind
-            && !self.depends_on_context(file, e)
-            && (self.contains_generic_function(file, left, is_argument)
-                || self.contains_generic_function(file, right, is_argument))
-        {
-            return true;
-        }
-        match hir[e].kind {
-            ExprKind::Array(items) => hir
-                .ids(items)
-                .any(|item| self.contains_generic_function(file, item, false)),
-            ExprKind::Object(props) => props.iter().any(|p| {
-                matches!(
-                    hir[p].kind,
-                    PropKind::Init | PropKind::Shorthand | PropKind::Method
-                ) && self.contains_generic_function(file, hir[p].value, false)
-            }),
-            kind => {
-                // Inside a literal, only expressions whose type does not depend on the contextual type are checked, and function
-                // expressions that declare type parameters. Resolving a nested call here would repeat work at every level.
-                let declares_type_params =
-                    matches!(kind, ExprKind::Fn(f) if !hir[f].type_params.is_empty());
-                if !is_argument && !declares_type_params && self.depends_on_context(file, e) {
-                    return false;
-                }
-                // The operands of an argument have its contextual type (`getContextualType`), which is assigned.
-                if is_argument
-                    && let ExprKind::Cond {
-                        yes: left,
-                        no: right,
-                        ..
-                    }
-                    | ExprKind::Binary {
-                        op: BinOp::Or | BinOp::Nullish,
-                        left,
-                        right,
-                    } = kind
-                    && (self.contains_generic_function(file, left, true)
-                        || self.contains_generic_function(file, right, true))
-                {
-                    return true;
-                }
-                let ty = self.type_of_expr(file, e);
-                // `getSingleSignature`, of either kind.
-                if !self.is_object_type(ty) {
-                    return false;
-                }
-                let Some(members) = self.members(ty) else {
-                    return false;
-                };
-                let shape = members.shape();
-                let only = match (shape.call.as_slice(), shape.construct.as_slice()) {
-                    ([only], []) | ([], [only]) => *only,
-                    _ => return false,
-                };
-                let sig = self.instantiate_sig(only, members.mapper);
-                !self.sig_type_params(sig).is_empty()
-            }
-        }
-    }
-
-    /// `chooseOverload`, from the attempt on that gave the functions among the arguments their parameter types: `first`, which
-    /// is what `chosen` was inferred to be then. They keep those types (`NodeCheckFlagsContextChecked`) and `argCheckMode` stays
-    /// `CheckModeNormal`, so to the attempts that follow they are arguments like any other, and nothing is settled early on
-    /// their account. `None`: no attempt is accepted, or it cannot be told.
-    fn later_attempts(
-        &mut self,
-        s: CallState<'_>,
-        candidates: &[SigId],
-        chosen: SigId,
-        first: SigId,
-    ) -> Option<SigId> {
-        let (file, args) = (s.file, s.args);
-        if args.iter().any(|a| matches!(a, Arg::Spread(..))) {
-            return None;
-        }
-        let at = candidates.iter().position(|&c| c == chosen)?;
-        let is_applicable =
-            |c: &mut Self, sig: SigId, relation: Relation, skips_sensitive: bool| {
-                c.signature_applicability(s, sig, relation, skips_sensitive, None)
-                    .known()
-            };
-        // That attempt was made in the round that goes by subtypes if its first round passed there.
-        let by_subtype = is_applicable(self, first, Relation::Subtype, true)?;
-        let relation = if by_subtype {
-            Relation::Subtype
-        } else {
-            Relation::Assignable
-        };
-        if is_applicable(self, first, relation, false)? {
-            return Some(first);
-        }
-        // The first round of that attempt was applicable, so every argument has been checked. The attempts that follow have new
-        // inference contexts, which get nothing from the annotations of a function that has been checked.
-        for &arg in args {
-            if let Arg::Expr(e) = arg {
-                self.set_context_checked(file, e, ContextChecked::ByEndedAttempt);
-            }
-        }
-        let mut attempts: SmallVec<[(Relation, SigId); 8]> = candidates[at + 1..]
-            .iter()
-            .map(|&c| (relation, c))
-            .collect();
-        if by_subtype {
-            attempts.extend(candidates.iter().map(|&c| (Relation::Assignable, c)));
-        }
-        for (relation, candidate) in attempts {
-            let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-            let sig = self.instantiate_for_call_as(s, candidate, false, true);
-            self.keeps_arg_contexts = outer;
-            if is_applicable(self, sig, relation, false)? {
-                return Some(sig);
-            }
-        }
-        None
-    }
-
-    /// `getCandidateForOverloadFailure`: what a call that none of `sigs` takes is taken for a call of. `sigs`: all the signatures,
-    /// in the order they are tried in. `settled`: the arguments have been looked at, and what is expected of them stays.
-    fn candidate_for_overload_failure(
-        &mut self,
-        s: CallState<'_>,
-        sigs: &[SigId],
-        settled: bool,
-    ) -> SigId {
+    /// `getCandidateForOverloadFailure`
+    fn candidate_for_overload_failure(&mut self, s: &CallState<'_>) -> SigId {
+        let sigs = &s.candidates[..];
         if sigs.len() == 1
             || sigs
                 .iter()
                 .any(|&sig| !self.sig_type_params(sig).is_empty())
         {
-            self.pick_longest_candidate_signature(s, sigs, settled)
+            self.pick_longest_candidate_signature(s)
         } else {
             self.union_of_signatures_for_overload_failure(sigs)
         }
@@ -1865,13 +1537,8 @@ impl<'p> Checker<'p> {
     }
 
     /// `pickLongestCandidateSignature`
-    fn pick_longest_candidate_signature(
-        &mut self,
-        s: CallState<'_>,
-        sigs: &[SigId],
-        settled: bool,
-    ) -> SigId {
-        let (type_args, args) = (s.type_args, s.args);
+    fn pick_longest_candidate_signature(&mut self, s: &CallState<'_>) -> SigId {
+        let (sigs, type_args, args) = (&s.candidates[..], s.type_args, s.args);
         let candidate = sigs[self.longest_candidate_index(sigs, args.len())];
         let type_params = self.sig_type_params(candidate);
         if type_params.is_empty() {
@@ -1897,12 +1564,12 @@ impl<'p> Checker<'p> {
             let mapper = self.mapper_from(&type_params, &filled);
             return self.instantiate_sig(candidate, mapper);
         }
-        // `inferSignatureInstantiationForOverloadFailure`: inferred anew, from the arguments that do not wait for the others.
-        let keeps = settled || self.keeps_arg_contexts;
-        let outer = std::mem::replace(&mut self.keeps_arg_contexts, keeps);
-        let sig = self.instantiate_for_call(s, candidate, true);
-        self.keeps_arg_contexts = outer;
-        sig
+        // `inferSignatureInstantiationForOverloadFailure`
+        let mut context = Inference::for_params(&type_params, Some(candidate));
+        context.any_default = self.hir(s.file).is_js;
+        let check_mode = CheckMode::SKIP_CONTEXT_SENSITIVE | CheckMode::SKIP_GENERIC_FUNCTIONS;
+        let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
+        self.instantiate_sig(candidate, mapper)
     }
 
     /// `createUnionOfSignaturesForOverloadFailure`: it takes what any of `sigs` takes, and returns what all of them return.
@@ -2233,35 +1900,52 @@ impl<'p> Checker<'p> {
         result
     }
 
-    #[inline]
-    pub(super) fn arg_type(&mut self, file: FileId, arg: Arg) -> TypeId {
-        match arg {
-            Arg::Expr(e) => self.type_of_expr(file, e),
-            Arg::Type(t, ..) | Arg::Spread(t, ..) => t,
-        }
+    /// FOR SPEED, see `CallState::checks_arguments_once`: `checkExpressionCached(e)` with `param` pushed for it.
+    pub(super) fn arg_type_kept_under(&mut self, file: FileId, e: ExprId, param: TypeId) -> TypeId {
+        let param = self.without_no_infer(param);
+        self.contextual.push((file, e, param));
+        self.inference_contexts.push(InferenceContextInfo {
+            file,
+            node: e,
+            context: None,
+        });
+        let outer = self.suspend_recheck();
+        let ty = self.type_of_expr(file, e);
+        self.end_recheck(outer);
+        self.inference_contexts.pop();
+        self.contextual.pop();
+        ty
     }
 
     /// `checkExpressionWithContextualType(arg, paramType, nil, checkMode)`, as `isSignatureApplicable` asks for every candidate, round
-    /// and relation: a literal is what it is under `param`. tsgo checks it again every time. It depends on the literal and on `param`
-    /// alone, so it is checked once for each `param`. Anything else is checked once.
-    pub(super) fn arg_type_under(&mut self, file: FileId, arg: Arg, param: TypeId) -> TypeId {
+    /// and relation. tsgo checks again every time. It depends on the argument, on `param` and on the mode alone, so a literal is
+    /// checked once for each.
+    pub(super) fn arg_type_under(
+        &mut self,
+        file: FileId,
+        arg: Arg,
+        param: TypeId,
+        check_mode: CheckMode,
+    ) -> TypeId {
         let Arg::Expr(e) = arg else {
-            return self.arg_type(file, arg);
+            return self.check_argument(file, arg, param, None, check_mode);
         };
-        // The parameters of a function that waits are typed when the function is told, not while the literal around it is tried.
-        if !self.is_literal_that_depends_on_context(file, e) || self.is_context_sensitive(file, e) {
-            return self.type_of_expr(file, e);
-        }
         let param = self.without_no_infer(param);
-        if let Some(&known) = self.literals_checked_under.get(&(file, e, param)) {
+        if !matches!(
+            self.hir(file)[e].kind,
+            ExprKind::Object(_) | ExprKind::Array(_)
+        ) {
+            return self.check_expression_with_contextual_type(file, e, param, None, check_mode);
+        }
+        let key = (file, e, param, check_mode.bits());
+        if let Some(&known) = self.literals_checked_under.get(&key) {
             return known;
         }
         let cycles = self.cycles;
-        let ty =
-            self.check_expression_with_contextual_type(file, e, param, None, CheckMode::empty());
-        // What rests on a trial, or on a question that came back to itself, holds only for now.
-        if self.provisional == 0 && self.cycles == cycles {
-            self.literals_checked_under.insert((file, e, param), ty);
+        let ty = self.check_expression_with_contextual_type(file, e, param, None, check_mode);
+        // What rests on a question that came back to itself holds only for now.
+        if self.cycles == cycles {
+            self.literals_checked_under.insert(key, ty);
         }
         ty
     }
@@ -2282,17 +1966,15 @@ impl<'p> Checker<'p> {
         self.normalized_tuple(&[t], &[ElemFlags::VARIADIC], false)
     }
 
-    /// `getSpreadArgumentType`: the arguments from `index` on, as the list a rest parameter of type `rest` collects them in.
-    /// `taken_for[i]`: what argument `i` counts as, if not as what it is where it stands. `from_result`: what is expected of the
-    /// result of the call says of its type parameters, while they are inferred.
+    /// `getSpreadArgumentType`
     pub(super) fn spread_argument_type(
         &mut self,
         file: FileId,
         args: &[Arg],
         index: usize,
         rest: TypeId,
-        taken_for: &[Option<TypeId>],
-        from_result: MapperId,
+        mut context: Option<&mut Inference>,
+        check_mode: CheckMode,
     ) -> TypeId {
         let is_const = self.is_const_type_variable(rest, 0);
         // `...x` for `...rest`
@@ -2320,29 +2002,26 @@ impl<'p> Checker<'p> {
                         (element, ElemFlags::REST)
                     }
                 }
-                arg => match taken_for.get(i).copied().flatten() {
-                    Some(ty) => (ty, ElemFlags::REQUIRED),
-                    None => {
-                        let contextual = self.rest_argument_context(rest, i - index, Some(length));
-                        let expected =
-                            self.instantiate_with_expected_result(contextual, from_result);
-                        let ty = self.arg_type_under(file, arg, expected);
-                        // `hasPrimitiveContextualType`. A literal there is room for stays one as well: `checkExpressionWithContextualType`
-                        // makes it regular, and only a fresh one is widened.
-                        let stays = is_const
-                            || self.may_be_primitive_or_key(contextual)
-                            || self.some_type(ty, |c, m| c.is_literal(m))
-                                && self.is_literal_context(ty, expected);
-                        (
-                            if stays {
-                                self.regular(ty)
-                            } else {
-                                self.widen_literal(ty)
-                            },
-                            ElemFlags::REQUIRED,
-                        )
-                    }
-                },
+                arg => {
+                    let contextual = self.rest_argument_context(rest, i - index, Some(length));
+                    let ty = self.check_argument(
+                        file,
+                        arg,
+                        contextual,
+                        context.as_deref_mut(),
+                        check_mode,
+                    );
+                    let has_primitive_contextual_type =
+                        is_const || self.may_be_primitive_or_key(contextual);
+                    (
+                        if has_primitive_contextual_type {
+                            self.regular(ty)
+                        } else {
+                            self.widen_literal(ty)
+                        },
+                        ElemFlags::REQUIRED,
+                    )
+                }
             };
             elems.push(ty);
             // `tupleNameSource`
@@ -2410,930 +2089,6 @@ impl<'p> Checker<'p> {
         self.param_type_at(params, i)
     }
 
-    /// The first candidate the arguments fit, going by those whose types do not depend on the choice.
-    fn choose_overload(&mut self, s: CallState<'_>, candidates: &[SigId]) -> Option<SigId> {
-        let (file, call) = (s.file, s.call);
-        // What the arguments are expected to be mentions the type parameters of all the candidates. To a call among the
-        // arguments those say nothing.
-        let mut type_params: SmallVec<[TypeId; 8]> = SmallVec::new();
-        for &candidate in candidates {
-            type_params.extend_from_slice(&self.sig_type_params(candidate));
-        }
-        self.candidate_holes.push(CandidateHoles {
-            call: (file, call),
-            type_params,
-            mapper: None,
-            deferred_calls: SmallVec::new(),
-        });
-        let chosen = self.choose_overload_among(s, candidates);
-        self.candidate_holes.pop();
-        chosen
-    }
-
-    /// Whether the arguments that are what they are whatever is expected of them fit `candidate` at all, and what they say about its
-    /// type parameters: first at the priority of an argument, then at a lesser one.
-    fn plain_arguments_say(
-        &mut self,
-        file: FileId,
-        candidate: SigId,
-        params: &[SigParam],
-        args: &[Arg],
-        settled_before: usize,
-    ) -> (bool, MapperId, MapperId) {
-        // Such an argument may ask what is expected of it all the same: a template, `x as const`, a tagged template. While the call
-        // is resolved that is up to the candidate (`checkExpressionWithContextualType`).
-        let call = args.iter().find_map(|a| match *a {
-            Arg::Expr(e) => match self.bound(file).expr_parent[e.idx()] {
-                Parent::Expr(call) => Some(call),
-                _ => None,
-            },
-            _ => None,
-        });
-        let Some(call) = call else {
-            return self.plain_arguments_say_as_told(file, candidate, params, args, settled_before);
-        };
-        self.resolving.push(Resolving::trial(
-            file,
-            call,
-            candidate,
-            List::Own(params.to_vec()),
-        ));
-        let said = self.plain_arguments_say_as_told(file, candidate, params, args, settled_before);
-        self.resolving.pop();
-        said
-    }
-
-    /// A function type with the annotated parameters of the function expression `e` and the return type of the signature that
-    /// `expected` has, so that inferring from it to `expected` yields the contravariant candidates and nothing for the return type.
-    /// `None` unless every parameter is annotated and `expected` mentions type parameters.
-    fn function_type_from_parameter_annotations(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        expected: TypeId,
-    ) -> Option<TypeId> {
-        let ExprKind::Fn(func) = self.hir(file)[e].kind else {
-            return None;
-        };
-        if self.hir(file)[func].params.is_empty()
-            || !self.hir(file)[func].type_params.is_empty()
-            || !self.has_type_variables(expected)
-            || self.is_context_sensitive(file, e)
-        {
-            return None;
-        }
-        let non_null = self.non_nullable(expected);
-        let contextual = self.single_call_signature(non_null, true)?;
-        if !self.sig_type_params(contextual).is_empty() {
-            return None;
-        }
-        let own = self.sig_of_fn(file, func);
-        let (params, this, ret) = (
-            self.sig_params(own),
-            self.sig_this_type(own),
-            self.sig_return(contextual),
-        );
-        let sig = self.p.types.intern_sig(SigData::Synth {
-            type_params: Box::new([]),
-            params: params.into(),
-            ret,
-            this,
-            of: Box::new([]),
-        });
-        Some(self.type_of_signature(sig, false))
-    }
-
-    /// `plain_arguments_say`, with `candidate` there to be asked what it expects.
-    fn plain_arguments_say_as_told(
-        &mut self,
-        file: FileId,
-        candidate: SigId,
-        params: &[SigParam],
-        args: &[Arg],
-        settled_before: usize,
-    ) -> (bool, MapperId, MapperId) {
-        let mut plain: SmallVec<[(usize, TypeId); 8]> = SmallVec::new();
-        for (i, &a) in args.iter().enumerate() {
-            let is_plain = match a {
-                Arg::Expr(e) => {
-                    // A call among the first `settled_before` arguments has been told what it is expected to be, and stays what it
-                    // comes to, unless the first round defers it.
-                    !self.is_context_sensitive(file, e)
-                        && (!self.depends_on_context(file, e)
-                            || i < settled_before
-                                && matches!(
-                                    self.hir(file)[e].kind,
-                                    ExprKind::Call(_) | ExprKind::New(_)
-                                )
-                                && !self.is_deferred_in_first_round(file, e))
-                }
-                Arg::Type(..) => true,
-                Arg::Spread(..) => false,
-            };
-            if is_plain {
-                let ty = self.arg_type(file, a);
-                plain.push((i, ty));
-            }
-        }
-        // Parameter annotations of a function expression are context independent too, unlike its return type.
-        let mut annotated: SmallVec<[(TypeId, TypeId); 4]> = SmallVec::new();
-        for (i, &a) in args.iter().enumerate() {
-            if let Arg::Expr(e) = a
-                && let Some(param) = self.param_type_at(params, i)
-                && let Some(ty) = self.function_type_from_parameter_annotations(file, e, param)
-            {
-                annotated.push((ty, param));
-            }
-        }
-        // No argument to go by: nothing is said, and nothing is ruled out.
-        if plain.is_empty() && annotated.is_empty() {
-            return (true, MapperId::IDENTITY, MapperId::IDENTITY);
-        }
-        let type_params = self.sig_type_params(candidate);
-        let mut inference = Inference::for_params(&type_params, Some(candidate));
-        inference.any_default = self.hir(file).is_js;
-        for &(ty, param) in &annotated {
-            self.infer(&mut inference, ty, param, 0);
-        }
-        for &(i, ty) in &plain {
-            if let Some(param) = self.param_type_at(params, i)
-                && self.has_type_variables(param)
-            {
-                if let Arg::Expr(e) = args[i] {
-                    self.note_array_literals(file, e, &mut inference.array_literals);
-                }
-                self.infer(&mut inference, ty, param, 0);
-            }
-        }
-        let (mut pairs, mut lesser_pairs) = (Vec::new(), Vec::new());
-        for k in 0..type_params.len() {
-            let c = &inference.candidates[k];
-            if c.covariant.is_empty() && c.contravariant.is_empty() {
-                continue;
-            }
-            let said = if c.priority == 0 {
-                &mut pairs
-            } else {
-                &mut lesser_pairs
-            };
-            said.push((type_params[k], self.get_inferred_type(&inference, k, false)));
-        }
-        let mapper_of = |c: &Self, pairs: Vec<(TypeId, TypeId)>| {
-            if pairs.is_empty() {
-                MapperId::IDENTITY
-            } else {
-                c.p.types.mapper(pairs)
-            }
-        };
-        let (known, lesser) = (mapper_of(self, pairs), mapper_of(self, lesser_pairs));
-        let all = if type_params.is_empty() {
-            MapperId::IDENTITY
-        } else {
-            self.inference_mapper(&inference)
-        };
-        let fits = plain
-            .iter()
-            .all(|&(i, ty)| match self.param_type_at(params, i) {
-                Some(param) => {
-                    let param = self.instantiate(param, all);
-                    !self.is_known(ty) || !self.is_known(param) || self.is_assignable(ty, param)
-                }
-                None => true,
-            });
-        (fits, known, lesser)
-    }
-
-    /// Whether those of the arguments `before` that go by what is expected of them, and wait for nothing, fit `params`. Each has been
-    /// told what it is expected to be. One that was told so in terms of a type parameter is first looked at while that is inferred:
-    /// it counts as fitting, and so does any that is given for a parameter that mentions one.
-    fn do_told_arguments_fit(&mut self, file: FileId, params: &[SigParam], before: &[Arg]) -> bool {
-        for (j, &arg) in before.iter().enumerate() {
-            let Arg::Expr(x) = arg else { continue };
-            if self.is_context_sensitive(file, x) || !self.depends_on_context(file, x) {
-                continue;
-            }
-            let Some(param) = self.param_type_at(params, j) else {
-                continue;
-            };
-            if self.has_type_variables(param)
-                || !self.is_literal_that_depends_on_context(file, x)
-                    && self
-                        .explicit_context(file, x)
-                        .is_none_or(|told| self.has_type_variables(told))
-            {
-                continue;
-            }
-            let ty = self.arg_type_under(file, arg, param);
-            if self.is_known(ty) && self.is_known(param) && !self.is_assignable(ty, param) {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// What `plain_arguments_say` to an object or array literal that is given for `param`. What they say at a lesser priority is thrown
-    /// away as soon as the literal has its own say (`inferFromTypes`), and the literal is inferred from as it is without it.
-    fn plain_arguments_say_to_literal(
-        &mut self,
-        param: TypeId,
-        known: MapperId,
-        lesser: MapperId,
-    ) -> MapperId {
-        if lesser == MapperId::IDENTITY {
-            return known;
-        }
-        let mut pairs = self.p.types.mapping(known).to_vec();
-        for &(type_param, said) in self.p.types.mapping(lesser) {
-            if !self.is_inferred_from_literal(param, type_param, 0) {
-                pairs.push((type_param, said));
-            }
-        }
-        self.p.types.mapper(pairs)
-    }
-
-    /// Whether an object or array literal that is given for `target` is a candidate, or has one in it, for `type_param`: that is
-    /// `target`, or a member of it, or what a property, an element or an index signature of it holds (`inferFromProperties`,
-    /// `inferFromIndexTypes`). Nothing is inferred to the `T` of `T[K]` or of `keyof T`, and to that of `{ [P in keyof T]: X }` only at
-    /// a lesser priority (`inferToMappedType`). Signatures, and what a mapped type that does not know its keys yet holds, are not
-    /// gone into.
-    fn is_inferred_from_literal(&mut self, target: TypeId, type_param: TypeId, depth: u32) -> bool {
-        if target == type_param {
-            return true;
-        }
-        if depth > 4 || !self.mentions(target, type_param) {
-            return false;
-        }
-        let parts: Option<&'p [TypeId]> = match self.data(target) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => Some(parts),
-            TypeData::Tuple { .. } => Some(self.type_arguments(target)),
-            _ => None,
-        };
-        if let Some(parts) = parts {
-            return parts
-                .iter()
-                .any(|&part| self.is_inferred_from_literal(part, type_param, depth + 1));
-        }
-        if let Some(element) = self.array_element(target) {
-            return self.is_inferred_from_literal(element, type_param, depth + 1);
-        }
-        if !self.is_object_type(target)
-            || self.mapped_origin(target).is_some() && self.is_generic(target)
-        {
-            return false;
-        }
-        let Some(members) = self.members(target) else {
-            return false;
-        };
-        for prop in &members.shape().props {
-            let held = self.type_of_prop(prop, members.mapper);
-            if self.is_inferred_from_literal(held, type_param, depth + 1) {
-                return true;
-            }
-        }
-        for info in &members.shape().index {
-            let held = self.instantiate(info.value, members.mapper);
-            if self.is_inferred_from_literal(held, type_param, depth + 1) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// What `inferTypeArguments` has inferred for `candidate` when it gets to argument `upto`: what the arguments before it say, but
-    /// for those that wait for the types of their parameters.
-    fn inference_from_arguments_before(
-        &mut self,
-        file: FileId,
-        candidate: SigId,
-        params: &[SigParam],
-        args: &[Arg],
-        upto: usize,
-    ) -> Inference {
-        let mut inference =
-            Inference::for_params(&self.sig_type_params(candidate), Some(candidate));
-        inference.any_default = self.hir(file).is_js;
-        for (j, &arg) in args[..upto].iter().enumerate() {
-            let Some(param) = self.param_type_at(params, j) else {
-                break;
-            };
-            let waits = match arg {
-                Arg::Expr(x) => {
-                    self.is_context_sensitive(file, x)
-                        || self.has_context_sensitive_right_operand(file, x)
-                }
-                Arg::Spread(..) => true,
-                Arg::Type(..) => false,
-            };
-            if waits || !self.has_type_variables(param) {
-                continue;
-            }
-            // `silentNeverType`: nothing is inferred from it.
-            if matches!(arg, Arg::Expr(x) if self.is_deferred_in_first_round(file, x)) {
-                continue;
-            }
-            let ty = self.arg_type_under(file, arg, param);
-            self.infer(&mut inference, ty, param, 0);
-        }
-        inference
-    }
-
-    /// Whether all in `e` that goes by what is expected of it is worked out once (`resolvedSignature`, `NodeCheckFlagsContextChecked`):
-    /// a call or a function, under operators that hand down what is expected of them (`getContextualType`).
-    fn is_settled_by_first_candidate(&self, file: FileId, e: ExprId) -> bool {
-        match self.hir(file)[e].kind {
-            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Fn(_) => true,
-            ExprKind::Await(x) | ExprKind::NonNull(x) => {
-                self.is_settled_by_first_candidate(file, x)
-            }
-            ExprKind::Cond {
-                yes: left,
-                no: right,
-                ..
-            }
-            | ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish | BinOp::And | BinOp::Comma,
-                left,
-                right,
-            } => [left, right].into_iter().all(|x| {
-                !self.depends_on_context(file, x) || self.is_settled_by_first_candidate(file, x)
-            }),
-            _ => false,
-        }
-    }
-
-    /// The calls, and the functions that do not wait for the types of their parameters, inside the object literal `e`: like such an
-    /// argument they are worked out once, for the first candidate, which expects `e` to be `context`. So are those inside an array
-    /// literal and under the operators that hand down what is expected of them. The way down is `getContextualType` read backwards.
-    fn settle_nested_once(&mut self, file: FileId, e: ExprId, context: TypeId) {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Object(props) => {
-                let mut apparent = None;
-                for p in props.iter() {
-                    let prop = &hir[p];
-                    if prop.value.is_none() || !self.has_nested_settled_once(file, prop.value) {
-                        continue;
-                    }
-                    if prop.kind == PropKind::Spread {
-                        self.settle_nested_once(file, prop.value, context);
-                    } else if matches!(prop.kind, PropKind::Init | PropKind::Method)
-                        && let Some(name) = self.member_name(file, prop.key)
-                    {
-                        let apparent = *apparent.get_or_insert_with(|| {
-                            self.apparent_context_of_object_literal(file, e, context)
-                        });
-                        let wanted = self
-                            .contextual_property(apparent, name)
-                            .unwrap_or(TypeId::UNRESOLVED);
-                        self.settle_nested_once(file, prop.value, wanted);
-                    }
-                }
-            }
-            ExprKind::Array(items) => {
-                // `getSpreadIndices`
-                let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
-                let first = hir.ids(items).position(is_spread);
-                let last = first.and_then(|_| hir.ids(items).rposition(is_spread));
-                for (index, item) in hir.ids(items).enumerate() {
-                    if self.has_nested_settled_once(file, item) {
-                        let wanted = self
-                            .contextual_element_at(context, index, Some(items.len()), first, last)
-                            .unwrap_or(TypeId::UNRESOLVED);
-                        self.settle_nested_once(file, item, wanted);
-                    }
-                }
-            }
-            ExprKind::Cond { yes, no, .. } => {
-                self.settle_nested_once(file, yes, context);
-                self.settle_nested_once(file, no, context);
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.settle_nested_once(file, left, context);
-                self.settle_nested_once(file, right, context);
-            }
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Comma,
-                right,
-                ..
-            } => self.settle_nested_once(file, right, context),
-            ExprKind::NonNull(x) | ExprKind::AsConst(x) => {
-                self.settle_nested_once(file, x, context)
-            }
-            // `getContextualTypeForAwaitOperand`
-            ExprKind::Await(x) => {
-                if self.has_nested_settled_once(file, x) {
-                    let wanted = self
-                        .awaited_or_promise_like(context)
-                        .unwrap_or(TypeId::UNRESOLVED);
-                    self.settle_nested_once(file, x, wanted);
-                }
-            }
-            ExprKind::Fn(_) if !self.is_context_sensitive(file, e) => {
-                self.set_context_if_unset(file, e, context);
-            }
-            ExprKind::Call(_) | ExprKind::New(_) => self.set_context_if_unset(file, e, context),
-            _ => {}
-        }
-    }
-
-    /// Whether `settle_nested_once` finds something to settle in `e`, or `e` is such a thing itself.
-    fn has_nested_settled_once(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Object(props) => props.iter().any(|p| {
-                let prop = &hir[p];
-                prop.value.is_some()
-                    && matches!(
-                        prop.kind,
-                        PropKind::Init | PropKind::Method | PropKind::Spread
-                    )
-                    && self.has_nested_settled_once(file, prop.value)
-            }),
-            ExprKind::Array(items) => hir
-                .ids(items)
-                .any(|item| self.has_nested_settled_once(file, item)),
-            ExprKind::Cond {
-                yes: left,
-                no: right,
-                ..
-            }
-            | ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.has_nested_settled_once(file, left)
-                    || self.has_nested_settled_once(file, right)
-            }
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Comma,
-                right: x,
-                ..
-            }
-            | ExprKind::NonNull(x)
-            | ExprKind::AsConst(x)
-            | ExprKind::Await(x) => self.has_nested_settled_once(file, x),
-            ExprKind::Fn(_) => !self.is_context_sensitive(file, e),
-            ExprKind::Call(_) | ExprKind::New(_) => true,
-            _ => false,
-        }
-    }
-
-    pub(super) fn has_const_type_parameter(&mut self, sig: SigId) -> bool {
-        self.sig_type_params(sig)
-            .iter()
-            .any(|&p| self.is_const_type_variable(p, 0))
-    }
-
-    /// `chooseOverload`: for each of `sigs`, whether it passes `hasCorrectTypeArgumentArity` and `hasCorrectArity` for `call`. Empty
-    /// if none passes, or if an argument is spread: the argument count then depends on the type of the operand.
-    pub(super) fn overloads_with_correct_arity(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        id: CallId,
-        sigs: &[SigId],
-    ) -> SmallVec<[bool; 8]> {
-        let hir = self.hir(file);
-        let (args, type_args) = (hir[id].args, self.type_arguments_of_call(file, call));
-        if hir
-            .ids(args)
-            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
-        {
-            return SmallVec::new();
-        }
-        let is_incomplete = self.is_call_incomplete(file, call, CallLike::Call(id));
-        let mut has_arity: SmallVec<[bool; 8]> = SmallVec::with_capacity(sigs.len());
-        for &sig in sigs {
-            let type_params = self.sig_type_params(sig);
-            has_arity.push(
-                self.has_correct_type_argument_arity(&type_params, type_args.len()) && {
-                    let params = self.sig_params(sig);
-                    self.has_correct_arity_for_count(&params, args.len(), None, is_incomplete)
-                },
-            );
-        }
-        if !has_arity.contains(&true) {
-            has_arity.clear();
-        }
-        has_arity
-    }
-
-    fn choose_overload_among(&mut self, s: CallState<'_>, candidates: &[SigId]) -> Option<SigId> {
-        let (file, call, node, type_args, args, this_arg) =
-            (s.file, s.call, s.node, s.type_args, s.args, s.this_arg);
-        // A call or a function among the arguments is looked at once, whichever candidate is tried.
-        let lists: SmallVec<[List<'p, SigParam>; 8]> =
-            candidates.iter().map(|&c| self.sig_params(c)).collect();
-        // What is expected of the result says what a candidate's type parameters are, for a start.
-        let mut from_result: SmallVec<[Option<MapperId>; 8]> = SmallVec::new();
-        // The arguments in `deferred_calls`.
-        let mut is_deferred: SmallVec<[bool; 8]> = smallvec![false; args.len()];
-        let mut is_sensitive: SmallVec<[bool; 8]> = args
-            .iter()
-            .map(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)))
-            .collect();
-        // `resolveCall`: one context sensitive argument sets `CheckModeSkipContextSensitive`, under which a function in the right
-        // operand of `&&` or `,` is `anyFunctionType` too.
-        if is_sensitive.contains(&true) {
-            for (i, &arg) in args.iter().enumerate() {
-                if let Arg::Expr(e) = arg
-                    && self.has_context_sensitive_right_operand(file, e)
-                {
-                    is_sensitive[i] = true;
-                }
-            }
-        }
-        for (i, &arg) in args.iter().enumerate() {
-            let Arg::Expr(e) = arg else { continue };
-            // `chooseOverload` checks a literal anew for each candidate. Not what is inside it and is worked out once.
-            let is_literal = self.is_literal_that_depends_on_context(file, e);
-            if is_sensitive[i]
-                || !self.depends_on_context(file, e)
-                || is_literal && (candidates.len() < 2 || !self.has_nested_settled_once(file, e))
-            {
-                continue;
-            }
-            if from_result.is_empty() {
-                from_result.resize(candidates.len(), None);
-            }
-            let mut wanted: SmallVec<[TypeId; 8]> = SmallVec::new();
-            // A call, and a function that does not wait for the types of its parameters, are worked out once and stay what they came
-            // to (`resolvedSignature`, `NodeCheckFlagsContextChecked`): for the first candidate that gets as far as them.
-            // `isSignatureApplicable` goes from left to right, so that is none that an argument before them rules out.
-            let is_settled_once = self.is_settled_by_first_candidate(file, e);
-            let mut reaches: SmallVec<[bool; 8]> = smallvec![true; lists.len()];
-            if (is_settled_once || is_literal) && type_args.is_empty() && i > 0 {
-                for (k, list) in lists.iter().enumerate() {
-                    reaches[k] = self
-                        .plain_arguments_say(file, candidates[k], list, &args[..i], 0)
-                        .0
-                        && self.do_told_arguments_fit(file, list, &args[..i]);
-                }
-                if !reaches.contains(&true) {
-                    reaches.fill(true);
-                }
-            }
-            // `inferTypeArguments` checks the arguments under `CheckModeSkipGenericFunctions`: the first candidate whose parameter has type
-            // variables defers the call (`resolveCallExpression`), and `argCheckMode` keeps the flag until a candidate passes the first
-            // round. That candidate says what is expected of the call, so no contextual type is recorded here. Without a context
-            // sensitive argument the first round infers from everything to the left of the call, and the call is resolved in it.
-            if type_args.is_empty() && is_sensitive.contains(&true) {
-                let first_to_reach = reaches.iter().position(|&r| r).unwrap_or(0);
-                for k in 0..=first_to_reach {
-                    if !self.sig_type_params(candidates[k]).is_empty()
-                        && let Some(t) = self.context_of_arg_at(&lists[k], i, Some(args.len()))
-                        && self.is_deferred_generic_call(file, e, t)
-                    {
-                        is_deferred[i] = true;
-                        if let Some(holes) = self.candidate_holes.last_mut() {
-                            holes.deferred_calls.push((file, e));
-                        }
-                        break;
-                    }
-                }
-                if is_deferred[i] {
-                    continue;
-                }
-            }
-            for (k, list) in lists.iter().enumerate() {
-                if !reaches[k] || is_literal && !wanted.is_empty() {
-                    continue;
-                }
-                if let Some(t) = self.context_of_arg_at(list, i, Some(args.len())) {
-                    let t = if is_literal && type_args.is_empty() && self.has_type_variables(t) {
-                        let (_, known, lesser) =
-                            self.plain_arguments_say(file, candidates[k], list, args, i);
-                        let said = self.plain_arguments_say_to_literal(t, known, lesser);
-                        self.instantiate(t, said)
-                    } else {
-                        t
-                    };
-                    // `instantiateContextualType`: the contextual signature of a function goes by all that is inferred so far, which
-                    // is what the arguments before it say to the candidate that settles it.
-                    let t = if wanted.is_empty()
-                        && type_args.is_empty()
-                        && matches!(self.hir(file)[e].kind, ExprKind::Fn(_))
-                        && self.has_type_variables(t)
-                        && self.maybe_type_of_kind(t, Self::is_deferred)
-                    {
-                        let so_far = self.inference_from_arguments_before(
-                            file,
-                            candidates[k],
-                            list,
-                            args,
-                            i,
-                        );
-                        self.instantiate_instantiable_for_signature(&so_far, t)
-                    } else {
-                        t
-                    };
-                    if type_args.is_empty() && self.has_type_variables(t) {
-                        let mapper = match from_result[k] {
-                            Some(known) => known,
-                            None => {
-                                let mapper =
-                                    self.mapper_from_expected_result(file, call, candidates[k]);
-                                from_result[k] = Some(mapper);
-                                mapper
-                            }
-                        };
-                        wanted.push(self.instantiate_with_expected_result(t, mapper));
-                    } else if self.has_type_variables(t) {
-                        // The type arguments are given.
-                        let mapper = match from_result[k] {
-                            Some(known) => known,
-                            None => {
-                                let type_params = self.sig_type_params(candidates[k]);
-                                let filled =
-                                    self.fill_sig_type_args(candidates[k], &type_params, type_args);
-                                let mapper = self.mapper_from(&type_params, &filled);
-                                from_result[k] = Some(mapper);
-                                mapper
-                            }
-                        };
-                        wanted.push(self.instantiate(t, mapper));
-                    } else {
-                        wanted.push(t);
-                    }
-                }
-            }
-            // The first candidate to get as far as `e` settles them, whether or not it is chosen.
-            if is_literal {
-                if let Some(&first) = wanted.first() {
-                    self.settle_nested_once(file, e, first);
-                }
-                continue;
-            }
-            // A candidate that takes anything says nothing of the argument, and must not drown out those that do.
-            let telling: SmallVec<[TypeId; 8]> = wanted
-                .iter()
-                .copied()
-                .filter(|&t| {
-                    let base = if self.is_deferred(t) {
-                        self.base_constraint(t)
-                    } else {
-                        t
-                    };
-                    base != TypeId::UNKNOWN && !self.is_any(base)
-                })
-                .collect();
-            let context = if is_settled_once && !wanted.is_empty() {
-                wanted[0]
-            } else {
-                self.union(if telling.is_empty() {
-                    &wanted
-                } else {
-                    &telling
-                })
-            };
-            // In the only round `inferTypeArguments` checks a function in the right operand of `&&` or `,` with the type parameters
-            // in its contextual signature fixed. The inference for the first generic candidate records that context.
-            if !(is_settled_once
-                && self.has_type_variables(context)
-                && self.has_context_sensitive_right_operand(file, e))
-            {
-                self.set_context(file, e, context);
-            }
-        }
-        let checks_this = self.checks_this_argument(file, call, node);
-        // The first whose parameters the arguments are subtypes of, if there is one; whether the call is an error is up to
-        // whether they can be assigned.
-        let mut instantiated: SmallVec<[Option<(List<'p, SigParam>, Option<TypeId>)>; 8]> =
-            smallvec![None; candidates.len()];
-        let passes: &[Relation] = if candidates.len() > 1 {
-            &[Relation::Subtype, Relation::Assignable]
-        } else {
-            &[Relation::Assignable]
-        };
-        // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` infers from the annotations of a function only the first time the
-        // function is checked. `is_arg_checked[i]`: an attempt has checked argument `i`. `is_first_to_check[k]`: the inference for
-        // candidate `k` was the first to check a function, so `instantiated[k]` may depend on the annotations of that function.
-        let mut is_arg_checked: SmallVec<[bool; 8]> = smallvec![false; args.len()];
-        let mut is_first_to_check: SmallVec<[bool; 8]> = smallvec![false; candidates.len()];
-        let mut was_by_subtype = passes[0] == Relation::Subtype;
-        for (&relation, k) in passes
-            .iter()
-            .flat_map(|pass| (0..candidates.len()).map(move |k| (pass, k)))
-        {
-            let by_subtype = relation == Relation::Subtype;
-            // The assignable pass starts. Each of its attempts has a new inference context, which gets nothing from the functions
-            // that the subtype pass checked.
-            if was_by_subtype && !by_subtype {
-                was_by_subtype = false;
-                for (i, &arg) in args.iter().enumerate() {
-                    if is_arg_checked[i]
-                        && let Arg::Expr(e) = arg
-                    {
-                        self.set_context_checked(file, e, ContextChecked::ByEndedAttempt);
-                    }
-                }
-                for (j, &was_first) in is_first_to_check.iter().enumerate() {
-                    if was_first {
-                        instantiated[j] = None;
-                    }
-                }
-            }
-            let candidate = candidates[k];
-            // One whose type parameters do not take the type arguments that are given is passed over.
-            if !type_args.is_empty() && !self.do_type_arguments_fit(candidate, type_args) {
-                continue;
-            }
-            let (params, this) = match &instantiated[k] {
-                Some(known) => known.clone(),
-                None => {
-                    let is_generic = !self.sig_type_params(candidate).is_empty();
-                    // `inferTypeArguments` checks the arguments whose parameter type could contain type variables.
-                    if type_args.is_empty() && is_generic {
-                        for (i, &arg) in args.iter().enumerate() {
-                            if let Arg::Expr(e) = arg
-                                && !is_arg_checked[i]
-                                && let Some(param) =
-                                    self.context_of_arg_at(&lists[k], i, Some(args.len()))
-                                && self.could_contain_type_variables_at(candidate, i, param)
-                            {
-                                is_arg_checked[i] = true;
-                                is_first_to_check[k] |= self.set_context_checked(
-                                    file,
-                                    e,
-                                    ContextChecked::By(candidate),
-                                );
-                            }
-                        }
-                    }
-                    let known = match &lists[k] {
-                        List::Kept(declared) if !is_generic => {
-                            (List::Kept(*declared), self.sig_this_type(candidate))
-                        }
-                        _ => {
-                            let sig = self.instantiate_for_call(s, candidate, true);
-                            (self.sig_params(sig), self.sig_this_type(sig))
-                        }
-                    };
-                    instantiated[k] = Some(known.clone());
-                    known
-                }
-            };
-            // With `...args: T`, how many it takes is only known now.
-            if self.non_array_rest_type(&lists[k]).is_some() && !self.has_correct_arity(s, &params)
-            {
-                continue;
-            }
-            // What it is called on comes first. To `this: void` anything will do.
-            if checks_this
-                && let Some(wanted) = this
-                && wanted != TypeId::VOID
-            {
-                let given = self.this_argument_type(file, this_arg);
-                let is_known = self.is_known(given) && self.is_known(wanted);
-                let fits = if by_subtype {
-                    is_known && self.is_subtype(given, wanted)
-                } else {
-                    !is_known || self.is_assignable(given, wanted)
-                };
-                if !fits {
-                    continue;
-                }
-            }
-            self.resolving
-                .push(Resolving::trial(file, call, candidate, params.clone()));
-            let rest = self.non_array_rest_type(&params);
-            let arg_count = if rest.is_some() {
-                (self.parameter_count(&params) - 1).min(args.len())
-            } else {
-                args.len()
-            };
-            let mut applicable = true;
-            // `chooseOverload`: `inferTypeArguments` has skipped the generic functions among the arguments, so `argCheckMode` has
-            // `CheckModeSkipGenericFunctions` and there is a second round.
-            let defers_generic_functions = type_args.is_empty()
-                && rest.is_none()
-                && !is_sensitive.contains(&true)
-                && !self.sig_type_params(candidate).is_empty();
-            let mut is_generic_function_deferred = false;
-            // A context sensitive function does not fit `candidate`, which comes out in the second round, and what it is expected to
-            // be there.
-            let mut is_rejected_in_second_round = false;
-            let mut second_round_context: Option<(ExprId, TypeId)> = None;
-            for (i, &arg) in args.iter().enumerate() {
-                // `isSignatureApplicable` checks the arguments from left to right, without an inference context.
-                if let Arg::Expr(e) = arg
-                    && !std::mem::replace(&mut is_arg_checked[i], true)
-                {
-                    self.set_context_checked(file, e, ContextChecked::By(candidate));
-                }
-                if let Arg::Expr(e) = arg
-                    && is_sensitive[i]
-                {
-                    if let Some(param) = self.context_of_arg_at(&params, i, Some(args.len())) {
-                        if !self.is_context_sensitive_argument_related(file, e, param, relation) {
-                            applicable = false;
-                            break;
-                        }
-                        // Where a type guard is asked for, only a type guard will do. That comes out in the second round: to the
-                        // first the function is `anyFunctionType`.
-                        // So does whether the parameters it annotates take what they are given. `params` lack what the deferred calls
-                        // contribute.
-                        let declared = self.context_of_arg_at(&lists[k], i, Some(args.len()));
-                        let fits = is_rejected_in_second_round
-                            || self.is_guard_if_expected(file, e, param)
-                                && (is_deferred.contains(&true)
-                                    || self.do_annotated_parameters_fit(
-                                        file, e, param, declared, relation,
-                                    ));
-                        if !fits {
-                            is_rejected_in_second_round = true;
-                            // The second round goes from left to right, and may not get past another function.
-                            if !is_sensitive[..i].contains(&true) && !self.has_type_variables(param)
-                            {
-                                second_round_context = Some((e, param));
-                            }
-                        }
-                    }
-                    continue;
-                }
-                // What `rest` collects is held against it all together, below. `silentNeverType` is related to every type.
-                if i >= arg_count || is_deferred[i] {
-                    continue;
-                }
-                let Some(param) = self.param_type_at(&params, i) else {
-                    break;
-                };
-                let ty = self.arg_type_under(file, arg, param);
-                // `anyFunctionType` is related to every function type (`signaturesRelatedTo`).
-                if defers_generic_functions
-                    && let Some(wants_construct) =
-                        self.wants_plain_signature(param, MapperId::IDENTITY)
-                    && self.single_generic_signature(ty, wants_construct).is_some()
-                    && !self.related(ty, param, relation)
-                {
-                    is_generic_function_deferred = true;
-                    continue;
-                }
-                if by_subtype {
-                    // What is not known is a subtype of nothing in particular: the choice is left to the second round.
-                    if !self.is_known(ty) || !self.is_known(param) || !self.is_subtype(ty, param) {
-                        applicable = false;
-                        break;
-                    }
-                    continue;
-                }
-                if !self.is_assignable(ty, param) {
-                    applicable = false;
-                    break;
-                }
-            }
-            if applicable && let Some(rest) = rest {
-                // What waits is not looked at, and fits anything.
-                let taken_for: SmallVec<[Option<TypeId>; 8]> = is_sensitive
-                    .iter()
-                    .zip(&is_deferred)
-                    .map(|(&waits, &defers)| (waits || defers).then_some(TypeId::UNRESOLVED))
-                    .collect();
-                let given = self.spread_argument_type(
-                    file,
-                    args,
-                    arg_count,
-                    rest,
-                    &taken_for,
-                    MapperId::IDENTITY,
-                );
-                applicable = if by_subtype {
-                    self.is_known(given) && self.is_known(rest) && self.is_subtype(given, rest)
-                } else {
-                    self.is_assignable(given, rest)
-                };
-            }
-            self.resolving.pop();
-            // The second round checks the function with what `candidate` expects of it, which stays its contextual type
-            // (`NodeCheckFlagsContextChecked`), and then finds that it does not fit.
-            if is_rejected_in_second_round {
-                if applicable && let Some((e, param)) = second_round_context {
-                    self.set_context(file, e, param);
-                }
-                applicable = false;
-            }
-            // The second round of `chooseOverload`: inference and `isSignatureApplicable` under `CheckModeNormal`.
-            if applicable && is_generic_function_deferred {
-                let outer = std::mem::replace(&mut self.keeps_arg_contexts, true);
-                let sig = self.instantiate_for_call(s, candidate, false);
-                self.keeps_arg_contexts = outer;
-                applicable = self
-                    .signature_applicability(s, sig, relation, false, None)
-                    .known()
-                    .unwrap_or(!by_subtype);
-            }
-            if applicable {
-                return Some(candidate);
-            }
-        }
-        None
-    }
-
     /// `ty`, which the type parameter `param` extends or defaults to, with what has been filled in around the signature `param`
     /// belongs to (`outer`) filled in. A clone (`cloneTypeParameter`) comes with that done.
     pub(super) fn filled_in_around(
@@ -3356,390 +2111,6 @@ impl<'p> Checker<'p> {
             self.failing_type_argument(sig, &type_params, type_args),
             Ok(Some(_))
         )
-    }
-
-    /// Of a function whose type is not known yet, the parameters it types itself are: whether they take what `param` would give them.
-    /// `param` is as the first round left it. `declared`: as the candidate declares it. Where that mentions a type parameter the
-    /// second round infers from the annotation itself (`inferFromAnnotatedParametersAndReturn`), so nothing can be told yet.
-    fn do_annotated_parameters_fit(
-        &mut self,
-        file: FileId,
-        arg: ExprId,
-        param: TypeId,
-        declared: Option<TypeId>,
-        relation: Relation,
-    ) -> bool {
-        let hir = self.hir(file);
-        let ExprKind::Fn(func) = hir[arg].kind else {
-            return true;
-        };
-        if !self.p.files.options.strict_function_types
-            || !hir[func].params.iter().any(|p| hir[p].ty.is_some())
-        {
-            return true;
-        }
-        let non_null = self.non_nullable(param);
-        let Some(expected) = self.single_call_signature(non_null, false) else {
-            return true;
-        };
-        if !self.sig_type_params(expected).is_empty() {
-            return true;
-        }
-        let given = self.sig_params(expected);
-        let declared = declared
-            .map(|declared| self.non_nullable(declared))
-            .and_then(|declared| self.single_call_signature(declared, false))
-            .map(|declared| self.sig_params(declared));
-        for (i, p) in hir[func]
-            .params
-            .iter()
-            .filter(|&p| !matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this)))
-            .enumerate()
-        {
-            if hir[p].ty.is_none() || hir[p].flags.contains(Flags::REST) {
-                continue;
-            }
-            let Some(from) = self.param_type_at(&given, i) else {
-                break;
-            };
-            if let Some(declared) = &declared
-                && self
-                    .param_type_at(declared, i)
-                    .is_some_and(|declared| self.has_type_variables(declared))
-            {
-                continue;
-            }
-            let to = self.type_of_param(file, p);
-            if !self.is_known(from) || !self.is_known(to) || self.has_type_variables(from) {
-                continue;
-            }
-            if !self.related(from, to, relation) {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// The first round of `chooseOverload` (`CheckModeSkipContextSensitive`): what of the object literal `arg` does not wait for its
-    /// context has to fit `param`, properties there are too many of aside (`getRegularTypeOfObjectLiteral`). In doubt it does.
-    fn do_plain_members_fit(
-        &mut self,
-        file: FileId,
-        arg: ExprId,
-        param: TypeId,
-        relation: Relation,
-    ) -> bool {
-        self.check_literal_skipping_sensitive(file, arg, param, relation)
-            .is_some()
-    }
-
-    /// The type of the object or array literal `arg` under `CheckModeSkipContextSensitive`, or `None` if that type is not related to
-    /// `param`.
-    /// `UNRESOLVED` stands for a member that is not checked, and for the whole literal when its type cannot be determined.
-    fn check_literal_skipping_sensitive(
-        &mut self,
-        file: FileId,
-        arg: ExprId,
-        param: TypeId,
-        relation: Relation,
-    ) -> Option<TypeId> {
-        let hir = self.hir(file);
-        let props = match hir[arg].kind {
-            ExprKind::Object(props) => props,
-            ExprKind::Array(items) => {
-                return self.check_array_skipping_sensitive(file, arg, items, param, relation);
-            }
-            _ => return Some(TypeId::UNRESOLVED),
-        };
-        if self.has_type_variables(param) || !self.is_known(param) {
-            return Some(TypeId::UNRESOLVED);
-        }
-        let partial = || Shape {
-            literal: Literalness::Partial,
-            ..Shape::default()
-        };
-        // A `Partial` shape without members is `anyFunctionType`, which `{}` is not.
-        let finish = |c: &mut Self, shape: Shape| {
-            if shape.props.is_empty() {
-                TypeId::EMPTY_OBJECT
-            } else {
-                c.synth(shape)
-            }
-        };
-        let mut shape = partial();
-        // `getSpreadType` of what comes before the properties in `shape`.
-        let mut spread: Option<TypeId> = None;
-        for p in props.iter() {
-            let prop = &hir[p];
-            if prop.kind == PropKind::Spread {
-                if self.depends_on_context(file, prop.value) {
-                    return Some(TypeId::UNRESOLVED);
-                }
-                let given = self.type_of_expr(file, prop.value);
-                if !self.is_known(given) || self.has_type_variables(given) {
-                    return Some(TypeId::UNRESOLVED);
-                }
-                let written = finish(self, std::mem::replace(&mut shape, partial()));
-                let left = match spread {
-                    Some(left) => self.spread(left, written),
-                    None => written,
-                };
-                spread = Some(self.spread(left, given));
-                continue;
-            }
-            let Some(name) = self.member_name(file, prop.key) else {
-                return Some(TypeId::UNRESOLVED);
-            };
-            let wanted = self.contextual_property(param, name);
-            // What is not looked at fits anything, whichever way it is compared, as `anyFunctionType` fits every function type.
-            let mut ty = TypeId::UNRESOLVED;
-            if prop.value.is_some()
-                && matches!(prop.kind, PropKind::Init | PropKind::Method)
-                && (matches!(hir[prop.value].kind, ExprKind::Object(_))
-                    || self.is_context_sensitive(file, prop.value))
-            {
-                if let Some(wanted) = wanted {
-                    if !self.has_room_for_literal(file, prop.value, wanted)
-                        || !self.is_any_function_type_related_to(file, prop.value, wanted, relation)
-                    {
-                        return None;
-                    }
-                    // The type of a nested literal becomes part of the type of `arg`: `wanted` leaves out an index signature of `param`
-                    // once a member of an intersection declares the property, but the relation below checks the property against both.
-                    ty =
-                        self.check_literal_skipping_sensitive(file, prop.value, wanted, relation)?;
-                }
-            } else if prop.value.is_some()
-                && matches!(prop.kind, PropKind::Init | PropKind::Shorthand)
-                && !self.depends_on_context(file, prop.value)
-                && !matches!(
-                    hir[prop.value].kind,
-                    ExprKind::Template { .. } | ExprKind::TaggedTemplate(_)
-                )
-                && !self.contains_nested_generic_function(file, prop.value)
-            {
-                let given = self.type_of_expr(file, prop.value);
-                if self.is_known(given) {
-                    ty = self.widen_literal_for_context(given, wanted);
-                }
-            }
-            shape.props.retain(|x| x.name != name);
-            shape
-                .props
-                .push(Self::literal_member_of_type(file, p, name, ty));
-        }
-        let written = finish(self, shape);
-        let literal_type = match spread {
-            Some(left) => self.spread(left, written),
-            None => written,
-        };
-        if self.is_any(literal_type) {
-            return Some(TypeId::UNRESOLVED);
-        }
-        self.related(literal_type, param, relation)
-            .then_some(literal_type)
-    }
-
-    /// `check_literal_skipping_sensitive`, of the array literal `arg` with the elements `items` (`checkArrayLiteral`). An element that
-    /// does not fit what `param` expects at its place counts as `unknown`: a member of `param` that says nothing of elements may
-    /// take the array all the same.
-    fn check_array_skipping_sensitive(
-        &mut self,
-        file: FileId,
-        arg: ExprId,
-        items: IdList<ExprId>,
-        param: TypeId,
-        relation: Relation,
-    ) -> Option<TypeId> {
-        let hir = self.hir(file);
-        if self.has_type_variables(param)
-            || !self.is_known(param)
-            || hir
-                .ids(items)
-                .any(|item| matches!(hir[item].kind, ExprKind::Spread(_) | ExprKind::Missing))
-        {
-            return Some(TypeId::UNRESOLVED);
-        }
-        let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(items.len());
-        for (i, item) in hir.ids(items).enumerate() {
-            let wanted = self.contextual_element_at(param, i, Some(items.len()), None, None);
-            // What is not looked at fits anything, whichever way it is compared.
-            let mut ty = TypeId::UNRESOLVED;
-            if matches!(hir[item].kind, ExprKind::Object(_))
-                || self.is_context_sensitive(file, item)
-            {
-                if let Some(wanted) = wanted {
-                    ty = if self.has_room_for_literal(file, item, wanted)
-                        && self.is_any_function_type_related_to(file, item, wanted, relation)
-                    {
-                        self.check_literal_skipping_sensitive(file, item, wanted, relation)
-                            .unwrap_or(TypeId::UNKNOWN)
-                    } else {
-                        TypeId::UNKNOWN
-                    };
-                }
-            } else if !self.depends_on_context(file, item)
-                && !matches!(
-                    hir[item].kind,
-                    ExprKind::Template { .. } | ExprKind::TaggedTemplate(_)
-                )
-                && !self.contains_nested_generic_function(file, item)
-            {
-                let given = self.type_of_expr(file, item);
-                if self.is_known(given) {
-                    // `checkExpressionForMutableLocation`: what is asserted is what it is said to be.
-                    ty = if matches!(hir[item].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
-                        given
-                    } else {
-                        self.widen_literal_for_context(given, wanted)
-                    };
-                }
-            }
-            types.push(ty);
-        }
-        // `inConstContext` is false: `isConstContext` reads the contextual type, which `isSignatureApplicable` sets to `param`.
-        let literal_type = if self.is_in_tuple_context(file, arg, Some(param)) {
-            let flags: SmallVec<[ElemFlags; 8]> = smallvec![ElemFlags::REQUIRED; types.len()];
-            self.tuple(&types, &flags, false)
-        } else {
-            // An element that is not checked is taken to fit, so it adds nothing to the element type. In a union `UNRESOLVED`
-            // absorbs the other members.
-            let checked: SmallVec<[TypeId; 8]> = types
-                .iter()
-                .copied()
-                .filter(|&ty| ty != TypeId::UNRESOLVED)
-                .collect();
-            let element = if checked.is_empty() {
-                self.union(&types)
-            } else {
-                self.union(&checked)
-            };
-            self.array_of(element)
-        };
-        self.related(literal_type, param, relation)
-            .then_some(literal_type)
-    }
-
-    /// `isSignatureApplicable` under `CheckModeSkipContextSensitive`: the context sensitive function `arg` is `anyFunctionType`, which
-    /// is related to every signature and has the properties of `Function`. Whether that type is related to `param`. True if `arg`
-    /// is no function, and if `param` has type variables: `checkFunctionExpressionOrObjectLiteralMethod` may keep the return type then.
-    fn is_any_function_type_related_to(
-        &mut self,
-        file: FileId,
-        arg: ExprId,
-        param: TypeId,
-        relation: Relation,
-    ) -> bool {
-        if !matches!(self.hir(file)[arg].kind, ExprKind::Fn(_))
-            || self.has_type_variables(param)
-            || !self.is_known(param)
-        {
-            return true;
-        }
-        let any_function_type = self.any_function_type();
-        self.related(any_function_type, param, relation)
-    }
-
-    /// Whether a function, object or array literal whose type is not known yet could be a `param` at all:
-    /// a function is no `string`, whatever its parameters turn out to be.
-    fn has_room_for_literal(&mut self, file: FileId, arg: ExprId, param: TypeId) -> bool {
-        let is_function = matches!(self.hir(file)[arg].kind, ExprKind::Fn(_));
-        self.parts(param).iter().any(|&part| {
-            if self.is_any(part)
-                || part == TypeId::UNKNOWN
-                || part == TypeId::OBJECT
-                || part == TypeId::EMPTY_OBJECT
-                || self.is_deferred(part)
-            {
-                return true;
-            }
-            if self.is_primitive(part) || part.is_never() {
-                return false;
-            }
-            if !is_function {
-                return true;
-            }
-            // Something to call, or nothing that every function does not have: `{ name: string }` will do.
-            if self
-                .members(part)
-                .is_none_or(|m| !m.shape().call.is_empty())
-            {
-                return true;
-            }
-            let function = self.global_ref(known::Function, &[]);
-            self.is_assignable(function, part)
-        })
-    }
-
-    /// `signaturesRelatedTo`: the type of an object or array literal has no signatures, so the literal `arg` is not related to
-    /// `param` if every member of `param` is primitive or has a signature. The type variables in the signatures do not matter.
-    fn literal_lacks_target_signatures(
-        &mut self,
-        file: FileId,
-        arg: ExprId,
-        param: TypeId,
-    ) -> bool {
-        if !matches!(
-            self.hir(file)[arg].kind,
-            ExprKind::Object(_) | ExprKind::Array(_)
-        ) {
-            return false;
-        }
-        self.parts(param).iter().all(|&part| {
-            self.is_primitive(part)
-                || self.is_object_type(part)
-                    && self.mapped_origin(part).is_none()
-                    && self.members(part).is_some_and(|m| {
-                        !m.shape().call.is_empty() || !m.shape().construct.is_empty()
-                    })
-        })
-    }
-
-    fn is_guard_if_expected(&mut self, file: FileId, arg: ExprId, param: TypeId) -> bool {
-        let ExprKind::Fn(func) = self.hir(file)[arg].kind else {
-            return true;
-        };
-        let non_null = self.non_nullable(param);
-        let sigs = self.signatures(non_null, false);
-        let [expected] = sigs[..] else { return true };
-        if self.sig_predicate(expected).is_none() {
-            return true;
-        }
-        // The parameters get their types for good once a candidate is picked.
-        if self.provisional == 0 {
-            self.provisional_floor = self.stack.len();
-        }
-        self.provisional += 1;
-        self.contextual.push((file, arg, param));
-        let own = self.sig_of_fn(file, func);
-        let is_guard = self.sig_predicate(own).is_some();
-        self.contextual.pop();
-        self.provisional -= 1;
-        if self.provisional == 0 {
-            self.provisional_arg_contexts.clear();
-        }
-        is_guard
-    }
-
-    /// Whether one of `own`, the type parameters of a signature, is in scope where `call` is written: in the function that declares
-    /// it, or, for a construct signature, in the class. What is written there may really mean it, and `inferFromTypes` takes it for
-    /// a candidate like any other.
-    pub(super) fn is_inside_declaration_of(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        own: &[TypeId],
-    ) -> bool {
-        // Only what the file of the call declares can be in scope there.
-        if own
-            .iter()
-            .all(|&p| matches!(*self.data(p), TypeData::TypeParam(of, ..) if of != file))
-        {
-            return false;
-        }
-        let scope = self.scope_of_expr(file, call);
-        let in_scope = self.type_params_in_scope(file, scope);
-        own.iter().any(|p| in_scope.contains(p))
     }
 
     /// `getOptionalCallSignature`: what `sig` gives back to `call`. In an optional chain that may have stopped before the call,
@@ -3780,124 +2151,8 @@ impl<'p> Checker<'p> {
         self.chain_receiver(file, this_arg, chain).0
     }
 
-    /// The contextual type of `call` that `inferTypeArguments` instantiates with `outerMapper`: `getContextualType` gives the declared
-    /// parameter type of the call around (`checkExpressionWithContextualType`). The recorded context of an argument is instantiated
-    /// ahead of time, so the contextual type is derived again with the declared parameter type as the context of the argument.
-    /// `None`: `call` is not in an argument of the innermost call being resolved, or the recorded context will do.
-    fn contextual_type_for_outer_mapper(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        type_params: &[TypeId],
-    ) -> Option<TypeId> {
-        let outer = self.resolving.last()?;
-        if outer.file != file || outer.call.is_none() || outer.so_far == MapperId::IDENTITY {
-            return None;
-        }
-        let (outer_call, params) = (outer.call, outer.params.clone());
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (ExprKind::Call(id) | ExprKind::New(id)) = hir[outer_call].kind else {
-            return None;
-        };
-        let mut arg = call;
-        loop {
-            arg = match bound.expr_parent[arg.idx()] {
-                Parent::Expr(parent) if parent == outer_call => break,
-                Parent::Expr(parent)
-                    if !matches!(
-                        hir[parent].kind,
-                        ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
-                    ) =>
-                {
-                    parent
-                }
-                Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => bound.prop_owner[p.idx()],
-                _ => return None,
-            };
-        }
-        let args = hir[id].args;
-        if hir
-            .ids(args)
-            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
-        {
-            return None;
-        }
-        let index = hir.ids(args).position(|a| a == arg)?;
-        let param = self.context_of_arg_at(&params, index, Some(args.len()))?;
-        let param = self.without_no_infer(param);
-        self.contextual.push((file, arg, param));
-        let expected = self.expected_result(file, call, type_params);
-        self.contextual.pop();
-        expected.map(|(ty, _)| ty)
-    }
-
-    /// The head of `inferTypeArguments`: what is expected of the result of `call`, whose signature has `type_params`, and
-    /// whether that is no more than what a binding pattern implies (`isFromBindingPattern`).
-    fn expected_result(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        type_params: &[TypeId],
-    ) -> Option<(TypeId, bool)> {
-        let outer = std::mem::replace(&mut self.keeps_boolean_in_arg_contexts, true);
-        let expected = self.expected_result_keeping_boolean(file, call, type_params);
-        self.keeps_boolean_in_arg_contexts = outer;
-        expected
-    }
-
-    /// `expected_result`, with `keeps_boolean_in_arg_contexts` set.
-    fn expected_result_keeping_boolean(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        type_params: &[TypeId],
-    ) -> Option<(TypeId, bool)> {
-        self.skip_binding_patterns += 1;
-        let without_patterns = self.contextual_type(file, call);
-        self.skip_binding_patterns -= 1;
-        // `skipBindingPatterns`: to type parameters that all have defaults a pattern says nothing.
-        let mut skips_patterns = true;
-        for &param in type_params {
-            skips_patterns = skips_patterns && self.has_default(param);
-        }
-        if skips_patterns {
-            return without_patterns.map(|expected| (expected, false));
-        }
-        let expected = self.contextual_type(file, call)?;
-        Some((expected, without_patterns != Some(expected)))
-    }
-
-    /// `inferTypeArguments` instantiates the contextual type of a call with `outerMapper`, in which a candidate from an argument of
-    /// the outer call outranks one from its return type. The recorded contextual type `contextual` of `call` can have the
-    /// `returnMapper` of the outer call applied. Returns the contextual type without it, if applying it gives `contextual`.
-    fn contextual_type_before_return_mapper(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        contextual: TypeId,
-    ) -> Option<TypeId> {
-        if self
-            .resolving
-            .iter()
-            .all(|r| r.return_mapper == MapperId::IDENTITY)
-        {
-            return None;
-        }
-        let (pushed, outer) = self.pushed_contextual_type(file, call)?;
-        let return_mapper = self.return_mapper_for_contexts(self.resolving[outer].return_mapper);
-        let instantiated = self.instantiate_with_expected_result(pushed, return_mapper);
-        if instantiated == pushed {
-            return None;
-        }
-        let instantiated = self.without_no_infer(instantiated);
-        if instantiated != contextual {
-            return None;
-        }
-        Some(self.without_no_infer(pushed))
-    }
-
     /// `getDefaultFromTypeParameter(param) != nil`
-    fn has_default(&mut self, param: TypeId) -> bool {
+    pub(super) fn has_default(&mut self, param: TypeId) -> bool {
         if let TypeData::TypeParam(file, tp, around) = *self.data(param)
             && around != MapperId::IDENTITY
         {
@@ -3920,468 +2175,8 @@ impl<'p> Checker<'p> {
         self.default_of_type_param(param).is_some()
     }
 
-    /// `createOuterReturnMapper(outerContext)`, applied to `ty`, what is expected of `call`: none of the type parameters of the call
-    /// around is left in it.
-    fn instantiate_with_outer_return_mapper(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        ty: TypeId,
-    ) -> TypeId {
-        let Some(outer) = self.outer_inference_context(file, call) else {
-            return ty;
-        };
-        let mapped = self.instantiate(ty, self.resolving[outer].outer_return_mapper);
-        if mapped != ty {
-            self.resolving[outer].is_outer_return_mapper_taken = true;
-        }
-        mapped
-    }
-
-    /// `outerContext := getInferenceContext(node)`: the index in `resolving` of the last context pushed for something that holds `e`,
-    /// which is an argument of the call the entry is for. One context or none: an entry that infers nothing
-    /// (`pushInferenceContext(node, nil)`: `isSignatureApplicable`) has no mappers, and hides those further out.
-    fn outer_inference_context(&self, file: FileId, e: ExprId) -> Option<usize> {
-        self.resolving.iter().rposition(|r| {
-            let around = if r.call.is_some() { r.call } else { r.node };
-            r.file == file && around.is_some() && self.is_in_argument_of(file, e, around)
-        })
-    }
-
-    /// Whether `e` is in an argument of `call`, or in the attributes of the JSX element `call` (`node.Attributes()`): not in what is
-    /// called, in the tag or in a child.
-    fn is_in_argument_of(&self, file: FileId, e: ExprId, call: ExprId) -> bool {
-        let hir = self.hir(file);
-        let mut at = Parent::Expr(e);
-        loop {
-            let parent = self.parent_of_node(file, at);
-            match parent {
-                Parent::Expr(x) if x == call => {
-                    return match hir[call].kind {
-                        ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
-                            at != Parent::Expr(hir[c].callee)
-                        }
-                        ExprKind::Jsx(_) => matches!(at, Parent::Prop(_)),
-                        _ => true,
-                    };
-                }
-                Parent::None | Parent::File => return false,
-                _ => at = parent,
-            }
-        }
-    }
-
-    /// `getContextualType` of `e` while `inferTypeArguments` checks the argument that `e` is, or is an operand of (`?:`, `||`, `??`, `&&`,
-    /// `,`): the declared type of the parameter. `None`: that argument is no `Resolving::checked_arg`.
-    fn declared_type_of_checked_arg(&self, file: FileId, e: ExprId) -> Option<TypeId> {
-        if self.resolving.iter().all(|r| r.checked_arg.is_none()) {
-            return None;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = e;
-        loop {
-            let checked = self
-                .resolving
-                .iter()
-                .rev()
-                .filter(|r| r.file == file)
-                .find_map(|r| r.checked_arg.filter(|checked| checked.0 == at));
-            if let Some((_, declared)) = checked {
-                return Some(declared);
-            }
-            let Parent::Expr(parent) = bound.expr_parent[at.idx()] else {
-                return None;
-            };
-            at = match hir[parent].kind {
-                ExprKind::Cond { test, .. } if test != at => parent,
-                ExprKind::Binary {
-                    op: BinOp::Or | BinOp::Nullish,
-                    ..
-                } => parent,
-                ExprKind::Binary {
-                    op: BinOp::And | BinOp::Comma,
-                    right,
-                    ..
-                } if right == at => parent,
-                _ => return None,
-            };
-        }
-    }
-
-    /// `ty` with the holes in `so_far` that come to nothing worked out. For a type parameter of a call around that has no candidates
-    /// tsgo has `silentNeverType` (`InferenceFlagsNoDefault`). Nothing is inferred from that, nor from a reference that holds it
-    /// (`ObjectFlagsNonInferrableType`), but it is a `never`: `getUnionType` drops it, `getPropertyTypeForIndexType` gives `never` for
-    /// it, and `keyof` of it is every key. What `instantiateType` makes there has no hole in it and is inferred from.
-    fn without_holes_that_vanish(&mut self, ty: TypeId, so_far: MapperId, depth: u32) -> TypeId {
-        if depth > 4 || !self.has_type_variables(ty) {
-            return ty;
-        }
-        let vanishing = |c: &mut Self, t: TypeId| {
-            let t = c.without_holes_that_vanish(t, so_far, depth + 1);
-            if c.p.types.map(so_far, t) == Some(TypeId::UNRESOLVED) {
-                TypeId::NEVER
-            } else {
-                t
-            }
-        };
-        match self.data(ty) {
-            TypeData::Union(members) => {
-                let mut left: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(members.len());
-                for &member in members.iter() {
-                    left.push(vanishing(self, member));
-                }
-                if left[..] == members[..] {
-                    ty
-                } else {
-                    self.union(&left)
-                }
-            }
-            TypeData::IndexedAccess {
-                obj,
-                index,
-                undefined,
-            } => {
-                let key = vanishing(self, *index);
-                if key == *index {
-                    ty
-                } else {
-                    self.indexed_access_flagged(*obj, key, *undefined, None)
-                        .unwrap_or(TypeId::UNKNOWN)
-                }
-            }
-            TypeData::Keyof(of) => {
-                let keyed = vanishing(self, *of);
-                if keyed == *of { ty } else { self.keyof(keyed) }
-            }
-            TypeData::Ref {
-                target,
-                args: TypeArguments::Given(args),
-            } => {
-                let mut new: Vec<TypeId> = Vec::with_capacity(args.len());
-                for &arg in args.iter() {
-                    new.push(self.without_holes_that_vanish(arg, so_far, depth + 1));
-                }
-                if new[..] == args[..] {
-                    ty
-                } else {
-                    self.intern(TypeData::Ref {
-                        target: *target,
-                        args: new.into(),
-                    })
-                }
-            }
-            TypeData::Tuple {
-                elems: TypeArguments::Given(elems),
-                flags,
-                readonly,
-            } => {
-                let mut new: Vec<TypeId> = Vec::with_capacity(elems.len());
-                for &elem in elems.iter() {
-                    new.push(self.without_holes_that_vanish(elem, so_far, depth + 1));
-                }
-                if new[..] == elems[..] {
-                    ty
-                } else {
-                    self.normalized_tuple(&new, flags, *readonly)
-                }
-            }
-            // Only a reference, a tuple, a union and an intersection are marked for what they hold (`getPropagatingFlagsOfTypes`).
-            // An anonymous type is inferred from like any other, with `silentNeverType` in it.
-            TypeData::Anon { .. } | TypeData::Fns { .. } => {
-                let silent = self
-                    .p
-                    .types
-                    .mapping(so_far)
-                    .iter()
-                    .filter(|pair| pair.1 == TypeId::UNRESOLVED)
-                    .map(|pair| (pair.0, TypeId::SILENT_NEVER))
-                    .collect();
-                let silent = self.p.types.mapper(silent);
-                self.instantiate(ty, silent)
-            }
-            _ => ty,
-        }
-    }
-
-    /// Takes the entry of `call` off `candidate_holes` while the contextual type of `call` itself is inferred from.
-    /// `getInferenceContext(node)` is the context of a call around `node`: a type parameter of a candidate that the contextual type
-    /// mentions is the one in scope at the call (`new C()` inside the generic class `C`). The caller puts back what is returned.
-    fn take_own_candidate_holes(&mut self, file: FileId, call: ExprId) -> Option<CandidateHoles> {
-        if self.candidate_holes.last()?.call == (file, call) {
-            self.candidate_holes.pop()
-        } else {
-            None
-        }
-    }
-
-    /// The type parameters of the candidates of the overloaded calls around say nothing.
-    fn instantiate_with_candidate_holes(&mut self, mut ty: TypeId) -> TypeId {
-        for i in (0..self.candidate_holes.len()).rev() {
-            if !self.has_type_variables(ty) {
-                break;
-            }
-            let holes = match self.candidate_holes[i].mapper {
-                Some(holes) => holes,
-                None => {
-                    let pairs: Vec<(TypeId, TypeId)> = self.candidate_holes[i]
-                        .type_params
-                        .iter()
-                        .map(|&p| (p, TypeId::UNRESOLVED))
-                        .collect();
-                    let holes = self.p.types.mapper(pairs);
-                    self.candidate_holes[i].mapper = Some(holes);
-                    holes
-                }
-            };
-            ty = self.remove_unresolved_params_from_unions(ty, holes, 0);
-            ty = self.instantiate(ty, holes);
-        }
-        ty
-    }
-
-    /// `silentNeverType`, which a type parameter nothing is known of yet stands for (`InferenceFlagsNoDefault`), is no member of a
-    /// union: of `T | undefined` there is `undefined` left, and of `PromiseLike<T | undefined>` a `PromiseLike<undefined>`. Here such
-    /// a parameter is mapped to what is not known, which leaves nothing of a union it is in, so it is taken out first.
-    fn remove_unresolved_params_from_unions(
-        &mut self,
-        ty: TypeId,
-        mapper: MapperId,
-        depth: usize,
-    ) -> TypeId {
-        if depth > 3 || !self.has_type_variables(ty) {
-            return ty;
-        }
-        match self.data(ty) {
-            TypeData::Union(members) => {
-                let is_hole =
-                    |c: &Self, m: TypeId| c.p.types.map(mapper, m) == Some(TypeId::UNRESOLVED);
-                let left: SmallVec<[TypeId; 8]> = members
-                    .iter()
-                    .copied()
-                    .filter(|&m| !is_hole(self, m))
-                    .collect();
-                // All of them: what is not known.
-                if left.is_empty() {
-                    return ty;
-                }
-                let left: SmallVec<[TypeId; 8]> = left
-                    .iter()
-                    .map(|&m| self.remove_unresolved_params_from_unions(m, mapper, depth + 1))
-                    .collect();
-                if left[..] == members[..] {
-                    return ty;
-                }
-                self.union(&left)
-            }
-            TypeData::Ref {
-                target,
-                args: TypeArguments::Given(args),
-            } => {
-                let new: SmallVec<[TypeId; 8]> = args
-                    .iter()
-                    .map(|&a| self.remove_unresolved_params_from_unions(a, mapper, depth + 1))
-                    .collect();
-                if new[..] == args[..] {
-                    return ty;
-                }
-                self.intern(TypeData::Ref {
-                    target: *target,
-                    args: new[..].into(),
-                })
-            }
-            _ => ty,
-        }
-    }
-
-    /// `createOuterReturnMapper`: every type parameter of a call being resolved, by what is expected of its result
-    /// (`return_mapper`), or else by what the arguments looked at so far come to: failing them its default, what it extends,
-    /// or `unknown`.
-    fn outer_return_mapper(&mut self, inference: &Inference, return_mapper: MapperId) -> MapperId {
-        // `cloneInferenceContext(context).mapper`: it is the clone that is settled.
-        let mut settled: Option<Inference> = None;
-        let count = inference.params.len();
-        let mut pairs = Vec::with_capacity(count);
-        for k in 0..count {
-            let param = inference.params[k];
-            let ty = match self.p.types.map(return_mapper, param) {
-                Some(ty) => ty,
-                // Nothing goes by what the last one is settled on.
-                None if k + 1 == count && matches!(self.data(param), TypeData::TypeParam(..)) => {
-                    self.settled_type(settled.as_ref().unwrap_or(inference), k)
-                }
-                None => {
-                    let settled = settled.get_or_insert_with(|| inference.clone());
-                    self.fix_params_in(settled, param);
-                    settled.candidates[k].fixed.unwrap_or(TypeId::UNKNOWN)
-                }
-            };
-            pairs.push((param, ty));
-        }
-        self.p.types.mapper(pairs)
-    }
-
-    /// Before an argument, or a part of one, that what is expected of it matters to is looked at: tells the calls inside it what
-    /// is known of the type parameters by now. Those nothing is known of yet say nothing.
-    fn note_so_far(&mut self, inference: &Inference) {
-        let Some(at) = self.resolving.len().checked_sub(1) else {
-            return;
-        };
-        let pairs: Vec<(TypeId, TypeId)> = (0..inference.params.len())
-            .map(|k| {
-                let c = &inference.candidates[k];
-                let known =
-                    c.fixed.is_some() || !c.covariant.is_empty() || !c.contravariant.is_empty();
-                (
-                    inference.params[k],
-                    if known {
-                        self.get_inferred_type(inference, k, false)
-                    } else {
-                        TypeId::UNRESOLVED
-                    },
-                )
-            })
-            .collect();
-        self.resolving[at].so_far = self.p.types.mapper(pairs);
-        // What is made of a generic function for a signature that may be dropped would stay.
-        self.resolving[at].is_inferential = !self.resolving[at].is_trial;
-        if !self.resolving[at].is_outer_return_mapper_taken {
-            let return_mapper = self.resolving[at].return_mapper;
-            let mapper = self.outer_return_mapper(inference, return_mapper);
-            self.resolving[at].outer_return_mapper = mapper;
-        }
-    }
-
-    /// After what `note_so_far` was called for has been looked at: the type parameters that the generic functions inside it went
-    /// by are settled (`instantiateSignatureInContextOf`, `context.mapper`), on what they were taken to be.
-    fn settle_after_look(&mut self, inference: &mut Inference) {
-        let Some(resolving) = self.resolving.last_mut() else {
-            return;
-        };
-        resolving.is_inferential = false;
-        for (param, ty) in resolving.settles.drain(..) {
-            if let Some(i) = inference.params.iter().position(|&p| p == param)
-                && inference.candidates[i].fixed.is_none()
-            {
-                inference.candidates[i].fixed = Some(ty);
-                inference.clear_cached_inferences();
-            }
-        }
-    }
-
-    /// `returnContext`: what `contextual`, which is expected of the result, says about the type parameters of `sig` when taken
-    /// on its own. `target`: what `sig` returns. `inferred`: a type that has been inferred from to `target` at the same priority,
-    /// and the inference that holds what came of it and nothing else.
-    fn return_mapper(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        sig: SigId,
-        type_params: &[TypeId],
-        contextual: TypeId,
-        target: TypeId,
-        is_from_pattern: bool,
-        calls_itself: bool,
-        inferred: Option<(TypeId, &Inference)>,
-    ) -> MapperId {
-        let expected = self.instantiate_with_outer_return_mapper(file, call, contextual);
-        let expected = self.instantiate_with_candidate_holes(expected);
-        if let Some((source, inference)) = inferred
-            && source == expected
-        {
-            return self.mapper_of_result_inference(type_params, inference);
-        }
-        let mut from_result = Inference::for_params(type_params, Some(sig));
-        from_result.calls_itself = calls_itself;
-        from_result.from_pattern = is_from_pattern;
-        self.infer(&mut from_result, expected, target, PRIORITY_RETURN);
-        // The names in a pattern can be anything, and nothing is inferred from that: only from the shape of it.
-        if is_from_pattern {
-            for c in &mut from_result.candidates {
-                c.covariant.retain(|t| !self.has_any_flag(*t));
-                c.contravariant.retain(|t| !self.has_any_flag(*t));
-            }
-            from_result.clear_cached_inferences();
-        }
-        self.mapper_of_result_inference(type_params, &from_result)
-    }
-
-    /// The type parameters of `sig` that what is expected of the result of `call` says something about, and what it says of
-    /// what the arguments are expected to be.
-    fn mapper_from_expected_result(&mut self, file: FileId, call: ExprId, sig: SigId) -> MapperId {
-        let type_params = self.sig_type_params(sig);
-        let ret = self.return_type_in_chain(file, call, sig);
-        if type_params.is_empty() || !self.has_type_variables(ret) {
-            return MapperId::IDENTITY;
-        }
-        let Some((contextual, is_from_pattern)) = self.expected_result(file, call, &type_params)
-        else {
-            return MapperId::IDENTITY;
-        };
-        let contextual = self
-            .declared_type_of_checked_arg(file, call)
-            .unwrap_or(contextual);
-        let calls_itself = self.is_inside_declaration_of(file, call, &type_params);
-        let own_holes = self.take_own_candidate_holes(file, call);
-        let return_mapper = self.return_mapper(
-            file,
-            call,
-            sig,
-            &type_params,
-            contextual,
-            ret,
-            is_from_pattern,
-            calls_itself,
-            None,
-        );
-        self.candidate_holes.extend(own_holes);
-        self.return_mapper_for_contexts(return_mapper)
-    }
-
-    /// From the type parameters something was inferred for to what was inferred, or to what they extend if that does not fit.
-    fn mapper_of_result_inference(
-        &mut self,
-        type_params: &[TypeId],
-        from_result: &Inference,
-    ) -> MapperId {
-        let mut pairs: Vec<(TypeId, TypeId)> = (0..type_params.len())
-            .filter(|&i| {
-                !from_result.candidates[i].covariant.is_empty()
-                    || !from_result.candidates[i].contravariant.is_empty()
-            })
-            .map(|i| {
-                let candidate = &from_result.candidates[i];
-                // Found where something is taken rather than given, for lack of better.
-                let ty = if candidate.covariant.is_empty() {
-                    self.get_inferred_type(from_result, i, false)
-                } else {
-                    self.union(&candidate.covariant)
-                };
-                (type_params[i], ty)
-            })
-            .collect();
-        if pairs.is_empty() {
-            return MapperId::IDENTITY;
-        }
-        let inferred = self.p.types.mapper(pairs.clone());
-        let mut changed = false;
-        for pair in &mut pairs {
-            if let Some(constraint) = self.constraint_of_type_param(pair.0) {
-                let constraint = self.instantiate(constraint, inferred);
-                if !self.is_assignable(pair.1, constraint) {
-                    pair.1 = constraint;
-                    changed = true;
-                }
-            }
-        }
-        if changed {
-            self.p.types.mapper(pairs)
-        } else {
-            inferred
-        }
-    }
-
     /// `ty` without `true` and `false`, if both are in it.
-    fn without_boolean(&mut self, ty: TypeId) -> TypeId {
+    pub(super) fn without_boolean(&mut self, ty: TypeId) -> TypeId {
         if let TypeData::Union(parts) = self.data(ty)
             && parts.contains(&TypeId::TRUE)
             && parts.contains(&TypeId::FALSE)
@@ -4389,1027 +2184,6 @@ impl<'p> Checker<'p> {
             return self.filter(ty, |_, m| m != TypeId::TRUE && m != TypeId::FALSE);
         }
         ty
-    }
-
-    /// `instantiateContextualType` puts what `returnMapper` says for a type parameter wherever one is come to on the way down
-    /// into what is expected, unless that is `any` or `unknown`, and without `boolean`. The mapper that does the same all
-    /// the way down at once.
-    fn return_mapper_for_contexts(&mut self, return_mapper: MapperId) -> MapperId {
-        if return_mapper == MapperId::IDENTITY {
-            return MapperId::IDENTITY;
-        }
-        let mapping = self.p.types.mapping(return_mapper);
-        let mut pairs: SmallVec<[(TypeId, TypeId); 4]> = SmallVec::new();
-        for &(param, ty) in mapping {
-            if !self.is_any(ty) && ty != TypeId::UNKNOWN {
-                pairs.push((param, self.without_boolean(ty)));
-            }
-        }
-        if pairs[..] == *mapping {
-            return return_mapper;
-        }
-        self.p.types.mapper(pairs.into_vec())
-    }
-
-    /// `return_mapper_for_contexts` without the removal of `boolean`. `None`: there is no `boolean` to remove.
-    fn return_mapper_keeping_boolean(&mut self, return_mapper: MapperId) -> Option<MapperId> {
-        if return_mapper == MapperId::IDENTITY {
-            return None;
-        }
-        let mapping = self.p.types.mapping(return_mapper);
-        let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(mapping.len());
-        let mut has_boolean = false;
-        for &(param, ty) in mapping {
-            if !self.is_any(ty) && ty != TypeId::UNKNOWN {
-                has_boolean = has_boolean || self.without_boolean(ty) != ty;
-                pairs.push((param, ty));
-            }
-        }
-        if has_boolean {
-            Some(self.p.types.mapper(pairs))
-        } else {
-            None
-        }
-    }
-
-    /// What `param` is expected to be going by what is expected of the result. Not `boolean`: `f(true)` is to give a
-    /// `boolean` where one is expected, not a `true`.
-    fn instantiate_with_expected_result(&mut self, param: TypeId, from_result: MapperId) -> TypeId {
-        let ty = self.instantiate(param, from_result);
-        // `instantiateContextualType`: `any` and `unknown` say nothing.
-        if self.is_any(ty) || ty == TypeId::UNKNOWN {
-            return param;
-        }
-        if ty != param {
-            self.without_boolean(ty)
-        } else {
-            ty
-        }
-    }
-
-    /// `sig` with its type parameters given or inferred. `skip_sensitive`: leave out the arguments that wait for the others.
-    #[inline]
-    pub(super) fn instantiate_for_call(
-        &mut self,
-        s: CallState<'_>,
-        sig: SigId,
-        skip_sensitive: bool,
-    ) -> SigId {
-        self.instantiate_for_call_as(s, sig, skip_sensitive, false)
-    }
-
-    /// `settled`: the functions among the arguments have their parameter types for good (`NodeCheckFlagsContextChecked`). They
-    /// wait for nothing, and are inferred from in their turn like any other argument.
-    pub(super) fn instantiate_for_call_as(
-        &mut self,
-        s: CallState<'_>,
-        sig: SigId,
-        skip_sensitive: bool,
-        settled: bool,
-    ) -> SigId {
-        let (file, call, type_args, args, this_arg) =
-            (s.file, s.call, s.type_args, s.args, s.this_arg);
-        let type_params = self.sig_type_params(sig);
-        let params = self.sig_params(sig);
-        if type_params.is_empty() {
-            if !skip_sensitive {
-                self.set_arg_contexts(file, args, &params);
-            }
-            return sig;
-        }
-        if !type_args.is_empty() {
-            let filled = self.fill_sig_type_args(sig, &type_params, type_args);
-            let mapper = self.mapper_from(&type_params, &filled);
-            let sig = self.instantiate_sig(sig, mapper);
-            if !skip_sensitive {
-                let params = self.sig_params(sig);
-                self.set_arg_contexts(file, args, &params);
-            }
-            return sig;
-        }
-
-        // The candidate that was chosen was tried just now. If no argument waits for the others, there is nothing more to find out.
-        if !settled {
-            match self.trials.remove(&(file, call)) {
-                Some(trial)
-                    if !skip_sensitive
-                        && trial.candidate == sig
-                        && trial.held == self.what_only_holds_for_now() =>
-                {
-                    return trial.result;
-                }
-                _ => {}
-            }
-        }
-        let mut inference = Inference::for_params(&type_params, Some(sig));
-        // `chooseOverload`, `inferSignatureInstantiationForOverloadFailure`: `InferenceFlagsAnyDefault` depends on the file that contains
-        // the call, not on the file that declares `sig`.
-        inference.any_default = self.hir(file).is_js;
-        inference.calls_itself = self.is_inside_declaration_of(file, call, &type_params);
-        inference.call_site = Some((file, call));
-        // `returnMapper`: the inferences from the contextual type of the call alone.
-        let mut from_result = MapperId::IDENTITY;
-        // `inferTypeArguments`: nothing is expected of what a decorator or a `[Symbol.hasInstance]` method gives back.
-        let has_no_contextual_type = !matches!(s.node, CallLike::Call(_));
-        // `inferTypeArguments` reads the contextual type of the call first, and the return type of `sig` only if there is one. The order
-        // is observable only while that return type is being resolved, when reading it is a circularity. `None`: not read yet.
-        let is_return_type_put_off = self.is_resolving_return_type(sig)
-            && (has_no_contextual_type || self.expected_result(file, call, &type_params).is_none());
-        let mut ret = if is_return_type_put_off {
-            None
-        } else {
-            Some(self.return_type_in_chain(file, call, sig))
-        };
-        let own_holes = self.take_own_candidate_holes(file, call);
-        // The contextual type of the call contributes inferences, at a lower priority than the arguments.
-        if let Some(ret) = ret
-            && self.has_type_variables(ret)
-            && !has_no_contextual_type
-            && let Some((contextual, is_from_pattern)) =
-                self.expected_result(file, call, &type_params)
-        {
-            // The recorded contextual type has `returnMapper` applied. The mappers of the same context would map what it put there.
-            let contextual = self
-                .declared_type_of_checked_arg(file, call)
-                .unwrap_or(contextual);
-            // What the inference below was made from, if `return_mapper` would make the same of it.
-            let mut inferred_from = None;
-            // `const [a, b] = f()` expects a pair of anything. That helps the arguments along, but is no answer.
-            if !is_from_pattern {
-                // For `outerMapper` only: `returnMapper` below is made from the recorded type.
-                let contextual = self
-                    .contextual_type_before_return_mapper(file, call, contextual)
-                    .unwrap_or(contextual);
-                // `outerMapper` is applied to the declared parameter type. `returnMapper` below is made from the recorded type.
-                let contextual = self
-                    .contextual_type_for_outer_mapper(file, call, &type_params)
-                    .unwrap_or(contextual);
-                // `outerMapper`: the type parameters of the call around, which is still being worked out, are what is known of them by
-                // now.
-                let mut expected = contextual;
-                if let Some(outer) = self.outer_inference_context(file, call)
-                    && self.has_type_variables(expected)
-                {
-                    let so_far = self.resolving[outer].so_far;
-                    // Where nothing is left of one that nothing is known of, that comes first: `UNRESOLVED` would take what is around it
-                    // along.
-                    if self
-                        .p
-                        .types
-                        .mapping(so_far)
-                        .iter()
-                        .any(|pair| pair.1 == TypeId::UNRESOLVED)
-                    {
-                        expected = self.without_holes_that_vanish(expected, so_far, 0);
-                    }
-                    expected = self.remove_unresolved_params_from_unions(expected, so_far, 0);
-                    expected = self.instantiate(expected, so_far);
-                }
-                let expected = self.instantiate_with_candidate_holes(expected);
-                // A generic function type that is expected stands with its own type parameters for type arguments, so that they
-                // are not erased.
-                let source = match self.single_call_signature(expected, false) {
-                    Some(generic) if !self.sig_type_params(generic).is_empty() => {
-                        let (params, ret, this) = (
-                            self.sig_params(generic),
-                            self.sig_return(generic),
-                            self.sig_this_type(generic),
-                        );
-                        let plain = self.p.types.intern_sig(SigData::Synth {
-                            type_params: Box::new([]),
-                            params: params.into(),
-                            ret,
-                            this,
-                            of: Box::new([]),
-                        });
-                        self.type_of_signature(plain, false)
-                    }
-                    _ => expected,
-                };
-                // What is expected is written where the call is: a type parameter of `sig` met in it is the caller's. What has a
-                // hole in it, where a call around knows nothing yet, is no candidate (`InferenceFlagsNoDefault`, `silentNeverType`).
-                let calls_itself = std::mem::replace(&mut inference.calls_itself, true);
-                inference.leaves_out_unknown = true;
-                self.infer(&mut inference, source, ret, PRIORITY_RETURN);
-                inference.leaves_out_unknown = false;
-                inference.calls_itself = calls_itself;
-                if !inference.went_by_flags {
-                    inferred_from = Some(source);
-                }
-            }
-            let any_default = std::mem::replace(&mut inference.any_default, false);
-            inference.clear_cached_inferences();
-            from_result = self.return_mapper(
-                file,
-                call,
-                sig,
-                &type_params,
-                contextual,
-                ret,
-                is_from_pattern,
-                inference.calls_itself,
-                inferred_from.map(|source| (source, &inference)),
-            );
-            inference.any_default = any_default;
-            inference.clear_cached_inferences();
-        }
-        self.candidate_holes.extend(own_holes);
-        // `getNonArrayRestType`: what a rest parameter that is no plain array collects is inferred from all together.
-        let rest_ty = self.non_array_rest_type(&params);
-        let arg_count = if rest_ty.is_some() {
-            (self.parameter_count(&params) - 1).min(args.len())
-        } else {
-            args.len()
-        };
-        // `...args: T`: as many as there are, if none of them is spread.
-        if let Some(rest) = rest_ty
-            && let Some(k) = type_params.iter().position(|&p| p == rest)
-            && !args[arg_count..]
-                .iter()
-                .any(|a| matches!(a, Arg::Spread(..)))
-        {
-            inference.candidates[k].implied_arity = Some(args.len() - arg_count);
-        }
-        if let Some(this_ty) = self.sig_this_type(sig)
-            && self.has_type_variables(this_ty)
-        {
-            let ty = self.this_argument_type(file, this_arg);
-            self.infer(&mut inference, ty, this_ty, 0);
-        }
-        // What the expected result says about the type parameters is what the arguments are first expected to fit.
-        let return_mapper = self.return_mapper_for_contexts(from_result);
-        self.resolving.push(Resolving {
-            is_trial: skip_sensitive,
-            ..Resolving::new(file, call, Some(sig), params.clone(), from_result)
-        });
-        let mut is_sensitive: SmallVec<[bool; 8]> = args
-            .iter()
-            .map(|a| !settled && matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)))
-            .collect();
-        // The arguments with `has_context_sensitive_right_operand`, and that operand. Under `CheckModeSkipContextSensitive` a function
-        // in the operand is `anyFunctionType`, and the argument is checked in the second round. Without a context sensitive
-        // argument there is one round: the argument is checked in its turn, and the function fixes type parameters then.
-        let mut sensitive_operands: SmallVec<[Option<ExprId>; 8]> = smallvec![None; args.len()];
-        if !settled {
-            let skips_context_sensitive = is_sensitive.contains(&true);
-            for (i, &arg) in args.iter().enumerate().take(arg_count) {
-                let Arg::Expr(e) = arg else { continue };
-                if is_sensitive[i] || !self.has_context_sensitive_right_operand(file, e) {
-                    continue;
-                }
-                let operand = self.last_right_operand(file, e);
-                // `NodeCheckFlagsContextChecked`: a function that an earlier attempt checked is an argument like any other.
-                if !skips_context_sensitive
-                    && let Some(&first) = self.context_checked_for.get(&(file, operand))
-                    && first != inference.sig
-                {
-                    continue;
-                }
-                sensitive_operands[i] = Some(operand);
-                is_sensitive[i] = skips_context_sensitive;
-            }
-        }
-        // `instantiateTypeWithSingleGenericCallSignature`: a generic function given where a function that is not generic is
-        // expected waits as well: its own type parameters are worked out from what it will be called with. The same for
-        // something generic to construct (`true`) where something to construct is expected.
-        let mut generic_functions: SmallVec<[Option<(SigId, bool)>; 8]> =
-            smallvec![None; args.len()];
-        for (i, &arg) in args.iter().enumerate() {
-            if let Arg::Expr(e) = arg
-                && !is_sensitive[i]
-                && (!self.depends_on_context(file, e)
-                    || matches!(self.hir(file)[e].kind, ExprKind::Fn(f) if !self.hir(file)[f].type_params.is_empty()))
-                && let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
-                && self.has_type_variables(param)
-                && let Some(wants_construct) = self.wants_plain_signature(param, from_result)
-            {
-                let ty = self.type_of_expr(file, e);
-                if let Some(generic) = self.single_generic_signature(ty, wants_construct) {
-                    generic_functions[i] = Some(generic);
-                    is_sensitive[i] = true;
-                }
-            }
-        }
-        // `checkExpressionEx` calls `instantiateTypeWithSingleGenericCallSignature` for every expression, so a generic function inside
-        // a literal argument, or an operand of a `?:`, `||` or `??` argument, is `anyFunctionType` in the first round as well
-        // (`CheckModeSkipGenericFunctions`), and the argument is checked again in the second round. Arguments that a generic rest
-        // parameter collects are not covered.
-        let mut nested_generic_functions: Vec<NestedGenericFunction> = Vec::new();
-        for (i, &arg) in args.iter().enumerate().take(arg_count) {
-            if let Arg::Expr(e) = arg
-                && generic_functions[i].is_none()
-                && matches!(
-                    self.hir(file)[e].kind,
-                    ExprKind::Array(_)
-                        | ExprKind::Object(_)
-                        | ExprKind::Cond { .. }
-                        | ExprKind::Binary {
-                            op: BinOp::Or | BinOp::Nullish,
-                            ..
-                        }
-                )
-                && let Some(param) = self.param_type_at(&params, i)
-            {
-                self.collect_nested_generic_functions(
-                    file,
-                    e,
-                    param,
-                    from_result,
-                    i,
-                    &mut nested_generic_functions,
-                );
-            }
-        }
-        for nested in &nested_generic_functions {
-            is_sensitive[nested.arg_index] = true;
-        }
-        if let Some(resolving) = self.resolving.last_mut() {
-            resolving.nested_generic_functions = nested_generic_functions;
-        }
-        // `checkConditionalExpression` and `checkBinaryLikeExpression` check each operand with `checkExpressionEx`: a generic function
-        // that is an operand of an argument is skipped in the first round and instantiated in the second one too.
-        let mut has_skipped_operand: SmallVec<[bool; 8]> = smallvec![false; args.len()];
-        for (i, &arg) in args.iter().enumerate().take(arg_count) {
-            if let Arg::Expr(e) = arg
-                && generic_functions[i].is_none()
-                && matches!(
-                    self.hir(file)[e].kind,
-                    ExprKind::Cond { .. }
-                        | ExprKind::Binary {
-                            op: BinOp::Or | BinOp::Nullish,
-                            ..
-                        }
-                )
-                && let Some(param) = self.param_type_at(&params, i)
-                && self.has_type_variables(param)
-                && let Some(wants_construct) = self.wants_plain_signature(param, from_result)
-                && self.has_skipped_generic_function_operand(file, e, wants_construct)
-            {
-                has_skipped_operand[i] = true;
-                is_sensitive[i] = true;
-            }
-        }
-        // `resolveCallExpression` under `CheckModeSkipGenericFunctions`: a call, without type arguments, of a generic function
-        // that returns a function waits too, so that what stands to its left has had its say. It is a plain argument for all
-        // that: nothing is settled for its sake. A trial infers from it in its turn, unless `choose_overload_among` defers it.
-        let mut put_off: SmallVec<[bool; 8]> = smallvec![false; args.len()];
-        if skip_sensitive {
-            for (i, &arg) in args.iter().enumerate() {
-                if matches!(arg, Arg::Expr(e) if self.is_deferred_in_first_round(file, e)) {
-                    is_sensitive[i] = true;
-                    put_off[i] = true;
-                }
-            }
-        }
-        // Whether anything would wait if this were not a trial.
-        let mut anything_waits = settled || is_sensitive.contains(&true);
-        for (i, &arg) in args.iter().enumerate() {
-            if let Arg::Expr(e) = arg
-                && !is_sensitive[i]
-                && !(skip_sensitive && anything_waits)
-                && let Some(param) = self.context_of_arg_at(&params, i, Some(args.len()))
-                && self.has_type_variables(param)
-                && self.defers_call_of_generic_function(file, e, param, from_result)
-            {
-                anything_waits = true;
-                if !skip_sensitive {
-                    is_sensitive[i] = true;
-                    put_off[i] = true;
-                }
-            }
-        }
-        // The plain literals in which the first round deferred a call. The second round checks them again.
-        let mut holds_deferred_call: SmallVec<[bool; 8]> = smallvec![false; args.len()];
-        let mut inferred_type_params: Vec<TypeId> = Vec::new();
-        for pass in 0..2 {
-            if pass == 1 && skip_sensitive {
-                break;
-            }
-            // `chooseOverload`: a candidate that what does not wait does not fit is rejected before anything else is looked at, and
-            // stays as the first round left it. That is what the rest is then expected to fit.
-            if pass == 1 && is_sensitive.contains(&true) {
-                let early = self.inference_mapper(&inference);
-                // The instantiation of a generic rest parameter can change the arity, which is checked again before the arguments.
-                let has_wrong_arity = rest_ty.is_some() && {
-                    let instantiated: SmallVec<[SigParam; 8]> = params
-                        .iter()
-                        .map(|p| SigParam {
-                            ty: self.instantiate(p.ty, early),
-                            ..*p
-                        })
-                        .collect();
-                    !self.has_correct_arity(s, &instantiated)
-                };
-                // `chooseOverload`: once a generic function was skipped `argCheckMode` has `CheckModeSkipGenericFunctions`, and
-                // `isSignatureApplicable` takes every generic function given where one that is not generic is expected for
-                // `anyFunctionType`, also where nothing is inferred from it.
-                let mut is_skipped = is_sensitive.clone();
-                if generic_functions.iter().any(Option::is_some) {
-                    for (i, &arg) in args.iter().enumerate() {
-                        if let Arg::Expr(e) = arg
-                            && !is_skipped[i]
-                            && !self.depends_on_context(file, e)
-                            && let Some(param) =
-                                self.context_of_arg_at(&params, i, Some(args.len()))
-                            && !self.has_type_variables(param)
-                            && let Some(wants_construct) =
-                                self.wants_plain_signature(param, from_result)
-                        {
-                            let ty = self.type_of_expr(file, e);
-                            is_skipped[i] =
-                                self.single_generic_signature(ty, wants_construct).is_some();
-                        }
-                    }
-                }
-                if has_wrong_arity
-                    || !self.fits_without_sensitive(file, args, &params, &is_skipped, early)
-                {
-                    let rejected: SmallVec<[SigParam; 8]> = params
-                        .iter()
-                        .map(|p| SigParam {
-                            ty: self.instantiate(p.ty, early),
-                            ..*p
-                        })
-                        .collect();
-                    for (i, &arg) in args.iter().enumerate() {
-                        if let Arg::Expr(e) = arg
-                            && is_sensitive[i]
-                            && let Some(context) =
-                                self.context_of_arg_at(&rejected, i, Some(args.len()))
-                        {
-                            self.set_context(file, e, context);
-                        }
-                    }
-                    break;
-                }
-            }
-            for (i, &arg) in args.iter().enumerate().take(arg_count) {
-                // The second round instantiates the generic functions inside argument `i` as it reaches them, which can add to
-                // `inferredTypeParameters`.
-                let instantiates_generic_functions = pass == 1
-                    && self.resolving.last().is_some_and(|r| {
-                        r.nested_generic_functions
-                            .iter()
-                            .any(|nested| nested.arg_index == i)
-                    });
-                if instantiates_generic_functions && let Some(resolving) = self.resolving.last_mut()
-                {
-                    resolving.inferred_type_params = std::mem::take(&mut inferred_type_params);
-                }
-                // Of a literal with functions in it, the rest has its say along with the plain arguments, and the functions
-                // theirs before the whole.
-                // This round checks argument `i` with its context sensitive parts.
-                let is_checked = is_sensitive[i] == (pass == 1);
-                if (is_sensitive[i] || is_checked && sensitive_operands[i].is_some())
-                    && generic_functions[i].is_none()
-                    && !put_off[i]
-                    && !has_skipped_operand[i]
-                    && let Arg::Expr(e) = arg
-                    && let Some(param) = self.param_type_at(&params, i)
-                    && self.has_type_variables(param)
-                    && !(pass == 0 && self.is_no_infer(param))
-                {
-                    self.infer_from_literal(
-                        file,
-                        sensitive_operands[i].unwrap_or(e),
-                        param,
-                        &mut inference,
-                        return_mapper,
-                        is_checked,
-                    );
-                }
-                if instantiates_generic_functions {
-                    // Those that `infer_from_literal` did not reach.
-                    if let Arg::Expr(e) = arg {
-                        self.instantiate_nested_generic_functions(file, e, &mut inference);
-                    }
-                    if let Some(resolving) = self.resolving.last_mut() {
-                        inferred_type_params = std::mem::take(&mut resolving.inferred_type_params);
-                    }
-                }
-                if is_sensitive[i] != (pass == 1) {
-                    continue;
-                }
-                let Some(param) = self.param_type_at(&params, i) else {
-                    break;
-                };
-                if let Some((generic, construct)) = generic_functions[i] {
-                    let ret =
-                        *ret.get_or_insert_with(|| self.return_type_in_chain(file, call, sig));
-                    self.infer_from_generic_function(
-                        &mut inference,
-                        generic,
-                        construct,
-                        param,
-                        ret,
-                        from_result,
-                        &mut inferred_type_params,
-                    );
-                    continue;
-                }
-                let depends_on_context = match arg {
-                    Arg::Expr(e) => {
-                        self.depends_on_context(file, e)
-                            || self.is_literal_that_depends_on_context(file, e)
-                    }
-                    _ => false,
-                };
-                // What the argument is expected to be is settled before it is looked at, and stays: what is inferred
-                // from the argument cannot be what is expected of it.
-                if let Arg::Expr(e) = arg
-                    && (pass == 1 || depends_on_context)
-                {
-                    let sensitive =
-                        if pass == 1 && !put_off[i] && self.is_context_sensitive(file, e) {
-                            Some(e)
-                        } else {
-                            sensitive_operands[i]
-                        };
-                    let context = if let Some(sensitive) = sensitive {
-                        // What it is to return is, for lack of anything better, what the expected result implies.
-                        let context = self.context_for_sensitive_arg(
-                            &mut inference,
-                            param,
-                            Some((file, sensitive)),
-                        );
-                        self.set_async_return_contexts(file, sensitive, context, return_mapper);
-                        let context = self.instantiate_with_expected_result(context, return_mapper);
-                        // `contextual_type_in_expr` prefers the context recorded for a function to that of the expression around it.
-                        if sensitive != e
-                            && matches!(self.hir(file)[sensitive].kind, ExprKind::Fn(_))
-                        {
-                            self.set_context(file, sensitive, context);
-                        }
-                        context
-                    } else {
-                        // `instantiateContextualType`: the contextual signature of a function goes by all that is inferred so far.
-                        let param = if matches!(self.hir(file)[e].kind, ExprKind::Fn(_)) {
-                            self.instantiate_instantiable_for_signature(&inference, param)
-                        } else {
-                            param
-                        };
-                        self.set_async_return_contexts(file, e, param, return_mapper);
-                        self.instantiate_with_expected_result(param, return_mapper)
-                    };
-                    // `checkExpression` is not memoised: a literal is checked anew for every inference and for every signature it is
-                    // held against, each time under what is expected of it then. Nothing is recorded for it, unless what is
-                    // expected of it has nothing to do with the inference.
-                    if pass == 1 && !holds_deferred_call[i]
-                        || sensitive.is_some()
-                        || !self.is_literal_that_depends_on_context(file, e)
-                        || !self.has_type_variables(param)
-                    {
-                        self.set_context(file, e, context);
-                    }
-                    if inference.calls_itself {
-                        let declared = self.without_no_infer(param);
-                        if let Some(resolving) = self.resolving.last_mut() {
-                            resolving.checked_arg = Some((e, declared));
-                        }
-                    }
-                }
-                if !self.has_type_variables(param) {
-                    continue;
-                }
-                if depends_on_context {
-                    self.note_so_far(&inference);
-                }
-                // The functions in it that wait for nothing are looked at along with it.
-                if pass == 0
-                    && let Arg::Expr(e) = arg
-                {
-                    self.infer_from_annotated_functions(file, e, param, &mut inference);
-                }
-                let literal = match arg {
-                    // Under `settled` a literal with functions in it counts as one that waits for nothing. Their parameters go by the
-                    // inference, not by the declared type.
-                    Arg::Expr(e)
-                        if (pass == 0 || holds_deferred_call[i])
-                            && sensitive_operands[i].is_none()
-                            && !self.is_context_sensitive(file, e) =>
-                    {
-                        // `chooseOverload`: `inferTypeArguments(.., argCheckMode|CheckModeSkipGenericFunctions, ..)` first.
-                        let check_mode = if pass == 0 {
-                            CheckMode::SKIP_GENERIC_FUNCTIONS
-                        } else {
-                            CheckMode::empty()
-                        };
-                        self.literal_argument_type_for_inference(
-                            file,
-                            e,
-                            param,
-                            return_mapper,
-                            &mut inference,
-                            check_mode,
-                        )
-                    }
-                    _ => None,
-                };
-                // `InferenceFlagsSkippedGenericFunction`: a call in it was deferred (`silentNeverType`). What else is in it has its say
-                // now, and the whole once more in the second round, when the call is resolved.
-                // A trial has only the first round, and is not what the candidate comes to (`trials`).
-                if pass == 0 && literal.is_some_and(|ty| self.is_non_inferrable(ty, 0)) {
-                    anything_waits = true;
-                    if !skip_sensitive {
-                        holds_deferred_call[i] = true;
-                        is_sensitive[i] = true;
-                        put_off[i] = true;
-                    }
-                }
-                let mut ty = match (literal, arg) {
-                    (Some(ty), _) => ty,
-                    (None, Arg::Expr(e)) => self.type_of_expr_for_inference(file, e),
-                    (None, _) => self.arg_type(file, arg),
-                };
-                self.settle_after_look(&mut inference);
-                if let Arg::Expr(e) = arg {
-                    if let Some(kept) = self.type_of_reference_to_infer_from(file, e) {
-                        ty = kept;
-                    }
-                    // `instantiateTypeWithSingleGenericCallSignature` goes for whatever the argument is written as: a call that gives a
-                    // generic function waits like a generic function that is named (`CheckModeSkipGenericFunctions`).
-                    if depends_on_context
-                        && let Some(wants_construct) =
-                            self.wants_plain_signature(param, from_result)
-                        && let Some((generic, construct)) =
-                            self.single_generic_signature(ty, wants_construct)
-                    {
-                        if pass == 0 {
-                            generic_functions[i] = Some((generic, construct));
-                            is_sensitive[i] = true;
-                            anything_waits = true;
-                        } else {
-                            let ret = *ret
-                                .get_or_insert_with(|| self.return_type_in_chain(file, call, sig));
-                            self.infer_from_generic_function(
-                                &mut inference,
-                                generic,
-                                construct,
-                                param,
-                                ret,
-                                from_result,
-                                &mut inferred_type_params,
-                            );
-                        }
-                        continue;
-                    }
-                    // `check_expression_with_contextual_type` has told the inference of those it made. This asks the kept way, which
-                    // would resolve the calls in them now.
-                    if literal.is_none() {
-                        self.note_array_literals(file, e, &mut inference.array_literals);
-                    }
-                    if has_skipped_operand[i] {
-                        let ret =
-                            *ret.get_or_insert_with(|| self.return_type_in_chain(file, call, sig));
-                        ty = self.instantiate_generic_function_operands(
-                            file,
-                            e,
-                            &mut inference,
-                            param,
-                            ret,
-                            from_result,
-                            &mut inferred_type_params,
-                        );
-                    }
-                }
-                // A literal given where there is room for one is meant as itself, and is not widened later on.
-                if self.some_type(ty, |c, m| c.is_literal(m)) {
-                    // Room for one can also come from what is expected of the result.
-                    let room = self.instantiate_with_expected_result(param, return_mapper);
-                    if self.is_literal_context(ty, room) {
-                        ty = self.regular(ty);
-                    }
-                }
-                self.infer(&mut inference, ty, param, 0);
-            }
-            // What the rest parameter collects (`getSpreadArgumentType`): in both rounds, if something waits for the second. A list
-            // with something left out of it is no candidate for `...args: T`, so there the first is not made.
-            let Some(rest) = rest_ty else { continue };
-            let waits = is_sensitive[arg_count..].contains(&true);
-            let infers = self.has_type_variables(rest)
-                && if pass == 1 {
-                    waits
-                } else {
-                    !waits || !type_params.contains(&rest)
-                };
-            let mut taken_for: SmallVec<[Option<TypeId>; 8]> = smallvec![None; args.len()];
-            for (i, &arg) in args.iter().enumerate().skip(arg_count) {
-                let Arg::Expr(e) = arg else { continue };
-                if !is_sensitive[i] {
-                    continue;
-                }
-                if pass == 0 {
-                    // `anyFunctionType`, `silentNeverType`: what waits says nothing, and neither does a list that holds it
-                    // (`ObjectFlagsNonInferrableType`).
-                    if infers {
-                        taken_for[i] = Some(if generic_functions[i].is_some() || put_off[i] {
-                            self.synth(Shape {
-                                literal: Literalness::Partial,
-                                ..Shape::default()
-                            })
-                        } else {
-                            self.with_so_far(file, &mut inference, |c, _| c.partial_type(file, e))
-                        });
-                    }
-                    continue;
-                }
-                let element =
-                    self.rest_argument_context(rest, i - arg_count, Some(args.len() - arg_count));
-                if let Some((generic, construct)) = generic_functions[i] {
-                    let ret =
-                        *ret.get_or_insert_with(|| self.return_type_in_chain(file, call, sig));
-                    taken_for[i] = self.generic_function_in_context(
-                        &mut inference,
-                        generic,
-                        construct,
-                        element,
-                        ret,
-                        from_result,
-                        &mut inferred_type_params,
-                    );
-                    continue;
-                }
-                let context = if put_off[i] {
-                    element
-                } else {
-                    self.context_for_sensitive_arg(&mut inference, element, Some((file, e)))
-                };
-                self.set_async_return_contexts(file, e, context, return_mapper);
-                let context = self.instantiate_with_expected_result(context, return_mapper);
-                self.set_context(file, e, context);
-            }
-            if !infers {
-                continue;
-            }
-            if args[arg_count..]
-                .iter()
-                .any(|a| matches!(a, Arg::Expr(e) if self.depends_on_context(file, *e)))
-            {
-                self.note_so_far(&inference);
-            }
-            for (i, &arg) in args.iter().enumerate().skip(arg_count) {
-                if let Arg::Expr(e) = arg
-                    && !is_sensitive[i]
-                {
-                    let element = self.rest_argument_context(
-                        rest,
-                        i - arg_count,
-                        Some(args.len() - arg_count),
-                    );
-                    taken_for[i] = self.literal_argument_type_for_inference(
-                        file,
-                        e,
-                        element,
-                        return_mapper,
-                        &mut inference,
-                        CheckMode::empty(),
-                    );
-                }
-            }
-            let spread =
-                self.spread_argument_type(file, args, arg_count, rest, &taken_for, return_mapper);
-            self.settle_after_look(&mut inference);
-            for (i, &arg) in args.iter().enumerate().skip(arg_count) {
-                if let Arg::Expr(e) = arg
-                    && taken_for[i].is_none()
-                {
-                    self.note_array_literals(file, e, &mut inference.array_literals);
-                }
-            }
-            self.infer(&mut inference, spread, rest, 0);
-        }
-        self.resolving.pop();
-        let mapper = self.inference_mapper(&inference);
-        let candidate = sig;
-        let sig = self.instantiate_sig(sig, mapper);
-        if skip_sensitive && !anything_waits && inferred_type_params.is_empty() {
-            self.trials.insert(
-                (file, call),
-                Trial {
-                    candidate,
-                    result: sig,
-                    held: self.what_only_holds_for_now(),
-                },
-            );
-        }
-        // `getSignatureInstantiation`, with `inferredTypeParameters`
-        if !inferred_type_params.is_empty() {
-            let ret = self.sig_return(sig);
-            if let Some((returned, construct)) = self.single_call_or_construct_signature(ret) {
-                let (params, ret, this) = (
-                    self.sig_params(returned),
-                    self.sig_return(returned),
-                    self.sig_this_type(returned),
-                );
-                // `cloneSignature`: it is declared where `returned` is.
-                let generalized = self.p.types.intern_sig(SigData::Synth {
-                    type_params: inferred_type_params.into(),
-                    params: params.into(),
-                    ret,
-                    this,
-                    of: Box::new([returned]),
-                });
-                let ret = self.type_of_signature(generalized, construct);
-                let returned_type = self.sig_return(sig);
-                self.note_single_signature_type(ret, returned_type, mapper);
-                let (params, this) = (self.sig_params(sig), self.sig_this_type(sig));
-                return self.p.types.intern_sig(SigData::Synth {
-                    type_params: Box::new([]),
-                    params: params.into(),
-                    ret,
-                    this,
-                    of: Box::new([]),
-                });
-            }
-        }
-        sig
-    }
-
-    /// `isSignatureApplicable` in the first round of `chooseOverload`, as far as it can be told without asking anything of what
-    /// waits: whether the arguments fit `params` with `early`, what has been inferred by then, filled in. In doubt they do.
-    fn fits_without_sensitive(
-        &mut self,
-        file: FileId,
-        args: &[Arg],
-        params: &[SigParam],
-        is_sensitive: &[bool],
-        early: MapperId,
-    ) -> bool {
-        let hir = self.hir(file);
-        // What goes into `...args: T` is held against it all together.
-        let count = if self.non_array_rest_type(params).is_some() {
-            (self.parameter_count(params) - 1).min(args.len())
-        } else {
-            args.len()
-        };
-        for (i, &arg) in args.iter().enumerate().take(count) {
-            let Some(param) = self.param_type_at(params, i) else {
-                continue;
-            };
-            let param = self.instantiate(param, early);
-            if !self.is_known(param) {
-                continue;
-            }
-            if !is_sensitive[i] {
-                let given = self.arg_type_under(file, arg, param);
-                if matches!(arg, Arg::Expr(e) if matches!(hir[e].kind, ExprKind::Missing)) {
-                    continue;
-                }
-                // `getRegularTypeOfObjectLiteral`: properties there are too many of do not count while the parameters may not be
-                // all they come to.
-                let given = self.regular_type_of_object_literal(given);
-                if self.is_known(given) && !self.is_assignable(given, param) {
-                    return false;
-                }
-                continue;
-            }
-            // Of an object literal with functions in it: what is required is written, and what does not wait fits.
-            let Arg::Expr(e) = arg else { continue };
-            let ExprKind::Object(props) = hir[e].kind else {
-                continue;
-            };
-            // The relation also covers index signatures and the members of an intersection, which the loop below does not reach.
-            if !self.do_plain_members_fit(file, e, param, Relation::Assignable) {
-                return false;
-            }
-            let target = self.apparent_type(param);
-            if !self.is_object_type(target) {
-                continue;
-            }
-            let Some(members) = self.members(target) else {
-                continue;
-            };
-            // With something spread into it, or a name that is only known when it runs, what it has cannot be told.
-            let mut written: SmallVec<[(Atom, PropId); 8]> = SmallVec::with_capacity(props.len());
-            let mut is_open = false;
-            for p in props.iter() {
-                match self.member_name(file, hir[p].key) {
-                    Some(name) if hir[p].kind != PropKind::Spread => written.push((name, p)),
-                    _ => is_open = true,
-                }
-            }
-            if is_open {
-                continue;
-            }
-            for wanted in &members.shape().props {
-                let Some(&(_, p)) = written.iter().rev().find(|w| w.0 == wanted.name) else {
-                    // What every object has need not be written.
-                    let object = self.global_ref(known::Object, &[]);
-                    if !wanted.flags.contains(PropFlags::OPTIONAL)
-                        && self.prop_ref(object, wanted.name).is_none()
-                    {
-                        return false;
-                    }
-                    continue;
-                };
-                let prop = &hir[p];
-                if matches!(prop.kind, PropKind::Getter | PropKind::Setter) || prop.value.is_none()
-                {
-                    continue;
-                }
-                let wanted = self.type_of_prop(wanted, members.mapper);
-                // Further in, the same.
-                if self.is_context_sensitive(file, prop.value) {
-                    if !self.do_plain_members_fit(file, prop.value, wanted, Relation::Assignable) {
-                        return false;
-                    }
-                    continue;
-                }
-                // `anyFunctionType` is related to every function type.
-                if self.contains_nested_generic_function(file, prop.value)
-                    || self.has_context_sensitive_right_operand(file, prop.value)
-                {
-                    continue;
-                }
-                let given = self.type_of_literal_prop(file, p);
-                let given = self.regular_type_of_object_literal(given);
-                if self.is_known(given)
-                    && self.is_known(wanted)
-                    && !self.is_assignable(given, wanted)
-                {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    /// Whether the first round of `inferTypeArguments` defers a call in `e`, the argument for `param`, and has nothing else in `e` to
-    /// infer from. `checkConditionalExpression` and `checkBinaryLikeExpression` pass `CheckModeSkipGenericFunctions` on to their operands.
-    fn defers_call_of_generic_function(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        param: TypeId,
-        from_result: MapperId,
-    ) -> bool {
-        let mut has_deferred_call = false;
-        self.has_call_operand(file, e)
-            && self.is_skipped_generic_function(file, e, param, from_result, &mut has_deferred_call)
-            && has_deferred_call
-    }
-
-    /// Whether `e` is a call, or a `?:` or `,` with a call for a result.
-    fn has_call_operand(&self, file: FileId, e: ExprId) -> bool {
-        match self.hir(file)[e].kind {
-            ExprKind::Call(_) => true,
-            ExprKind::Cond { yes, no, .. } => {
-                self.has_call_operand(file, yes) || self.has_call_operand(file, no)
-            }
-            ExprKind::Binary {
-                op: BinOp::Comma,
-                right,
-                ..
-            } => self.has_call_operand(file, right),
-            _ => false,
-        }
-    }
-
-    /// Whether `CheckModeSkipGenericFunctions` leaves nothing of `e` to infer from: a call that `resolveCallExpression` defers
-    /// (`silentNeverType`), a generic function where `param` has a signature without type parameters (`anyFunctionType`), or a `?:` or
-    /// `,` with only such results. `has_deferred_call`: set if there is such a call.
-    fn is_skipped_generic_function(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        param: TypeId,
-        from_result: MapperId,
-        has_deferred_call: &mut bool,
-    ) -> bool {
-        match self.hir(file)[e].kind {
-            ExprKind::Call(_) => {
-                let is_deferred = self.is_call_of_generic_function_returning_function(file, e);
-                *has_deferred_call |= is_deferred;
-                is_deferred
-            }
-            ExprKind::Cond { yes, no, .. } => {
-                self.is_skipped_generic_function(file, yes, param, from_result, has_deferred_call)
-                    && self.is_skipped_generic_function(
-                        file,
-                        no,
-                        param,
-                        from_result,
-                        has_deferred_call,
-                    )
-            }
-            ExprKind::Binary {
-                op: BinOp::Comma,
-                right,
-                ..
-            } => {
-                self.is_skipped_generic_function(file, right, param, from_result, has_deferred_call)
-            }
-            _ => {
-                if self.depends_on_context(file, e) {
-                    return false;
-                }
-                let Some(wants_construct) = self.wants_plain_signature(param, from_result) else {
-                    return false;
-                };
-                let ty = self.type_of_expr(file, e);
-                self.single_generic_signature(ty, wants_construct).is_some()
-            }
-        }
     }
 
     /// `isGenericFunctionReturningFunction`, of some signature of what the call `e` calls, if `e` is a call without type arguments.
@@ -5447,97 +2221,6 @@ impl<'p> Checker<'p> {
         false
     }
 
-    /// `resolveCallExpression` under `CheckModeSkipGenericFunctions`: whether `inferTypeArguments` defers the argument `e`, given for
-    /// `param`. `getResolvedSignature` returns a cached `resolvedSignature` first, so a call that is resolved is not deferred.
-    fn is_deferred_generic_call(&mut self, file: FileId, e: ExprId, param: TypeId) -> bool {
-        self.has_type_variables(param)
-            && matches!(self.hir(file)[e].kind, ExprKind::Call(_))
-            && self.p.calls.get(&(file, e)).is_none()
-            && self.is_call_of_generic_function_returning_function(file, e)
-    }
-
-    /// Whether `e` is an argument of the overloaded call whose candidates are being tried, and the first round defers it.
-    fn is_deferred_in_first_round(&self, file: FileId, e: ExprId) -> bool {
-        self.candidate_holes
-            .last()
-            .is_some_and(|holes| holes.deferred_calls.contains(&(file, e)))
-    }
-
-    /// The types of the array literals `e` is made of: what `ObjectFlagsArrayLiteral` marks.
-    fn note_array_literals(&mut self, file: FileId, e: ExprId, out: &mut Vec<TypeId>) {
-        if e.is_none() {
-            return;
-        }
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Array(items) => {
-                let ty = self.type_of_expr(file, e);
-                if !out.contains(&ty) {
-                    out.push(ty);
-                }
-                for item in hir.ids(items) {
-                    self.note_array_literals(file, item, out);
-                }
-            }
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    self.note_array_literals(file, hir[p].value, out);
-                }
-            }
-            ExprKind::Spread(x)
-            | ExprKind::NonNull(x)
-            | ExprKind::AsConst(x)
-            | ExprKind::Satisfies { expr: x, .. } => self.note_array_literals(file, x, out),
-            ExprKind::Await(x)
-            | ExprKind::Assign {
-                op: None, value: x, ..
-            } => self.note_array_literals(file, x, out),
-            ExprKind::Cond { yes, no, .. } => {
-                self.note_array_literals(file, yes, out);
-                self.note_array_literals(file, no, out);
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish | BinOp::And | BinOp::Comma,
-                left,
-                right,
-            } => {
-                self.note_array_literals(file, left, out);
-                self.note_array_literals(file, right, out);
-            }
-            _ => {}
-        }
-    }
-
-    /// An object or array literal, or a choice between such.
-    fn is_literal_that_depends_on_context(&self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Object(_) | ExprKind::Array(_) => true,
-            ExprKind::Cond { yes, no, .. } => {
-                self.is_literal_that_depends_on_context(file, yes)
-                    || self.is_literal_that_depends_on_context(file, no)
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish | BinOp::And | BinOp::Comma,
-                left,
-                right,
-            } => {
-                self.is_literal_that_depends_on_context(file, left)
-                    || self.is_literal_that_depends_on_context(file, right)
-            }
-            ExprKind::NonNull(x) | ExprKind::Satisfies { expr: x, .. } => {
-                self.is_literal_that_depends_on_context(file, x)
-            }
-            // `getContextualType` goes through a const assertion, `isContextSensitive` has no case for one: the functions under it
-            // that wait are checked with it, and go by the inference, not by what is pushed.
-            ExprKind::AsConst(x) => {
-                self.is_literal_that_depends_on_context(file, x)
-                    && !self.is_context_sensitive(file, x)
-            }
-            _ => false,
-        }
-    }
-
     /// `checkExpressionWithContextualType`: `pushContextualType`, `pushInferenceContext`, `checkExpression`, which is not memoised, and
     /// the two pops. What tsgo keeps of what is in `e` is kept: `resolvedSignature`, `NodeCheckFlagsContextChecked`.
     /// `inference_context` is lent to `inference_contexts` for as long as the check lasts.
@@ -5550,6 +2233,28 @@ impl<'p> Checker<'p> {
         check_mode: CheckMode,
     ) -> TypeId {
         self.contextual.push((file, e, contextual_type));
+        let ty = self.check_with_inference_context(
+            file,
+            e,
+            contextual_type,
+            inference_context,
+            check_mode,
+            |c, check_mode| c.check_expression_ex(file, e, check_mode),
+        );
+        self.contextual.pop();
+        ty
+    }
+
+    /// `pushInferenceContext`, `checkExpressionEx`, which is not memoised, `popInferenceContext`.
+    pub(super) fn check_with_inference_context(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        contextual_type: TypeId,
+        inference_context: Option<&mut Inference>,
+        check_mode: CheckMode,
+        check: impl FnOnce(&mut Self, CheckMode) -> TypeId,
+    ) -> TypeId {
         let mut inference_context = inference_context;
         let context = inference_context
             .as_deref_mut()
@@ -5570,59 +2275,25 @@ impl<'p> Checker<'p> {
             std::mem::take(&mut self.rechecked_members),
         );
         let outer = self.begin_recheck();
-        let ty = self.type_of_expr(file, e);
+        let ty = check(self, check_mode);
         self.end_recheck(outer);
         (self.rechecked_exprs, self.rechecked_members) = found_outside;
         self.mode_of_recheck = mode_outside;
-        if self.resolving.last().is_some_and(|r| r.is_inferential) {
-            let skips_context_sensitive = check_mode.contains(CheckMode::SKIP_CONTEXT_SENSITIVE);
-            self.resolve_return_types_in(file, e, skips_context_sensitive);
-        }
+        let instantiated =
+            self.instantiate_contextual_type(contextual_type, file, e, ContextFlags::empty());
+        let ty = if self.maybe_type_of_kind(ty, Self::is_literal)
+            && self.is_literal_context(ty, instantiated)
+        {
+            self.regular(ty)
+        } else {
+            ty
+        };
         let lent = self.inference_contexts.pop().and_then(|info| info.context);
-        if let (Some(inference), Some(lent)) = (inference_context, lent) {
+        if let (Some(inference), Some(mut lent)) = (inference_context, lent) {
+            lent.intra_expression_inference_sites.clear();
             *inference = lent;
         }
-        self.contextual.pop();
         ty
-    }
-
-    /// `inferTypeArguments`: `checkExpressionWithContextualType(arg, paramType, context, checkMode)`, of the argument `e`, under
-    /// `param`, the uninstantiated parameter type. `None`: `e` is no literal, and is checked once.
-    fn literal_argument_type_for_inference(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        param: TypeId,
-        return_mapper: MapperId,
-        inference: &mut Inference,
-        check_mode: CheckMode,
-    ) -> Option<TypeId> {
-        if !self.is_literal_that_depends_on_context(file, e) {
-            return None;
-        }
-        let return_mapper = self.without_const_type_parameters(return_mapper);
-        let uninstantiated = self.instantiate_with_expected_result(param, return_mapper);
-        let uninstantiated = self.without_no_infer(uninstantiated);
-        Some(self.check_expression_with_contextual_type(
-            file,
-            e,
-            uninstantiated,
-            Some(inference),
-            check_mode,
-        ))
-    }
-
-    /// `isConstContext` asks `getContextualType`, which gives the parameter type as declared: `returnMapper` comes after it
-    /// (`instantiateContextualType`). What is pushed has been through `return_mapper` already, so a `const` type parameter is left in.
-    fn without_const_type_parameters(&mut self, return_mapper: MapperId) -> MapperId {
-        let mapping = self.p.types.mapping(return_mapper);
-        let mut pairs = mapping.to_vec();
-        pairs.retain(|pair| !self.is_const_type_variable(pair.0, 0));
-        if pairs.len() == mapping.len() {
-            return_mapper
-        } else {
-            self.p.types.mapper(pairs)
-        }
     }
 
     /// `getSingleSignature`: the one call (or construct) signature of `ty`, if there is none of the other kind.
@@ -5661,7 +2332,10 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSingleCallOrConstructSignature`, and whether it is one to construct with.
-    fn single_call_or_construct_signature(&mut self, ty: TypeId) -> Option<(SigId, bool)> {
+    pub(super) fn single_call_or_construct_signature(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<(SigId, bool)> {
         match self.single_signature(ty, false, false) {
             Some(sig) => Some((sig, false)),
             None => self
@@ -5698,9 +2372,6 @@ impl<'p> Checker<'p> {
             inference.stand_ins = stand_ins;
             inference.own_of_source = SmallVec::from_slice(&self.sig_type_params(expected));
         }
-        // What `expected` takes may really be a type parameter of `sig`, adopted by the call around or in scope there:
-        // `inferFromTypes` takes it for a candidate like any other.
-        inference.calls_itself = true;
         inference.around_source = self
             .sig_decl(expected)
             .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
@@ -5755,645 +2426,6 @@ impl<'p> Checker<'p> {
         self.instantiate_sig(sig, mapper)
     }
 
-    /// `instantiateContextualType`, where no signature is looked for in `ty`: what waits for type parameters is what is expected of
-    /// the result makes of it (`from_result`, the `returnMapper`), without `boolean`, unless that says nothing or has a hole in it.
-    /// `getApparentTypeOfContextualType` with `ContextFlagsNoConstraints`: a type variable that is all that is expected says nothing.
-    /// One that is a member of a union, as in the type of an optional parameter, is what it extends.
-    fn apparent_contextual_type_without_constraints(&mut self, ty: TypeId) -> Option<TypeId> {
-        if self.is_type_variable(ty) {
-            return None;
-        }
-        // `getApparentTypeOfIntersectionType`: `F & (X extends T ? unknown : "message")` is `F`.
-        Some(self.map_type(ty, |c, m| {
-            if c.is_type_variable(m) || matches!(c.data(m), TypeData::Intersection(_)) {
-                c.apparent_type(m)
-            } else {
-                m
-            }
-        }))
-    }
-
-    /// `instantiateContextualType` with the `returnMapper` of `getInferenceContext(node)`, for a `const` type parameter, which is
-    /// still in what is pushed for an argument (`without_const_type_parameters`).
-    pub(super) fn instantiate_contextual_type_from_expected_result(
-        &mut self,
-        ty: TypeId,
-    ) -> TypeId {
-        match self.resolving.last() {
-            Some(resolving) => {
-                let from_result = resolving.return_mapper;
-                self.instantiate_contextual_type_from_result(ty, from_result)
-            }
-            None => ty,
-        }
-    }
-
-    fn instantiate_contextual_type_from_result(
-        &mut self,
-        ty: TypeId,
-        from_result: MapperId,
-    ) -> TypeId {
-        if from_result == MapperId::IDENTITY || !self.maybe_type_of_kind(ty, Self::is_deferred) {
-            return ty;
-        }
-        let instantiated = self.instantiate_instantiable_types(ty, from_result);
-        if self.is_any(instantiated)
-            || instantiated == TypeId::UNKNOWN
-            || !self.is_known(instantiated)
-        {
-            return ty;
-        }
-        self.without_boolean(instantiated)
-    }
-
-    /// Whether what is given for `param` is expected to be a function that is not generic (`Some(false)`), or something that is not
-    /// generic to construct (`Some(true)`), and nothing else.
-    fn wants_plain_signature(&mut self, param: TypeId, from_result: MapperId) -> Option<bool> {
-        let contextual = self.instantiate_contextual_type_from_result(param, from_result);
-        let contextual = self.apparent_contextual_type_without_constraints(contextual)?;
-        let non_null = self.non_nullable(contextual);
-        for construct in [false, true] {
-            if self
-                .single_signature(non_null, construct, false)
-                .is_some_and(|s| self.sig_type_params(s).is_empty())
-            {
-                return Some(construct);
-            }
-        }
-        None
-    }
-
-    /// The one call signature of `ty`, or else its one construct signature (`true`), if it is generic and of the kind that is wanted.
-    fn single_generic_signature(
-        &mut self,
-        ty: TypeId,
-        wants_construct: bool,
-    ) -> Option<(SigId, bool)> {
-        let (generic, construct) = match self.single_signature(ty, false, true) {
-            Some(generic) => (generic, false),
-            None => (self.single_signature(ty, true, true)?, true),
-        };
-        (construct == wants_construct && !self.sig_type_params(generic).is_empty())
-            .then_some((generic, construct))
-    }
-
-    /// Collects the expressions in `e`, an array or object literal or an element or member of one, that
-    /// `instantiateTypeWithSingleGenericCallSignature` applies to: the type has a single generic signature, and the contextual type
-    /// has a single signature of the same kind without type parameters. `contextual`: the contextual type of `e`. Pushes them in
-    /// source order. Does not visit operands of `&&` and `,`, spread elements and members, or computed members.
-    fn collect_nested_generic_functions(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        contextual: TypeId,
-        from_result: MapperId,
-        arg_index: usize,
-        out: &mut Vec<NestedGenericFunction>,
-    ) {
-        // Nothing is inferred to a contextual type without type variables.
-        if !self.has_type_variables(contextual) {
-            return;
-        }
-        let hir = self.hir(file);
-        // `getApparentTypeOfContextualType` with `ContextFlagsNoConstraints`, which `getContextualType` passes up to the enclosing
-        // literals: a literal whose contextual type is a type variable gives its elements and members no contextual type.
-        let contextual = if matches!(hir[e].kind, ExprKind::Array(_) | ExprKind::Object(_)) {
-            let instantiated =
-                self.instantiate_contextual_type_from_result(contextual, from_result);
-            if matches!(
-                self.data(instantiated),
-                TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::IndexedAccess { .. }
-            ) {
-                return;
-            }
-            instantiated
-        } else {
-            contextual
-        };
-        match hir[e].kind {
-            ExprKind::Array(items) => {
-                // `getSpreadIndices`
-                let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
-                let (first_spread, last_spread) = (
-                    hir.ids(items).position(is_spread),
-                    hir.ids(items).rposition(is_spread),
-                );
-                for (i, item) in hir.ids(items).enumerate() {
-                    if !is_spread(item)
-                        && let Some(element) = self.contextual_element_at(
-                            contextual,
-                            i,
-                            Some(items.len()),
-                            first_spread,
-                            last_spread,
-                        )
-                    {
-                        self.collect_nested_generic_functions(
-                            file,
-                            item,
-                            element,
-                            from_result,
-                            arg_index,
-                            out,
-                        );
-                    }
-                }
-            }
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    let prop = &hir[p];
-                    if prop.value.is_some()
-                        && matches!(
-                            prop.kind,
-                            PropKind::Init | PropKind::Shorthand | PropKind::Method
-                        )
-                        && let Some(name) = self.member_name(file, prop.key)
-                        && let Some(member) = self.contextual_property(contextual, name)
-                    {
-                        self.collect_nested_generic_functions(
-                            file,
-                            prop.value,
-                            member,
-                            from_result,
-                            arg_index,
-                            out,
-                        );
-                    }
-                }
-            }
-            kind => {
-                // Only expressions whose type does not depend on the contextual type are checked here, and function expressions that
-                // declare type parameters.
-                let declares_type_params =
-                    matches!(kind, ExprKind::Fn(f) if !hir[f].type_params.is_empty());
-                if self.is_context_sensitive(file, e)
-                    || !declares_type_params && self.depends_on_context(file, e)
-                {
-                    return;
-                }
-                let Some(wants_construct) = self.wants_plain_signature(contextual, from_result)
-                else {
-                    return;
-                };
-                let ty = self.type_of_expr(file, e);
-                if let Some((sig, is_construct)) =
-                    self.single_generic_signature(ty, wants_construct)
-                {
-                    out.push(NestedGenericFunction {
-                        arg_index,
-                        expr: e,
-                        sig,
-                        is_construct,
-                        contextual,
-                        instantiated: None,
-                    });
-                } else if let ExprKind::Cond {
-                    yes: left,
-                    no: right,
-                    ..
-                }
-                | ExprKind::Binary {
-                    op: BinOp::Or | BinOp::Nullish,
-                    left,
-                    right,
-                } = kind
-                {
-                    // `checkConditionalExpression` and `checkBinaryLikeExpression` check the operands in the check mode of the whole.
-                    // They have its contextual type (`getContextualTypeForConditionalOperand`, `getContextualTypeForBinaryOperand`).
-                    for operand in [left, right] {
-                        self.collect_nested_generic_functions(
-                            file,
-                            operand,
-                            contextual,
-                            from_result,
-                            arg_index,
-                            out,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    /// `NestedGenericFunction::instantiated` of the entry for `e` in `Resolving::nested_generic_functions` of a call being resolved.
-    fn nested_generic_function(&self, file: FileId, e: ExprId) -> Option<Option<TypeId>> {
-        self.resolving
-            .iter()
-            .rev()
-            .filter(|resolving| resolving.file == file)
-            .find_map(|resolving| {
-                resolving
-                    .nested_generic_functions
-                    .iter()
-                    .find(|nested| nested.expr == e)
-            })
-            .map(|nested| nested.instantiated)
-    }
-
-    /// The second round of `inferTypeArguments` for the generic functions in `e`, a literal argument or a part of one: instantiates
-    /// those that are still skipped, in source order. Visits the same expressions as `collect_nested_generic_functions`.
-    fn instantiate_nested_generic_functions(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        inference: &mut Inference,
-    ) {
-        if !self.contains_nested_generic_function(file, e) {
-            return;
-        }
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Array(items) => {
-                for item in hir.ids(items) {
-                    self.instantiate_nested_generic_functions(file, item, inference);
-                }
-            }
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    self.instantiate_nested_generic_functions(file, hir[p].value, inference);
-                }
-            }
-            ExprKind::Cond {
-                yes: left,
-                no: right,
-                ..
-            }
-            | ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } if self.nested_generic_function(file, e).is_none() => {
-                self.instantiate_nested_generic_functions(file, left, inference);
-                self.instantiate_nested_generic_functions(file, right, inference);
-            }
-            _ => {
-                let Some(resolving) = self
-                    .resolving
-                    .last_mut()
-                    .filter(|resolving| resolving.file == file && resolving.sig == inference.sig)
-                else {
-                    return;
-                };
-                let Some(outer) = resolving.sig else { return };
-                let Some(&nested) = resolving
-                    .nested_generic_functions
-                    .iter()
-                    .find(|nested| nested.expr == e && nested.instantiated.is_none())
-                else {
-                    return;
-                };
-                let (call, from_result) = (resolving.call, resolving.return_mapper);
-                let mut inferred_type_params = std::mem::take(&mut resolving.inferred_type_params);
-                let ret = self.return_type_in_chain(file, call, outer);
-                let instantiated = self.generic_function_in_context(
-                    inference,
-                    nested.sig,
-                    nested.is_construct,
-                    nested.contextual,
-                    ret,
-                    from_result,
-                    &mut inferred_type_params,
-                );
-                let Some(resolving) = self.resolving.last_mut() else {
-                    return;
-                };
-                resolving.inferred_type_params = inferred_type_params;
-                for entry in resolving
-                    .nested_generic_functions
-                    .iter_mut()
-                    .filter(|entry| entry.expr == e)
-                {
-                    entry.instantiated = instantiated;
-                }
-                // Without a contextual signature the function keeps its generic type.
-                if instantiated.is_none() {
-                    resolving
-                        .nested_generic_functions
-                        .retain(|entry| entry.expr != e);
-                }
-            }
-        }
-    }
-
-    /// Whether `e` has an entry in `Resolving::nested_generic_functions`, or is a literal with such an element or member. Visits the
-    /// same expressions as `collect_nested_generic_functions`.
-    fn contains_nested_generic_function(&self, file: FileId, e: ExprId) -> bool {
-        if e.is_none()
-            || self
-                .resolving
-                .iter()
-                .all(|resolving| resolving.nested_generic_functions.is_empty())
-        {
-            return false;
-        }
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Array(items) => hir
-                .ids(items)
-                .any(|item| self.contains_nested_generic_function(file, item)),
-            ExprKind::Object(props) => props.iter().any(|p| {
-                matches!(
-                    hir[p].kind,
-                    PropKind::Init | PropKind::Shorthand | PropKind::Method
-                ) && self.contains_nested_generic_function(file, hir[p].value)
-            }),
-            ExprKind::Cond {
-                yes: left,
-                no: right,
-                ..
-            }
-            | ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.nested_generic_function(file, e).is_some()
-                    || self.contains_nested_generic_function(file, left)
-                    || self.contains_nested_generic_function(file, right)
-            }
-            _ => self.nested_generic_function(file, e).is_some(),
-        }
-    }
-
-    /// `checkConditionalExpression`, `checkBinaryLikeExpression` under `CheckModeInferential`: the type of `e`, a `?:`, `||` or `??`
-    /// with an operand in `Resolving::nested_generic_functions`, from the types its operands have in the round under way. The type
-    /// that is kept for `e` has the operands as they are written. `None`: `e` is no such expression.
-    #[inline]
-    pub(super) fn type_with_nested_generic_functions(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-    ) -> Option<TypeId> {
-        if e.is_none()
-            || !matches!(
-                self.hir(file)[e].kind,
-                ExprKind::Cond { .. }
-                    | ExprKind::Binary {
-                        op: BinOp::Or | BinOp::Nullish,
-                        ..
-                    }
-            )
-            || self.nested_generic_function(file, e).is_some()
-            || !self.contains_nested_generic_function(file, e)
-        {
-            return None;
-        }
-        let ty = self.type_of_expr_uncached(file, e);
-        Some(ty)
-    }
-
-    /// Whether the first round of `inferTypeArguments` leaves out `e` or a part of it (`CheckModeSkipContextSensitive`,
-    /// `CheckModeSkipGenericFunctions`).
-    fn is_skipped_in_first_round(&self, file: FileId, e: ExprId) -> bool {
-        self.is_context_sensitive(file, e)
-            || self.has_context_sensitive_right_operand(file, e)
-            || self.contains_nested_generic_function(file, e)
-    }
-
-    /// Infers from the generic functions in `e`, a literal argument or a part of one, that the second round of `inferTypeArguments` has
-    /// instantiated, each to its contextual type: what `inferTypes` from the type of the argument makes of them.
-    fn infer_from_nested_generic_functions(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        inference: &mut Inference,
-    ) {
-        if !self.contains_nested_generic_function(file, e) {
-            return;
-        }
-        let entry = self
-            .resolving
-            .last()
-            .filter(|resolving| resolving.file == file && resolving.sig == inference.sig)
-            .and_then(|resolving| {
-                resolving
-                    .nested_generic_functions
-                    .iter()
-                    .find(|nested| nested.expr == e)
-            })
-            .copied();
-        if let Some(nested) = entry {
-            if let Some(instantiated) = nested.instantiated {
-                self.infer(inference, instantiated, nested.contextual, 0);
-            }
-            return;
-        }
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Array(items) => {
-                for item in hir.ids(items) {
-                    self.infer_from_nested_generic_functions(file, item, inference);
-                }
-            }
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    self.infer_from_nested_generic_functions(file, hir[p].value, inference);
-                }
-            }
-            ExprKind::Cond {
-                yes: left,
-                no: right,
-                ..
-            }
-            | ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.infer_from_nested_generic_functions(file, left, inference);
-                self.infer_from_nested_generic_functions(file, right, inference);
-            }
-            _ => {}
-        }
-    }
-
-    /// Whether the first round of `inferTypeArguments` skips `e` or, if `e` is a `?:`, `||` or `??` expression, one of its operands
-    /// (`skippedGenericFunction`): a generic function (`instantiateTypeWithSingleGenericCallSignature`), or a call that
-    /// `resolveCallExpression` defers. No call is resolved here, so a call of something with a signature that returns a generic
-    /// function counts as skipped.
-    fn has_skipped_generic_function_operand(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        wants_construct: bool,
-    ) -> bool {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Cond {
-                yes: left,
-                no: right,
-                ..
-            }
-            | ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.has_skipped_generic_function_operand(file, left, wants_construct)
-                    || self.has_skipped_generic_function_operand(file, right, wants_construct)
-            }
-            ExprKind::Call(c) => {
-                if self.is_call_of_generic_function_returning_function(file, e) {
-                    return true;
-                }
-                let data = &hir[c];
-                if matches!(hir[data.callee].kind, ExprKind::Super) {
-                    return false;
-                }
-                let mut callee = self.type_of_expr(file, data.callee);
-                if data.chain != Chain::No || self.is_in_optional_chain(file, data.callee) {
-                    callee = self.non_nullable(callee);
-                }
-                let callee = self.non_null_type(callee);
-                if self.is_any(callee) {
-                    return false;
-                }
-                for sig in self.signatures(callee, false) {
-                    let ret = self.sig_return(sig);
-                    if self
-                        .single_generic_signature(ret, wants_construct)
-                        .is_some()
-                    {
-                        return true;
-                    }
-                }
-                false
-            }
-            kind => {
-                let declares_type_params =
-                    matches!(kind, ExprKind::Fn(f) if !hir[f].type_params.is_empty());
-                if self.is_context_sensitive(file, e)
-                    || !declares_type_params && self.depends_on_context(file, e)
-                {
-                    return false;
-                }
-                let ty = self.type_of_expr(file, e);
-                self.single_generic_signature(ty, wants_construct).is_some()
-            }
-        }
-    }
-
-    /// `checkExpressionEx` in the second round of `inferTypeArguments`: the type of `e`, an argument given for `param` or an operand of
-    /// one. `checkConditionalExpression` and `checkBinaryLikeExpression` check their operands the same way, and
-    /// `instantiateTypeWithSingleGenericCallSignature` applies to each operand and to the result. The operands have been checked.
-    /// `ret`: the return type of the signature that is inferred for.
-    fn instantiate_generic_function_operands(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        inference: &mut Inference,
-        param: TypeId,
-        ret: TypeId,
-        from_result: MapperId,
-        inferred_type_params: &mut Vec<TypeId>,
-    ) -> TypeId {
-        let ty = match self.hir(file)[e].kind {
-            ExprKind::Cond { yes, no, .. } => {
-                let yes = self.instantiate_generic_function_operands(
-                    file,
-                    yes,
-                    inference,
-                    param,
-                    ret,
-                    from_result,
-                    inferred_type_params,
-                );
-                let no = self.instantiate_generic_function_operands(
-                    file,
-                    no,
-                    inference,
-                    param,
-                    ret,
-                    from_result,
-                    inferred_type_params,
-                );
-                self.union_reduced(&[yes, no])
-            }
-            ExprKind::Binary {
-                op: op @ (BinOp::Or | BinOp::Nullish),
-                left,
-                right,
-            } => {
-                let left = self.instantiate_generic_function_operands(
-                    file,
-                    left,
-                    inference,
-                    param,
-                    ret,
-                    from_result,
-                    inferred_type_params,
-                );
-                let right = self.instantiate_generic_function_operands(
-                    file,
-                    right,
-                    inference,
-                    param,
-                    ret,
-                    from_result,
-                    inferred_type_params,
-                );
-                let is_or = matches!(op, BinOp::Or);
-                let may_be_right = if is_or {
-                    self.can_be_falsy(left)
-                } else {
-                    self.can_be_nullish(left)
-                };
-                if may_be_right {
-                    let left = if is_or {
-                        self.remove_definitely_falsy(left)
-                    } else {
-                        left
-                    };
-                    let left = self.non_nullable(left);
-                    self.union_reduced(&[left, right])
-                } else {
-                    left
-                }
-            }
-            _ => self.type_of_expr(file, e),
-        };
-        if let Some(wants_construct) = self.wants_plain_signature(param, from_result)
-            && let Some((generic, construct)) = self.single_generic_signature(ty, wants_construct)
-            && let Some(instantiated) = self.generic_function_in_context(
-                inference,
-                generic,
-                construct,
-                param,
-                ret,
-                from_result,
-                inferred_type_params,
-            )
-        {
-            instantiated
-        } else {
-            ty
-        }
-    }
-
-    /// Infers from `generic`, which is given for `param`, as what `generic_function_in_context` makes of it.
-    fn infer_from_generic_function(
-        &mut self,
-        inference: &mut Inference,
-        generic: SigId,
-        construct: bool,
-        param: TypeId,
-        ret: TypeId,
-        from_result: MapperId,
-        inferred_type_params: &mut Vec<TypeId>,
-    ) {
-        if let Some(ty) = self.generic_function_in_context(
-            inference,
-            generic,
-            construct,
-            param,
-            ret,
-            from_result,
-            inferred_type_params,
-        ) {
-            self.infer(inference, ty, param, 0);
-        }
-    }
-
     /// The name of the type parameter `param`: the name `unique_type_params` gave it, or else the declared name.
     pub fn type_param_name(&self, param: TypeId) -> Option<Atom> {
         let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
@@ -6442,7 +2474,11 @@ impl<'p> Checker<'p> {
     /// (those of the same function with the same mapper) are cloned with the same mapper, and those that keep their name only
     /// change identity.
     /// `None`: the renamed clones cannot be represented.
-    fn unique_type_params(&self, inferred: &[TypeId], own: &[TypeId]) -> Option<Vec<TypeId>> {
+    pub(super) fn unique_type_params(
+        &self,
+        inferred: &[TypeId],
+        own: &[TypeId],
+    ) -> Option<Vec<TypeId>> {
         let mut names: Vec<Atom> = inferred
             .iter()
             .filter_map(|&param| self.type_param_name(param))
@@ -6526,1402 +2562,24 @@ impl<'p> Checker<'p> {
         Some(unique)
     }
 
-    /// `instantiateTypeWithSingleGenericCallSignature`, once nothing is put off any more: what `generic`, the signature of a
-    /// generic function, or of something generic to construct (`construct`), that is given for `param`, is inferred from as.
-    /// `ret`: what the signature that is inferred for returns.
-    fn generic_function_in_context(
-        &mut self,
-        inference: &mut Inference,
-        generic: SigId,
-        construct: bool,
-        param: TypeId,
-        ret: TypeId,
-        from_result: MapperId,
-        inferred_type_params: &mut Vec<TypeId>,
-    ) -> Option<TypeId> {
-        let own = self.sig_type_params(generic);
-        let contextual_type = self.instantiate_contextual_type_from_result(param, from_result);
-        let contextual_type = self.apparent_contextual_type_without_constraints(contextual_type)?;
-        let non_null = self.non_nullable(contextual_type);
-        // Its type parameters can become those of the function that is returned, renamed where their names are taken.
-        if self
-            .single_call_or_construct_signature(ret)
-            .is_some_and(|(s, _)| self.sig_type_params(s).is_empty())
-            && let Some(contextual) = self.single_signature(non_null, construct, false)
-            && let Some(unique) = self.unique_type_params(inferred_type_params, &own)
-        {
-            let renamed = if unique == own {
-                generic
-            } else {
-                self.with_own_type_params(generic, &own, &unique)
-            };
-            if self.adopt_generic_argument(inference, renamed, contextual) {
-                inferred_type_params.extend(unique);
-                // With them standing for themselves it is then inferred from like any argument.
-                let (params, ret, this) = (
-                    self.sig_params(renamed),
-                    self.sig_return(renamed),
-                    self.sig_this_type(renamed),
-                );
-                let plain = self.p.types.intern_sig(SigData::Synth {
-                    type_params: Box::new([]),
-                    params: params.into(),
-                    ret,
-                    this,
-                    of: Box::new([]),
-                });
-                return Some(self.type_of_signature(plain, construct));
-            }
-        }
-        // `applyToParameterTypes`: of what is expected to be taken, as much is looked at as the function takes.
-        let taken = self.sig_params(generic);
-        let takes_rest = self.effective_rest_type(&taken).is_some();
-        let count = self.parameter_count(&taken) - usize::from(takes_rest);
-        // A type parameter that is all that is expected is not settled by what the expected result makes of it.
-        let context = self.context_for_sensitive_arg_taking(
-            inference,
-            contextual_type,
-            None,
-            Some((smallvec![true; count], takes_rest)),
-        );
-        let context = self.non_nullable(context);
-        let expected = self.single_signature(context, construct, false)?;
-        let sig = self.instantiate_sig_in_context_under(generic, expected, false, None);
-        Some(self.type_of_signature(sig, construct))
-    }
-
-    /// `instantiateTypeWithSingleGenericCallSignature`, of `e`, which is a `ty` as it is written and stands inside an argument that is
-    /// looked at to infer from: a generic function, or something generic to construct, where one that is not generic is expected
-    /// is what it is when called the way that is expected. That holds for the inference, not for `e`.
-    pub(super) fn instantiate_generic_function_in_context(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        ty: TypeId,
-    ) -> TypeId {
-        // The second round has instantiated a generic function inside a literal argument. The members of an object literal are
-        // typed on demand, so this does not depend on `is_inferential`.
-        if let Some(Some(instantiated)) = self.nested_generic_function(file, e) {
-            return instantiated;
-        }
-        let Some((at, is_returned)) = self.inference_around(file, e) else {
-            return ty;
-        };
-        let (outer, so_far, from_result) = (
-            self.resolving[at].sig,
-            self.resolving[at].so_far,
-            self.resolving[at].return_mapper,
-        );
-        let (generic, construct) = match self.single_signature(ty, false, true) {
-            Some(generic) => (generic, false),
-            None => match self.single_signature(ty, true, true) {
-                Some(generic) => (generic, true),
-                None => return ty,
-            },
-        };
-        if self.sig_type_params(generic).is_empty() {
-            return ty;
-        }
-        let Some(context) = self.contextual_type(file, e) else {
-            return ty;
-        };
-        let contextual = self.instantiate_contextual_type_from_result(context, from_result);
-        let non_null = self.non_nullable(contextual);
-        let Some(expected) = self.single_signature(non_null, construct, false) else {
-            return ty;
-        };
-        if !self.sig_type_params(expected).is_empty() {
-            return ty;
-        }
-        let wanted = self.sig_params(expected);
-        // Where its type parameters would become those of a function that is returned it stays as it is: only
-        // `generic_function_in_context` adopts type parameters, for an argument and for what `collect_nested_generic_functions` finds.
-        // They would where it says something of type parameters nothing is known of yet, and nothing of any other
-        // (`hasOverlappingInferences`).
-        if let Some(outer) = outer
-            && self
-                .p
-                .types
-                .mapping(so_far)
-                .iter()
-                .any(|pair| pair.1 == TypeId::UNRESOLVED)
-        {
-            let ret = self.sig_return(outer);
-            if self
-                .single_call_or_construct_signature(ret)
-                .is_some_and(|(s, _)| self.sig_type_params(s).is_empty())
-            {
-                let returned = self.sig_return(expected);
-                let (mut says_something, mut overlaps) = (false, false);
-                for &(param, known) in self.p.types.mapping(so_far) {
-                    let is_taken = wanted.iter().any(|p| self.mentions(p.ty, param));
-                    says_something |= is_taken;
-                    overlaps |=
-                        known != TypeId::UNRESOLVED && (is_taken || self.mentions(returned, param));
-                }
-                if says_something && !overlaps {
-                    return ty;
-                }
-            }
-        }
-        // `applyToParameterTypes`: of what is expected to be taken, as much is looked at as the function takes.
-        let taken = self.sig_params(generic);
-        let takes_rest = self.effective_rest_type(&taken).is_some();
-        let count = self.parameter_count(&taken) - usize::from(takes_rest);
-        let mut looked_at: Vec<TypeId> = wanted
-            .iter()
-            .enumerate()
-            .filter(|&(i, _)| takes_rest || i < count)
-            .map(|(_, p)| p.ty)
-            .collect();
-        looked_at.extend(self.sig_this_type(expected));
-        // `context.mapper`: the type parameters in that are settled on what they come to as things stand.
-        let failing_that = self.resolving[at].outer_return_mapper;
-        let mut settled: Vec<(TypeId, TypeId)> = Vec::new();
-        for &(param, known) in self.p.types.mapping(so_far) {
-            if !looked_at.iter().any(|&part| self.mentions(part, param)) {
-                continue;
-            }
-            let known = if known != TypeId::UNRESOLVED {
-                known
-            } else if is_returned {
-                // Nothing is known of it: what it defaults to or extends, or `unknown`.
-                self.p
-                    .types
-                    .map(failing_that, param)
-                    .unwrap_or(TypeId::UNKNOWN)
-            } else {
-                // What stands in a literal waits for the other arguments (`CheckModeSkipGenericFunctions`), which may be yet to come.
-                return ty;
-            };
-            if !self.is_known(known) {
-                return ty;
-            }
-            settled.push((param, known));
-        }
-        // `instantiateSignatureInContextOf`: with `...args: T` nothing is settled (`nonFixingMapper`).
-        let is_open = self
-            .effective_rest_type(&wanted)
-            .is_some_and(|rest| matches!(self.data(rest), TypeData::TypeParam(..)));
-        if !is_open {
-            self.resolving[at].settles.extend(settled.iter().copied());
-        }
-        let mapper = self.p.types.mapper(settled);
-        let expected = self.instantiate_sig(expected, mapper);
-        let sig = self.instantiate_sig_in_context_under(generic, expected, false, None);
-        self.type_of_signature(sig, construct)
-    }
-
-    /// `getInferenceContext`, where the check mode is `CheckModeInferential`: which of the calls being resolved `e` is looked at to infer
-    /// the type arguments of, and whether it is (in) what a function returns, which `getReturnTypeFromBody` looks at without
-    /// `CheckModeSkipGenericFunctions`. `e` stands in a literal, or is returned by a function, that is (part of) an argument of
-    /// the call. An argument itself, or one of the alternatives it is, waits for the others instead.
-    fn inference_around(&self, file: FileId, e: ExprId) -> Option<(usize, bool)> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (mut at, mut is_inside, mut is_returned) = (e, false, false);
-        loop {
-            at = match bound.expr_parent[at.idx()] {
-                Parent::Prop(p) => {
-                    let owner = bound.prop_owner[p.idx()];
-                    let is_member = matches!(
-                        hir[p].kind,
-                        PropKind::Init | PropKind::Shorthand | PropKind::Method
-                    );
-                    if !is_member || !matches!(hir[owner].kind, ExprKind::Object(_)) {
-                        return None;
-                    }
-                    is_inside = true;
-                    owner
-                }
-                Parent::Expr(parent) => match hir[parent].kind {
-                    ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee != at => {
-                        if !is_inside {
-                            return None;
-                        }
-                        let found = self
-                            .resolving
-                            .iter()
-                            .rposition(|r| r.file == file && r.call == parent)?;
-                        return self.resolving[found]
-                            .is_inferential
-                            .then_some((found, is_returned));
-                    }
-                    ExprKind::Array(_) => {
-                        is_inside = true;
-                        parent
-                    }
-                    ExprKind::Cond { test, .. } if test != at => parent,
-                    ExprKind::Binary {
-                        op: BinOp::Or | BinOp::Nullish,
-                        ..
-                    } => parent,
-                    ExprKind::Binary {
-                        op: BinOp::And | BinOp::Comma,
-                        right,
-                        ..
-                    } if right == at => parent,
-                    _ => return None,
-                },
-                // `getReturnTypeFromBody`: what a function that does not say what it returns returns.
-                parent @ (Parent::FnBody(_) | Parent::Stmt(_)) => {
-                    if let Parent::Stmt(s) = parent
-                        && (s.is_none() || !matches!(hir[s].kind, StmtKind::Return(_)))
-                    {
-                        return None;
-                    }
-                    let func = self.enclosing_fn(file, parent)?;
-                    let FnOwner::Expr(function) = bound.fns[func.idx()].owner else {
-                        return None;
-                    };
-                    if hir[func].ret.is_some() {
-                        return None;
-                    }
-                    (is_inside, is_returned) = (true, true);
-                    function
-                }
-                _ => return None,
-            };
-        }
-    }
-
-    /// `getNarrowableTypeForReference` under `CheckModeInferential`: the type of the reference `e`, which has been looked at, with its
-    /// type variables kept where otherwise what they extend stands in for them. `None`: it is no reference, or none is in
-    /// scope where it stands.
-    fn type_of_reference_to_infer_from(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        if !matches!(
-            self.hir(file)[e].kind,
-            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }
-        ) || self.hir(file).type_params.is_empty()
-        {
-            return None;
-        }
-        let scope = self.scope_of_expr(file, e);
-        if !self
-            .type_params_in_scope(file, scope)
-            .iter()
-            .any(|&p| matches!(self.data(p), TypeData::TypeParam(..)))
-        {
-            return None;
-        }
-        let around = self.inferential.replace((file, e));
-        let ty = self.type_of_expr_uncached(file, e);
-        self.inferential = around;
-        self.is_known(ty).then_some(ty)
-    }
-
-    /// The second branch of `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`, for the functions in `e`, which is expected
-    /// to be `expected`: one that waits for nothing, and has fewer parameters than are expected of it, says by the types it
-    /// writes what is expected.
-    fn infer_from_annotated_functions(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        expected: TypeId,
-        inference: &mut Inference,
-    ) {
-        if !self.has_type_variables(expected) {
-            return;
-        }
-        let hir = self.hir(file);
-        let may_hold_one = |x: ExprId| {
-            matches!(
-                hir[x].kind,
-                ExprKind::Fn(_)
-                    | ExprKind::Object(_)
-                    | ExprKind::Array(_)
-                    | ExprKind::Cond { .. }
-                    | ExprKind::Binary { .. }
-            )
-        };
-        match hir[e].kind {
-            ExprKind::Fn(func) => {
-                if !hir[func].type_params.is_empty() || self.is_context_sensitive(file, e) {
-                    return;
-                }
-                // `NodeCheckFlagsContextChecked`: only the attempt that checks the function first infers from its annotations.
-                if let Some(&first) = self.context_checked_for.get(&(file, e))
-                    && first != inference.sig
-                {
-                    return;
-                }
-                // `getContextualSignature`: `instantiateContextualType` with `ContextFlagsSignature`, then the apparent type. The
-                // constraint of a type parameter can mention the type parameters being inferred.
-                let expected = self.instantiate_instantiable_for_signature(inference, expected);
-                let non_null = self.non_nullable(expected);
-                let contextual = self.contextual_signature_in(file, func, non_null);
-                // `len(node.Parameters())` counts a `this` that is written.
-                let own = hir[func].params.len() + usize::from(hir[func].this_ty(hir).is_some());
-                if let Some(contextual) = contextual
-                    && self.sig_params(contextual).len() > own
-                {
-                    self.infer_from_annotated_parameters_and_return(
-                        file, func, contextual, inference,
-                    );
-                }
-            }
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    let prop = &hir[p];
-                    if prop.value.is_none() || !may_hold_one(prop.value) {
-                        continue;
-                    }
-                    match prop.kind {
-                        // What is spread is expected to be what the literal is.
-                        PropKind::Spread => self
-                            .infer_from_annotated_functions(file, prop.value, expected, inference),
-                        PropKind::Init | PropKind::Method => {
-                            // `getApparentTypeOfContextualType` of the literal, under `ContextFlagsSignature`.
-                            let expected =
-                                self.instantiate_instantiable_for_signature(inference, expected);
-                            if let Some(name) = self.member_name(file, prop.key)
-                                && let Some(member) = self.contextual_property(expected, name)
-                            {
-                                self.infer_from_annotated_functions(
-                                    file, prop.value, member, inference,
-                                );
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            ExprKind::Array(items) => {
-                // `getSpreadIndices`
-                let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
-                let (first_spread, last_spread) = (
-                    hir.ids(items).position(is_spread),
-                    hir.ids(items).rposition(is_spread),
-                );
-                for (i, item) in hir.ids(items).enumerate() {
-                    if may_hold_one(item)
-                        && let Some(element) = self.contextual_element_at(
-                            expected,
-                            i,
-                            Some(items.len()),
-                            first_spread,
-                            last_spread,
-                        )
-                    {
-                        self.infer_from_annotated_functions(file, item, element, inference);
-                    }
-                }
-            }
-            ExprKind::Cond { yes, no, .. } => {
-                self.infer_from_annotated_functions(file, yes, expected, inference);
-                self.infer_from_annotated_functions(file, no, expected, inference);
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.infer_from_annotated_functions(file, left, expected, inference);
-                self.infer_from_annotated_functions(file, right, expected, inference);
-            }
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Comma,
-                right,
-                ..
-            } => self.infer_from_annotated_functions(file, right, expected, inference),
-            _ => {}
-        }
-    }
-
-    /// `checkExpressionWithContextualType` for `e`, an argument or a part of one that type arguments are inferred from.
-    fn type_of_expr_for_inference(&mut self, file: FileId, e: ExprId) -> TypeId {
-        let ty = self.type_of_expr(file, e);
-        if self.resolving.last().is_some_and(|r| r.is_inferential) {
-            self.resolve_return_types_in(file, e, false);
-        }
-        ty
-    }
-
-    /// `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` resolves the return type of a function expression that has a
-    /// contextual signature and no return type annotation when the function is first checked, in the check mode of that check
-    /// (`getReturnTypeFromBody(node, checkMode)`), and caches it. The type of a function expression is lazy here, so this resolves
-    /// the return types of the function expressions in `e` while the check mode is still `CheckModeInferential`.
-    /// `skips_context_sensitive`: a function that is skipped is not `ContextChecked`.
-    fn resolve_return_types_in(&mut self, file: FileId, e: ExprId, skips_context_sensitive: bool) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match hir[e].kind {
-            ExprKind::Fn(func) => {
-                // `NodeCheckFlagsContextChecked` is set before the body is looked at.
-                if hir[func].ret.is_some()
-                    || skips_context_sensitive && self.is_context_sensitive(file, e)
-                    || self.stack.contains(&Query::Return(file, func))
-                    || self.stack.contains(&Query::ReturnAtFirstLook(file, func))
-                    // The own signature comes from the second check of the literal around, which checks no function again.
-                    || self
-                        .contextual_signature(file, func)
-                        .is_none_or(|sig| self.is_signature_of_declaration(sig, file, func))
-                {
-                    return;
-                }
-                self.return_type_of_fn(file, func);
-                // `getReturnTypeFromBody` checks the returned expressions in the same check mode.
-                match hir[func].body {
-                    FnBody::Expr(body) => {
-                        self.resolve_return_types_in(file, body, skips_context_sensitive)
-                    }
-                    FnBody::Block(_) => {
-                        for s in bound.ids(bound.fns[func.idx()].returns) {
-                            if let StmtKind::Return(value) = hir[s].kind
-                                && value.is_some()
-                            {
-                                self.resolve_return_types_in(file, value, skips_context_sensitive);
-                            }
-                        }
-                    }
-                    FnBody::None => {}
-                }
-            }
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    let prop = &hir[p];
-                    if prop.value.is_some()
-                        && !matches!(prop.kind, PropKind::Getter | PropKind::Setter)
-                    {
-                        self.resolve_return_types_in(file, prop.value, skips_context_sensitive);
-                    }
-                }
-            }
-            ExprKind::Array(items) => {
-                for item in hir.ids(items) {
-                    self.resolve_return_types_in(file, item, skips_context_sensitive);
-                }
-            }
-            ExprKind::Cond { yes, no, .. } => {
-                self.resolve_return_types_in(file, yes, skips_context_sensitive);
-                self.resolve_return_types_in(file, no, skips_context_sensitive);
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish | BinOp::And | BinOp::Comma,
-                left,
-                right,
-            } => {
-                self.resolve_return_types_in(file, left, skips_context_sensitive);
-                self.resolve_return_types_in(file, right, skips_context_sensitive);
-            }
-            ExprKind::Spread(x)
-            | ExprKind::NonNull(x)
-            | ExprKind::AsConst(x)
-            | ExprKind::Satisfies { expr: x, .. } => {
-                self.resolve_return_types_in(file, x, skips_context_sensitive)
-            }
-            _ => {}
-        }
-    }
-
-    /// Sets the state of `NodeCheckFlagsContextChecked` for the function expressions in the argument `e`. Visits the same expressions
-    /// as `infer_from_annotated_functions`. Returns whether `e` contains a function expression.
-    fn set_context_checked(&mut self, file: FileId, e: ExprId, state: ContextChecked) -> bool {
-        let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Fn(_) => {
-                match state {
-                    ContextChecked::No => self.context_checked_for.remove(&(file, e)),
-                    ContextChecked::By(candidate) => {
-                        self.context_checked_for.insert((file, e), Some(candidate))
-                    }
-                    ContextChecked::ByEndedAttempt => {
-                        self.context_checked_for.insert((file, e), None)
-                    }
-                };
-                true
-            }
-            ExprKind::Object(props) => {
-                let mut found = false;
-                for p in props.iter() {
-                    if hir[p].value.is_some() {
-                        found |= self.set_context_checked(file, hir[p].value, state);
-                    }
-                }
-                found
-            }
-            ExprKind::Array(items) => {
-                let mut found = false;
-                for item in hir.ids(items) {
-                    found |= self.set_context_checked(file, item, state);
-                }
-                found
-            }
-            ExprKind::Cond { yes, no, .. } => {
-                self.set_context_checked(file, yes, state)
-                    | self.set_context_checked(file, no, state)
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.set_context_checked(file, left, state)
-                    | self.set_context_checked(file, right, state)
-            }
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Comma,
-                right,
-                ..
-            } => self.set_context_checked(file, right, state),
-            _ => false,
-        }
-    }
-
-    /// `getContextualTypeForReturnExpression` for the async function `e`, whose contextual type `context` still mentions the type
-    /// parameters being inferred. tsgo filters and awaits the uninstantiated return type of the contextual signature, and applies
-    /// `returnMapper` last (`instantiateContextualType`). The contextual type recorded for `e` has `return_mapper` applied already,
-    /// so the contextual type of each returned expression is recorded separately.
-    fn set_async_return_contexts(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        context: TypeId,
-        return_mapper: MapperId,
-    ) {
-        // A recorded context is permanent, so a candidate that can still be rejected records nothing.
-        if return_mapper == MapperId::IDENTITY || self.resolving.last().is_some_and(|r| r.is_trial)
-        {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let ExprKind::Fn(func) = hir[e].kind else {
-            return;
-        };
-        let f = &hir[func];
-        if !f.flags.contains(Flags::ASYNC) || f.flags.contains(Flags::GENERATOR) || f.ret.is_some()
-        {
-            return;
-        }
-        let Some(contextual) = self.contextual_signature_in(file, func, context) else {
-            return;
-        };
-        let declared = self.sig_return(contextual);
-        if !self.has_type_variables(declared) {
-            return;
-        }
-        // `getContextualReturnType`
-        let promise_like = self.filter(declared, |c, t| {
-            c.is_any(t)
-                || t == TypeId::UNKNOWN
-                || t == TypeId::VOID
-                || c.is_instantiable_non_primitive(t)
-                || c.thenable_value(t)
-                    .is_some_and(|promised| c.awaited_or_none(promised).is_some())
-        });
-        let Some(awaited) = self.awaited_no_alias(promise_like) else {
-            return;
-        };
-        if awaited == TypeId::UNRESOLVED {
-            return;
-        }
-        let promise = self.global_ref(known::PromiseLike, &[awaited]);
-        let uninstantiated = self.union(&[awaited, promise]);
-        let expected = self.instantiate_with_expected_result(uninstantiated, return_mapper);
-        // If `return_mapper` maps none of these type parameters, the order of the steps makes no difference.
-        if expected == uninstantiated {
-            return;
-        }
-        match f.body {
-            FnBody::Expr(body) => self.set_context_if_unset(file, body, expected),
-            FnBody::Block(_) => {
-                for s in bound.ids(bound.fns[func.idx()].returns) {
-                    if let StmtKind::Return(value) = hir[s].kind
-                        && value.is_some()
-                    {
-                        self.set_context_if_unset(file, value, expected);
-                    }
-                }
-            }
-            FnBody::None => {}
-        }
-    }
-
-    /// `set_context`, unless a context is recorded for `e`. The table for provisional contexts replaces an entry, the permanent one does not.
-    fn set_context_if_unset(&mut self, file: FileId, e: ExprId, context: TypeId) {
-        if self.explicit_context(file, e).is_none() {
-            self.set_context(file, e, context);
-        }
-    }
-
-    /// Records the contextual type of `e`, which takes precedence over the one derived from the parent of `e`. The first context
-    /// recorded for `e` stays (`NodeCheckFlagsContextChecked`): a later call changes nothing, except while the result is provisional.
-    fn set_context(&mut self, file: FileId, e: ExprId, context: TypeId) {
-        if self.keeps_arg_contexts {
-            return;
-        }
-        let context = self.without_no_infer(context);
-        if !self.is_provisional_here() {
-            self.p.arg_contexts.insert((file, e), context);
-        } else {
-            self.provisional_arg_contexts.insert((file, e), context);
-        }
-    }
-
-    /// What `e` was settled to be expected to be.
-    pub(super) fn explicit_context(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        if self.pulls_contextual_types() {
-            return None;
-        }
-        // A contextual type recorded inside an argument has `boolean` removed too: see `arg_context_keeping_boolean`.
-        if self.keeps_boolean_in_arg_contexts
-            && let Some(return_mapper) = self.resolving.last().map(|r| r.return_mapper)
-            && self.return_mapper_keeping_boolean(return_mapper).is_some()
-        {
-            return None;
-        }
-        if self.provisional > 0
-            && let Some(&known) = self.provisional_arg_contexts.get(&(file, e))
-        {
-            self.note_provisional_read();
-            return Some(known);
-        }
-        self.p.arg_contexts.get(&(file, e))
-    }
-
-    /// Infers from the properties of an object literal, or the attributes of a JSX element, given for `param`: from those
-    /// with parameters waiting for their types (`sensitive`), or from the others. The former go one by one in the order
-    /// written: each is told what is known by then, and adds to what the next is told.
-    pub(super) fn infer_from_members(
-        &mut self,
-        file: FileId,
-        props: Span<PropId>,
-        param: TypeId,
-        inference: &mut Inference,
-        return_mapper: MapperId,
-        sensitive: bool,
-    ) {
-        let hir = self.hir(file);
-        // `getApparentTypeOfContextualType` under `ContextFlagsNoConstraints`: nil for a type variable and for what is nested in it.
-        let skip_sites_around = inference.skip_intra_expression_sites;
-        if sensitive {
-            let contextual = self.instantiate_with_expected_result(param, return_mapper);
-            inference.skip_intra_expression_sites |= self.is_type_variable(contextual);
-        }
-        // `getApparentTypeOfContextualType`, on the way from a function to its signature: the literal around it is expected to be
-        // what `param` comes to as things stand.
-        let param = if sensitive {
-            self.instantiate_instantiable_for_signature(inference, param)
-        } else {
-            param
-        };
-        // `getApparentTypeOfContextualType` discriminates a union by the members of the literal, also during inference. Only the
-        // context sensitive members read `param` as a contextual type. For the others it is the inference target, which stays the
-        // whole union (`inferToMultipleTypes`).
-        let param = match props
-            .iter()
-            .next()
-            .map(|first| self.bound(file).prop_owner[first.idx()])
-        {
-            Some(owner) if sensitive && owner.is_some() && self.is_union(param) => {
-                match hir[owner].kind {
-                    ExprKind::Object(_) => self.discriminate_by_object_members(file, owner, param),
-                    ExprKind::Jsx(_) => self.discriminate_by_jsx_attributes(file, owner, param),
-                    _ => param,
-                }
-            }
-            _ => param,
-        };
-        // `checkObjectLiteral`: what is spread is not put off (`checkMode & CheckModeInferential`). The functions in it are told now
-        // what is known now, before anything else in the literal has had its say.
-        if !sensitive {
-            for p in props.iter() {
-                let prop = &hir[p];
-                if prop.kind == PropKind::Spread
-                    && let ExprKind::Object(inner) = hir[prop.value].kind
-                    && self.is_context_sensitive(file, prop.value)
-                {
-                    self.infer_from_members(file, inner, param, inference, return_mapper, true);
-                }
-            }
-        }
-        for p in props.iter() {
-            let prop = &hir[p];
-            if matches!(prop.kind, PropKind::Getter | PropKind::Setter) {
-                // `checkObjectLiteral`: an accessor makes a property like any other, which waits for nothing.
-                if !sensitive
-                    && !self.is_setter_beside_getter(file, props, p)
-                    && let Some(name) = self.member_name(file, prop.key)
-                    && let Some(member_param) = self.contextual_property(param, name)
-                    && self.has_type_variables(member_param)
-                {
-                    let ty = self.type_of_literal_prop(file, p);
-                    self.infer(inference, ty, member_param, 0);
-                }
-                continue;
-            }
-            let is_sensitive = prop.value.is_some() && self.is_context_sensitive(file, prop.value);
-            if prop.kind == PropKind::Spread {
-                if is_sensitive {
-                    // The rest of it, along with the rest of the literal.
-                    if !sensitive && let ExprKind::Object(inner) = hir[prop.value].kind {
-                        self.infer_from_members(
-                            file,
-                            inner,
-                            param,
-                            inference,
-                            return_mapper,
-                            false,
-                        );
-                    }
-                    continue;
-                }
-                // Property by property, like what is written out: a part of the object is no candidate for the whole.
-                if !sensitive {
-                    let ty = self.type_of_expr(file, prop.value);
-                    for &part in self.parts(ty) {
-                        if self.is_primitive(part) || self.is_any(part) {
-                            continue;
-                        }
-                        let Some(members) = self.members(part) else {
-                            continue;
-                        };
-                        for spread in &members.shape().props {
-                            if let Some(member_param) = self.contextual_property(param, spread.name)
-                                && self.has_type_variables(member_param)
-                                && self.is_spreadable_property(spread)
-                                && !self.is_spread_property_replaced(
-                                    file,
-                                    props,
-                                    Some(p),
-                                    spread.name,
-                                )
-                            {
-                                let ty = self.type_of_prop(spread, members.mapper);
-                                self.infer(inference, ty, member_param, 0);
-                            }
-                        }
-                    }
-                }
-                continue;
-            }
-            // The second round instantiates a generic function when it reaches the member, and infers from it when the literal
-            // argument is checked as a whole.
-            let holds_generic_function =
-                !is_sensitive && self.contains_nested_generic_function(file, prop.value);
-            if holds_generic_function && sensitive {
-                self.instantiate_nested_generic_functions(file, prop.value, inference);
-                continue;
-            }
-            let Some(name) = self.member_name(file, prop.key) else {
-                continue;
-            };
-            let Some(member_param) = self.contextual_property(param, name) else {
-                continue;
-            };
-            if !self.has_type_variables(member_param) {
-                continue;
-            }
-            // A function in the right operand of `&&` or `,` is `anyFunctionType` in the first round. In the second it fixes the type
-            // parameters of its contextual signature when `checkObjectLiteral` reaches the member, which is no intra-expression
-            // inference site: `isContextSensitive` has no case for those operators. JSX attributes are not covered.
-            let owner = self.bound(file).prop_owner[p.idx()];
-            if !is_sensitive
-                && prop.value.is_some()
-                && owner.is_some()
-                && matches!(hir[owner].kind, ExprKind::Object(_))
-                && self.has_context_sensitive_right_operand(file, prop.value)
-            {
-                if sensitive {
-                    let operand = self.last_right_operand(file, prop.value);
-                    let context = self.context_for_sensitive_arg(
-                        inference,
-                        member_param,
-                        Some((file, operand)),
-                    );
-                    let context = self.instantiate_with_expected_result(context, return_mapper);
-                    self.set_context(file, prop.value, context);
-                } else {
-                    self.infer_from_literal(
-                        file,
-                        prop.value,
-                        member_param,
-                        inference,
-                        return_mapper,
-                        false,
-                    );
-                }
-                continue;
-            }
-            // `CheckModeSkipGenericFunctions`: the first round infers nothing from a generic function.
-            if holds_generic_function {
-                self.infer_from_literal(
-                    file,
-                    prop.value,
-                    member_param,
-                    inference,
-                    return_mapper,
-                    false,
-                );
-                continue;
-            }
-            if is_sensitive
-                && self.infer_from_literal(
-                    file,
-                    prop.value,
-                    member_param,
-                    inference,
-                    return_mapper,
-                    sensitive,
-                )
-            {
-                if sensitive {
-                    self.infer_from_whole_literal(
-                        file,
-                        prop.value,
-                        member_param,
-                        inference,
-                        return_mapper,
-                    );
-                }
-                continue;
-            }
-            if is_sensitive != sensitive {
-                continue;
-            }
-            // What may be left out may be `undefined`, which then says nothing about the type parameters.
-            let is_optional = self.parts(param).iter().any(|&part| {
-                let part = self.apparent_type(part);
-                self.prop_ref(part, name)
-                    .is_some_and(|(p, _)| p.flags.contains(PropFlags::OPTIONAL))
-            });
-            self.optional_member = is_optional;
-            self.infer_from_member(
-                file,
-                prop.value,
-                member_param,
-                inference,
-                return_mapper,
-                sensitive,
-            );
-            self.optional_member = false;
-        }
-        inference.skip_intra_expression_sites = skip_sites_around;
-    }
-
-    /// `getSpreadType`: whether a property `name` that is spread into an object literal is replaced by one of `props`, the members
-    /// of the literal, written after the spread `after` (`None`: by any of them). A property that is optional in a later spread
-    /// replaces nothing.
-    fn is_spread_property_replaced(
-        &mut self,
-        file: FileId,
-        props: Span<PropId>,
-        after: Option<PropId>,
-        name: Atom,
-    ) -> bool {
-        let hir = self.hir(file);
-        for p in props.iter() {
-            if after.is_some_and(|after| p <= after) {
-                continue;
-            }
-            let prop = &hir[p];
-            if prop.kind != PropKind::Spread {
-                if self.member_name(file, prop.key) == Some(name) {
-                    return true;
-                }
-                continue;
-            }
-            if let ExprKind::Object(inner) = hir[prop.value].kind {
-                if self.is_spread_property_replaced(file, inner, None, name) {
-                    return true;
-                }
-                continue;
-            }
-            // Any other expression whose type depends on its contextual type is checked in its turn.
-            if self.depends_on_context(file, prop.value) {
-                continue;
-            }
-            let ty = self.type_of_expr(file, prop.value);
-            let parts = self.parts(ty);
-            let mut is_replaced = !parts.is_empty();
-            for &part in parts {
-                is_replaced = is_replaced
-                    && !self.is_primitive(part)
-                    && !self.is_any(part)
-                    && !self.is_generic_object_type(part)
-                    && self.prop_ref(part, name).is_some_and(|(later, _)| {
-                        later
-                            .flags
-                            .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
-                            || !later.flags.contains(PropFlags::OPTIONAL)
-                                && self.is_spreadable_property(later)
-                    });
-            }
-            if is_replaced {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Whether `p`, a member of the object literal `props`, is a setter that goes with a getter: the two are one property, and the
-    /// getter says what it is.
-    fn is_setter_beside_getter(&mut self, file: FileId, props: Span<PropId>, p: PropId) -> bool {
-        let hir = self.hir(file);
-        if hir[p].kind != PropKind::Setter {
-            return false;
-        }
-        let name = self.member_name(file, hir[p].key);
-        name.is_some()
-            && props.iter().any(|q| {
-                hir[q].kind == PropKind::Getter && self.member_name(file, hir[q].key) == name
-            })
-    }
-
-    /// `value` is `NONE` for `<a b />`.
-    pub(super) fn infer_from_member(
-        &mut self,
-        file: FileId,
-        value: ExprId,
-        member_param: TypeId,
-        inference: &mut Inference,
-        return_mapper: MapperId,
-        sensitive: bool,
-    ) {
-        if value.is_none() {
-            self.infer(inference, TypeId::TRUE, member_param, 0);
-            return;
-        }
-        if sensitive {
-            let context =
-                self.context_for_sensitive_arg(inference, member_param, Some((file, value)));
-            self.set_async_return_contexts(file, value, context, return_mapper);
-            let context = self.instantiate_with_expected_result(context, return_mapper);
-            self.set_context(file, value, context);
-        } else if self.depends_on_context(file, value)
-            && !self
-                .resolving
-                .last()
-                .is_some_and(|r| r.sig == inference.sig && r.is_trial)
-        {
-            // `instantiateContextualType`: only a function is told what has been inferred so far. What is given for a type parameter
-            // goes by what is expected of the result, or else by what the type parameter extends. That is said before it is looked
-            // at, and stays: what is inferred from it cannot be what is expected of it. What the type parameter extends may be
-            // yet to be inferred itself: then it is left to what the literal around is expected to be in the end.
-            let (mut is_open, mut is_bounded) = (false, false);
-            for &part in self.parts(member_param) {
-                if inference.params.contains(&part) {
-                    is_open = true;
-                    is_bounded |= self
-                        .constraint_of_type_param(part)
-                        .is_some_and(|constraint| !self.has_type_variables(constraint));
-                }
-            }
-            if is_open {
-                let context = self.instantiate_with_expected_result(member_param, return_mapper);
-                if is_bounded || context != member_param {
-                    self.set_context(file, value, context);
-                }
-            }
-        }
-        let is_optional = std::mem::take(&mut self.optional_member);
-        // The functions in it that wait for nothing are looked at along with it.
-        if !sensitive {
-            self.infer_from_annotated_functions(file, value, member_param, inference);
-        }
-        let ty = if self.depends_on_context(file, value) {
-            self.with_so_far(file, inference, |c, _| {
-                c.type_of_expr_for_inference(file, value)
-            })
-        } else {
-            self.type_of_expr(file, value)
-        };
-        // `CheckModeSkipGenericFunctions`: in the first round a generic function where one that is not generic is expected says
-        // nothing (`anyFunctionType`). It has its say when the literal around it is looked at as a whole.
-        if !sensitive
-            && self.is_object_type(ty)
-            && self
-                .resolving
-                .last()
-                .is_some_and(|r| r.sig == inference.sig && r.call.is_some())
-            && let Some(wants_construct) = self.wants_plain_signature(member_param, return_mapper)
-            && self.single_generic_signature(ty, wants_construct).is_some()
-        {
-            return;
-        }
-        // `checkExpressionForMutableLocation`: in a property a literal stays one only where one is expected.
-        let ty = if !sensitive
-            && self.some_type(ty, |c, m| c.is_unit(m))
-            && !self.in_const_context(file, value)
-            && !matches!(
-                self.hir(file)[value].kind,
-                ExprKind::As { .. } | ExprKind::AsConst(_)
-            ) {
-            let room = self.instantiate_with_expected_result(member_param, return_mapper);
-            self.widen_literal_for_context(ty, Some(room))
-        } else {
-            ty
-        };
-        self.note_array_literals(file, value, &mut inference.array_literals);
-        if sensitive && inference.skip_intra_expression_sites {
-            return;
-        }
-        let target = if is_optional {
-            self.optional(member_param)
-        } else {
-            member_param
-        };
-        self.infer(inference, ty, target, 0);
-    }
-
-    /// `addIntraExpressionInferenceSite`, of `value`, a literal whose parts have been gone through: as a whole it has its say as well
-    /// before what is written after it is looked at. What it is expected to be is said first, as things stand, and stays: what
-    /// is inferred from it cannot be what is expected of it. Nothing is settled on its account.
-    fn infer_from_whole_literal(
-        &mut self,
-        file: FileId,
-        value: ExprId,
-        param: TypeId,
-        inference: &mut Inference,
-        return_mapper: MapperId,
-    ) {
-        let mut as_things_stand = inference.clone();
-        let context =
-            self.context_for_sensitive_arg(&mut as_things_stand, param, Some((file, value)));
-        let context = self.instantiate_with_expected_result(context, return_mapper);
-        self.set_context(file, value, context);
-        let ty = self.with_so_far(file, inference, |c, _| {
-            c.type_of_expr_for_inference(file, value)
-        });
-        self.note_array_literals(file, value, &mut inference.array_literals);
-        if !inference.skip_intra_expression_sites {
-            self.infer(inference, ty, param, 0);
-        }
-    }
-
-    /// Looks at a part of an argument that what is expected of it matters to, with the calls inside it told what is known of the
-    /// type parameters by now.
-    fn with_so_far(
-        &mut self,
-        file: FileId,
-        inference: &mut Inference,
-        look: impl FnOnce(&mut Self, &mut Inference) -> TypeId,
-    ) -> TypeId {
-        // The attributes of a JSX element are gone through without anything having been said of its component.
-        let is_noted = self
-            .resolving
-            .last()
-            .is_some_and(|r| r.sig == inference.sig);
-        if !is_noted {
-            let node = self
-                .jsx_resolving
-                .last()
-                .map_or(ExprId::NONE, |&(_, element, _)| element);
-            self.resolving.push(Resolving {
-                node,
-                ..Resolving::new(
-                    file,
-                    ExprId::NONE,
-                    inference.sig,
-                    List::default(),
-                    MapperId::IDENTITY,
-                )
-            });
-        }
-        self.note_so_far(inference);
-        let ty = look(self, inference);
-        self.settle_after_look(inference);
-        if !is_noted {
-            self.resolving.pop();
-        }
-        ty
-    }
-
     /// `node.Type() == nil && !HasContextSensitiveParameters(node)`, the condition for `returnOnlyType` in
-    /// `checkFunctionExpressionOrObjectLiteralMethod`. Async functions and generators are not supported and return false.
-    fn is_return_only_function(&self, file: FileId, f: FnId) -> bool {
+    /// `checkFunctionExpressionOrObjectLiteralMethod`.
+    pub(super) fn is_return_only_function(&self, file: FileId, f: FnId) -> bool {
         let hir = self.hir(file);
         let func = &hir[f];
         func.ret.is_none()
             && func.type_params.is_empty()
-            && !func.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
             && !func.params.iter().any(|p| hir[p].ty.is_none())
             // A function that is not an arrow function has an implicit `this` parameter if it uses `this`.
             && (func.kind == FnKind::Arrow || func.this_ty(hir).is_some() || !self.bound(file).fns[f.idx()].contains_this)
     }
 
-    /// The expression body of `f`, if `is_return_only_function`.
-    fn body_of_return_only_function(&self, file: FileId, f: FnId) -> Option<ExprId> {
-        let FnBody::Expr(body) = self.hir(file)[f].body else {
-            return None;
-        };
-        self.is_return_only_function(file, f).then_some(body)
-    }
-
-    /// The literal `e` is, or that `e`, a function that takes nothing from where it stands itself, returns; and what that literal
-    /// is expected to be, given that `e` is expected to be a `param`.
-    /// (`checkFunctionExpressionOrObjectLiteralMethod` under `CheckModeSkipContextSensitive`: `returnOnlyType`.)
-    fn literal_that_waits(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        param: TypeId,
-    ) -> Option<(ExprId, TypeId)> {
-        match self.hir(file)[e].kind {
-            ExprKind::Object(_) | ExprKind::Array(_) => Some((e, param)),
-            ExprKind::Fn(f) => {
-                let body = self.body_of_return_only_function(file, f)?;
-                let non_null = self.non_nullable(param);
-                let expected = self.single_call_signature(non_null, true)?;
-                if !self.sig_type_params(expected).is_empty() {
-                    return None;
-                }
-                let ret = self.sig_return(expected);
-                if !self.has_type_variables(ret) {
-                    return None;
-                }
-                self.literal_that_waits(file, body, ret)
-            }
-            _ => None,
-        }
-    }
-
-    /// Infers from what is inside `e`, a literal with functions in it that wait for their context, or a function that returns
-    /// one, given for `param`: from those functions one by one (`sensitive`), or from everything else.
-    /// `false`: it is left to the whole.
-    fn infer_from_literal(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        param: TypeId,
-        inference: &mut Inference,
-        return_mapper: MapperId,
-        sensitive: bool,
-    ) -> bool {
-        // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` calls `inferFromAnnotatedParametersAndReturn` before
-        // `getReturnTypeFromBody`: infer from the parameter annotations of each return-only function around the literal before a
-        // function inside the literal fixes a type parameter. The loop takes the same steps as `literal_that_waits`.
-        if sensitive {
-            let (mut outer, mut expected) = (e, param);
-            while let ExprKind::Fn(f) = self.hir(file)[outer].kind
-                && let Some(body) = self.body_of_return_only_function(file, f)
-            {
-                let non_null = self.non_nullable(expected);
-                let Some(contextual) = self.single_call_signature(non_null, true) else {
-                    break;
-                };
-                if !self.sig_type_params(contextual).is_empty() {
-                    break;
-                }
-                self.infer_from_annotated_parameters_and_return(file, f, contextual, inference);
-                (outer, expected) = (body, self.sig_return(contextual));
-            }
-        }
-        let Some((e, param)) = self.literal_that_waits(file, e, param) else {
-            // The first round of `inferTypeArguments` infers from the type of `e` under `CheckModeSkipContextSensitive`, whatever kind of
-            // expression `e` is. A function with context sensitive parameters is `anyFunctionType`, which contributes nothing.
-            let is_any_function = matches!(self.hir(file)[e].kind, ExprKind::Fn(f) if !self.is_return_only_function(file, f));
-            if sensitive || is_any_function {
-                return false;
-            }
-            self.infer_from_annotated_functions(file, e, param, inference);
-            let partial = self.with_so_far(file, inference, |c, _| c.partial_type(file, e));
-            self.infer(inference, partial, param, 0);
-            return true;
-        };
-        match self.hir(file)[e].kind {
-            ExprKind::Array(items) if sensitive => {
-                return self.infer_from_elements(file, e, items, param, inference, return_mapper);
-            }
-            ExprKind::Object(props) if sensitive => {
-                self.infer_from_members(file, props, param, inference, return_mapper, true);
-                return true;
-            }
-            _ => {}
-        }
-        // The first round of `inferTypeArguments`: `checkExpressionWithContextualType(arg, paramType, context, checkMode)` of the whole,
-        // with blanks for the functions that wait. Those that wait for nothing, and the calls, are checked now, once.
-        self.infer_from_annotated_functions(file, e, param, inference);
-        // `checkObjectLiteral`: what is spread is not put off (`checkMode & CheckModeInferential`). The functions in it are told now
-        // what is known now, before anything else in the literal has had its say.
-        if let ExprKind::Object(props) = self.hir(file)[e].kind {
-            let hir = self.hir(file);
-            for p in props.iter() {
-                let prop = &hir[p];
-                if prop.kind == PropKind::Spread
-                    && let ExprKind::Object(inner) = hir[prop.value].kind
-                    && self.is_context_sensitive(file, prop.value)
-                {
-                    self.infer_from_members(file, inner, param, inference, return_mapper, true);
-                }
-            }
-        }
-        let from_result = self.without_const_type_parameters(return_mapper);
-        let contextual_type = self.instantiate_with_expected_result(param, from_result);
-        let contextual_type = self.without_no_infer(contextual_type);
-        let partial = self.with_so_far(file, inference, |c, inference| {
-            c.check_expression_with_contextual_type(
-                file,
-                e,
-                contextual_type,
-                Some(inference),
-                CheckMode::SKIP_CONTEXT_SENSITIVE | CheckMode::SKIP_GENERIC_FUNCTIONS,
-            )
-        });
-        self.infer(inference, partial, param, 0);
-        true
-    }
-
-    /// The same for the functions among the elements of the array literal `e`, given for `param`. `checkArrayLiteral`: an element
-    /// is looked at on its own, in its turn, in a tuple context only (`addIntraExpressionInferenceSite`). The members of an
-    /// object literal among the elements are, whatever is around it. `false`: the elements are left to the whole.
-    fn infer_from_elements(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        items: IdList<ExprId>,
-        param: TypeId,
-        inference: &mut Inference,
-        return_mapper: MapperId,
-    ) -> bool {
-        let hir = self.hir(file);
-        // `getApparentTypeOfContextualType` under `ContextFlagsNoConstraints`: nil for a type variable and for what is nested in it.
-        let skip_sites_around = inference.skip_intra_expression_sites;
-        let contextual = self.instantiate_with_expected_result(param, return_mapper);
-        inference.skip_intra_expression_sites |= self.is_type_variable(contextual);
-        // `getContextualSignature` passes `ContextFlagsSignature` up to the array literal, where `getApparentTypeOfContextualType`
-        // instantiates an instantiable contextual type with `nonFixingMapper` (`instantiateContextualType`).
-        let param = self.instantiate_instantiable_for_signature(inference, param);
-        let in_tuple = self.array_literal_wants_tuple(file, e);
-        // `getSpreadIndices`
-        let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
-        let (first_spread, last_spread) = (
-            hir.ids(items).position(is_spread),
-            hir.ids(items).rposition(is_spread),
-        );
-        for (i, item) in hir.ids(items).enumerate() {
-            if is_spread(item) {
-                continue;
-            }
-            if !self.is_context_sensitive(file, item) {
-                // The second round instantiates a generic function when it reaches the element.
-                self.instantiate_nested_generic_functions(file, item, inference);
-                continue;
-            }
-            let Some(element_param) =
-                self.contextual_element_at(param, i, Some(items.len()), first_spread, last_spread)
-            else {
-                continue;
-            };
-            if !self.has_type_variables(element_param) {
-                continue;
-            }
-            let is_gone_through =
-                self.infer_from_literal(file, item, element_param, inference, return_mapper, true);
-            if !in_tuple {
-                continue;
-            }
-            if is_gone_through {
-                self.infer_from_whole_literal(file, item, element_param, inference, return_mapper);
-            } else {
-                self.infer_from_member(file, item, element_param, inference, return_mapper, true);
-            }
-        }
-        inference.skip_intra_expression_sites = skip_sites_around;
-        in_tuple
-    }
-
-    /// `instantiateTypeWithSingleGenericCallSignature` under `CheckModeSkipGenericFunctions`: whether `e` is a generic function in
-    /// `Resolving::nested_generic_functions` that is skipped.
-    pub(super) fn is_nested_generic_function_skipped(&self, file: FileId, e: ExprId) -> bool {
-        self.nested_generic_function(file, e) == Some(None)
-    }
-
-    /// `e` as the first round of `inferTypeArguments` checks it.
-    fn partial_type(&mut self, file: FileId, e: ExprId) -> TypeId {
-        if !self.is_skipped_in_first_round(file, e) {
-            return self.type_of_expr(file, e);
-        }
-        // `getTypeAtPosition`: where there is no parameter anything is expected.
-        let contextual_type = self.contextual_type(file, e).unwrap_or(TypeId::ANY);
-        self.check_expression_with_contextual_type(
-            file,
-            e,
-            contextual_type,
-            None,
-            CheckMode::INFERENTIAL
-                | CheckMode::SKIP_CONTEXT_SENSITIVE
-                | CheckMode::SKIP_GENERIC_FUNCTIONS,
-        )
-    }
-
-    /// `checkFunctionExpressionOrObjectLiteralMethod` under `CheckModeSkipContextSensitive`, of the context sensitive function `f`:
-    /// `anyFunctionType`, or `returnOnlyType` if it has no context sensitive parameters and something can be inferred from what it
-    /// returns.
-    pub(super) fn type_of_skipped_function(&mut self, file: FileId, f: FnId) -> TypeId {
-        let hir = self.hir(file);
-        let any_function_type = self.any_function_type();
-        if !self.is_return_only_function(file, f) {
-            return any_function_type;
-        }
-        let Some(expected) = self.contextual_signature(file, f) else {
-            return any_function_type;
-        };
-        let wanted = self.sig_return(expected);
-        if !self.has_type_variables(wanted) {
-            return any_function_type;
-        }
-        // `getReturnTypeFromBody(node, checkMode)`, without the widening at its end.
-        let ret = match hir[f].body {
-            FnBody::Expr(body) => self.type_of_expr(file, body),
-            // `checkAndAggregateReturnExpressionTypes`. A return expression is context sensitive, so there is at least one type.
-            FnBody::Block(_) => {
-                let bound = self.bound(file);
-                let info = &bound.fns[f.idx()];
-                // `functionHasImplicitReturn`
-                let mut has_return_without_expression =
-                    info.end != UNREACHABLE && self.is_reachable(file, info.end);
-                let mut types: Vec<TypeId> = Vec::new();
-                for s in bound.ids(info.returns) {
-                    let StmtKind::Return(value) = hir[s].kind else {
-                        continue;
-                    };
-                    if value.is_none() {
-                        has_return_without_expression = true;
-                        continue;
-                    }
-                    let ty = self.type_of_expr(file, value);
-                    if !types.contains(&ty) {
-                        types.push(ty);
-                    }
-                }
-                if has_return_without_expression && self.p.files.options.strict_null_checks {
-                    types.push(TypeId::UNDEFINED);
-                }
-                self.union_reduced(&types)
-            }
-            FnBody::None => return any_function_type,
-        };
-        let returns = self.p.types.intern_sig(SigData::Synth {
-            type_params: Box::new([]),
-            params: Box::new([]),
-            ret,
-            this: None,
-            of: Box::new([]),
-        });
-        self.synth(Shape {
-            call: vec![returns],
-            literal: Literalness::Partial,
-            ..Shape::default()
-        })
-    }
-
-    /// Records the contextual type of each context sensitive argument of a call to a signature with the parameters `params`.
-    fn set_arg_contexts(&mut self, file: FileId, args: &[Arg], params: &[SigParam]) {
-        if self.is_provisional_here() || self.keeps_arg_contexts {
-            return;
-        }
-        for (i, &arg) in args.iter().enumerate() {
-            if let Arg::Expr(e) = arg
-                && self.is_context_sensitive(file, e)
-                && let Some(param) = self.context_of_arg_at(params, i, Some(args.len()))
-            {
-                let param = self.without_no_infer(param);
-                self.p.arg_contexts.insert((file, e), param);
-            }
-        }
-    }
-
     /// `instantiateInstantiableTypes`: what waits for type parameters, be it in a union or an intersection. Object types stay.
-    fn instantiate_instantiable_types(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
+    pub(super) fn instantiate_instantiable_types(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+    ) -> TypeId {
         if self.is_deferred(ty) {
             return self.instantiate(ty, mapper);
         }
@@ -7944,39 +2602,9 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `instantiateContextualType`, where a signature is looked for in `ty`: what waits for type parameters is what they come to
-    /// as things stand (`nonFixingMapper`), once something has been inferred or one of them has a default, unless that says
-    /// nothing. Nothing is settled by it.
-    pub(super) fn instantiate_instantiable_for_signature(
-        &mut self,
-        inference: &Inference,
-        ty: TypeId,
-    ) -> TypeId {
-        if !self.maybe_type_of_kind(ty, Self::is_deferred) {
-            return ty;
-        }
-        // `hasInferenceCandidatesOrDefault`
-        let has_something = (0..inference.params.len()).any(|i| {
-            let c = &inference.candidates[i];
-            !c.covariant.is_empty()
-                || !c.contravariant.is_empty()
-                || self.has_default(inference.params[i])
-        });
-        if !has_something {
-            return ty;
-        }
-        let so_far = self.inference_mapper(inference);
-        let instantiated = self.instantiate_instantiable_types(ty, so_far);
-        if self.is_any(instantiated) || instantiated == TypeId::UNKNOWN {
-            ty
-        } else {
-            instantiated
-        }
-    }
-
     /// `inferFromAnnotatedParametersAndReturn`: what the types `func` writes for its parameters, as far as a rest parameter, and
     /// for what it returns say about the type parameters in `contextual`, the signature expected of it.
-    fn infer_from_annotated_parameters_and_return(
+    pub(super) fn infer_from_annotated_parameters_and_return(
         &mut self,
         file: FileId,
         func: FnId,
@@ -8012,437 +2640,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getInferenceContext`: however deep in an argument a function whose parameters wait for their types is written, it settles
-    /// the type parameters they are typed with. `e`: the argument, or a part of it. What the argument is expected to be has been
-    /// pushed.
-    fn fix_for_functions_inside(&mut self, inference: &mut Inference, file: FileId, e: ExprId) {
-        self.fix_for_nested_functions(inference, file, e, false);
-    }
-
-    /// `records_contexts`: the contextual type of a literal around `e` was instantiated with the current inferences. It can only be
-    /// computed while the inference is in progress, so the contextual type of each function inside the literal is recorded now.
-    fn fix_for_nested_functions(
-        &mut self,
-        inference: &mut Inference,
-        file: FileId,
-        e: ExprId,
-        mut records_contexts: bool,
-    ) {
-        if !self.is_context_sensitive(file, e) && !self.has_context_sensitive_right_operand(file, e)
-        {
-            return;
-        }
-        let hir = self.hir(file);
-        // `getContextualSignature` passes `ContextFlagsSignature` up through every enclosing literal, and at each level
-        // `instantiateContextualType` instantiates an instantiable contextual type with `nonFixingMapper`.
-        let mut is_pushed = false;
-        if matches!(hir[e].kind, ExprKind::Array(_) | ExprKind::Object(_))
-            && let Some(expected) = self.contextual_type(file, e)
-        {
-            let instantiated = self.instantiate_instantiable_for_signature(inference, expected);
-            if instantiated != expected {
-                self.contextual.push((file, e, instantiated));
-                (is_pushed, records_contexts) = (true, true);
-            }
-        }
-        match hir[e].kind {
-            ExprKind::Fn(_) => {
-                if let Some(param) = self.contextual_type(file, e) {
-                    // `instantiateContextualType` with `ContextFlagsSignature` prefers `nonFixingMapper` to `returnMapper` for an
-                    // instantiable contextual type. The contextual type of the argument around `e` has `returnMapper` applied, so
-                    // the result is recorded for `e` itself.
-                    let is_instantiated =
-                        self.instantiate_instantiable_for_signature(inference, param) != param;
-                    let context = self.context_for_sensitive_arg(inference, param, Some((file, e)));
-                    if records_contexts || is_instantiated {
-                        // As for an argument, `returnMapper` applies to the type parameters that are left.
-                        let from_result = self
-                            .resolving
-                            .last()
-                            .filter(|r| r.sig == inference.sig)
-                            .map(|r| r.return_mapper);
-                        let context = match from_result {
-                            Some(from_result) => {
-                                let return_mapper = self.return_mapper_for_contexts(from_result);
-                                self.set_async_return_contexts(file, e, context, return_mapper);
-                                self.instantiate_with_expected_result(context, return_mapper)
-                            }
-                            None => context,
-                        };
-                        self.set_context(file, e, context);
-                    }
-                }
-            }
-            ExprKind::Array(items) => {
-                for item in hir.ids(items) {
-                    self.fix_for_nested_functions(inference, file, item, records_contexts);
-                }
-            }
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    let prop = &hir[p];
-                    if prop.value.is_some()
-                        && !matches!(
-                            prop.kind,
-                            PropKind::Spread | PropKind::Getter | PropKind::Setter
-                        )
-                    {
-                        self.fix_for_nested_functions(
-                            inference,
-                            file,
-                            prop.value,
-                            records_contexts,
-                        );
-                    }
-                }
-            }
-            ExprKind::Cond { yes, no, .. } => {
-                self.fix_for_nested_functions(inference, file, yes, records_contexts);
-                self.fix_for_nested_functions(inference, file, no, records_contexts);
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.fix_for_nested_functions(inference, file, left, records_contexts);
-                self.fix_for_nested_functions(inference, file, right, records_contexts);
-            }
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Comma,
-                right,
-                ..
-            } => self.fix_for_nested_functions(inference, file, right, records_contexts),
-            ExprKind::NonNull(x)
-            | ExprKind::Satisfies { expr: x, .. }
-            | ExprKind::Yield { value: x, .. } => {
-                self.fix_for_nested_functions(inference, file, x, records_contexts)
-            }
-            _ => {}
-        }
-        if is_pushed {
-            self.contextual.pop();
-        }
-    }
-
-    /// `getReturnTypeFromBody`: the same for what the function `func` returns, and then for what it yields. What `func` is expected
-    /// to be has been pushed: that says what it is expected to return and to yield.
-    fn fix_for_functions_returned(&mut self, inference: &mut Inference, file: FileId, func: FnId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let info = &bound.fns[func.idx()];
-        match hir[func].body {
-            FnBody::Expr(body) => self.fix_for_functions_inside(inference, file, body),
-            FnBody::Block(_) => {
-                for s in bound.ids(info.returns) {
-                    if let StmtKind::Return(value) = hir[s].kind
-                        && value.is_some()
-                    {
-                        self.fix_for_functions_inside(inference, file, value);
-                    }
-                }
-                for y in bound.ids(info.yields) {
-                    self.fix_for_functions_inside(inference, file, y);
-                }
-            }
-            FnBody::None => {}
-        }
-    }
-
-    /// Whether the constraint of type parameter `i` mentions another type parameter of `inference` that is not fixed and has no
-    /// candidates, as in `K extends keyof T` before anything is inferred for `T`. `getInferredType` checks the inferred type against
-    /// the instantiated constraint and falls back to the constraint, here `keyof unknown`. tsgo only caches that result and
-    /// drops it at the next candidate (`clearCachedInferences`), so it must not be fixed.
-    fn has_open_constraint(&mut self, inference: &Inference, i: usize) -> bool {
-        let Some(constraint) = self.constraint_of_type_param(inference.params[i]) else {
-            return false;
-        };
-        (0..inference.params.len()).any(|j| {
-            let other = &inference.candidates[j];
-            j != i
-                && other.fixed.is_none()
-                && other.covariant.is_empty()
-                && other.contravariant.is_empty()
-                && self.mentions(constraint, inference.params[j])
-        })
-    }
-
-    /// What an argument with parameters of its own is expected to be: `param`, with the type parameters that its
-    /// parameters need settled on what the other arguments say.
-    /// `arg`: the argument, if it is written out.
-    pub(super) fn context_for_sensitive_arg(
-        &mut self,
-        inference: &mut Inference,
-        param: TypeId,
-        arg: Option<(FileId, ExprId)>,
-    ) -> TypeId {
-        self.context_for_sensitive_arg_taking(inference, param, arg, None)
-    }
-
-    /// `taken`: of a function that is not written out, which of its parameters before a rest parameter take their types from what
-    /// is expected, and whether a rest parameter takes what is left.
-    fn context_for_sensitive_arg_taking(
-        &mut self,
-        inference: &mut Inference,
-        param: TypeId,
-        arg: Option<(FileId, ExprId)>,
-        taken: Option<(SmallVec<[bool; 8]>, bool)>,
-    ) -> TypeId {
-        if !self.has_type_variables(param) {
-            return param;
-        }
-        // The function the argument is, if it is one.
-        let function = arg.and_then(|(file, e)| match self.hir(file)[e].kind {
-            ExprKind::Fn(func) => Some((file, func)),
-            _ => None,
-        });
-        // `assignContextualParameterTypes`: a function takes from what is expected the types of the parameters it has and
-        // does not type itself, and nothing else is looked at. A rest parameter it does not type takes all there is from its
-        // place on.
-        let needed: Option<(SmallVec<[bool; 8]>, bool)> = taken.or_else(|| {
-            let (file, func) = function?;
-            let hir = self.hir(file);
-            let (mut plain, mut takes_rest) = (SmallVec::<[bool; 8]>::new(), false);
-            for p in hir[func]
-                .params
-                .iter()
-                .filter(|&p| !matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this)))
-            {
-                if hir[p].flags.contains(Flags::REST) {
-                    takes_rest = hir[p].ty.is_none();
-                    break;
-                }
-                plain.push(hir[p].ty.is_none());
-            }
-            Some((plain, takes_rest))
-        });
-        let param = self.without_no_infer(param);
-        let param = if arg.is_some() {
-            self.instantiate_instantiable_for_signature(inference, param)
-        } else {
-            param
-        };
-        if !self.has_type_variables(param) {
-            return param;
-        }
-        // `<F extends (x: This) => void>(f: F)`: what `F` extends is what a function given for it goes by, and what that
-        // is depends on what the signature was found in, which only a clone of `F` knows. So it is where what has been inferred
-        // for `F` says nothing (`instantiateContextualType`).
-        let outer = inference
-            .sig
-            .and_then(|sig| self.sig_decl(sig))
-            .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
-        let as_it_stands: &Inference = inference;
-        let param = self.map_type(param, |c, m| {
-            let Some(i) = as_it_stands.params.iter().position(|&p| p == m) else {
-                return m;
-            };
-            let candidate = &as_it_stands.candidates[i];
-            if candidate.fixed.is_some() {
-                return m;
-            }
-            if !candidate.covariant.is_empty() || !candidate.contravariant.is_empty() {
-                let inferred = c.get_inferred_type(as_it_stands, i, false);
-                if !c.is_any(inferred) && inferred != TypeId::UNKNOWN {
-                    return m;
-                }
-            }
-            match c.constraint_of_type_param(m) {
-                Some(constraint) if !c.every_type(constraint, |k, t| k.is_primitive(t)) => {
-                    c.filled_in_around(m, constraint, outer)
-                }
-                _ => m,
-            }
-        });
-        let non_null = self.non_nullable(param);
-        // What is yet to be worked out has signatures only by way of what it extends, which is not what is looked for.
-        let mut sigs = if self.some_type(non_null, |c, m| c.is_deferred(m)) {
-            Sigs::new()
-        } else if function.is_some() {
-            // `getContextualSignature`: of a union, the members that can be called.
-            let callable = self.filter(non_null, |c, m| !c.signatures(m, false).is_empty());
-            Sigs::from_slice(&self.signatures(callable, false))
-        } else {
-            let sigs = self.signatures(non_null, false);
-            // Something to construct, given where something to construct is expected.
-            if sigs.is_empty() && arg.is_none() {
-                Sigs::from_slice(&self.signatures(non_null, true))
-            } else {
-                Sigs::from_slice(&sigs)
-            }
-        };
-        // `isAritySmaller`: a signature that takes less than the function asks for is not what it goes by.
-        if let Some((file, func)) = function {
-            let hir = self.hir(file);
-            let is_asked_for = |p: &ParamId| {
-                hir[*p].default.is_none()
-                    && !hir[*p].flags.intersects(Flags::OPTIONAL | Flags::REST)
-            };
-            let asked = hir[func].params.iter().take_while(is_asked_for).count();
-            sigs.retain(|sig| {
-                let params = self.sig_params(*sig);
-                self.has_effective_rest_parameter(&params) || self.parameter_count(&params) >= asked
-            });
-        }
-        // `getContextualCallSignature`: a function that is to be all of them goes by ONE signature, and settles what that mentions.
-        if function.is_some() && sigs.len() > 1 && !self.is_union(non_null) {
-            sigs = self.intersected_signature(&sigs).into_iter().collect();
-        }
-        // What the signatures nothing is settled for take.
-        let mut open: Vec<TypeId> = Vec::new();
-        if sigs.is_empty() {
-            // `instantiateContextualType`, for a signature: what waits for type parameters is what they come to as things stand
-            // (`nonFixingMapper`), unless that says nothing. A function is given no signature that mentions them, so nothing is
-            // settled for it.
-            if function.is_some() {
-                let so_far = self.inference_mapper(inference);
-                let instantiated = self.instantiate(param, so_far);
-                return if self.is_any(instantiated) || instantiated == TypeId::UNKNOWN {
-                    param
-                } else {
-                    instantiated
-                };
-            }
-            // An object or an array with functions somewhere inside. They settle what their parameters are typed with, be there
-            // something to go by or not (`isFixed`, which widens literals).
-            if let Some((file, e)) = arg {
-                self.contextual.push((file, e, param));
-                self.fix_for_functions_inside(inference, file, e);
-                self.contextual.pop();
-                // The first round skips them, and the second has only instantiated them so far.
-                self.infer_from_nested_generic_functions(file, e, inference);
-            }
-            // In the end the literal is held against what the type parameters come to. It is looked at once, so that is anticipated
-            // wherever there is something to go by. What was made out from the literal with its functions left out is only
-            // settled by a function that needs it. A type parameter that is itself what is expected, or one of the alternatives,
-            // is yet to be inferred from the literal (`instantiateContextualType` settles nothing).
-            for i in 0..inference.params.len() {
-                let c = &inference.candidates[i];
-                if c.fixed.is_none()
-                    && (!c.covariant.is_empty() || !c.contravariant.is_empty())
-                    && c.priority & PRIORITY_PARTIAL_HOMOMORPHIC == 0
-                    // `InferencePriorityReturnType`: the literal as a whole may have a better candidate, and `returnMapper` fixes nothing.
-                    && c.priority & PRIORITY_RETURN == 0
-                    && !self.parts(param).contains(&inference.params[i])
-                    && self.mentions(param, inference.params[i])
-                    && !self.has_open_constraint(inference, i)
-                {
-                    let fixed = self.get_inferred_type(inference, i, false);
-                    inference.candidates[i].fixed = Some(fixed);
-                    inference.clear_cached_inferences();
-                }
-            }
-        } else {
-            // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`: the types the function writes have their say first.
-            if let (Some((file, func)), &[sig]) = (function, &sigs[..]) {
-                self.infer_from_annotated_parameters_and_return(file, func, sig, inference);
-            }
-            // `assignContextualParameterTypes`, `applyToParameterTypes`: `this` comes first, unless the function says itself what it is.
-            let own_this_is_typed = function
-                .is_some_and(|(file, func)| self.hir(file)[func].this_ty(self.hir(file)).is_some());
-            for sig in sigs {
-                // `instantiateSignature(contextualSignature, inferenceContext.mapper)`: what the type parameters of a generic
-                // contextual signature extend goes through the mapper as well.
-                for &own in self.sig_type_params(sig).iter() {
-                    if let Some(constraint) = self.constraint_of_type_param(own) {
-                        self.fix_params_in(inference, constraint);
-                    }
-                }
-                let params = self.sig_params(sig);
-                let this = if own_this_is_typed {
-                    None
-                } else {
-                    self.sig_this_type(sig)
-                };
-                // With `...args: T` nothing is settled: what is given is yet to say what `T` is.
-                if let Some(rest) = self.effective_rest_type(&params)
-                    && matches!(self.data(rest), TypeData::TypeParam(..))
-                {
-                    open.extend(params.iter().map(|p| p.ty));
-                    open.extend(this);
-                    continue;
-                }
-                if let Some(this) = this {
-                    self.fix_params_in(inference, this);
-                }
-                for (i, p) in params.into_iter().enumerate() {
-                    let is_needed = match &needed {
-                        None => true,
-                        // A rest parameter stands for every position from its own on.
-                        Some((plain, takes_rest)) if p.rest => {
-                            *takes_rest || plain.iter().skip(i).any(|&n| n)
-                        }
-                        Some((plain, takes_rest)) => plain.get(i).copied().unwrap_or(*takes_rest),
-                    };
-                    if is_needed {
-                        self.fix_params_in(inference, p.ty);
-                    }
-                }
-            }
-            // What it returns or yields is looked at next, unless it says itself what that is. The functions in that go by what it is
-            // expected to return or yield.
-            if let (Some((file, func)), Some((_, e))) = (function, arg)
-                && self.hir(file)[func].ret.is_none()
-            {
-                self.contextual.push((file, e, param));
-                self.fix_for_functions_returned(inference, file, func);
-                self.contextual.pop();
-            }
-        }
-        let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
-        for i in 0..inference.params.len() {
-            let p = inference.params[i];
-            if let Some(fixed) = inference.candidates[i].fixed {
-                pairs.push((p, fixed));
-            } else if open.iter().any(|&ty| self.mentions(ty, p)) {
-                // `nonFixingMapper`, for what is taken. What only the result mentions stays as it is.
-                pairs.push((p, self.get_inferred_type(inference, i, false)));
-            }
-        }
-        if pairs.is_empty() {
-            return param;
-        }
-        let mapper = self.p.types.mapper(pairs);
-        self.instantiate(param, mapper)
-    }
-
-    /// The contextual type of the argument `arg` of `call` for a call nested in `arg`, while the type arguments of `call` are
-    /// inferred. `inferTypeArguments` instantiates `getContextualType` of the nested call with `outerMapper` and
-    /// `createOuterReturnMapper`, which keep `boolean`: only `instantiateContextualType` removes it, from a contextual type that is
-    /// itself instantiable. `None`: the recorded contextual type is the same.
-    fn arg_context_keeping_boolean(
-        &mut self,
-        file: FileId,
-        call: ExprId,
-        arg: ExprId,
-    ) -> Option<TypeId> {
-        if !self.keeps_boolean_in_arg_contexts {
-            return None;
-        }
-        let resolving = self
-            .resolving
-            .iter()
-            .rev()
-            .find(|r| r.file == file && r.call == call)?;
-        let (params, return_mapper) = (resolving.params.clone(), resolving.return_mapper);
-        let return_mapper = self.return_mapper_keeping_boolean(return_mapper)?;
-        let hir = self.hir(file);
-        let (ExprKind::Call(id) | ExprKind::New(id)) = hir[call].kind else {
-            return None;
-        };
-        if hir
-            .ids(hir[id].args)
-            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
-        {
-            return None;
-        }
-        let index = hir.ids(hir[id].args).position(|a| a == arg)?;
-        let param = self.context_of_arg_at(&params, index, Some(hir[id].args.len()))?;
-        let context = self.instantiate(param, return_mapper);
-        Some(self.without_no_infer(context))
-    }
-
-    /// What argument `arg` of `call` is expected to be.
-    pub(super) fn contextual_type_of_arg(
+    /// `getContextualTypeForArgument`, `getContextualTypeForArgumentAtIndex`
+    pub(super) fn contextual_type_for_argument(
         &mut self,
         file: FileId,
         call: ExprId,
@@ -8475,22 +2674,6 @@ impl<'p> Checker<'p> {
                 return None;
             }
         }
-        if !pulls
-            && self.provisional > 0
-            && let Some(&known) = self.provisional_arg_contexts.get(&(file, arg))
-        {
-            self.note_provisional_read();
-            return Some(
-                self.arg_context_keeping_boolean(file, call, arg)
-                    .unwrap_or(known),
-            );
-        }
-        if !pulls && let Some(known) = self.p.arg_contexts.get(&(file, arg)) {
-            return Some(
-                self.arg_context_keeping_boolean(file, call, arg)
-                    .unwrap_or(known),
-            );
-        }
         let hir = self.hir(file);
         // The pieces of text come first.
         let (id, offset) = match hir[call].kind {
@@ -8518,93 +2701,26 @@ impl<'p> Checker<'p> {
             }
         }
         let (index, count) = (index + offset, count + offset);
-        if pulls {
-            // `resolvingSignature`: `resolving` is popped before the candidates are compared, and another thread may have kept the
-            // call. Nothing is resolved for the question.
-            if self
-                .resolving
+        // `resolvingSignature`
+        if self.p.calls.get(&(file, call)).is_none()
+            && !self
+                .resolved_meanwhile
                 .iter()
-                .any(|r| r.file == file && r.call == call)
-                || self.stack.contains(&Query::Call(file, call))
-            {
-                return None;
-            }
-            let resolved = self.p.calls.get(&(file, call))?;
-            let Some(sig) = resolved.sig else {
-                return self.has_any_flag(resolved.ret).then_some(TypeId::ANY);
-            };
-            let params = self.sig_params(sig);
-            let param = self
-                .context_of_arg_at(&params, index, Some(count))
-                .unwrap_or(TypeId::ANY);
-            return Some(self.without_no_infer(param));
-        }
-        if let Some(resolving) = self
-            .resolving
-            .iter()
-            .rev()
-            .find(|r| r.file == file && r.call == call)
+                .any(|r| r.0 == file && r.1 == call)
+            && self.stack.contains(&Query::Call(file, call))
         {
-            let (params, is_trial) = (resolving.params.clone(), resolving.is_trial);
-            let param = self.context_of_arg_at(&params, index, Some(count))?;
-            // Once the call is resolved more is expected than this, or something else: what goes by it is not kept.
-            if (is_trial || self.has_type_variables(param))
-                && let Some(i) = self
-                    .stack
-                    .iter()
-                    .rposition(|q| *q == Query::Call(file, call))
-            {
-                self.mark_tainted_from(i + 1);
-            }
-            return Some(self.without_no_infer(param));
+            return Some(TypeId::ANY);
         }
-        // `getContextualTypeForArgumentAtIndex`: "If we're already in the process of resolving the given signature, don't resolve again".
-        let asking = std::mem::replace(&mut self.asking_for_context, true);
-        let resolved = self.resolve_call(file, call);
-        self.asking_for_context = asking;
-        if self.provisional > 0
-            && let Some(&known) = self.provisional_arg_contexts.get(&(file, arg))
-        {
-            self.note_provisional_read();
-            return Some(known);
-        }
-        if let Some(known) = self.p.arg_contexts.get(&(file, arg)) {
-            return Some(known);
-        }
+        let resolved = self.resolved_signature(file, call);
         // `resolveUntypedCall`, `resolveErrorCall`: what anything comes of has no parameters.
         let Some(sig) = resolved.sig else {
             return (self.has_any_flag(resolved.ret)).then_some(TypeId::ANY);
         };
         let params = self.sig_params(sig);
         // `getTypeAtPosition`: where there is no parameter anything is expected.
-        Some(
-            self.context_of_arg_at(&params, index, Some(count))
-                .unwrap_or(TypeId::ANY),
-        )
-    }
-}
-
-/// The type parameters of the candidates of an overloaded call. `mapper`: from each of them to a hole, once that has been asked for.
-/// `deferred_calls`: the arguments that the first round of `chooseOverload` defers (`CheckModeSkipGenericFunctions`).
-pub(super) struct CandidateHoles {
-    call: (FileId, ExprId),
-    type_params: SmallVec<[TypeId; 8]>,
-    mapper: Option<MapperId>,
-    deferred_calls: SmallVec<[(FileId, ExprId); 4]>,
-}
-
-/// Whether the type node `node` is a keyword, a literal type, a reference without type arguments, or a union or intersection of those.
-fn is_plain_type_reference(hir: &File, node: TypeNodeId) -> bool {
-    match hir[node].kind {
-        TypeNodeKind::Keyword(_)
-        | TypeNodeKind::StringLit(_)
-        | TypeNodeKind::NumberLit(_)
-        | TypeNodeKind::BigIntLit { .. }
-        | TypeNodeKind::BoolLit(_) => true,
-        TypeNodeKind::Ref { args, .. } => args.is_empty(),
-        TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
-            hir.ids(types).all(|t| is_plain_type_reference(hir, t))
-        }
-        _ => false,
+        let param = self
+            .context_of_arg_at(&params, index, Some(count))
+            .unwrap_or(TypeId::ANY);
+        Some(self.without_no_infer(param))
     }
 }

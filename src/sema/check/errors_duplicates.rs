@@ -6,8 +6,8 @@
 //! `checkObjectTypeForDuplicateDeclarations` and `checkTypeParameters`. What the binder refused is on record
 //! (`Bound::redeclarations`) and is reported here.
 
-use super::errors::Diagnostic;
 use super::late_bound::LateBoundConflict;
+use super::sink::held;
 use super::*;
 use crate::bind::{
     ClassOwner, Decl, JsDeclarationKind, SymbolId, assignment_declaration_kind, flags_of_member,
@@ -19,7 +19,7 @@ use smallvec::SmallVec;
 type Declaration = (FileId, Decl, bool);
 
 impl Checker<'_> {
-    pub(super) fn check_duplicates(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_duplicates(&mut self, file: FileId) {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
             let symbol = &bound.symbols[i];
@@ -35,14 +35,14 @@ impl Checker<'_> {
             if sym.file == file && sym.id.idx() != i {
                 continue;
             }
-            self.check_what_merges(file, sym, out);
+            self.check_what_merges(file, sym);
         }
-        self.check_refused_merges(file, out);
-        self.check_duplicate_umd_globals(file, out);
-        self.check_duplicate_members(file, out);
-        self.check_static_property_name_conflicts(file, out);
-        self.check_external_module_exports(file, out);
-        self.report_redeclarations(file, out);
+        self.check_refused_merges(file);
+        self.check_duplicate_umd_globals(file);
+        self.check_duplicate_members(file);
+        self.check_static_property_name_conflicts(file);
+        self.check_external_module_exports(file);
+        self.report_redeclarations(file);
         let hir = self.hir(file);
         let lists = hir
             .fns
@@ -59,13 +59,15 @@ impl Checker<'_> {
                     .take(i)
                     .any(|earlier| hir[earlier].name == hir[p].name)
                 {
-                    out.push(Diagnostic {
-                        start: hir[p].pos,
-                        code: 2300,
-                    });
+                    self.error_at((file, hir[p].pos, 0), 2300, &[]);
                     if hir[p].name == known::empty {
                         let missing = vec!["(Missing)".to_owned()];
-                        self.note(hir[p].pos, super::explain::NO_LENGTH, 2300, missing);
+                        self.note_printed(
+                            hir[p].pos,
+                            super::explain::NO_LENGTH,
+                            2300,
+                            held(missing),
+                        );
                     }
                 }
             }
@@ -91,9 +93,11 @@ impl Checker<'_> {
             Decl::ImportNamespace(i) => hir[i].namespace_pos,
             Decl::ImportSpec(s) => hir[s].pos,
             Decl::ImportEquals(i) => hir[i].name_pos,
-            Decl::UmdGlobal(stmt) => {
-                start_after_tokens(&hir.text, hir[stmt].pos, &[b"export", b"as", b"namespace"])?
-            }
+            Decl::UmdGlobal(stmt) => start_after_tokens(
+                &hir.text,
+                self.start_after_modifiers(file, stmt),
+                &[b"export", b"as", b"namespace"],
+            )?,
             // The name of `export { a as b }` is `b`.
             Decl::ExportSpec(spec) => hir[spec].pos,
             Decl::ExportStarAs(stmt) => match hir[stmt].kind {
@@ -107,7 +111,7 @@ impl Checker<'_> {
                 {
                     hir[e].pos
                 }
-                _ => hir[stmt].pos,
+                _ => hir[stmt].start,
             },
             Decl::Member(m) => hir[m].name_pos,
             Decl::ParameterProperty(p) => hir[hir[p].pat].pos,
@@ -118,19 +122,20 @@ impl Checker<'_> {
 
     /// `declareSymbolEx`: "Report errors every position with duplicate declaration. Report errors on previous encountered
     /// declarations".
-    fn report_redeclarations(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        use super::explain::{NO_LENGTH, Related};
+    fn report_redeclarations(&mut self, file: FileId) {
+        use super::explain::NO_LENGTH;
         let bound = self.bound(file);
-        let related_at = |(start, end, _): (u32, u32, bool), code: u32| Related {
-            at: Some((file, start, if end == NO_LENGTH { start } else { end })),
-            code,
-            args: Vec::new(),
+        let related_at = |(start, end, _): (u32, u32, bool), code: u32| {
+            Reported::bare(
+                (file, start, if end == NO_LENGTH { start } else { end }),
+                code,
+            )
         };
         // Each report: where, with which code, and what goes with it.
-        let mut reports: Vec<((u32, u32, bool), u32, Vec<Related>, Decl)> = Vec::new();
+        let mut reports: Vec<((u32, u32, bool), u32, Vec<Reported>, Decl)> = Vec::new();
         for refusal in bound.redeclarations.iter() {
             let (symbol, code) = (refusal.symbol, refusal.code);
-            self.relate_export_type_without_braces(file, refusal.decl, code, out);
+            self.relate_export_type_without_braces(file, refusal.decl, code);
             let reported = reports.len();
             let Some(new) = self.range_of_declaration_name(file, refusal.decl) else {
                 continue;
@@ -151,18 +156,20 @@ impl Checker<'_> {
                 reports.push((range, code, another, at));
             }
             reports.push((new, code, firsts, refusal.decl));
-            out.extend(reports[reported..].iter().map(|report| Diagnostic {
-                start: report.0.0,
-                code: report.1,
-            }));
+            self.reported.extend(
+                reports[reported..]
+                    .iter()
+                    .map(|report| Reported::bare((file, report.0.0, 0), report.1)),
+            );
         }
         // `compactAndMergeRelatedInfos`: the reports of one error are one, with what goes with any of them in the order of errors.
         reports.sort_by_key(|report| (report.0.0, report.1));
         for same in reports.chunk_by(|a, b| (a.0.0, a.1) == (b.0.0, b.1)) {
             let ((start, end, is_token), code) = (same[0].0, same[0].1);
-            let mut related: Vec<Related> = same.iter().flat_map(|r| r.2.iter().cloned()).collect();
+            let mut related: Vec<Reported> =
+                same.iter().flat_map(|r| r.2.iter().cloned()).collect();
             if same.len() > 1 {
-                related.sort_by_key(|r| (r.at, r.code));
+                related.sort_by_key(|r| (r.file, r.start, r.end, r.code));
                 related.dedup();
             }
             // `getDisplayName`
@@ -171,13 +178,13 @@ impl Checker<'_> {
             {
                 // `export = e` has no name, so `getDeclarationName`.
                 let end = if is_token { 0 } else { end };
-                self.note(start, end, code, vec!["export=".to_owned()]);
+                self.note(start, end, code, &[Arg::Text("export=")]);
             } else if matches!(at, Decl::Member(_) | Decl::Property(_)) {
                 self.note_duplicate_name(file, start, start);
             } else if self.is_declaration_name_missing(file, at) {
-                self.note(start, NO_LENGTH, code, vec!["(Missing)".to_owned()]);
+                self.note(start, NO_LENGTH, code, &[Arg::Text("(Missing)")]);
             } else if !is_token {
-                self.note(start, end, code, Vec::new());
+                self.note(start, end, code, &[]);
             }
             if !related.is_empty() {
                 self.relate(start, code, |_| related);
@@ -191,16 +198,16 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let start = match decl {
             Decl::Fn(it) if hir[it].name.is_none() => match bound.fns[it.idx()].owner {
-                crate::bind::FnOwner::Stmt(statement) => hir[statement].pos,
+                crate::bind::FnOwner::Stmt(statement) => hir[statement].start,
                 _ => return None,
             },
             Decl::Class(it) if hir[it].name.is_none() => match bound.class_owner[it.idx()] {
-                ClassOwner::Stmt(statement) if statement.is_some() => hir[statement].pos,
+                ClassOwner::Stmt(statement) if statement.is_some() => hir[statement].start,
                 _ => return None,
             },
             Decl::ExportExpr(statement) => {
                 let start = self.export_assignment_name_start(file, statement);
-                if start == hir[statement].pos {
+                if start == hir[statement].start {
                     return Some((start, self.end_of_stmt(file, statement), false));
                 }
                 // A missing identifier has no length.
@@ -220,21 +227,20 @@ impl Checker<'_> {
 
     /// Reports `code` at the name of every declaration in `decls` that is in `file`.
     fn report_declarations<'a>(
-        &self,
+        &mut self,
         file: FileId,
         decls: impl Iterator<Item = &'a Declaration>,
         code: u32,
-        out: &mut Vec<Diagnostic>,
     ) {
         for &(of, decl, _) in decls {
             if of == file
                 && let Some(start) = self.declaration_name_start(of, decl)
             {
-                out.push(Diagnostic { start, code });
+                self.error_at((file, start, 0), code, &[]);
                 // `getDisplayName`. What 2649 says is noted where it is reported.
                 if code != 2649 && self.is_declaration_name_missing(of, decl) {
                     let missing = vec!["(Missing)".to_owned()];
-                    self.note(start, super::explain::NO_LENGTH, code, missing);
+                    self.note_printed(start, super::explain::NO_LENGTH, code, held(missing));
                 }
             }
         }
@@ -280,14 +286,12 @@ impl Checker<'_> {
         source: &[Declaration],
         named: Sym,
         code: u32,
-        out: &mut Vec<Diagnostic>,
     ) {
         if !target.iter().chain(source).any(|d| d.0 == file) {
             return;
         }
         // `symbolToString(source)`. A member: as its first declaration writes it.
         let name = match source.first() {
-            _ if !self.explains => String::new(),
             Some(&(of, decl @ (Decl::Member(_) | Decl::Property(_)), _)) => {
                 let place = self.place_of_declaration(of, decl);
                 place.map_or(String::new(), |(of, from, to)| {
@@ -311,14 +315,16 @@ impl Checker<'_> {
                 {
                     let others = other
                         .iter()
-                        .filter_map(|d| self.place_of_declaration(d.0, d.1));
+                        .filter_map(|d| self.place_of_declaration(d.0, d.1))
+                        .collect::<Vec<_>>()
+                        .into_iter();
                     let at = match decl {
                         Decl::Member(_) | Decl::Property(_) => {
                             (start, self.end_of_name_at(of, start))
                         }
                         _ => (start, end),
                     };
-                    self.add_duplicate_declaration_error(file, at, others, &name, code, out);
+                    self.add_duplicate_declaration_error(file, at, others, &name, code);
                 }
             }
         }
@@ -327,25 +333,24 @@ impl Checker<'_> {
     /// `addDuplicateDeclarationError`: reports `code` at `at`, which is in `file` (an end of 0: the token there), and says where else
     /// the name is declared.
     fn add_duplicate_declaration_error(
-        &self,
+        &mut self,
         file: FileId,
         at: (u32, u32),
         others: impl Iterator<Item = super::related::Place>,
         name: &str,
         code: u32,
-        out: &mut Vec<Diagnostic>,
     ) {
         let (start, end) = at;
-        let is_again = self.explains && out.iter().any(|d| d.start == start && d.code == code);
-        out.push(Diagnostic { start, code });
-        if !self.explains {
-            return;
-        }
-        let mut related: Vec<super::explain::Related> = Vec::new();
+        let is_again = self
+            .reported
+            .iter()
+            .any(|d| d.start == start && d.code == code);
+        self.error_at((file, start, 0), code, &[]);
+        let mut related: Vec<Reported> = Vec::new();
         for other in others {
             if (other.0, other.1) == (file, start)
                 || related.len() >= 5
-                || related.iter().any(|r| r.at == Some(other))
+                || related.iter().any(|r| (r.file, r.start, r.end) == other)
             {
                 continue;
             }
@@ -354,25 +359,15 @@ impl Checker<'_> {
             } else {
                 (6204, Vec::new())
             };
-            related.push(super::explain::Related {
-                at: Some(other),
-                code,
-                args,
-            });
+            related.push(Reported::new(other, code, held(args)));
         }
-        self.note(start, end, code, vec![name.to_owned()]);
+        self.note(start, end, code, &[Arg::Text(name)]);
         self.relate_reports_merged(start, code, is_again, related);
     }
 
     /// `declareSymbolEx`: `export type T;`, which is about to be refused with `code`, may have been meant to be `export type { T }`.
     /// `out`: what has been reported so far.
-    fn relate_export_type_without_braces(
-        &mut self,
-        file: FileId,
-        decl: Decl,
-        code: u32,
-        out: &[Diagnostic],
-    ) {
+    fn relate_export_type_without_braces(&mut self, file: FileId, decl: Decl, code: u32) {
         let Decl::Alias(a) = decl else { return };
         let hir = self.hir(file);
         let alias = &hir[a];
@@ -385,24 +380,31 @@ impl Checker<'_> {
             next = self.skip_trivia_from(file, next + 1);
         }
         if !matches!(hir.text.get(next as usize), None | Some(b';' | b'}'))
-            || out
+            || self
+                .reported
                 .iter()
                 .any(|d| d.start == alias.name_pos && d.code == code)
         {
             return;
         }
         self.relate(alias.name_pos, code, |c| {
-            vec![super::explain::Related {
-                at: Some(c.place_of_token(file, alias.name_pos)),
-                code: 1369,
-                args: vec![format!("export type {{ {} }}", c.atom_text(alias.name))],
-            }]
+            vec![c.new_diagnostic(
+                c.place_of_token(file, alias.name_pos),
+                1369,
+                &[Arg::Text(&format!(
+                    "export type {{ {} }}",
+                    c.atom_text(alias.name)
+                ))],
+            )]
         });
     }
 
     /// `mergeSymbol`: reports the pairs of symbols that `Files::merge` refused to merge.
-    fn check_refused_merges(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_refused_merges(&mut self, file: FileId) {
         let files = self.files();
+        if !files.has_refused_merges(file) {
+            return;
+        }
         let declarations = |parts: &[Sym]| -> Vec<Declaration> {
             let of_part = |&part: &Sym| {
                 files
@@ -423,12 +425,12 @@ impl Checker<'_> {
             let added = declarations(&files.parts(source));
             if files.flags(target).contains(SymFlags::NAMESPACE_MODULE) {
                 // What does not go with a namespace without values has words of its own, said once.
-                self.report_declarations(file, added.iter().take(1), 2649, out);
+                self.report_declarations(file, added.iter().take(1), 2649);
                 if let Some(&(of, decl, _)) = added.first()
                     && of == file
                     && let Some(start) = self.declaration_name_start(of, decl)
                 {
-                    self.explain(start, 2649, |c| vec![c.symbol_to_string(target)]);
+                    self.note(start, 0, 2649, &[Arg::Sym(target)]);
                 }
                 continue;
             }
@@ -441,13 +443,13 @@ impl Checker<'_> {
             } else {
                 2300
             };
-            self.report_merge_symbol_error(file, &there, &added, source, code, out);
+            self.report_merge_symbol_error(file, &there, &added, source, code);
         }
     }
 
     /// `bindNamespaceExportDeclaration`: the names of all `export as namespace N` in a file share one symbol table, where an alias
     /// excludes an alias.
-    fn check_duplicate_umd_globals(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_duplicate_umd_globals(&mut self, file: FileId) {
         let bound = self.bound(file);
         for (i, &(name, symbol)) in bound.umd_globals.iter().enumerate() {
             if bound
@@ -458,13 +460,13 @@ impl Checker<'_> {
                 && let Some(start) =
                     self.declaration_name_start(file, bound.symbols[symbol.idx()].decls[0])
             {
-                out.push(Diagnostic { start, code: 2300 });
+                self.error_at((file, start, 0), 2300, &[]);
             }
         }
     }
 
     /// From `checkModuleDeclaration`: 2433 2434, a namespace comes after the class or function it adds to, in the same file.
-    fn check_what_merges(&mut self, file: FileId, sym: Sym, out: &mut Vec<Diagnostic>) {
+    fn check_what_merges(&mut self, file: FileId, sym: Sym) {
         let files = self.files();
         let mut decls: Vec<Declaration> = Vec::new();
         for &part in files.parts(sym).iter() {
@@ -481,17 +483,17 @@ impl Checker<'_> {
         {
             return;
         }
-        let is_ambient = |of: FileId, flags: Flags| {
-            flags.contains(Flags::AMBIENT) || self.hir(of).kind == FileKind::Declaration
+        let is_ambient = |c: &Self, of: FileId, flags: Flags| {
+            flags.contains(Flags::AMBIENT) || c.hir(of).kind == FileKind::Declaration
         };
         // `getFirstNonAmbientClassOrFunctionDeclaration`
         let first = decls.iter().find_map(|&(of, decl, _)| match decl {
-            Decl::Class(c) if !is_ambient(of, self.hir(of)[c].flags) => {
+            Decl::Class(c) if !is_ambient(self, of, self.hir(of)[c].flags) => {
                 Some((of, self.hir(of)[c].name_pos))
             }
             Decl::Fn(f)
                 if !matches!(self.hir(of)[f].body, FnBody::None)
-                    && !is_ambient(of, self.hir(of)[f].flags) =>
+                    && !is_ambient(self, of, self.hir(of)[f].flags) =>
             {
                 Some((of, self.hir(of)[f].start))
             }
@@ -506,21 +508,15 @@ impl Checker<'_> {
                 let module = self.hir(of)[m];
                 if !is_own
                     || of != file
-                    || is_ambient(of, module.flags)
+                    || is_ambient(self, of, module.flags)
                     || !self.bound(of).is_instantiated_module(m, keeps_const_enums)
                 {
                     continue;
                 }
                 if of != home {
-                    out.push(Diagnostic {
-                        start: module.name_pos,
-                        code: 2433,
-                    });
+                    self.error_at((file, module.name_pos, 0), 2433, &[]);
                 } else if module.name_pos < start {
-                    out.push(Diagnostic {
-                        start: module.name_pos,
-                        code: 2434,
-                    });
+                    self.error_at((file, module.name_pos, 0), 2434, &[]);
                 }
             }
         }
@@ -529,7 +525,7 @@ impl Checker<'_> {
     /// `checkExternalModuleExports`: 2323. "It is a Syntax Error if the ExportedNames of ModuleItemList contains any duplicate entries.
     /// (TS Exceptions: namespaces, function overloads, enums, and interfaces)". tsgo reports wherever a declaration is. Here a file
     /// asks about each module it has a declaration of, and keeps what is said about itself.
-    fn check_external_module_exports(&self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_external_module_exports(&mut self, file: FileId) {
         let (files, bound) = (self.files(), self.bound(file));
         let own = files.module(file).is_module();
         let own = own.then(|| files.file_symbol(file));
@@ -548,43 +544,42 @@ impl Checker<'_> {
                 continue;
             }
             // `isNotOverload`
-            let is_not_overload = |&&(of, decl): &&(FileId, Decl)| match decl {
-                Decl::Fn(f) => !matches!(self.hir(of)[f].body, FnBody::None),
-                Decl::Member(m) if self.hir(of)[m].kind == MemberKind::Method => {
-                    !matches!(self.hir(of)[self.hir(of)[m].func].body, FnBody::None)
+            let is_not_overload = |c: &Self, &&(of, decl): &&(FileId, Decl)| match decl {
+                Decl::Fn(f) => !matches!(c.hir(of)[f].body, FnBody::None),
+                Decl::Member(m) if c.hir(of)[m].kind == MemberKind::Method => {
+                    !matches!(c.hir(of)[c.hir(of)[m].func].body, FnBody::None)
                 }
                 _ => true,
             };
             // `!ast.IsAccessor(d) && !ast.IsInterfaceDeclaration(d)`
-            let is_counted = |&&(of, decl): &&(FileId, Decl)| match decl {
-                Decl::Member(m) => !matches!(
-                    self.hir(of)[m].kind,
-                    MemberKind::Getter | MemberKind::Setter
-                ),
+            let is_counted = |c: &Self, &&(of, decl): &&(FileId, Decl)| match decl {
+                Decl::Member(m) => {
+                    !matches!(c.hir(of)[m].kind, MemberKind::Getter | MemberKind::Setter)
+                }
                 _ => !matches!(decl, Decl::Interface(_)),
             };
-            let counted = declarations.iter().filter(is_not_overload);
-            let count = counted.filter(is_counted).count();
+            let counted = declarations.iter().filter(|it| is_not_overload(self, it));
+            let count = counted.filter(|it| is_counted(self, it)).count();
             // "it is legal to merge type alias with other values"
             if count < 2 || flags.contains(SymFlags::TYPE_ALIAS) && count == 2 {
                 continue;
             }
             // `exports.a = 1` as often as one likes, but not next to `Object.defineProperty(exports, "a", ..)`.
-            let is_exports_property = |&(of, decl): &(FileId, Decl)| {
+            let is_exports_property = |c: &Self, &(of, decl): &(FileId, Decl)| {
                 matches!(decl, Decl::ExportsProperty(e) if matches!(
-                    assignment_declaration_kind(self.hir(of), e),
+                    assignment_declaration_kind(c.hir(of), e),
                     JsDeclarationKind::ExportsProperty(_)
                 ))
             };
-            if declarations.iter().all(is_exports_property) {
+            if declarations.iter().all(|it| is_exports_property(self, it)) {
                 continue;
             }
-            for &(of, decl) in declarations.iter().filter(is_not_overload) {
+            for it @ &(of, decl) in declarations.iter() {
                 if of == file
+                    && is_not_overload(self, &it)
                     && let Some((start, end)) = self.error_range_of_declaration(file, decl)
                 {
-                    out.push(Diagnostic { start, code: 2323 });
-                    self.note(start, end, 2323, vec![self.atom_text(id)]);
+                    self.error_at((file, start, end), 2323, &[Arg::Atom(id)]);
                 }
             }
         }
@@ -604,7 +599,7 @@ impl Checker<'_> {
     }
 
     /// Of the members of each class, interface and type literal.
-    fn check_duplicate_members(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_duplicate_members(&mut self, file: FileId) {
         let hir = self.hir(file);
         let is_declaration_file = hir.kind == FileKind::Declaration;
         let classes = hir.classes.iter().map(|class| {
@@ -623,7 +618,7 @@ impl Checker<'_> {
                     hir[m].kind == MemberKind::Constructor || hir[m].flags.contains(Flags::STATIC)
                 })
             {
-                self.check_object_type_for_duplicate_declarations(file, members, is_ambient, out);
+                self.check_object_type_for_duplicate_declarations(file, members, is_ambient);
             }
             for is_static in [false, true] {
                 let computed = members.iter().find(|&m| {
@@ -634,7 +629,7 @@ impl Checker<'_> {
                 let symbol = computed.map_or(SymbolId::NONE, |m| bound.member_symbol[m.idx()]);
                 if symbol.is_some() {
                     let container = self.files().sym(file, bound.symbols[symbol.idx()].parent);
-                    self.report_conflicts_of_late_bound_members(file, container, is_static, out);
+                    self.report_conflicts_of_late_bound_members(file, container, is_static);
                 }
             }
         }
@@ -646,7 +641,6 @@ impl Checker<'_> {
         file: FileId,
         container: Sym,
         is_static: bool,
-        out: &mut Vec<Diagnostic>,
     ) {
         let Some(late) = self.late_bound_members(container, is_static) else {
             return;
@@ -666,7 +660,7 @@ impl Checker<'_> {
                     };
                     for at in earlier.iter().chain(std::iter::once(refused)) {
                         if let Some(place) = self.place_of_declaration(at.0, at.1) {
-                            self.error(place, 2300, &[name]);
+                            self.error_at(place, 2300, &[name]);
                         }
                     }
                 }
@@ -674,7 +668,7 @@ impl Checker<'_> {
                     let own = |it: &(FileId, Decl)| (it.0, it.1, true);
                     let target: Vec<Declaration> = target.iter().map(own).collect();
                     let source: Vec<Declaration> = source.iter().map(own).collect();
-                    self.report_merge_symbol_error(file, &target, &source, container, 2300, out);
+                    self.report_merge_symbol_error(file, &target, &source, container, 2300);
                 }
             }
         }
@@ -686,7 +680,6 @@ impl Checker<'_> {
         file: FileId,
         members: Span<MemberId>,
         is_ambient: bool,
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         // `instanceNames`, `staticNames`: 1 for a property, 2 for an accessor, 3 once errors have been reported.
@@ -705,10 +698,7 @@ impl Checker<'_> {
             } else if let Some(name) = self.declared_member_name(file, member.key) {
                 let is_static = member.flags.contains(Flags::STATIC);
                 if !is_ambient && is_static && name == known::prototype {
-                    out.push(Diagnostic {
-                        start: member.name_pos,
-                        code: 2699,
-                    });
+                    self.error_at((file, member.name_pos, 0), 2699, &[]);
                     self.explain_static_name_conflict(file, m, name);
                 }
                 let kind = match member.kind {
@@ -771,13 +761,13 @@ impl Checker<'_> {
                 let first = first.and_then(|(of, first)| self.place_of_declaration(of, first));
                 let (of, from, to) = first.unwrap_or(place);
                 let text = Arg::Bytes(&self.hir(of).text[from as usize..to as usize]);
-                self.error(place, 2300, &[text]);
+                self.error_at(place, 2300, &[text]);
             }
         }
     }
 
     /// `checkClassForStaticPropertyNameConflicts`: 2699
-    fn check_static_property_name_conflicts(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_static_property_name_conflicts(&mut self, file: FileId) {
         let hir = self.hir(file);
         if self.files().options.use_define_for_class_fields || hir.kind == FileKind::Declaration {
             return;
@@ -800,10 +790,7 @@ impl Checker<'_> {
                         b"name" | b"length" | b"caller" | b"arguments"
                     )
                 {
-                    out.push(Diagnostic {
-                        start: member.name_pos,
-                        code: 2699,
-                    });
+                    self.error_at((file, member.name_pos, 0), 2699, &[]);
                     self.explain_static_name_conflict(file, m, name);
                 }
             }
@@ -830,9 +817,14 @@ impl Checker<'_> {
     }
 
     /// The argument of 2300 at the name of a member that starts at `start`: the name that starts at `named_at`, as it is written.
-    fn note_duplicate_name(&self, file: FileId, start: u32, named_at: u32) {
+    fn note_duplicate_name(&mut self, file: FileId, start: u32, named_at: u32) {
         let name = self.source_text(file, named_at, self.end_of_name_at(file, named_at));
-        self.note(start, self.end_of_name_at(file, start), 2300, vec![name]);
+        self.note(
+            start,
+            self.end_of_name_at(file, start),
+            2300,
+            &[Arg::Text(&name)],
+        );
     }
 }
 

@@ -3,35 +3,31 @@
 //! From TypeScript 7.0.2's grammarchecks.go, the `checkStrictMode*` functions of its binder.go, and the checks of this kind that
 //! sit in checker.go. As there, nothing of this is said of a file that does not parse.
 
-use super::errors::Diagnostic;
+use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::resolve::ModuleKind;
 
 impl Checker<'_> {
     /// `GetIncludeProcessorDiagnostics`
-    pub(super) fn include_processor_diagnostics(
-        &mut self,
-        file: FileId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    pub(super) fn include_processor_diagnostics(&mut self, file: FileId) {
         for &(start, code) in &self.files().module(file).missing_references {
             let code = self.note_missing_reference(file, start, code);
-            out.push(Diagnostic { start, code });
+            self.error_at((file, start, 0), code, &[]);
         }
         for (_, start, end, problem) in self.files().include_problems_in(file) {
-            out.push(Diagnostic {
-                start: *start,
-                code: problem.code,
-            });
-            self.note(*start, *end, problem.code, problem.args.clone());
+            self.add_diagnostic(Reported::new(
+                (file, *start, *end),
+                problem.code,
+                held(problem.args.clone()),
+            ));
             self.explain_chain(*start, problem.code, |_| {
                 problem
                     .chain
                     .iter()
                     .map(|(level, code, args)| super::explain::Line {
                         code: *code,
-                        args: args.clone(),
+                        args: held(args.clone()),
                         level: *level,
                     })
                     .collect()
@@ -39,7 +35,7 @@ impl Checker<'_> {
         }
     }
 
-    pub(super) fn check_grammar(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_grammar(&mut self, file: FileId) {
         let hir = self.hir(file);
         // A JSON file has no statements of its own: its `export =` is the binder's.
         if hir.has_errors || hir.kind == FileKind::Json {
@@ -48,27 +44,34 @@ impl Checker<'_> {
         // `grammarErrorOnNode` and its like say nothing of a file the parser objected to, nor does `checkContextualIdentifier`.
         let parses = !has_parse_diagnostics(hir);
         if parses {
-            self.check_module_syntax(file, out);
-            self.check_variables_are_initialized(file, out);
-            self.check_yield_in_property_initializers(file, out);
+            self.check_module_syntax(file);
+            self.check_yield_in_property_initializers(file);
         }
-        let said_before = out.len();
-        self.check_strict_mode(file, parses, out);
+        let said_before = self.reported.len();
+        self.check_strict_mode(file, parses);
         // `getStrictModeIdentifierMessage`: all of them are reported on the name they are about.
-        for d in &out[said_before..] {
-            if d.code == 1214 {
-                let start = d.start;
-                self.explain(start, 1214, |c| {
-                    vec![c.source_text(file, start, c.end_of_name_at(file, start))]
-                });
-            }
+        let names: Vec<u32> = self.reported[said_before..]
+            .iter()
+            .filter(|d| d.code == 1214)
+            .map(|d| d.start)
+            .collect();
+        for start in names {
+            self.note(
+                start,
+                0,
+                1214,
+                &[Arg::Text(&self.source_text(
+                    file,
+                    start,
+                    self.end_of_name_at(file, start),
+                ))],
+            );
         }
-        self.check_comma_operators(file, out);
     }
 
     /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: what is said of the `/// <reference>` whose value is written at
     /// `start`. Returns the code of what is said: 2727 for 2726 where a library has nearly that name.
-    fn note_missing_reference(&self, file: FileId, start: u32, mut code: u32) -> u32 {
+    fn note_missing_reference(&mut self, file: FileId, start: u32, mut code: u32) -> u32 {
         let references = &self.hir(file).references;
         let Some(&(_, value, ..)) = references.iter().find(|r| r.2 == start) else {
             return code;
@@ -103,28 +106,12 @@ impl Checker<'_> {
             6054 | 6231 => vec![name.replace('\\', "/"), extensions.to_owned()],
             _ => vec![name.replace('\\', "/")],
         };
-        self.note(start, end, code, args);
+        self.note_printed(start, end, code, held(args));
         code
     }
 
-    /// `GetImpliedNodeFormatForEmit`: `Some(true)` for an ECMAScript module, `Some(false)` for CommonJS.
-    fn implied_format_for_emit(&self, file: FileId) -> Option<bool> {
-        let module = self.files().module(file);
-        if self.p.files.options.module.is_node() {
-            return Some(module.is_esm);
-        }
-        let path = module.path.as_str();
-        if path.ends_with(".cts") || path.ends_with(".cjs") {
-            Some(false)
-        } else if path.ends_with(".mts") || path.ends_with(".mjs") || module.says_esm {
-            Some(true)
-        } else {
-            None
-        }
-    }
-
     /// 1202 1203 1218 1392, 1323 1324 1325 18060
-    fn check_module_syntax(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_module_syntax(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let kind = self.p.files.options.module;
         let is_declaration_file = hir.kind == FileKind::Declaration;
@@ -146,24 +133,16 @@ impl Checker<'_> {
                         && !import.flags.intersects(Flags::TYPE_ONLY | Flags::AMBIENT)
                         && !is_declaration_file
                     {
-                        out.push(Diagnostic {
-                            start: s.pos,
-                            code: 1202,
-                        });
                         let end = self.end_of_stmt(file, StmtId(i as u32));
-                        self.note(s.pos, end, 1202, Vec::new());
+                        self.error_at((file, s.start, end), 1202, &[]);
                     }
                     // `checkImportEqualsDeclaration`
                     if matches!(import.target, ImportEqualsTarget::Entity(_))
                         && import.flags.contains(Flags::TYPE_ONLY)
                         && matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_))
                     {
-                        out.push(Diagnostic {
-                            start: s.pos,
-                            code: 1392,
-                        });
                         let end = self.end_of_stmt(file, StmtId(i as u32));
-                        self.note(s.pos, end, 1392, Vec::new());
+                        self.error_at((file, s.start, end), 1392, &[]);
                     }
                 }
                 StmtKind::ExportAssign(_) => {
@@ -175,25 +154,17 @@ impl Checker<'_> {
                     }
                     let is_ambient = is_declaration_file
                         || matches!(bound.stmt_parent[i], Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
-                    let format = self.implied_format_for_emit(file);
+                    let format = self.files().module(file).implied_format;
                     if kind >= ModuleKind::Es2015
                         && kind != ModuleKind::Preserve
-                        && (is_ambient && format == Some(true)
-                            || !is_ambient && format != Some(false))
+                        && (is_ambient && format == ResolutionMode::Import
+                            || !is_ambient && format != ResolutionMode::Require)
                     {
-                        out.push(Diagnostic {
-                            start: s.pos,
-                            code: 1203,
-                        });
                         let end = self.end_of_stmt(file, StmtId(i as u32));
-                        self.note(s.pos, end, 1203, Vec::new());
+                        self.error_at((file, s.start, end), 1203, &[]);
                     } else if kind == ModuleKind::System && !is_ambient {
-                        out.push(Diagnostic {
-                            start: s.pos,
-                            code: 1218,
-                        });
                         let end = self.end_of_stmt(file, StmtId(i as u32));
-                        self.note(s.pos, end, 1218, Vec::new());
+                        self.error_at((file, s.start, end), 1218, &[]);
                     }
                 }
                 _ => {}
@@ -223,22 +194,14 @@ impl Checker<'_> {
             if after_keyword == Some(b'.') {
                 // `import.defer(..)`
                 if !matches!(kind, ModuleKind::EsNext | ModuleKind::Preserve) {
-                    out.push(Diagnostic {
-                        start: e.pos,
-                        code: 18060,
-                    });
                     let end = self.end_inside_parentheses(file, ExprId(i as u32));
-                    self.note(e.pos, end, 18060, Vec::new());
+                    self.error_at((file, e.pos, end), 18060, &[]);
                     continue;
                 }
             } else if kind == ModuleKind::Es2015 {
-                out.retain(|d| d.code != 1326 || d.start != e.pos);
-                out.push(Diagnostic {
-                    start: e.pos,
-                    code: 1323,
-                });
+                self.reported.retain(|d| d.code != 1326 || d.start != e.pos);
                 let end = self.end_inside_parentheses(file, ExprId(i as u32));
-                self.note(e.pos, end, 1323, Vec::new());
+                self.error_at((file, e.pos, end), 1323, &[]);
                 continue;
             }
             if after_keyword == Some(b'<') {
@@ -247,17 +210,12 @@ impl Checker<'_> {
             let options = hir.ids(args).nth(1);
             if !has_import_attributes && let Some(options) = options {
                 let start = self.start_of(file, options);
-                out.push(Diagnostic { start, code: 1324 });
-                self.note(start, self.error_end_of(file, options), 1324, Vec::new());
+                self.error_at((file, start, self.error_end_of(file, options)), 1324, &[]);
                 continue;
             }
             if args.len() > 2 || matches!(hir[specifier].kind, ExprKind::Missing) {
-                out.push(Diagnostic {
-                    start: e.pos,
-                    code: 1450,
-                });
                 let end = self.end_inside_parentheses(file, id);
-                self.note(e.pos, end, 1450, Vec::new());
+                self.error_at((file, e.pos, end), 1450, &[]);
                 continue;
             }
             if let Some(spread) = [Some(specifier), options]
@@ -265,68 +223,15 @@ impl Checker<'_> {
                 .flatten()
                 .find(|&a| matches!(hir[a].kind, ExprKind::Spread(_)))
             {
-                out.push(Diagnostic {
-                    start: hir[spread].pos,
-                    code: 1325,
-                });
                 let end = self.end_of_expr(file, spread);
-                self.note(hir[spread].pos, end, 1325, Vec::new());
-            }
-        }
-    }
-
-    /// `checkGrammarVariableDeclaration`, as far as what has to be initialized goes: 1492, 1182, 1155.
-    fn check_variables_are_initialized(&self, file: FileId, out: &mut Vec<Diagnostic>) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.kind == FileKind::Declaration {
-            return;
-        }
-        for (d, decl) in hir.var_decls.iter().enumerate() {
-            let is_using = matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing);
-            if !is_using && (decl.init.is_some() || decl.flags.contains(Flags::AMBIENT)) {
-                continue;
-            }
-            // The variable of a `catch` clause is put down to the `try` statement: `checkVariableDeclaration` does not see it.
-            let stmt = bound.var_stmt[d];
-            if stmt.is_none() || !matches!(hir[stmt].kind, StmtKind::Var(_)) {
-                continue;
-            }
-            let is_pattern = matches!(hir[decl.pat].kind, PatKind::Object(_) | PatKind::Array(_));
-            let start = hir[decl.pat].pos;
-            let keyword = match decl.kind {
-                VarKind::AwaitUsing => "await using",
-                VarKind::Using => "using",
-                _ => "const",
-            };
-            if is_pattern && is_using {
-                out.push(Diagnostic { start, code: 1492 });
-                let end = self.end_of_pat(file, decl.pat);
-                self.note(start, end, 1492, vec![keyword.to_owned()]);
-                continue;
-            }
-            if decl.init.is_some() || decl.flags.contains(Flags::AMBIENT) {
-                continue;
-            }
-            // The head of a `for`-`in` or a `for`-`of` gives its variable a value.
-            if let Parent::Stmt(owner) = bound.stmt_parent[stmt.idx()]
-                && owner.is_some()
-                && matches!(hir[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt)
-            {
-                continue;
-            }
-            if is_pattern {
-                out.push(Diagnostic { start, code: 1182 });
-                self.note(start, self.end_of_pat(file, decl.pat), 1182, Vec::new());
-            } else if is_using || decl.kind == VarKind::Const {
-                out.push(Diagnostic { start, code: 1155 });
-                self.note(start, 0, 1155, vec![keyword.to_owned()]);
+                self.error_at((file, hir[spread].pos, end), 1325, &[]);
             }
         }
     }
 
     /// `checkGrammarYieldExpression`: 1163. `parsePropertyDeclaration` parses an initializer outside of the yield context around the
     /// class, where `yield` is the keyword only if a name, a keyword or a literal follows on the same line (`isYieldExpression`).
-    fn check_yield_in_property_initializers(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_yield_in_property_initializers(&mut self, file: FileId) {
         let hir = self.hir(file);
         let index = self.exprs_by_kind(file);
         for &id in index.of(ExprTag::Yield) {
@@ -338,56 +243,43 @@ impl Checker<'_> {
             }
             let container = hir.get_this_container(hir.node(id), true, false);
             if hir.kind(container) == Kind::PropertyDeclaration {
-                out.push(Diagnostic {
-                    start: e.pos,
-                    code: 1163,
-                });
+                self.error_at((file, e.pos, 0), 1163, &[]);
             }
         }
     }
 
-    /// 2695
-    fn check_comma_operators(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
-        if self.p.files.options.allow_unreachable_code {
+    /// From `checkBinaryLikeExpression`, of `id`, which is `left, right`: 2695
+    pub(super) fn check_comma_operator(
+        &mut self,
+        file: FileId,
+        id: ExprId,
+        left: ExprId,
+        right: ExprId,
+    ) {
+        if self.p.files.options.allow_unreachable_code || !self.is_side_effect_free(file, left) {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let index = self.exprs_by_kind(file);
-        for &id in index.of(ExprTag::Binary) {
-            let ExprKind::Binary {
-                op: BinOp::Comma,
-                left,
-                right,
-            } = hir[id].kind
-            else {
-                continue;
+        // `isIndirectCall`: `(0, x.f)()` is a way of calling `x.f` without `x` for `this`.
+        let is_zero =
+            matches!(hir[left].kind, ExprKind::Number(n) if hir.numbers[n as usize] == 0.0);
+        let is_callee = matches!(bound.expr_parent[id.idx()], Parent::Expr(p)
+            if matches!(hir[p].kind, ExprKind::Call(c) | ExprKind::TaggedTemplate(c) if hir[c].callee == id));
+        let is_reference = matches!(
+            hir[right].kind,
+            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Ident(known::eval)
+        );
+        if is_zero && is_callee && is_reference {
+            return;
+        }
+        let start = self.start_of(file, left);
+        if !self.is_in_adjacent_jsx_elements(file, id, start) {
+            // An operand that is left out is a name that takes no room (`createMissingNode`).
+            let end = match hir[left].kind {
+                ExprKind::Missing | ExprKind::Ident(known::empty) => super::explain::NO_LENGTH,
+                _ => self.error_end_of(file, left),
             };
-            let i = id.idx();
-            if bound.is_unchecked(i) || !self.is_side_effect_free(file, left) {
-                continue;
-            }
-            // `isIndirectCall`: `(0, x.f)()` is a way of calling `x.f` without `x` for `this`.
-            let is_zero =
-                matches!(hir[left].kind, ExprKind::Number(n) if hir.numbers[n as usize] == 0.0);
-            let is_callee = matches!(bound.expr_parent[i], Parent::Expr(p)
-                if matches!(hir[p].kind, ExprKind::Call(c) | ExprKind::TaggedTemplate(c) if hir[c].callee == id));
-            let is_reference = matches!(
-                hir[right].kind,
-                ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Ident(known::eval)
-            );
-            if is_zero && is_callee && is_reference {
-                continue;
-            }
-            let start = self.start_of(file, left);
-            if !self.is_in_adjacent_jsx_elements(file, id, start) {
-                out.push(Diagnostic { start, code: 2695 });
-                // An operand that is left out is a name that takes no room (`createMissingNode`).
-                let end = match hir[left].kind {
-                    ExprKind::Missing | ExprKind::Ident(known::empty) => super::explain::NO_LENGTH,
-                    _ => self.error_end_of(file, left),
-                };
-                self.note(start, end, 2695, Vec::new());
-            }
+            self.error_at((file, start, end), 2695, &[]);
         }
     }
 
@@ -450,7 +342,7 @@ impl Checker<'_> {
     // ───────────────────────────── strict mode ─────────────────────────────
 
     /// 1100 1210 1215, 1212 1213 1214, 1102: everything is strict mode code. Reserved words are only looked for in a file that `parses`.
-    fn check_strict_mode(&mut self, file: FileId, parses: bool, out: &mut Vec<Diagnostic>) {
+    fn check_strict_mode(&mut self, file: FileId, parses: bool) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration {
             return;
@@ -503,10 +395,11 @@ impl Checker<'_> {
                     && !bound.is_in_type_query(id)
                     && !hir.is_ambient(hir.node(id))
                 {
-                    out.push(Diagnostic {
-                        start: e.pos,
-                        code: pick(self, Parent::Expr(id), RESERVED),
-                    });
+                    self.error_at(
+                        (file, e.pos, 0),
+                        pick(self, Parent::Expr(id), RESERVED),
+                        &[],
+                    );
                 }
             }
         }
@@ -531,10 +424,11 @@ impl Checker<'_> {
                         && is_eval_or_arguments(name)
                         && !is_parenthesized(hir, operand)
                     {
-                        out.push(Diagnostic {
-                            start: hir[operand].pos,
-                            code: pick(self, Parent::Expr(id), EVAL_OR_ARGUMENTS),
-                        });
+                        self.error_at(
+                            (file, hir[operand].pos, 0),
+                            pick(self, Parent::Expr(id), EVAL_OR_ARGUMENTS),
+                            &[],
+                        );
                     }
                 }
                 // `checkStrictModeDeleteExpression`
@@ -544,10 +438,7 @@ impl Checker<'_> {
                 } if matches!(hir[operand].kind, ExprKind::Ident(_))
                     && !is_parenthesized(hir, operand) =>
                 {
-                    out.push(Diagnostic {
-                        start: hir[operand].pos,
-                        code: 1102,
-                    });
+                    self.error_at((file, hir[operand].pos, 0), 1102, &[]);
                 }
                 // A missing operand is a missing identifier, which starts where the keyword ends (`createMissingNode`).
                 ExprKind::Unary {
@@ -555,8 +446,7 @@ impl Checker<'_> {
                     operand,
                 } if matches!(hir[operand].kind, ExprKind::Missing) => {
                     let start = e.pos + b"delete".len() as u32;
-                    out.push(Diagnostic { start, code: 1102 });
-                    self.note(start, super::explain::NO_LENGTH, 1102, Vec::new());
+                    self.error_at((file, start, start), 1102, &[]);
                 }
                 _ => {}
             }
@@ -600,10 +490,11 @@ impl Checker<'_> {
             if is_ambient && (!is_eval || is_parameter && root.idx() == i) {
                 continue;
             }
-            out.push(Diagnostic {
-                start: pat.pos,
-                code: because(in_class, if is_eval { EVAL_OR_ARGUMENTS } else { RESERVED }),
-            });
+            self.error_at(
+                (file, pat.pos, 0),
+                because(in_class, if is_eval { EVAL_OR_ARGUMENTS } else { RESERVED }),
+                &[],
+            );
         }
         for (i, f) in hir.fns.iter().enumerate() {
             if !matches!(f.kind, FnKind::Decl | FnKind::Expr) || f.flags.contains(Flags::AMBIENT) {
@@ -622,10 +513,7 @@ impl Checker<'_> {
             } else {
                 RESERVED
             };
-            out.push(Diagnostic {
-                start: f.name_pos,
-                code: pick(self, parent, codes),
-            });
+            self.error_at((file, f.name_pos, 0), pick(self, parent, codes), &[]);
         }
         for (i, c) in hir.classes.iter().enumerate() {
             let is_bound = match bound.class_owner[i] {
@@ -634,10 +522,7 @@ impl Checker<'_> {
             };
             // Its name is inside it.
             if is_bound && !c.flags.contains(Flags::AMBIENT) && is_reserved(c.name) {
-                out.push(Diagnostic {
-                    start: c.name_pos,
-                    code: RESERVED[0],
-                });
+                self.error_at((file, c.name_pos, 0), RESERVED[0], &[]);
             }
         }
         if !parses {
@@ -646,21 +531,17 @@ impl Checker<'_> {
 
         // `checkContextualIdentifier` is run on every identifier: on those of types and of the names of declarations too.
         let text: &[u8] = &hir.text;
-        let in_scope =
-            |c: &Self, name: Atom, start: u32, scope: ScopeId, out: &mut Vec<Diagnostic>| {
-                if scope.is_some()
-                    && is_reserved(name)
-                    && is_word_at(text, start as usize, c.files().atoms.bytes(name))
-                {
-                    let (in_class, is_ambient) = c.in_class_and_ambient(file, scope);
-                    if !is_ambient && !c.is_in_declared_variable(file, start) {
-                        out.push(Diagnostic {
-                            start,
-                            code: because(in_class, RESERVED),
-                        });
-                    }
+        let in_scope = |c: &mut Self, name: Atom, start: u32, scope: ScopeId| {
+            if scope.is_some()
+                && is_reserved(name)
+                && is_word_at(text, start as usize, c.files().atoms.bytes(name))
+            {
+                let (in_class, is_ambient) = c.in_class_and_ambient(file, scope);
+                if !is_ambient && !c.is_in_declared_variable(file, start) {
+                    c.error_at((file, start, 0), because(in_class, RESERVED), &[]);
                 }
-            };
+            }
+        };
         for (i, t) in hir.types.iter().enumerate() {
             let scope = bound.type_scope[i];
             if bound.is_unchecked_type(i) {
@@ -669,12 +550,12 @@ impl Checker<'_> {
             match t.kind {
                 // `IsIdentifierName`: of `a.b.c` only `a` is looked at.
                 TypeNodeKind::Ref { name, .. } if !name.is_empty() => {
-                    in_scope(self, hir[name.at(0)].text, t.pos, scope, out)
+                    in_scope(self, hir[name.at(0)].text, t.pos, scope)
                 }
                 TypeNodeKind::Typeof { expr, .. } if expr.is_some() => {
                     let leftmost = first_identifier(hir, expr);
                     if let ExprKind::Ident(name) = hir[leftmost].kind {
-                        in_scope(self, name, hir[leftmost].pos, scope, out);
+                        in_scope(self, name, hir[leftmost].pos, scope);
                     }
                 }
                 TypeNodeKind::Import { name, .. }
@@ -698,7 +579,6 @@ impl Checker<'_> {
                             hir[name.at(0)].text,
                             skip_trivia(text, dot + 1) as u32,
                             scope,
-                            out,
                         );
                     }
                 }
@@ -708,7 +588,7 @@ impl Checker<'_> {
                     } else {
                         t.pos
                     };
-                    in_scope(self, param, start, scope, out);
+                    in_scope(self, param, start, scope);
                 }
                 TypeNodeKind::Tuple(elems) => {
                     for e in elems.iter() {
@@ -733,7 +613,7 @@ impl Checker<'_> {
                             .map_or(before, <[u8]>::trim_ascii_end);
                         let len = self.files().atoms.bytes(elem.name).len();
                         if before.len() >= len {
-                            in_scope(self, elem.name, (before.len() - len) as u32, scope, out);
+                            in_scope(self, elem.name, (before.len() - len) as u32, scope);
                         }
                     }
                 }
@@ -741,20 +621,14 @@ impl Checker<'_> {
             }
         }
         for (i, p) in hir.type_params.iter().enumerate() {
-            in_scope(self, p.name, p.pos, bound.type_param_scope[i], out);
+            in_scope(self, p.name, p.pos, bound.type_param_scope[i]);
         }
         // The names statements give and use.
-        let named =
-            |c: &Self, name: Atom, start: u32, parent: Parent, out: &mut Vec<Diagnostic>| {
-                if is_reserved(name)
-                    && is_word_at(text, start as usize, c.files().atoms.bytes(name))
-                {
-                    out.push(Diagnostic {
-                        start,
-                        code: pick(c, parent, RESERVED),
-                    });
-                }
-            };
+        let named = |c: &mut Self, name: Atom, start: u32, parent: Parent| {
+            if is_reserved(name) && is_word_at(text, start as usize, c.files().atoms.bytes(name)) {
+                c.error_at((file, start, 0), pick(c, parent, RESERVED), &[]);
+            }
+        };
         for (i, s) in hir.stmts.iter().enumerate() {
             let parent = bound.stmt_parent[i];
             // What is in an ambient namespace or module is ambient, whether or not it can say so.
@@ -765,22 +639,22 @@ impl Checker<'_> {
             }
             match s.kind {
                 StmtKind::Interface(x) if !hir[x].flags.contains(Flags::AMBIENT) => {
-                    named(self, hir[x].name, hir[x].name_pos, parent, out)
+                    named(self, hir[x].name, hir[x].name_pos, parent)
                 }
                 StmtKind::TypeAlias(x) if !hir[x].flags.contains(Flags::AMBIENT) => {
-                    named(self, hir[x].name, hir[x].name_pos, parent, out)
+                    named(self, hir[x].name, hir[x].name_pos, parent)
                 }
                 StmtKind::Enum(x) if !hir[x].flags.contains(Flags::AMBIENT) => {
-                    named(self, hir[x].name, hir[x].name_pos, parent, out)
+                    named(self, hir[x].name, hir[x].name_pos, parent)
                 }
                 StmtKind::Module(x) if !hir[x].flags.contains(Flags::AMBIENT) => {
                     if let ModuleName::Ident(name) = hir[x].name {
-                        named(self, name, hir[x].name_pos, parent, out);
+                        named(self, name, hir[x].name_pos, parent);
                     }
                 }
                 StmtKind::ImportEquals(x) if !hir[x].flags.contains(Flags::AMBIENT) => {
                     let import = &hir[x];
-                    named(self, import.name, import.name_pos, parent, out);
+                    named(self, import.name, import.name_pos, parent);
                     // Of `a.b.c` only `a`, which comes after the `=`.
                     if let ImportEqualsTarget::Entity(path) = import.target
                         && !path.is_empty()
@@ -796,7 +670,6 @@ impl Checker<'_> {
                                 hir[path.at(0)].text,
                                 skip_trivia(text, equals + 1) as u32,
                                 parent,
-                                out,
                             );
                         }
                     }
@@ -804,32 +677,30 @@ impl Checker<'_> {
                 // The local names: what is imported can go by any word.
                 StmtKind::Import(x) => {
                     let import = &hir[x];
-                    named(self, import.default, import.default_pos, parent, out);
-                    named(self, import.namespace, import.namespace_pos, parent, out);
+                    named(self, import.default, import.default_pos, parent);
+                    named(self, import.namespace, import.namespace_pos, parent);
                     for spec in import.named.iter() {
-                        named(self, hir[spec].local, hir[spec].pos, parent, out);
+                        named(self, hir[spec].local, hir[spec].pos, parent);
                     }
                 }
                 StmtKind::ExportStar {
                     alias, alias_pos, ..
-                } if is_reserved(alias) => named(self, alias, alias_pos, parent, out),
-                StmtKind::Labeled { label, .. } => named(self, label, s.pos, parent, out),
+                } if is_reserved(alias) => named(self, alias, alias_pos, parent),
+                StmtKind::Labeled { label, .. } => named(self, label, s.start, parent),
                 StmtKind::Break(label) if label.is_some() => {
                     named(
                         self,
                         label,
-                        skip_trivia(text, s.pos as usize + b"break".len()) as u32,
+                        skip_trivia(text, s.start as usize + b"break".len()) as u32,
                         parent,
-                        out,
                     );
                 }
                 StmtKind::Continue(label) if label.is_some() => {
                     named(
                         self,
                         label,
-                        skip_trivia(text, s.pos as usize + b"continue".len()) as u32,
+                        skip_trivia(text, s.start as usize + b"continue".len()) as u32,
                         parent,
-                        out,
                     );
                 }
                 _ => {}
@@ -866,15 +737,15 @@ impl Checker<'_> {
     fn is_in_declared_variable(&self, file: FileId, at: u32) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let stmt = (0..hir.stmts.len())
-            .filter(|&s| hir.stmts[s].pos <= at && !matches!(bound.stmt_parent[s], Parent::None))
-            .max_by_key(|&s| hir.stmts[s].pos);
+            .filter(|&s| hir.stmts[s].start <= at && !matches!(bound.stmt_parent[s], Parent::None))
+            .max_by_key(|&s| hir.stmts[s].start);
         let member = (0..hir.members.len())
             .filter(|&m| {
                 hir.members[m].start <= at && matches!(bound.member_owner[m], MemberOwner::Class(_))
             })
             .max_by_key(|&m| hir.members[m].start);
         match (stmt, member) {
-            (stmt, Some(m)) if stmt.is_none_or(|s| hir.stmts[s].pos < hir.members[m].start) => {
+            (stmt, Some(m)) if stmt.is_none_or(|s| hir.stmts[s].start < hir.members[m].start) => {
                 hir.members[m].kind == MemberKind::Property
                     && hir.members[m].flags.contains(Flags::AMBIENT)
             }

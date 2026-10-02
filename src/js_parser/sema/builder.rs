@@ -6,7 +6,7 @@ use bun_sema::hir::{self, *};
 pub(crate) struct Builder<'a> {
     pub(crate) file: hir::File,
     pub(crate) atoms: &'a Interner,
-    /// The short names that were interned for this file, each at the place its spelling gives it. The last to come to a place has it.
+    /// The short names this thread has interned, each at the place its spelling gives it. The last to come to a place has it.
     seen_names: Box<[std::cell::Cell<SeenName>]>,
 
     /// The TypeScript syntax nodes the parser built.
@@ -42,14 +42,40 @@ impl SeenName {
     };
 }
 
+/// A power of two.
+const SEEN_NAMES_LEN: usize = 1 << 14;
+
+thread_local! {
+    /// The vectors the tree of the last file was made in, empty: they have about the room the next needs.
+    static ROOM: std::cell::RefCell<hir::File> = Default::default();
+    /// `Builder::seen_names` between two files, and `Interner::number` of the interner they are of.
+    static SEEN_NAMES: std::cell::Cell<(u64, Box<[std::cell::Cell<SeenName>]>)> = Default::default();
+}
+
+impl Drop for Builder<'_> {
+    fn drop(&mut self) {
+        SEEN_NAMES.set((self.atoms.number(), std::mem::take(&mut self.seen_names)));
+    }
+}
+
+/// `file` is finished: it is fitted, and the vectors it was made in serve the next file of this thread.
+pub(crate) fn leave_room(file: &mut hir::File) {
+    ROOM.with_borrow_mut(|room| file.fit_leaving_room(room));
+}
+
 impl<'a> Builder<'a> {
-    pub(crate) fn new(source_len: usize, is_js: bool, atoms: &'a Interner) -> Self {
-        // A power of two, and more than a file of this length has different names.
-        let names = (source_len / 16).next_power_of_two().clamp(64, 2048);
+    pub(crate) fn new(is_js: bool, atoms: &'a Interner) -> Self {
+        let (of, mut seen_names) = SEEN_NAMES.take();
+        if seen_names.is_empty() {
+            let none = std::cell::Cell::new(SeenName::NONE);
+            seen_names = vec![none; SEEN_NAMES_LEN].into_boxed_slice();
+        } else if of != atoms.number() {
+            seen_names.fill(std::cell::Cell::new(SeenName::NONE));
+        }
         Builder {
-            file: hir::File::default(),
+            file: ROOM.take(),
             atoms,
-            seen_names: vec![std::cell::Cell::new(SeenName::NONE); names].into_boxed_slice(),
+            seen_names,
 
             ts: Default::default(),
             pending: Vec::new(),
@@ -112,7 +138,7 @@ impl<'a> Builder<'a> {
             self.file.error_pos = offset;
         }
         self.file.syntax_errors += 1;
-        self.file.ty(TypeNodeKind::Error, offset)
+        self.file.ty(TypeNodeKind::Error, offset, offset)
     }
 
     pub(crate) fn number_name(&self, n: f64) -> Atom {

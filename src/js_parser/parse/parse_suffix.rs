@@ -34,6 +34,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
+            p.note_token_full_start(&mut left.loc, Mark::End);
             p.note_type(&mut left.loc, kind);
 
             // These tokens are not allowed to follow a cast expression. This isn't
@@ -464,7 +465,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        if old_optional_chain.is_some() {
+        if old_optional_chain.is_some() && !p.lexer.tolerant {
             p.log().add_range_error(
                 Some(p.source),
                 p.lexer.range(),
@@ -476,6 +477,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let backtick = p.lexer.loc();
         let head = p.tagged_template_contents();
         let (parts, tail_loc) = p.parse_template_parts(true)?;
+        if old_optional_chain.is_some() && p.lexer.tolerant {
+            // `checkGrammarTaggedTemplateChain`: said of `node.Template`.
+            p.lexer.ts_grammar_error(p.lexer.range_from(backtick), 1358);
+        }
         // `hasCorrectArity`: a call with a template whose last literal is missing or unterminated is incomplete.
         let is_incomplete = p.lexer.tolerant && p.lexer.unterminated_at == tail_loc.start as usize;
         let tag = *left;
@@ -703,6 +708,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.next()?;
         *optional_chain = old_optional_chain;
+        p.note_token_full_start(&mut left.loc, Mark::End);
         p.note_flag(&mut left.loc, Mark::NonNull);
 
         Ok(Continuation::Next)
@@ -1175,13 +1181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let after_super = bun_ast::Loc {
                     start: p.real_loc(left.loc).start + 5,
                 };
-                p.lexer.ts_error(
-                    bun_ast::Range {
-                        loc: after_super,
-                        len: 0,
-                    },
-                    2754,
-                );
+                p.lexer.ts_error(p.lexer.range_from(after_super), 2754);
                 if matches!(
                     p.lexer.token,
                     T::TNoSubstitutionTemplateLiteral | T::TTemplateHead

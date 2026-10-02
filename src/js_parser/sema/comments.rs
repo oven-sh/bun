@@ -171,7 +171,7 @@ fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &Interner, file: &
         (None, Some(lib), _) => (ReferenceKind::Lib, lib),
         (None, None, Some(path)) => (ReferenceKind::Path, path),
         (None, None, None) => {
-            file.early_errors.push((comment_pos as u32, 1084));
+            file.error(comment_pos as u32, (comment_pos + text.len()) as u32, 1084);
             return;
         }
     };

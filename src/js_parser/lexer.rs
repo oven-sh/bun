@@ -612,7 +612,14 @@ impl<'a> Lexer<'a> {
                         0x38 | 0x39 => {
                             if self.tolerant {
                                 // `scanEscapeSequence`: objected to, and it stands for the digit. Under a tag for its own text.
-                                self.escape_error(start, iter.i as usize - 1, 2, 1488);
+                                let escape = [b'\\', c2 as u8];
+                                self.escape_error_about(
+                                    start,
+                                    iter.i as usize - 1,
+                                    2,
+                                    1488,
+                                    Some(&escape),
+                                );
                                 if self.is_under_tag {
                                     buf.push(u16::from(b'\\'));
                                 }
@@ -1183,27 +1190,40 @@ impl<'a> Lexer<'a> {
 
     /// Notes an error by the code TypeScript has for it. Only in tolerant mode: nobody but the type checker reads it.
     /// Like any other error it is dropped if the last one was at the same place, which is TypeScript's own rule.
-    #[cold]
-    #[inline(never)]
     pub(crate) fn ts_error(&mut self, r: Range, code: u32) {
-        debug_assert!(self.tolerant);
-        if self.is_log_disabled {
-            self.swallowed += 1;
-            return;
-        }
-        let _ = self.add_range_error(r, format_args!("TS{code}"));
+        self.log_ts_error(false, r, code, None);
     }
 
-    /// `ts_error`, of an error that names `what` (`{0}`).
+    /// `ts_error`, of an error that names `what` (`{0}`; a NUL before `{1}`).
+    pub(crate) fn ts_error_about(&mut self, r: Range, code: u32, what: &[u8]) {
+        self.log_ts_error(false, r, code, Some(what));
+    }
+
     #[cold]
     #[inline(never)]
-    pub(crate) fn ts_error_about(&mut self, r: Range, code: u32, what: &[u8]) {
+    fn log_ts_error(&mut self, is_grammar_error: bool, r: Range, code: u32, what: Option<&[u8]>) {
         debug_assert!(self.tolerant);
         if self.is_log_disabled {
             self.swallowed += 1;
             return;
         }
-        let _ = self.add_range_error(r, format_args!("TS{code} {}", bstr::BStr::new(what)));
+        let blank = if what.is_some() { " " } else { "" };
+        let what = bstr::BStr::new(what.unwrap_or_default());
+        if is_grammar_error {
+            let text = format_args!("TG{code}{blank}{what}");
+            self.log().add_range_error_fmt(Some(self.source), r, text);
+        } else {
+            let _ = self.add_range_error(r, format_args!("TS{code}{blank}{what}"));
+        }
+    }
+
+    /// From `start` to where the token before this one ends.
+    #[inline]
+    pub(crate) fn range_from(&self, start: Loc) -> Range {
+        Range {
+            loc: start,
+            len: self.token_full_start as i32 - start.start,
+        }
     }
 
     /// `'{0}' expected.`, of `token`.
@@ -1212,30 +1232,19 @@ impl<'a> Lexer<'a> {
     }
 
     /// The same, where TypeScript's checker says it (`ts_grammar_error`).
-    #[cold]
-    #[inline(never)]
     pub(crate) fn ts_grammar_expected(&mut self, r: Range, token: &str) {
-        debug_assert!(self.tolerant);
-        if self.is_log_disabled {
-            self.swallowed += 1;
-            return;
-        }
-        self.log()
-            .add_range_error_fmt(Some(self.source), r, format_args!("TG1005 {token}"));
+        self.ts_grammar_error_about(r, 1005, token.as_bytes());
     }
 
     /// Logs an error that TypeScript's checker reports through `grammarErrorOnNode`, not its parser. It is only reported if
     /// the file has no syntax errors, and the rule of one error per position (`parseErrorAtRange`) does not apply to it.
-    #[cold]
-    #[inline(never)]
     pub(crate) fn ts_grammar_error(&mut self, r: Range, code: u32) {
-        debug_assert!(self.tolerant);
-        if self.is_log_disabled {
-            self.swallowed += 1;
-            return;
-        }
-        self.log()
-            .add_range_error_fmt(Some(self.source), r, format_args!("TG{code}"));
+        self.log_ts_error(true, r, code, None);
+    }
+
+    /// The same, of an error that names `what`.
+    pub(crate) fn ts_grammar_error_about(&mut self, r: Range, code: u32, what: &[u8]) {
+        self.log_ts_error(true, r, code, Some(what));
     }
 
     /// `NodeFlagsJavaScriptFile`. The type checker has JavaScript parsed as TypeScript with JSX. Always false outside tolerant mode.
@@ -1325,6 +1334,20 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn escape_error(&mut self, start: usize, at: usize, len: usize, code: u32) {
+        self.escape_error_about(start, at, len, code, None);
+    }
+
+    /// The same, of an error that names `what`.
+    #[cold]
+    #[inline(never)]
+    fn escape_error_about(
+        &mut self,
+        start: usize,
+        at: usize,
+        len: usize,
+        code: u32,
+        what: Option<&[u8]>,
+    ) {
         if self.is_under_tag {
             return;
         }
@@ -1334,13 +1357,11 @@ impl<'a> Lexer<'a> {
         if is_unterminated && matches!(self.contents[self.unterminated_at], b'"' | b'\'') {
             return;
         }
-        self.ts_error(
-            Range {
-                loc: bun_ast::usize2loc(start + at),
-                len: len as i32,
-            },
-            code,
-        );
+        let range = Range {
+            loc: bun_ast::usize2loc(start + at),
+            len: len as i32,
+        };
+        self.log_ts_error(false, range, code, what);
         // Those of a template it reads in a second scan (`reScanTemplateToken`), which comes to the end of the text
         // again and says the same of it: that is where the last error is.
         if is_unterminated && !self.is_log_disabled {
@@ -1379,7 +1400,14 @@ impl<'a> Lexer<'a> {
         let code = text[digit..end]
             .iter()
             .fold(0u16, |code, &b| code * 8 + u16::from(b - b'0'));
-        self.escape_error(start, digit - 1, end + 1 - digit, 1487);
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let escape = [
+            b'\\',
+            b'x',
+            HEX[usize::from(code >> 4) & 15],
+            HEX[usize::from(code) & 15],
+        ];
+        self.escape_error_about(start, digit - 1, end + 1 - digit, 1487, Some(&escape));
         buf.push(code);
         end - 1
     }
@@ -1960,6 +1988,10 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 0x09 | 0x20 => {
+                    // The rest of the run at once: an indented line has many.
+                    while matches!(contents.get(self.current), Some(b' ' | b'\t')) {
+                        self.current += 1;
+                    }
                     self.step_with(contents);
                     continue;
                 }
@@ -2725,7 +2757,8 @@ impl<'a> Lexer<'a> {
             });
         }
 
-        if !for_pragma {
+        // The type checker reads the pragmas it knows out of `all_comments` (`process_pragmas_into_fields`).
+        if !for_pragma || self.tolerant {
             return;
         }
 
@@ -4549,7 +4582,18 @@ impl<'a> Lexer<'a> {
                 let is_after_minus =
                     before.iter().rev().take_while(|&&ch| ch == b'-').count() % 2 == 1;
                 // Octal literals are not allowed.
-                self.ts_error(range(start - usize::from(is_after_minus), pos), 1121);
+                let significant = rest.iter().position(|&digit| digit != b'0');
+                let mut meant: Vec<u8> = if is_after_minus {
+                    b"-0o".to_vec()
+                } else {
+                    b"0o".to_vec()
+                };
+                meant.extend_from_slice(significant.map_or(b"0", |first| &rest[first..]));
+                self.ts_error_about(
+                    range(start - usize::from(is_after_minus), pos),
+                    1121,
+                    &meant,
+                );
                 return self.move_to(pos);
             }
             has_leading_zero = true;

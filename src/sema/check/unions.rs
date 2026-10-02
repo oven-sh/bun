@@ -31,7 +31,10 @@ impl<'p> Checker<'p> {
         match self.data(ty) {
             TypeData::Union(members) => out.extend_from_slice(members),
             TypeData::Intrinsic(
-                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+                Intrinsic::Never
+                | Intrinsic::SilentNever
+                | Intrinsic::UnreachableNever
+                | Intrinsic::ImplicitNever,
             ) => {}
             // `TypeFlagsAny`: the union is `anyType`.
             TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::IntrinsicMarker) => {
@@ -63,6 +66,7 @@ impl<'p> Checker<'p> {
                             | TypeId::INTRINSIC_MARKER
                             | TypeId::SILENT_NEVER
                             | TypeId::UNREACHABLE_NEVER
+                            | TypeId::IMPLICIT_NEVER
                     ) =>
             {
                 return a;
@@ -665,7 +669,10 @@ impl<'p> Checker<'p> {
                 }
             }
             TypeData::Intrinsic(
-                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+                Intrinsic::Never
+                | Intrinsic::SilentNever
+                | Intrinsic::UnreachableNever
+                | Intrinsic::ImplicitNever,
             ) => ty,
             _ => {
                 if keep(self, ty) {
@@ -744,7 +751,10 @@ impl<'p> Checker<'p> {
                 }
             }
             TypeData::Intrinsic(
-                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever,
+                Intrinsic::Never
+                | Intrinsic::SilentNever
+                | Intrinsic::UnreachableNever
+                | Intrinsic::ImplicitNever,
             ) => ty,
             _ => f(self, ty),
         }

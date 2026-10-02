@@ -868,10 +868,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.module_scope
     }
 
-    /// `finishNode`: `expr` ends where the token before the current one does. For `hir::File::expr_ends`.
+    /// `finishNode`: `expr` ends where the token before the current one does.
     #[inline]
     pub(crate) fn finish_expr(&mut self, expr: &mut Expr) {
-        if TYPESCRIPT && self.lexer.tolerant && self.log().errors != 0 {
+        if self.keeps_type_syntax() {
             self.note_expr_end(expr, self.lexer.full_start());
         }
     }
@@ -1982,11 +1982,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `b`, of the binding that the expression whose `loc` is `loc` turned out to be. It is that node: what is noted of the expression
     /// is noted of the binding.
     #[inline]
-    fn binding_of_expr<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
+    fn binding_of_expr<T>(&mut self, t: T, expr: &Expr) -> Binding
     where
         T: js_ast::binding::BindingAlloc,
     {
-        Binding::alloc(self.arena, t, loc)
+        let mut binding = Binding::alloc(self.arena, t, expr.loc);
+        // The range of the declaration is about to be noted where the end of the expression is.
+        if let Some(end) = self.end_of_literal(expr) {
+            self.note_loc(&mut binding.loc, crate::sema::Mark::PatternEnd, end);
+        }
+        binding
     }
 
     pub(crate) fn record_exported_binding(&mut self, binding: Binding) {
@@ -1994,10 +1999,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(ident) => {
                 let ident = ident.get();
-                // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
-                let name: &'a [u8] = self.symbols[ident.r#ref.inner_index() as usize]
-                    .original_name
-                    .slice();
+                let name: &'a [u8] = self.load_name_from_ref(ident.r#ref);
                 self.record_export(binding.loc, name, ident.r#ref)
                     .expect("unreachable");
             }
@@ -4047,7 +4049,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match expr.data {
             js_ast::ExprData::EMissing(_) => return None,
             js_ast::ExprData::EIdentifier(ex) => {
-                return Some(self.binding_of_expr(B::Identifier { r#ref: ex.ref_ }, expr.loc));
+                return Some(self.binding_of_expr(B::Identifier { r#ref: ex.ref_ }, &expr));
             }
             js_ast::ExprData::EArray(ex) => {
                 if let Some(spread) = ex.comma_after_spread.to_nullable() {
@@ -4094,7 +4096,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     //                                   ^ Binding is missing there
                     let mut binding = res
                         .binding
-                        .unwrap_or_else(|| self.binding_of_expr(B::Missing {}, item.loc));
+                        .unwrap_or_else(|| self.binding_of_expr(B::Missing {}, &item));
                     if !dots.is_empty() {
                         self.note_loc(&mut binding.loc, crate::sema::Mark::DotDotDot, dots);
                     }
@@ -4110,7 +4112,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         has_spread: is_spread,
                         is_single_line: ex.is_single_line,
                     },
-                    expr.loc,
+                    &expr,
                 ));
             }
             js_ast::ExprData::EObject(mut ex) => {
@@ -4181,7 +4183,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                         is_single_line: ex.is_single_line,
                     },
-                    expr.loc,
+                    &expr,
                 ));
             }
             _ => {
@@ -4306,6 +4308,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, crate::Error> {
+        // The type checker has what was written (`keep_import`).
+        if self.keeps_type_syntax() {
+            return Ok(self.s(S::TypeScript::default(), loc));
+        }
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
@@ -4919,10 +4925,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.real_loc(decl.binding.loc),
                         );
                         let ident_ref = ident.r#ref;
-                        // SAFETY: original_name is an arena-owned slice valid for 'a.
-                        let name = self.symbols[ident_ref.inner_index() as usize]
-                            .original_name
-                            .slice();
+                        let name = self.load_name_from_ref(ident_ref);
                         self.log().add_range_error_fmt(
                             Some(self.source),
                             r,
@@ -5257,6 +5260,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
         }
 
+        // The type checker binds for itself.
+        if self.keeps_type_syntax() {
+            return Ok(self.store_name_in_ref(name));
+        }
+
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name);
 
@@ -5344,10 +5352,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
         if let Some(name) = &func.name {
-            // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
-            let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
-                .original_name
-                .slice();
+            let original_name: &[u8] = self.load_name_from_ref(name.ref_);
 
             if func.flags.contains(Flags::Function::IsAsync) && original_name == b"await" {
                 self.log().add_range_error(
@@ -9794,7 +9799,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // at zero capacity and reserved one identifier reference at a time. A
         // `source.len() / 16` hint (≈ one symbol per 16 source bytes) covers
         // the vast majority of real files in a single allocation.
-        let estimated_symbol_count = source.contents.len() / 16;
+        let estimated_symbol_count = if opts.tolerant {
+            0
+        } else {
+            source.contents.len() / 16
+        };
 
         // ~one scope per 64 source bytes covers most files without regrowth.
         let mut scope_order =

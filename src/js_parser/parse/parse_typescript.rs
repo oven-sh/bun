@@ -48,6 +48,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.tolerant {
                 let mut decorator = p.parse_decorator_expression_tolerant()?;
                 p.note_loc(&mut decorator.loc, crate::sema::Mark::AtSign, at_sign);
+                p.note_token_full_start(&mut decorator.loc, crate::sema::Mark::DecoratorEnd);
                 decorators.push(decorator);
                 continue;
             }
@@ -276,12 +277,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
+        is_after_module_keyword: bool,
     ) -> Result<Stmt, Error> {
         let p = self;
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
         let mut name_text = p.lexer.identifier;
-        let name_is_string = p.lexer.token == T::TStringLiteral;
+        // `parseModuleDeclaration`: `parseAmbientExternalModuleDeclaration` only right after `module`.
+        let name_is_string =
+            p.lexer.token == T::TStringLiteral && (is_after_module_keyword || !p.lexer.tolerant);
         let mut string_name: &'a [u8] = b"";
         let mut has_body = true;
         if p.lexer.token == T::TIdentifier
@@ -290,7 +294,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             p.lexer.next()?;
         } else {
-            // A string names no symbol. After a dot (`parseIdentifierName`) anything but a word stays, and the name is missing.
+            // A string names no symbol. After `namespace` (`parseIdentifier`) and after a dot (`parseIdentifierName`) anything but a
+            // word stays, and the name is missing.
             name_text = b"";
             if name_is_string {
                 if p.keeps_type_syntax() {
@@ -354,7 +359,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 dot_loc
             };
-            let mut inner = p.parse_type_script_namespace_stmt(inner_loc, &mut _opts)?;
+            let mut inner = p.parse_type_script_namespace_stmt(inner_loc, &mut _opts, false)?;
             p.finish_node(&mut inner.loc, inner_full_start);
             stmts.push(inner);
         } else if p.lexer.token != T::TOpenBrace
@@ -647,7 +652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let specifier = p.parse_expr(Level::Lowest)?;
                 let is_written = !specifier.is_missing();
                 if is_written && p.current_scope().kind == ScopeKind::Entry {
-                    p.ts_checker_error(at, 1141);
+                    p.ts_checker_error(p.lexer.range_from(at), 1141);
                 }
                 external = Some(bun_ast::ts_syntax::ModuleReference::External {
                     text: None,

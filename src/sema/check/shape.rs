@@ -1752,7 +1752,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The same of two declarations of a function, but for the body.
-    fn is_next_statement(&self, file: FileId, previous: FnId, f: FnId) -> bool {
+    pub(super) fn is_next_statement(&self, file: FileId, previous: FnId, f: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (FnOwner::Stmt(before), FnOwner::Stmt(s)) =
             (bound.fns[previous.idx()].owner, bound.fns[f.idx()].owner)
@@ -1829,7 +1829,7 @@ impl<'p> Checker<'p> {
                 let base = self.type_from_node(file, node);
                 let valid = self.as_base_type(base, (file, decl), |checker, _, _| {
                     let at = (file, hir[node].pos, checker.end_of_type_node(file, node));
-                    checker.error(at, 2312, &[]);
+                    checker.error_at(at, 2312, &[]);
                 });
                 let Some(base) = valid else { continue };
                 if !self.has_base(base, sym, 0) {
@@ -1997,7 +1997,7 @@ impl<'p> Checker<'p> {
                     && args.iter().all(|&arg| self.is_known(arg))
                     && let Some(at) = self.place_to_report_base_at(file, c)
                 {
-                    self.error(at, 2508, &[]);
+                    self.error_at(at, 2508, &[]);
                 }
                 TypeId::UNRESOLVED
             }
@@ -3383,8 +3383,9 @@ impl<'p> Checker<'p> {
             return in_a_circle;
         }
         if !self.enter(Query::Assigned(file, assignments[0])) {
+            // `getTypeOfVariableOrParameterOrProperty` keeps what `reportCircularityError` returns: whoever asks next has the answer.
             return if self.came_full_circle {
-                in_a_circle
+                self.p.assigned_prop_types.insert(key, in_a_circle)
             } else {
                 TypeId::UNRESOLVED
             };
@@ -3787,26 +3788,19 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         use crate::bind::{JsDeclarationKind, assignment_declaration_kind};
         let hir = self.hir(file);
-        if matches!(
+        let is_export = matches!(
             assignment_declaration_kind(hir, declaration),
             JsDeclarationKind::ModuleExports | JsDeclarationKind::ExportsProperty(_)
-        ) {
-            // `GetRightMostAssignedExpression`, which steps through compound assignments too.
-            let mut rightmost = value;
-            while let ExprKind::Assign { value: next, .. } = hir[rightmost].kind {
-                rightmost = next;
-            }
-            if matches!(hir[rightmost].kind, ExprKind::Array(items) if items.is_empty()) {
-                let any_array = self.array_of(TypeId::ANY);
-                self.report_implicit_any(file, UntypedProperty::Assignment(declaration), any_array);
-                return any_array;
-            }
-            let ty = self.type_of_expr(file, rightmost);
-            return self.regular(ty);
+        );
+        // `GetRightMostAssignedExpression`, which steps through compound assignments too.
+        let mut rightmost = value;
+        while let (true, ExprKind::Assign { value: next, .. }) = (is_export, hir[rightmost].kind) {
+            rightmost = next;
         }
-        let ty = self.type_of_expr(file, value);
-        // `checkExpressionForMutableLocation` does not go through `checkExpressionCached`: an object literal is a type of its own.
+        let ty = self.type_of_expr(file, rightmost);
         let ty = match *self.data(ty) {
+            _ if is_export => self.regular(ty),
+            // `checkExpressionForMutableLocation` does not go through `checkExpressionCached`: an object literal is a type of its own.
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(of, literal, is_js_literal, false, is_fresh),
                 mapper,
@@ -3816,77 +3810,21 @@ impl<'p> Checker<'p> {
             }),
             _ => ty,
         };
-        // `isEmptyArrayLiteralType` tests the type of `value`. The type of `a = []` is the type of `[]`.
-        let mut rightmost = value;
-        while let ExprKind::Assign {
-            op: None,
-            value: next,
-            ..
-        } = hir[rightmost].kind
-        {
-            rightmost = next;
-        }
-        let is_empty_array = matches!(hir[rightmost].kind, ExprKind::Array(items) if items.is_empty())
-            || self.hands_on_empty_array_literal(file, rightmost, 0)
-                && ty == self.array_of(TypeId::NEVER);
         // The property is `any[]`, unless its owner initializes a variable that has a type annotation.
-        if is_empty_array && !self.is_property_of_annotated_variable(file, target) {
+        if self.is_empty_array_literal_type(ty)
+            && !self.is_property_of_annotated_variable(file, target)
+        {
             let any_array = self.array_of(TypeId::ANY);
             self.report_implicit_any(file, UntypedProperty::Assignment(declaration), any_array);
             return any_array;
         }
         // `checkExpressionForMutableLocation`: what is asserted is what it is said to be, and a literal stays one where a literal
         // is expected.
-        if matches!(hir[value].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
+        if is_export || matches!(hir[value].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
             return ty;
         }
-        let expected = self.contextual_type(file, value);
+        let expected = self.contextual_type(file, value, ContextFlags::empty());
         self.widen_literal_for_context(ty, expected)
-    }
-
-    /// Whether the type of `e` is that of an `[]` written elsewhere. There is no `implicitNeverType`, so this follows the syntax that
-    /// hands such a type on as it is. A variable or a parameter that does not say what it is has the type of its initializer.
-    fn hands_on_empty_array_literal(&self, file: FileId, e: ExprId, depth: u32) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match hir[e].kind {
-            ExprKind::Array(items) => items.is_empty(),
-            ExprKind::Assign {
-                op: None, value, ..
-            } => self.hands_on_empty_array_literal(file, value, depth),
-            ExprKind::NonNull(inner) => self.hands_on_empty_array_literal(file, inner, depth),
-            ExprKind::Cond { yes, no, .. } => {
-                self.hands_on_empty_array_literal(file, yes, depth)
-                    && self.hands_on_empty_array_literal(file, no, depth)
-            }
-            ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => {
-                self.hands_on_empty_array_literal(file, left, depth)
-                    && self.hands_on_empty_array_literal(file, right, depth)
-            }
-            ExprKind::Ident(_) if depth < 8 => {
-                let symbol = bound.expr_symbol[e.idx()];
-                if symbol.is_none() {
-                    return false;
-                }
-                let initializer = match bound.symbols[symbol.idx()].decls.as_slice() {
-                    [Decl::Var(pat)] => match bound.pat_parent[pat.idx()] {
-                        crate::bind::PatParent::Var(v) if hir[v].ty.is_none() => hir[v].init,
-                        _ => return false,
-                    },
-                    [Decl::Param(pat)] => match bound.pat_parent[pat.idx()] {
-                        crate::bind::PatParent::Param(p) if hir[p].ty.is_none() => hir[p].default,
-                        _ => return false,
-                    },
-                    _ => return false,
-                };
-                initializer.is_some()
-                    && self.hands_on_empty_array_literal(file, initializer, depth + 1)
-            }
-            _ => false,
-        }
     }
 
     /// `hasParentWithTypeAnnotation`: whether `target` is `f.name` or `f[key]` of a variable `f` that says what it is.
@@ -4142,20 +4080,6 @@ impl<'p> Checker<'p> {
                             name,
                         });
                     }
-                    // `widenTypeInferredFromInitializer`: in a JavaScript file an empty array literal gives `any[]`.
-                    if hir.is_js
-                        && matches!(hir[member.init].kind, ExprKind::Array(items) if items.is_empty())
-                    {
-                        let any_array = self.array_of(TypeId::ANY);
-                        if !matches!(owner, MemberOwner::None) {
-                            self.report_implicit_any(
-                                file,
-                                UntypedProperty::Member(first),
-                                any_array,
-                            );
-                        }
-                        return any_array;
-                    }
                     let ty = self.type_of_declaration_initializer(file, member.init);
                     // `widenTypeForVariableLikeDeclaration`: a `unique symbol` belongs to the declaration it was made for. To any
                     // other it is a `symbol`.
@@ -4169,6 +4093,13 @@ impl<'p> Checker<'p> {
                     } else {
                         self.widen_literal(ty)
                     };
+                    // `widenTypeInferredFromInitializer`
+                    if let Some(any) = self.implicit_any_of_empty_literal(file, ty) {
+                        if !matches!(owner, MemberOwner::None) {
+                            self.report_implicit_any(file, UntypedProperty::Member(first), any);
+                        }
+                        return any;
+                    }
                     let widened = self.regular_object(ty);
                     // `widenTypeForVariableLikeDeclaration`
                     if reports_errors && self.report_errors_from_widening(ty) {
@@ -4306,7 +4237,7 @@ impl<'p> Checker<'p> {
                     }
                     // `getTypeOfAccessors` calls `getReturnTypeFromBody` directly. The return type of the getter's signature is a
                     // separate resolution (`getReturnTypeOfSignature`), so a cycle through the property does not mark it.
-                    let ty = self.return_type_of_fn_uncached(f, func);
+                    let ty = self.return_type_of_fn_uncached(f, func, CheckMode::empty());
                     return ty;
                 }
                 // What the parameter of a setter starts out as says nothing about the property.
@@ -4939,13 +4870,6 @@ impl<'p> Checker<'p> {
     /// The type of `ty.name` where it is only written to: the target of `=`, of a destructuring assignment, of `for..of`.
     pub fn write_type_of_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         self.property_type(ty, name, Access::Written)
-            .map(|found| found.0)
-    }
-
-    /// The type of `ty.name` where it is the target of an assignment without being only written to: a property is what is read
-    /// from it, and an index signature takes what it says.
-    pub(super) fn type_of_property_for_write(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
-        self.property_type(ty, name, Access::Assigned)
             .map(|found| found.0)
     }
 

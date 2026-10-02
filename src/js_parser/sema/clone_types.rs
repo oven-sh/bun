@@ -148,11 +148,12 @@ impl Builder<'_> {
                             is_optional,
                             mut is_rest,
                             loc,
+                            end,
                         } = self.ts[element];
                         let name = label.map_or(Atom::NONE, |label| self.atoms.intern(&label));
                         if is_rest && is_optional && label.is_some() {
                             // `checkNamedTupleMember`: A tuple member cannot be both optional and rest.
-                            self.file.early_errors.push((pos(loc), 5085));
+                            self.file.error(pos(loc), pos(end), 5085);
                             // `getTupleElementFlags`, `getTypeFromNamedTupleTypeNode`: it is optional.
                             is_rest = false;
                             ty = self.rest_element_type(ty);
@@ -162,6 +163,8 @@ impl Builder<'_> {
                             name,
                             optional: is_optional,
                             rest: is_rest,
+                            start: pos(loc),
+                            end: pos(end),
                         }
                     })
                     .collect();
@@ -200,10 +203,6 @@ impl Builder<'_> {
                     extra_member_loc,
                     members,
                 } = self.ts[mapped];
-                if let Some(loc) = extra_member_loc {
-                    // `checkGrammarMappedType`: A mapped type may not declare properties or methods.
-                    self.file.early_errors.push((pos(loc), 7061));
-                }
                 let param = self.clone_type_param(param);
                 let mapped = Mapped {
                     param: self.file.add_type_param(param),
@@ -213,6 +212,16 @@ impl Builder<'_> {
                     optional: mapped_modifier(optional),
                     members: self.clone_members(members),
                 };
+                if let Some(loc) = extra_member_loc {
+                    // `checkGrammarMappedType`: A mapped type may not declare properties or methods. `GetErrorRangeForNode`: the name of
+                    // a property, the whole of a signature.
+                    match mapped.members.iter().next().map(|first| self.file[first]) {
+                        Some(first) if first.kind != MemberKind::Property => {
+                            self.file.error(pos(loc), first.loc.end, 7061);
+                        }
+                        _ => self.file.early_errors.push((pos(loc), 7061)),
+                    }
+                }
                 TypeNodeKind::Mapped(self.file.add_mapped(mapped))
             }
             ts::TypeData::IndexedAccess { object, index } => TypeNodeKind::IndexedAccess {
@@ -253,14 +262,13 @@ impl Builder<'_> {
                     self.pending.push(PendingPart::ImportAttributes(attributes));
                 }
                 if argument.is_some() {
-                    let node = self.clone_import_type_without_specifier(
+                    return self.clone_import_type_without_specifier(
                         argument,
                         name,
                         is_typeof,
                         pos(loc),
+                        pos(end),
                     );
-                    self.file[node].end = pos(end);
-                    return node;
                 }
                 let spec = self.atoms.intern(&specifier);
                 let mode = match mode {
@@ -314,12 +322,12 @@ impl Builder<'_> {
             }
             ts::TypeData::Optional(operand) => {
                 // `checkNamedTupleMember`. The element is required (`getTupleElementFlags`), and `getTypeFromOptionalTypeNode` adds `undefined`.
-                self.file.early_errors.push((pos(loc), 5086));
+                self.file.error(pos(loc), pos(end), 5086);
                 self.clone_union_with_keyword(operand, Keyword::Undefined, pos(loc))
             }
             ts::TypeData::Rest(operand) => {
                 // `checkNamedTupleMember`. The element is required (`getTupleElementFlags`).
-                self.file.early_errors.push((pos(loc), 5087));
+                self.file.error(pos(loc), pos(end), 5087);
                 let element = self.rest_element_type(operand);
                 return self.clone_type(element);
             }
@@ -332,8 +340,7 @@ impl Builder<'_> {
                 is_syntax_error: false,
             } => TypeNodeKind::Error,
         };
-        let node = self.file.ty(kind, pos(loc));
-        self.file[node].end = pos(end);
+        let node = self.file.ty(kind, pos(loc), pos(end));
         if let ts::TypeData::HeritageExpression(expression) = data {
             let expression = self.ts[expression];
             self.pending
@@ -357,7 +364,7 @@ impl Builder<'_> {
         at: u32,
     ) -> TypeNodeKind {
         let operand = self.clone_type(operand);
-        let keyword = self.file.ty(TypeNodeKind::Keyword(keyword), at);
+        let keyword = self.file.ty(TypeNodeKind::Keyword(keyword), at, at);
         TypeNodeKind::Union(self.file.list(&[operand, keyword]))
     }
 
@@ -378,10 +385,10 @@ impl Builder<'_> {
         name: ts::Span<ts::Name>,
         is_typeof: bool,
         at: u32,
+        end: u32,
     ) -> TypeNodeId {
-        self.file
-            .early_errors
-            .push((pos(self.ts[argument].loc), 1141));
+        let ts::Type { loc, end: to, .. } = self.ts[argument];
+        self.file.error(pos(loc), pos(to), 1141);
         let argument = self.clone_type(argument);
         let args = self.file.list(&[argument]);
         let name = self.clone_names(name);
@@ -394,14 +401,15 @@ impl Builder<'_> {
                 mode: ResolutionMode::None,
             },
             at,
+            end,
         )
     }
 
     /// The keyword type that `name` spells. It must spell one.
     pub(crate) fn clone_keyword_type(&mut self, name: &[u8], loc: bun_ast::Loc) -> TypeNodeId {
         let keyword_type = super::keep::keyword_type(name).expect("the caller checked");
-        self.file
-            .ty(TypeNodeKind::Keyword(keyword(keyword_type)), pos(loc))
+        let kind = TypeNodeKind::Keyword(keyword(keyword_type));
+        self.file.ty(kind, pos(loc), pos(loc) + name.len() as u32)
     }
 
     pub(crate) fn clone_type_list(&mut self, list: ts::IdList<ts::Type>) -> IdList<TypeNodeId> {
@@ -425,6 +433,10 @@ impl Builder<'_> {
     /// `a.b.c` as an expression.
     fn clone_entity_name_expression(&mut self, names: ts::Span<ts::Name>) -> ExprId {
         let mut expr = ExprId::NONE;
+        let start = names
+            .iter()
+            .next()
+            .map_or(0, |first| pos(self.ts[first].loc));
         for name in names.iter() {
             let ts::Name { text, loc } = self.ts[name];
             let name = self.atoms.intern(&text);
@@ -438,7 +450,7 @@ impl Builder<'_> {
                     chain: Chain::No,
                 },
             };
-            expr = self.file.expr(kind, pos(loc));
+            expr = self.file.expr(kind, start, pos(loc) + text.len() as u32);
         }
         expr
     }
@@ -551,7 +563,7 @@ impl Builder<'_> {
         if id.is_none() {
             return PatId::NONE;
         }
-        let ts::Pattern { data, loc } = self.ts[id];
+        let ts::Pattern { data, loc, end } = self.ts[id];
         let kind = match data {
             ts::PatternData::Missing => PatKind::Missing,
             ts::PatternData::Identifier(name) => PatKind::Ident(self.atom(&name)),
@@ -563,6 +575,7 @@ impl Builder<'_> {
                             pattern,
                             is_rest,
                             loc,
+                            end,
                             ..
                         } = self.ts[element];
                         PatElem {
@@ -570,6 +583,7 @@ impl Builder<'_> {
                             default: ExprId::NONE,
                             is_rest,
                             start: pos(loc),
+                            end: pos(end),
                         }
                     })
                     .collect();
@@ -591,6 +605,7 @@ impl Builder<'_> {
                             value,
                             is_rest,
                             loc,
+                            end,
                             ..
                         } = self.ts[property];
                         PatProp {
@@ -606,6 +621,7 @@ impl Builder<'_> {
                             is_rest,
                             pos: pos(loc),
                             key_pos: pos(loc),
+                            end: pos(end),
                         }
                     })
                     .collect();
@@ -623,7 +639,7 @@ impl Builder<'_> {
                 PatKind::Object(cloned)
             }
         };
-        self.file.pat(kind, pos(loc))
+        self.file.pat(kind, pos(loc), pos(end))
     }
 
     /// A computed key is left empty. The caller adds a `PendingPart` for it.
@@ -683,7 +699,7 @@ impl Builder<'_> {
         let func = self.file.add_fn(func);
         if let Some(body) = body {
             // `checkGrammarAccessor`: An implementation cannot be declared in ambient contexts.
-            self.file.early_errors.push((pos(body.loc), 1183));
+            self.file.error(pos(body.loc), pos(body.end), 1183);
             self.pending.push(PendingPart::FunctionBody(func, body));
         }
         func
@@ -721,12 +737,15 @@ impl Builder<'_> {
             members,
             ..
         } = self.ts[id];
-        self.file.early_errors.extend(
-            heritage_errors
-                .into_iter()
-                .flatten()
-                .map(|(loc, code)| (self::pos(loc), code)),
-        );
+        for (loc, code) in heritage_errors.into_iter().flatten() {
+            match code {
+                // Where the keyword ends. Nothing is said of a clause after the first.
+                1097 => {
+                    (self.file).error_about(self::pos(loc), self::pos(loc), code, &[b"extends"])
+                }
+                _ => self.file.early_errors.push((self::pos(loc), code)),
+            }
+        }
         let type_params = self.clone_type_params(type_params);
         let heritage: smallvec::SmallVec<[ts::TypeId; 4]> = self.ts.id_list(extends).collect();
         let heritage: smallvec::SmallVec<[TypeNodeId; 4]> = heritage
@@ -760,15 +779,14 @@ impl Builder<'_> {
         };
         let name = self.atoms.intern(super::keep::keyword_text(keyword));
         let name = self.file.entity_name([(name, pos(loc))].into_iter());
-        let node = self.file.ty(
+        self.file.ty(
             TypeNodeKind::Ref {
                 name,
                 args: IdList::EMPTY,
             },
             pos(loc),
-        );
-        self.file[node].end = pos(end);
-        node
+            pos(end),
+        )
     }
 
     pub(crate) fn clone_type_alias(
@@ -863,6 +881,7 @@ impl Builder<'_> {
         if kind == ts::MemberKind::Property && matches!(key, ts::PropertyKey::BigInt) {
             self.file.checker_errors.push((pos(loc), 1539));
         }
+        let is_number = matches!(key, ts::PropertyKey::Number(_));
         let mut key = self.clone_key(key);
         // `getDeclarationName`: a private name with no class around it names nothing.
         if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
@@ -888,7 +907,11 @@ impl Builder<'_> {
                 ts::MemberKind::IndexSignature => MemberKind::IndexSignature,
             },
             key,
-            flags: flags(member_flags),
+            flags: if is_number {
+                flags(member_flags) | Flags::LITERAL_NAME
+            } else {
+                flags(member_flags)
+            },
             modifiers: modifier_list,
             // The type of an index signature is the return type of its signature: one node, not two.
             ty: if kind == ts::MemberKind::IndexSignature {
@@ -913,11 +936,13 @@ impl Builder<'_> {
             signature,
             trailing_comma_loc,
             loc,
+            end,
             ..
         } = self.ts[id];
         let params = self.ts[signature].params;
         let Some(first) = params.get(0) else {
-            self.file.early_errors.push((pos(loc), 1096));
+            // Said of the signature.
+            self.file.error(pos(loc), pos(end), 1096);
             return;
         };
         let ts::Param {

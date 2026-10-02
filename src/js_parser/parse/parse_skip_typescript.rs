@@ -180,6 +180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             default,
                             is_rest,
                             loc,
+                            end: self.lexer.full_start(),
                         });
                     }
 
@@ -211,6 +212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         default: None,
                         is_rest: false,
                         loc: self.lexer.loc(),
+                        end: bun_ast::Loc::EMPTY,
                     };
 
                     match self.lexer.token {
@@ -277,6 +279,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         property.default = Some(self.skip_initializer_in_signature()?);
                     }
                     if keeps {
+                        property.end = self.lexer.full_start();
                         properties.push(property);
                     }
 
@@ -1185,6 +1188,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_optional: false,
             is_rest: false,
             loc: self.lexer.loc(),
+            end: bun_ast::Loc::EMPTY,
         };
         let is_named = self.is_start_of_named_tuple_element();
         if is_named {
@@ -1228,6 +1232,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             self.finish_last_type();
             element.ty = self.last_type();
+            element.end = self.lexer.full_start();
         }
         Ok(element)
     }
@@ -2122,6 +2127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 is_optional: optional,
                                 is_rest: rest,
                                 loc: element_loc,
+                                end: self.lexer.full_start(),
                             });
                         }
                         if self.lexer.token != T::TComma {
@@ -2239,8 +2245,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             break;
         }
         if let Some((at, code)) = fn_type_error.take() {
-            self.lexer
-                .ts_error(bun_ast::Range { loc: at, len: 0 }, code);
+            self.lexer.ts_error(self.lexer.range_from(at), code);
         }
 
         loop {
@@ -2306,8 +2311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         )?;
                     }
                     if let Some((at, code)) = fn_type_error.take() {
-                        self.lexer
-                            .ts_error(bun_ast::Range { loc: at, len: 0 }, code);
+                        self.lexer.ts_error(self.lexer.range_from(at), code);
                     }
                     if KEEP {
                         self.push_type_list_item();
@@ -2364,8 +2368,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         )?;
                     }
                     if let Some((at, code)) = fn_type_error.take() {
-                        self.lexer
-                            .ts_error(bun_ast::Range { loc: at, len: 0 }, code);
+                        self.lexer.ts_error(self.lexer.range_from(at), code);
                     }
                     if KEEP {
                         self.push_type_list_item();
@@ -3392,7 +3395,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.lexer.ts_grammar_error(
                     bun_ast::Range {
                         loc: less_than,
-                        len: 1,
+                        len: self.lexer.start as i32 + 1 - less_than.start,
                     },
                     1098,
                 );
@@ -3440,7 +3443,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.ts_grammar_error(
                 bun_ast::Range {
                     loc: less_than,
-                    len: 1,
+                    len: self.lexer.start as i32 + 1 - less_than.start,
                 },
                 1098,
             );
@@ -3989,15 +3992,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn check_end_of_type_arguments(&mut self, is_empty: bool, less_than: i32) {
-        let (start, code) = if is_empty {
-            (less_than, 1099)
+        // 1099: to past the token after the empty list.
+        let (start, end, code) = if is_empty {
+            (less_than, self.lexer.start as i32 + 1, 1099)
         } else {
-            (self.lexer.full_start().start - 1, 1009)
+            let comma_end = self.lexer.full_start().start;
+            (comma_end - 1, comma_end, 1009)
         };
         self.lexer.ts_grammar_error(
             bun_ast::Range {
                 loc: bun_ast::Loc { start },
-                len: 1,
+                len: end - start,
             },
             code,
         );

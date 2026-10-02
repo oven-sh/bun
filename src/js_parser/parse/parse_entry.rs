@@ -556,8 +556,8 @@ impl<'a> Parser<'a> {
         // What is objected to without the tree suffering is for the checker to say, in its own words.
         // Sorted by which part of TypeScript reports it.
         let (mut syntactic, mut grammar, mut checker) = (Vec::new(), Vec::new(), Vec::new());
-        let error_arguments = Self::error_arguments(p.log());
-        let error_ends = Self::error_ends(p.log(), self.source.contents(), p.is_jsx_enabled());
+        let (mut error_arguments, mut error_ends) = (Vec::new(), Vec::new());
+        let has_jsx = p.is_jsx_enabled();
         let opening_brackets = Self::opening_brackets(p.log());
         let mut has_errors = false;
         for msg in p.log().msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
@@ -582,7 +582,17 @@ impl<'a> Parser<'a> {
                     } else {
                         &mut grammar
                     };
-                    list.push(((offset as i64 + i64::from(delta)).max(0) as u32, code));
+                    let start = (offset as i64 + i64::from(delta)).max(0) as u32;
+                    list.push((start, code));
+                    let contents = self.source.contents();
+                    if let Some(args) = crate::sema::error_arguments(&msg.data, code, contents) {
+                        error_arguments.push((start, code, args));
+                    }
+                    error_ends.extend(crate::sema::error_end(
+                        &msg.data,
+                        self.source.contents(),
+                        has_jsx,
+                    ));
                 }
                 _ => has_errors = true,
             }
@@ -642,27 +652,6 @@ impl<'a> Parser<'a> {
             }
         }
         found
-    }
-
-    /// `hir::File::error_arguments`, of what is in `log`.
-    fn error_arguments(log: &bun_ast::Log) -> Vec<(u32, Box<str>)> {
-        log.msgs
-            .iter()
-            .filter(|msg| msg.kind == bun_ast::Kind::Err)
-            .filter_map(|msg| {
-                let offset = msg.data.location.as_ref()?.offset;
-                Some((offset as u32, crate::sema::error_argument(&msg.data.text)?))
-            })
-            .collect()
-    }
-
-    /// `hir::File::error_ends`, of what is in `log`.
-    fn error_ends(log: &bun_ast::Log, contents: &[u8], has_jsx: bool) -> Vec<(u32, u32, u32)> {
-        log.msgs
-            .iter()
-            .filter(|msg| msg.kind == bun_ast::Kind::Err)
-            .filter_map(|msg| crate::sema::error_end(&msg.data, contents, has_jsx))
-            .collect()
     }
 
     /// Whether TypeScript's parser or scanner reports the logged error `text`, which `early_error` translated to `code`.

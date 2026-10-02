@@ -6,14 +6,12 @@
 
 use super::Checker;
 use crate::atom::{Atom, known};
-use crate::bind::{FnOwner, MemberOwner};
+use crate::bind::{ClassOwner, FnOwner, MemberOwner};
 use crate::hir::{
-    CallId, CaseId, ClassId, EnumMemberId, ExportSpecId, Expr, ExprId, ExprKind, File, FileKind,
-    Flags, FnBody, FnId, FnKind, Func, INCOMPLETE_TEMPLATE, IdList, ImportSpecId, Keyword,
-    MemberId, MemberKind, ModifierKind, Node, NodeData, ParamId, Part, PatElemId, PatId, PatKind,
-    PatPropId, PropId, PropKey, Span, Stmt, StmtId, StmtKind, TupleElemId, TypeNode, TypeNodeId,
-    TypeNodeKind, TypeParamId, UnOp, VarDeclId, is_parenthesized, open_parenthesis,
-    start_inside_parentheses,
+    CaseId, ClassId, EnumMemberId, ExportSpecId, ExprId, ExprKind, File, FileKind, FnBody, FnId,
+    FnKind, IdList, ImportSpecId, MemberId, MemberKind, ModifierKind, Node, NodeData, ParamId,
+    Part, PatElemId, PatId, PatPropId, PropId, PropKey, Span, Stmt, StmtId, StmtKind, TupleElemId,
+    TypeNodeId, TypeParamId, VarDeclId, is_parenthesized,
 };
 use crate::program::FileId;
 use bun_core::lexer;
@@ -81,7 +79,7 @@ fn line_end(text: &[u8], mut at: usize) -> usize {
 }
 
 /// `SkipTrivia`: from `at`, past blanks and comments.
-pub(super) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
+pub(crate) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
     loop {
         match text.get(at) {
             Some(b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C) => at += 1,
@@ -250,7 +248,7 @@ fn unicode_escape(text: &[u8], at: usize) -> Option<(usize, u32)> {
 }
 
 /// Where the token `written` starts that comes right before `at`, trivia aside. `None`: something else is written there.
-pub(super) fn start_of_token_before(text: &[u8], at: u32, written: &[u8]) -> Option<u32> {
+pub(crate) fn start_of_token_before(text: &[u8], at: u32, written: &[u8]) -> Option<u32> {
     let before = trim_trivia_end(&text[..(at as usize).min(text.len())]);
     before
         .ends_with(written)
@@ -858,25 +856,6 @@ fn try_close_from(text: &[u8], start: usize, closer: u8, jsx_depth: u32) -> Opti
     }
 }
 
-fn keyword_text(keyword: Keyword) -> &'static [u8] {
-    match keyword {
-        Keyword::Any => b"any",
-        Keyword::Unknown => b"unknown",
-        Keyword::Never => b"never",
-        Keyword::Void => b"void",
-        Keyword::Undefined => b"undefined",
-        Keyword::Null => b"null",
-        Keyword::String => b"string",
-        Keyword::Number => b"number",
-        Keyword::Boolean => b"boolean",
-        Keyword::BigInt => b"bigint",
-        Keyword::Symbol => b"symbol",
-        Keyword::Object => b"object",
-        Keyword::This => b"this",
-        Keyword::Intrinsic => b"intrinsic",
-    }
-}
-
 // ───────────────────────────── the tree ─────────────────────────────
 
 /// The tree of a file and its text. Every function gives `node.End()` of what it is named after, unless it says otherwise.
@@ -903,44 +882,12 @@ impl<'a> Spans<'a> {
         skip_trivia(self.text, at)
     }
 
-    /// The name or keyword that starts at `at`.
-    fn word_at(self, at: usize) -> &'a [u8] {
-        word_at(self.text, at)
-    }
-
     /// Past `token` if it is the next thing after `at`. Otherwise `at`.
     fn eat(self, at: usize, token: &[u8]) -> usize {
         let start = self.skip_trivia(at);
         match self.text.get(start..) {
             Some(rest) if rest.starts_with(token) => start + token.len(),
             _ => at,
-        }
-    }
-
-    /// Past the word `word` if it is the next thing after `at`. Otherwise `at`.
-    fn eat_word(self, at: usize, word: &[u8]) -> usize {
-        let start = self.skip_trivia(at);
-        if self.word_at(start) == word {
-            start + word.len()
-        } else {
-            at
-        }
-    }
-
-    /// Past the name after `at`, if one is next.
-    fn eat_name(self, at: usize) -> usize {
-        let start = self.skip_trivia(at);
-        match word_end(self.text, start) {
-            end if end > start => end,
-            _ => at,
-        }
-    }
-
-    /// `parseTypeMemberSemicolon`
-    fn member_separator(self, at: usize) -> usize {
-        match self.eat(at, b",") {
-            end if end != at => end,
-            _ => self.eat(at, b";"),
         }
     }
 
@@ -955,15 +902,6 @@ impl<'a> Spans<'a> {
         close_from(self.text, at, closer, jsx_depth)
     }
 
-    /// `close`, of the array or object literal that opens at `open`, unless the parser missed its closer.
-    fn close_literal(self, open: usize, at: usize, closer: u8) -> usize {
-        let unclosed = &self.hir.unclosed_literals;
-        match unclosed.binary_search_by_key(&(open as u32), |literal| literal.0) {
-            Ok(found) => unclosed[found].1 as usize,
-            Err(_) => self.close(at, closer),
-        }
-    }
-
     /// Past what the bracket at `open` opens.
     fn bracket(self, open: usize) -> usize {
         match self.byte(open) {
@@ -974,48 +912,9 @@ impl<'a> Spans<'a> {
         }
     }
 
-    /// Past the braces that open after `at`. `at` if none do.
-    fn braces_after(self, at: usize) -> usize {
-        let open = self.skip_trivia(at);
-        if self.byte(open) == b'{' {
-            self.close(open + 1, b'}')
-        } else {
-            at
-        }
-    }
-
-    /// Right after the first `{` from `at` on that is in no other bracket. For the head of a declaration whose braces are empty.
-    fn inside_braces_after(self, mut at: usize) -> usize {
-        loop {
-            at = self.skip_trivia(at);
-            match self.byte(at) {
-                b'{' => return at + 1,
-                b'(' | b'[' => at = self.bracket(at),
-                _ if at >= self.text.len() => return self.text.len(),
-                _ => at = self.token(at).max(at + 1),
-            }
-        }
-    }
-
-    fn close_parens(self, mut at: usize, count: usize) -> usize {
-        for _ in 0..count {
-            at = self.eat(at, b")");
-        }
-        at
-    }
-
     /// `GetRangeOfTokenAtPosition`
     fn token(self, at: usize) -> usize {
         token_end(self.text, at, self.is_jsx())
-    }
-
-    /// A string or a template without substitutions.
-    fn quoted(self, at: usize) -> usize {
-        match self.byte(at) {
-            b'"' | b'\'' => string_end(self.text, at),
-            b'`' => template_text(self.text, at + 1).0,
-            _ => self.token(at),
-        }
     }
 
     /// The name that starts at `at`: an identifier, a private name, a string, a number, `[computed]`, or a binding pattern. Any
@@ -1027,64 +926,10 @@ impl<'a> Spans<'a> {
         }
     }
 
-    /// Past the template that opens at `open`. `end_of_part`: where what is substituted ends, given which it is and where its `${`
-    /// ends.
-    fn template(self, open: usize, end_of_part: &dyn Fn(usize, usize) -> usize) -> usize {
-        let (mut at, mut is_substitution) = template_text(self.text, open + 1);
-        let mut index = 0;
-        while is_substitution {
-            let inside = end_of_part(index, at).max(at);
-            // `parseLiteralOfTemplateSpan`: the rest is a missing `TemplateTail`.
-            if self.hir.has_parse_diagnostics && self.byte(self.skip_trivia(inside)) != b'}' {
-                return inside;
-            }
-            (at, is_substitution) = template_text(self.text, self.close(inside, b'}'));
-            index += 1;
-        }
-        at
-    }
-
-    /// `A.B.C` at `at`. An empty name stands for one that is missing.
-    fn entity_name(self, at: usize, names: Span<crate::hir::NameId>) -> usize {
-        let mut end = match self.hir.texts(names).next() {
-            Some(known::empty) => at,
-            _ => word_end(self.text, at),
-        };
-        for name in self.hir.texts(names).skip(1) {
-            let dot = self.eat(end, b".");
-            if dot == end {
-                break;
-            }
-            end = if name == known::empty {
-                dot
-            } else {
-                self.eat_name(dot)
-            };
-        }
-        end
-    }
-
     // ───────────────────────────── expressions ─────────────────────────────
-
-    fn expr_pos(self, e: ExprId) -> usize {
-        self.hir.exprs.get(e.idx()).map_or(0, |e| e.pos as usize)
-    }
 
     fn type_pos(self, node: TypeNodeId) -> usize {
         self.hir.types.get(node.idx()).map_or(0, |t| t.pos as usize)
-    }
-
-    /// How many `(` are written one after the other from `open` on, before `inside`.
-    fn parens_from(self, open: usize, inside: usize) -> usize {
-        let (mut at, mut count) = (open, 0);
-        loop {
-            at = self.skip_trivia(at);
-            if at >= inside || self.byte(at) != b'(' {
-                return count;
-            }
-            at += 1;
-            count += 1;
-        }
     }
 
     /// `e` as it is written, with the parentheses around it.
@@ -1094,207 +939,24 @@ impl<'a> Spans<'a> {
 
     /// `e` with those of the parentheses around it that open at `start` or later.
     fn expr_from(self, e: ExprId, start: usize) -> usize {
-        let end = self.expr_inside(e);
-        match open_parenthesis(self.hir, e) {
-            Some(open) => {
-                let inside = start_inside_parentheses(self.hir, e) as usize;
-                let count = self.parens_from((open as usize).max(start), inside);
-                self.close_parens(end, count)
-            }
-            None => end,
+        let around = crate::hir::parentheses_around(self.hir, e).iter();
+        match around.take_while(|p| p.1 as usize >= start).last() {
+            Some(outermost) => outermost.2 as usize,
+            None => self.expr_inside(e),
         }
     }
 
     /// `e` itself, whatever parentheses it is in.
     fn expr_inside(self, e: ExprId) -> usize {
-        let Some(&Expr { kind, pos }) = self.hir.exprs.get(e.idx()) else {
-            return 0;
-        };
-        let pos = pos as usize;
-        let noted = self
-            .hir
-            .expr_ends
-            .get(e.idx())
-            .map_or(0, |&end| end as usize);
-        let end = match kind {
-            ExprKind::Missing if noted != 0 => return noted,
-            ExprKind::Missing | ExprKind::Ident(known::empty) => {
-                return skip_trivia_back(self.text, pos);
-            }
-            ExprKind::Ident(_) | ExprKind::This | ExprKind::Super | ExprKind::Null => {
-                self.token(pos)
-            }
-            ExprKind::True | ExprKind::False => self.token(pos),
-            ExprKind::Number(_) | ExprKind::BigInt(_) => number_end(self.text, pos),
-            ExprKind::String(_) => match self.byte(pos) {
-                b'"' | b'\'' | b'`' => self.quoted(pos),
-                b'#' => word_end(self.text, pos),
-                // JSX text is put where its element starts.
-                b'<' => self.token(pos),
-                // The name of an intrinsic element.
-                _ => jsx_name_end(self.text, pos),
-            },
-            ExprKind::Regex => regex_end(self.text, pos),
-            ExprKind::Template { exprs, .. } => self.template_of_exprs(pos, exprs),
-            ExprKind::TaggedTemplate(c) => {
-                let Some(call) = self.hir.calls.get(c.idx()) else {
-                    return self.token(pos);
-                };
-                let tag_end = self.type_args(call.type_args, self.expr(call.callee));
-                let open = self.skip_trivia(self.eat(tag_end, b"?."));
-                if self.byte(open) == b'`' {
-                    self.template_of_exprs(open, call.args)
-                } else {
-                    tag_end
-                }
-            }
-            ExprKind::Array(items) => {
-                // Holes take no room.
-                let last = self.hir.ids(items).rev().find(|&item| {
-                    !matches!(
-                        self.hir.exprs.get(item.idx()),
-                        None | Some(Expr {
-                            kind: ExprKind::Missing,
-                            ..
-                        })
-                    )
-                });
-                self.close_literal(pos, last.map_or(pos + 1, |last| self.expr(last)), b']')
-            }
-            ExprKind::Object(props) => {
-                let last = props.iter().next_back();
-                self.close_literal(pos, last.map_or(pos + 1, |last| self.prop(last)), b'}')
-            }
-            ExprKind::Fn(f) => self.func(f),
-            ExprKind::Class(c) => self.class(c),
-            ExprKind::Dot {
-                obj,
-                name: known::empty,
-                ..
-            } => {
-                let obj_end = self.expr(obj);
-                let dot_end = match self.eat(obj_end, b"?.") {
-                    end if end != obj_end => end,
-                    _ => self.eat(obj_end, b"."),
-                };
-                // `parseRightSideOfDot`: a private name that is not allowed there is consumed all the same.
-                match self.skip_trivia(dot_end) {
-                    name if self.byte(name) == b'#' => word_end(self.text, name),
-                    _ => dot_end,
-                }
-            }
-            ExprKind::Dot { name_pos, .. } => word_end(self.text, name_pos as usize),
-            ExprKind::Index { index, .. } => self.close(self.expr(index), b']'),
-            ExprKind::Call(c) | ExprKind::New(c) => self.call(c, pos),
-            ExprKind::Unary {
-                op: op @ (UnOp::PostInc | UnOp::PostDec),
-                operand,
-            } => self.eat(
-                self.expr(operand),
-                if op == UnOp::PostInc { b"++" } else { b"--" },
-            ),
-            ExprKind::Unary { operand: last, .. }
-            | ExprKind::Binary { right: last, .. }
-            | ExprKind::Assign { value: last, .. }
-            | ExprKind::Cond { no: last, .. }
-            | ExprKind::Spread(last)
-            | ExprKind::Await(last) => self.expr(last),
-            ExprKind::Yield { value, star } => {
-                if value.is_some() {
-                    self.expr(value)
-                } else if star {
-                    self.eat(self.token(pos), b"*")
-                } else {
-                    self.token(pos)
-                }
-            }
-            // `x as T`, or `<T>x`.
-            ExprKind::As { expr, ty } => {
-                if self.type_pos(ty) > self.expr_pos(expr) {
-                    self.ty_in(ty, 0)
-                } else {
-                    self.expr(expr)
-                }
-            }
-            // `x satisfies T`, or what a `@satisfies` tag before `x` makes.
-            ExprKind::Satisfies { expr, ty } => {
-                if self.type_pos(ty) > self.expr_pos(expr) {
-                    self.ty_in(ty, 0)
-                } else {
-                    self.expr(expr)
-                }
-            }
-            // `x as const`, or `<const>x`.
-            ExprKind::AsConst(x) => {
-                let operand_end = self.expr(x);
-                let after_as = self.eat_word(operand_end, b"as");
-                match self.eat_word(after_as, b"const") {
-                    end if after_as != operand_end && end != after_as => end,
-                    _ => operand_end,
-                }
-            }
-            ExprKind::NonNull(x) => self.eat(self.expr(x), b"!"),
-            ExprKind::Instantiation { expr, type_args } => {
-                self.type_args(type_args, self.expr(expr))
-            }
-            ExprKind::Jsx(jsx) => match self.hir.jsx.get(jsx.idx()) {
-                Some(element) => element.end as usize,
-                None => self.token(pos),
-            },
-            ExprKind::ImportCall { args, .. } => {
-                let specifier = self.hir.id_at(args, 0);
-                let mut deferred = self.hir.deferred_import_calls.iter();
-                if let Some(&(_, close)) = deferred.find(|call| call.0 == specifier)
-                    && self.byte(close as usize) == b')'
-                {
-                    return close as usize + 1;
-                }
-                let last = self.hir.ids(args).last().unwrap_or(specifier);
-                self.close(self.expr(last).max(pos), b')')
-            }
-            // `import.meta`, `new.target`
-            ExprKind::ImportMeta | ExprKind::NewTarget(_) => {
-                self.eat_name(self.eat(self.token(pos), b"."))
-            }
-        };
-        end.max(pos).max(noted)
-    }
-
-    fn template_of_exprs(self, open: usize, exprs: IdList<ExprId>) -> usize {
-        self.template(open, &|index, from| {
-            if index < exprs.len() {
-                self.expr(self.hir.id_at(exprs, index))
-            } else {
-                from
-            }
-        })
-    }
-
-    /// A call or a `new` expression that starts at `pos`.
-    fn call(self, c: CallId, pos: usize) -> usize {
-        let Some(call) = self.hir.calls.get(c.idx()) else {
-            return self.token(pos);
-        };
-        // The `)`, or where it is missed the last character of the last token of the call (`finishNode`).
-        if call.close_pos < INCOMPLETE_TEMPLATE {
-            return call.close_pos as usize + 1;
-        }
-        // `new C<T>`
-        self.type_args(call.type_args, self.expr(call.callee))
+        self.hir.exprs.get(e.idx()).map_or(0, |e| e.end as usize)
     }
 
     /// A property of an object literal.
     fn prop(self, p: PropId) -> usize {
-        let Some(prop) = self.hir.props.get(p.idx()) else {
-            return 0;
-        };
-        if prop.end != 0 {
-            prop.end as usize
-        } else if prop.value.is_some() {
-            self.expr(prop.value)
-        } else {
-            self.prop_name(p)
-        }
+        self.hir
+            .props
+            .get(p.idx())
+            .map_or(0, |prop| prop.end as usize)
     }
 
     /// The name of a property of an object literal.
@@ -1364,164 +1026,10 @@ impl<'a> Spans<'a> {
 
     /// `node` itself, whatever parentheses it is in.
     fn ty(self, node: TypeNodeId) -> usize {
-        let Some(&TypeNode { kind, pos, end }) = self.hir.types.get(node.idx()) else {
-            return 0;
-        };
-        if end != 0 {
-            return end as usize;
-        }
-        let pos = pos as usize;
-        let end = match kind {
-            TypeNodeKind::Error | TypeNodeKind::Heritage(_) | TypeNodeKind::BoolLit(_) => {
-                self.token(pos)
-            }
-            TypeNodeKind::Keyword(keyword) => {
-                if self.is_written_keyword(node) {
-                    pos + keyword_text(keyword).len()
-                } else if self.byte(pos) == b'*' {
-                    // JSDoc's `*`
-                    pos + 1
-                } else {
-                    // One the lowering made: the `null` of JSDoc's `T?`.
-                    return skip_trivia_back(self.text, pos);
-                }
-            }
-            // A type that is missing.
-            TypeNodeKind::Ref { name, args }
-                if args.is_empty() && self.hir.texts(name).eq([known::empty]) =>
-            {
-                return skip_trivia_back(self.text, pos);
-            }
-            TypeNodeKind::Ref { name, args } => self.type_args(args, self.entity_name(pos, name)),
-            TypeNodeKind::StringLit(_) => self.quoted(pos),
-            TypeNodeKind::NumberLit(_) | TypeNodeKind::BigIntLit { .. } => {
-                number_end(self.text, self.skip_trivia(self.eat(pos, b"-")))
-            }
-            TypeNodeKind::Template { types, .. } => self.template(pos, &|index, from| {
-                if index < types.len() {
-                    self.ty_in(self.hir.id_at(types, index), from)
-                } else {
-                    from
-                }
-            }),
-            TypeNodeKind::Array(element) => {
-                self.eat(self.eat(self.ty_in(element, pos), b"["), b"]")
-            }
-            TypeNodeKind::Tuple(elements) => {
-                let last = elements.iter().next_back();
-                self.close(last.map_or(pos + 1, |last| self.tuple_elem(last)), b']')
-            }
-            TypeNodeKind::Union(members) | TypeNodeKind::Intersection(members) => {
-                let mut members = self.hir.ids(members);
-                let Some(last) = members.next_back() else {
-                    return self.token(pos);
-                };
-                // JSDoc's `T?` and `?T` are kept as `T | null`, with the keyword put where the whole starts.
-                if self.type_pos(last) == pos
-                    && !self.is_written_keyword(last)
-                    && let Some(operand) = members.next_back()
-                {
-                    let operand_end = self.ty_in(operand, pos);
-                    return if self.byte(pos) == b'?' {
-                        operand_end
-                    } else {
-                        self.eat(operand_end, b"?")
-                    };
-                }
-                self.ty_in(last, pos)
-            }
-            TypeNodeKind::Fn(f) => self.func(f),
-            TypeNodeKind::Object(members) => {
-                let last = members.iter().next_back();
-                self.close(
-                    last.map_or(pos + 1, |last| self.hir[last].loc.end as usize),
-                    b'}',
-                )
-            }
-            TypeNodeKind::Cond { no: last, .. }
-            | TypeNodeKind::Keyof(last)
-            | TypeNodeKind::Readonly(last) => self.ty_in(last, pos),
-            TypeNodeKind::Infer(tp) => self.type_param(tp),
-            TypeNodeKind::Mapped(mapped) => {
-                let Some(mapped) = self.hir.mapped.get(mapped.idx()) else {
-                    return self.token(pos);
-                };
-                let last_end = if mapped.ty.is_some() {
-                    self.ty_in(mapped.ty, pos)
-                } else if mapped.name_ty.is_some() {
-                    self.ty_in(mapped.name_ty, pos)
-                } else {
-                    self.type_param(mapped.param)
-                };
-                self.close(last_end.max(pos + 1), b'}')
-            }
-            TypeNodeKind::IndexedAccess { index, .. } => self.close(self.ty_in(index, pos), b']'),
-            // `unique symbol`
-            TypeNodeKind::UniqueSymbol => self.eat_name(self.token(pos)),
-            TypeNodeKind::Typeof {
-                name, args, expr, ..
-            } => {
-                let name_end = if expr.is_some() {
-                    self.expr(expr)
-                } else {
-                    self.entity_name(self.skip_trivia(self.token(pos)), name)
-                };
-                self.type_args(args, name_end)
-            }
-            TypeNodeKind::Import {
-                spec,
-                args,
-                is_typeof,
-                ..
-            } => {
-                let import = if is_typeof {
-                    self.skip_trivia(self.token(pos))
-                } else {
-                    pos
-                };
-                let keyword_end = self.token(import);
-                let open = self.skip_trivia(keyword_end);
-                if self.byte(open) != b'(' {
-                    return keyword_end;
-                }
-                let mut at = self.bracket(open);
-                loop {
-                    let dot = self.eat(at, b".");
-                    let end = self.eat_name(dot);
-                    if dot == at || end == dot {
-                        break;
-                    }
-                    at = end;
-                }
-                // Without a specifier `args` holds what is written in its place.
-                if spec.is_some() {
-                    self.type_args(args, at)
-                } else {
-                    at
-                }
-            }
-            TypeNodeKind::Predicate { ty, .. } => {
-                if ty.is_some() {
-                    self.ty_in(ty, pos)
-                } else {
-                    // `asserts x`
-                    self.eat_name(self.token(pos))
-                }
-            }
-        };
-        end.max(pos)
-    }
-
-    /// Whether `node` is a keyword that is written where it is said to be. One that is not stands for something else.
-    fn is_written_keyword(self, node: TypeNodeId) -> bool {
-        match self.hir.types.get(node.idx()) {
-            Some(&TypeNode {
-                kind: TypeNodeKind::Keyword(keyword),
-                pos,
-                ..
-            }) => self.word_at(pos as usize) == keyword_text(keyword),
-            _ => true,
-        }
+        self.hir
+            .types
+            .get(node.idx())
+            .map_or(0, |node| node.end as usize)
     }
 
     /// Past the type arguments `args`, which are written after `at`. `at` if there are none.
@@ -1544,112 +1052,50 @@ impl<'a> Spans<'a> {
         self.eat(self.eat(at, b","), b">")
     }
 
-    /// Past the type parameters `params`. `at` if there are none.
-    fn type_params(self, params: Span<TypeParamId>, at: usize) -> usize {
-        match params.iter().next_back() {
-            Some(last) => self.close_angle(self.type_param(last)),
-            None => at,
-        }
-    }
-
     fn tuple_elem(self, elem: TupleElemId) -> usize {
-        let Some(elem) = self.hir.tuple_elems.get(elem.idx()) else {
-            return 0;
-        };
-        let type_end = self.ty_in(elem.ty, 0);
-        if elem.optional && elem.name.is_none() {
-            self.eat(type_end, b"?")
-        } else {
-            type_end
-        }
+        self.hir
+            .tuple_elems
+            .get(elem.idx())
+            .map_or(0, |elem| elem.end as usize)
     }
 
     fn type_param(self, tp: TypeParamId) -> usize {
-        let Some(tp) = self.hir.type_params.get(tp.idx()) else {
-            return 0;
-        };
-        if tp.end != 0 {
-            tp.end as usize
-        } else if tp.default.is_some() {
-            self.ty_in(tp.default, 0)
-        } else if tp.constraint.is_some() {
-            self.ty_in(tp.constraint, 0)
-        } else {
-            self.token(tp.pos as usize)
-        }
+        self.hir
+            .type_params
+            .get(tp.idx())
+            .map_or(0, |tp| tp.end as usize)
     }
 
     // ───────────────────────────── patterns ─────────────────────────────
 
     fn pat(self, pat: PatId) -> usize {
-        let Some(pat) = self.hir.pats.get(pat.idx()) else {
-            return 0;
-        };
-        let pos = pat.pos as usize;
-        match pat.kind {
-            PatKind::Missing | PatKind::Ident(known::empty) => skip_trivia_back(self.text, pos),
-            PatKind::Ident(_) => self.token(pos),
-            PatKind::Object(props) => {
-                let last = props.iter().next_back();
-                self.close(last.map_or(pos + 1, |last| self.pat_prop(last)), b'}')
-            }
-            PatKind::Array(elems) => {
-                // Holes take no room.
-                let last = elems.iter().rev().find(|&elem| {
-                    let elem = self.hir[elem];
-                    elem.default.is_some()
-                        || self
-                            .hir
-                            .pats
-                            .get(elem.pat.idx())
-                            .is_some_and(|pat| !matches!(pat.kind, PatKind::Missing))
-                });
-                self.close(last.map_or(pos + 1, |last| self.pat_elem(last)), b']')
-            }
-        }
+        self.hir
+            .pats
+            .get(pat.idx())
+            .map_or(0, |node| node.end as usize)
     }
 
     fn pat_prop(self, p: PatPropId) -> usize {
-        let Some(prop) = self.hir.pat_props.get(p.idx()) else {
-            return 0;
-        };
-        if prop.default.is_some() {
-            self.expr(prop.default)
-        } else if prop.value.is_some() {
-            self.pat(prop.value)
-        } else {
-            self.key(prop.key, prop.pos as usize)
-        }
+        self.hir
+            .pat_props
+            .get(p.idx())
+            .map_or(0, |node| node.end as usize)
     }
 
     fn pat_elem(self, p: PatElemId) -> usize {
-        let Some(elem) = self.hir.pat_elems.get(p.idx()) else {
-            return 0;
-        };
-        if elem.default.is_some() {
-            self.expr(elem.default)
-        } else {
-            self.pat(elem.pat)
-        }
+        self.hir
+            .pat_elems
+            .get(p.idx())
+            .map_or(0, |node| node.end as usize)
     }
 
     // ───────────────────────────── declarations ─────────────────────────────
 
     fn var_decl(self, decl: VarDeclId) -> usize {
-        let Some(decl) = self.hir.var_decls.get(decl.idx()) else {
-            return 0;
-        };
-        if decl.loc.end != 0 {
-            decl.loc.end as usize
-        } else if decl.init.is_some() {
-            self.expr(decl.init)
-        } else if decl.ty.is_some() {
-            self.ty_in(decl.ty, 0)
-        } else if decl.flags.contains(Flags::DEFINITE) {
-            self.eat(self.pat(decl.pat), b"!")
-        } else {
-            self.pat(decl.pat)
-        }
+        self.hir
+            .var_decls
+            .get(decl.idx())
+            .map_or(0, |decl| decl.loc.end as usize)
     }
 
     /// Where the tag of a JSDoc comment that starts at `at` ends: where the next one starts, or else before the `*/`.
@@ -1679,130 +1125,20 @@ impl<'a> Spans<'a> {
     }
 
     fn param(self, param: ParamId) -> usize {
-        let Some(param) = self.hir.params.get(param.idx()) else {
-            return 0;
-        };
-        if param.loc.end != 0 {
-            return param.loc.end as usize;
-        }
-        let pos = param.pos as usize;
-        // `reparseJSDocSignature`: one that is made from a `@param` tag is as long as the tag.
-        if self.byte(pos) == b'@' && self.hir.is_in_jsdoc(param.pos) {
-            return self.jsdoc_tag(pos);
-        }
-        // The type a JSDoc comment gives it is written before it, and is no part of it.
-        let is_typed = param.ty.is_some() && self.type_pos(param.ty) >= pos;
-        if param.default.is_some() {
-            self.expr(param.default)
-        } else if is_typed {
-            self.ty_in(param.ty, 0)
-        } else if param.flags.contains(Flags::OPTIONAL) {
-            self.eat(self.pat(param.pat), b"?")
-        } else {
-            self.pat(param.pat)
-        }
-    }
-
-    /// Where the head of `func` ends: after the return type or else the parameters, after the `=>` of an arrow function.
-    fn signature(self, func: &Func) -> usize {
-        let anchor = func.anchor as usize;
-        if func.kind == FnKind::Arrow {
-            return self.eat(anchor, b"=>");
-        }
-        let closer = match self.byte(anchor) {
-            b'(' => b')',
-            b'[' => b']',
-            // `static { }`
-            b'{' => return anchor,
-            // `createMissingList`: no parameters are written. The anchor is in the token before.
-            _ => 0,
-        };
-        let params_end = if closer == 0 {
-            ident_end(self.text, anchor).max(anchor + 1)
-        } else {
-            let inside = match func.params.iter().next_back() {
-                Some(last) => self.param(last),
-                None if func.this_ty(self.hir).is_some() => self.ty_in(func.this_ty(self.hir), 0),
-                None => anchor + 1,
-            };
-            self.close(inside.max(anchor + 1), closer)
-        };
-        // The return type a JSDoc comment gives it is written before it, and is no part of it.
-        if func.ret.is_some() && self.type_pos(func.ret) >= anchor {
-            self.ty_in(func.ret, 0)
-        } else {
-            params_end
-        }
-    }
-
-    /// Whatever `f` is: a function, a method, an accessor, a signature with its `;`, a function type.
-    fn func(self, f: FnId) -> usize {
-        let Some(func) = self.hir.fns.get(f.idx()) else {
-            return 0;
-        };
-        match func.body {
-            FnBody::Expr(e) => self.expr(e),
-            FnBody::Block(stmts) => match self.hir.ids(stmts).next_back() {
-                Some(last) => self.close(self.hir[last].loc.end as usize, b'}'),
-                None => self.braces_after(self.signature(func)),
-            }
-            .max(func.anchor as usize),
-            FnBody::None => {
-                let head_end = self.signature(func);
-                if matches!(func.kind, FnKind::FunctionType | FnKind::ConstructorType)
-                    || func.flags.contains(Flags::MISSING_BODY)
-                {
-                    head_end
-                } else if func.flags.contains(Flags::BODY_DROPPED) {
-                    self.braces_after(head_end)
-                } else {
-                    self.member_separator(head_end)
-                }
-            }
-        }
-    }
-
-    fn class(self, c: ClassId) -> usize {
-        let Some(class) = self.hir.classes.get(c.idx()) else {
-            return 0;
-        };
-        let inside = match class.members.iter().next_back() {
-            Some(last) => self.hir[last].loc.end as usize,
-            None => {
-                // The last thing in the head that is kept.
-                let head = if let Some(last) = self.hir.ids(class.implements).next_back() {
-                    self.ty_in(last, 0)
-                } else if class.extends.is_some() {
-                    self.type_args(class.extends_args, self.expr(class.extends))
-                } else if class.name.is_some() {
-                    self.type_params(class.type_params, self.token(class.name_pos as usize))
-                } else {
-                    self.type_params(class.type_params, class.name_pos as usize)
-                };
-                self.inside_braces_after(head)
-            }
-        };
-        self.close(inside.max(class.name_pos as usize), b'}')
+        self.hir
+            .params
+            .get(param.idx())
+            .map_or(0, |param| param.loc.end as usize)
     }
 
     // ───────────────────────────── statements ─────────────────────────────
 
-    /// Past the `:` of a `case` or `default` clause. `None` if where it is written is not kept.
-    fn case_label(self, case: CaseId) -> Option<usize> {
-        let case = self.hir.cases.get(case.idx())?;
-        if case.test.is_some() {
-            return Some(self.eat(self.expr(case.test), b":"));
-        }
-        let pos = case.pos as usize;
-        (self.word_at(pos) == b"default").then(|| self.eat(pos + b"default".len(), b":"))
-    }
-
     /// `getErrorRangeForArrowFunction`: an arrow function whose block goes over several lines is pointed at by the first of them.
-    fn arrow_error_end(self, f: FnId) -> usize {
-        let end = self.func(f);
+    fn arrow_error_end(self, e: ExprId, f: FnId) -> usize {
+        let end = self.expr_inside(e);
         match self.hir.fns.get(f.idx()) {
             Some(func) if matches!(func.body, FnBody::Block(_)) => {
-                line_end(self.text, self.signature(func)).min(end)
+                line_end(self.text, self.eat(func.anchor as usize, b"=>")).min(end)
             }
             _ => end,
         }
@@ -1850,7 +1186,7 @@ impl Checker<'_> {
         };
         let is_pointed_at_by_a_token = match expr.kind {
             ExprKind::Fn(f) => match hir.fns.get(f.idx()).map(|f| f.kind) {
-                Some(FnKind::Arrow) => return spans.arrow_error_end(f) as u32,
+                Some(FnKind::Arrow) => return spans.arrow_error_end(e, f) as u32,
                 kind => kind == Some(FnKind::Expr),
             },
             ExprKind::Class(_) | ExprKind::Satisfies { .. } | ExprKind::Yield { .. } => true,
@@ -1994,7 +1330,10 @@ impl Checker<'_> {
     /// the whole of anything else.
     pub(super) fn error_range_of_stmt(&self, file: FileId, s: StmtId) -> (u32, u32) {
         let (hir, spans) = (self.hir(file), self.spans(file));
-        let Some(&Stmt { kind, pos, loc, .. }) = hir.stmts.get(s.idx()) else {
+        let Some(&Stmt {
+            kind, start, loc, ..
+        }) = hir.stmts.get(s.idx())
+        else {
             return (0, 0);
         };
         let name = match kind {
@@ -2004,20 +1343,39 @@ impl Checker<'_> {
             StmtKind::TypeAlias(a) => hir.aliases.get(a.idx()).map(|a| (a.name, a.name_pos)),
             StmtKind::Enum(e) => hir.enums.get(e.idx()).map(|e| (e.name, e.name_pos)),
             StmtKind::Module(m) => hir.modules.get(m.idx()).map(|m| (known::empty, m.name_pos)),
-            StmtKind::Return(_) => Some((Atom::NONE, pos)),
-            _ => return (pos, loc.end),
+            StmtKind::Return(_) => Some((Atom::NONE, start)),
+            _ => return (start, loc.end),
         };
-        let start = match name {
+        let at = match name {
             Some((name, name_pos)) if name.is_some() => name_pos,
-            _ => pos,
+            _ => start,
         };
-        (start, spans.token(start as usize) as u32)
+        (at, spans.token(at as usize) as u32)
+    }
+
+    /// Where the first token after the modifiers of the statement `s` is: of a variable statement, its `VariableDeclarationList`.
+    pub(super) fn start_after_modifiers(&self, file: FileId, s: StmtId) -> u32 {
+        let hir = self.hir(file);
+        let Some(last) = hir.modifier_list(hir[s].modifiers).last() else {
+            return hir[s].start;
+        };
+        let end = match last.kind {
+            ModifierKind::Decorator(e) => self.end_of_expr(file, e),
+            ModifierKind::Keyword(_) => self.end_of_token_at(file, last.pos),
+        };
+        self.skip_trivia_from(file, end)
     }
 
     /// `GetErrorRangeForNode` of a `case` or `default` clause: up to its `:`.
     pub(super) fn error_range_of_case(&self, file: FileId, case: CaseId) -> (u32, u32) {
-        let start = self.hir(file).cases.get(case.idx()).map_or(0, |c| c.pos);
-        (start, self.spans(file).case_label(case).unwrap_or(0) as u32)
+        let hir = self.hir(file);
+        let Some(case) = hir.cases.get(case.idx()) else {
+            return (0, 0);
+        };
+        match hir.ids(case.body).next() {
+            Some(first) => (case.pos, hir[first].loc.pos),
+            None => (case.pos, case.end),
+        }
     }
 
     /// `GetErrorRangeForNode` of one declaration of a variable statement: its name or pattern.
@@ -2040,7 +1398,14 @@ impl Checker<'_> {
 
     /// `node.End()` of whatever `func` is: a function, a method, an accessor, a signature with its `;`, a function type.
     pub(super) fn end_of_fn(&self, file: FileId, func: FnId) -> u32 {
-        self.spans(file).func(func) as u32
+        let hir = self.hir(file);
+        match self.bound(file).fns.get(func.idx()).map(|func| func.owner) {
+            Some(FnOwner::Expr(e)) => hir[e].end,
+            Some(FnOwner::Stmt(s)) => hir[s].loc.end,
+            Some(FnOwner::Member(m)) => hir[m].loc.end,
+            Some(FnOwner::Type(node)) => hir[node].end,
+            Some(FnOwner::None) | None => 0,
+        }
     }
 
     /// `GetErrorRangeForNode`, of whatever `f` is.
@@ -2059,22 +1424,17 @@ impl Checker<'_> {
             _ if matches!(func.kind, FnKind::Method | FnKind::Getter | FnKind::Setter) => {
                 (func.name_pos, spans.name(func.name_pos as usize) as u32)
             }
-            _ => (func.start, spans.func(f) as u32),
-        }
-    }
-
-    /// Where the head of `func` ends: after its return type, or else after the `)` of its parameters. After the `=>` of an arrow
-    /// function.
-    pub(super) fn end_of_signature(&self, file: FileId, func: FnId) -> u32 {
-        match self.hir(file).fns.get(func.idx()) {
-            Some(func) => self.spans(file).signature(func) as u32,
-            None => 0,
+            _ => (func.start, self.end_of_fn(file, f)),
         }
     }
 
     /// `node.End()` of a class.
     pub(super) fn end_of_class(&self, file: FileId, class: ClassId) -> u32 {
-        self.spans(file).class(class) as u32
+        let hir = self.hir(file);
+        match self.bound(file).class_owner[class.idx()] {
+            ClassOwner::Expr(e) => hir[e].end,
+            ClassOwner::Stmt(s) => hir[s].loc.end,
+        }
     }
 
     /// `node.End()` of `Base<Args>` in the `extends` clause of a class (`ExpressionWithTypeArguments`). 0 if there is none.
@@ -2142,7 +1502,7 @@ impl Checker<'_> {
     /// `node.End()` of `a` or `a as b` in an import.
     pub(super) fn end_of_import_spec(&self, file: FileId, spec: ImportSpecId) -> u32 {
         match self.hir(file).import_specs.get(spec.idx()) {
-            Some(spec) => self.end_of_token_at(file, spec.pos.max(spec.imported_pos)),
+            Some(spec) => spec.end,
             None => 0,
         }
     }
@@ -2150,7 +1510,7 @@ impl Checker<'_> {
     /// `node.End()` of `a` or `a as b` in an export.
     pub(super) fn end_of_export_spec(&self, file: FileId, spec: ExportSpecId) -> u32 {
         match self.hir(file).export_specs.get(spec.idx()) {
-            Some(spec) => self.end_of_token_at(file, spec.pos.max(spec.local_pos)),
+            Some(spec) => spec.end,
             None => 0,
         }
     }
@@ -2166,12 +1526,6 @@ impl Checker<'_> {
     /// no text: that of the default library is not kept.
     pub(super) fn end_of_token_at(&self, file: FileId, pos: u32) -> u32 {
         (self.spans(file).token(pos as usize) as u32).max(pos)
-    }
-
-    /// `node.End()` of the template that opens at `open`, whatever is substituted in it.
-    pub(super) fn end_of_template_at(&self, file: FileId, open: u32) -> u32 {
-        let spans = self.spans(file);
-        spans.template(open as usize, &|_, from| spans.close(from, b'}') - 1) as u32
     }
 
     /// Where what the bracket at `open` opens is closed: after the matching `)`, `]`, `}`.
@@ -2240,6 +1594,25 @@ impl Checker<'_> {
                 },
                 _ => 0,
             },
+            NodeData::Part(Part::NamedBindings, row) => {
+                self.end_of_node(file, row.with(Part::ImportClause))
+            }
+            NodeData::Part(Part::Body | Part::Literal, row) => self.end_of_node(file, row),
+            NodeData::Part(
+                Part::Extends | Part::Implements | Part::DeclarationList | Part::CatchClause,
+                _,
+            ) => {
+                let mut last = Node::NONE;
+                hir.for_each_child(node, &mut |child| {
+                    last = child;
+                    false
+                });
+                self.end_of_node(file, last)
+            }
+            NodeData::Part(
+                Part::Label | Part::NameLiteral | Part::Operand | Part::Keyword | Part::Specifier,
+                _,
+            ) if hir.start(node) != 0 => self.end_of_token_at(file, hir.start(node)),
             // The tree does not say.
             NodeData::Part(..) => 0,
             NodeData::Expr(e) => self.end_inside_parentheses(file, e),

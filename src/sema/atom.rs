@@ -38,7 +38,9 @@ macro_rules! known_atoms {
         #[allow(non_upper_case_globals)]
         pub mod known {
             use super::Atom;
-            known_atoms!(@consts 0u32; $($name,)*);
+            #[allow(non_camel_case_types)]
+            enum Number { $($name),* }
+            $(pub const $name: Atom = Atom(Number::$name as u32);)*
             pub(super) const TEXTS: &[&str] = &[$($text),*];
             /// `[Symbol.iterator]` and `[Symbol.asyncIterator]` as names of properties. Interned right after `TEXTS`: no `str`
             /// holds their first byte.
@@ -48,11 +50,6 @@ macro_rules! known_atoms {
             pub const global_augmentation: Atom = Atom(TEXTS.len() as u32 + 2);
         }
     };
-    (@consts $n:expr; $name:ident, $($rest:ident,)*) => {
-        pub const $name: Atom = Atom($n);
-        known_atoms!(@consts $n + 1u32; $($rest,)*);
-    };
-    (@consts $n:expr;) => {};
 }
 
 known_atoms! {
@@ -176,6 +173,16 @@ known_atoms! {
     construct_signature = "new=",
     index_signature = "index=",
     type_literal = "type=",
+    any = "any",
+    never = "never",
+    void = "void",
+    WeakMap = "WeakMap",
+    WeakSet = "WeakSet",
+    Reflect = "Reflect",
+    let_ = "let",
+    __esModule = "__esModule",
+    async_ = "async",
+    AsyncDisposable = "AsyncDisposable",
 }
 
 /// What the name of a property that a symbol names starts with: `InternalSymbolNamePrefix` and `@`. No text has the byte 0xFE in
@@ -301,6 +308,12 @@ impl Interner {
         );
         assert_eq!(this.intern(b"\xFEglobal"), known::global_augmentation);
         this
+    }
+
+    /// Which interner it is, of all there have been: what is remembered of one says nothing of another.
+    #[inline]
+    pub fn number(&self) -> u64 {
+        self.number
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {

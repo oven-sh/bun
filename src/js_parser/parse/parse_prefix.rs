@@ -61,11 +61,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             let less_than = p.lexer.loc();
             if p.try_skip_type_script_type_arguments_with_backtracking() {
-                let after_super = bun_ast::Range {
-                    loc: super_range.end(),
-                    len: 0,
-                };
-                p.lexer.ts_error(after_super, 2754);
+                p.lexer
+                    .ts_error(p.lexer.range_from(super_range.end()), 2754);
                 // A template drops the type arguments.
                 if !matches!(
                     p.lexer.token,
@@ -153,8 +150,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut value = p.parse_expr(Level::Lowest)?;
             p.mark_expr_as_parenthesized(&mut value);
-            p.mark_paren(&mut value, loc, full_start);
             p.lexer.expect(T::TCloseParen)?;
+            p.mark_paren(&mut value, loc, full_start);
 
             p.allow_in = old_allow_in;
             return Ok(value);
@@ -310,7 +307,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         let value = p.parse_expr(Level::Prefix)?;
                         if p.lexer.token == T::TAsteriskAsterisk {
-                            p.unary_before_exponentiation(level, loc, 17006)?;
+                            p.unary_before_exponentiation(level, loc, b"await")?;
                         }
 
                         return Ok(p.new_expr(E::Await { value }, loc));
@@ -332,7 +329,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && p.lexer.tolerant
                         && level.lt(Level::Prefix)
                     {
-                        p.lexer.ts_error(name_range, 17006);
+                        p.lexer.ts_error_about(name_range, 17006, b"await");
                     }
                 }
             },
@@ -448,8 +445,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let ref_ = p.store_name_in_ref(name);
-
-        Ok(Expr::init_identifier(ref_, loc))
+        let mut identifier = Expr::init_identifier(ref_, loc);
+        // Written with an escape, it is longer than its name.
+        if Self::IS_TYPESCRIPT_ENABLED && !ref_.is_source_contents_slice() {
+            p.finish_expr(&mut identifier);
+        }
+        Ok(identifier)
     }
 
     /// `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine`, with the lexer already at that token.
@@ -482,7 +483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
-            p.unary_before_exponentiation(level, await_range.loc, 17006)?;
+            p.unary_before_exponentiation(level, await_range.loc, b"await")?;
         }
         Ok(p.new_expr(E::Await { value }, await_range.loc))
     }
@@ -575,7 +576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
-            p.unary_before_exponentiation(level, loc, 17006)?;
+            p.unary_before_exponentiation(level, loc, b"void")?;
         }
 
         Ok(p.new_expr(
@@ -593,7 +594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
-            p.unary_before_exponentiation(level, loc, 17006)?;
+            p.unary_before_exponentiation(level, loc, b"typeof")?;
         }
 
         let mut flags = UnaryFlags::default();
@@ -615,7 +616,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
-            p.unary_before_exponentiation(level, loc, 17006)?;
+            p.unary_before_exponentiation(level, loc, b"delete")?;
         }
         if let ExprData::EIndex(e_index) = &value.data {
             if let ExprData::EPrivateIdentifier(private) = &e_index.index.data {
@@ -657,7 +658,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
-            p.unary_before_exponentiation(level, loc, 17006)?;
+            p.unary_before_exponentiation(level, loc, b"+")?;
         }
 
         Ok(p.new_expr(
@@ -675,7 +676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
-            p.unary_before_exponentiation(level, loc, 17006)?;
+            p.unary_before_exponentiation(level, loc, b"-")?;
         }
 
         Ok(p.new_expr(
@@ -693,7 +694,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
-            p.unary_before_exponentiation(level, loc, 17006)?;
+            p.unary_before_exponentiation(level, loc, b"~")?;
         }
 
         Ok(p.new_expr(
@@ -711,7 +712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
-            p.unary_before_exponentiation(level, loc, 17006)?;
+            p.unary_before_exponentiation(level, loc, b"!")?;
         }
 
         Ok(p.new_expr(
@@ -976,7 +977,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `checkGrammarMetaProperty`: any word makes a meta property, and all but `target` are objected to.
                 if p.lexer.identifier != b"target" {
                     let name = p.lexer.range();
-                    p.lexer.ts_error(name, 17012);
+                    let named = [p.lexer.raw(), b"new", b"target"].join(&0);
+                    p.lexer.ts_error_about(name, 17012, &named);
                     other_name = Some(p.new_expr(E::EString::init(p.lexer.identifier), name.loc));
                 }
             }
@@ -1085,7 +1087,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         data: ExprData::EMissing(E::Missing {}),
                         loc: p.lexer.loc(),
                     };
-                    p.note_flag(&mut hole.loc, crate::sema::Mark::OmittedExpression);
+                    p.finish_expr(&mut hole);
+                    p.note_token_full_start(&mut hole.loc, crate::sema::Mark::OmittedExpression);
                     items.push(hole);
                 }
                 T::TDotDotDot => {
@@ -1398,7 +1401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && p.lexer.tolerant
                             && !p.lexer.is_log_disabled
                         {
-                            p.unary_before_exponentiation(level, loc, 17007)?;
+                            p.unary_before_exponentiation(level, loc, b"")?;
                         }
                     }
                     return Ok(value);
@@ -1415,13 +1418,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // loop would otherwise apply to the annotated "x".
                 let mut value = Expr::EMPTY;
                 p.parse_expr_with_flags(Level::Prefix, flags, &mut value)?;
+                p.note_token_full_start(&mut value.loc, crate::sema::Mark::End);
                 p.note_loc(&mut value.loc, crate::sema::Mark::LessThan, loc);
                 p.note_kept_type(&mut value.loc, crate::sema::Mark::As, ty);
                 if p.lexer.token == T::TAsteriskAsterisk
                     && p.lexer.tolerant
                     && !p.lexer.is_log_disabled
                 {
-                    p.unary_before_exponentiation(level, loc, 17007)?;
+                    p.unary_before_exponentiation(level, loc, b"")?;
                 }
                 return Ok(value);
             }
@@ -1496,8 +1500,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::Backtrack);
         }
         let rest = Self::pfx_jsx_elements(p, first, false)?;
-        p.lexer
-            .ts_error(bun_ast::Range { loc: first, len: 1 }, 2657);
+        p.lexer.ts_error(p.lexer.range_from(first), 2657);
         Ok(p.join_with_comma(element, rest))
     }
 
@@ -1633,22 +1636,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(arrow_result?, loc))
     }
 
-    /// `parseUnaryExpressionOrHigher`: what starts at `loc` is on the left of `**`.
+    /// `parseUnaryExpressionOrHigher`: what starts at `loc` is on the left of `**`. `operator`: what it starts with, nothing for `<T>`.
     #[cold]
     #[inline(never)]
     fn unary_before_exponentiation(
         &mut self,
         level: Level,
         loc: bun_ast::Loc,
-        code: u32,
+        operator: &[u8],
     ) -> PResult<()> {
         let p = self;
         if p.lexer.tolerant && !p.lexer.is_log_disabled {
             // The operand of a unary operator, of `await` and of `<T>` is parsed at Level::Prefix
             // (`parseSimpleUnaryExpression`): only the outermost is objected to.
             if level.lt(Level::Prefix) {
-                let len = p.lexer.start as i32 - loc.start;
-                p.lexer.ts_error(bun_ast::Range { loc, len }, code);
+                let range = p.lexer.range_from(loc);
+                match operator {
+                    b"" => p.lexer.ts_error(range, 17007),
+                    _ => p.lexer.ts_error_about(range, 17006, operator),
+                }
             }
             return Ok(());
         }

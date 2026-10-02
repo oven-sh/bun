@@ -5,7 +5,7 @@
 //! is in the circle, and what only leads to it is not. Here the circles are looked for in what is written, and among those that
 //! `Checker::enter` came upon when the types were asked for.
 
-use super::errors::Diagnostic;
+use super::sink::held;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
 use smallvec::SmallVec;
@@ -82,7 +82,7 @@ fn keyword_it_comes_to(hir: &hir::File, node: TypeNodeId) -> Option<Keyword> {
 }
 
 impl Checker<'_> {
-    pub(super) fn check_circularities(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    pub(super) fn check_circularities(&mut self, file: FileId) {
         self.check_circular_resolutions(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `checkClassLikeDeclaration`, `checkInterfaceDeclaration`
@@ -97,7 +97,7 @@ impl Checker<'_> {
             let own = self.files().sym(file, symbol);
             self.base_types(own);
         }
-        self.check_circular_mapped_properties(file, out);
+        self.check_circular_mapped_properties(file);
         for p in 0..hir.type_params.len() {
             let constraint = hir.type_params[p].constraint;
             if constraint.is_none() {
@@ -119,10 +119,9 @@ impl Checker<'_> {
             }
             if is_circular {
                 let start = start_of_constraint(hir, constraint);
-                out.push(Diagnostic { start, code: 2313 });
                 let end = self.end_of_type_node_from(file, constraint, start);
                 let name = self.atom_text(hir.type_params[p].name);
-                self.note(start, end, 2313, vec![name]);
+                self.error_at((file, start, end), 2313, &[Arg::Text(&name)]);
                 self.relate(start, 2313, |c| {
                     c.origin_of_circular_constraint(file, own, start, end)
                 });
@@ -156,7 +155,7 @@ impl Checker<'_> {
         if let (of, Decl::Interface(i)) = extending {
             // `isNodeDescendantOf`
             let is_written_in_it = of == file
-                && (hir[hir[i].stmt].pos..self.end_of_stmt(file, hir[i].stmt))
+                && (hir[hir[i].stmt].start..self.end_of_stmt(file, hir[i].stmt))
                     .contains(&hir[mapped].pos);
             if !is_written_in_it {
                 let at = self.place_of_token(of, self.hir(of)[i].name_pos);
@@ -239,13 +238,16 @@ impl Checker<'_> {
 
     /// The end of `getTypeOfAccessors`, where `popTypeResolution` finds the circle. `members`: the declarations of the property.
     pub(super) fn report_circular_accessors(&mut self, members: &[(FileId, MemberId)]) {
-        let of_kind = |kind: MemberKind| {
+        let of_kind = |c: &Self, kind: MemberKind| {
             members
                 .iter()
                 .copied()
-                .find(|&(file, m)| self.hir(file)[m].kind == kind)
+                .find(|&(file, m)| c.hir(file)[m].kind == kind)
         };
-        let (getter, setter) = (of_kind(MemberKind::Getter), of_kind(MemberKind::Setter));
+        let (getter, setter) = (
+            of_kind(self, MemberKind::Getter),
+            of_kind(self, MemberKind::Setter),
+        );
         // `getAnnotatedAccessorTypeNode`
         let annotated_getter = getter.filter(|&(file, g)| {
             let hir = self.hir(file);
@@ -256,7 +258,7 @@ impl Checker<'_> {
             let first = hir[hir[s].func].params.iter().next();
             first.is_some_and(|p| hir[p].ty.is_some())
         });
-        let auto_accessor = of_kind(MemberKind::Property);
+        let auto_accessor = of_kind(self, MemberKind::Property);
         // `symbolToString`
         let (file, first) = members[0];
         let end = self.end_of_member_name(file, first);
@@ -327,7 +329,7 @@ impl Checker<'_> {
 
     /// `getTypeOfMappedSymbol`: 2615 at `c.currentNode`, the type node being checked when the type of a property of a mapped type
     /// turns out to depend on itself.
-    fn check_circular_mapped_properties(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+    fn check_circular_mapped_properties(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `checkSourceElement` makes each type node the current node, checks its children, then resolves the node. Children have
         // lower ids.
@@ -362,19 +364,21 @@ impl Checker<'_> {
                     Some(at) => (at, self.end_of_token_at(file, at)),
                     None => (node.pos, self.end_of_type_node(file, TypeNodeId(n as u32))),
                 };
-                out.push(Diagnostic { start, code: 2615 });
                 let names = &self.p.circular_mapped_prop_names;
                 let named = names.get(&(file, TypeNodeId(n as u32)));
-                self.explain_to(start, end, 2615, |c| match named {
-                    Some((mapped, name)) => vec![
-                        match c.prop_of(mapped, name) {
-                            Some((prop, _)) => c.prop_to_string(&prop),
-                            None => c.atom_text(name),
-                        },
-                        c.type_to_string(mapped),
-                    ],
-                    None => Vec::new(),
-                });
+                {
+                    let args = match named {
+                        Some((mapped, name)) => vec![
+                            match self.prop_of(mapped, name) {
+                                Some((prop, _)) => self.prop_to_string(&prop),
+                                None => self.atom_text(name),
+                            },
+                            self.type_to_string(mapped),
+                        ],
+                        None => Vec::new(),
+                    };
+                    self.add_diagnostic(Reported::new((file, start, end), 2615, held(args)));
+                }
             }
         }
     }
@@ -460,7 +464,7 @@ impl Checker<'_> {
     ) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let options = &self.p.files.options;
-        if options.no_emit_is_set || options.isolated_modules || hir.kind == FileKind::Declaration {
+        if options.no_emit || options.isolated_modules || hir.kind == FileKind::Declaration {
             return None;
         }
         let index = self.exprs_by_kind(file);
@@ -496,7 +500,7 @@ impl Checker<'_> {
         own: TypeParamId,
         start: u32,
         end: u32,
-    ) -> Vec<super::explain::Related> {
+    ) -> Vec<Reported> {
         // `getNarrowableTypeForReference` asks what the type of a variable extends.
         let variable = self.first_variable_read_by_emit(file, |c, ty| {
             matches!(
@@ -519,13 +523,7 @@ impl Checker<'_> {
                     !(start..end).contains(&from) && !(from..to).contains(&start)
                 }),
         };
-        at.map(|at| super::explain::Related {
-            at: Some(at),
-            code: 2751,
-            args: Vec::new(),
-        })
-        .into_iter()
-        .collect()
+        at.map(|at| Reported::bare(at, 2751)).into_iter().collect()
     }
 
     /// Whether `from` is `to`, or what it extends leads there, going by what is written as `is_constraint_circular` does.

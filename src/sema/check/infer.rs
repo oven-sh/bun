@@ -75,15 +75,6 @@ pub struct Inference {
     calls: u32,
     /// The parameter type an inference started from.
     original_target: TypeId,
-    /// The call is written in the body of what it calls: the type parameters in scope there are the ones being inferred.
-    pub(super) calls_itself: bool,
-    /// Where the call is written, until it has been asked whether a function around it took the type parameters over.
-    pub(super) call_site: Option<(FileId, ExprId)>,
-    /// What is inferred from has holes (`UNRESOLVED`) where something waits for its context or is not known yet: whatever
-    /// holds one is no candidate (`ObjectFlagsNonInferrableType`).
-    pub(super) leaves_out_unknown: bool,
-    /// `calls_itself` or `leaves_out_unknown` has decided whether something became a candidate.
-    pub(super) went_by_flags: bool,
     /// What is inferred from is what a binding pattern implies (`patternForType`).
     pub(super) from_pattern: bool,
     /// The types of the array literals in the arguments (`ObjectFlagsArrayLiteral`).
@@ -104,9 +95,18 @@ pub struct Inference {
     pub(super) own_of_source: SmallVec<[TypeId; 4]>,
     /// `propagationType`: the stand-in for the wildcard that is inferred for every type parameter in the target.
     propagated: Option<TypeId>,
-    /// The members of a literal are being checked that `getApparentTypeOfContextualType` has no type for under
-    /// `ContextFlagsNoConstraints`: `inferFromIntraExpressionSites` infers nothing from them.
-    pub(super) skip_intra_expression_sites: bool,
+    /// `returnMapper`. `IDENTITY`: nil.
+    pub(super) return_mapper: MapperId,
+    /// The clone that `createOuterReturnMapper` makes, once.
+    pub(super) outer_return_context: Option<Box<Inference>>,
+    /// `InferenceFlagsNoDefault`
+    pub(super) no_default: bool,
+    /// `InferenceFlagsSkippedGenericFunction`
+    pub(super) skipped_generic_function: bool,
+    /// `inferredTypeParameters`
+    pub(super) inferred_type_params: Vec<TypeId>,
+    /// `intraExpressionInferenceSites`
+    pub(super) intra_expression_inference_sites: Vec<(FileId, ExprId, TypeId)>,
 }
 
 impl Inference {
@@ -135,10 +135,6 @@ impl Inference {
             depth: 0,
             calls: 0,
             original_target: TypeId::NEVER,
-            calls_itself: false,
-            call_site: None,
-            leaves_out_unknown: false,
-            went_by_flags: false,
             from_pattern: false,
             array_literals: Vec::new(),
             any_default: false,
@@ -147,7 +143,12 @@ impl Inference {
             stand_ins: None,
             own_of_source: SmallVec::new(),
             propagated: None,
-            skip_intra_expression_sites: false,
+            return_mapper: MapperId::IDENTITY,
+            outer_return_context: None,
+            no_default: false,
+            skipped_generic_function: false,
+            inferred_type_params: Vec::new(),
+            intra_expression_inference_sites: Vec::new(),
         }
     }
 
@@ -359,25 +360,8 @@ impl<'p> Checker<'p> {
         target = self.actual_type_variable(target);
         if self.is_type_variable(target) {
             if let Some(index) = n.index_of(target) {
-                // A parameter says nothing about itself, unless it is the caller's as well. It still counts as an inference made.
-                if source == target {
-                    if !n.calls_itself
-                        && let Some((file, call)) = n.call_site.take()
-                    {
-                        n.calls_itself = self.is_type_param_adopted_around(file, call, target);
-                    }
-                    if !n.calls_itself {
-                        n.inference_priority = n.inference_priority.min(n.priority as i32);
-                        return;
-                    }
-                    n.went_by_flags = true;
-                }
                 // `ObjectFlagsNonInferrableType`: what has something left out of it is no candidate.
                 if self.is_non_inferrable(source, 0) {
-                    return;
-                }
-                if n.leaves_out_unknown && !self.is_known(source) {
-                    n.went_by_flags = true;
                     return;
                 }
                 let candidate = n.propagated.unwrap_or(source);
@@ -1889,7 +1873,14 @@ impl<'p> Checker<'p> {
             return false;
         }
         match self.data(ty) {
-            TypeData::Synth(shape) => shape.literal == Literalness::Partial,
+            TypeData::Synth(shape) => {
+                shape.literal == Literalness::Partial
+                    || shape.literal == Literalness::JsxAttributes
+                        && shape.props.iter().any(|p| {
+                            matches!(p.source, PropSource::Copy(ty, ..) | PropSource::Type(ty)
+                                if self.is_non_inferrable(ty, depth + 1))
+                        })
+            }
             TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::SilentNever) => true,
             // `checkObjectLiteral`: `objectFlags |= getObjectFlags(t) & ObjectFlagsPropagatingFlags`. `autoType` gets into a literal only
             // as what a target of an assignment pattern is declared as. The members were looked at with the literal.
@@ -2255,7 +2246,7 @@ impl<'p> Checker<'p> {
         }
         // tsc stored the type parameters when it checked the function, so a cycle through this lookup is not an error.
         self.eager.push(self.stack.len());
-        let contextual = self.contextual_signature(file, func);
+        let contextual = self.assigned_contextual_signature(file, func);
         self.eager.pop();
         let Some(contextual) = contextual else {
             return Vec::new();
@@ -2609,6 +2600,8 @@ impl<'p> Checker<'p> {
                 } else {
                     (contravariant, covariant)
                 };
+            } else if n.no_default {
+                inferred = Some(TypeId::SILENT_NEVER);
             } else if let Some(default) = self.default_of_type_param(param) {
                 // A default may mention the parameters before it. Those from it on are nothing yet.
                 let mut default = self.instantiate(default, outer);
@@ -2687,7 +2680,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `nonFixingMapper`, for the parameters `ty` mentions.
-    fn non_fixing_mapper(&mut self, n: &Inference, ty: TypeId) -> MapperId {
+    pub(super) fn non_fixing_mapper(&mut self, n: &Inference, ty: TypeId) -> MapperId {
         if !self.has_type_variables(ty) {
             return MapperId::IDENTITY;
         }
@@ -2704,6 +2697,49 @@ impl<'p> Checker<'p> {
         self.p.types.mapper(pairs)
     }
 
+    /// `context.mapper`, for what `ty` mentions (`InferenceTypeMapper.Map`).
+    pub(super) fn fixing_mapper(&mut self, n: &mut Inference, ty: TypeId) -> MapperId {
+        if !self.has_type_variables(ty) {
+            return MapperId::IDENTITY;
+        }
+        let mentioned = self.params_mentioned_in(ty, &n.params);
+        let mut pairs = Vec::new();
+        for i in 0..n.params.len() {
+            if !mentioned[i] {
+                continue;
+            }
+            if n.candidates[i].fixed.is_none() {
+                self.infer_from_intra_expression_sites(n);
+                n.clear_cached_inferences();
+                n.candidates[i].fixed = Some(self.get_inferred_type(n, i, true));
+            }
+            pairs.push((n.params[i], self.get_inferred_type(n, i, true)));
+        }
+        if pairs.is_empty() {
+            return MapperId::IDENTITY;
+        }
+        self.p.types.mapper(pairs)
+    }
+
+    /// `inferFromIntraExpressionSites`
+    fn infer_from_intra_expression_sites(&mut self, n: &mut Inference) {
+        for (file, e, ty) in std::mem::take(&mut n.intra_expression_inference_sites) {
+            if let Some(contextual_type) =
+                self.contextual_type(file, e, ContextFlags::NO_CONSTRAINTS)
+            {
+                self.infer(n, ty, contextual_type, 0);
+            }
+        }
+    }
+
+    /// `core.Some(n.inferences, hasInferenceCandidatesOrDefault)`
+    pub(super) fn has_inference_candidates_or_default(&mut self, n: &Inference) -> bool {
+        (0..n.params.len()).any(|i| {
+            let c = &n.candidates[i];
+            !c.covariant.is_empty() || !c.contravariant.is_empty() || self.has_default(n.params[i])
+        })
+    }
+
     /// Every parameter as it stands.
     pub(super) fn inference_mapper(&mut self, n: &Inference) -> MapperId {
         let types: SmallVec<[TypeId; 4]> = (0..n.params.len())
@@ -2712,34 +2748,13 @@ impl<'p> Checker<'p> {
         self.mapper_from(&n.params, &types)
     }
 
-    /// What `fix_params_in` settles parameter `index` on, or has settled it on.
-    pub(super) fn settled_type(&mut self, n: &Inference, index: usize) -> TypeId {
-        // Nothing is settled: what is found on the way holds only if it were.
-        n.clear_cached_inferences();
-        let settled = self.get_inferred_type(n, index, true);
-        n.clear_cached_inferences();
-        settled
-    }
-
-    /// Settles the parameters `ty` mentions: whatever is inferred later does not change them.
-    pub(super) fn fix_params_in(&mut self, inference: &mut Inference, ty: TypeId) {
-        let mentioned = self.params_mentioned_in(ty, &inference.params);
-        for i in 0..inference.params.len() {
-            if inference.candidates[i].fixed.is_none() && mentioned[i] {
-                inference.clear_cached_inferences();
-                let fixed = self.get_inferred_type(inference, i, true);
-                inference.candidates[i].fixed = Some(fixed);
-            }
-        }
-    }
-
     /// Whether `param` occurs in `ty`, as far as can be told without resolving members.
     pub fn mentions(&self, ty: TypeId, param: TypeId) -> bool {
         self.any_type_in(ty, |t| t == param)
     }
 
     /// `mentions`, for each of `params`, going through `ty` once.
-    fn params_mentioned_in(&self, ty: TypeId, params: &[TypeId]) -> SmallVec<[bool; 4]> {
+    pub(super) fn params_mentioned_in(&self, ty: TypeId, params: &[TypeId]) -> SmallVec<[bool; 4]> {
         let mut mentioned: SmallVec<[bool; 4]> = smallvec![false; params.len()];
         let may_be_any = self.any_type_in(ty, |t| {
             if let Some(i) = params.iter().position(|&p| p == t) {

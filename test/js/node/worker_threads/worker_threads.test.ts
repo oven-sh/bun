@@ -625,6 +625,28 @@ describe("stdio is flushed when the worker exits synchronously", () => {
       });
     },
   );
+
+  // The listener stops the worker from inside an event that the runtime emits. The worker's event loop runs on
+  // until it sees the stop: no exception stays pending for it.
+  test.concurrent("process.exit() in an 'uncaughtException' listener: the worker exits with that code", async () => {
+    const workerSrc = `process.on("uncaughtException", () => process.exit(42)); throw new Error("thrown");`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         w.on("error", e => console.log("error " + e.message));
+         w.on("exit", code => console.log("exit " + code));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "exit 42\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("worker event", () => {

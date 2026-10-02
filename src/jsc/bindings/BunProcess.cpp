@@ -920,15 +920,25 @@ static void dispatchExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
+// What `emit` threw when the runtime emitted the event: an uncaught exception. A termination that has no script
+// left to unwind is taken here, so nothing stays pending for the event loop.
+static void reportExceptionOfRuntimeEmit(Zig::GlobalObject* globalObject, JSC::TopExceptionScope& scope)
+{
+    auto* exception = scope.exception();
+    if (!exception) [[likely]]
+        return;
+    if (scope.tryClearException())
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    else
+        Bun::takeTerminationOutsideScript(JSC::getVM(globalObject), scope);
+}
+
 // The same for the end of the event loop, where nothing called: what a listener throws is an uncaught exception.
 extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     dispatchExit(globalObject, exitCode);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        if (scope.tryClearException())
-            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
-    }
+    reportExceptionOfRuntimeEmit(globalObject, scope);
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1836,6 +1846,10 @@ bool Process::emit(const Identifier& eventName, const MarkedArgumentBuffer& args
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto emitName = Identifier::fromString(vm, "emit"_s);
 
+    // A worker that stops runs no more listeners.
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        return false;
+
     // The `emit` of node:events does nothing for an event that has no listener, and most events that the
     // runtime emits have none. The read of that `emit` evaluates a module the first time: skip both.
     bool listenedTo = hasListeners(eventName);
@@ -1864,11 +1878,7 @@ bool Process::emitFromRuntime(const Identifier& eventName, const MarkedArgumentB
     auto* globalObject = defaultGlobalObject(this->globalObject());
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     bool called = emit(eventName, args);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        // A termination stays pending: it is the end of the thread, and the caller has to see it.
-        if (scope.tryClearException())
-            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
-    }
+    reportExceptionOfRuntimeEmit(globalObject, scope);
     return called;
 }
 

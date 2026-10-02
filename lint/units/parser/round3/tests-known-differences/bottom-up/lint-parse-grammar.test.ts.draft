@@ -1,0 +1,33 @@
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import groups from "./lint-parse-grammar.rows.json";
+
+// DRAFT, not run. It belongs in test/bundler/transpiler/lint-parse-grammar.test.ts, with lint-command-rows.json beside it as
+// lint-parse-grammar.rows.json, once `git grep -n parse_for_lint -- src/runtime/cli/lint_command.rs` finds the call of the lint parse.
+// Each group is the sources of one change of the grammar, one file for each source. A file without `expect` is TypeScript
+// that tsc 6.0.2 parses: the command reports no syntax error in it. `expect` is the first diagnostic of tsc for a source
+// that it rejects. Both are predictions: compare the first run with the rows of src/js_parser/parse/grammar_rows_tests.rs.
+// A group with "+decorators" needs a tsconfig.json with experimentalDecorators, if the command reads one.
+
+const lintEnv = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: "1" };
+
+test.concurrent.each(groups.map(group => [group.group, group] as const))("bun --lint reads %s as tsc does", async (_, group) => {
+  const files: Record<string, string> = {};
+  for (const file of group.files) files[file.name] = file.text;
+  if (group.decorators) files["tsconfig.json"] = JSON.stringify({ compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } });
+  using dir = tempDir("lint-parse-grammar", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--lint", ...group.files.map(file => file.name)],
+    env: lintEnv,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const syntaxErrors = stderr.split("\n").filter(line => /: error (TS1\d{3}|syntax):/.test(line));
+  const expected = group.files.filter(file => file.expect !== null).map(file => file.expect);
+  expect(stdout).toBe("");
+  expect(syntaxErrors).toEqual(expected);
+  expect(exitCode).toBe(expected.length > 0 ? 2 : 0);
+});

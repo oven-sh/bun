@@ -1,0 +1,1812 @@
+[
+ {
+  "group": "reserved-type-name",
+  "family": "reserved-type-name",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r000.ts",
+    "text": "let x: if;",
+    "expect": null
+   },
+   {
+    "name": "r001.ts",
+    "text": "let x: class;",
+    "expect": null
+   },
+   {
+    "name": "r002.ts",
+    "text": "let x: function;",
+    "expect": null
+   },
+   {
+    "name": "r003.ts",
+    "text": "let x: in;",
+    "expect": null
+   },
+   {
+    "name": "r004.ts",
+    "text": "let x: extends;",
+    "expect": null
+   },
+   {
+    "name": "r005.ts",
+    "text": "let x: super;",
+    "expect": null
+   },
+   {
+    "name": "r006.ts",
+    "text": "let x: delete;",
+    "expect": null
+   },
+   {
+    "name": "r007.ts",
+    "text": "let x: if.x;",
+    "expect": null
+   },
+   {
+    "name": "r008.ts",
+    "text": "let x: class<T>;",
+    "expect": null
+   },
+   {
+    "name": "r009.ts",
+    "text": "let x: | if;",
+    "expect": null
+   },
+   {
+    "name": "r010.ts",
+    "text": "let x: A | if;",
+    "expect": null
+   },
+   {
+    "name": "r011.ts",
+    "text": "let x: A & class;",
+    "expect": null
+   },
+   {
+    "name": "r012.ts",
+    "text": "let x: keyof if;",
+    "expect": null
+   },
+   {
+    "name": "r013.ts",
+    "text": "let x: (if);",
+    "expect": null
+   },
+   {
+    "name": "r014.ts",
+    "text": "let x: (class);",
+    "expect": null
+   },
+   {
+    "name": "r015.ts",
+    "text": "let x: `${if}`;",
+    "expect": null
+   },
+   {
+    "name": "r016.tsx",
+    "text": "let x: if;",
+    "expect": null
+   },
+   {
+    "name": "r086.ts",
+    "text": "const v = <if>x;",
+    "expect": null
+   },
+   {
+    "name": "r087.ts",
+    "text": "const v = <class>x;",
+    "expect": null
+   },
+   {
+    "name": "r088.ts",
+    "text": "const v = <enum>x;",
+    "expect": null
+   },
+   {
+    "name": "r094.ts",
+    "text": "const v = x as if;",
+    "expect": null
+   },
+   {
+    "name": "r095.ts",
+    "text": "const v = x as var;",
+    "expect": null
+   },
+   {
+    "name": "r096.ts",
+    "text": "const v = x satisfies if;",
+    "expect": null
+   },
+   {
+    "name": "r097.ts",
+    "text": "const v = (): if => x;",
+    "expect": null
+   },
+   {
+    "name": "r098.tsx",
+    "text": "x as if;",
+    "expect": null
+   },
+   {
+    "name": "r099.tsx",
+    "text": "x as var;",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "reserved-tuple-label",
+  "family": "reserved-tuple-label",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r017.ts",
+    "text": "type X = [...const: A[]];",
+    "expect": null
+   },
+   {
+    "name": "r018.ts",
+    "text": "type X = [...in: A[]];",
+    "expect": null
+   },
+   {
+    "name": "r019.ts",
+    "text": "type X = [...class: A[]];",
+    "expect": null
+   },
+   {
+    "name": "r020.ts",
+    "text": "type X = [...if: A[]];",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "import-type",
+  "family": "import-type",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r021.ts",
+    "text": "let x: typeof import(\"x\")<C>;",
+    "expect": null
+   },
+   {
+    "name": "r022.ts",
+    "text": "type X = typeof import(\"x\")<C>;",
+    "expect": null
+   },
+   {
+    "name": "r023.ts",
+    "text": "let x: import(\"x\")<T>;",
+    "expect": null
+   },
+   {
+    "name": "r024.ts",
+    "text": "type X = import(\"x\")<T>;",
+    "expect": null
+   },
+   {
+    "name": "r025.ts",
+    "text": "let x: import(\"x\", { with: { a: \"b\" } })<T>;",
+    "expect": null
+   },
+   {
+    "name": "r026.ts",
+    "text": "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });",
+    "expect": null
+   },
+   {
+    "name": "r027.ts",
+    "text": "type X = import(\"x\", { with: { a: \"b\" + \"c\" } });",
+    "expect": null
+   },
+   {
+    "name": "r028.ts",
+    "text": "let x: import(\"x\").A.<T>;",
+    "expect": null
+   },
+   {
+    "name": "r029.ts",
+    "text": "type X = import(\"x\").A.<T>;",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "asserts-is-next-line",
+  "family": "asserts-is-next-line",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r030.ts",
+    "text": "type X = (a) => asserts a\nis B;",
+    "expect": null
+   },
+   {
+    "name": "r031.ts",
+    "text": "const f = (a): (a) => asserts a\nis B => 0;",
+    "expect": null
+   },
+   {
+    "name": "r032.ts",
+    "text": "const f = (a): asserts a\nis B => 0;",
+    "expect": null
+   },
+   {
+    "name": "r033.ts",
+    "text": "const f = (a): asserts this\nis B => 0;",
+    "expect": null
+   },
+   {
+    "name": "r034.ts",
+    "text": "function f(): asserts this\nis B { throw 0 }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "as-names-declaration",
+  "family": "as-names-declaration",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r035.ts",
+    "text": "type as = 1",
+    "expect": null
+   },
+   {
+    "name": "r036.ts",
+    "text": "declare type as = 1",
+    "expect": null
+   },
+   {
+    "name": "r037.ts",
+    "text": "type satisfies = 1",
+    "expect": null
+   },
+   {
+    "name": "r038.ts",
+    "text": "interface as {}",
+    "expect": null
+   },
+   {
+    "name": "r039.ts",
+    "text": "export interface as {}",
+    "expect": null
+   },
+   {
+    "name": "r040.ts",
+    "text": "interface satisfies {}",
+    "expect": null
+   },
+   {
+    "name": "r133.ts",
+    "text": "namespace as {}",
+    "expect": null
+   },
+   {
+    "name": "r134.ts",
+    "text": "declare namespace as {}",
+    "expect": null
+   },
+   {
+    "name": "r135.ts",
+    "text": "namespace as { export const x = 1; }",
+    "expect": null
+   },
+   {
+    "name": "r136.ts",
+    "text": "namespace as.b { export const x = 1; }",
+    "expect": null
+   },
+   {
+    "name": "r137.ts",
+    "text": "namespace satisfies { export const x = 1; }",
+    "expect": null
+   },
+   {
+    "name": "r243.ts",
+    "text": "type as = 1; let x: as;",
+    "expect": null
+   },
+   {
+    "name": "r244.ts",
+    "text": "type as<T> = T;",
+    "expect": null
+   },
+   {
+    "name": "r245.ts",
+    "text": "type /* c */ as = 1",
+    "expect": null
+   },
+   {
+    "name": "r246.ts",
+    "text": "type as\n= 1",
+    "expect": null
+   },
+   {
+    "name": "r247.ts",
+    "text": "let type: any; type as = 1;",
+    "expect": null
+   },
+   {
+    "name": "r248.ts",
+    "text": "function f() { type as = 1; return 1 as as }",
+    "expect": null
+   },
+   {
+    "name": "r249.ts",
+    "text": "{ type satisfies = 1 }",
+    "expect": null
+   },
+   {
+    "name": "r250.ts",
+    "text": "export declare type satisfies = 1",
+    "expect": null
+   },
+   {
+    "name": "r251.tsx",
+    "text": "type as = 1; let x: as;",
+    "expect": null
+   },
+   {
+    "name": "r252.ts",
+    "text": "interface as {}\nfoo()",
+    "expect": null
+   },
+   {
+    "name": "r253.ts",
+    "text": "interface as { a: 1 }\nconst x = 1;",
+    "expect": null
+   },
+   {
+    "name": "r254.ts",
+    "text": "interface as {}; foo()",
+    "expect": null
+   },
+   {
+    "name": "r255.ts",
+    "text": "interface as {}\n[x] = y",
+    "expect": null
+   },
+   {
+    "name": "r256.ts",
+    "text": "interface as<T> extends B<T> { a: T }",
+    "expect": null
+   },
+   {
+    "name": "r257.ts",
+    "text": "interface satisfies extends B {}",
+    "expect": null
+   },
+   {
+    "name": "r258.ts",
+    "text": "declare interface as { a: 1 }",
+    "expect": null
+   },
+   {
+    "name": "r259.ts",
+    "text": "export declare interface as {}",
+    "expect": null
+   },
+   {
+    "name": "r260.ts",
+    "text": "export default interface as {}",
+    "expect": null
+   },
+   {
+    "name": "r261.ts",
+    "text": "function f() { interface as {} }",
+    "expect": null
+   },
+   {
+    "name": "r262.ts",
+    "text": "namespace N { export interface as {} }",
+    "expect": null
+   },
+   {
+    "name": "r263.ts",
+    "text": "declare global { interface as {} }",
+    "expect": null
+   },
+   {
+    "name": "r264.tsx",
+    "text": "interface as {}\nfoo()",
+    "expect": null
+   },
+   {
+    "name": "r265.ts",
+    "text": "namespace as {}\nfoo()",
+    "expect": null
+   },
+   {
+    "name": "r266.ts",
+    "text": "namespace as {};",
+    "expect": null
+   },
+   {
+    "name": "r267.ts",
+    "text": "namespace as {}`x`",
+    "expect": null
+   },
+   {
+    "name": "r268.ts",
+    "text": "module as.b {}",
+    "expect": null
+   },
+   {
+    "name": "r269.ts",
+    "text": "namespace as.b.c { export const a = 1 }",
+    "expect": null
+   },
+   {
+    "name": "r270.ts",
+    "text": "export namespace as { export const a = 1 }",
+    "expect": null
+   },
+   {
+    "name": "r271.ts",
+    "text": "namespace N { namespace as { export const x = 1 } export const y = as.x }",
+    "expect": null
+   },
+   {
+    "name": "r272.ts",
+    "text": "declare namespace as { const x: number; function f(): void }",
+    "expect": null
+   },
+   {
+    "name": "r273.ts",
+    "text": "declare module as.b {}",
+    "expect": null
+   },
+   {
+    "name": "r274.ts",
+    "text": "export declare namespace satisfies {}",
+    "expect": null
+   },
+   {
+    "name": "r275.tsx",
+    "text": "namespace as { export const x = 1; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "signature-initializer",
+  "family": "signature-initializer",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r041.ts",
+    "text": "type X = { a(b = 1): A };",
+    "expect": null
+   },
+   {
+    "name": "r042.ts",
+    "text": "let x: { a(b = 1): A };",
+    "expect": null
+   },
+   {
+    "name": "r043.ts",
+    "text": "interface I { (a = 1): A }",
+    "expect": null
+   },
+   {
+    "name": "r047.ts",
+    "text": "let g: (a = 1) => void;",
+    "expect": null
+   },
+   {
+    "name": "r048.ts",
+    "text": "let x: ({ a = 1 }) => void;",
+    "expect": null
+   },
+   {
+    "name": "r050.tsx",
+    "text": "let g: (a = 1) => void;",
+    "expect": null
+   },
+   {
+    "name": "r056.ts",
+    "text": "let x: A<(a = 1) => void>;",
+    "expect": null
+   },
+   {
+    "name": "r058.ts",
+    "text": "class C extends B<(a = 1) => void> {}",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "signature-parameter-modifier",
+  "family": "signature-parameter-modifier",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r044.ts",
+    "text": "type X = { a(public b: B): A };",
+    "expect": null
+   },
+   {
+    "name": "r049.ts",
+    "text": "let x: (public a: A) => void;",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "interface-extends-expression",
+  "family": "interface-extends-expression",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r045.ts",
+    "text": "interface I extends a() {}",
+    "expect": null
+   },
+   {
+    "name": "r046.ts",
+    "text": "interface I extends a.b() {}",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "signature-pattern",
+  "family": "signature-pattern",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r051.ts",
+    "text": "let x: ([a, , b]) => void;",
+    "expect": null
+   },
+   {
+    "name": "r052.ts",
+    "text": "type X = ([a, , b]) => void;",
+    "expect": null
+   },
+   {
+    "name": "r053.ts",
+    "text": "let x: new ([a, , b]) => A;",
+    "expect": null
+   },
+   {
+    "name": "r054.ts",
+    "text": "type X = { ([a, , b]): void };",
+    "expect": null
+   },
+   {
+    "name": "r055.ts",
+    "text": "type X = { new ([a, , b]): A };",
+    "expect": null
+   },
+   {
+    "name": "r057.ts",
+    "text": "type X = A<([a, , b]) => void>;",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "function-parameter-modifier",
+  "family": "function-parameter-modifier",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r059.ts",
+    "text": "function f(public a: A) {}",
+    "expect": null
+   },
+   {
+    "name": "r116.ts",
+    "text": "class C { m(public a: A) {} }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "rest-parameter-comma",
+  "family": "rest-parameter-comma",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r060.ts",
+    "text": "declare class C { m(...a,): void; }",
+    "expect": null
+   },
+   {
+    "name": "r061.ts",
+    "text": "declare class C { constructor(...a,); }",
+    "expect": null
+   },
+   {
+    "name": "r062.ts",
+    "text": "declare class C { m(...a: A[],): void; }",
+    "expect": null
+   },
+   {
+    "name": "r063.ts",
+    "text": "declare class C { constructor(...a: A[],); }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "out-in-name",
+  "family": "out-in-name",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r064.ts",
+    "text": "function f<out>() {}",
+    "expect": null
+   },
+   {
+    "name": "r065.ts",
+    "text": "const f = function <out>() {};",
+    "expect": null
+   },
+   {
+    "name": "r066.ts",
+    "text": "function f<out = A>() {}",
+    "expect": null
+   },
+   {
+    "name": "r067.ts",
+    "text": "const f = function <out = A>() {};",
+    "expect": null
+   },
+   {
+    "name": "r068.ts",
+    "text": "function f<const out>() {}",
+    "expect": null
+   },
+   {
+    "name": "r069.ts",
+    "text": "const f = function <const out>() {};",
+    "expect": null
+   },
+   {
+    "name": "r070.ts",
+    "text": "const f = <out>(a): T => a;",
+    "expect": null
+   },
+   {
+    "name": "r071.ts",
+    "text": "const f = <out>(a: T) => a;",
+    "expect": null
+   },
+   {
+    "name": "r072.ts",
+    "text": "const f = <out = A>(a): T => a;",
+    "expect": null
+   },
+   {
+    "name": "r073.ts",
+    "text": "const f = <out = A>(a: T) => a;",
+    "expect": null
+   },
+   {
+    "name": "r074.ts",
+    "text": "const f = <const out>(a): T => a;",
+    "expect": null
+   },
+   {
+    "name": "r075.tsx",
+    "text": "const f = function g<out>() {};",
+    "expect": null
+   },
+   {
+    "name": "r076.tsx",
+    "text": "async function f<out>() {}",
+    "expect": null
+   },
+   {
+    "name": "r077.tsx",
+    "text": "const f = function g<out = A>() {};",
+    "expect": null
+   },
+   {
+    "name": "r078.tsx",
+    "text": "async function f<const out>() {}",
+    "expect": null
+   },
+   {
+    "name": "r079.tsx",
+    "text": "const f = <out = A>() => 0;",
+    "expect": null
+   },
+   {
+    "name": "r080.tsx",
+    "text": "const f = async <out = A>() => 0;",
+    "expect": null
+   },
+   {
+    "name": "r081.ts",
+    "text": "const v = <out>x;",
+    "expect": null
+   },
+   {
+    "name": "r082.ts",
+    "text": "<out>x;",
+    "expect": null
+   },
+   {
+    "name": "r083.ts",
+    "text": "const v = <out>(x);",
+    "expect": null
+   },
+   {
+    "name": "r084.ts",
+    "text": "const v = <in>x;",
+    "expect": null
+   },
+   {
+    "name": "r085.ts",
+    "text": "const v = <in>(x);",
+    "expect": null
+   },
+   {
+    "name": "r089.ts",
+    "text": "const v = <out>(x) => x;",
+    "expect": null
+   },
+   {
+    "name": "r090.ts",
+    "text": "const v = <out, T>(x) => x;",
+    "expect": null
+   },
+   {
+    "name": "r091.ts",
+    "text": "const v = <out = A>(x) => x;",
+    "expect": null
+   },
+   {
+    "name": "r092.tsx",
+    "text": "f(<out, T>(x) => x);",
+    "expect": null
+   },
+   {
+    "name": "r093.tsx",
+    "text": "f(<out = A>(x) => x);",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "as-less-equals",
+  "family": "as-less-equals",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r100.ts",
+    "text": "const v = x as T <= y;",
+    "expect": null
+   },
+   {
+    "name": "r101.ts",
+    "text": "x as T <= y;",
+    "expect": null
+   },
+   {
+    "name": "r102.ts",
+    "text": "const v = x satisfies T <= y;",
+    "expect": null
+   },
+   {
+    "name": "r103.tsx",
+    "text": "f(x as T <= y);",
+    "expect": null
+   },
+   {
+    "name": "r104.tsx",
+    "text": "const v = [x as T <= y];",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "colon-after-operand",
+  "family": "colon-after-operand",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r105.ts",
+    "text": "x = a ? 1 + async(b) : c;",
+    "expect": null
+   },
+   {
+    "name": "r106.ts",
+    "text": "x = a ? -<T>(b) : c;",
+    "expect": null
+   },
+   {
+    "name": "r181.ts",
+    "text": "x = a ? -async(b) : c;",
+    "expect": null
+   },
+   {
+    "name": "r182.ts",
+    "text": "x = a ? y || async(b) : c;",
+    "expect": null
+   },
+   {
+    "name": "r183.ts",
+    "text": "x = a ? typeof async() : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r184.ts",
+    "text": "x = a ? 1 + async<T>(b) : c;",
+    "expect": null
+   },
+   {
+    "name": "r185.ts",
+    "text": "switch (x) { case 1 + async(b): c; }",
+    "expect": null
+   },
+   {
+    "name": "r187.ts",
+    "text": "x = a ? !<T>(b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r188.ts",
+    "text": "x = a ? typeof <T>(b) : c;",
+    "expect": null
+   },
+   {
+    "name": "r189.ts",
+    "text": "x = a ? 1 + <T>(b) : c;",
+    "expect": null
+   },
+   {
+    "name": "r190.ts",
+    "text": "async function f() { x = a ? await <T>(b) : c; }",
+    "expect": null
+   },
+   {
+    "name": "r191.ts",
+    "text": "switch (x) { case -<T>(b): c; }",
+    "expect": null
+   },
+   {
+    "name": "r192.tsx",
+    "text": "x = a ? 1 + async(b) : c;",
+    "expect": null
+   },
+   {
+    "name": "r193.tsx",
+    "text": "switch (x) { case -async(b): c; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "conditional-colon",
+  "family": "conditional-colon",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r107.ts",
+    "text": "x = a ? <T>(b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r195.ts",
+    "text": "x = a ? <T>(b, c) : d => e;",
+    "expect": null
+   },
+   {
+    "name": "r196.ts",
+    "text": "x = a ? async <T>(b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r197.ts",
+    "text": "x = a ? b ? c : <T>(d) : e => f;",
+    "expect": null
+   },
+   {
+    "name": "r198.ts",
+    "text": "x = a ? b ? c : async <T>(d) : e => f;",
+    "expect": null
+   },
+   {
+    "name": "r199.ts",
+    "text": "for (const k of a ? <T>(b) : c => d) {}",
+    "expect": null
+   },
+   {
+    "name": "r200.ts",
+    "text": "x = { [a ? <T>(b) : c => d]: 1 };",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "conditional-colon-in-arrow-body",
+  "family": "conditional-colon-in-arrow-body",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r108.ts",
+    "text": "x = a ? y => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r109.ts",
+    "text": "x = a ? (y) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r110.ts",
+    "text": "x = a ? <T>(y: T) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r111.tsx",
+    "text": "x = a ? y => ({ y }) : z => ({ z });",
+    "expect": null
+   },
+   {
+    "name": "r202.ts",
+    "text": "x = a ? y => ({ y }) : z => ({ z });",
+    "expect": null
+   },
+   {
+    "name": "r203.ts",
+    "text": "x = a ? y => ([y]) : z => z;",
+    "expect": null
+   },
+   {
+    "name": "r204.ts",
+    "text": "x = a ? y => (b, c) : d => e;",
+    "expect": null
+   },
+   {
+    "name": "r205.ts",
+    "text": "x = a ? y => (b = 1) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r206.ts",
+    "text": "x = a ? y => async (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r207.ts",
+    "text": "x = a ? y => <T>(b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r208.ts",
+    "text": "x = a ? y => z => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r209.ts",
+    "text": "x = a ? y => q ? r : (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r210.ts",
+    "text": "x = a ? async y => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r211.ts",
+    "text": "x = a ? async => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r212.ts",
+    "text": "x = a ? b ? c : y => (d) : e => f;",
+    "expect": null
+   },
+   {
+    "name": "r213.ts",
+    "text": "f(a ? y => (b) : c => d);",
+    "expect": null
+   },
+   {
+    "name": "r215.ts",
+    "text": "x = a ? (y, z) => ({ y, z }) : c => ({ c });",
+    "expect": null
+   },
+   {
+    "name": "r216.ts",
+    "text": "x = a ? (y = 1) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r217.ts",
+    "text": "x = a ? ({ y }) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r218.ts",
+    "text": "x = a ? ({ y }: Y) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r219.ts",
+    "text": "x = a ? ([y]: Y, z: Z) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r220.ts",
+    "text": "x = a ? (y, ...z) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r221.ts",
+    "text": "x = a ? async (y) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r222.ts",
+    "text": "x = a ? <T>(y) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r223.ts",
+    "text": "x = a ? <T,>(y) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r225.ts",
+    "text": "x = a ? <T>() => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r226.ts",
+    "text": "x = a ? <T>(y: T) => ({ y }) : z => ({ z });",
+    "expect": null
+   },
+   {
+    "name": "r227.ts",
+    "text": "x = a ? <T extends U>(y: T) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r228.ts",
+    "text": "x = a ? <T>(...y: T[]) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r229.ts",
+    "text": "x = a ? async <T>(y: T) => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r230.ts",
+    "text": "x = a ? async <T>() => (b) : c => d;",
+    "expect": null
+   },
+   {
+    "name": "r232.tsx",
+    "text": "x = a ? (y) => (b) : c => d;",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "index-signature-comma",
+  "family": "index-signature-comma",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r112.ts",
+    "text": "class C { [k: string]: T, }",
+    "expect": null
+   },
+   {
+    "name": "r113.ts",
+    "text": "abstract class C extends B { [k: string]: T, }",
+    "expect": null
+   },
+   {
+    "name": "r114.ts",
+    "text": "const c = class { [k: string]: T, };",
+    "expect": null
+   },
+   {
+    "name": "r115.ts",
+    "text": "declare class C { [k: string]: T, }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "class-implements-expression",
+  "family": "class-implements-expression",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r117.ts",
+    "text": "class C implements a() {}",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "accessor-modifier+decorators",
+  "family": "accessor-modifier",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r118.ts",
+    "text": "class C { accessor x: T; }",
+    "expect": null
+   },
+   {
+    "name": "r119.ts",
+    "text": "class C { static accessor x = 1; }",
+    "expect": null
+   },
+   {
+    "name": "r120.ts",
+    "text": "class C { accessor #x: T; }",
+    "expect": null
+   },
+   {
+    "name": "r121.ts",
+    "text": "class C { static accessor #x = 1; }",
+    "expect": null
+   },
+   {
+    "name": "r122.ts",
+    "text": "abstract class C extends B { abstract accessor x: T; }",
+    "expect": null
+   },
+   {
+    "name": "r123.ts",
+    "text": "declare class C { accessor x: T; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "import-attributes-next-line",
+  "family": "import-attributes-next-line",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r124.ts",
+    "text": "import A from \"x\"\nwith { type: \"json\" };",
+    "expect": null
+   },
+   {
+    "name": "r296.ts",
+    "text": "import \"x\"\nwith { type: \"json\" };",
+    "expect": null
+   },
+   {
+    "name": "r300.js",
+    "text": "import A from \"x\"\nwith { type: \"json\" }; A;",
+    "expect": null
+   },
+   {
+    "name": "r308.js",
+    "text": "import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}",
+    "expect": "r308.js(4,6): error TS1005: '{' expected."
+   }
+  ]
+ },
+ {
+  "group": "namespace-import-expression",
+  "family": "namespace-import-expression",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r125.ts",
+    "text": "namespace N { import(\"x\"); }",
+    "expect": null
+   },
+   {
+    "name": "r126.ts",
+    "text": "namespace N { import.meta; }",
+    "expect": null
+   },
+   {
+    "name": "r290.ts",
+    "text": "namespace N { import(\"x\").then(f); }",
+    "expect": null
+   },
+   {
+    "name": "r291.ts",
+    "text": "namespace N { import\n(\"x\"); }",
+    "expect": null
+   },
+   {
+    "name": "r292.ts",
+    "text": "namespace N { import.meta.url; }",
+    "expect": null
+   },
+   {
+    "name": "r293.ts",
+    "text": "namespace N.M { import(\"x\"); }",
+    "expect": null
+   },
+   {
+    "name": "r294.ts",
+    "text": "export namespace N { import(\"x\"); }",
+    "expect": null
+   },
+   {
+    "name": "r295.tsx",
+    "text": "namespace N { import(\"x\"); }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "abstract-declare",
+  "family": "abstract-declare",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r127.ts",
+    "text": "abstract declare class C {}",
+    "expect": null
+   },
+   {
+    "name": "r128.ts",
+    "text": "export abstract declare class C {}",
+    "expect": null
+   },
+   {
+    "name": "r276.ts",
+    "text": "abstract declare class C { m(): void }",
+    "expect": null
+   },
+   {
+    "name": "r277.ts",
+    "text": "@d abstract declare class C {}",
+    "expect": null
+   },
+   {
+    "name": "r278.tsx",
+    "text": "abstract declare class C {}",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "enum-member-in-brackets",
+  "family": "enum-member-in-brackets",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r129.ts",
+    "text": "enum E { [\"x\"] }",
+    "expect": null
+   },
+   {
+    "name": "r130.ts",
+    "text": "enum E { [\"x\"] = 1 }",
+    "expect": null
+   },
+   {
+    "name": "r131.ts",
+    "text": "enum E { ['x'] = 1, B = E.x }",
+    "expect": null
+   },
+   {
+    "name": "r132.ts",
+    "text": "enum E { [`x`] = 1 }",
+    "expect": null
+   },
+   {
+    "name": "r279.ts",
+    "text": "enum E { [\"x\"], [\"y\"] }",
+    "expect": null
+   },
+   {
+    "name": "r280.ts",
+    "text": "enum E { [ \"x\" ] = 1, }",
+    "expect": null
+   },
+   {
+    "name": "r281.ts",
+    "text": "enum E { [\"x\"] = \"s\" }",
+    "expect": null
+   },
+   {
+    "name": "r282.ts",
+    "text": "enum E { [\"x\"] = 1, [\"y\"] = x + 1 }",
+    "expect": null
+   },
+   {
+    "name": "r283.ts",
+    "text": "enum E { [\"a-b\"] = 1, B = E[\"a-b\"] }",
+    "expect": null
+   },
+   {
+    "name": "r284.ts",
+    "text": "enum E { [`x`] = 1, [`y`] }",
+    "expect": null
+   },
+   {
+    "name": "r285.ts",
+    "text": "const enum E { [\"x\"] = 1 } var v = E.x;",
+    "expect": null
+   },
+   {
+    "name": "r286.ts",
+    "text": "export enum E { [\"x\"] = 1 }",
+    "expect": null
+   },
+   {
+    "name": "r287.ts",
+    "text": "declare enum E { [\"x\"] = 1 }",
+    "expect": null
+   },
+   {
+    "name": "r288.ts",
+    "text": "namespace N { export enum E { [\"x\"] = 1 } }",
+    "expect": null
+   },
+   {
+    "name": "r289.tsx",
+    "text": "enum E { [\"x\"] = 1 }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "metadata-union-check-type+decorators",
+  "family": "metadata-union-check-type",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r138.ts",
+    "text": "class C { @d p: number | A extends B ? string : never; }",
+    "expect": null
+   },
+   {
+    "name": "r139.ts",
+    "text": "class C { @d p: K & A extends B ? string : never; }",
+    "expect": null
+   },
+   {
+    "name": "r140.ts",
+    "text": "class C { @d p: K | A extends B ? string[] : number[]; }",
+    "expect": null
+   },
+   {
+    "name": "r141.ts",
+    "text": "class C { @d p: string | A extends B ? () => void : () => void; }",
+    "expect": null
+   },
+   {
+    "name": "r142.ts",
+    "text": "class C { @d p: K | A extends B ? null : K; }",
+    "expect": null
+   },
+   {
+    "name": "r143.ts",
+    "text": "class C { @d m(a: number | A extends B ? string : string) {} }",
+    "expect": null
+   },
+   {
+    "name": "r144.ts",
+    "text": "class C { @d m(): string & A extends B ? never : string { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r309.ts",
+    "text": "class C { @d p: number | A extends B ? string : string; }",
+    "expect": null
+   },
+   {
+    "name": "r312.ts",
+    "text": "class C { @d p: string & A extends B ? never : string; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "metadata-operator-before-extends+decorators",
+  "family": "metadata-operator-before-extends",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r145.ts",
+    "text": "class C { @d p: keyof A extends B ? string : never; }",
+    "expect": null
+   },
+   {
+    "name": "r146.ts",
+    "text": "class C { @d p: readonly A[] extends B ? string : number; }",
+    "expect": null
+   },
+   {
+    "name": "r147.ts",
+    "text": "class C { @d p: unique symbol extends B ? string : never; }",
+    "expect": null
+   },
+   {
+    "name": "r148.ts",
+    "text": "class C { @d m(a: keyof A extends B ? () => void : () => void) {} }",
+    "expect": null
+   },
+   {
+    "name": "r149.ts",
+    "text": "class C { @d m(): readonly A[] extends B ? unknown : string { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r317.ts",
+    "text": "class C { @d p: keyof A extends B ? () => void : () => void; }",
+    "expect": null
+   },
+   {
+    "name": "r319.ts",
+    "text": "class C { @d p: readonly A[] extends B ? unknown : string; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "metadata-false-type-union+decorators",
+  "family": "metadata-false-type-union",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r150.ts",
+    "text": "class C { @d p: A extends B ? string : never | number; }",
+    "expect": null
+   },
+   {
+    "name": "r151.ts",
+    "text": "class C { @d p: A extends B ? unknown : string & string; }",
+    "expect": null
+   },
+   {
+    "name": "r161.ts",
+    "text": "class C { @d p: X extends Y ? A : (A | null); }",
+    "expect": null
+   },
+   {
+    "name": "r322.ts",
+    "text": "class C { @d p: A extends B ? never : string | number; }",
+    "expect": null
+   },
+   {
+    "name": "r323.ts",
+    "text": "class C { @d p: A extends B ? string : unknown | null; }",
+    "expect": null
+   },
+   {
+    "name": "r325.ts",
+    "text": "class C { @d p: A extends B ? string : never & K; }",
+    "expect": null
+   },
+   {
+    "name": "r334.ts",
+    "text": "class C { @d p: X extends Y ? never : string & string; }",
+    "expect": null
+   },
+   {
+    "name": "r335.ts",
+    "text": "class C { @d p: X extends Y ? string : never & string; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "metadata-keyword-dot+decorators",
+  "family": "metadata-keyword-dot",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r152.ts",
+    "text": "class C { @d p: any.b; }",
+    "expect": null
+   },
+   {
+    "name": "r153.ts",
+    "text": "class C { @d p: string.b; }",
+    "expect": null
+   },
+   {
+    "name": "r154.ts",
+    "text": "class C { @d p: bigint.b<T>; }",
+    "expect": null
+   },
+   {
+    "name": "r155.ts",
+    "text": "class C { @d p: undefined.b; }",
+    "expect": null
+   },
+   {
+    "name": "r156.ts",
+    "text": "class C { @d m(a: never.b) {} }",
+    "expect": null
+   },
+   {
+    "name": "r328.ts",
+    "text": "class C { @d p: never.b; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "metadata-unique-operand+decorators",
+  "family": "metadata-unique-operand",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r157.ts",
+    "text": "class C { @d p: unique symbol[]; }",
+    "expect": null
+   },
+   {
+    "name": "r158.ts",
+    "text": "class C { @d p: unique [A]; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "metadata-conditional-branches+decorators",
+  "family": "metadata-conditional-branches",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r159.ts",
+    "text": "class C { @d p: X extends Y ? number : never; }",
+    "expect": null
+   },
+   {
+    "name": "r160.ts",
+    "text": "class C { @d p: X extends Y ? K : K; }",
+    "expect": null
+   },
+   {
+    "name": "r162.ts",
+    "text": "class C { @d p: (X extends Y ? string : unknown); }",
+    "expect": null
+   },
+   {
+    "name": "r163.ts",
+    "text": "class C { @d p: X extends infer U extends V ? string : never; }",
+    "expect": null
+   },
+   {
+    "name": "r337.ts",
+    "text": "class C { @d p: X extends Y ? never : A.B; }",
+    "expect": null
+   },
+   {
+    "name": "r339.ts",
+    "text": "class C { @d p: X extends Y ? A<B> : null; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "metadata-operand-serialization+decorators",
+  "family": "metadata-operand-serialization",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r164.ts",
+    "text": "class C { @d p: string | (never | never); }",
+    "expect": null
+   },
+   {
+    "name": "r165.ts",
+    "text": "class C { @d p: (null | undefined) | string; }",
+    "expect": null
+   },
+   {
+    "name": "r166.ts",
+    "text": "class C { @d p: A.B | C.D; }",
+    "expect": null
+   },
+   {
+    "name": "r167.ts",
+    "text": "class C { @d m(a: A.B & A.C) {} }",
+    "expect": null
+   },
+   {
+    "name": "r343.ts",
+    "text": "class C { @d p: string | never & string; }",
+    "expect": null
+   },
+   {
+    "name": "r345.ts",
+    "text": "class C { @d p: string & (unknown & unknown); }",
+    "expect": null
+   },
+   {
+    "name": "r347.ts",
+    "text": "class C { @d p: A.B & A.C; }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "metadata-import-and-unique+decorators",
+  "family": "metadata-import-and-unique",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r168.ts",
+    "text": "class C { @d p: A | unique symbol; }",
+    "expect": null
+   },
+   {
+    "name": "r169.ts",
+    "text": "class C { @d p: import(\"x\") | A; }",
+    "expect": null
+   },
+   {
+    "name": "r170.ts",
+    "text": "class C { @d p: import(\"x\")[\"y\"]; }",
+    "expect": null
+   },
+   {
+    "name": "r349.ts",
+    "text": "class C { @d p: unique symbol & A; }",
+    "expect": null
+   },
+   {
+    "name": "r350.ts",
+    "text": "class C { @d p: A | import(\"x\"); }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "metadata-predicates+decorators",
+  "family": "metadata-predicates",
+  "decorators": true,
+  "files": [
+   {
+    "name": "r171.ts",
+    "text": "class C { @d p: this is B; }",
+    "expect": null
+   },
+   {
+    "name": "r172.ts",
+    "text": "class C { @d m(): a is B { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r173.ts",
+    "text": "class C { @d m(): a is B | C { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r174.ts",
+    "text": "class C { @d m(): string is B { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r175.ts",
+    "text": "class C { @d m(): asserts a { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r176.ts",
+    "text": "class C { @d m(): asserts a is B { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r177.ts",
+    "text": "class C { @d m(): asserts this is B { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r178.ts",
+    "text": "class C { @d m(): asserts a | B { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r179.ts",
+    "text": "class C { @d m(): A | asserts a { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r354.ts",
+    "text": "class C { @d p: this is this; }",
+    "expect": null
+   },
+   {
+    "name": "r357.ts",
+    "text": "class C { @d m(): a is B extends C ? D : E { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r359.ts",
+    "text": "class C { @d m(): this is B { throw 0 } }",
+    "expect": null
+   },
+   {
+    "name": "r362.ts",
+    "text": "class C { @d m(): asserts this { throw 0 } }",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "type-import-attributes-next-line",
+  "family": "type-import-attributes-next-line",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r297.ts",
+    "text": "import type A from \"x\"\nwith { type: \"json\" };",
+    "expect": null
+   }
+  ]
+ },
+ {
+  "group": "export-attributes-next-line",
+  "family": "export-attributes-next-line",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r298.ts",
+    "text": "export { a } from \"x\"\nwith { type: \"json\" };",
+    "expect": "r298.ts(2,6): error TS1005: '(' expected."
+   },
+   {
+    "name": "r299.ts",
+    "text": "export * from \"x\"\nwith { type: \"json\" };",
+    "expect": "r299.ts(2,6): error TS1005: '(' expected."
+   },
+   {
+    "name": "r301.js",
+    "text": "export * from \"x\"\nwith { type: \"json\" };",
+    "expect": "r301.js(2,6): error TS1005: '(' expected."
+   }
+  ]
+ },
+ {
+  "group": "cast-after-as-declaration",
+  "family": "cast-after-as-declaration",
+  "decorators": false,
+  "files": [
+   {
+    "name": "r302.ts",
+    "text": "type as = 1\ntype as any",
+    "expect": "r302.ts(2,9): error TS1005: '=' expected."
+   },
+   {
+    "name": "r303.ts",
+    "text": "type as = 1\ntype as <T>(x: T) => void",
+    "expect": "r303.ts(2,12): error TS1005: '=' expected."
+   },
+   {
+    "name": "r304.ts",
+    "text": "interface as {}\ninterface as any\nfoo()",
+    "expect": "r304.ts(2,14): error TS1005: '{' expected."
+   },
+   {
+    "name": "r305.ts",
+    "text": "interface as {}\ninterface as {} | X\nfoo()",
+    "expect": "r305.ts(2,17): error TS1109: Expression expected."
+   },
+   {
+    "name": "r306.ts",
+    "text": "namespace as {}\nnamespace as any",
+    "expect": "r306.ts(2,14): error TS1005: '{' expected."
+   },
+   {
+    "name": "r307.ts",
+    "text": "namespace as {}\nnamespace as { foo(): void }",
+    "expect": "r307.ts(2,21): error TS1005: ';' expected."
+   }
+  ]
+ }
+]

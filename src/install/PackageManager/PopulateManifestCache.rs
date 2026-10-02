@@ -116,9 +116,7 @@ impl RunTasksCallbacks for ManifestsOnlyCallbacks {
 /// Populate the manifest cache for packages included from `root_pkg_ids`. Only manifests of
 /// direct dependencies of the `root_pkg_ids` are populated. If `root_pkg_ids` has length 0
 /// all packages in the lockfile will have their manifests fetched if necessary.
-///
-/// The wait runs every pending task of the manager, so a dependency queued before or during
-/// the call resolves inside it and the lockfile can grow: hold no lockfile slice across the call.
+/// A dependency that is queued before or during the call resolves inside it.
 pub fn populate_manifest_cache(
     manager: &mut PackageManager,
     packages: Packages<'_>,

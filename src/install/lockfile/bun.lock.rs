@@ -1672,6 +1672,21 @@ pub(crate) enum ResolveError {
     Unresolvable,
 }
 
+/// Where a walk up the package paths found the entry for a dependency.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FoundAt {
+    /// `<pkg path>/<name>`.
+    Own,
+    /// The path of a package that encloses `<pkg path>`.
+    Enclosing,
+    /// The last path a walk bounded at a bundled package probes: next to that package, in
+    /// the package that bundles it. `bundler_len` is the length of the bundler's path,
+    /// 0 for the root package.
+    BundleRoot { bundler_len: usize },
+    /// The top-level `<name>`.
+    Root,
+}
+
 impl<T> PkgMap<T> {
     // No `Entry` alias — inherent associated types are
     // unstable; callers name `T` directly.
@@ -1714,6 +1729,7 @@ impl<T> PkgMap<T> {
         path_buf: &mut [u8],
     ) -> Result<&T, ResolveError> {
         self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, None)
+            .map(|(entry, _)| entry)
     }
 
     /// Like `find_resolution`, but stops the upward walk one level above a
@@ -1733,7 +1749,7 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
         bundled_pkgs: &PkgPathSet,
-    ) -> Result<&T, ResolveError> {
+    ) -> Result<(&T, FoundAt), ResolveError> {
         self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, Some(bundled_pkgs))
     }
 
@@ -1744,7 +1760,7 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
         bundled_pkgs: Option<&PkgPathSet>,
-    ) -> Result<&T, ResolveError> {
+    ) -> Result<(&T, FoundAt), ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
         if pkg_path.len() + 1 + dep_name.len() > path_buf.len() {
@@ -1756,19 +1772,28 @@ impl<T> PkgMap<T> {
         let mut offset = pkg_path.len() + 1;
 
         let mut at_bundle_root = false;
+        let mut found_at = FoundAt::Own;
         let mut valid = true;
         while valid {
             path_buf[offset..offset + dep_name.len()].copy_from_slice(dep_name);
             let res_path = &path_buf[0..offset + dep_name.len()];
 
             if let Some(entry) = self.map.get(res_path) {
-                return Ok(entry);
+                if at_bundle_root {
+                    found_at = FoundAt::BundleRoot {
+                        bundler_len: offset.saturating_sub(1),
+                    };
+                } else if offset == 0 {
+                    found_at = FoundAt::Root;
+                }
+                return Ok((entry, found_at));
             }
 
             if offset == 0 || at_bundle_root {
                 return Err(ResolveError::Unresolvable);
             }
 
+            found_at = FoundAt::Enclosing;
             if let Some(bundled_pkgs) = bundled_pkgs {
                 at_bundle_root = bundled_pkgs.contains(&path_buf[0..offset - 1]);
             }
@@ -3177,6 +3202,9 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
+        // Packages whose rows found different copies of an optional peer.
+        let mut multi_path_conflicts: Vec<PackageID> = Vec::new();
+
         // then each package dependency
         for row in pkg_rows {
             let pkg_path = row.key.slice();
@@ -3218,13 +3246,20 @@ pub(crate) fn parse_into_binary_lockfile(
                         // exactly like the hoister that re-derives them after
                         // `Package::clone` resets them (#37346).
                         let found = if dep.behavior.is_optional_peer() {
-                            pkg_map.find_resolution_bounded_at_bundle(
+                            let found = pkg_map.find_resolution_bounded_at_bundle(
                                 pkg_path,
                                 dep,
                                 string_buf,
                                 &mut path_buf[..],
                                 &bundled_pkgs,
-                            )
+                            );
+                            if let Ok((&id, _)) = found {
+                                let bound = resolutions[dep_id as usize];
+                                if bound != id && bound != invalid_package_id {
+                                    multi_path_conflicts.push(pkg_id);
+                                }
+                            }
+                            found.map(|(id, _)| id)
                         } else {
                             pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
                         };
@@ -3256,6 +3291,23 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
+        if !multi_path_conflicts.is_empty() {
+            bind_optional_peers_by_row(
+                &mut multi_path_conflicts,
+                pkg_rows,
+                &pkg_map,
+                &bundled_pkgs,
+                pkg_deps,
+                pkg_resolutions,
+                catalogs,
+                dependencies,
+                resolutions,
+                string_buf,
+                &mut path_buf[..],
+                &mut lockfile.pinned_optional_peers,
+            );
+        }
+
         lockfile.tag_workspace_links(
             manager
                 .as_deref()
@@ -3268,6 +3320,123 @@ pub(crate) fn parse_into_binary_lockfile(
     }
 
     Ok(())
+}
+
+/// A package printed at several paths has one set of edges, and its rows can walk to
+/// different copies of an optional peer. The hoister decides such an edge at the first
+/// placement it processes and nests the bound package only where it has to
+/// (`Tree::process_subtree`), so take the binding from the row that shows the most of it:
+///
+/// 1. An entry in the row's own path is the bound package. Nothing else nests there.
+/// 2. A copy the hoister does not dedupe a peer onto (out of range, and not a root
+///    dependency) is the bound package too, or the row would have an entry of its own.
+/// 3. A copy at the root of the row's bundle, then one at the top level, can be where the
+///    edge itself placed the bound package because nothing was there to dedupe onto. A
+///    copy the bundling package depends on was there first, so it ranks with the rest.
+/// 4. Any other copy is one the package deduped onto.
+///
+/// Equal ranks keep the last row, as the rows loop does. The first two ranks prove the
+/// binding, so those edges go to `pinned` and the hoister does not move them.
+#[cold]
+fn bind_optional_peers_by_row(
+    conflicts: &mut Vec<PackageID>,
+    pkg_rows: &[JSON::E::PropertyJSON],
+    pkg_map: &PkgMap<PackageID>,
+    bundled_pkgs: &PkgPathSet,
+    pkg_deps: &[DependencySlice],
+    pkg_resolutions: &[Resolution],
+    catalogs: &CatalogMap,
+    dependencies: &[Dependency],
+    resolutions: &mut [PackageID],
+    string_buf: &[u8],
+    path_buf: &mut [u8],
+    pinned: &mut Vec<DependencyID>,
+) {
+    const OWN_ENTRY: u8 = 5;
+    const REJECTED_COPY: u8 = 4;
+    const BUNDLE_ROOT_COPY: u8 = 3;
+    const ROOT_COPY: u8 = 2;
+    const OTHER_COPY: u8 = 1;
+
+    conflicts.sort_unstable();
+    conflicts.dedup();
+
+    for &pkg_id in conflicts.iter() {
+        let deps = pkg_deps[pkg_id as usize];
+        for dep_id in deps.begin()..deps.end() {
+            let dep = &dependencies[dep_id as usize];
+            if !dep.behavior.is_optional_peer() {
+                continue;
+            }
+            let range = catalogs.resolve_range(string_buf, dep);
+
+            let mut best: u8 = 0;
+            for row in pkg_rows {
+                let pkg_path = row.key.slice();
+                if pkg_map.get(pkg_path) != Some(&pkg_id) {
+                    continue;
+                }
+                let Ok((&found, found_at)) = pkg_map.find_resolution_bounded_at_bundle(
+                    pkg_path,
+                    dep,
+                    string_buf,
+                    path_buf,
+                    bundled_pkgs,
+                ) else {
+                    continue;
+                };
+
+                let rank = if found_at == FoundAt::Own {
+                    OWN_ENTRY
+                } else {
+                    // The package whose `node_modules` the walk ended in, when that is the
+                    // top of the search.
+                    let top_pkg_id = match found_at {
+                        FoundAt::Root | FoundAt::BundleRoot { bundler_len: 0 } => Some(0),
+                        FoundAt::BundleRoot { bundler_len } => {
+                            pkg_map.get(&pkg_path[..bundler_len]).copied()
+                        }
+                        FoundAt::Own | FoundAt::Enclosing => None,
+                    };
+                    let top_pkg_depends_on_it = top_pkg_id.is_some_and(|top_pkg_id| {
+                        let top_deps = pkg_deps[top_pkg_id as usize];
+                        (top_deps.begin()..top_deps.end()).any(|top_dep_id| {
+                            dependencies[top_dep_id as usize].name_hash == dep.name_hash
+                                && resolutions[top_dep_id as usize] == found
+                        })
+                    });
+                    let found_res = &pkg_resolutions[found as usize];
+                    let in_range = range.tag == DependencyVersionTag::Npm
+                        && found_res.tag == ResolutionTag::Npm
+                        && range.npm().version.satisfies(
+                            found_res.npm().version,
+                            string_buf,
+                            string_buf,
+                        );
+                    let root_dependency = top_pkg_id == Some(0) && top_pkg_depends_on_it;
+                    if !in_range && !root_dependency {
+                        REJECTED_COPY
+                    } else {
+                        match found_at {
+                            FoundAt::BundleRoot { .. } if !top_pkg_depends_on_it => {
+                                BUNDLE_ROOT_COPY
+                            }
+                            FoundAt::Root => ROOT_COPY,
+                            _ => OTHER_COPY,
+                        }
+                    }
+                };
+                if rank >= best {
+                    best = rank;
+                    resolutions[dep_id as usize] = found;
+                }
+            }
+
+            if best >= REJECTED_COPY {
+                pinned.push(dep_id);
+            }
+        }
+    }
 }
 
 /// The catalog-resolved range of a peer edge the fresh resolver defers to its second phase

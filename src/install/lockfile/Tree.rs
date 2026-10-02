@@ -127,7 +127,8 @@ enum HoistDependencyResult {
     Resolve(PackageID),
     ResolveReplace(ResolveReplace),
     ResolveLater,
-    /// `Hoisted`, plus the optional peer's slot now points at the version it deduplicated onto.
+    /// `Hoisted` onto another version the optional peer's range accepts. The slot moves to
+    /// that version unless the binding is already decided; see the `Rebind` arm.
     Rebind(PackageID),
     Placement(Placement),
 }
@@ -434,7 +435,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     // could be visited multiple times before it's resolved.
     pub(crate) pending_optional_peers:
         ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
-    /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
+    /// An optional peer got bound after a placement of its dependent was processed; see
+    /// `Lockfile::resolve`.
     pub(crate) late_bound_optional_peer: bool,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
@@ -531,6 +533,46 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         Ok(CleanResult { trees, dep_ids })
     }
+
+    /// Whether this pass already processed a placement of `pkg_id` before the one
+    /// `dependency_id` names, so the package's optional-peer slots have been read.
+    #[cold]
+    fn processed_earlier_placement(&self, pkg_id: PackageID, dependency_id: DependencyID) -> bool {
+        // The root has no tree entry and its pass comes first.
+        if pkg_id == 0 {
+            return dependency_id != ROOT_DEP_ID;
+        }
+        processed_placements(
+            self.list.items_dependencies(),
+            &self.queue,
+            &*self.resolutions,
+            pkg_id,
+        ) > 1
+    }
+}
+
+/// Counts the placements of `pkg_id` a pass has taken off its queue, the one in progress
+/// included. Every placement is a tree entry, and is queued until it is processed.
+#[cold]
+#[inline(never)]
+fn processed_placements(
+    placed: &[DependencyIDList],
+    queue: &TreeFiller,
+    resolutions: &[PackageID],
+    pkg_id: PackageID,
+) -> usize {
+    let mut entries: usize = 0;
+    for list in placed {
+        for &dep_id in list.iter() {
+            entries += usize::from(resolutions[dep_id as usize] == pkg_id);
+        }
+    }
+    let mut queued: usize = 0;
+    for i in 0..queue.readable_length() {
+        let item = queue.peek_item(i);
+        queued += usize::from(resolutions[item.dependency_id as usize] == pkg_id);
+    }
+    entries.saturating_sub(queued)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -787,20 +829,21 @@ impl Tree {
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
                     // A peer an ancestor edge already provides dedupes instead of nesting
                     // a second copy of the folder (#40561).
-                    if dependency.behavior.is_peer()
-                        && matches!(
-                            Tree::hoist_dependency::<true, METHOD>(
-                                next_id,
-                                hoist_root_id,
-                                pkg_id,
-                                dep_id,
-                                resolution_list,
-                                builder,
-                            ),
-                            HoistDependencyResult::Hoisted
-                        )
-                    {
-                        break 'hoisted HoistDependencyResult::Hoisted;
+                    if dependency.behavior.is_peer() {
+                        let deduped = Tree::hoist_dependency::<true, METHOD>(
+                            next_id,
+                            hoist_root_id,
+                            pkg_id,
+                            dep_id,
+                            resolution_list,
+                            builder,
+                        );
+                        if matches!(
+                            deduped,
+                            HoistDependencyResult::Hoisted | HoistDependencyResult::Rebind(_)
+                        ) {
+                            break 'hoisted deduped;
+                        }
                     }
 
                     // Folder packages never hoist, so a cycle between them would nest forever.
@@ -839,6 +882,13 @@ impl Tree {
                 HoistDependencyResult::Resolve(res_id) => {
                     debug_assert!(pkg_id == invalid_package_id);
                     debug_assert!(res_id != invalid_package_id);
+                    // An earlier placement of this package was processed with the slot
+                    // unbound, and has to be processed again with it bound.
+                    if METHOD == BuilderMethod::Resolvable
+                        && builder.processed_earlier_placement(parent_pkg_id, dependency_id)
+                    {
+                        builder.late_bound_optional_peer = true;
+                    }
                     builder.resolutions[dep_id as usize] = res_id;
                     debug_assert!(
                         !builder
@@ -903,7 +953,16 @@ impl Tree {
                 }
                 HoistDependencyResult::Rebind(res_id) => {
                     debug_assert!(dependency.behavior.is_optional_peer());
-                    builder.resolutions[dep_id as usize] = res_id;
+                    // One slot serves every placement of the package. Only the first
+                    // placement a pass processes can move it, and not off a binding that
+                    // bun.lock spells out. Any other placement dedupes without moving it,
+                    // so none is left built from a binding the pass did not end with.
+                    if METHOD == BuilderMethod::Resolvable
+                        && !builder.lockfile().pinned_optional_peers.contains(&dep_id)
+                        && !builder.processed_earlier_placement(parent_pkg_id, dependency_id)
+                    {
+                        builder.resolutions[dep_id as usize] = res_id;
+                    }
                 }
                 HoistDependencyResult::ResolveLater => {
                     // `dep_id` is an unresolved optional peer. while hoisting it deduplicated
@@ -1029,7 +1088,7 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
-                // An optional peer's binding follows the dedupe, but only in the tree being saved.
+                // An optional peer's binding can follow the dedupe, but only in the tree being saved.
                 let dedupe = || {
                     if METHOD == BuilderMethod::Resolvable && dependency.behavior.is_optional_peer()
                     {

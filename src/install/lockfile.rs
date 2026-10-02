@@ -182,6 +182,10 @@ pub struct Lockfile {
     pub workspace_versions: VersionHashMap,
     /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
+    /// Optional-peer edges whose binding the rows of bun.lock spell out, for packages it
+    /// prints at several paths (`bun_lock::bind_optional_peers_by_row`). The hoister does
+    /// not move these. Not saved.
+    pub(crate) pinned_optional_peers: Vec<DependencyID>,
 
     /// Optional because `trustedDependencies` in package.json might be an
     /// empty list or it might not exist
@@ -687,6 +691,7 @@ impl Lockfile {
         self.workspace_paths = NameHashMap::default();
         self.workspace_versions = VersionHashMap::default();
         self.self_contained_workspaces = ArrayHashMap::default();
+        self.pinned_optional_peers = Vec::new();
         self.overrides = OverrideMap::default();
         self.catalogs = CatalogMap::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
@@ -1352,6 +1357,10 @@ impl<'a> Cloner<'a> {
             }
         }
 
+        if self.keep_optional_peer_targets && !self.old.pinned_optional_peers.is_empty() {
+            self.carry_pinned_optional_peers();
+        }
+
         // cloning finished, items in lockfile buffer might have a different order, meaning
         // package ids and dependency ids have changed
         self.manager
@@ -1372,6 +1381,29 @@ impl<'a> Cloner<'a> {
         }
         Ok(())
     }
+
+    /// Maps the pinned optional peers to their new dependency ids, so the hoist of the
+    /// cleaned lockfile keeps the bindings the load-time hoist kept. A clean that may change
+    /// resolutions does not carry them, and the hoister binds those peers again.
+    #[cold]
+    fn carry_pinned_optional_peers(&mut self) {
+        let old_dependencies = self.old.packages.items_dependencies();
+        let new_dependencies = self.lockfile.packages.items_dependencies();
+        for &old_dep_id in &self.old.pinned_optional_peers {
+            let Some(old_pkg_id) = old_dependencies
+                .iter()
+                .position(|deps| deps.contains(old_dep_id))
+            else {
+                continue;
+            };
+            let Some(new_deps) = new_dependencies.get(self.mapping[old_pkg_id] as usize) else {
+                continue;
+            };
+            self.lockfile
+                .pinned_optional_peers
+                .push(new_deps.off + (old_dep_id - old_dependencies[old_pkg_id].off));
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1380,6 +1412,8 @@ impl<'a> Cloner<'a> {
 
 impl Lockfile {
     /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
+    /// A bound slot moves only where the first placement of its package is processed, so the
+    /// last pass builds every placement from the bindings it ends with.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
         Ok(())
@@ -2117,6 +2151,7 @@ impl Lockfile {
             workspace_paths: NameHashMap::default(),
             workspace_versions: VersionHashMap::default(),
             self_contained_workspaces: ArrayHashMap::default(),
+            pinned_optional_peers: Vec::new(),
             overrides: OverrideMap::default(),
             catalogs: CatalogMap::default(),
             meta_hash: ZERO_HASH,

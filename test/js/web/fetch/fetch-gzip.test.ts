@@ -1011,9 +1011,22 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
     Buffer.from(Bun.hash.adler32(zlibReading).toString(16).padStart(8, "0"), "hex"),
   ]);
 
+  // zlib writes no header for a 256-byte window, so this stream is wrapped by hand: 08 1d, the data, the
+  // Adler-32. A deflater with a 512-byte window keeps each distance at 250 or less.
+  const wb8 = Buffer.concat([
+    Buffer.from([0x08, 0x1d]),
+    deflateRawSync(plain, { windowBits: 9 }),
+    deflateSync(plain).subarray(-4),
+  ]);
+
+  // The three raw rows after `raw` each fail one part of the zlib header check only.
   const decodes: Record<string, Buffer> = {
     raw: deflateRawSync(plain),
-    raw78: rawStartingWith(0x78, 1000), // 78 e8: the first byte of a zlib stream, but not a zlib header
+    // 00 00, the empty stored block that a flush before the first data writes: a multiple of 31, but the method is 0
+    syncFlushFirst: Buffer.concat([stored(0x00, Buffer.alloc(0)), deflateRawSync(plain)]),
+    raw88: rawStartingWith(0x88, 796), // 88 1c: method 8 and a multiple of 31, but the window size is not valid
+    raw78: rawStartingWith(0x78, 1000), // 78 e8: method 8 and a 32K window, but not a multiple of 31
+    wb8,
     wb9: deflateSync(plain, { windowBits: 9 }),
     wb15: deflateSync(plain),
     twoReadings, // fetch() must return the zlib reading

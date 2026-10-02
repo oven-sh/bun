@@ -93,7 +93,7 @@ impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
 }
 
 #[derive(EnumSetType, strum::IntoStaticStr)]
-pub enum ObservableGetter {
+pub(crate) enum ObservableGetter {
     Stdin,
     Stdout,
     Stderr,
@@ -115,7 +115,7 @@ pub(crate) use bun_spawn::process::StdioKind;
 // Intrusive ref-count: `RefPtr<Subprocess>` provides ref/deref and frees the
 // Box when ref_count → 0; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
-pub struct Subprocess<'a> {
+pub(crate) struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
     /// The construction ref on the `Process` (detached in [`Subprocess::finalize`]).
     pub(crate) process: RefPtr<Process>,
@@ -238,7 +238,7 @@ impl<'a> Subprocess<'a> {
     /// Borrow the stored JSC global. The global is guaranteed to outlive
     /// every Subprocess it created.
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
     }
 
@@ -261,7 +261,7 @@ impl<'a> Subprocess<'a> {
 
     /// Intrusive `ref()`.
     #[inline]
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         // SAFETY: `&self` → live `*const Self`; `RefCount::ref_` only touches
         // the intrusive counter via `addr_of_mut!`.
         unsafe { RefCount::<Self>::ref_(self.as_ctx_ptr()) }
@@ -269,7 +269,7 @@ impl<'a> Subprocess<'a> {
     /// Intrusive `deref()`.
     /// May free `self`; do not use `self` after calling.
     #[inline]
-    pub fn deref(&self) {
+    pub(crate) fn deref(&self) {
         // SAFETY: `&self` → live `*const Self`; destructor handles the Box.
         // R-2: `&self` so callers can deref at scope exit without holding a
         // unique borrow across re-entrant JS.
@@ -280,7 +280,7 @@ impl<'a> Subprocess<'a> {
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub(crate) struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
@@ -1305,7 +1305,7 @@ impl Subprocess<'_> {
         self.abort_handle.disarm();
     }
 
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(Subprocess, "finalize");
         // Ensure any code which references the "this" value doesn't attempt to
         // access it after it's been freed We cannot call any methods which

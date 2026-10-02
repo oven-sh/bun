@@ -46,7 +46,7 @@ pub(crate) const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 // `Sys(SystemError)` is constructed/matched directly in subproc.rs, Builtin.rs,
 // and builtin/cp.rs; boxing it would ripple through those call sites.
 #[allow(clippy::large_enum_variant)]
-pub enum ShellErr {
+pub(crate) enum ShellErr {
     Sys(SystemError),
     Custom(Box<[u8]>),
 }

@@ -5298,7 +5298,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 // C++ side declares `extern "C" SYSV_ABI void* JSDOMFile__construct(...)` (JSDOMFile.cpp).
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn JSDOMFile__construct(
+    pub(crate) unsafe fn JSDOMFile__construct(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> Option<NonNull<Blob>> {
@@ -5948,7 +5948,7 @@ impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
 // across many crates (spawn stdio, shell, ReadableStream, DevServer, fetch);
 // boxing the `Blob` arm would change the public ABI in all of them.
 #[allow(clippy::large_enum_variant)]
-pub enum Any {
+pub(crate) enum Any {
     Blob(Blob),
     InternalBlob(Internal),
     WTFStringImpl(bun_core::WTFStringImpl),
@@ -6348,7 +6348,7 @@ impl Any {
 
 /// A single-use Blob backed by an allocation of memory.
 #[derive(Default)]
-pub struct Internal {
+pub(crate) struct Internal {
     pub(crate) bytes: Vec<u8>,
     pub(crate) was_string: bool,
 }
@@ -6415,7 +6415,7 @@ impl Internal {
 // C++ side declares `extern "C" SYSV_ABI bool JSDOMFile__hasInstance(...)` (JSDOMFile.cpp).
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn JSDOMFile__hasInstance(
+    pub(crate) unsafe fn JSDOMFile__hasInstance(
         _a: JSValue,
         _b: &JSGlobalObject,
         value: JSValue,

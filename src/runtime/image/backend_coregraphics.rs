@@ -10,7 +10,7 @@
 use super::codecs;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub enum BackendError {
+pub(crate) enum BackendError {
     #[error("BackendUnavailable")]
     BackendUnavailable,
     // ── from codecs::Error ────────────────────────────────────────────────

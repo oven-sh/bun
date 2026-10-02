@@ -55,7 +55,7 @@ pub(crate) struct Expansion {
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum ExpansionState {
+pub(crate) enum ExpansionState {
     #[default]
     Idle,
     Walking,

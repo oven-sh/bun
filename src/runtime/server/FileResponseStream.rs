@@ -53,7 +53,7 @@ pub(crate) struct FileResponseStream {
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 #[repr(u8)]
-pub enum Mode {
+pub(crate) enum Mode {
     Reader,
     Sendfile,
 }

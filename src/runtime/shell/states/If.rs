@@ -14,13 +14,13 @@ pub(crate) struct If {
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum IfState {
+pub(crate) enum IfState {
     #[default]
     Idle,
     Exec(Exec),
 }
 
-pub struct Exec {
+pub(crate) struct Exec {
     pub(crate) state: ExecBranch,
     /// Back-reference to the current `SmolList<ast::Stmt, 1>` being walked.
     /// Points into the AST arena, which the interpreter holds for its entire

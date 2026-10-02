@@ -2430,8 +2430,9 @@ pub(crate) fn xml_escape(input: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError>
     Ok(result)
 }
 
+#[cfg(target_os = "macos")]
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, PartialEq, Eq)]
-pub enum CalendarError {
+pub(crate) enum CalendarError {
     #[error("InvalidCron")]
     InvalidCron,
 }
@@ -2601,8 +2602,9 @@ fn emit_calendar_dicts(
     Ok(())
 }
 
+#[cfg(windows)]
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, PartialEq, Eq)]
-pub enum TaskXmlError {
+pub(crate) enum TaskXmlError {
     #[error("InvalidCron")]
     InvalidCron,
     #[error("TooManyTriggers")]

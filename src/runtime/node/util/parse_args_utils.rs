@@ -2,7 +2,7 @@ use bun_core::{String, StringView};
 use bun_jsc::JSValue;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum OptionValueType {
+pub(crate) enum OptionValueType {
     #[default]
     Boolean,
     String,

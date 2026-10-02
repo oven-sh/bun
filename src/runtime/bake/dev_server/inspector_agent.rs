@@ -14,7 +14,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C++ `InspectorBunFrontendDevServerAgent` handle.
-    pub struct InspectorBunFrontendDevServerAgentHandle;
+    pub(crate) struct InspectorBunFrontendDevServerAgentHandle;
 }
 
 /// `BunFrontendDevServerAgent` — view over the `Debugger`'s erased agent

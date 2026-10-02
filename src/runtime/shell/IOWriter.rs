@@ -37,7 +37,7 @@ use crate::shell::yield_::Yield;
 /// heap-allocated `PipeReader`); for that variant the dispatch target is
 /// carried in `raw` instead of `node`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ChildPtr {
+pub(crate) struct ChildPtr {
     pub node: NodeId,
     pub(crate) tag: WriterTag,
     /// Only meaningful when `tag == Subproc` — `*mut subproc::CapturedWriter`.

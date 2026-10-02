@@ -11,6 +11,7 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::{self as sh, Yield};
+#[cfg(windows)]
 use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
@@ -20,9 +21,9 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
+use bun_sys::{self, SystemError};
 #[cfg(not(windows))]
-use bun_sys::FdExt;
-use bun_sys::{self, Fd, SystemError};
+use bun_sys::{Fd, FdExt};
 use enumset::EnumSet;
 
 use crate::api::bun_spawn::stdio::{self, Stdio};
@@ -183,7 +184,7 @@ impl CmdHandle {
     }
 }
 
-pub struct ShellSubprocess {
+pub(crate) struct ShellSubprocess {
     pub(crate) cmd_parent: CmdHandle,
 
     /// `None` once closed.
@@ -760,12 +761,7 @@ impl ShellSubprocess {
         // populated `exec.subproc.child`.
         unsafe { *out_subproc = subprocess };
 
-        let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
-            Ok(w) => w,
-            Err(WritableInitError::UnexpectedCreatingStdin) => {
-                panic!("unexpected error while creating stdin");
-            }
-        };
+        let stdin = Writable::init(stdio0, event_loop, subprocess, spawn_stdin);
         let stdout = Readable::init(
             OutKind::Stdout,
             stdio1,
@@ -839,6 +835,7 @@ impl ShellSubprocess {
         // stable address, so the self-referential raw pointer is sound for the
         // life of the subprocess. Only reachable on Windows (POSIX
         // `Writable::init` never returns `Pipe` for shell stdio).
+        #[cfg(windows)]
         {
             // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
             // the local `subproc: &mut` reborrow — the pointer is stored
@@ -970,15 +967,10 @@ impl ShellSubprocess {
 // Writable
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum WritableInitError {
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
-}
-
-pub enum Writable {
+pub(crate) enum Writable {
+    #[cfg(windows)]
     Pipe(RefPtr<FileSink>),
-    Fd(Fd),
+    Fd,
     Buffer(RefPtr<StaticPipeWriter>),
     #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
@@ -986,10 +978,11 @@ pub enum Writable {
     Ignore,
 }
 
+#[cfg(windows)]
 impl Writable {
     // When the stream has closed we need to be notified to prevent a use-after-free
     // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
+    pub(crate) fn on_close(&mut self, _: Option<bun_sys::Error>) {
         match self {
             Writable::Buffer(_) | Writable::Pipe(_) => {
                 // Dropping the Arc on reassignment below derefs.
@@ -1006,7 +999,7 @@ impl Writable {
         event_loop: EventLoopHandle,
         subprocess: *mut Subprocess,
         result: StdioResult,
-    ) -> Result<Writable, WritableInitError> {
+    ) -> Writable {
         assert_stdio_result!(result);
 
         // Note: `Stdio` impls Drop, so we cannot partially move out via
@@ -1025,16 +1018,16 @@ impl Writable {
                         if let bun_sys::Result::Err(_err) =
                             pipe.writer.with_mut(|w| w.start_with_current_pipe())
                         {
-                            return Err(WritableInitError::UnexpectedCreatingStdin);
+                            panic!("unexpected error while creating stdin");
                         }
 
                         // TODO: uncoment this when is ready, commented because was not compiling
                         // subprocess.weak_file_sink_stdin_ptr = pipe;
                         // subprocess.flags.has_stdin_destructor_called = false;
 
-                        return Ok(Writable::Pipe(pipe));
+                        return Writable::Pipe(pipe);
                     }
-                    return Ok(Writable::Inherit);
+                    return Writable::Inherit;
                 }
 
                 Stdio::Blob(_) => {
@@ -1050,27 +1043,24 @@ impl Writable {
                         Stdio::Blob(b) => unsafe { core::ptr::read(b) },
                         _ => unreachable!(),
                     };
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
+                    return Writable::Buffer(StaticPipeWriter::create(
                         event_loop,
                         subprocess,
                         result,
                         JscSubprocess::source_from_blob(blob),
-                    )));
+                    ));
                 }
-                Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(*fd));
-                }
-                Stdio::Dup2(dup2) => {
-                    return Ok(Writable::Fd(dup2.to.to_fd()));
+                Stdio::Fd(_) | Stdio::Dup2(_) => {
+                    return Writable::Fd;
                 }
                 Stdio::Inherit => {
-                    return Ok(Writable::Inherit);
+                    return Writable::Inherit;
                 }
                 Stdio::Path(_) | Stdio::Ignore => {
-                    return Ok(Writable::Ignore);
+                    return Writable::Ignore;
                 }
                 Stdio::Ipc | Stdio::Capture(_) => {
-                    return Ok(Writable::Ignore);
+                    return Writable::Ignore;
                 }
                 Stdio::SocketFd => {
                     // The shell never uses this; rejected at i < 3 anyway.
@@ -1103,12 +1093,12 @@ impl Writable {
                         Stdio::Blob(b) => unsafe { core::ptr::read(b) },
                         _ => unreachable!(),
                     };
-                    Ok(Writable::Buffer(StaticPipeWriter::create(
+                    Writable::Buffer(StaticPipeWriter::create(
                         event_loop,
                         subprocess,
                         result,
                         JscSubprocess::source_from_blob(blob),
-                    )))
+                    ))
                 }
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(memfd) => {
@@ -1121,12 +1111,12 @@ impl Writable {
                     // `Stdio::Memfd`).
                     let _ =
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    Ok(Writable::Memfd(fd))
+                    Writable::Memfd(fd)
                 }
-                Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
-                Stdio::Inherit => Ok(Writable::Inherit),
-                Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-                Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
+                Stdio::Fd(_) => Writable::Fd,
+                Stdio::Inherit => Writable::Inherit,
+                Stdio::Path(_) | Stdio::Ignore => Writable::Ignore,
+                Stdio::Ipc | Stdio::Capture(_) => Writable::Ignore,
                 Stdio::ReadableStream(_) => {
                     // The shell never uses this
                     panic!("Unimplemented stdin readable_stream");
@@ -1142,8 +1132,9 @@ impl Writable {
     // Note: there is intentionally no `Writable::toJS` here — the shell never
     // exposes its stdin Writable to JS.
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match self {
+            #[cfg(windows)]
             Writable::Pipe(_) => {
                 // deref via drop-on-reassign
                 *self = Writable::Ignore;
@@ -1163,7 +1154,7 @@ impl Writable {
                 *self = Writable::Ignore;
             }
             Writable::Ignore => {}
-            Writable::Fd(_) | Writable::Inherit => {}
+            Writable::Fd | Writable::Inherit => {}
         }
     }
 }
@@ -1491,7 +1482,7 @@ impl<'a> SpawnArgs<'a> {
 
 pub(crate) type IOReader = BufferedReader;
 
-pub enum PipeReaderState {
+pub(crate) enum PipeReaderState {
     Pending,
     Done(Box<[u8]>),
     Err(Option<Box<SystemError>>),

@@ -52,7 +52,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
-pub enum Backend {
+pub(crate) enum Backend {
     System = 0,
     Bun = 1,
 }
@@ -227,7 +227,7 @@ pub(crate) struct Decoded {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
-pub enum Error {
+pub(crate) enum Error {
     #[error("UnknownFormat")]
     UnknownFormat,
     #[error("DecodeFailed")]

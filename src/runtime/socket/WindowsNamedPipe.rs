@@ -77,7 +77,7 @@ bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub(crate) struct Flags: u8 {
         const DISCONNECTED = 1 << 0;
         const IS_CLOSED    = 1 << 1;
         const IS_CLIENT    = 1 << 2;

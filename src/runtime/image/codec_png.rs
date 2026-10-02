@@ -8,7 +8,7 @@ use super::codecs;
 use super::quantize;
 use crate::encoded_wrap_free;
 
-bun_opaque::opaque_ffi! { pub struct spng_ctx; }
+bun_opaque::opaque_ffi! { pub(crate) struct spng_ctx; }
 
 unsafe extern "C" {
     fn spng_ctx_new(flags: c_int) -> *mut spng_ctx;

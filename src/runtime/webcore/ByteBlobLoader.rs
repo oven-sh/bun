@@ -7,7 +7,7 @@ use crate::webcore::blob::{self, Blob, BlobExt as _, Store};
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
 
-pub struct ByteBlobLoader {
+pub(crate) struct ByteBlobLoader {
     pub offset: blob::SizeType,
     // LIFETIMES.tsv: SHARED — ref() on setup, deref() in clearData
     pub(crate) store: Option<RefPtr<Store>>,
@@ -131,16 +131,10 @@ impl ByteBlobLoader {
         debug_assert!(buffer.as_ptr() != temporary.as_ptr());
         buffer[..temporary.len()].copy_from_slice(temporary);
         if self.remain == 0 {
-            return streams::Result::IntoArrayAndDone(streams::IntoArray {
-                value: array,
-                len: copied,
-            });
+            return streams::Result::IntoArrayAndDone(streams::IntoArray { len: copied });
         }
 
-        streams::Result::IntoArray(streams::IntoArray {
-            value: array,
-            len: copied,
-        })
+        streams::Result::IntoArray(streams::IntoArray { len: copied })
     }
 
     pub(crate) fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {

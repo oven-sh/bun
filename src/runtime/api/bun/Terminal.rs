@@ -163,7 +163,7 @@ pub(crate) struct Terminal {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub(crate) struct Flags: u8 {
         const CLOSED         = 1 << 0;
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
@@ -302,11 +302,12 @@ pub(crate) struct CreateResult {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum InitError {
+pub(crate) enum InitError {
     #[error("OpenPtyFailed")]
     OpenPtyFailed,
     #[error("DupFailed")]
     DupFailed,
+    #[cfg(not(windows))]
     #[error("NotSupported")]
     NotSupported,
     #[error("WriterStartFailed")]
@@ -320,6 +321,7 @@ impl From<CreatePtyError> for InitError {
         match e {
             CreatePtyError::OpenPtyFailed => InitError::OpenPtyFailed,
             CreatePtyError::DupFailed => InitError::DupFailed,
+            #[cfg(not(windows))]
             CreatePtyError::NotSupported => InitError::NotSupported,
         }
     }
@@ -590,6 +592,7 @@ impl Terminal {
                 InitError::DupFailed => {
                     global_object.throw(format_args!("Failed to duplicate PTY file descriptor"))
                 }
+                #[cfg(not(windows))]
                 InitError::NotSupported => {
                     global_object.throw(format_args!("PTY not supported on this platform"))
                 }
@@ -792,11 +795,12 @@ pub(crate) struct PtyResult {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum CreatePtyError {
+pub(crate) enum CreatePtyError {
     #[error("OpenPtyFailed")]
     OpenPtyFailed,
     #[error("DupFailed")]
     DupFailed,
+    #[cfg(not(windows))]
     #[error("NotSupported")]
     NotSupported,
 }

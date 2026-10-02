@@ -23,7 +23,7 @@ const OPENER: &[u8] = b"xdg-open";
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, strum::IntoStaticStr, enum_map::Enum)]
 #[strum(serialize_all = "snake_case")] // Vscode → "vscode"
-pub enum Editor {
+pub(crate) enum Editor {
     None,
     Sublime,
     Vscode,

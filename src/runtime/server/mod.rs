@@ -201,7 +201,7 @@ pub(crate) use server_body::ServePlugins;
 // ─── ServerFlags ─────────────────────────────────────────────────────────────
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
-    pub struct ServerFlags: u8 {
+    pub(crate) struct ServerFlags: u8 {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
         const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;

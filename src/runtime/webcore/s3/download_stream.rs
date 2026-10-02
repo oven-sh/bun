@@ -15,7 +15,7 @@ use bun_threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);
 
-pub struct S3HttpDownloadStreamingTask {
+pub(crate) struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,

@@ -734,7 +734,7 @@ impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
 /// type tag into the low bits of a pointer to this.
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
-pub struct RewriterPipe {
+pub(crate) struct RewriterPipe {
     pub(crate) global: GlobalRef,
     /// The owning `JSHTMLRewriterTransform` wrapper cell (whose `m_ctx` is this
     /// pipe). Its WriteBarrier slots root the response, input/output streams,
@@ -830,7 +830,7 @@ impl RewriterPipe {
     /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
     /// here may touch other GC cells, and the other ref holders may still
     /// dispatch into the pipe after this cell is swept.
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         self.cell.set(JSValue::ZERO);
     }
 
@@ -1456,7 +1456,7 @@ impl RewriterPipe {
     }
 
     /// `SinkHandle::write` entry — input bytes arrived.
-    pub fn write(&self, data: &StreamResult) -> Writable {
+    pub(crate) fn write(&self, data: &StreamResult) -> Writable {
         let _pin = self.pin();
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
@@ -1511,7 +1511,7 @@ impl RewriterPipe {
     }
 
     /// `SinkHandle::end` entry — input EOF or terminal upstream error.
-    pub fn end_from_stream(&self, err: Option<StreamError>) {
+    pub(crate) fn end_from_stream(&self, err: Option<StreamError>) {
         let _pin = self.pin();
         // Detach via `detach_input_source` (not a bare `.set(None)`) so a
         // `JSController`'s `m_sinkPtr` is nulled before any path can free the
@@ -1546,7 +1546,7 @@ impl RewriterPipe {
     }
 
     /// `SourceHandle::on_ready` entry — the output ByteStream drained.
-    pub fn resume(&self) {
+    pub(crate) fn resume(&self) {
         if self.done.get()
             || self.phase.get() == RewritePhase::Done
             || self.driving.get()
@@ -1560,7 +1560,7 @@ impl RewriterPipe {
     }
 
     /// `SourceHandle::on_close` entry — the output reader cancelled.
-    pub fn cancel_from_output(&self, _err: Option<SysError>) {
+    pub(crate) fn cancel_from_output(&self, _err: Option<SysError>) {
         let _pin = self.pin();
         self.detach_output();
         self.phase.set(RewritePhase::Done);
@@ -2039,10 +2039,10 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
 // ───────── .then() reactions for a content handler's promise ─────────────
 
 bun_jsc::jsc_promise_handler!(
-    pub fn Bun__HTMLRewriter__onHandlerResolve => on_handler_resolve
+    pub(crate) fn Bun__HTMLRewriter__onHandlerResolve => on_handler_resolve
 );
 bun_jsc::jsc_promise_handler!(
-    pub fn Bun__HTMLRewriter__onHandlerReject => on_handler_reject
+    pub(crate) fn Bun__HTMLRewriter__onHandlerReject => on_handler_reject
 );
 
 fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

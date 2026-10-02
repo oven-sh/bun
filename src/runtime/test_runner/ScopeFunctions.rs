@@ -40,7 +40,7 @@ mod group_log {
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]
-pub enum Mode {
+pub(crate) enum Mode {
     #[strum(serialize = "describe")]
     Describe,
     #[strum(serialize = "test")]

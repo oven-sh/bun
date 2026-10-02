@@ -109,7 +109,7 @@ pub(crate) struct Context<'a> {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum FromTarballError {
+pub(crate) enum FromTarballError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("MissingPackageJSON")]

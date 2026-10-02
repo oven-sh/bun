@@ -183,7 +183,7 @@ pub(crate) struct Decoded {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
-pub enum DecodeError {
+pub(crate) enum DecodeError {
     #[error("DecodeFailed")]
     DecodeFailed,
 }

@@ -30,7 +30,7 @@ type DebugHttpsMuxCtx = RequestContext<DebugHTTPSServer, true, true, true>;
 // `bun_ptr` for these eight types.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CtxTag {
+pub(crate) enum CtxTag {
     None = 0,
     Http,
     Https,
@@ -43,7 +43,7 @@ pub enum CtxTag {
 }
 
 #[derive(Copy, Clone)]
-pub struct AnyRequestContext {
+pub(crate) struct AnyRequestContext {
     pub(crate) tag: CtxTag,
     pub ptr: *mut (),
 }
@@ -57,7 +57,7 @@ impl AnyRequestContext {
 
 /// Internal: maps each `RequestContext` monomorphization to its tag so
 /// `AnyRequestContext::init` is generic over the eight types without `TypeList`.
-pub trait CtxKind {
+pub(crate) trait CtxKind {
     const TAG: CtxTag;
 }
 
@@ -165,7 +165,7 @@ impl AnyRequestContext {
         dispatch!(self, 0, |_T, ctx| ctx.memory_cost())
     }
 
-    pub fn get<T: CtxKind>(self) -> Option<*mut T> {
+    pub(crate) fn get<T: CtxKind>(self) -> Option<*mut T> {
         if self.tag == T::TAG {
             Some(self.ptr.cast::<T>())
         } else {
@@ -214,7 +214,7 @@ impl AnyRequestContext {
         })
     }
 
-    pub fn ref_(self) {
+    pub(crate) fn ref_(self) {
         dispatch!(self, (), |_T, ctx| ctx.ref_())
     }
 
@@ -247,11 +247,11 @@ impl AnyRequestContext {
         })
     }
 
-    pub fn deref(self) {
+    pub(crate) fn deref(self) {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }
 
-    pub fn on_request_body_stream_drained(self) {
+    pub(crate) fn on_request_body_stream_drained(self) {
         dispatch!(
             self,
             (),
@@ -260,7 +260,7 @@ impl AnyRequestContext {
         )
     }
 
-    pub fn write_chunk(
+    pub(crate) fn write_chunk(
         self,
         data: &crate::webcore::streams::Result,
     ) -> crate::webcore::streams::Writable {
@@ -272,7 +272,7 @@ impl AnyRequestContext {
         )
     }
 
-    pub fn end_chunk(self, err: Option<&crate::webcore::streams::StreamError>) {
+    pub(crate) fn end_chunk(self, err: Option<&crate::webcore::streams::StreamError>) {
         dispatch!(self, (), ptr | T, ptr | T::end_chunk(ptr, err))
     }
 }

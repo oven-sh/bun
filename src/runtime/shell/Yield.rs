@@ -21,7 +21,7 @@ use crate::shell::states::pipeline::Pipeline;
 // OnIoWriterChunk's `err` is constructed inline at several sites in IOWriter.rs;
 // boxing it would add an allocation to the synchronous-write fast path for no win.
 #[allow(clippy::large_enum_variant)]
-pub enum Yield {
+pub(crate) enum Yield {
     /// Step the node at this id (`Interpreter::next_node`).
     Next(NodeId),
     /// IOWriter completed a chunk synchronously; fire `on_io_writer_chunk` on

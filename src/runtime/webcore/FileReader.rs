@@ -28,7 +28,7 @@ bun_core::declare_scope!(FileReader, visible);
 // auto-derefs to `&T` so the impls below compile against either. `Cell<T>` and
 // `JsCell<T>` are both `#[repr(transparent)]`, so the embedded layout (offset
 // 0 of `NewSource<FileReader>`) is unchanged.
-pub struct FileReader {
+pub(crate) struct FileReader {
     /// Wrapped in `UnsafeCell` so that the back-ref `*mut FileReader` (vtable
     /// `parent`) and the reader's own `&mut self` both derive from a
     /// SharedReadWrite root — see `BufferedReaderParent` aliasing contract
@@ -748,7 +748,6 @@ impl FileReader {
             } else if pending_buf.len() >= buffered.len() {
                 pending_buf[..buffered.len()].copy_from_slice(&buffered);
                 streams::Result::IntoArrayAndDone(streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
                     len: buffered.len() as u64,
                 })
             } else {
@@ -760,7 +759,6 @@ impl FileReader {
             let result = if pending_buf.len() >= chunk.len() {
                 pending_buf[..chunk.len()].copy_from_slice(&chunk);
                 let into = streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
                     len: chunk.len() as u64,
                 };
                 if was_done {
@@ -816,12 +814,10 @@ impl FileReader {
 
                 if self.reader_finished() {
                     return streams::Result::IntoArrayAndDone(streams::IntoArray {
-                        value: array,
                         len: drained_len as u64,
                     });
                 } else {
                     return streams::Result::IntoArray(streams::IntoArray {
-                        value: array,
                         len: drained_len as u64,
                     });
                 }
@@ -848,7 +844,6 @@ impl FileReader {
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
                 let into = streams::IntoArray {
-                    value: array,
                     len: amount_read as u64,
                 };
                 return if done {
@@ -1095,7 +1090,7 @@ impl Drop for SourcePin {
 // (`increment_count`/`decrement_count`) and `global_this` are plain `Source`
 // fields; callers deref in a tight `unsafe { (*ptr).method() }` scope and never
 // hold `&mut Source` across other `self.*` accesses.
-bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; pub fn shared parent_const; }
+bun_core::impl_field_parent! { FileReader => Source.context; pub(crate) fn raw parent; pub(crate) fn shared parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";

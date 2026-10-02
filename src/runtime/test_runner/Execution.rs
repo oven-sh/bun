@@ -203,7 +203,7 @@ impl ExecutionSequence {
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr, strum::FromRepr)]
 #[repr(u8)]
-pub enum Result {
+pub(crate) enum Result {
     #[default]
     Pending,
     Pass,

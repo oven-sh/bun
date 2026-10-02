@@ -17,7 +17,7 @@ pub(crate) struct CondExpr {
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum CondExprState {
+pub(crate) enum CondExprState {
     #[default]
     Idle,
     ExpandingArgs {

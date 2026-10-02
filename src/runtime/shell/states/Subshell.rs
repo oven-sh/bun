@@ -15,7 +15,7 @@ pub(crate) struct Subshell {
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum SubshellState {
+pub(crate) enum SubshellState {
     #[default]
     Idle,
     Exec,

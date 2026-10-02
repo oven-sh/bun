@@ -98,7 +98,7 @@ bun_opaque::opaque_ffi! {
     /// immutability — C++ mutates the underlying object (e.g.
     /// `napi_set_last_error`, handle-scope push/pop) through pointers derived
     /// from `&self`. See [`Self::as_mut_ptr`].
-    pub struct NapiEnv;
+    pub(crate) struct NapiEnv;
 }
 
 #[allow(improper_ctypes)] // `vm_handle::Shared` is opaque to C++ (`BunVmHandleRef`)
@@ -267,7 +267,7 @@ pub(super) type napi_env = *mut NapiEnv;
 
 bun_opaque::opaque_ffi! {
     /// Contents are not used by any Rust code
-    pub struct Ref;
+    pub(crate) struct Ref;
 }
 
 type napi_ref = *mut Ref;
@@ -278,7 +278,7 @@ type napi_ref = *mut Ref;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C++ handle-scope object (see [`NapiEnv`] for rationale).
-    pub struct NapiHandleScope;
+    pub(crate) struct NapiHandleScope;
 }
 
 // `crate::ffi::ffi_body` re-declares `NapiHandleScope__{open,close}` locally
@@ -2123,7 +2123,7 @@ static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
     release: c"node".as_ptr(),
 };
 
-bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
+bun_opaque::opaque_ffi! { pub(crate) struct struct_napi_async_cleanup_hook_handle__; }
 type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
 type napi_async_cleanup_hook = Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;
 

@@ -114,7 +114,7 @@ impl Entry {
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct Meta: u8 {
+    pub(crate) struct Meta: u8 {
         const RETURN_AS_BOOL          = 1 << 0;
         const SUPPORTS_AUTO_PIPELINING = 1 << 1;
         const RETURN_AS_BUFFER        = 1 << 2;

@@ -176,7 +176,7 @@ pub(crate) enum SerializeAndSendResult {
 /// Mode of Inter-Process Communication.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum Mode {
+pub(crate) enum Mode {
     /// Uses SerializedScriptValue to send data. Only valid for bun <--> bun communication.
     /// The first packet sent here is a version packet so that the version of the other end is known.
     Advanced,
@@ -193,7 +193,7 @@ bun_core::comptime_string_map! {
 }
 
 impl Mode {
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
+    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
         use bun_jsc::ComptimeStringMapExt as _;
         if !value.is_string() {
             return Ok(None);
@@ -215,7 +215,7 @@ pub(crate) struct DecodeIPCMessageResult {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum IPCDecodeError {
+pub(crate) enum IPCDecodeError {
     /// There werent enough bytes, recall this function again when new data is available.
     #[error("NotEnoughBytes")]
     NotEnoughBytes,
@@ -236,7 +236,7 @@ impl From<JsError> for IPCDecodeError {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum IPCSerializationError {
+pub(crate) enum IPCSerializationError {
     /// Value could not be serialized.
     #[error("SerializationFailed")]
     SerializationFailed,

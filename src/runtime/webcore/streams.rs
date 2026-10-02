@@ -62,7 +62,7 @@ pub(crate) mod result {
 /// Options payload for the `Start::FileSink` variant.
 pub(crate) type FileSinkOptions = crate::webcore::file_sink::Options;
 
-pub enum Start {
+pub(crate) enum Start {
     Empty,
     Err(SysError),
     ChunkSize(BlobSizeType),
@@ -89,7 +89,7 @@ pub(crate) enum StartTag {
 }
 
 impl Start {
-    pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Start::Empty | Start::Ready => Ok(JSValue::UNDEFINED),
             Start::ChunkSize(chunk) => Ok(JSValue::from(chunk)),
@@ -107,7 +107,7 @@ impl Start {
         }
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Start> {
+    pub(crate) fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Start> {
         if value.is_empty_or_undefined_or_null() || !value.is_object() {
             return Ok(Start::Empty);
         }
@@ -278,7 +278,7 @@ impl Start {
 // Result
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum StreamResult {
+pub(crate) enum StreamResult {
     // Self-referential: the pointee's `Pending.result` points back at this value, so a
     // `&'a mut Pending` borrow can't be expressed; raw pointer with the BORROW_PARAM
     // contract (pointee strictly outlives this result).
@@ -309,14 +309,14 @@ impl StreamResult {
     }
 }
 
-pub enum StreamError {
+pub(crate) enum StreamError {
     Error(SysError),
     AbortReason(CommonAbortReason),
     JSValue(jsc::strong::Optional),
 }
 
 impl StreamError {
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         match self {
             StreamError::Error(err) => err.to_js(global_object),
             StreamError::JSValue(v) => v.get().unwrap_or(JSValue::UNDEFINED),
@@ -345,7 +345,7 @@ impl StreamResult {
 
 // ─── Result.Writable ─────────────────────────────────────────────────────
 
-pub enum Writable {
+pub(crate) enum Writable {
     // Self-referential via WritablePending.result (see StreamResult::Pending above);
     // raw pointer with the BORROW_PARAM contract.
     Pending(*mut WritablePending),
@@ -363,7 +363,7 @@ pub enum Writable {
     Temporary(BlobSizeType),
 }
 
-pub struct WritablePending {
+pub(crate) struct WritablePending {
     pub(crate) future: WritableFuture,
     pub(crate) result: Writable,
     pub(crate) consumed: BlobSizeType,
@@ -470,7 +470,7 @@ impl Writable {
         crate::dispatch::fold(settled);
     }
 
-    pub fn to_js(self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
+    pub(crate) fn to_js(self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
         match self {
             Writable::Err(err) => {
                 JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js()
@@ -497,14 +497,13 @@ impl Writable {
 // ─── Result.IntoArray ────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
-pub struct IntoArray {
-    pub value: JSValue,
+pub(crate) struct IntoArray {
     pub(crate) len: BlobSizeType,
 }
 
 // ─── Result.Pending ──────────────────────────────────────────────────────
 
-pub struct Pending {
+pub(crate) struct Pending {
     pub(crate) future: PendingFuture,
     pub(crate) result: StreamResult,
     pub(crate) state: PendingState,
@@ -732,7 +731,7 @@ impl StreamResult {
         crate::dispatch::fold(settled);
     }
 
-    pub fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         match self {
             StreamResult::Owned(list) => {
                 // The buffer is handed to JSC; the later
@@ -984,7 +983,7 @@ impl UpstreamSource for crate::api::html_rewriter::RewriterPipe {
 /// Tagged handle a sink holds to its upstream source — a closed set of
 /// variants so native source↔sink pairs can pump without a JS round-trip.
 #[derive(Copy, Clone, Default)]
-pub enum SourceHandle {
+pub(crate) enum SourceHandle {
     /// No source attached.
     #[default]
     None,
@@ -995,6 +994,7 @@ pub enum SourceHandle {
     /// The `'static` bound erases the `&JSGlobalObject` borrow carried in
     /// `Subprocess<'a>`; the pointed-at allocation outlives this handle.
     Subprocess(BackRef<crate::api::bun::subprocess::Subprocess<'static>>),
+    #[cfg(windows)]
     ShellWritable(BackRef<crate::shell::subproc::Writable, bun_ptr::Mut>),
     FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet, bun_ptr::Mut>),
     ServerRequestBody(crate::server::AnyRequestContext),
@@ -1008,16 +1008,16 @@ pub enum SourceHandle {
 
 impl SourceHandle {
     #[inline]
-    pub fn is_dead(&self) -> bool {
+    pub(crate) fn is_dead(&self) -> bool {
         matches!(self, SourceHandle::None)
     }
 
     #[inline]
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         *self = SourceHandle::None;
     }
 
-    pub fn close(&mut self, err: Option<SysError>) {
+    pub(crate) fn close(&mut self, err: Option<SysError>) {
         match *self {
             SourceHandle::None => {}
             SourceHandle::JSController(cpp) => {
@@ -1039,6 +1039,7 @@ impl SourceHandle {
             SourceHandle::FileReader(p) => p.on_close(err),
             SourceHandle::Subprocess(p) => p.on_close(err),
             // SAFETY: live backref; cleared before the pointee is freed.
+            #[cfg(windows)]
             SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
             SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
             SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
@@ -1049,7 +1050,7 @@ impl SourceHandle {
     }
 
     /// [`close`](Self::close), with `reason` as the piped JS stream's cancel() argument.
-    pub fn abort(&mut self, reason: CommonAbortReason) {
+    pub(crate) fn abort(&mut self, reason: CommonAbortReason) {
         match *self {
             SourceHandle::JSController(_) => {
                 let global = VirtualMachine::get().global();
@@ -1063,7 +1064,7 @@ impl SourceHandle {
     }
 
     /// [`close`](Self::close), with an arbitrary JS `reason` for the piped JS stream's cancel().
-    pub fn cancel(&mut self, reason: JSValue) {
+    pub(crate) fn cancel(&mut self, reason: JSValue) {
         match *self {
             SourceHandle::JSController(cpp) => {
                 let global = VirtualMachine::get().global();
@@ -1082,7 +1083,7 @@ impl SourceHandle {
         }));
     }
 
-    pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
+    pub(crate) fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
         match *self {
             SourceHandle::None => {}
             SourceHandle::JSController(cpp) => {
@@ -1104,14 +1105,16 @@ impl SourceHandle {
                 p.on_cancel();
             }
             // Remaining variants leave `on_ready` at the trait default (no-op).
-            SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
+            SourceHandle::Subprocess(_) => {}
+            #[cfg(windows)]
+            SourceHandle::ShellWritable(_) => {}
         }
     }
 
     /// The source's JS wrapper was collected while this producer still held the
     /// source: nothing can read what it delivers from now on. Called from a GC
     /// sweep: arms must not run JS.
-    pub fn consumer_collected(self) {
+    pub(crate) fn consumer_collected(self) {
         match self {
             SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
             SourceHandle::S3DownloadBody(p) => p.on_stream_collected(),
@@ -1121,13 +1124,14 @@ impl SourceHandle {
             | SourceHandle::ByteStream(_)
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
+            #[cfg(windows)]
+            SourceHandle::ShellWritable(_) => {}
         }
     }
 
-    pub fn start(&mut self) {
+    pub(crate) fn start(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),
             SourceHandle::S3DownloadBody(p) => p.on_consumer_attached(),
@@ -1138,9 +1142,10 @@ impl SourceHandle {
             | SourceHandle::ByteStream(_)
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
+            #[cfg(windows)]
+            SourceHandle::ShellWritable(_) => {}
         }
     }
 }
@@ -1164,7 +1169,7 @@ pub(crate) enum HTTPServerWritableState {
 /// `HTTPSResponseSink`) wraps this; the response itself is dispatched at
 /// runtime through `uws::AnyResponse`, so one instantiation serves HTTP/1.1,
 /// HTTP/2 and HTTP/3 alike.
-pub struct HTTPServerWritable<const SSL: bool> {
+pub(crate) struct HTTPServerWritable<const SSL: bool> {
     pub(crate) res: Option<uws::AnyResponse>,
     pub(crate) buffer: Vec<u8>,
     pub(crate) pooled_buffer: Option<NonNull<ByteListPoolNode>>,
@@ -1246,7 +1251,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// registration / pending-flush creation) and the VM-owned global outlives
     /// this sink (JSC_BORROW). Never `None` once initialized.
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this
             .as_ref()
             .expect("HTTPServerWritable.global_this used before init")
@@ -1768,7 +1773,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(self.park_pending_flush(cx.global()))
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
+    pub(crate) fn flush(&mut self) -> bun_sys::Result<()> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flush()");
         self.unregister_auto_flusher();
 
@@ -1784,7 +1789,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(())
     }
 
-    pub fn write(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write(&mut self, data: &StreamResult) -> Writable {
         if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
@@ -2107,7 +2112,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
     /// This can be called _many_ times for the same instance
     /// so it must zero out state instead of make it
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "finalize()");
         if !self.is_done() {
             self.unregister_auto_flusher();
@@ -2256,7 +2261,7 @@ pub(crate) type HTTPResponseSink = HTTPServerWritable<false>;
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct NetworkSink {
+pub(crate) struct NetworkSink {
     /// The sink's ref on the upload, released in `detach_writable`.
     pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
@@ -2308,7 +2313,7 @@ impl NetworkSink {
     /// Invariant: `global_this` is set at construction and the VM-owned global
     /// outlives this sink (JSC_BORROW). Never `None` once set.
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this
             .as_ref()
             .expect("NetworkSink.global_this used before init")
@@ -2334,7 +2339,7 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         self.detach_writable();
     }
 
@@ -2405,7 +2410,7 @@ impl NetworkSink {
         source.ready(None, None);
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
+    pub(crate) fn flush(&mut self) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }
 
@@ -2457,7 +2462,7 @@ impl NetworkSink {
         Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
-    pub fn write(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
@@ -2659,7 +2664,7 @@ impl NetworkSink {
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         NetworkSinkJSSink::create_object(global_this, self, 0)
     }
 
@@ -2727,7 +2732,7 @@ pub(crate) struct BufferAction {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum BufferActionTag {
+pub(crate) enum BufferActionTag {
     Text,
     ArrayBuffer,
     Blob,

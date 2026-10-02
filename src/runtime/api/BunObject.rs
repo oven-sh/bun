@@ -191,7 +191,7 @@ pub(crate) mod bun_object {
                 bun_jsc::jsc_host_abi! {
                     $(#[$attr])*
                     #[unsafe(no_mangle)]
-                    pub unsafe fn $sym(
+                    pub(crate) unsafe fn $sym(
                         g: *mut JSGlobalObject,
                         f: *mut CallFrame,
                     ) -> JSValue {
@@ -231,7 +231,7 @@ pub(crate) mod bun_object {
                 // not RCX/RDX, so `extern "C"` reads garbage for both args.
                 bun_jsc::jsc_host_abi! {
                     #[unsafe(no_mangle)]
-                    pub unsafe fn $sym(
+                    pub(crate) unsafe fn $sym(
                         this: *mut JSGlobalObject,
                         object: *mut JSObject,
                     ) -> JSValue {

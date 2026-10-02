@@ -1,4 +1,4 @@
-import type { Subprocess } from "bun";
+import { RedisClient, SQL, type Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
@@ -7,7 +7,8 @@ import { connect as netConnect } from "net";
 import { join } from "path";
 import { Duplex } from "stream";
 import { connect as tlsConnect } from "tls";
-import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
+import { MYSQL_CLIENT_SSL, MYSQL_DEFAULT_CAPABILITIES, mysqlHandshakeV10 } from "../../sql/wire-frames";
+import { clientEvents, startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
 beforeAll(async () => {
@@ -627,12 +628,23 @@ it("fetch sends the client certificate a renegotiation asks for", async () => {
   });
 });
 
-it("fetch through a CONNECT proxy sends the client certificate a renegotiation asks for", async () => {
-  // An ambient NO_PROXY applies to an explicit `proxy` option too and would send this request direct.
+// An ambient NO_PROXY applies to an explicit `proxy` option too and would send the request direct.
+async function withoutNoProxy<T>(run: () => Promise<T>): Promise<T> {
   const noProxyKeys = ["NO_PROXY", "no_proxy"];
   const saved = noProxyKeys.map(key => [key, Bun.env[key]] as const);
   for (const key of noProxyKeys) Bun.env[key] = "";
   try {
+    return await run();
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete Bun.env[key];
+      else Bun.env[key] = value;
+    }
+  }
+}
+
+it("fetch through a CONNECT proxy sends the client certificate a renegotiation asks for", async () => {
+  await withoutNoProxy(async () => {
     using proxy = await startRecordingProxy();
     const res = await fetch(url, {
       keepalive: false,
@@ -644,12 +656,7 @@ it("fetch through a CONNECT proxy sends the client certificate a renegotiation a
       peerCN: "agent3",
     });
     expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT localhost:${url.port} HTTP/1.1`]);
-  } finally {
-    for (const [key, value] of saved) {
-      if (value === undefined) delete Bun.env[key];
-      else Bun.env[key] = value;
-    }
-  }
+  });
 });
 
 it("Bun.connect sends the client certificate a renegotiation asks for", async () => {
@@ -674,4 +681,281 @@ it("Bun.connect sends the client certificate a renegotiation asks for", async ()
   } finally {
     socket.end();
   }
+});
+
+// The servers below read a request, renegotiate, and only then answer it. A server that asks for the client
+// certificate for one location only does that. Each server is a node process: a TLS server in Bun cannot
+// renegotiate. The first line of its output is its port. When its stdin ends, it prints everything it received as
+// one line of JSON.
+const recordingServerPrelude = /* js */ `
+  const tlsOptions = {
+    cert: process.env.SERVER_CERT,
+    key: process.env.SERVER_KEY,
+    minVersion: "TLSv1.2",
+    maxVersion: "TLSv1.2",
+  };
+  const received = [];
+  process.stdin.on("end", () => console.log(JSON.stringify(received))).resume();
+  const listen = server => server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+  // Runs answer() once the client has finished the new handshake.
+  const renegotiateThen = (socket, answer) =>
+    socket.renegotiate({ requestCert: true, rejectUnauthorized: false }, err => (err ? socket.destroy(err) : answer()));
+`;
+
+async function startRecordingServer(script: string, env: Record<string, string> = {}) {
+  const server = Bun.spawn({
+    cmd: ["node", "-e", recordingServerPrelude + script],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "pipe",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key, ...env },
+  });
+  const reader = server.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  async function nextLine(): Promise<string> {
+    while (!output.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`the server exited after it printed ${JSON.stringify(output)}`);
+      output += decoder.decode(value, { stream: true });
+    }
+    const [line] = output.split("\n", 1);
+    output = output.slice(line.length + 1);
+    return line;
+  }
+  const port = Number(await nextLine());
+  return {
+    port,
+    /** Everything the server received. Call it once, when the client is done. */
+    async received(): Promise<string[]> {
+      server.stdin.end();
+      return JSON.parse(await nextLine());
+    },
+    [Symbol.asyncDispose]: () => server[Symbol.asyncDispose](),
+  };
+}
+
+// Renegotiates once per connection, when it has read a request for /members.
+const renegotiatingOrigin = /* js */ `
+  const server = require("https").createServer(tlsOptions, (req, res) => {
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      received.push([req.method, req.url, body].join(" ").trim());
+      const answer = () => res.end("the answer to " + req.method + " " + req.url);
+      if (req.url !== "/members" || req.socket.renegotiated) return answer();
+      req.socket.renegotiated = true;
+      renegotiateThen(req.socket, answer);
+    });
+  });
+  server.on("clientError", (err, socket) => {
+    received.push("not a request: " + err.code);
+    socket.destroy();
+  });
+  listen(server);
+`;
+
+// The end of the renegotiation must not send the request into the tunnel again. The origin answers both copies,
+// and every later fetch on that tunnel then resolves with the answer to the request before it.
+it.each(["GET", "POST"])(
+  "fetch through a CONNECT proxy sends a %s once when the origin renegotiates before it answers",
+  async method => {
+    await using origin = await startRecordingServer(renegotiatingOrigin);
+    using proxy = await startRecordingProxy();
+    const answers = await withoutNoProxy(async () => {
+      const answers: string[] = [];
+      for (const [path, init] of [
+        ["/members", method === "POST" ? { method, body: "amount=100" } : {}],
+        ["/account?user=alice", {}],
+        ["/account?user=bob", {}],
+      ] as const) {
+        const res = await fetch(`https://localhost:${origin.port}${path}`, {
+          ...init,
+          tls: { ca: tls.cert },
+          proxy: `http://127.0.0.1:${proxy.port}`,
+        });
+        answers.push(await res.text());
+      }
+      return answers;
+    });
+    expect({ answers, received: await origin.received(), tunnels: proxy.requests.map(r => r.requestLine) }).toEqual({
+      answers: [
+        `the answer to ${method} /members`,
+        "the answer to GET /account?user=alice",
+        "the answer to GET /account?user=bob",
+      ],
+      received: [
+        method === "POST" ? "POST /members amount=100" : "GET /members",
+        "GET /account?user=alice",
+        "GET /account?user=bob",
+      ],
+      tunnels: [`CONNECT localhost:${origin.port} HTTP/1.1`],
+    });
+  },
+);
+
+it("fetch with checkServerIdentity reads the answer of an origin that renegotiates before it answers", async () => {
+  await using origin = await startRecordingServer(renegotiatingOrigin);
+  const res = await fetch(`https://localhost:${origin.port}/members`, {
+    tls: { ca: tls.cert, checkServerIdentity: () => undefined },
+  });
+  expect({ answer: await res.text(), received: await origin.received() }).toEqual({
+    answer: "the answer to GET /members",
+    received: ["GET /members"],
+  });
+});
+
+// Plays a WebSocket server by hand. It reads the upgrade request, renegotiates, and only then answers 101, followed
+// by a text frame and a Close frame with code 1000.
+const renegotiatingWebSocketOrigin = /* js */ `
+  const server = require("tls").createServer(tlsOptions, socket => {
+    socket.on("error", () => {});
+    let head = "";
+    socket.on("data", function onHead(chunk) {
+      head += chunk.toString("latin1");
+      if (!head.includes("\\r\\n\\r\\n")) return;
+      socket.off("data", onHead);
+      received.push(head.split("\\r\\n")[0]);
+      const key = /sec-websocket-key:\\s*(\\S+)/i.exec(head)[1];
+      const accept = require("crypto")
+        .createHash("sha1")
+        .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+        .digest("base64");
+      renegotiateThen(socket, () => {
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+            "Sec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n",
+        );
+        const text = Buffer.from("after renegotiation");
+        socket.write(Buffer.concat([Buffer.from([0x81, text.length]), text, Buffer.from([0x88, 0x02, 0x03, 0xe8])]));
+      });
+    });
+  });
+  listen(server);
+`;
+
+it("WebSocket through a CONNECT proxy opens when the origin renegotiates before it answers the upgrade", async () => {
+  await using origin = await startRecordingServer(renegotiatingWebSocketOrigin);
+  using proxy = await startRecordingProxy();
+  const events = await withoutNoProxy(() =>
+    clientEvents(
+      new WebSocket(`wss://localhost:${origin.port}/`, {
+        tls: { ca: tls.cert },
+        proxy: `http://127.0.0.1:${proxy.port}`,
+      }),
+    ),
+  );
+  expect({ events, received: await origin.received() }).toEqual({
+    events: ["after renegotiation", { code: 1000, reason: "", wasClean: true }],
+    received: ["GET / HTTP/1.1"],
+  });
+});
+
+// Every key holds "value-of-<key>". Renegotiates when it has read GET b.
+const renegotiatingRedisServer = /* js */ `
+  const server = require("tls").createServer(tlsOptions, socket => {
+    socket.on("error", () => {});
+    let pending = "";
+    socket.on("data", chunk => {
+      pending += chunk;
+      // A command is a RESP array of bulk strings: *<count>, then <count> times $<length> and the bytes.
+      for (let head; (head = /^\\*(\\d+)\\r\\n/.exec(pending)); ) {
+        const lines = pending.slice(head[0].length).split("\\r\\n");
+        if (lines.length <= 2 * head[1]) return;
+        const command = lines.slice(0, 2 * head[1]).filter((_, index) => index % 2 === 1);
+        pending = lines.slice(2 * head[1]).join("\\r\\n");
+        received.push(command.join(" "));
+        const answer = () =>
+          socket.write(
+            command[0] === "HELLO"
+              ? "%2\\r\\n$6\\r\\nserver\\r\\n$5\\r\\nredis\\r\\n$5\\r\\nproto\\r\\n:3\\r\\n"
+              : "$" + (9 + command[1].length) + "\\r\\nvalue-of-" + command[1] + "\\r\\n",
+          );
+        if (command.join(" ") === "GET b") renegotiateThen(socket, answer);
+        else answer();
+      }
+    });
+  });
+  listen(server);
+`;
+
+// The end of the renegotiation must not send HELLO again: the reply to it is handed to the next command.
+it("Bun.RedisClient authenticates once when the server renegotiates before it answers", async () => {
+  await using server = await startRecordingServer(renegotiatingRedisServer);
+  const redis = new RedisClient(`rediss://user:secret@localhost:${server.port}`, {
+    tls: { ca: tls.cert },
+    autoReconnect: false,
+  });
+  try {
+    const values: unknown[] = [];
+    for (const key of ["a", "b", "c", "d"]) values.push(await redis.get(key));
+    expect({ values, received: await server.received() }).toEqual({
+      values: ["value-of-a", "value-of-b", "value-of-c", "value-of-d"],
+      received: ["HELLO 3 AUTH user secret", "GET a", "GET b", "GET c", "GET d"],
+    });
+  } finally {
+    redis.close();
+  }
+});
+
+// Accepts every login and answers every packet after it with an OK packet: 1 affected row for do 'first', 2 for
+// do 'second', 3, 4, and 0 for anything else. Renegotiates when it has read do 'second'.
+const renegotiatingMySQLServer = /* js */ `
+  const net = require("net");
+  const affectedRows = { "do 'first'": 1, "do 'second'": 2, "do 'third'": 3, "do 'fourth'": 4 };
+  // A packet is the length of its payload in 3 bytes, a sequence id, and the payload. The payload of an OK packet
+  // is a 0x00 header, the affected rows, the last insert id, 2 bytes of status flags and 2 bytes of warnings.
+  const ok = (sequence, rows) => Buffer.from([7, 0, 0, sequence, 0x00, rows, 0, 0x02, 0, 0, 0]);
+  const secure = require("tls").createServer(tlsOptions, socket => {
+    socket.on("error", () => {});
+    let pending = Buffer.alloc(0);
+    let loggedIn = false;
+    socket.on("data", chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      while (pending.length >= 4 && pending.length >= 4 + pending.readUIntLE(0, 3)) {
+        const sequence = pending[3];
+        const payload = pending.subarray(4, 4 + pending.readUIntLE(0, 3));
+        pending = pending.subarray(4 + payload.length);
+        // The first packet is the login. A query is the byte 0x03 (COM_QUERY) and its text.
+        const packet = !loggedIn ? "login" : payload[0] === 0x03 ? payload.toString("latin1", 1) : "not a query";
+        loggedIn = true;
+        received.push(packet);
+        const answer = () => socket.write(ok(sequence + 1, affectedRows[packet] ?? 0));
+        if (packet === "do 'second'") renegotiateThen(socket, answer);
+        else answer();
+      }
+    });
+  });
+  secure.listen(0, "127.0.0.1");
+  // The connection starts in plaintext: the server greets, the client answers with an SSLRequest packet, and
+  // everything after that packet is TLS.
+  const server = net.createServer(plain => {
+    plain.on("error", () => {});
+    plain.write(Buffer.from(process.env.MYSQL_GREETING, "hex"));
+    plain.once("data", first => {
+      plain.pause();
+      const inner = net.connect(secure.address().port, "127.0.0.1", () => {
+        inner.write(first.subarray(4 + first.readUIntLE(0, 3)));
+        plain.pipe(inner).pipe(plain);
+      });
+      inner.on("error", () => {});
+    });
+  });
+  listen(server);
+`;
+
+// The end of the renegotiation must not send the login packet again: the reply to it is handed to the next query.
+it("Bun.SQL logs in to MySQL once when the server renegotiates before it answers", async () => {
+  await using server = await startRecordingServer(renegotiatingMySQLServer, {
+    MYSQL_GREETING: mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }).toString("hex"),
+  });
+  await using sql = new SQL(`mysql://user:secret@localhost:${server.port}/db`, { max: 1, tls: { ca: tls.cert } });
+  const affectedRows: number[] = [];
+  for (const word of ["first", "second", "third", "fourth"]) {
+    affectedRows.push((await sql.unsafe(`do '${word}'`).simple()).affectedRows);
+  }
+  expect({ affectedRows, received: await server.received() }).toEqual({
+    affectedRows: [1, 2, 3, 4],
+    received: ["login", "SET time_zone = '+00:00'", "do 'first'", "do 'second'", "do 'third'", "do 'fourth'"],
+  });
 });

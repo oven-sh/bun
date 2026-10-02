@@ -258,7 +258,7 @@ describe.concurrent("scan errors in the dev server and in bun build --app", () =
     files.map(file => `  - ${file}`).join("\n");
   // The underline and the message start below the character at `cursorAt`.
   const invalidRoute = (file: string, cursorAt: number, cursorLength: number, message: string) => {
-    const indent = " ".repeat('error: "'.length + cursorAt);
+    const indent = Buffer.alloc('error: "'.length + cursorAt, " ").toString();
     return [
       `error: "${file}" is not a valid route`,
       indent + Buffer.alloc(cursorLength - 1, "-").toString(),

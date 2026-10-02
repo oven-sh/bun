@@ -695,6 +695,35 @@ describe("bunshell", () => {
     expect(stdout.toString()).toEqual(`noice\n`);
   });
 
+  // A command made only of assignments completes with the status of the last
+  // command substitution its values performed, or 0 if there was none
+  // (POSIX 2.9.1; bash and dash: `FOO=$(exit 3); echo $?` prints 3).
+  describe("assignment-only command, status of the last cmd subst", () => {
+    TestBuilder.command`FOO=$(exit 3)`.exitCode(3).runAsTest("failing substitution");
+    TestBuilder.command`FOO="$(exit 3)"`.exitCode(3).runAsTest("failing quoted substitution");
+    TestBuilder.command`FOO=$(exit 0)`.exitCode(0).runAsTest("successful substitution");
+    TestBuilder.command`false; FOO=bar`.exitCode(0).runAsTest("no substitution is 0 even after a failing command");
+    TestBuilder.command`FOO=$(echo v; exit 3); echo $FOO`
+      .stdout("v\n")
+      .runAsTest("value is still assigned and the next statement still runs");
+    TestBuilder.command`FOO=$(exit 3) BAR=$(exit 4)`.exitCode(4).runAsTest("last substitution wins");
+    TestBuilder.command`FOO=$(exit 3) BAR=$(exit 0)`.exitCode(0).runAsTest("later successful substitution wins");
+    TestBuilder.command`FOO=$(exit 3) BAR=bar`.exitCode(3).runAsTest("later literal value keeps the status");
+    TestBuilder.command`FOO=$(exit 3) BAR=*.nomatch`
+      .exitCode(3)
+      .runAsTest("later unmatched glob value keeps the status");
+    TestBuilder.command`FOO=$(false) || echo no`.stdout("no\n").runAsTest("takes the || branch");
+    TestBuilder.command`FOO=$(exit 3) && echo hi`.exitCode(3).runAsTest("fails an && chain");
+    TestBuilder.command`if FOO=$(false); then echo yes; else echo no; fi`
+      .stdout("no\n")
+      .runAsTest("as an if condition");
+    TestBuilder.command`(FOO=$(exit 3))`.exitCode(3).runAsTest("as the last command of a subshell");
+    TestBuilder.command`FOO=$(exit 3) echo hi`
+      .stdout("hi\n")
+      .exitCode(0)
+      .runAsTest("prefix assignment leaves the status to the command");
+  });
+
   describe("empty_expansion", () => {
     TestBuilder.command`$(exit 0) && echo hi`.stdout("hi\n").runAsTest("empty command subst");
     TestBuilder.command`$(exit 1) && echo hi`.exitCode(1).runAsTest("empty command subst 2");

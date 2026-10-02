@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -343,6 +343,97 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   ]);
   return { exitCode, stdout, stderr };
 }
+
+describe("node:test run()", () => {
+  // Expected values are what node v26.3.0 reports for the same files.
+  // run() spawns one debug+ASAN `bun test` child per file, sequentially, hence
+  // the same headroom as the multi-file tests above.
+  test.concurrent(
+    "republishes a file's events at the child's nesting and numbers the file node by its position in the run",
+    async () => {
+      using dir = tempDir("node-test-run-nesting", {
+        "nested.js": `
+          const { test } = require("node:test");
+          test("top", async t => {
+            await t.test("sub", () => {});
+          });
+          test("failing", () => {
+            throw new Error("boom");
+          });
+          test("skipped", { skip: true }, () => {});
+        `,
+        "empty.js": "",
+        "driver.mjs": `
+          import { run } from "node:test";
+
+          const verdicts = [];
+          for await (const { type, data } of run({ files: ["nested.js", "empty.js"] })) {
+            if (type === "test:pass" || type === "test:fail") {
+              const { name, nesting, testNumber, testId } = data;
+              verdicts.push({ type, name, nesting, testNumber, testId });
+            }
+          }
+          console.log(JSON.stringify(verdicts));
+        `,
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "driver.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const verdicts = JSON.parse(stdout);
+
+      // A file's top-level tests are nesting 0 under run(), exactly as when the
+      // file runs on its own; only a file with nothing to report (empty.js) is
+      // reported through its own file-level node.
+      expect(verdicts.map(({ type, name, nesting }) => [type, name, nesting])).toEqual([
+        ["test:pass", "sub", 1],
+        ["test:pass", "top", 0],
+        ["test:fail", "failing", 0],
+        ["test:pass", "skipped", 0],
+        ["test:pass", "empty.js", 0],
+      ]);
+      // The file node is the run's second file, not file number 1 every time.
+      expect(verdicts.at(-1)).toEqual({ type: "test:pass", name: "empty.js", nesting: 0, testNumber: 2, testId: 2 });
+    },
+    30_000,
+  );
+
+  test.concurrent("numbers the file nodes of an aborted run by their position too", async () => {
+    // Nothing is spawned: the run is aborted before its first file starts, so
+    // every file is reported as cancelled (the files need not even exist).
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { run } = require("node:test");
+          const verdicts = [];
+          for await (const { type, data } of run({ files: ["a.js", "b.js"], signal: AbortSignal.abort() })) {
+            if (type === "test:fail") verdicts.push([data.name, data.testNumber, data.testId]);
+          }
+          console.log(JSON.stringify(verdicts));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual([
+      ["a.js", 1, 1],
+      ["b.js", 2, 2],
+    ]);
+  });
+});
 
 describe("node:test mock", () => {
   const { mock } = require("node:test");

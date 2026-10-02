@@ -4,6 +4,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::strings;
+use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
 use bun_ptr::{RefCount, RefPtr};
@@ -989,6 +990,17 @@ impl SignResult {
 
     pub fn headers(&self) -> &[PicoHeader] {
         &self._headers[0..self._headers_len as usize]
+    }
+
+    /// The redirect mode for a request that carries these headers. The
+    /// signature covers the method, the host and the path, so the transport
+    /// must not send the request again to a `Location`. `requested` is the
+    /// mode the caller asked for, when a caller can ask.
+    pub const fn redirect_mode(requested: Option<FetchRedirect>) -> FetchRedirect {
+        match requested {
+            Some(FetchRedirect::Error) => FetchRedirect::Error,
+            _ => FetchRedirect::Manual,
+        }
     }
 
     pub fn mix_with_header<'b>(

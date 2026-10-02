@@ -6,8 +6,7 @@ use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
-    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
-    Method,
+    AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt, Method,
 };
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -719,8 +718,7 @@ pub(crate) fn execute_simple_s3_request(
             S3HttpSimpleTask::http_callback,
             S3HttpSimpleTask::release_at_shutdown,
         ),
-        // Signed requests are only valid at the signed host; surface 3xx as an error.
-        FetchRedirect::Manual,
+        SignResult::redirect_mode(None),
         HttpOptions {
             http_proxy,
             verbose: Some(verbose),

@@ -832,7 +832,7 @@ impl UpdateInteractiveCommand {
         // `&manager.options`). The returned `OutdatedPackage`s do *not*
         // borrow from `manager`, so the caller may keep using it afterwards.
         let cache_ctx = manager.manifest_disk_cache_ctx();
-        let min_age_ms = manager.options.minimum_release_age_ms;
+        let min_age_ms = manager.options.minimum_release_age_gate_ms();
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes;
         let update_to_latest = manager.options.do_.update_to_latest();

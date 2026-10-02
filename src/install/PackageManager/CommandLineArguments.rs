@@ -1229,6 +1229,12 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
     }
 
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, crate::Error> {
+        // Before `PackageManager::init` and the `--analyze` bundler start a thread.
+        #[cfg(not(windows))]
+        if subcommand.links_bins() {
+            crate::bin::init_exec_mode();
+        }
+
         Output::set_is_verbose(Output::is_verbose());
 
         let params: &'static [ParamType] = match subcommand {

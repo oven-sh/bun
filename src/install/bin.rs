@@ -1,5 +1,4 @@
 use core::fmt;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::Error;
 use bun_alloc::AllocError;
@@ -831,24 +830,36 @@ pub struct Linker<'a> {
     pub skipped_due_to_missing_bin: bool,
 }
 
-static UMASK: AtomicU32 = AtomicU32::new(0);
-static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
+/// The mode a bin target gets, `0o777 & !umask`. Only `init_exec_mode` fills it.
+#[cfg(not(windows))]
+static EXEC_MODE: bun_core::Once<Mode> = bun_core::Once::new();
+
+/// libc reads the umask by setting it, so this runs while the process has one thread.
+#[cfg(not(windows))]
+pub(crate) fn init_exec_mode() {
+    EXEC_MODE.get_or_init(|| {
+        #[cfg(all(debug_assertions, target_os = "linux"))]
+        debug_assert!(
+            thread_count().is_none_or(|threads| threads == 1),
+            "init_exec_mode() sets the umask for a moment, another thread could create a file with it"
+        );
+        let prev = sys::umask(0);
+        sys::umask(prev);
+        0o777 & !prev
+    });
+}
+
+/// `Threads:` of `/proc/self/status`, or `None` when it cannot be read.
+#[cfg(all(debug_assertions, target_os = "linux"))]
+fn thread_count() -> Option<usize> {
+    let status = sys::File::read_from(Fd::cwd(), b"/proc/self/status").ok()?;
+    let key = b"\nThreads:";
+    let value = &status[strings::index_of(&status, key)? + key.len()..];
+    let value = &value[..strings::index_of_char_usize(value, b'\n')?];
+    core::str::from_utf8(value).ok()?.trim().parse().ok()
+}
 
 impl<'a> Linker<'a> {
-    pub fn ensure_umask() {
-        // Single-winner gate: only the thread that flips false->true performs
-        // the temporary umask(0)/umask(prev) probe. A bare load+store would let
-        // two threads interleave the probe and leave the process umask wrong.
-        if HAS_SET_UMASK
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            let prev = sys::umask(0);
-            sys::umask(prev);
-            UMASK.store(prev as u32, Ordering::Release);
-        }
-    }
-
     fn unlink_bin_or_shim(abs_dest: &ZStr) {
         #[cfg(not(windows))]
         {
@@ -1322,7 +1333,10 @@ impl<'a> Linker<'a> {
     fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // hoisted from `defer` block in create_symlink
         if err.is_none() {
-            let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
+            let Some(&mode) = EXEC_MODE.get() else {
+                debug_assert!(false, "a bin was linked before bin::init_exec_mode() ran");
+                return;
+            };
             let _ = sys::lchmod(abs_target, mode);
         }
     }

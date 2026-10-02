@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import { spawn } from "node:child_process";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -189,6 +190,54 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
+  });
+});
+
+describe("WriteStream end()", () => {
+  // The parent does not read the child's stdout until the child has called
+  // end(), so most of the 1 MiB sits in the stream's sink at that point. The
+  // callback must wait for it, or process.exit truncates the output.
+  //
+  // Windows: a write to an inherited stdout pipe blocks until the reader
+  // drains it (every write() returns true), so the child never reaches end()
+  // while the parent waits, and there is no backlog to flush.
+  it.skipIf(isWindows)("fires the callback after the backlog is flushed", async () => {
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `const { WriteStream } = require("node:tty");
+         const out = new WriteStream(1);
+         const chunk = Buffer.alloc(256 * 1024, 120);
+         for (let i = 0; i < 4; i++) out.write(chunk);
+         out.end(() => process.exit(0));
+         process.send("ending");`,
+      ],
+      { env: bunEnv, stdio: ["ignore", "pipe", "pipe", "ipc"] },
+    );
+    let received = 0;
+    let reading = false;
+    // 'exit' is the fallback for a child that dies before it sends "ending".
+    const read = () => {
+      if (reading) return;
+      reading = true;
+      child.stdout!.on("data", d => (received += d.length));
+    };
+    child.on("message", read);
+    child.on("exit", read);
+    const stderr = new Promise<string>(resolve => {
+      let err = "";
+      child.stderr!.on("data", d => (err += d));
+      child.stderr!.on("end", () => resolve(err));
+    });
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers<void>();
+    child.stdout!.on("end", onEnd);
+    const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
+
+    await ended;
+    expect(await stderr).toBe("");
+    expect(received).toBe(4 * 256 * 1024);
+    expect(await exited).toBe(0);
   });
 });
 

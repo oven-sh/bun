@@ -1,4 +1,5 @@
 import { randomUUIDv7, SQL } from "bun";
+import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
@@ -916,6 +917,17 @@ describe("Query Execution", () => {
   });
 });
 
+// Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.
+const sqliteAllowsMoreThan65535Parameters = (() => {
+  using db = new Database(":memory:");
+  try {
+    db.prepare("SELECT ?65538").finalize();
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 describe("Parameterized Queries", () => {
   let sql: SQL;
 
@@ -948,6 +960,21 @@ describe("Parameterized Queries", () => {
 
     const result = await sql.unsafe(`SELECT * FROM ${tableName}`);
     expect(Object.values(result[0])).toEqual(values);
+  });
+
+  test.skipIf(!sqliteAllowsMoreThan65535Parameters)("binds more than 65535 values in one statement", async () => {
+    await sql`CREATE TABLE many_values (a TEXT)`;
+
+    // ?65538 gives the statement 65538 parameters without the long SQL text of a
+    // bulk insert. A 16-bit parameter count wraps that to 2:
+    // "SQLite query expected 2 values, received 65538".
+    const count = 65538;
+    const values: (string | null)[] = Array(count).fill(null);
+    values[count - 1] = "last";
+
+    await sql.unsafe(`INSERT INTO many_values (a) VALUES (?${count})`, values);
+    expect(await sql`SELECT a FROM many_values`).toEqual([{ a: "last" }]);
+    expect(await sql.unsafe(`SELECT ?${count} AS v`, values)).toEqual([{ v: "last" }]);
   });
 
   test("escapes special characters in parameters", async () => {

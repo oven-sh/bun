@@ -579,6 +579,8 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     let mut status: u32 = 0;
     let mut bounds: Vec<[u32; 3]> = Vec::new();
     let start_len = stream.decoded_bytes.len();
+    // The size cap counts a value before the trim, so whitespace is not free.
+    let mut untrimmed_len = start_len;
     let mut seen_regular = false;
     let mut seen_status = false;
     // Stream-level malformations seen mid-decode. The loop MUST consume the
@@ -634,9 +636,8 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         }
         // Cap decoded size independently of the wire size: HPACK indexed
         // refs can amplify a small block into huge name/value pairs.
-        if stream.decoded_bytes.len() + result.name.len() + result.value.len()
-            > LOCAL_MAX_HEADER_LIST_SIZE as usize
-        {
+        untrimmed_len += result.name.len() + result.value.len();
+        if untrimmed_len > LOCAL_MAX_HEADER_LIST_SIZE as usize {
             session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
             stream.header_block.clear();
             return;
@@ -644,7 +645,9 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         let name_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
         stream.decoded_bytes.extend_from_slice(result.name);
         let value_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
-        stream.decoded_bytes.extend_from_slice(result.value);
+        stream
+            .decoded_bytes
+            .extend_from_slice(trim_response_value(result.value));
         bounds.push([
             name_start,
             value_start,
@@ -787,6 +790,11 @@ pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
 /// enabling header injection when values are forwarded downstream.
 pub(crate) fn is_malformed_response_value(value: &[u8]) -> bool {
     bun_core::strings::contains_any(value, b"\0\r\n")
+}
+
+/// RFC 9110 §5.5: a parser strips leading and trailing SP / HTAB. HPACK and QPACK do not.
+pub(crate) fn trim_response_value(value: &[u8]) -> &[u8] {
+    bun_core::strings::trim(value, b" \t")
 }
 
 pub(crate) fn error_code_for(err: crate::Error) -> wire::ErrorCode {

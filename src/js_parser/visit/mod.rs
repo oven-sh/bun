@@ -174,11 +174,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ReactRefresh::hook_ctx_mut` centralises the raw-pointer deref and returns a
             // borrow detached from `self` (the storage is on the caller's stack frame), so
             // it can be held across the `&mut self` method call below.
-            let hook_ctx = self
+            // There is no storage for a method, which takes no signature.
+            if let Some(hook) = self
                 .react_refresh
                 .hook_ctx_mut()
-                .expect("caller did not init hook storage. any function can have react hooks!");
-            if let Some(hook) = hook_ctx.as_ref() {
+                .and_then(|hook_ctx| hook_ctx.as_ref())
+            {
                 // `handle_react_refresh_post_visit_function_body` does not re-enter
                 // `hook_ctx_storage` (it only touches `stmts` and unrelated `P` fields).
                 self.handle_react_refresh_post_visit_function_body(&mut stmts, hook);
@@ -356,6 +357,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut val,
                     ExprIn {
                         is_immediately_assigned_to_decl: true,
+                        // `const { a } = x` reads `x.a` and drops `x`.
+                        is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
                         ..Default::default()
                     },
                 );
@@ -1220,7 +1223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                // `lower_standard_decorators_stmt` owns field placement for such classes.
+                // Standard decorator lowering wraps field initializers where they are.
                 let use_define = self.options.use_define_for_class_fields
                     || class.should_lower_standard_decorators;
 
@@ -1778,6 +1781,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .binding
                 .filter(|r| *r != js_ast::Ref::NONE)
                 .map(|r| p.load_name_from_ref(r));
+            // `Host::new_local` appends the locals of the compiled function here.
+            let generated_len = p.current_scope().generated.len();
             let compiled = {
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
@@ -1793,6 +1798,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts.clear();
                 stmts.extend(new_body);
                 p.react_compiler_result = Some(result);
+                p.drop_symbols_of_replaced_function(pending.binding);
+            } else {
+                p.current_scope_mut().generated.truncate(generated_len);
             }
         }
 

@@ -50,6 +50,101 @@ describe.concurrent("require.cache", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("listing require.cache does not create a namespace object for each ES module", async () => {
+    using dir = tempDir("require-cache-esm-namespaces", {
+      "a.mjs": `export const a = 1;`,
+      "b.mjs": `import { a } from "./a.mjs"; export const b = a + 1;`,
+      "index.mjs": `
+        import { heapStats } from "bun:jsc";
+        import { b } from "./b.mjs";
+        import { join } from "node:path";
+        const namespaces = () => heapStats().objectTypeCounts.ModuleNamespaceObject ?? 0;
+        const aPath = join(import.meta.dir, "a.mjs");
+        const before = namespaces();
+        const keys = Object.keys(require.cache)
+          .filter(key => key.startsWith(import.meta.dir))
+          .map(key => key.slice(import.meta.dir.length + 1))
+          .sort();
+        const has = aPath in require.cache;
+        const descriptor = Object.getOwnPropertyDescriptor(require.cache, aPath);
+        const createdByListing = namespaces() - before;
+        const { a } = require.cache[aPath].exports;
+        const createdByGet = namespaces() - before - createdByListing;
+        // The key is now in both tables; it is still listed once.
+        const listedAfterGet = Object.keys(require.cache).filter(key => key === aPath).length;
+        console.log(JSON.stringify({ b, keys, has, descriptor, createdByListing, a, createdByGet, listedAfterGet }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        b: 2,
+        keys: ["a.mjs", "b.mjs"],
+        has: true,
+        descriptor: { writable: false, enumerable: true, configurable: true },
+        createdByListing: 0,
+        a: 1,
+        createdByGet: 1,
+        listedAfterGet: 1,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a specifier imported under two import attribute types is one key of require.cache", async () => {
+    using dir = tempDir("require-cache-esm-attribute-types", {
+      "a.mjs": `export const a = 1;`,
+      "data.json": `{"x":1}`,
+      // Never imported as JavaScript.
+      "only.json": `{"y":2}`,
+      "index.mjs": `
+        import { join } from "node:path";
+        import { a } from "./a.mjs";
+        import text from "./a.mjs" with { type: "text" };
+        import data from "./data.json";
+        import sameData from "./data.json" with { type: "json" };
+        import only from "./only.json" with { type: "json" };
+        import onlyText from "./only.json" with { type: "text" };
+        const keys = Object.keys(require.cache)
+          .filter(key => key.startsWith(import.meta.dir))
+          .map(key => key.slice(import.meta.dir.length + 1))
+          .sort();
+        // Every key that is listed is there when asked for by name.
+        const present = keys.map(key => join(import.meta.dir, key)).every(key => key in require.cache && require.cache[key]);
+        console.log(JSON.stringify({ a, text: text.length > 0, x: data.x + sameData.x, y: only.y, onlyText, keys, present }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        a: 1,
+        text: true,
+        x: 2,
+        y: 2,
+        onlyText: `{"y":2}`,
+        keys: ["a.mjs", "data.json", "only.json"],
+        present: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't leak the output source code", () => {
     test("via require() with a lot of long export names", async () => {
       let text = "";
@@ -64,7 +159,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           const noChildren = module.children = { indexOf() { return 0; } }; // disable children tracking
           function bust() {
             const mod = require.cache[path];
@@ -109,6 +204,16 @@ describe.concurrent("require.cache", () => {
       expect(exitCode).toBe(0);
     }, 60000);
 
+    // The harness turns the transpiler cache off, so each import() parses the module again: ~15ms in release, 115 to
+    // 185ms under ASAN, where the full counts are a minute of work. The ASAN counts still leak past the limit with the
+    // bug (0.64 and 1.7 MB per import); its quarantine, which holds ~150 MB of what was freed, is off for these two.
+    const noQuarantine = {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    };
+
     test("via await import() with a lot of function calls", async () => {
       let text = "function i() { return 1; }\n";
       for (let i = 0; i < 20000; i++) {
@@ -123,18 +228,18 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           function bust() {
             delete require.cache[path];
           }
 
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < ${isASAN ? 25 : 100}; i++) {
             await import(path);
             bust();
           }
           gc(true);
           const baseline = rss();
-          for (let i = 0; i < 400; i++) {
+          for (let i = 0; i < ${isASAN ? 150 : 400}; i++) {
             await import(path);
             bust(path);
           }
@@ -143,7 +248,7 @@ describe.concurrent("require.cache", () => {
           const diff = after - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
+          if (diff > 64 * 1024 * 1024) {
             // Bun v1.1.22 reported 1 MB here on macoS arm64.
             // Bun v1.1.21 reported 257 MB here on macoS arm64.
             throw new Error("Memory leak detected");
@@ -154,7 +259,7 @@ describe.concurrent("require.cache", () => {
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
+        env: noQuarantine,
         stdio: ["inherit", "inherit", "inherit"],
       });
 
@@ -173,18 +278,18 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           function bust() {
             delete require.cache[path];
           }
 
-          for (let i = 0; i < 50; i++) {
+          for (let i = 0; i < ${isASAN ? 40 : 50}; i++) {
             await import(path);
             bust();
           }
           gc(true);
           const baseline = rss();
-          for (let i = 0; i < 250; i++) {
+          for (let i = 0; i < ${isASAN ? 60 : 250}; i++) {
             await import(path);
             bust(path);
           }
@@ -193,7 +298,7 @@ describe.concurrent("require.cache", () => {
           const diff = after - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
+          if (diff > 64 * 1024 * 1024) {
             // Bun v1.1.21 reported 423 MB here on macoS arm64.
             // Bun v1.1.22 reported 4 MB here on macoS arm64.
             throw new Error("Memory leak detected");
@@ -205,7 +310,7 @@ describe.concurrent("require.cache", () => {
       console.log({ dir });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
+        env: noQuarantine,
         stdio: ["inherit", "inherit", "inherit"],
       });
 
@@ -234,7 +339,7 @@ describe.concurrent("require.cache", () => {
           "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           function bust() {
             const mod = require.cache[path];
             if (mod) {

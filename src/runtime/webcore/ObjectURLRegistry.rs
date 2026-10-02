@@ -14,7 +14,7 @@ use crate::webcore::BlobExt as _;
 // Key is `[u8; 16]` (the UUID bytes) rather than `UUID` directly because
 // upstream `bun_jsc::UUID` does not yet derive `Hash + Eq`; using the raw
 // byte array avoids touching the upstream crate.
-pub struct ObjectURLRegistry {
+pub(crate) struct ObjectURLRegistry {
     map: Guarded<HashMap<[u8; 16], Box<Entry>>>,
 }
 
@@ -29,7 +29,7 @@ impl Default for ObjectURLRegistry {
 /// Holds no VM-affine state: `blob.global_this` is null and `blob.name` is a
 /// shared impl (pre-hashed, never atomized in place), so dupes may clone it
 /// into any VM.
-pub struct Entry {
+pub(crate) struct Entry {
     blob: Blob,
 }
 

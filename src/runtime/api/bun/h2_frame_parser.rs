@@ -4742,7 +4742,13 @@ impl H2FrameParser {
                 // Without this, graceful close puts Last-Stream-ID=0 on the wire, telling the
                 // peer that every in-flight stream is safe to retry.
                 if id > 0 {
-                    last_stream_id = Some(u32::try_from(id).expect("int cast"));
+                    let id = u32::try_from(id).expect("int cast");
+                    // nghttp2_submit_goaway refuses an id that only this side can open, and node
+                    // ignores that error: no GOAWAY is sent.
+                    if id.is_multiple_of(2) == this.is_server.get() {
+                        return Ok(JSValue::UNDEFINED);
+                    }
+                    last_stream_id = Some(id);
                 }
             }
             if callframe.arguments_count() >= 3 {

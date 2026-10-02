@@ -11,15 +11,6 @@ use crate::api::bun::process::sync;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(target_os = "macos")]
-const OPENER: &[u8] = b"/usr/bin/open";
-#[cfg(windows)]
-const OPENER: &[u8] = b"start";
-#[cfg(not(any(target_os = "macos", windows)))]
-const OPENER: &[u8] = b"xdg-open";
-
-// ──────────────────────────────────────────────────────────────────────────
-
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, strum::IntoStaticStr, enum_map::Enum)]
 #[strum(serialize_all = "snake_case")] // Vscode → "vscode"
@@ -177,14 +168,11 @@ impl Editor {
             }};
         }
 
+        #[cfg(target_os = "macos")]
         if matches!(self, Editor::Vim | Editor::Emacs | Editor::Neovim) {
-            push_arg!(OPENER);
+            push_arg!(super::open::OPENER);
             push_arg!(binary);
-
-            #[cfg(target_os = "macos")]
-            {
-                push_arg!(b"--args");
-            }
+            push_arg!(b"--args");
         }
 
         push_arg!(binary);

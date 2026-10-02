@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { chmodSync, existsSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 // Both ways of naming an editor (EDITOR in the environment, the `editor`
 // option) end in a PATH lookup of the editor's binary name. The fake editors
@@ -151,4 +151,84 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
   });
 
   await Promise.all(runs);
+});
+
+// vim, nvim and emacs used to be launched through the platform opener, in the
+// shape of macOS's `open <editor> --args ...`: `xdg-open <editor> <editor> <file>`
+// on Linux, which xdg-open rejects, and `start ...` on Windows, which is a cmd.exe
+// builtin that cannot be spawned. Either way the editor never opened. They are
+// now run directly, like every other editor. macOS keeps the opener (it would
+// open Terminal.app here), so it is skipped.
+describe.skipIf(isMacOS)("Bun.openInEditor runs terminal editors directly", () => {
+  // Stands in for the editor, and on Linux also for xdg-open: writes its own
+  // name followed by its arguments into its last argument, which is the file
+  // being opened in both argv shapes (so on Linux the old shape shows up in the
+  // diff; on Windows the old shape spawned nothing at all).
+  const recordArgv = isWindows
+    ? [
+        "@echo off",
+        "setlocal enabledelayedexpansion",
+        'set "last="',
+        'for %%a in (%*) do set "last=%%~a"',
+        "(echo %~n0",
+        'for %%a in (%*) do echo %%~a) > "!last!.tmp"',
+        'move /y "!last!.tmp" "!last!" >nul',
+        "",
+      ].join("\r\n")
+    : `#!/bin/sh
+for file; do :; done
+printf '%s\\n' "\${0##*/}" "$@" > "$file.tmp" && mv "$file.tmp" "$file"
+`;
+
+  const cases: [editor: string, how: "$EDITOR" | "name" | "absolute path"][] = [
+    ["vim", "$EDITOR"],
+    ["nvim", "$EDITOR"],
+    ["emacs", "$EDITOR"],
+    ["vim", "name"],
+  ];
+  // An absolute editor path is classified by its exact basename, which the
+  // .cmd stub does not have, so this form only reaches these editors on Linux.
+  if (!isWindows) cases.push(["nvim", "absolute path"]);
+
+  // Not concurrent: five debug builds starting at once on a loaded machine ran
+  // past the default per-test timeout; one at a time each row takes ~0.5s.
+  test.each(cases)("%s given as %s", async (editor, how) => {
+    const stub = isWindows ? `${editor}.cmd` : editor;
+    using dir = tempDir("open-in-editor-terminal", {
+      [stub]: recordArgv,
+      // In cwd as well as on PATH so it is found however argv[0] gets resolved.
+      ...(isWindows ? {} : { "xdg-open": recordArgv }),
+      "run.js": `
+        const [file, editor] = process.argv.slice(2);
+        if (editor) Bun.openInEditor(file, { editor });
+        else Bun.openInEditor(file);
+        const deadline = Date.now() + 3000;
+        while (!(await Bun.file(file).exists())) {
+          if (Date.now() > deadline) throw new Error("nothing was spawned: " + file + " was never written");
+          await Bun.sleep(5);
+        }
+        await Bun.write(Bun.stdout, await Bun.file(file).text());
+      `,
+    });
+    if (!isWindows) {
+      chmodSync(join(String(dir), stub), 0o755);
+      chmodSync(join(String(dir), "xdg-open"), 0o755);
+    }
+    const file = join(String(dir), "opened.txt");
+
+    const overrides: Record<string, string> = { PATH: `${String(dir)}${delimiter}${process.env.PATH}` };
+    const cmd = [bunExe(), "run.js", file];
+    if (how === "$EDITOR") overrides.EDITOR = editor;
+    else cmd.push(how === "name" ? editor : join(String(dir), stub));
+    // bunEnv spells the variable "Path" on Windows; a second, differently
+    // cased PATH key would leave it up to the spawn which one the child sees.
+    const env = mergeWindowEnvs([bunEnv, overrides]);
+
+    await using proc = Bun.spawn({ cmd, env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.split(/\r?\n/)).toEqual([editor, file, ""]);
+    expect(exitCode).toBe(0);
+  });
 });

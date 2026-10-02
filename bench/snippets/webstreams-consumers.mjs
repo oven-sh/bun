@@ -61,6 +61,22 @@ const direct = (size, unit, last) => {
     });
 };
 
+// A direct stream that writes a string of `size` bytes and then `size` bytes, in turns. Each binary
+// chunk moves the strings before it out of the sink's rope.
+const directMixed = size => {
+  const textChunk = "y".repeat(size);
+  const binaryChunk = new Uint8Array(size).fill(121);
+  const count = TOTAL / size;
+  return () =>
+    new ReadableStream({
+      type: "direct",
+      pull(c) {
+        for (let i = 0; i < count; i++) c.write(i % 2 ? textChunk : binaryChunk);
+        c.end();
+      },
+    });
+};
+
 const shapes = {
   "binary 64KiB x128": binary(64 * 1024),
   "binary 1KiB x8192": binary(1024),
@@ -74,6 +90,8 @@ const shapes = {
   "direct UTF-16 1KiB x8192": direct(1024, "\u0416"),
   "direct UTF-16 16B x524288": direct(16, "\u0416"),
   "direct text, UTF-16 last": direct(1024, "x", "\u0416"),
+  "direct mixed text/bytes 1KiB x8192": directMixed(1024),
+  "direct mixed text/bytes 16B x524288": directMixed(16),
   "one 8MiB chunk": (() => {
     const chunk = new Uint8Array(TOTAL).fill(122);
     return () =>

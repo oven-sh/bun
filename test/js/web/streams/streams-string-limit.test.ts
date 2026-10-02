@@ -271,20 +271,24 @@ describe.skipIf(!isASAN)("a direct stream's text sink throws when its text canno
     expect(result).toEqual({ stdout: refusedAtTheThird, exitCode: 0 });
   });
 
-  test.concurrent("the caller catches the error and writes bytes", async () => {
+  test.concurrent("the caller catches the error and writes a string and bytes", async () => {
     const result = await runWithCap(`
-      let writes, bytesRefused;
+      let writes, stringRefused, bytesRefused;
       const stream = new ReadableStream({
         type: "direct",
         pull(controller) {
           writes = writeUntilRefused(controller, latin1);
+          stringRefused = tryWrite(controller, "tail");
           bytesRefused = tryWrite(controller, new TextEncoder().encode("z"));
           controller.end();
         },
       });
-      console.log(JSON.stringify({ ...(await settle(Bun.readableStreamToText(stream))), ...writes, bytesRefused }));
+      console.log(JSON.stringify({ ...(await settle(Bun.readableStreamToText(stream))), ...writes, stringRefused, bytesRefused }));
     `);
-    expect(result).toEqual({ stdout: { ...refusedAtTheThird, bytesRefused: outOfMemory }, exitCode: 0 });
+    expect(result).toEqual({
+      stdout: { ...refusedAtTheThird, stringRefused: outOfMemory, bytesRefused: outOfMemory },
+      exitCode: 0,
+    });
   });
 
   // The two megabytes of Latin-1 are 4 MiB in a 16-bit buffer.
@@ -318,6 +322,54 @@ describe.skipIf(!isASAN)("a direct stream's text sink throws when its text canno
       console.log(JSON.stringify({ ...(await settle(Bun.readableStreamToText(stream))), written }));
     `);
     expect(result).toEqual({ stdout: { rejected: outOfMemory, written: 2 }, exitCode: 0 });
+  });
+
+  // The stream fails after the refused write. The sink has no text, and a stream that fails has
+  // no reader for one: the consumer and the close() hook of the source get the error of the stream.
+  test.concurrent.each([
+    [
+      "pull() lets the error of the write escape",
+      "pull(controller)",
+      "for (;;) controller.write(latin1());",
+      outOfMemory,
+    ],
+    ["an async pull() lets it escape", "async pull(controller)", "for (;;) controller.write(latin1());", outOfMemory],
+    ["pull() throws", "pull(controller)", "throw new Error('boom');", "Error: boom"],
+    ["an async pull() throws", "async pull(controller)", "throw new Error('boom');", "Error: boom"],
+    ["controller.error(e)", "pull(controller)", "controller.error(new Error('boom'));", "Error: boom"],
+    ["controller.close(e)", "pull(controller)", "controller.close(new Error('boom'));", "Error: boom"],
+  ])("the stream fails after the refused write: %s", async (_name, pull, fail, error) => {
+    const result = await runWithCap(`
+      let closedWith = "close() not called";
+      const stream = new ReadableStream({
+        type: "direct",
+        ${pull} {
+          if (${JSON.stringify(error)} !== ${JSON.stringify(outOfMemory)}) writeUntilRefused(controller, latin1);
+          ${fail}
+        },
+        close(reason) {
+          closedWith = describeError(reason);
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(Bun.readableStreamToText(stream))), closedWith }));
+    `);
+    expect(result).toEqual({ stdout: { rejected: error, closedWith: error }, exitCode: 0 });
+  });
+
+  test.concurrent("new Response(async generator).text() after the refused chunk", async () => {
+    const result = await runWithCap(`
+      let thrown = null;
+      async function* body() {
+        try {
+          for (;;) yield latin1();
+        } catch (e) {
+          thrown = describeError(e);
+          throw e;
+        }
+      }
+      console.log(JSON.stringify({ ...(await settle(new Response(body()).text())), thrown }));
+    `);
+    expect(result).toEqual({ stdout: { rejected: outOfMemory, thrown: outOfMemory }, exitCode: 0 });
   });
 });
 
@@ -388,45 +440,120 @@ describe.skipIf(!enoughMemory)("a direct stream's text sink throws when its text
   // (https://github.com/oven-sh/WebKit/pull/631). The sink has no text to resolve with.
   test("the caller catches the error of a 16-bit character after a gigabyte of Latin-1", async () => {
     const result = await runParsed(`
-      let refused;
+      let refused, refusedAgain;
       const stream = new ReadableStream({
         type: "direct",
         pull(controller) {
           controller.write(gigabyte);
           refused = tryWrite(controller, "\\u20AC");
+          refusedAgain = tryWrite(controller, "tail");
           controller.end();
         },
       });
-      console.log(JSON.stringify({ ...(await settle(Bun.readableStreamToText(stream))), refused }));
+      console.log(JSON.stringify({ ...(await settle(Bun.readableStreamToText(stream))), refused, refusedAgain }));
     `);
-    expect(result).toEqual({ stdout: { rejected: outOfMemory, refused: outOfMemory }, stderr: "", exitCode: 0 });
+    expect(result).toEqual({
+      stdout: { rejected: outOfMemory, refused: outOfMemory, refusedAgain: outOfMemory },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 
-// A text consumer of a stream that has bytes and strings rejects when a string chunk makes
-// the text longer than the limit. Nothing reads its text after that, and the collector
-// does not know the size of the text, so the consumer gives it back at once.
-test("a rejected text() of bytes and strings does not keep its text", async () => {
+// The body of a Response is a direct stream. The error of the chunk that the sink refuses goes to
+// the generator and to the consumer. The stream then fails, and its sink has no text to build.
+test.skipIf(!enoughMemory)("new Response(async generator).text() with a 16-bit character after 513 MiB", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+    const megabyte = Buffer.alloc(2 ** 20, "x").toString("latin1");
+    let thrown = null;
+    async function* body() {
+      try {
+        for (let i = 0; i < 513; i++) yield megabyte;
+        yield "\\u20AC";
+      } catch (e) {
+        thrown = e.name + ": " + e.message;
+        throw e;
+      }
+    }
+    const rejected = await new Response(body()).text().then(() => "resolved", e => e.name + ": " + e.message);
+    console.log(JSON.stringify({ rejected, thrown }));
+  `);
+  expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    stdout: { rejected: outOfMemory, thrown: outOfMemory },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The builder of the sink can keep the buffer that it could not grow. The sink has no use for
+// that text after the refused write, so it gives it back then, and not when the stream ends.
+// The allocator of a debug build returns memory to the system a moment later, so the child polls.
+test.skipIf(!enoughMemory)("a direct stream's text sink does not keep the text that a refused write lost", async () => {
+  await expectRssDeltaBelow(
+    [
+      "-e",
+      `
+      const megabyte = Buffer.alloc(2 ** 20, "x").toString("latin1");
+      let deltaMiB;
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 513; i++) controller.write(megabyte);
+          try {
+            controller.write("\\u20AC");
+          } catch {}
+          // The stream is still open here.
+          for (let polls = 0; polls < 60; polls++) {
+            deltaMiB = (process.memoryUsage.rss() - before) / 2 ** 20;
+            if (deltaMiB < 64) break;
+            await Bun.sleep(50);
+          }
+        },
+      });
+      await stream.text().catch(() => {});
+      console.log(JSON.stringify({ deltaMiB }));
+      `,
+    ],
+    // A sink that keeps the text holds 513 MiB.
+    { release: 128, debug: 192 },
+  );
+});
+
+// A text consumer of a stream that has bytes and strings rejects when a chunk cannot be a part of
+// the text. Nothing reads its text after that, and the collector does not know the size of the
+// text, so the consumer gives it back at once. The first row passes with the base too, where the
+// consumer finds the limit when it ends the text and gives the text back there.
+test.each([
+  [
+    "a string that passes the limit",
+    `import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+     setSyntheticAllocationLimitForTesting(32 * 1024 * 1024);`,
+    "part",
+    outOfMemory,
+  ],
+  ["a chunk that is not text", "", "123", "TypeError: Expected text, ArrayBuffer or ArrayBufferView"],
+])("a rejected text() of bytes and strings does not keep its text: %s", async (_name, setup, last, error) => {
   const MIB = 1024 * 1024;
   const rejectedCalls = 16;
   await expectRssDeltaBelow(
     [
       "-e",
       `
-      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-      setSyntheticAllocationLimitForTesting(${32 * MIB});
+      ${setup}
       const part = Buffer.alloc(${8 * MIB}, "x").toString("latin1");
-      // The text is 32 MiB after four parts, and the fifth part passes the limit.
+      // The text is 32 MiB after four parts.
       const rejectedText = async () => {
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(new Uint8Array([97]));
-            for (let i = 0; i < 5; i++) controller.enqueue(part);
+            for (let i = 0; i < 4; i++) controller.enqueue(part);
+            controller.enqueue(${last});
             controller.close();
           },
         });
         const error = await stream.text().then(() => "resolved", e => e.name + ": " + e.message);
-        if (error !== "${outOfMemory}") throw new Error(error);
+        if (error !== ${JSON.stringify(error)}) throw new Error(error);
       };
       await rejectedText();
       const before = process.memoryUsage.rss();

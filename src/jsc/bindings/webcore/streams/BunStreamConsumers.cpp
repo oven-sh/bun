@@ -694,7 +694,7 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            flushedRope = jsString(vm, rope);
+            flushedRope = jsString(vm, WTF::move(rope));
             RETURN_IF_EXCEPTION(scope, {});
         }
         bool appended;

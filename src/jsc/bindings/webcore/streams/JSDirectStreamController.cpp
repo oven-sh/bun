@@ -430,7 +430,7 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            ropeString = jsString(vm, rope);
+            ropeString = jsString(vm, WTF::move(rope));
             RETURN_IF_EXCEPTION(scope, {});
         }
         // GC-allocation is done; the barrier container is only mutated under the cell lock, and the throw waits for the unlock.
@@ -630,28 +630,35 @@ static JSValue flushDirectSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDire
     return {};
 }
 
-// `sink.close(error)`: the Text/Array sinks fulfill their closing promise with the partial result.
-static void closeDirectSinkForError(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
+// The stream failed. Nothing reads the text or the array of its sink after that, so the sink only releases them.
+static void closeDirectSinkForError(JSC::VM& vm, JSDirectStreamController* controller, JSValue error)
 {
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer:
         controller->freeBuffer();
         return;
-    case DirectSinkKind::Text:
-        if (!controller->m_calledDone)
-            endTextSink(vm, globalObject, controller);
-        return;
-    case DirectSinkKind::Array:
-        if (!controller->m_calledDone)
-            endArraySink(vm, globalObject, controller);
-        return;
+    case DirectSinkKind::Text: {
+        if (controller->m_calledDone)
+            return;
+        controller->m_calledDone = true;
+        Locker locker { controller->cellLock() };
+        controller->m_textAccumulator.reset(locker);
+        break;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    case DirectSinkKind::Array:
+        if (controller->m_calledDone)
+            return;
+        controller->m_calledDone = true;
+        controller->m_array.clear();
+        break;
+    }
+    if (auto* closingPromise = controller->closingPromise().get())
+        closingPromise->rejectAsHandled(vm, error);
 }
 
 // Errors the stream with `error`: rejects the pending read, errors the stream, tears the sink down,
-// then runs the user's close(error) hook. The stream is fully errored before anything that can throw
-// (the sink teardown, the hook) runs, so a throw from those propagates with the stream consistent.
+// then runs the user's close(error) hook. The stream is fully errored before the hook, which is the one
+// step that can throw, runs, so a throw from it propagates with the stream consistent.
 bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue error)
 {
     auto& vm = getVM(globalObject);
@@ -681,8 +688,7 @@ bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
     // (end() arming the final chunk leaves the stream Readable), so doing it again would double it.
     if (wasClosed)
         return delivered;
-    closeDirectSinkForError(vm, globalObject, this);
-    RETURN_IF_EXCEPTION(scope, false);
+    closeDirectSinkForError(vm, this, error);
     if (source) {
         source->close(globalObject, error);
         RETURN_IF_EXCEPTION(scope, false);

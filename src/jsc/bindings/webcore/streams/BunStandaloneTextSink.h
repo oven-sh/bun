@@ -43,8 +43,12 @@ struct BunTextAccumulator {
         if (m_rope.hasOverflowed() || exceedsStringLimit(static_cast<size_t>(m_rope.length()) + chunk.length())) [[unlikely]]
             return false;
         m_rope.append(chunk);
-        if (m_rope.hasOverflowed()) [[unlikely]]
+        if (m_rope.hasOverflowed()) [[unlikely]] {
+            // The builder can keep the buffer that it could not grow. Nothing can read it now.
+            m_rope.clear();
+            m_rope.didOverflow();
             return false;
+        }
         hasString = true;
         estimatedLength += chunk.length();
         return true;
@@ -58,9 +62,11 @@ struct BunTextAccumulator {
         if (m_rope.hasOverflowed()) [[unlikely]]
             return {};
         // toString() shrinks the buffer first, and asserts when that overflows the rope.
-        m_rope.shrinkToFit();
-        if (m_rope.hasOverflowed()) [[unlikely]]
-            return {};
+        if (m_rope.capacity() != m_rope.length()) {
+            m_rope.shrinkToFit();
+            if (m_rope.hasOverflowed()) [[unlikely]]
+                return {};
+        }
         return m_rope.toString();
     }
 

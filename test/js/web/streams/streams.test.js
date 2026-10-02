@@ -3819,6 +3819,42 @@ describe("a direct stream's text sink keeps its text when it refuses a string", 
       exitCode: 0,
     });
   });
+
+  // A stream that fails has no reader for the text of its sink, so the sink does not build it.
+  // The bytes in the sink are past the limit here: a sink that builds them throws, and that error
+  // took the place of the error of the stream and of the close() hook of the source.
+  test.concurrent.each([
+    ["pull() throws", "pull(controller)", "throw new Error('boom');"],
+    ["an async pull() throws", "async pull(controller)", "throw new Error('boom');"],
+    ["controller.error(e)", "pull(controller)", "controller.error(new Error('boom'));"],
+    ["controller.error(e) in an async pull()", "async pull(controller)", "controller.error(new Error('boom'));"],
+    ["controller.close(e)", "pull(controller)", "controller.close(new Error('boom'));"],
+    ["controller.close(e) in an async pull()", "async pull(controller)", "controller.close(new Error('boom'));"],
+  ])(
+    "a stream that fails gives its own error, with bytes past the limit in the sink: %s",
+    async (_name, pull, fail) => {
+      const result = await runInSubprocess(`
+      const bytes = new Uint8Array(${CHUNK}).fill(97);
+      let closedWith = "close() not called";
+      const stream = new ReadableStream({
+        type: "direct",
+        ${pull} {
+          for (let i = 0; i < 6; i++) controller.write(bytes);
+          ${fail}
+        },
+        close(reason) {
+          closedWith = describeError(reason);
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(Bun.readableStreamToText(stream))), closedWith }));
+    `);
+      expect(result).toEqual({
+        stdout: { rejected: "Error: boom", closedWith: "Error: boom" },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 // A source pull() that runs inside the pipe's in-place drain and synchronously errors the

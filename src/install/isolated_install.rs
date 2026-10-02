@@ -102,12 +102,6 @@ struct StackFrame {
     hasher: Wyhash,
 }
 
-#[derive(Clone, Copy)]
-struct WorkFrame {
-    v: u32,
-    child: u32,
-}
-
 /// Compute entry_hash for the global virtual store. The hash makes a
 /// global-store directory name unique to this entry's *resolved* dependency
 /// closure, so two projects that resolve `react@18.3.1` to the same set of
@@ -933,22 +927,13 @@ pub(crate) fn build_store(
                 if info.peers.eql(curr_peers, &eql_ctx) {
                     // dedupe! depend on the already created entry
 
-                    let mut entries = store_entries.slice();
-                    // disjoint-column views via `split_mut`.
-                    let store::entry::EntryColumnsMut {
-                        dependencies: entry_dependencies,
-                        parents: entry_parents,
-                        ..
-                    } = entries.split_mut();
-
-                    let parents = &mut entry_parents[info.entry_id.get() as usize];
-
                     if curr_dep_id != invalid_dependency_id
                         && dependencies[curr_dep_id as usize].behavior.is_workspace()
                     {
-                        parents.push(entry.entry_parent_id);
                         continue 'next_entry;
                     }
+                    let mut entries = store_entries.slice();
+                    let entry_dependencies = entries.items_dependencies_mut();
                     let ctx = store::entry::DependenciesOrderedArraySetCtx {
                         string_buf,
                         dependencies,
@@ -960,7 +945,6 @@ pub(crate) fn build_store(
                         },
                         &ctx,
                     )?;
-                    parents.push(entry.entry_parent_id);
                     continue 'next_entry;
                 }
             }
@@ -1005,8 +989,6 @@ pub(crate) fn build_store(
                 )?
             };
 
-        let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
-
         let hoisted = 'hoisted: {
             if !manager.options.hoist {
                 break 'hoisted false;
@@ -1036,7 +1018,6 @@ pub(crate) fn build_store(
         let new_entry = StoreEntry {
             node_id: entry.node_id,
             dependencies: new_entry_dependencies,
-            parents: new_entry_parents,
             peer_hash: new_entry_peer_hash,
             hoisted,
             step: core::sync::atomic::AtomicU32::new(0),
@@ -1129,6 +1110,7 @@ pub(crate) fn build_store(
     Ok(Store {
         entries: store_entries,
         nodes,
+        components: store::Components::default(),
     })
 }
 
@@ -1155,7 +1137,7 @@ pub(crate) fn install_isolated_packages(
     } else {
         Timings::Quiet
     };
-    let store: Store = build_store(
+    let mut store: Store = build_store(
         &*manager,
         &*lockfile,
         install_root_dependencies,
@@ -1163,6 +1145,7 @@ pub(crate) fn install_isolated_packages(
         packages_to_install,
         timings,
     )?;
+    let mut components: Option<store::Components> = None;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {
@@ -1420,211 +1403,136 @@ pub(crate) fn install_isolated_packages(
             // the same hash suffix, so they resolve in any project that produces
             // the same SCC closure.
             {
-                let n: u32 = u32::try_from(store.entries.len()).expect("int cast");
-                let mut tarjan_index = vec![u32::MAX; n as usize].into_boxed_slice();
-                let mut lowlink = vec![0u32; n as usize].into_boxed_slice();
-                let mut on_stack = vec![false; n as usize].into_boxed_slice();
-
-                let mut scc_stack: Vec<u32> = Vec::new();
-                let mut work: Vec<WorkFrame> = Vec::new();
+                let entry_dependencies: &[store::entry::Dependencies] = entry_dependencies;
                 let mut scc_ext: ArrayHashMap<u64, ()> = ArrayHashMap::default();
-
-                let mut index_counter: u32 = 0;
-                for root in 0..n as usize {
-                    if tarjan_index[root] != u32::MAX {
-                        continue;
-                    }
-                    work.push(WorkFrame {
-                        v: u32::try_from(root).expect("int cast"),
-                        child: 0,
-                    });
-                    while !work.is_empty() {
-                        let frame_idx = work.len() - 1;
-                        let v = work[frame_idx].v;
-                        if work[frame_idx].child == 0 {
-                            tarjan_index[v as usize] = index_counter;
-                            lowlink[v as usize] = index_counter;
-                            index_counter += 1;
-                            scc_stack.push(v);
-                            on_stack[v as usize] = true;
-                        }
-                        let deps = entry_dependencies[v as usize].slice();
-                        let mut recursed = false;
-                        while (work[frame_idx].child as usize) < deps.len() {
-                            let w = deps[work[frame_idx].child as usize].entry_id.get() as usize;
-                            if tarjan_index[w] == u32::MAX {
-                                work[frame_idx].child += 1;
-                                work.push(WorkFrame {
-                                    v: u32::try_from(w).expect("int cast"),
-                                    child: 0,
-                                });
-                                recursed = true;
-                                break;
-                            } else if on_stack[w] {
-                                lowlink[v as usize] = lowlink[v as usize].min(tarjan_index[w]);
+                components = Some(store::Components::compute(entry_dependencies, |members| {
+                    if members.len() == 1 {
+                        // Singleton SCC. Tarjan emits SCCs in reverse
+                        // topological order, so every dep's hash is final
+                        // by now (including any cycle-member deps that
+                        // just got their SCC hash). Recompute this entry's
+                        // hash from those final values so a dependent of
+                        // a cycle picks up the order-independent SCC hash
+                        // rather than the pass-1 placeholder.
+                        let m = members[0];
+                        if entry_hashes[m as usize] != 0 {
+                            let mut sub = Wyhash::init(0x9E3779B97F4A7C15);
+                            {
+                                let mut hw = WyhashWriter { hasher: &mut sub };
+                                write!(
+                                    hw,
+                                    "{}",
+                                    store::entry::fmt_store_path(
+                                        store::entry::Id::from(m),
+                                        &store,
+                                        lockfile
+                                    )
+                                )
+                                .expect("unreachable");
                             }
-                            work[frame_idx].child += 1;
-                        }
-                        if recursed {
-                            continue;
-                        }
-                        if lowlink[v as usize] == tarjan_index[v as usize] {
-                            let start = 'blk: {
-                                let mut i = scc_stack.len();
-                                while i > 0 {
-                                    if scc_stack[i - 1] == v {
-                                        break 'blk i - 1;
-                                    }
-                                    i -= 1;
+                            sub.update(bun_core::bytes_of(
+                                &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get() as usize]
+                                    as usize]
+                                    .integrity,
+                            ));
+                            let mut poisoned = false;
+                            for dep in entry_dependencies[m as usize].slice() {
+                                let dh = entry_hashes[dep.entry_id.get() as usize];
+                                if dh == 0 {
+                                    poisoned = true;
+                                    break;
                                 }
-                                unreachable!();
-                            };
-                            // Reshaped for borrowck — copy members to
-                            // avoid holding a borrow into scc_stack while mutating.
-                            let members: Vec<u32> = scc_stack[start..].to_vec();
-                            for &m in &members {
-                                on_stack[m as usize] = false;
+                                let dep_name_hash = dependencies[dep.dep_id as usize].name_hash;
+                                sub.update(bun_core::bytes_of(&dep_name_hash));
+                                sub.update(bun_core::bytes_of(&dh));
                             }
-                            if members.len() == 1 {
-                                // Singleton SCC. Tarjan emits SCCs in reverse
-                                // topological order, so every dep's hash is final
-                                // by now (including any cycle-member deps that
-                                // just got their SCC hash). Recompute this entry's
-                                // hash from those final values so a dependent of
-                                // a cycle picks up the order-independent SCC hash
-                                // rather than the pass-1 placeholder.
-                                let m = members[0];
-                                if entry_hashes[m as usize] != 0 {
-                                    let mut sub = Wyhash::init(0x9E3779B97F4A7C15);
-                                    {
-                                        let mut hw = WyhashWriter { hasher: &mut sub };
-                                        write!(
-                                            hw,
-                                            "{}",
-                                            store::entry::fmt_store_path(
-                                                store::entry::Id::from(m),
-                                                &store,
-                                                lockfile
-                                            )
-                                        )
-                                        .expect("unreachable");
-                                    }
-                                    sub.update(bun_core::bytes_of(
-                                        &pkg_metas[node_pkg_ids
-                                            [entry_node_ids[m as usize].get() as usize]
-                                            as usize]
-                                            .integrity,
-                                    ));
-                                    let mut poisoned = false;
-                                    for dep in entry_dependencies[m as usize].slice() {
-                                        let dh = entry_hashes[dep.entry_id.get() as usize];
-                                        if dh == 0 {
-                                            poisoned = true;
-                                            break;
-                                        }
-                                        let dep_name_hash =
-                                            dependencies[dep.dep_id as usize].name_hash;
-                                        sub.update(bun_core::bytes_of(&dep_name_hash));
-                                        sub.update(bun_core::bytes_of(&dh));
-                                    }
-                                    if poisoned {
-                                        entry_hashes[m as usize] = 0;
-                                    } else {
-                                        let mut h = sub.final_();
-                                        if h == 0 {
-                                            h = 1;
-                                        }
-                                        entry_hashes[m as usize] = h;
-                                    }
-                                }
-                            } else if members.len() > 1 {
-                                // One order-independent hash for the whole SCC:
-                                // collect a sub-hash per member (store path +
-                                // integrity), collect every external-dep hash,
-                                // sort both lists, then hash the concatenation.
-                                // Sorting by *content* (not entry index) is what
-                                // makes this stable across projects.
-                                scc_ext.clear_retaining_capacity();
-                                let mut member_sub: Vec<u64> = Vec::new();
-                                let mut any_ineligible = false;
-                                for &m in &members {
-                                    if entry_hashes[m as usize] == 0 {
-                                        any_ineligible = true;
-                                    }
-                                    let mut sub = Wyhash::init(0);
-                                    {
-                                        let mut hw = WyhashWriter { hasher: &mut sub };
-                                        write!(
-                                            hw,
-                                            "{}",
-                                            store::entry::fmt_store_path(
-                                                store::entry::Id::from(m),
-                                                &store,
-                                                lockfile
-                                            )
-                                        )
-                                        .expect("unreachable");
-                                    }
-                                    sub.update(bun_core::bytes_of(
-                                        &pkg_metas[node_pkg_ids
-                                            [entry_node_ids[m as usize].get() as usize]
-                                            as usize]
-                                            .integrity,
-                                    ));
-                                    member_sub.push(sub.final_());
-                                    for dep in entry_dependencies[m as usize].slice() {
-                                        let di = dep.entry_id.get() as usize;
-                                        // Skip intra-SCC edges; those are captured
-                                        // by member_sub.
-                                        if members.contains(&u32::try_from(di).expect("int cast")) {
-                                            continue;
-                                        }
-                                        if entry_hashes[di] == 0 {
-                                            any_ineligible = true;
-                                        }
-                                        // Dep symlinks inside the entry are named
-                                        // by the dependency *alias*, so two SCCs
-                                        // that reach the same external entry under
-                                        // different aliases must hash differently.
-                                        let mut ext = Wyhash::init(0);
-                                        ext.update(bun_core::bytes_of(
-                                            &dependencies[dep.dep_id as usize].name_hash,
-                                        ));
-                                        ext.update(bun_core::bytes_of(&entry_hashes[di]));
-                                        scc_ext.put(ext.final_(), ())?;
-                                    }
-                                }
-                                index_sort::sort_slice_unstable_by(&mut member_sub, |a, b| {
-                                    a.cmp(b)
-                                });
-                                let ext_keys = scc_ext.keys_mut();
-                                index_sort::sort_slice_unstable_by(ext_keys, |a, b| a.cmp(b));
-                                let mut hasher = Wyhash::init(0x42A7C15F9E3779B9);
-                                for k in &member_sub {
-                                    hasher.update(bun_core::bytes_of(k));
-                                }
-                                for k in ext_keys.iter() {
-                                    hasher.update(bun_core::bytes_of(k));
-                                }
-                                let mut h = hasher.final_();
+                            if poisoned {
+                                entry_hashes[m as usize] = 0;
+                            } else {
+                                let mut h = sub.final_();
                                 if h == 0 {
                                     h = 1;
                                 }
-                                let final_h: u64 = if any_ineligible { 0 } else { h };
-                                for &m in &members {
-                                    entry_hashes[m as usize] = final_h;
-                                }
+                                entry_hashes[m as usize] = h;
                             }
-                            scc_stack.truncate(start);
                         }
-                        work.pop();
-                        if !work.is_empty() {
-                            let parent_idx = work.len() - 1;
-                            let pv = work[parent_idx].v;
-                            lowlink[pv as usize] = lowlink[pv as usize].min(lowlink[v as usize]);
+                    } else if members.len() > 1 {
+                        // One order-independent hash for the whole SCC:
+                        // collect a sub-hash per member (store path +
+                        // integrity), collect every external-dep hash,
+                        // sort both lists, then hash the concatenation.
+                        // Sorting by *content* (not entry index) is what
+                        // makes this stable across projects.
+                        scc_ext.clear_retaining_capacity();
+                        let mut member_sub: Vec<u64> = Vec::new();
+                        let mut any_ineligible = false;
+                        for &m in members {
+                            if entry_hashes[m as usize] == 0 {
+                                any_ineligible = true;
+                            }
+                            let mut sub = Wyhash::init(0);
+                            {
+                                let mut hw = WyhashWriter { hasher: &mut sub };
+                                write!(
+                                    hw,
+                                    "{}",
+                                    store::entry::fmt_store_path(
+                                        store::entry::Id::from(m),
+                                        &store,
+                                        lockfile
+                                    )
+                                )
+                                .expect("unreachable");
+                            }
+                            sub.update(bun_core::bytes_of(
+                                &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get() as usize]
+                                    as usize]
+                                    .integrity,
+                            ));
+                            member_sub.push(sub.final_());
+                            for dep in entry_dependencies[m as usize].slice() {
+                                let di = dep.entry_id.get() as usize;
+                                // Skip intra-SCC edges; those are captured
+                                // by member_sub.
+                                if members.contains(&u32::try_from(di).expect("int cast")) {
+                                    continue;
+                                }
+                                if entry_hashes[di] == 0 {
+                                    any_ineligible = true;
+                                }
+                                // Dep symlinks inside the entry are named
+                                // by the dependency *alias*, so two SCCs
+                                // that reach the same external entry under
+                                // different aliases must hash differently.
+                                let mut ext = Wyhash::init(0);
+                                ext.update(bun_core::bytes_of(
+                                    &dependencies[dep.dep_id as usize].name_hash,
+                                ));
+                                ext.update(bun_core::bytes_of(&entry_hashes[di]));
+                                scc_ext.put(ext.final_(), ())?;
+                            }
+                        }
+                        index_sort::sort_slice_unstable_by(&mut member_sub, |a, b| a.cmp(b));
+                        let ext_keys = scc_ext.keys_mut();
+                        index_sort::sort_slice_unstable_by(ext_keys, |a, b| a.cmp(b));
+                        let mut hasher = Wyhash::init(0x42A7C15F9E3779B9);
+                        for k in &member_sub {
+                            hasher.update(bun_core::bytes_of(k));
+                        }
+                        for k in ext_keys.iter() {
+                            hasher.update(bun_core::bytes_of(k));
+                        }
+                        let mut h = hasher.final_();
+                        if h == 0 {
+                            h = 1;
+                        }
+                        let final_h: u64 = if any_ineligible { 0 } else { h };
+                        for &m in members {
+                            entry_hashes[m as usize] = final_h;
                         }
                     }
-                }
+                    Ok(())
+                })?);
             }
 
             // Ineligibility can surface mid-cycle: A→B→A where B turns out to
@@ -1671,6 +1579,11 @@ pub(crate) fn install_isolated_packages(
         None
     };
     // (Drop frees global_store_path)
+
+    store.components = match components {
+        Some(components) => components,
+        None => store::Components::compute(store.entries.items_dependencies(), |_| Ok(()))?,
+    };
 
     // setup node_modules/.bun
     let is_new_bun_modules: bool = 'is_new_bun_modules: {
@@ -2051,6 +1964,8 @@ pub(crate) fn install_isolated_packages(
             tasks,
             waiters_head: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             next_waiter: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
+            units: vec![installer::UnitState::default(); store.components.unit_count()]
+                .into_boxed_slice(),
             trusted_dependencies_mutex: Default::default(),
             trusted_dependencies_from_update_requests,
             supported_backend: std::sync::atomic::AtomicU8::new(
@@ -2657,18 +2572,13 @@ pub(crate) fn install_isolated_packages(
                     // .monotonic is okay because `Wait.isDone` already synchronized with the tasks.
                     let dep_step = entry_steps[dep.entry_id.get() as usize].load(Ordering::Relaxed);
                     if dep_step != installer::Step::Done as u32 {
-                        log!(", parents:\n - ");
-                        let parent_ids =
-                            store::entry::debug_gather_all_parents(entry_id, installer.store);
-                        for &parent_id in &parent_ids {
-                            if parent_id == store::entry::Id::ROOT {
-                                log!("root ");
-                            } else {
-                                log!("{} ", parent_id.get());
-                            }
-                        }
-
-                        log!("\n");
+                        log!(
+                            ", component {}: dependency {} in component {} is at {}\n",
+                            installer.store.components.id(entry_id),
+                            dep.entry_id.get(),
+                            installer.store.components.id(dep.entry_id),
+                            <&'static str>::from(installer::Step::from_u32(dep_step)),
+                        );
                         continue 'next_entry;
                     }
                 }

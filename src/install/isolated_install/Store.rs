@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::MultiArrayList;
 use bun_semver::String as SemverString;
 use bun_wyhash::Wyhash;
 
@@ -26,6 +26,8 @@ pub struct Store {
     /// Accessed from multiple threads
     pub(crate) entries: entry::List,
     pub(crate) nodes: node::List,
+    /// Empty until `install_isolated_packages` computes them.
+    pub(crate) components: Components,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -108,48 +110,157 @@ impl Drop for Store {
     }
 }
 
-impl Store {
-    /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
-    pub(crate) fn is_cycle(
-        &self,
-        id: entry::Id,
-        maybe_parent_id: entry::Id,
-        parent_dedupe: &mut ArrayHashMap<entry::Id, ()>,
-    ) -> bool {
-        use entry::EntryColumns as _;
-        let mut i: usize = 0;
-        let mut len: usize;
+/// The strongly connected components of the entry dependency graph. Two entries are in one
+/// component when each depends on the other, directly or through other entries.
+#[derive(Default)]
+pub struct Components {
+    /// The component of each entry. Ids follow Tarjan's emission order: a
+    /// dependency in another component has a lower id than its dependent.
+    ids: Box<[u32]>,
+    /// The components with more than one member, by ascending component id.
+    units: Vec<Unit>,
+    /// The members of every unit, unit after unit.
+    members: Vec<entry::Id>,
+}
 
-        let entry_parents = self.entries.items_parents();
+struct Unit {
+    component: u32,
+    members_start: u32,
+    members_len: u32,
+}
 
-        for &parent_id in entry_parents[id.get() as usize].as_slice() {
-            if parent_id == entry::Id::INVALID {
+#[derive(Clone, Copy)]
+struct WorkFrame {
+    v: u32,
+    child: u32,
+}
+
+impl Components {
+    /// Tarjan's algorithm without recursion. `on_component` gets the members of each
+    /// component, after every component that one depends on.
+    pub(crate) fn compute(
+        entry_dependencies: &[entry::Dependencies],
+        mut on_component: impl FnMut(&[u32]) -> Result<(), AllocError>,
+    ) -> Result<Components, AllocError> {
+        let n = entry_dependencies.len();
+        let mut components = Components {
+            ids: vec![0u32; n].into_boxed_slice(),
+            units: Vec::new(),
+            members: Vec::new(),
+        };
+
+        let mut tarjan_index = vec![u32::MAX; n].into_boxed_slice();
+        let mut lowlink = vec![0u32; n].into_boxed_slice();
+        let mut on_stack = vec![false; n].into_boxed_slice();
+
+        let mut scc_stack: Vec<u32> = Vec::new();
+        let mut work: Vec<WorkFrame> = Vec::new();
+
+        let mut index_counter: u32 = 0;
+        let mut component: u32 = 0;
+        for root in 0..n {
+            if tarjan_index[root] != u32::MAX {
                 continue;
             }
-            if parent_id == maybe_parent_id {
-                return true;
-            }
-            let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result
-        }
-
-        len = parent_dedupe.len();
-        while i < len {
-            // Capture key before mutating `parent_dedupe`.
-            let key = parent_dedupe.keys()[i];
-            for &parent_id in entry_parents[key.get() as usize].as_slice() {
-                if parent_id == entry::Id::INVALID {
+            work.push(WorkFrame {
+                v: u32::try_from(root).expect("int cast"),
+                child: 0,
+            });
+            while !work.is_empty() {
+                let frame_idx = work.len() - 1;
+                let v = work[frame_idx].v;
+                if work[frame_idx].child == 0 {
+                    tarjan_index[v as usize] = index_counter;
+                    lowlink[v as usize] = index_counter;
+                    index_counter += 1;
+                    scc_stack.push(v);
+                    on_stack[v as usize] = true;
+                }
+                let deps = entry_dependencies[v as usize].slice();
+                let mut recursed = false;
+                while (work[frame_idx].child as usize) < deps.len() {
+                    let w = deps[work[frame_idx].child as usize].entry_id.get() as usize;
+                    if tarjan_index[w] == u32::MAX {
+                        work[frame_idx].child += 1;
+                        work.push(WorkFrame {
+                            v: u32::try_from(w).expect("int cast"),
+                            child: 0,
+                        });
+                        recursed = true;
+                        break;
+                    } else if on_stack[w] {
+                        lowlink[v as usize] = lowlink[v as usize].min(tarjan_index[w]);
+                    }
+                    work[frame_idx].child += 1;
+                }
+                if recursed {
                     continue;
                 }
-                if parent_id == maybe_parent_id {
-                    return true;
+                if lowlink[v as usize] == tarjan_index[v as usize] {
+                    let start = scc_stack
+                        .iter()
+                        .rposition(|&member| member == v)
+                        .expect("the root of a component is on the stack");
+                    let members = &scc_stack[start..];
+                    for &member in members {
+                        on_stack[member as usize] = false;
+                        components.ids[member as usize] = component;
+                    }
+                    if members.len() > 1 {
+                        components.units.push(Unit {
+                            component,
+                            members_start: u32::try_from(components.members.len())
+                                .expect("int cast"),
+                            members_len: u32::try_from(members.len()).expect("int cast"),
+                        });
+                        components
+                            .members
+                            .extend(members.iter().map(|&member| entry::Id::from(member)));
+                    }
+                    on_component(members)?;
+                    component += 1;
+                    scc_stack.truncate(start);
                 }
-                let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result
-                len = parent_dedupe.len();
+                work.pop();
+                if let Some(parent) = work.last() {
+                    let pv = parent.v as usize;
+                    lowlink[pv] = lowlink[pv].min(lowlink[v as usize]);
+                }
             }
-            i += 1;
         }
 
-        false
+        Ok(components)
+    }
+
+    #[inline]
+    pub(crate) fn id(&self, entry_id: entry::Id) -> u32 {
+        self.ids[entry_id.get() as usize]
+    }
+
+    #[inline]
+    pub(crate) fn same(&self, a: entry::Id, b: entry::Id) -> bool {
+        self.id(a) == self.id(b)
+    }
+
+    pub(crate) fn unit_count(&self) -> usize {
+        self.units.len()
+    }
+
+    /// The unit of an entry that is a member of a dependency cycle.
+    #[inline]
+    pub(crate) fn unit_of(&self, entry_id: entry::Id) -> Option<usize> {
+        if self.units.is_empty() {
+            return None;
+        }
+        let component = self.id(entry_id);
+        self.units
+            .binary_search_by_key(&component, |unit| unit.component)
+            .ok()
+    }
+
+    pub(crate) fn unit_members(&self, unit: usize) -> &[entry::Id] {
+        let unit = &self.units[unit];
+        &self.members[unit.members_start as usize..][..unit.members_len as usize]
     }
 }
 
@@ -275,7 +386,6 @@ pub mod entry {
         pub node_id: super::node::Id,
         // parent_id: Id,
         pub dependencies: Dependencies,
-        pub parents: Vec<Id>,
         // `AtomicU32` storing the `#[repr(u8)]` `Step` discriminant. Loads and
         // stores go through `Step as u32` / `Step::from_u32` (see Installer.rs);
         // no atomic-enum wrapper exists.
@@ -311,7 +421,6 @@ pub mod entry {
         pub trait EntryColumns for Entry {
             node_id: super::node::Id,
             dependencies: Dependencies,
-            parents: Vec<Id>,
             step: core::sync::atomic::AtomicU32,
             hoisted: bool,
             peer_hash: PeerHash,
@@ -508,38 +617,6 @@ pub mod entry {
             inner: fmt_store_path(entry_id, store, lockfile),
             entry_hash: store.entries.items_entry_hash()[entry_id.get() as usize],
         }
-    }
-
-    pub(crate) fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
-        let mut i: usize = 0;
-        let mut len: usize;
-
-        let entry_parents = store.entries.items_parents();
-
-        let mut parents: ArrayHashMap<Id, ()> = ArrayHashMap::default();
-
-        for &parent_id in entry_parents[entry_id.get() as usize].as_slice() {
-            if parent_id == Id::INVALID {
-                continue;
-            }
-            let _ = parents.put(parent_id, ()); // OOM-only Result
-        }
-
-        len = parents.len();
-        while i < len {
-            // Capture key before mutating `parents`.
-            let key = parents.keys()[i];
-            for &parent_id in entry_parents[key.get() as usize].as_slice() {
-                if parent_id == Id::INVALID {
-                    continue;
-                }
-                let _ = parents.put(parent_id, ()); // OOM-only Result
-                len = parents.len();
-            }
-            i += 1;
-        }
-
-        parents.keys().to_vec()
     }
 
     #[derive(Copy, Clone)]

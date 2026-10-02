@@ -117,6 +117,15 @@ pub struct Installer<'a> {
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
+
+    /// Main-thread only, one slot per dependency cycle (`Components::unit_of`).
+    pub(crate) units: Box<[UnitState]>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct UnitState {
+    /// The parked member that waits, for the whole cycle, on a dependency outside it.
+    waiter: StoreEntryId,
 }
 
 impl<'a> Installer<'a> {
@@ -457,9 +466,15 @@ impl<'a> Installer<'a> {
         // fix: check if the task is unblocked after the task returns blocked, and only set/unset
         // blocked from the main thread.
 
-        let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
+        if let Some(unit) = self.store.components.unit_of(entry_id) {
+            // .monotonic is okay because the task isn't running right now.
+            self.store.entries.items_step()[entry_id.get() as usize]
+                .store(Step::Blocked as u32, Ordering::Relaxed);
+            self.release_unit_if_ready(unit);
+            return;
+        }
 
-        match self.is_task_blocked(entry_id, &mut parent_dedupe) {
+        match self.is_task_blocked(entry_id) {
             None => {
                 // .monotonic is okay because the task isn't running right now.
                 self.store.entries.items_step()[entry_id.get() as usize]
@@ -482,12 +497,8 @@ impl<'a> Installer<'a> {
         *head = waiter;
     }
 
-    /// Returns the first unfinished non-cyclic dependency; runs on main and task threads, so `parent_dedupe` must not be shared.
-    fn is_task_blocked(
-        &self,
-        entry_id: StoreEntryId,
-        parent_dedupe: &mut ArrayHashMap<StoreEntryId, ()>,
-    ) -> Option<StoreEntryId> {
+    /// Returns the first unfinished dependency outside the entry's own dependency cycle; runs on main and task threads.
+    fn is_task_blocked(&self, entry_id: StoreEntryId) -> Option<StoreEntryId> {
         let entries = &self.store.entries;
         let entry_deps = entries.items_dependencies();
         let entry_steps = entries.items_step();
@@ -495,15 +506,62 @@ impl<'a> Installer<'a> {
         let deps = &entry_deps[entry_id.get() as usize];
         for dep in deps.slice() {
             if entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire) != Step::Done as u32
+                && !self.store.components.same(entry_id, dep.entry_id)
             {
-                parent_dedupe.clear_retaining_capacity();
-                if self.store.is_cycle(entry_id, dep.entry_id, parent_dedupe) {
-                    continue;
-                }
                 return Some(dep.entry_id);
             }
         }
         None
+    }
+
+    /// Main thread only. The members of a dependency cycle park at `Step::Blocked` and leave it
+    /// together, when each member has its files and dependency links on disk and each
+    /// dependency outside the cycle is done.
+    fn release_unit_if_ready(&mut self, unit: usize) {
+        if self.units[unit].waiter != StoreEntryId::INVALID {
+            return;
+        }
+
+        let store = self.store;
+        let entry_steps = store.entries.items_step();
+        let entry_deps = store.entries.items_dependencies();
+        let members = store.components.unit_members(unit);
+
+        let mut parked = StoreEntryId::INVALID;
+        for &member in members {
+            let step = entry_steps[member.get() as usize].load(Ordering::Acquire);
+            if step == Step::LinkPackage as u32 || step == Step::SymlinkDependencies as u32 {
+                return;
+            }
+            if step == Step::Blocked as u32 {
+                parked = member;
+            }
+        }
+        if parked == StoreEntryId::INVALID {
+            return;
+        }
+
+        for &member in members {
+            for dep in entry_deps[member.get() as usize].slice() {
+                if entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire)
+                    != Step::Done as u32
+                    && !store.components.same(member, dep.entry_id)
+                {
+                    self.units[unit].waiter = parked;
+                    self.push_waiter(dep.entry_id, parked);
+                    return;
+                }
+            }
+        }
+
+        for &member in members {
+            // .monotonic is okay because a parked task isn't running.
+            let step = &entry_steps[member.get() as usize];
+            if step.load(Ordering::Relaxed) == Step::Blocked as u32 {
+                step.store(Step::SymlinkDependencyBinaries as u32, Ordering::Relaxed);
+                self.start_task(member);
+            }
+        }
     }
 
     /// Called from main thread
@@ -581,8 +639,6 @@ impl<'a> Installer<'a> {
             );
         }
 
-        let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
-
         let mut waiter = core::mem::replace(
             &mut self.waiters_head[completed.get() as usize],
             StoreEntryId::INVALID,
@@ -600,7 +656,14 @@ impl<'a> Installer<'a> {
                 );
             }
 
-            if let Some(blocked_on) = self.is_task_blocked(entry_id, &mut parent_dedupe) {
+            if let Some(unit) = self.store.components.unit_of(entry_id) {
+                debug_assert!(self.units[unit].waiter == entry_id);
+                self.units[unit].waiter = StoreEntryId::INVALID;
+                self.release_unit_if_ready(unit);
+                continue;
+            }
+
+            if let Some(blocked_on) = self.is_task_blocked(entry_id) {
                 self.push_waiter(blocked_on, entry_id);
                 continue;
             }
@@ -609,6 +672,10 @@ impl<'a> Installer<'a> {
             entry_steps[entry_id.get() as usize]
                 .store(Step::SymlinkDependencyBinaries as u32, Ordering::Relaxed);
             self.start_task(entry_id);
+        }
+
+        if let Some(unit) = self.store.components.unit_of(completed) {
+            self.release_unit_if_ready(unit);
         }
     }
 }
@@ -1518,13 +1585,10 @@ impl Task {
                 Step::CheckIfBlocked => {
                     let current_step = Step::CheckIfBlocked;
                     // preinstall scripts need to run before binaries can be linked. Block here if any dependencies
-                    // of this entry are not finished. Do not count cycles towards blocking.
-
-                    let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
-
-                    if installer
-                        .is_task_blocked(self.entry_id, &mut parent_dedupe)
-                        .is_some()
+                    // of this entry are not finished. A member of a dependency cycle always parks: the main
+                    // thread releases the members of a cycle together.
+                    if installer.store.components.unit_of(self.entry_id).is_some()
+                        || installer.is_task_blocked(self.entry_id).is_some()
                     {
                         return Ok(Yield::Blocked);
                     }

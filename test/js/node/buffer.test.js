@@ -279,6 +279,50 @@ for (let withOverridenBufferWrite of [false, true]) {
         }
       });
 
+      // A DataView has no `length`, so Node's Buffer.from(dataView), and therefore
+      // new Buffer(dataView) / Buffer(dataView), return an empty Buffer instead of
+      // copying the bytes the view covers.
+      it("creating a Buffer from a DataView gives an empty Buffer (old constructor too)", () => {
+        const ab = new Uint8Array([0x61, 0x62, 0x63, 0x64]).buffer;
+        const results = Object.fromEntries(
+          [
+            ["new Buffer(dv)", () => new Buffer(new DataView(ab))],
+            ["Buffer(dv)", () => Buffer(new DataView(ab))],
+            ["Buffer.from(dv)", () => Buffer.from(new DataView(ab))],
+            ["new Buffer(dv, encoding)", () => new Buffer(new DataView(ab), "latin1")],
+            ["new Buffer(sub-range dv)", () => new Buffer(new DataView(ab, 1, 2))],
+            ["Buffer(sub-range dv)", () => Buffer(new DataView(ab, 1, 2))],
+            [
+              "new Buffer(detached dv)",
+              () => {
+                const detachable = new Uint8Array([1, 2, 3]).buffer;
+                const dv = new DataView(detachable);
+                detachable.transfer();
+                return new Buffer(dv);
+              },
+            ],
+          ].map(([name, make]) => {
+            try {
+              const buf = make();
+              return [name, { isBuffer: Buffer.isBuffer(buf), bytes: Array.from(buf) }];
+            } catch (e) {
+              return [name, `${e.constructor.name}: ${e.message}`];
+            }
+          }),
+        );
+        expect(results).toEqual({
+          "new Buffer(dv)": { isBuffer: true, bytes: [] },
+          "Buffer(dv)": { isBuffer: true, bytes: [] },
+          "Buffer.from(dv)": { isBuffer: true, bytes: [] },
+          "new Buffer(dv, encoding)": { isBuffer: true, bytes: [] },
+          "new Buffer(sub-range dv)": { isBuffer: true, bytes: [] },
+          "Buffer(sub-range dv)": { isBuffer: true, bytes: [] },
+          "new Buffer(detached dv)": { isBuffer: true, bytes: [] },
+        });
+        // The source bytes are untouched and still reachable through a real view.
+        expect(new Buffer(new Uint8Array(ab))).toEqual(Buffer.from("abcd"));
+      });
+
       it("invalid encoding", () => {
         const b = Buffer.allocUnsafe(64);
         // Test invalid encoding for Buffer.toString

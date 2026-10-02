@@ -1375,7 +1375,7 @@ impl<'p> Checker<'p> {
             },
             TypeData::Fns { ref decls, .. } => decls
                 .first()
-                .and_then(|&(file, func)| at(file, self.hir(file)[func].pos)),
+                .and_then(|&(file, func)| at(file, self.hir(file)[func].start)),
             TypeData::Synth(ref shape) => shape
                 .symbol_declared_at
                 .and_then(|(file, pos)| at(file, pos)),

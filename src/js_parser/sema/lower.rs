@@ -1238,7 +1238,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             ret,
             body,
             anchor,
-            pos,
             start,
         })
     }
@@ -1294,7 +1293,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             ret,
             body,
             anchor,
-            pos,
             start: pos,
         })
     }
@@ -1458,7 +1456,6 @@ impl<'p, 'a> Lower<'p, 'a> {
                 ret: TypeNodeId::NONE,
                 body,
                 anchor: member.name_pos,
-                pos: member.name_pos,
                 start: member.start,
             });
             return member;

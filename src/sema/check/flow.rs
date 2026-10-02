@@ -1346,50 +1346,62 @@ impl<'p> Checker<'p> {
         true
     }
 
-    /// `isConstantReference` of a name: a constant, a parameter or a local `let` that nothing assigns to, the name a function
-    /// expression gives itself. What is exported where it is declared is none of them: the name in the file stands for the
-    /// export, which is not looked through.
-    pub(super) fn is_constant_name(&self, file: FileId, symbol: SymbolId) -> bool {
-        use crate::bind::Parent;
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let s = &bound.symbols[symbol.idx()];
-        let is_assigned = s.flags.contains(SymFlags::ASSIGNED);
-        match s.decls.first() {
+    /// `GetRootDeclaration(symbol.ValueDeclaration)`, of a variable or a parameter. `None`: of anything else.
+    fn root_declaration(&self, file: FileId, symbol: SymbolId) -> PatParent {
+        let bound = self.bound(file);
+        match bound.symbols[symbol.idx()].decls.first() {
             Some(&(Decl::Var(pat) | Decl::Param(pat))) => {
-                let mut root = pat;
-                loop {
-                    match bound.pat_parent[root.idx()] {
-                        PatParent::Prop(parent, _) | PatParent::Elem(parent, _) => root = parent,
-                        PatParent::Param(_) => return !is_assigned,
-                        PatParent::Var(d) => {
-                            if hir[d].flags.contains(Flags::EXPORT) {
-                                return false;
-                            }
-                            let stmt = bound.var_stmt[d.idx()];
-                            if stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Try { .. }) {
-                                return !is_assigned;
-                            }
-                            return match hir[d].kind {
-                                VarKind::Const | VarKind::Using | VarKind::AwaitUsing => true,
-                                VarKind::Let => {
-                                    let is_global = !self.files().modules[file.idx()].is_module()
-                                        && stmt.is_some()
-                                        && matches!(bound.stmt_parent[stmt.idx()], Parent::File);
-                                    // `isSymbolAssigned`: what `export { x }` names counts as assigned to.
-                                    !is_global
-                                        && !is_assigned
-                                        && (hir.exports.is_empty()
-                                            || !self.is_named_by_export_specifier(file, symbol))
-                                }
-                                VarKind::Var => false,
-                            };
-                        }
-                        PatParent::None => return false,
-                    }
-                }
+                super::errors_modules::root_declaration(bound, pat)
             }
-            Some(&Decl::Fn(f)) => hir[f].kind == FnKind::Expr,
+            _ => PatParent::None,
+        }
+    }
+
+    /// `isParameterOrMutableLocalVariable`
+    fn is_parameter_or_mutable_local_variable(&self, file: FileId, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match self.root_declaration(file, symbol) {
+            PatParent::Param(_) => true,
+            PatParent::Var(d) => {
+                let stmt = bound.var_stmt[d.idx()];
+                // `IsCatchClause(declaration.Parent)`, or else `isMutableLocalVariableDeclaration`
+                stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Try { .. })
+                    || hir[d].kind == VarKind::Let
+                        && !hir[d].flags.contains(Flags::EXPORT)
+                        && !(stmt.is_some()
+                            && matches!(bound.stmt_parent[stmt.idx()], Parent::File)
+                            && !self.files().modules[file.idx()].is_module())
+            }
             _ => false,
+        }
+    }
+
+    /// `isSymbolAssigned`: what `export { x }` names counts as assigned to.
+    fn is_symbol_assigned(&self, file: FileId, symbol: SymbolId) -> bool {
+        self.bound(file).symbols[symbol.idx()]
+            .flags
+            .contains(SymFlags::ASSIGNED)
+            || !self.hir(file).exports.is_empty() && self.is_named_by_export_specifier(file, symbol)
+    }
+
+    /// `isConstantReference` of a name. What is exported where it is declared is none: the name in the file stands for the export,
+    /// which is not looked through.
+    pub(super) fn is_constant_name(&self, file: FileId, symbol: SymbolId) -> bool {
+        let hir = self.hir(file);
+        match self.root_declaration(file, symbol) {
+            PatParent::Var(d) if hir[d].flags.contains(Flags::EXPORT) => false,
+            _ if self.is_parameter_or_mutable_local_variable(file, symbol) => {
+                !self.is_symbol_assigned(file, symbol)
+            }
+            // `isConstantVariable`
+            PatParent::Var(d) => matches!(
+                hir[d].kind,
+                VarKind::Const | VarKind::Using | VarKind::AwaitUsing
+            ),
+            _ => matches!(
+                self.bound(file).symbols[symbol.idx()].decls.first(),
+                Some(&Decl::Fn(f)) if hir[f].kind == FnKind::Expr
+            ),
         }
     }
 
@@ -4268,25 +4280,6 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn declaring_fn(&self, file: FileId, symbol: SymbolId) -> Option<FnId> {
-        let bound = self.bound(file);
-        let mut pat = match bound.symbols[symbol.idx()].decls.first() {
-            Some(&(Decl::Var(pat) | Decl::Param(pat))) => pat,
-            _ => return None,
-        };
-        loop {
-            match bound.pat_parent[pat.idx()] {
-                PatParent::Prop(parent, _) | PatParent::Elem(parent, _) => pat = parent,
-                PatParent::Var(d) => {
-                    return self
-                        .enclosing_fn(file, crate::bind::Parent::Stmt(bound.var_stmt[d.idx()]));
-                }
-                PatParent::Param(p) => return Some(bound.param_fn[p.idx()]),
-                PatParent::None => return None,
-            }
-        }
-    }
-
     /// `markNodeAssignmentsWorker`: what `export { x }` names may be assigned to at any time, for all that can be seen from here.
     fn is_named_by_export_specifier(&self, file: FileId, symbol: SymbolId) -> bool {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
@@ -4352,108 +4345,73 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Whether a parameter or a `let` is not assigned to any more once `e` has been reached, so that what is known of it
-    /// there still holds when a function created there runs.
+    /// `isParameterOrMutableLocalVariable(symbol) && isPastLastAssignment(symbol, e)`
     pub(super) fn is_past_last_assignment(
         &mut self,
         file: FileId,
         symbol: SymbolId,
         e: ExprId,
     ) -> bool {
-        use crate::bind::Parent;
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        let s = &bound.symbols[symbol.idx()];
-        let Some(&(Decl::Var(pat) | Decl::Param(pat))) = s.decls.first() else {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Some(&(Decl::Var(pat) | Decl::Param(pat))) = bound.symbols[symbol.idx()].decls.first()
+        else {
             return false;
         };
-        // `isParameterOrMutableLocalVariable`: `var` is out, a constant too, and so is what other files or scripts can reach.
-        let mut root = pat;
-        let is_local = loop {
-            match bound.pat_parent[root.idx()] {
-                PatParent::Prop(parent, _) | PatParent::Elem(parent, _) => root = parent,
-                PatParent::Param(_) => break true,
-                PatParent::Var(d) => {
-                    let stmt = bound.var_stmt[d.idx()];
-                    let is_catch = stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Try { .. });
-                    let is_global = !self.files().modules[file.idx()].is_module()
-                        && stmt.is_some()
-                        && matches!(bound.stmt_parent[stmt.idx()], Parent::File);
-                    break is_catch
-                        || (hir[d].kind == VarKind::Let
-                            && !hir[d].flags.contains(Flags::EXPORT)
-                            && !is_global);
-                }
-                PatParent::None => break false,
-            }
-        };
-        if !is_local || !hir.exports.is_empty() && self.is_named_by_export_specifier(file, symbol) {
+        if !self.is_parameter_or_mutable_local_variable(file, symbol)
+            || !hir.exports.is_empty() && self.is_named_by_export_specifier(file, symbol)
+        {
             return false;
         }
-        if !s.flags.contains(SymFlags::ASSIGNED) {
-            return true;
-        }
-        let declared_at = hir[pat].pos;
-        let declaring = self.declaring_fn(file, symbol);
+        // `FindAncestor(symbol.ValueDeclaration, IsFunctionOrSourceFile)`
+        let declaring_function = match self.root_declaration(file, symbol) {
+            PatParent::Var(d) => self.enclosing_fn(file, Parent::Stmt(bound.var_stmt[d.idx()])),
+            PatParent::Param(p) => Some(bound.param_fn[p.idx()]),
+            _ => None,
+        };
+        // `markNodeAssignmentsWorker`
         let from = bound.assignments.partition_point(|a| a.0.0 < symbol.0);
-        for &(_, assignment) in bound.assignments[from..]
+        bound.assignments[from..]
             .iter()
             .take_while(|a| a.0 == symbol)
-        {
-            if self.function_around(file, assignment) != declaring {
-                return false;
-            }
-            // The assignment counts as going on until the end of the outermost statement it is in, since that may loop.
-            let mut outermost = None;
-            let mut at = bound.expr_parent[assignment.idx()];
-            loop {
-                match at {
-                    Parent::None | Parent::File | Parent::FnBody(_) | Parent::Module(_) => break,
-                    Parent::Stmt(stmt) if stmt.is_some() => {
-                        if hir[stmt].pos <= declared_at {
-                            break;
-                        }
-                        if matches!(
-                            hir[stmt].kind,
-                            StmtKind::Var(_)
-                                | StmtKind::Expr(_)
-                                | StmtKind::If { .. }
-                                | StmtKind::DoWhile { .. }
-                                | StmtKind::While { .. }
-                                | StmtKind::For { .. }
-                                | StmtKind::ForIn { .. }
-                                | StmtKind::ForOf { .. }
-                                | StmtKind::Switch { .. }
-                                | StmtKind::Try { .. }
-                                | StmtKind::Class(_)
-                        ) {
-                            outermost = Some(stmt);
-                        }
+            .all(|&(_, assignment)| {
+                self.function_around(file, assignment) == declaring_function
+                    && self.extend_assignment_position(file, assignment, hir[pat].pos) < hir[e].pos
+            })
+    }
+
+    /// `extendAssignmentPosition`
+    fn extend_assignment_position(&self, file: FileId, node: ExprId, declaration: u32) -> u32 {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut pos = hir[node].pos;
+        let mut at = bound.expr_parent[node.idx()];
+        loop {
+            match at {
+                Parent::None | Parent::File | Parent::FnBody(_) | Parent::Module(_) => return pos,
+                Parent::Stmt(stmt) if stmt.is_some() => {
+                    if hir[stmt].pos <= declaration {
+                        return pos;
                     }
-                    _ => {}
+                    if matches!(
+                        hir[stmt].kind,
+                        StmtKind::Var(_)
+                            | StmtKind::Expr(_)
+                            | StmtKind::If { .. }
+                            | StmtKind::DoWhile { .. }
+                            | StmtKind::While { .. }
+                            | StmtKind::For { .. }
+                            | StmtKind::ForIn { .. }
+                            | StmtKind::ForOf { .. }
+                            | StmtKind::Switch { .. }
+                            | StmtKind::Try { .. }
+                            | StmtKind::Class(_)
+                    ) {
+                        pos = hir[stmt].loc.end;
+                    }
                 }
-                at = self.outward(file, at);
+                _ => {}
             }
-            let Some(outermost) = outermost else {
-                if hir[assignment].pos >= hir[e].pos {
-                    return false;
-                }
-                continue;
-            };
-            if hir[e].pos <= hir[outermost].pos {
-                return false;
-            }
-            let mut at = bound.expr_parent[e.idx()];
-            loop {
-                match at {
-                    Parent::None | Parent::File => break,
-                    Parent::Stmt(stmt) if stmt == outermost => return false,
-                    _ => {}
-                }
-                at = self.outward(file, at);
-            }
+            at = self.outward(file, at);
         }
-        true
     }
 
     fn evolving_array(&mut self, element: TypeId) -> TypeId {

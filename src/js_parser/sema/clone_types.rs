@@ -692,7 +692,6 @@ impl Builder<'_> {
             ret: self.clone_type(return_type),
             body: FnBody::None,
             anchor: pos(open_paren_loc),
-            pos: pos(loc),
             start: start.unwrap_or(pos(loc)),
         };
         let func = self.file.add_fn(func);

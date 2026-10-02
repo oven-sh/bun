@@ -727,7 +727,7 @@ impl<'p> Checker<'p> {
         let pos = decls
             .iter()
             .find(|d| d.0 == file)
-            .map_or(0, |&(f, func)| self.hir(f)[func].pos);
+            .map_or(0, |&(f, func)| self.hir(f)[func].start);
         self.identity_mapper_of_mentioned(file, scope, pos, &mentioned)
     }
 

@@ -1356,7 +1356,7 @@ impl<'p> Checker<'p> {
         }
         let other = if is_getter { setter } else { getter };
         // `allAccessors.FirstAccessor`
-        if other.is_some_and(|other| hir[other].pos < hir[func].pos) {
+        if other.is_some_and(|other| hir[other].start < hir[func].start) {
             return None;
         }
         Some(PseudoElementKind::Property(

@@ -6,6 +6,13 @@ use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, UNREACHABLE};
 use smallvec::SmallVec;
 
+#[derive(Copy, Clone)]
+enum WideningKind {
+    FunctionReturn,
+    GeneratorNext,
+    GeneratorYield,
+}
+
 /// What `reportCircularityError` returns for a declaration with the type annotation `annotation`.
 pub(super) fn circularity_error_type(annotation: TypeNodeId) -> TypeId {
     if annotation.is_some() {
@@ -1077,6 +1084,64 @@ impl<'p> Checker<'p> {
             _ => {}
         }
         error_reported
+    }
+
+    /// `reportErrorsFromWidening`, of what the function `func` yields, returns or is sent.
+    fn report_errors_from_widening_of_function(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        ty: TypeId,
+        kind: WideningKind,
+    ) {
+        if !self.p.files.options.no_implicit_any || !self.contains_widening_type(ty, 0) {
+            return;
+        }
+        let f = &self.hir(file)[func];
+        if let FnOwner::Expr(e) = self.bound(file).fns[func.idx()].owner
+            && !self.is_context_known(file, e)
+        {
+            return;
+        }
+        // `shouldReportErrorsFromWideningWithContextualSignature`
+        if let Some(signature) = self.contextual_signature(file, func) {
+            let returned = self.sig_return(signature);
+            let is_async = f.flags.contains(Flags::ASYNC);
+            let is_generator = f.flags.contains(Flags::GENERATOR);
+            let iteration = if is_generator {
+                self.iteration_types(returned, is_async)
+            } else {
+                None
+            };
+            let expected = match kind {
+                WideningKind::GeneratorYield => iteration.map(|types| types.yielded),
+                WideningKind::GeneratorNext => iteration.map(|types| types.next),
+                WideningKind::FunctionReturn if is_generator => {
+                    Some(iteration.map_or(returned, |types| types.returned))
+                }
+                WideningKind::FunctionReturn if is_async => Some(self.awaited(returned)),
+                WideningKind::FunctionReturn => Some(returned),
+            };
+            if !expected.is_some_and(|expected| self.is_generic(expected)) {
+                return;
+            }
+        }
+        if !self.report_errors_from_widening(ty) || self.hir(file).is_js && !self.is_check_js(file)
+        {
+            return;
+        }
+        // `reportImplicitAny`
+        let at = self.place_of_signature_declaration(file, func);
+        let widened = self.regular_object(ty);
+        let is_yield = matches!(kind, WideningKind::GeneratorYield);
+        if f.name.is_some() || matches!(f.kind, FnKind::Method | FnKind::Getter) {
+            let name = self.declaration_name_at(file, at.1);
+            let code = if is_yield { 7055 } else { 7010 };
+            self.error(at, code, &[Arg::Text(&name), Arg::Type(widened)]);
+        } else {
+            let code = if is_yield { 7025 } else { 7011 };
+            self.error(at, code, &[Arg::Type(widened)]);
+        }
     }
 
     /// `reportImplicitAny`, of the name `pat` of a variable, a parameter or a binding element that comes to be `ty`: 7005, 7006 7019,
@@ -2605,17 +2670,6 @@ impl<'p> Checker<'p> {
 
     /// `getReturnTypeFromAnnotation`, then `getReturnTypeFromBody`. It pushes no resolution and caches nothing.
     pub(super) fn return_type_of_fn_uncached(&mut self, file: FileId, func: FnId) -> TypeId {
-        self.return_type_from_body(file, func, &mut [None; 3])
-    }
-
-    /// The same. `unwidened`: `yieldType`, `returnType` and `nextType`, as `getReturnTypeFromBody` hands them to
-    /// `reportErrorsFromWidening`.
-    pub(super) fn return_type_from_body(
-        &mut self,
-        file: FileId,
-        func: FnId,
-        unwidened: &mut [Option<TypeId>; 3],
-    ) -> TypeId {
         let hir = self.hir(file);
         let f = &hir[func];
         if f.ret.is_some() {
@@ -2657,7 +2711,12 @@ impl<'p> Checker<'p> {
                 let ty = self.type_of_expr(file, e);
                 let ty = self.regular_in_const_context(file, e, ty);
                 if is_async {
-                    self.check_awaited_type(ty, true, self.place_of_function(file, func), 1058)
+                    self.check_awaited_type(
+                        ty,
+                        true,
+                        self.place_of_signature_declaration(file, func),
+                        1058,
+                    )
                 } else {
                     ty
                 }
@@ -2687,7 +2746,7 @@ impl<'p> Checker<'p> {
                     }
                     let mut ty = self.type_of_expr(file, e);
                     if is_async {
-                        let error_node = self.place_of_function(file, func);
+                        let error_node = self.place_of_signature_declaration(file, func);
                         ty = self.check_awaited_type(ty, true, error_node, 1058);
                     }
                     if ty.is_never() {
@@ -2724,7 +2783,12 @@ impl<'p> Checker<'p> {
             }
         };
         if !is_generator {
-            unwidened[1] = Some(ret);
+            self.report_errors_from_widening_of_function(
+                file,
+                func,
+                ret,
+                WideningKind::FunctionReturn,
+            );
             // `getWidenedLiteralLikeTypeForContextualReturnTypeIfNeeded`
             if self.is_unit(ret) {
                 let mut contextual = if self.is_own_contextual_signature(file, func) {
@@ -2791,7 +2855,15 @@ impl<'p> Checker<'p> {
         } else {
             Some(self.intersection(&nexts))
         };
-        *unwidened = [Some(yielded), Some(ret), next];
+        for (ty, kind) in [
+            (Some(yielded), WideningKind::GeneratorYield),
+            (Some(ret), WideningKind::FunctionReturn),
+            (next, WideningKind::GeneratorNext),
+        ] {
+            if let Some(ty) = ty {
+                self.report_errors_from_widening_of_function(file, func, ty, kind);
+            }
+        }
         // `getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded`: only a type with one value is widened, and only where no
         // literal is expected. A union of literals stays.
         if self.is_unit(ret) || self.is_unit(yielded) || next.is_some_and(|t| self.is_unit(t)) {

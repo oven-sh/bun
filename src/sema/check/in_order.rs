@@ -7,7 +7,7 @@
 
 use super::errors_x_statements::is_with_statement;
 use super::*;
-use crate::bind::Parent;
+use crate::bind::{Parent, PatParent};
 
 /// `deferredNodes`
 pub(super) enum DeferredNode {
@@ -176,6 +176,7 @@ impl Checker<'_> {
             }
             PatKind::Object(props) => {
                 for p in props.iter() {
+                    self.check_unused_renamed_binding_element(file, p);
                     if let PropKey::Computed(key) = hir[p].key {
                         self.check_expression(file, key);
                     }
@@ -189,6 +190,58 @@ impl Checker<'_> {
                     self.check_expression(file, hir[e].default);
                 }
             }
+        }
+    }
+
+    /// Whether the element `p` of a pattern has a `PropertyName` and a name: `{ a: b }`, not `{ a }`.
+    pub(super) fn is_renamed_binding_element(&self, file: FileId, p: PatPropId) -> bool {
+        let hir = self.hir(file);
+        !hir[p].is_rest
+            && matches!(hir[hir[p].value].kind, PatKind::Ident(_))
+            && hir[hir[p].value].pos != hir[p].pos
+    }
+
+    /// `checkVariableLikeDeclaration`, `checkUnusedRenamedBindingElements`: 2842
+    fn check_unused_renamed_binding_element(&mut self, file: FileId, p: PatPropId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.kind == FileKind::Declaration || !self.is_renamed_binding_element(file, p) {
+            return;
+        }
+        // `WalkUpBindingElementsAndPatterns`
+        let mut outermost = hir[p].value;
+        while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) =
+            bound.pat_parent[outermost.idx()]
+        {
+            outermost = outer;
+        }
+        let PatParent::Param(param) = bound.pat_parent[outermost.idx()] else {
+            return;
+        };
+        let func = &hir[bound.param_fn[param.idx()]];
+        let symbol = bound.pat_symbol[hir[p].value.idx()];
+        // `NodeIsMissing(body)`, `referenceKinds == 0`
+        if !matches!(func.body, FnBody::None)
+            || func.flags.contains(Flags::BODY_DROPPED)
+            || symbol.is_none()
+            || bound.expr_symbol.contains(&symbol)
+        {
+            return;
+        }
+        let start = hir[hir[p].value].pos;
+        let (node, name) = match hir[hir[p].value].kind {
+            PatKind::Ident(name) if name != known::empty => {
+                (self.place_of_token(file, start), Arg::Atom(name))
+            }
+            _ => ((file, start, start), Arg::Text("(Missing)")),
+        };
+        let property = self.declaration_name_at(file, hir[p].pos);
+        let related = hir[param].ty.is_none().then(|| {
+            let end = self.end_of_param(file, param);
+            self.new_diagnostic((file, end, end), 2843, &[Arg::Text(&property)])
+        });
+        let diagnostic = self.error(node, 2842, &[name, Arg::Text(&property)]);
+        if let Some(related) = related {
+            diagnostic.add_related_info(related);
         }
     }
 
@@ -219,6 +272,7 @@ impl Checker<'_> {
             self.check_type_nodes(file, decl.extends_args);
             self.check_expression(file, decl.extends);
             self.base_types(sym);
+            self.report_class_like_declaration(file, class, sym);
         }
         self.check_type_nodes(file, decl.implements);
     }

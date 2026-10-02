@@ -2007,7 +2007,11 @@ impl<'p> Checker<'p> {
 
     /// `baseTypeNode.Expression()` of class `c`. `None`: nothing is to be said of it, `checkSourceFile` never comes there or its
     /// type is a guess.
-    fn place_to_report_base_at(&self, file: FileId, c: ClassId) -> Option<(FileId, u32, u32)> {
+    pub(super) fn place_to_report_base_at(
+        &self,
+        file: FileId,
+        c: ClassId,
+    ) -> Option<(FileId, u32, u32)> {
         let extends = self.hir(file)[c].extends;
         if self.bound(file).is_unchecked(extends.idx()) || self.is_uncertain(file, extends) {
             return None;
@@ -2758,7 +2762,7 @@ impl<'p> Checker<'p> {
 
     /// `isMixinConstructorType`, of a type whose construct signatures are `sigs`: one signature, without type parameters, that
     /// takes `...args: any[]` and nothing else.
-    fn is_mixin_constructor_type(&mut self, sigs: &[SigId]) -> bool {
+    pub(super) fn is_mixin_constructor_type(&mut self, sigs: &[SigId]) -> bool {
         let &[sig] = sigs else { return false };
         // How many parameters are written is known without asking what they are.
         if self

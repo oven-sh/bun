@@ -14,6 +14,7 @@ pub mod json;
 pub mod json_places;
 pub mod local;
 pub mod messages;
+pub mod node;
 pub mod program;
 pub mod resolve;
 pub mod table;

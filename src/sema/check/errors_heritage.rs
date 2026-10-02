@@ -63,15 +63,8 @@ impl Checker<'_> {
             && let Some(&base) = self.base_types(sym).first()
             && self.is_known(base)
         {
-            match self.heir_against_base(class_type, base, this) {
-                Some(with_this) => self.issue_member_specific_error(
-                    file,
-                    c,
-                    (class_type, base),
-                    with_this,
-                    2415,
-                    out,
-                ),
+            match self.unrelated_with_this_argument(class_type, base, this) {
+                Some(with_this) => self.issue_member_specific_error(file, c, with_this, 2415),
                 // The static side is looked at only if the instances are in order.
                 None => {
                     let static_type = self.type_of_symbol(sym);
@@ -135,15 +128,11 @@ impl Checker<'_> {
                 continue;
             }
             let is_class = matches!(*self.data(implemented), TypeData::Ref { target, .. } if self.files().flags(target).contains(SymFlags::CLASS));
-            if let Some(with_this) = self.heir_against_base(class_type, implemented, this) {
-                self.issue_member_specific_error(
-                    file,
-                    c,
-                    (class_type, implemented),
-                    with_this,
-                    if is_class { 2720 } else { 2420 },
-                    out,
-                );
+            if let Some(with_this) =
+                self.unrelated_with_this_argument(class_type, implemented, this)
+            {
+                let generic_diag = if is_class { 2720 } else { 2420 };
+                self.issue_member_specific_error(file, c, with_this, generic_diag);
             }
         }
         let locals = [(file, class.members)];
@@ -192,226 +181,83 @@ impl Checker<'_> {
         Some(self.synth(shape))
     }
 
-    /// `getTypeWithThisArgument`: what `ty` has, with `this_argument` for `this`. A reference has no place for that, so the type is
-    /// made up.
-    fn with_this_argument(&mut self, ty: TypeId, this_argument: TypeId) -> TypeId {
-        match self.data(ty) {
-            TypeData::Ref { target, .. } => {
-                let own_this = self.intern(TypeData::ThisParam(*target));
-                let Some(members) = self.members(ty) else {
-                    return ty;
-                };
-                let mut pairs = self.p.types.mapping(members.mapper).to_vec();
-                for pair in &mut pairs {
-                    if pair.0 == own_this {
-                        pair.1 = this_argument;
-                    }
-                }
-                // With nothing to put for anything, what is inherited as it is stays the very same on both sides.
-                let mapper = if pairs.iter().all(|pair| pair.0 == pair.1) {
-                    MapperId::IDENTITY
-                } else {
-                    self.p.types.mapper(pairs)
-                };
-                let mut shape = Shape::default();
-                for prop in &members.shape().props {
-                    let mut prop = prop.clone();
-                    self.instantiate_prop(&mut prop, mapper);
-                    shape.props.push(prop);
-                }
-                for &sig in &members.shape().call {
-                    let sig = self.instantiate_sig(sig, mapper);
-                    shape.call.push(sig);
-                }
-                for &sig in &members.shape().construct {
-                    let sig = self.instantiate_sig(sig, mapper);
-                    shape.construct.push(sig);
-                }
-                for info in &members.shape().index {
-                    let value = self.instantiate(info.value, mapper);
-                    shape.index.push(IndexInfo { value, ..*info });
-                }
-                self.synth(shape)
-            }
-            TypeData::Intersection(parts) => {
-                let parts: Vec<TypeId> = parts
-                    .iter()
-                    .map(|&part| self.with_this_argument(part, this_argument))
-                    .collect();
-                self.intersection(&parts)
-            }
-            _ => ty,
-        }
-    }
-
-    /// `checkTypeAssignableTo(typeWithThis, baseWithThis)`: whether `heir` fits `base` with `this`, the `this` type of the heir, for
-    /// `this` in both. `None` if it does, else the two as they were compared.
-    fn heir_against_base(
+    /// `getTypeWithThisArgument` of `ty` and of `base`, with `this` for both. `None`: the first is assignable to the second.
+    fn unrelated_with_this_argument(
         &mut self,
-        heir: TypeId,
+        ty: TypeId,
         base: TypeId,
         this: TypeId,
-    ) -> Option<(TypeId, TypeId)> {
-        // As the two stand each is `this` to itself. What fits so is taken to fit.
-        if self.is_assignable(heir, base) {
+    ) -> Option<[TypeId; 2]> {
+        // It gives back what is no reference. To tell costs (`isThislessInterface`), and whether the two are related does not hang
+        // on it: it is asked once they are not.
+        let mut with_this = [ty, base].map(|t| self.type_with_this_argument(t, this));
+        let [source, target] = with_this;
+        if self.is_type_related_to_if_told(source, target, Relation::Assignable, true) == Some(true)
+        {
             return None;
         }
-        let with_this = (
-            self.with_this_argument(heir, this),
-            self.with_this_argument(base, this),
-        );
-        if !self.is_assignable(with_this.0, with_this.1) {
-            return Some(with_this);
-        }
-        // `isObjectTypeWithInferableIndex`: what a class or an interface declares is not taken for an index signature it lacks.
-        // The two that were compared are nobody's declaration, so that is asked of the types themselves.
-        let (Some(sm), Some(tm)) = (self.members(heir), self.members(base)) else {
-            return None;
-        };
-        let has_string_index = tm
-            .shape()
-            .index
-            .iter()
-            .any(|info| info.key == TypeId::STRING);
-        for info in &tm.shape().index {
-            let wanted = self.instantiate(info.value, tm.mapper);
-            if !(has_string_index && self.is_any(wanted))
-                && self.applicable_index_info(&sm, info.key, None).is_none()
-            {
-                return Some(with_this);
+        for (t, plain) in with_this.iter_mut().zip([ty, base]) {
+            if !self.takes_this_argument(plain) {
+                *t = plain;
             }
         }
-        None
+        Some(with_this)
     }
 
-    /// `issueMemberSpecificError`: it is said of each member that is to blame, and of the class if none can be told. `plain`: the
-    /// class and what it does not fit. `with_this`: what `heir_against_base` made of the two. As there, what fits either way fits.
+    /// `issueMemberSpecificError`
     fn issue_member_specific_error(
         &mut self,
         file: FileId,
         c: ClassId,
-        plain: (TypeId, TypeId),
-        with_this: (TypeId, TypeId),
-        broad: u32,
-        out: &mut Vec<Diagnostic>,
+        [type_with_this, base_with_this]: [TypeId; 2],
+        broad_diag: u32,
     ) {
         let hir = self.hir(file);
-        let apparent_base = self.apparent_type(with_this.1);
-        let mut named: Vec<(MemberId, Atom)> = Vec::new();
+        let apparent_base = self.apparent_type(base_with_this);
+        let mut issued_member_error = false;
         for m in hir[c].members.iter() {
             let member = &hir[m];
-            if member.flags.contains(Flags::STATIC)
-                || !matches!(
-                    member.kind,
-                    MemberKind::Property
-                        | MemberKind::Method
-                        | MemberKind::Getter
-                        | MemberKind::Setter
-                )
-            {
+            if member.flags.contains(Flags::STATIC) {
                 continue;
             }
-            if let Some(name) = self.member_name(file, member.key) {
-                named.push((m, name));
+            // `declaredProp.Name != ast.InternalSymbolNameComputed`
+            let Some(name) = self.member_name(file, member.key) else {
+                continue;
+            };
+            let (Some((prop, mapper)), Some((base_prop, base_mapper))) = (
+                self.prop_of(type_with_this, name),
+                self.prop_of(apparent_base, name),
+            ) else {
+                continue;
+            };
+            let (given, wanted) = (
+                self.type_of_prop(&prop, mapper),
+                self.type_of_prop(&base_prop, base_mapper),
+            );
+            let at = (file, member.name_pos, self.end_of_member_name(file, m));
+            let mut diags = Vec::new();
+            if !self.check_type_assignable_to_ex(given, wanted, Some(at), None, Some(&mut diags)) {
+                let declared = self.prop_to_string(&prop);
+                let args = [
+                    Arg::Text(&declared),
+                    Arg::Type(type_with_this),
+                    Arg::Type(base_with_this),
+                ];
+                let diagnostic =
+                    self.new_diagnostic_chain(diags.into_iter().next(), at, 2416, &args);
+                self.add_diagnostic(diagnostic);
+                issued_member_error = true;
             }
         }
-        // What fits as the two stand is let off, unless that leaves no member to blame.
-        let mut some_fit_neither_way = false;
-        for &(_, name) in &named {
-            some_fit_neither_way |= !self.is_member_assignable(with_this, name)
-                && !self.is_member_assignable(plain, name);
+        if !issued_member_error {
+            let at = self.place_of_token(file, hir[c].name_pos);
+            self.check_type_assignable_to(
+                type_with_this,
+                base_with_this,
+                Some(at),
+                Some(broad_diag),
+            );
         }
-        let mut issued = false;
-        for (m, name) in named {
-            let member = &hir[m];
-            if !self.is_member_assignable(with_this, name)
-                && !(some_fit_neither_way && self.is_member_assignable(plain, name))
-            {
-                out.push(Diagnostic {
-                    start: member.name_pos,
-                    code: 2416,
-                });
-                let end = self.end_of_member_name(file, m);
-                self.explain_another(member.name_pos, end, 2416, |c| {
-                    let declared = match c.prop_of(plain.0, name) {
-                        Some((prop, _)) => c.prop_to_string(&prop),
-                        None => c.atom_text(name),
-                    };
-                    vec![
-                        declared,
-                        c.type_to_string(plain.0),
-                        c.base_with_this_to_string(plain.1),
-                    ]
-                });
-                if self.explains
-                    && let (Some((own, own_mapper)), Some((inherited, base_mapper))) = (
-                        self.prop_of(with_this.0, name),
-                        self.prop_of(apparent_base, name),
-                    )
-                {
-                    let (given, wanted) = (
-                        self.type_of_prop(&own, own_mapper),
-                        self.type_of_prop(&inherited, base_mapper),
-                    );
-                    let (lines, related) = self.relation_lines_with_related(
-                        given,
-                        wanted,
-                        super::relate::Relation::Assignable,
-                        None,
-                        1,
-                    );
-                    self.explain_chain(member.name_pos, 2416, |_| lines);
-                    self.relate(member.name_pos, 2416, |_| related);
-                }
-                issued = true;
-            }
-        }
-        if !issued {
-            let at = hir[c].name_pos;
-            self.report_not_assignable(plain.0, plain.1, at, broad, out);
-            self.explain_as_another(at);
-            self.explain_base_with_this(at, broad, plain.1);
-        }
-    }
-
-    /// `typeToString(baseWithThis)`: a reference or an intersection that `getTypeWithThisArgument` makes anew goes by no alias.
-    fn base_with_this_to_string(&mut self, base: TypeId) -> String {
-        let base = self.without_alias_of_reference(base);
-        if self.is_intersection(base) && self.takes_this_argument(base) {
-            self.type_to_string_written_out(base)
-        } else {
-            self.type_to_string(base)
-        }
-    }
-
-    /// Has what was last noted of the error `code` at `start` name `base` as `base_with_this_to_string` does.
-    fn explain_base_with_this(&mut self, start: u32, code: u32, base: TypeId) {
-        if !self.explains
-            || !self.is_intersection(base) && self.without_alias_of_reference(base) == base
-        {
-            return;
-        }
-        let (plain, with_this) = (
-            self.type_to_string(base),
-            self.base_with_this_to_string(base),
-        );
-        self.explain_renamed(start, code, &plain, &with_this);
-    }
-
-    /// Whether the property `name` of the first of `pair` fits that of the second. It does where one of them has none, and where it
-    /// cannot be told.
-    fn is_member_assignable(&mut self, pair: (TypeId, TypeId), name: Atom) -> bool {
-        let base = self.apparent_type(pair.1);
-        let (Some((own, own_mapper)), Some((inherited, base_mapper))) =
-            (self.prop_of(pair.0, name), self.prop_of(base, name))
-        else {
-            return true;
-        };
-        let (given, wanted) = (
-            self.type_of_prop(&own, own_mapper),
-            self.type_of_prop(&inherited, base_mapper),
-        );
-        !self.is_known(given) || !self.is_known(wanted) || self.is_assignable(given, wanted)
     }
 
     /// The members that declare `prop`, if members of classes or interfaces do.
@@ -753,22 +599,16 @@ impl Checker<'_> {
                 if !self.is_known(base) || !self.is_valid_base_type(base) {
                     continue;
                 }
-                // `getTypeWithThisArgument` gives back what is no reference. To tell costs (`isThislessInterface`), and whether the two are
-                // related does not hang on it: it is asked once they are not.
-                let mut with_this = [ty, base].map(|t| self.type_with_this_argument(t, this));
-                let [source, target] = with_this;
-                if self.is_type_related_to_if_told(source, target, Relation::Assignable, true)
-                    == Some(true)
+                if let Some([type_with_this, base_with_this]) =
+                    self.unrelated_with_this_argument(ty, base, this)
                 {
-                    continue;
+                    self.check_type_assignable_to(
+                        type_with_this,
+                        base_with_this,
+                        Some(at),
+                        Some(2430),
+                    );
                 }
-                for (t, plain) in with_this.iter_mut().zip([ty, base]) {
-                    if !self.takes_this_argument(plain) {
-                        *t = plain;
-                    }
-                }
-                let [type_with_this, base_with_this] = with_this;
-                self.check_type_assignable_to(type_with_this, base_with_this, Some(at), Some(2430));
             }
         } else if !self.check_inherited_properties_are_identical(sym, ty, &bases, None) {
             return;
@@ -825,7 +665,7 @@ impl Checker<'_> {
         let mut identical = true;
         for &declared_base in bases {
             // `this` is in each what it is in the heir.
-            let base = self.with_this_argument(declared_base, this);
+            let base = self.type_with_this_argument(declared_base, this);
             let Some(members) = self.members(base) else {
                 continue;
             };

@@ -370,14 +370,7 @@ impl Checker<'_> {
             else {
                 continue;
             };
-            let (start, end) = match bound.fns[i].owner {
-                FnOwner::Expr(e) if matches!(func.kind, FnKind::Expr | FnKind::Arrow) => (
-                    self.error_start_inside_parentheses(file, e),
-                    self.error_end_inside_parentheses(file, e),
-                ),
-                FnOwner::Stmt(s) => self.error_range_of_stmt(file, s),
-                _ => self.error_range_of_fn(file, f),
-            };
+            let (start, end) = self.error_range_of_fn(file, f);
             requests.push(Request {
                 order: (place + put_off, start),
                 start,

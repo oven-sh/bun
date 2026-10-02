@@ -5,6 +5,7 @@
 //! from then on. Positions are byte offsets into the source.
 
 use crate::atom::Atom;
+pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, ToNode};
 use std::marker::PhantomData;
 
 macro_rules! define_id {
@@ -868,7 +869,6 @@ pub struct Func {
     pub body: FnBody,
     /// The `(` of the parameters; the `=>` of an arrow function.
     pub anchor: u32,
-    pub pos: u32,
     /// Where its first token is, decorators and modifiers included. That of the member, for a method or an accessor.
     pub start: u32,
 }
@@ -1491,6 +1491,12 @@ pub struct File {
     pub tuple_elems: Few<TupleElem>,
     pub mapped: Few<Mapped>,
     pub modifiers: Vec<Modifier>,
+    /// See node.rs. Set by `finish_nodes`.
+    pub bases: NodeBases,
+    pub fn_nodes: Vec<Node>,
+    pub class_nodes: Vec<Node>,
+    /// `node.Parent`, by `Node`: `File::parent`.
+    pub parents: std::sync::OnceLock<Box<[Node]>>,
 }
 
 macro_rules! arenas {

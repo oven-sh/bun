@@ -471,6 +471,7 @@ pub fn summarize(
     file.legacy_decorators = experimental_decorators;
     file.is_js = is_js;
     file.shrink_to_fit();
+    file.finish_nodes();
     (file, parsing.get())
 }
 

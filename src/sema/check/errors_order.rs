@@ -1260,7 +1260,8 @@ impl Checker<'_> {
                         let FnOwner::Stmt(s) = bound.fns[f.idx()].owner else {
                             return;
                         };
-                        hir[f].pos <= name_pos || self.is_use_deferred_in(file, e, Parent::Stmt(s))
+                        hir[f].start <= name_pos
+                            || self.is_use_deferred_in(file, e, Parent::Stmt(s))
                     }
                     Decl::Enum(_) | Decl::EnumMember(_) => {
                         let (en, start) = match decl {

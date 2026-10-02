@@ -75,7 +75,7 @@ impl Checker<'_> {
                     } else {
                         7020
                     };
-                    let start = self.start_of_signature(file, func);
+                    let start = self.error_range_of_fn(file, func).0;
                     out.push(Diagnostic { start, code });
                     let end = self.end_of_fn(file, func);
                     self.explain_to(start, end, code, |_| vec![]);
@@ -91,7 +91,7 @@ impl Checker<'_> {
                     } else {
                         7010
                     };
-                    let start = self.start_of_signature(file, func);
+                    let start = self.error_range_of_fn(file, func).0;
                     out.push(Diagnostic { start, code });
                     let is_missing = match bound.fns[f].owner {
                         FnOwner::Member(m) => {
@@ -313,16 +313,6 @@ impl Checker<'_> {
         Some(pos)
     }
 
-    /// Where an error about `func` as a whole goes: its name if it has one.
-    fn start_of_signature(&self, file: FileId, func: FnId) -> u32 {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match bound.fns[func.idx()].owner {
-            FnOwner::Member(m) => hir[m].name_pos,
-            _ if hir[func].name.is_some() => hir[func].name_pos,
-            _ => hir[func].pos,
-        }
-    }
-
     fn check_parameters_implicitly_any(
         &mut self,
         file: FileId,
@@ -501,7 +491,9 @@ impl Checker<'_> {
                     });
                 }
                 PatKind::Object(_) | PatKind::Array(_) => {
-                    self.check_pattern_implicitly_any(file, param.pat, out)
+                    if !self.is_type_of_parameter_never_asked_for(file, func, p) {
+                        self.check_pattern_implicitly_any(file, param.pat, out)
+                    }
                 }
                 _ => {}
             }
@@ -533,6 +525,21 @@ impl Checker<'_> {
                 .files()
                 .resolve_name(file, scope, name, SymFlags::TYPE)
                 .is_some()
+    }
+
+    /// `checkVariableLikeDeclaration` returns before it asks for the type of a renamed element in a function without a body. 7031
+    /// comes from `getTypeFromBindingPattern`, which only runs once the type of the parameter is asked for: by another element of
+    /// the pattern, by a call, or by a comparison with another signature.
+    fn is_type_of_parameter_never_asked_for(&self, file: FileId, func: FnId, p: ParamId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (f, symbol) = (&hir[func], bound.fn_symbol[func.idx()]);
+        f.kind == FnKind::Decl
+            && matches!(f.body, FnBody::None)
+            && !f.flags.contains(Flags::BODY_DROPPED)
+            && matches!(hir[hir[p].pat].kind, PatKind::Object(props) if props.iter().all(|q| self.is_renamed_binding_element(file, q)))
+            && symbol.is_some()
+            && bound.symbols[symbol.idx()].decls.len() == 1
+            && !bound.expr_symbol.contains(&symbol)
     }
 
     /// `getTypeFromBindingPattern` with `reportErrors`: each name in a pattern that nothing gives a type.

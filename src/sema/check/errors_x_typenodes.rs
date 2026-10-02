@@ -1290,7 +1290,7 @@ impl Checker<'_> {
             if hir
                 .early_errors
                 .iter()
-                .any(|&(start, _)| (member.start..func.pos).contains(&start))
+                .any(|&(start, _)| (member.start..func.anchor).contains(&start))
                 || func.params.len() != 1
             {
                 continue;

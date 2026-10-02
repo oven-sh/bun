@@ -1218,16 +1218,9 @@ impl Checker<'_> {
         let hir = self.hir(file);
         // There is no text of the default library.
         if hir.text.is_empty() {
-            return (file, hir[func].pos, hir[func].pos);
+            return (file, hir[func].start, hir[func].start);
         }
-        let (start, end) = match self.bound(file).fns[func.idx()].owner {
-            FnOwner::Stmt(s) => self.error_range_of_stmt(file, s),
-            FnOwner::Expr(e) if hir[func].kind == FnKind::Expr => (
-                self.error_start_inside_parentheses(file, e),
-                self.error_end_inside_parentheses(file, e),
-            ),
-            _ => self.error_range_of_fn(file, func),
-        };
+        let (start, end) = self.error_range_of_fn(file, func);
         (file, start, end)
     }
 

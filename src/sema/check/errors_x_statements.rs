@@ -1098,7 +1098,6 @@ impl Checker<'_> {
         from: Parent,
         is_loop: bool,
     ) -> Vec<super::explain::Related> {
-        use crate::bind::FnOwner;
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = from;
         let func = loop {
@@ -1131,15 +1130,7 @@ impl Checker<'_> {
         {
             return Vec::new();
         }
-        // `GetErrorRangeForNode`
-        let (start, end) = match bound.fns[func.idx()].owner {
-            FnOwner::Stmt(s) => self.error_range_of_stmt(file, s),
-            FnOwner::Expr(owner) if matches!(f.kind, FnKind::Expr | FnKind::Arrow) => (
-                self.error_start_inside_parentheses(file, owner),
-                self.error_end_inside_parentheses(file, owner),
-            ),
-            _ => self.error_range_of_fn(file, func),
-        };
+        let (start, end) = self.error_range_of_fn(file, func);
         vec![super::explain::Related {
             at: Some((file, start, end)),
             code: 1356,

@@ -129,6 +129,10 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         tuple_elems: _,
         mapped: _,
         modifiers: _,
+        bases: _,
+        parents: _,
+        fn_nodes: _,
+        class_nodes: _,
     } = file;
     let mut d = Dump {
         file,
@@ -275,7 +279,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     }
     for &(owner, ty) in jsdoc_types {
         let (kind, pos) = match owner {
-            JsDocTypeOwner::Fn(id) => ("Fn", file.fns.get(id.idx()).map(|func| func.pos)),
+            JsDocTypeOwner::Fn(id) => ("Fn", file.fns.get(id.idx()).map(|func| func.start)),
             JsDocTypeOwner::Prop(id) => ("Prop", file.props.get(id.idx()).map(|prop| prop.pos)),
             JsDocTypeOwner::Assign(id) => ("Assign", file.exprs.get(id.idx()).map(|expr| expr.pos)),
             JsDocTypeOwner::Export(id) => ("Export", file.stmts.get(id.idx()).map(|stmt| stmt.pos)),
@@ -299,7 +303,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
                 0,
                 "",
                 "jsdoc_param_error of Fn pos={} pos={pos} code={code}",
-                func.pos
+                func.start
             ),
             None => put!(
                 d,
@@ -365,6 +369,40 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         exprs.pos,
         stmts.pos
     );
+    macro_rules! compare_walks {
+        ($($vector:ident $id:ident),*) => {$(
+            for i in 0..file.$vector.len() as u32 {
+                let seen = d.seen.contains(&(stringify!($vector), i));
+                let has_parent = file.parent(file.node($id(i))).is_some();
+                if seen != has_parent {
+                    orphans.push(format!("{}[{i}] seen={seen} has_parent={has_parent}", stringify!($vector)));
+                }
+            }
+        )*};
+    }
+    compare_walks!(
+        exprs ExprId, types TypeNodeId, pat_props PatPropId, pat_elems PatElemId, params ParamId, type_params TypeParamId,
+        members MemberId, props PropId, var_decls VarDeclId, cases CaseId, enum_members EnumMemberId, import_specs ImportSpecId,
+        export_specs ExportSpecId, tuple_elems TupleElemId, fns FnId, classes ClassId
+    );
+    // The two rows that are no node: node.rs.
+    for (i, statement) in file.stmts.iter().enumerate() {
+        let seen = d.seen.contains(&("stmts", i as u32));
+        let has_parent = match statement.kind {
+            StmtKind::Expr(e) => file.parent(file.node(e)).is_some(),
+            _ => file.parent(file.node(StmtId(i as u32))).is_some(),
+        };
+        if seen != has_parent {
+            orphans.push(format!("stmts[{i}] seen={seen} has_parent={has_parent}"));
+        }
+    }
+    for (i, pattern) in file.pats.iter().enumerate() {
+        let seen = d.seen.contains(&("pats", i as u32));
+        let has_parent = file.parent(file.node(PatId(i as u32))).is_some();
+        if seen != has_parent && !matches!(pattern.kind, PatKind::Missing) {
+            orphans.push(format!("pats[{i}] seen={seen} has_parent={has_parent}"));
+        }
+    }
     (d.out, orphans)
 }
 
@@ -927,14 +965,13 @@ impl Dump<'_> {
             ret,
             body,
             anchor,
-            pos,
             start,
         } = node!(self, depth, label, fns, id);
         put!(
             self,
             depth,
             label,
-            "Func kind={kind:?} flags={flags:?} name={} name_pos={name_pos} anchor={anchor} pos={pos} start={start}",
+            "Func kind={kind:?} flags={flags:?} name={} name_pos={name_pos} anchor={anchor} start={start}",
             self.q(name)
         );
         let d = depth + 1;

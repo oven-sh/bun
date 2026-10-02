@@ -10,9 +10,10 @@ use crate::bind::{FnOwner, MemberOwner};
 use crate::hir::{
     CallId, CaseId, ClassId, EnumMemberId, ExportSpecId, Expr, ExprId, ExprKind, File, FileKind,
     Flags, FnBody, FnId, FnKind, Func, INCOMPLETE_TEMPLATE, IdList, ImportSpecId, Keyword,
-    MemberId, MemberKind, ParamId, PatElemId, PatId, PatKind, PatPropId, PropId, PropKey, PropKind,
-    Span, Stmt, StmtId, StmtKind, TupleElemId, TypeNode, TypeNodeId, TypeNodeKind, TypeParamId,
-    UnOp, VarDeclId, is_parenthesized, open_parenthesis, start_inside_parentheses,
+    MemberId, MemberKind, ModifierKind, Node, NodeData, ParamId, Part, PatElemId, PatId, PatKind,
+    PatPropId, PropId, PropKey, PropKind, Span, Stmt, StmtId, StmtKind, TupleElemId, TypeNode,
+    TypeNodeId, TypeNodeKind, TypeParamId, UnOp, VarDeclId, is_parenthesized, open_parenthesis,
+    start_inside_parentheses,
 };
 use crate::program::FileId;
 use bun_core::lexer;
@@ -2042,23 +2043,23 @@ impl Checker<'_> {
         self.spans(file).func(func) as u32
     }
 
-    /// `GetErrorRangeForNode` of whatever `func` is: the name of a function, an accessor or a method with a body to it, or else its
-    /// first token; the first line of an arrow function; the whole of a signature or a function type. The name a function expression
-    /// is given to is not looked for: `error_range_of_expr`.
+    /// `GetErrorRangeForNode`, of whatever `f` is.
     pub(super) fn error_range_of_fn(&self, file: FileId, f: FnId) -> (u32, u32) {
         let spans = self.spans(file);
         let Some(func) = self.hir(file).fns.get(f.idx()) else {
             return (0, 0);
         };
-        if let Some(FnOwner::Member(m)) = self.bound(file).fns.get(f.idx()).map(|f| f.owner) {
-            return self.error_range_of_member(file, m);
-        }
-        match func.kind {
-            FnKind::Decl | FnKind::Expr | FnKind::Method | FnKind::Getter | FnKind::Setter => {
+        match self.bound(file).fns.get(f.idx()).map(|f| f.owner) {
+            Some(FnOwner::Member(m)) => self.error_range_of_member(file, m),
+            Some(FnOwner::Stmt(s)) => self.error_range_of_stmt(file, s),
+            Some(FnOwner::Expr(e)) if matches!(func.kind, FnKind::Expr | FnKind::Arrow) => (
+                self.error_start_inside_parentheses(file, e),
+                self.error_end_inside_parentheses(file, e),
+            ),
+            _ if matches!(func.kind, FnKind::Method | FnKind::Getter | FnKind::Setter) => {
                 (func.name_pos, spans.name(func.name_pos as usize) as u32)
             }
-            FnKind::Arrow => (func.pos, spans.arrow_error_end(f) as u32),
-            _ => (func.pos, spans.func(f) as u32),
+            _ => (func.start, spans.func(f) as u32),
         }
     }
 
@@ -2258,5 +2259,70 @@ impl Checker<'_> {
     /// `pos`.
     pub(super) fn end_of_token_before(&self, file: FileId, pos: u32) -> u32 {
         skip_trivia_back(&self.hir(file).text, pos as usize) as u32
+    }
+}
+
+impl Checker<'_> {
+    /// `node.End()`
+    pub(super) fn end_of_node(&self, file: FileId, node: Node) -> u32 {
+        let hir = self.hir(file);
+        match hir.data(node) {
+            NodeData::None => 0,
+            NodeData::File => hir.source_len,
+            NodeData::Part(Part::Name | Part::PropertyName | Part::BindingsName, _) => {
+                self.end_of_name_at(file, hir.start(node))
+            }
+            NodeData::Part(Part::Base, row) => match hir
+                .ids(hir[hir.class_of(hir.parent(node).row())].extends_args)
+                .next_back()
+            {
+                Some(_) => self.end_of_class_extends(file, hir.class_of(hir.parent(node).row())),
+                None => self.end_of_node(file, row),
+            },
+            // The tree does not say.
+            NodeData::Part(..) => 0,
+            NodeData::Expr(e) => self.end_of_expr(file, e),
+            NodeData::Stmt(s) => self.end_of_stmt(file, s),
+            NodeData::Type(t) => self.end_of_type_node(file, t),
+            NodeData::Pat(p) => self.end_of_pat(file, p),
+            NodeData::PatProp(p) => self.end_of_pat_prop(file, p),
+            NodeData::PatElem(e) => self.end_of_pat_elem(file, e),
+            NodeData::Param(p) => self.end_of_param(file, p),
+            NodeData::TypeParam(p) => self.end_of_type_param(file, p),
+            NodeData::Member(m) => hir[m].loc.end,
+            NodeData::Prop(p) => self.end_of_prop(file, p),
+            NodeData::VarDecl(d) => hir[d].loc.end,
+            NodeData::Case(c) => match hir.ids(hir[c].body).next_back() {
+                Some(last) => self.end_of_stmt(file, last),
+                None => self.error_range_of_case(file, c).1,
+            },
+            NodeData::EnumMember(m) => hir[m].loc.end,
+            NodeData::ImportSpec(s) => self.end_of_import_spec(file, s),
+            NodeData::ExportSpec(s) => self.end_of_export_spec(file, s),
+            NodeData::TupleElem(e) => self.end_of_tuple_elem(file, e),
+            NodeData::Modifier(m) => match hir[m].kind {
+                ModifierKind::Decorator(e) => self.end_of_expr(file, e),
+                ModifierKind::Keyword(_) => self.end_of_token_at(file, hir[m].pos),
+            },
+        }
+    }
+
+    /// `GetErrorRangeForNode`
+    pub(super) fn get_error_range_for_node(&self, file: FileId, node: Node) -> (u32, u32) {
+        let hir = self.hir(file);
+        match hir.data(node) {
+            NodeData::Expr(e) => self.error_range_of_expr(file, e),
+            NodeData::Stmt(s) => self.error_range_of_stmt(file, s),
+            NodeData::Member(m) => self.error_range_of_member(file, m),
+            NodeData::Prop(_) if hir.function_of(node).is_some() => {
+                self.error_range_of_fn(file, hir.function_of(node))
+            }
+            NodeData::PatProp(p) => self.error_range_of_pat_prop(file, p),
+            NodeData::PatElem(e) => self.error_range_of_pat_elem(file, e),
+            NodeData::VarDecl(d) => self.error_range_of_var_decl(file, d),
+            NodeData::Case(c) => self.error_range_of_case(file, c),
+            NodeData::EnumMember(m) => self.error_range_of_enum_member(file, m),
+            _ => (hir.start(node), self.end_of_node(file, node)),
+        }
     }
 }

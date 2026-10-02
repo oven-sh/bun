@@ -189,7 +189,6 @@ impl Checker<'_> {
         self.check_x_modules(file, &mut out);
         self.check_x_classes(file, &mut out);
         self.check_x_collisions(file, &mut out);
-        self.check_x_identifiers(file, &mut out);
         self.check_x_properties_jsx(file, &mut out);
         // `checkGrammarRegularExpressionLiteral`
         if !has_parse_diagnostics {

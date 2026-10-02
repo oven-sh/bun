@@ -67,7 +67,7 @@ impl Checker<'_> {
                     _ => false,
                 };
                 // `checkWithStatement` does not look at the statement.
-                if is_deferred && !hir.is_in_with(hir.fns[f].pos) {
+                if is_deferred && !hir.is_in_with(hir.fns[f].start) {
                     self.prepare_fn(file, FnId(f as u32));
                     self.check_unreachable_in(file, list, out);
                 }
@@ -285,20 +285,6 @@ impl Checker<'_> {
         self.maybe_type_of_kind(t, |_, t| t == TypeId::VOID)
     }
 
-    /// Where an error about the function `func` as a whole goes: at its name, or else at the name of what it is given to.
-    /// `GetErrorRangeForNode`, `GetNameOfDeclaration`
-    fn start_of_function_node(&self, file: FileId, func: FnId) -> u32 {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let f = &hir[func];
-        match (f.kind, bound.fns[func.idx()].owner) {
-            (_, FnOwner::Member(m)) => hir[m].name_pos,
-            (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => f.name_pos,
-            _ if f.name.is_some() => f.name_pos,
-            (FnKind::Expr, FnOwner::Expr(e)) => bound.get_assigned_name(hir, e).unwrap_or(f.pos),
-            _ => f.pos,
-        }
-    }
-
     /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030, of a `@type` tag on a function.
     fn check_full_signatures(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -381,7 +367,7 @@ impl Checker<'_> {
         let start = if error_node.is_some() {
             start_of_return_type(hir, error_node)
         } else {
-            self.start_of_function_node(file, func)
+            self.error_range_of_fn(file, func).0
         };
         let code = match declared {
             Some(TypeId::NEVER) => 2534,

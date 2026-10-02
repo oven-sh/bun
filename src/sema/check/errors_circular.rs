@@ -458,11 +458,7 @@ impl Checker<'_> {
             && !matches!(hir[func].body, FnBody::None)
             && !named(self, func, 7023)
         {
-            let start = hir[func].pos;
-            let end = match owner {
-                FnOwner::Expr(e) => self.error_end_inside_parentheses(file, e),
-                _ => self.end_of_token_at(file, start),
-            };
+            let (start, end) = self.error_range_of_fn(file, func);
             let err = self.new_diagnostic((file, start, end), 7024, &[]);
             self.commit(err);
         }

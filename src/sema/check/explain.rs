@@ -321,24 +321,6 @@ impl Checker<'_> {
         String::from_utf8_lossy(self.files().atoms.bytes(name)).into_owned()
     }
 
-    /// In what was last noted of the error `code` at `start`, the type that reads `from` goes by the name `to`.
-    pub(super) fn explain_renamed(&self, start: u32, code: u32, from: &str, to: &str) {
-        if let Some(note) = self
-            .notes
-            .borrow_mut()
-            .iter_mut()
-            .rev()
-            .find(|n| n.start == start && n.code == code)
-        {
-            let reasons = note.chain.iter_mut().map(|line| &mut line.args);
-            for arg in std::iter::once(&mut note.args).chain(reasons).flatten() {
-                if arg.as_str() == from {
-                    *arg = to.to_owned();
-                }
-            }
-        }
-    }
-
     /// The source text of `file` from `start` to `end`.
     pub(super) fn source_text(&self, file: FileId, start: u32, end: u32) -> String {
         let text = &self.hir(file).text;

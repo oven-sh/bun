@@ -890,7 +890,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             ret,
             body: FnBody::None,
             anchor: pos,
-            pos,
             start: pos,
         })
     }

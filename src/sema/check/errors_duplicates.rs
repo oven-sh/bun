@@ -486,7 +486,7 @@ impl Checker<'_> {
                 if !matches!(self.hir(of)[f].body, FnBody::None)
                     && !is_ambient(of, self.hir(of)[f].flags) =>
             {
-                Some((of, self.hir(of)[f].pos))
+                Some((of, self.hir(of)[f].start))
             }
             _ => None,
         });

@@ -1082,79 +1082,25 @@ impl Unused<'_> {
     /// Where the names in the JSDoc comment `open..end` are resolved from: the scope of the statement, member or parameter it is
     /// attached to (`withJSDoc`), which are the nodes `checkSourceElement` is given. `NONE` if it is attached to none.
     fn scope_of_jsdoc(&self, open: usize, end: usize) -> ScopeId {
-        const MODIFIERS: [&[u8]; 15] = [
-            b"abstract",
-            b"accessor",
-            b"async",
-            b"const",
-            b"declare",
-            b"default",
-            b"export",
-            b"get",
-            b"override",
-            b"private",
-            b"protected",
-            b"public",
-            b"readonly",
-            b"set",
-            b"static",
-        ];
         let (hir, bound) = (self.hir, self.bound);
         let text: &[u8] = &hir.text;
-        let first = skip_trivia(text, end);
-        if hir.is_in_with(first as u32) {
+        // Where the host starts, decorators and modifiers included.
+        let first = skip_trivia(text, end) as u32;
+        if hir.is_in_with(first) {
             return ScopeId::NONE;
         }
         // `GetJSDocCommentRanges`: a parameter has the comments on the line of the token before it as well.
         let before = byte_before_comment(text, open);
-        let is_leading = before.is_none();
-        let scope_of_parameter = |p: ParamId| {
-            let f = bound.param_fn[p.idx()];
-            if f.is_some() && (is_leading || matches!(before, Some(b'(' | b','))) {
-                bound.fns[f.idx()].scope
-            } else {
-                ScopeId::NONE
-            }
-        };
-        if text.get(first) == Some(&b'@') {
-            let at = skip_trivia(text, first + 1) as u32;
-            let is_first = |d: &&(DecoratorOwner, ExprId)| d.1.is_some() && hir[d.1].pos == at;
-            return match hir.decorators.iter().find(is_first) {
-                Some(&(DecoratorOwner::Class(class), _))
-                    if is_leading
-                        && matches!(bound.class_owner[class.idx()], ClassOwner::Stmt(_)) =>
-                {
-                    bound.class_scope[class.idx()]
-                }
-                Some(&(DecoratorOwner::Member(m), _)) if is_leading => self.scope_of_member(m),
-                Some(&(DecoratorOwner::Param(p), _)) => scope_of_parameter(p),
-                _ => ScopeId::NONE,
-            };
-        }
-        // What is kept is where the keyword or the name is, which comes after the modifiers.
-        let mut last = first;
-        loop {
-            let word = identifier_at(text, last, false);
-            let len = if MODIFIERS.iter().any(|modifier| *modifier == word) {
-                word.len()
-            } else if text.get(last) == Some(&b'*') {
-                1
-            } else {
-                break;
-            };
-            last = skip_trivia(text, last + len);
-        }
-        let is_host = |pos: u32| (first..=last).contains(&(pos as usize));
-        if is_leading {
+        if before.is_none() {
             if let Some(s) = (0..hir.stmts.len()).find(|&i| {
-                is_host(hir.stmts[i].pos) && !matches!(bound.stmt_parent[i], Parent::None)
+                hir.stmts[i].start == first && !matches!(bound.stmt_parent[i], Parent::None)
             }) {
                 return self.scope_of_statement(StmtId(s as u32));
             }
-            if let Some(m) = hir.members.iter().position(|m| is_host(m.start)) {
+            if let Some(m) = hir.members.iter().position(|m| m.start == first) {
                 return self.scope_of_member(MemberId(m as u32));
             }
-            if let Some(m) = hir.enum_members.iter().position(|m| is_host(m.pos)) {
+            if let Some(m) = hir.enum_members.iter().position(|m| m.pos == first) {
                 let owner = bound.enum_member_owner[m];
                 return bound
                     .enum_scope
@@ -1162,9 +1108,13 @@ impl Unused<'_> {
                     .map_or(ScopeId::NONE, |&it| it);
             }
         }
-        match hir.params.iter().position(|p| is_host(p.pos)) {
-            Some(p) => scope_of_parameter(ParamId(p as u32)),
-            None => ScopeId::NONE,
+        match hir.params.iter().position(|p| p.pos == first) {
+            Some(p)
+                if bound.param_fn[p].is_some() && matches!(before, None | Some(b'(' | b',')) =>
+            {
+                bound.fns[bound.param_fn[p].idx()].scope
+            }
+            _ => ScopeId::NONE,
         }
     }
 

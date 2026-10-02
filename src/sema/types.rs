@@ -743,6 +743,7 @@ pub mod tf {
 
     pub const NULLABLE: u32 = UNDEFINED | NULL;
     pub const TYPE_VARIABLE: u32 = TYPE_PARAMETER | INDEXED_ACCESS;
+    pub const UNION_OR_INTERSECTION: u32 = UNION | INTERSECTION;
     pub const LITERAL: u32 = STRING_LITERAL | NUMBER_LITERAL | BIGINT_LITERAL | BOOLEAN_LITERAL;
     pub const UNIT: u32 = ENUM | LITERAL | UNIQUE_ES_SYMBOL | NULLABLE;
     pub const STRING_LIKE: u32 = STRING | STRING_LITERAL | TEMPLATE_LITERAL | STRING_MAPPING;
@@ -778,13 +779,20 @@ pub mod tf {
         | NULL;
     pub const INSTANTIABLE_NON_PRIMITIVE: u32 =
         TYPE_PARAMETER | INDEXED_ACCESS | CONDITIONAL | SUBSTITUTION;
-    pub const STRUCTURED_OR_INSTANTIABLE: u32 = OBJECT
-        | UNION
-        | INTERSECTION
-        | INSTANTIABLE_NON_PRIMITIVE
-        | INDEX
-        | TEMPLATE_LITERAL
-        | STRING_MAPPING;
+    pub const INSTANTIABLE: u32 =
+        INSTANTIABLE_NON_PRIMITIVE | INDEX | TEMPLATE_LITERAL | STRING_MAPPING;
+    pub const STRUCTURED_OR_INSTANTIABLE: u32 = OBJECT | UNION_OR_INTERSECTION | INSTANTIABLE;
+    pub const SINGLETON: u32 = ANY
+        | UNKNOWN
+        | STRING
+        | NUMBER
+        | BOOLEAN
+        | BIGINT
+        | ES_SYMBOL
+        | VOID
+        | NULLABLE
+        | NEVER
+        | NON_PRIMITIVE;
 
     // What is gathered of the members while an intersection is made. The last three use bits the mask leaves out.
     pub const INCLUDES_MASK: u32 = ANY

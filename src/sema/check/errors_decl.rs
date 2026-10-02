@@ -178,7 +178,7 @@ impl Checker<'_> {
             let (declared, declared_pos) = match bound.symbols[local.idx()].decls.first() {
                 Some(&Decl::Param(p)) => (p, hir[p].pos),
                 Some(&Decl::Var(p)) => (PatId::NONE, hir[p].pos),
-                Some(&Decl::Fn(f)) => (PatId::NONE, hir[f].pos),
+                Some(&Decl::Fn(f)) => (PatId::NONE, hir[f].start),
                 _ => continue,
             };
             // `root.Parent.Locals()`: a local of the function whose parameter it is.

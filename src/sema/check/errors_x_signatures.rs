@@ -2129,31 +2129,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `GetErrorRangeForNode` of the function `f`.
-    pub(super) fn place_of_function(&self, file: FileId, f: FnId) -> (FileId, u32, u32) {
-        (
-            file,
-            self.start_of_function_error(file, f),
-            end_of_function_error(self, file, f),
-        )
-    }
-
-    /// Where an error about the function `f` as a whole goes: `GetErrorRangeForNode`.
-    fn start_of_function_error(&self, file: FileId, f: FnId) -> u32 {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let func = &hir[f];
-        let owner = bound.fns[f.idx()].owner;
-        match (func.kind, owner) {
-            (FnKind::Arrow, _) => func.pos,
-            (FnKind::Constructor, FnOwner::Member(m)) => hir[m].start,
-            (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => func.name_pos,
-            _ if func.name.is_some() => func.name_pos,
-            // One without a name goes by what it is given to, if it is written right there.
-            (FnKind::Expr, FnOwner::Expr(e)) => bound.get_assigned_name(hir, e).unwrap_or(func.pos),
-            _ => func.pos,
-        }
-    }
-
     /// `checkAsyncFunctionReturnType`: 1064, or 1058 1062.
     pub(super) fn check_async_function_return_type(&mut self, file: FileId, f: FnId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -2180,7 +2155,12 @@ impl Checker<'_> {
             self.error((file, start, end), 1064, &[Arg::Type(awaited)]);
             return;
         }
-        self.check_awaited_type(ret, false, self.place_of_function(file, f), 1058);
+        self.check_awaited_type(
+            ret,
+            false,
+            self.place_of_signature_declaration(file, f),
+            1058,
+        );
     }
 
     /// `createPromiseReturnType`, where there is a `Promise` to name as a type but none to make one with: 2712, 2705.
@@ -2245,9 +2225,8 @@ impl Checker<'_> {
                 _ => false,
             };
             if is_asked {
-                let start = self.start_of_function_error(file, f);
+                let (start, end) = self.error_range_of_fn(file, f);
                 out.push(Diagnostic { start, code: 2705 });
-                let end = end_of_function_error(self, file, f);
                 self.explain_to(start, end, 2705, |_| vec![]);
                 self.report_global_error(2468, vec!["Promise".to_owned()]);
             }
@@ -2788,19 +2767,4 @@ enum DefaultState {
 struct DefaultResolution {
     states: FxHashMap<(FileId, TypeParamId), DefaultState>,
     done: FxHashSet<(FileId, TypeNodeId)>,
-}
-
-/// Where the error that starts at `start_of_function_error` ends.
-fn end_of_function_error(c: &Checker<'_>, file: FileId, f: FnId) -> u32 {
-    let (hir, bound) = (c.hir(file), c.bound(file));
-    let func = &hir[f];
-    match (func.kind, bound.fns[f.idx()].owner) {
-        (FnKind::Arrow | FnKind::Expr, FnOwner::Expr(e)) => c.error_end_inside_parentheses(file, e),
-        (FnKind::Constructor, FnOwner::Member(m)) => c.end_of_name_at(file, hir[m].name_pos),
-        (FnKind::Method | FnKind::Getter | FnKind::Setter, _) => {
-            c.end_of_name_at(file, func.name_pos)
-        }
-        _ if func.name.is_some() => c.end_of_name_at(file, func.name_pos),
-        _ => c.end_of_token_at(file, func.pos),
-    }
 }

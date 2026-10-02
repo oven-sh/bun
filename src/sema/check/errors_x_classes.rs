@@ -1,27 +1,26 @@
 //! Classes and interfaces against what they extend, and what only the inside of a class can get wrong:
-//! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript file); 2508 2509 2510 2545 2797
-//! 2675 (what a class extends); 2422 (what it implements); 2312 2499 (what an interface extends); 2725 (a class called `Object`);
+//! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript file); 2510 2545 2797
+//! 2675 (what a class extends); 2422 (what it implements); 2499 (what an interface extends); 2725 (a class called `Object`);
 //! 2376 2377 2401 17005 (where `super()` is called); 2715 (an abstract property read while the instance is set up).
 //!
 //! Follows `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`, `checkMembersForOverrideModifier`,
-//! `checkMemberForOverrideModifier`, `getBaseConstructorTypeOfClass`, `resolveBaseTypesOfClass`, `resolveBaseTypesOfInterface`,
-//! `isValidBaseType`, `isMixinConstructorType`, `checkInterfaceDeclaration`, `checkClassNameCollisionWithObject`,
+//! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration`, `checkClassNameCollisionWithObject`,
 //! `checkConstructorDeclaration` and `checkPropertyAccessibilityAtLocation` of TypeScript 7.0.2's checker.go.
 
 use super::errors::Diagnostic;
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
+use crate::bind::{FnOwner, MemberOwner, Parent};
 use crate::resolve::ModuleKind;
 use smallvec::SmallVec;
 
-/// What `getBaseConstructorTypeOfClass` and `getBaseTypes` come to for a class.
+/// What `getBaseConstructorTypeOfClass` and `getBaseTypes` come to for a class with an `extends` clause.
 #[derive(Copy, Clone)]
 enum ClassBase {
     /// It cannot be told.
     Unknown,
-    /// It extends nothing, or something that cannot be extended, which is an error of its own.
+    /// It has no `extends` clause, or no base types.
     Nothing,
-    /// `constructor`: the type of what is written after `extends`. `base`: the type of the instances of that.
+    /// `constructor`: the type of what is written after `extends`. `base`: the first of its base types.
     Is { constructor: TypeId, base: TypeId },
 }
 
@@ -30,9 +29,6 @@ enum ClassBase {
 struct Overrider {
     key: PropKey,
     flags: Flags,
-    /// Where an error about it goes.
-    start: u32,
-    is_parameter: bool,
     /// The member, or the constructor that has the parameter.
     member: MemberId,
     /// `NONE` for a member.
@@ -129,15 +125,6 @@ impl Checker<'_> {
         if hir.has_errors {
             return;
         }
-        for c in 0..hir.classes.len() {
-            let is_bound = match bound.class_owner[c] {
-                ClassOwner::Expr(x) => x.is_some() && !bound.is_unchecked(x.idx()),
-                ClassOwner::Stmt(s) => s.is_some(),
-            };
-            if is_bound && bound.class_symbol[c].is_some() {
-                self.report_class_like_declaration(file, ClassId(c as u32), out);
-            }
-        }
         for i in 0..hir.interfaces.len() {
             if bound.interface_symbol[i].is_some() {
                 self.check_bases_of_interface(file, InterfaceId(i as u32), out);
@@ -161,37 +148,70 @@ impl Checker<'_> {
 
     // ───────────────────────────── what a class extends and implements ─────────────────────────────
 
-    /// The parts of `checkClassLikeDeclaration` that the codes above come from.
-    fn report_class_like_declaration(
-        &mut self,
-        file: FileId,
-        c: ClassId,
-        out: &mut Vec<Diagnostic>,
-    ) {
+    /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses, and `checkClassNameCollisionWithObject`.
+    pub(super) fn report_class_like_declaration(&mut self, file: FileId, c: ClassId, sym: Sym) {
         let hir = self.hir(file);
+        // Of a file that could not be made sense of only parts are there: what is missing from them may well be written.
+        if hir.has_errors {
+            return;
+        }
         let class = &hir[c];
-        let sym = self.class_sym(file, c);
-        // `checkClassNameCollisionWithObject`
         if class.name == known::Object
             && !class.flags.contains(Flags::AMBIENT)
             && self.emits_module_format_before_es2015(file)
         {
-            out.push(Diagnostic {
-                start: class.name_pos,
-                code: 2725,
-            });
             let module = self.p.files.options.module.name();
-            self.note(class.name_pos, 0, 2725, vec![module.to_owned()]);
+            let at = self.place_of_token(file, class.name_pos);
+            self.error(at, 2725, &[Arg::Text(module)]);
         }
-        self.base_types(sym);
-        let base = self.resolve_base_of_class(file, c, sym, out);
-        if let ClassBase::Is { constructor, .. } = base {
-            self.check_base_type_accessibility(file, c, constructor, out);
+        let base = self.base_of_class(file, c, sym);
+        if let ClassBase::Is { constructor, base } = base {
+            let static_base_type = self.apparent_type(constructor);
+            self.check_base_type_accessibility(file, c, static_base_type);
             if self.is_type_variable(constructor) {
-                self.check_mixin_class(file, c, sym, constructor, out);
+                let static_type = self.type_of_symbol(sym);
+                let own = self.signatures(static_type, true);
+                // `GetErrorRangeForNode`
+                let at = self.place_of_token(file, class.name_pos);
+                if !self.is_mixin_constructor_type(&own) {
+                    self.error(at, 2545, &[]);
+                } else if !class.flags.contains(Flags::ABSTRACT)
+                    && self
+                        .signatures(constructor, true)
+                        .iter()
+                        .any(|&sig| self.is_abstract_signature(sig))
+                {
+                    self.error(at, 2797, &[]);
+                }
+            } else if !matches!(
+                self.data(static_base_type),
+                TypeData::Anon {
+                    origin: Origin::ClassStatic(_),
+                    ..
+                }
+            ) {
+                // What is like a class without being one has to make the same thing whichever way it is called.
+                let mapper = self.decl_params_mapper(sym, file, class.type_params);
+                let mut returns = Vec::new();
+                for sig in self.super_constructor_sigs(sym) {
+                    let returned = self.sig_return(sig);
+                    returns.push(self.instantiate(returned, mapper));
+                }
+                let are_known = returns.iter().all(|&returned| self.is_known(returned));
+                let all_the_same = self.answer_if_sure(|checker| {
+                    returns
+                        .iter()
+                        .all(|&returned| checker.is_identical(returned, base))
+                });
+                if are_known
+                    && all_the_same == Some(false)
+                    && let Some(at) = self.place_to_report_base_at(file, c)
+                {
+                    self.error(at, 2510, &[]);
+                }
             }
         }
-        self.check_members_for_override_modifier(file, c, sym, base, out);
+        self.check_members_for_override_modifier(file, c, sym, base);
         for node in hir.ids(class.implements) {
             // The name of a primitive type is a name that nothing goes by here, which is said elsewhere.
             if !matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
@@ -200,12 +220,8 @@ impl Checker<'_> {
             let implemented = self.type_from_node(file, node);
             let implemented = self.reduced_base_type(implemented);
             if self.is_settled_base(implemented) && !self.is_valid_base_type(implemented) {
-                out.push(Diagnostic {
-                    start: hir[node].pos,
-                    code: 2422,
-                });
-                let end = self.end_of_type_node(file, node);
-                self.note(hir[node].pos, end, 2422, Vec::new());
+                let at = (file, hir[node].pos, self.end_of_type_node(file, node));
+                self.error(at, 2422, &[]);
             }
         }
     }
@@ -229,350 +245,38 @@ impl Checker<'_> {
         kind < ModuleKind::Es2015
     }
 
-    /// `getBaseConstructorTypeOfClass` and `resolveBaseTypesOfClass`, with 2508 and 2509, and the 2510 of
-    /// `checkClassLikeDeclaration`, which goes over the same signatures.
-    fn resolve_base_of_class(
-        &mut self,
-        file: FileId,
-        c: ClassId,
-        sym: Sym,
-        out: &mut Vec<Diagnostic>,
-    ) -> ClassBase {
-        let hir = self.hir(file);
-        let class = &hir[c];
-        let extends = class.extends;
-        if extends.is_none() {
+    /// `getBaseConstructorTypeOfClass` and `getBaseTypes(classType)[0]`, of the class `c` of `sym`.
+    fn base_of_class(&mut self, file: FileId, c: ClassId, sym: Sym) -> ClassBase {
+        let class = &self.hir(file)[c];
+        if class.extends.is_none() {
             return ClassBase::Nothing;
         }
-        // `getBaseTypes`: what an interface of the same name extends comes after what the class extends, or in its place.
-        let interface_extends = self.files().decls(sym).iter().any(
-            |&(f, decl)| matches!(decl, Decl::Interface(i) if !self.hir(f)[i].extends.is_empty()),
-        );
-        let nothing = if interface_extends && !self.base_types(sym).is_empty() {
-            ClassBase::Unknown
-        } else {
-            ClassBase::Nothing
-        };
         let constructor = self.base_constructor_type_of_class(sym);
-        // `resolveBaseTypesOfClass`: the error type is no base type.
-        if self.is_error_type(constructor) {
-            return nothing;
-        }
-        if !self.is_known(constructor) || self.is_uncertain(file, extends) {
-            return ClassBase::Unknown;
-        }
-        if constructor == TypeId::NULL {
-            return nothing;
-        }
-        let apparent = self.apparent_type(constructor);
-        if !self.is_known(apparent) {
-            return ClassBase::Unknown;
-        }
-        if !(self.is_object_type(apparent)
-            || self.is_intersection(apparent)
-            || self.has_any_flag(apparent))
+        if !self.is_error_type(constructor)
+            && (!self.is_known(constructor) || self.is_uncertain(file, class.extends))
         {
-            return nothing;
+            return ClassBase::Unknown;
         }
+        if let Some(&base) = self.base_types(sym).first() {
+            return ClassBase::Is { constructor, base };
+        }
+        // No base type is made of what could not be worked out.
         let args = self.types_from_nodes(file, class.extends_args);
-        if args.iter().any(|&arg| !self.is_known(arg)) {
-            return ClassBase::Unknown;
-        }
-        let start = self.start_of(file, extends);
-        let base_class = match *self.data(apparent) {
-            TypeData::Anon {
-                origin: Origin::ClassStatic(target),
-                ..
-            } => Some(target),
-            _ => None,
+        let returned = match self.super_constructor_sigs(sym).first() {
+            Some(&sig) => self.sig_return(sig),
+            None => TypeId::ERROR,
         };
-        let mut returns = Vec::new();
-        let base = match base_class {
-            // `areAllOuterTypeParametersApplied`, `getTypeFromClassOrInterfaceReference`
-            Some(target) if !self.has_outer_type_parameters(target) => {
-                let (least, most) = self.type_argument_arity(target);
-                if hir.is_js && most > 0 {
-                    // In a JavaScript file a wrong type argument count does not give the error type, and
-                    // `fillMissingTypeArguments` supplies `any` for the missing arguments.
-                    let params = self.type_params_of_symbol(target);
-                    let filled = self.fill_type_args_as(&params, &args, true);
-                    self.type_reference(target, &filled)
-                } else if args.len() < least || args.len() > most {
-                    return nothing;
-                } else {
-                    self.type_reference(target, &args)
-                }
-            }
-            _ if self.has_any_flag(apparent) => apparent,
-            _ => {
-                let Some(list) = self.base_constructor_returns(apparent, &args) else {
-                    return ClassBase::Unknown;
-                };
-                returns = list;
-                let Some(&first) = returns.first() else {
-                    return nothing;
-                };
-                first
-            }
-        };
-        let mapper = self.decl_params_mapper(sym, file, class.type_params);
-        let base = self.instantiate(base, mapper);
-        if self.is_error_type(base) {
-            return nothing;
-        }
-        if !self.is_settled_base(base) {
-            return ClassBase::Unknown;
-        }
-        let base = self.reduced_base_type(base);
-        if !self.is_valid_base_type(base) {
-            return nothing;
-        }
-        if self.has_base(base, sym, 0) {
-            return nothing;
-        }
-        // What is like a class without being one has to make the same thing whichever way it is called.
-        if base_class.is_none() && !self.is_type_variable(constructor) {
-            let gave_up_before = std::mem::replace(&mut self.relation_gave_up, false);
-            let mut all_the_same = true;
-            for &returned in &returns {
-                let returned = self.instantiate(returned, mapper);
-                if !self.is_known(returned) {
-                    all_the_same = true;
-                    break;
-                }
-                all_the_same &= self.is_identical(returned, base);
-            }
-            // What a comparison that was cut short came to is told nobody.
-            let is_sure = !self.relation_gave_up && !self.timed_out();
-            self.relation_gave_up |= gave_up_before;
-            if !all_the_same && is_sure {
-                out.push(Diagnostic { start, code: 2510 });
-                self.note(start, self.end_of_expr(file, extends), 2510, Vec::new());
-            }
-        }
-        ClassBase::Is { constructor, base }
-    }
-
-    /// Whether `class` is declared inside something that has type parameters: `getOuterTypeParametersOfClassOrInterface`.
-    fn has_outer_type_parameters(&mut self, class: Sym) -> bool {
-        for (f, decl) in self.files().decls(class) {
-            let Decl::Class(c) = decl else { continue };
-            let scope = self.bound(f).class_scope[c.idx()];
-            if scope.is_none() {
-                return false;
-            }
-            let around = self.bound(f).scopes[scope.idx()].parent;
-            let params = self.outer_type_params(f, around);
-            return params
-                .iter()
-                .any(|&param| matches!(self.data(param), TypeData::TypeParam(..)));
-        }
-        false
-    }
-
-    /// Whether `ty` still has type variables once the `this` types in scope in the heritage clause of class `c` are erased.
-    /// A class, function or object literal written inside a class captures the `this` type of that class, heritage clause
-    /// included (`getOuterTypeParameters` with `includeThisTypes`). That does not make the class generic.
-    fn has_type_variables_except_this(&mut self, file: FileId, c: ClassId, ty: TypeId) -> bool {
-        if !self.has_type_variables(ty) {
-            return false;
-        }
-        let scope = self.bound(file).class_scope[c.idx()];
-        let in_scope = self.outer_type_params(file, scope);
-        let this_to_any: Vec<(TypeId, TypeId)> = in_scope
-            .iter()
-            .filter(|&&param| matches!(self.data(param), TypeData::ThisParam(_)))
-            .map(|&param| (param, TypeId::ANY))
-            .collect();
-        let erase_this = self.p.types.mapper(this_to_any);
-        let erased = self.instantiate(ty, erase_this);
-        // `instantiate` returns an unknown type at its depth limit, which tells nothing about `ty`.
-        !self.is_known(erased) || self.has_type_variables(erased)
-    }
-
-    /// `getInstantiatedConstructorsForTypeArguments`, of the construct signatures `sigs`.
-    fn constructors_for_type_arguments(&mut self, sigs: &[SigId], args: &[TypeId]) -> Vec<SigId> {
-        let mut out = Vec::with_capacity(sigs.len());
-        for &sig in sigs {
-            let params = self.sig_type_params(sig);
-            // `getMinTypeArgumentCount`
-            let least = (0..params.len())
-                .rev()
-                .find(|&i| self.default_of_type_param(params[i]).is_none())
-                .map_or(0, |i| i + 1);
-            if args.len() < least || args.len() > params.len() {
-                continue;
-            }
-            if params.is_empty() {
-                out.push(sig);
-                continue;
-            }
-            let filled = self.fill_sig_type_args(sig, &params, args);
-            let mapper = self.mapper_from(&params, &filled);
-            out.push(self.instantiate_sig(sig, mapper));
-        }
-        out
-    }
-
-    /// The construct signatures of `constructor`, member by member if it is an intersection, and which of the members lose theirs
-    /// in `resolveIntersectionTypeMembers`, being mixin constructors next to a constructor that is not: `findMixins`.
-    /// `None`: it cannot be told which are.
-    fn construct_signatures_by_member(
-        &mut self,
-        constructor: TypeId,
-    ) -> Option<(Vec<Vec<SigId>>, Vec<bool>)> {
-        let parts: &[TypeId] = match self.data(constructor) {
-            TypeData::Intersection(parts) => &parts[..],
-            _ => std::slice::from_ref(&constructor),
-        };
-        let mut lists: Vec<Vec<SigId>> = Vec::with_capacity(parts.len());
-        let mut is_mixin: Vec<bool> = Vec::with_capacity(parts.len());
-        for &part in parts {
-            let sigs = self.signatures(part, true);
-            is_mixin.push(parts.len() > 1 && self.is_mixin_constructor(&sigs)?);
-            lists.push(sigs.into_vec());
-        }
-        let constructor_types = lists.iter().filter(|sigs| !sigs.is_empty()).count();
-        let mixins = is_mixin.iter().filter(|&&mixin| mixin).count();
-        if constructor_types > 0
-            && constructor_types == mixins
-            && let Some(first) = is_mixin.iter().position(|&mixin| mixin)
+        if args.iter().all(|&arg| self.is_known(arg))
+            && (self.is_error_type(returned) || self.is_settled_base(returned))
         {
-            is_mixin[first] = false;
-        }
-        Some((lists, is_mixin))
-    }
-
-    /// What the signatures `getInstantiatedConstructorsForTypeArguments` gives for `constructor` return. What a mixin constructor
-    /// in an intersection makes is part of what the other members make: `includeMixinType`. `None`: it cannot be told.
-    fn base_constructor_returns(
-        &mut self,
-        constructor: TypeId,
-        args: &[TypeId],
-    ) -> Option<Vec<TypeId>> {
-        let (lists, is_mixin) = self.construct_signatures_by_member(constructor)?;
-        let has_mixins = is_mixin.contains(&true);
-        let mut returns = Vec::new();
-        for i in 0..lists.len() {
-            if is_mixin[i] {
-                continue;
-            }
-            for sig in self.constructors_for_type_arguments(&lists[i], args) {
-                let returned = self.sig_return(sig);
-                if !has_mixins {
-                    returns.push(returned);
-                    continue;
-                }
-                let mut mixed = Vec::with_capacity(lists.len());
-                for j in 0..lists.len() {
-                    if j == i {
-                        mixed.push(returned);
-                    } else if is_mixin[j] {
-                        mixed.push(self.sig_return(lists[j][0]));
-                    }
-                }
-                returns.push(self.intersection(&mixed));
-            }
-        }
-        Some(returns)
-    }
-
-    /// `isMixinConstructorType`, of a type whose construct signatures are `sigs`: one signature, without type parameters, that
-    /// takes `...args: any[]` and nothing else. `None`: it cannot be told.
-    fn is_mixin_constructor(&mut self, sigs: &[SigId]) -> Option<bool> {
-        let [sig] = sigs[..] else { return Some(false) };
-        if !self.sig_type_params(sig).is_empty() {
-            return Some(false);
-        }
-        let params = self.sig_params(sig);
-        let [param] = &params[..] else {
-            return Some(false);
-        };
-        if !param.rest {
-            return Some(false);
-        }
-        if !self.is_known(param.ty) {
-            return None;
-        }
-        Some(
-            self.has_any_flag(param.ty)
-                || self
-                    .array_element(param.ty)
-                    .is_some_and(|ty| self.has_any_flag(ty)),
-        )
-    }
-
-    /// 2545 2797: a class that extends a value whose type is a type variable. Its static side is `typeof C & T`, whose construct
-    /// signatures are those of `resolveIntersectionTypeMembers`: they come to a mixin constructor if both members are one.
-    fn check_mixin_class(
-        &mut self,
-        file: FileId,
-        c: ClassId,
-        sym: Sym,
-        constructor: TypeId,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let hir = self.hir(file);
-        let class = &hir[c];
-        let apparent = self.apparent_type(constructor);
-        let Some((lists, is_dropped)) = self.construct_signatures_by_member(apparent) else {
-            return;
-        };
-        let base_sigs: Vec<SigId> = lists
-            .iter()
-            .zip(&is_dropped)
-            .filter(|x| !*x.1)
-            .flat_map(|x| x.0.iter().copied())
-            .collect();
-        let own_is_mixin = if class
-            .members
-            .iter()
-            .any(|m| hir[m].kind == MemberKind::Constructor)
-        {
-            let statics = self.type_of_symbol(sym);
-            let is_own = |c: &Self, t: TypeId| matches!(*c.data(t), TypeData::Anon { origin: Origin::ClassStatic(s), .. } if s == sym);
-            let statics = match self.data(statics) {
-                TypeData::Intersection(parts) => parts
-                    .iter()
-                    .copied()
-                    .find(|&part| is_own(self, part))
-                    .unwrap_or(statics),
-                _ => statics,
-            };
-            let own = self.signatures(statics, true);
-            self.is_mixin_constructor(&own)
-        } else if self.type_params_of_symbol(sym).is_empty() {
-            // `getDefaultConstructSignatures`: it is made the ways what it extends is.
-            let args = self.types_from_nodes(file, class.extends_args);
-            let own = self.constructors_for_type_arguments(&base_sigs, &args);
-            self.is_mixin_constructor(&own)
+            ClassBase::Nothing
         } else {
-            Some(false)
-        };
-        let (Some(own_is_mixin), Some(base_is_mixin)) =
-            (own_is_mixin, self.is_mixin_constructor(&base_sigs))
-        else {
-            return;
-        };
-        let start = class.name_pos;
-        if !(own_is_mixin && (base_is_mixin || base_sigs.is_empty())) {
-            out.push(Diagnostic { start, code: 2545 });
-        } else if !class.flags.contains(Flags::ABSTRACT)
-            && base_sigs.iter().any(|&sig| self.is_abstract_signature(sig))
-        {
-            out.push(Diagnostic { start, code: 2797 });
+            ClassBase::Unknown
         }
     }
 
     /// `checkBaseTypeAccessibility`: 2675, only from within a class can what it makes privately be extended.
-    fn check_base_type_accessibility(
-        &mut self,
-        file: FileId,
-        c: ClassId,
-        constructor: TypeId,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let apparent = self.apparent_type(constructor);
+    fn check_base_type_accessibility(&mut self, file: FileId, c: ClassId, apparent: TypeId) {
         let TypeData::Anon {
             origin: Origin::ClassStatic(class),
             ..
@@ -613,7 +317,6 @@ impl Checker<'_> {
             .any(|around| self.class_sym(file, around) == class);
         if !is_within {
             let start = self.start_of(file, extends);
-            out.push(Diagnostic { start, code: 2675 });
             // The type arguments are part of what is extended.
             let last_argument = self.end_of_type_args(file, self.hir(file)[c].extends_args);
             let end = if last_argument == 0 {
@@ -623,9 +326,8 @@ impl Checker<'_> {
                 let close = rest.and_then(|rest| rest.iter().position(|&b| b == b'>'));
                 last_argument + close.map_or(0, |at| at as u32 + 1)
             };
-            self.explain_to(start, end, 2675, |c| {
-                vec![super::errors_modules::fully_qualified_name(c, class)]
-            });
+            let name = super::errors_modules::fully_qualified_name(self, class);
+            self.error((file, start, end), 2675, &[Arg::Text(&name)]);
         }
     }
 
@@ -759,7 +461,6 @@ impl Checker<'_> {
         c: ClassId,
         sym: Sym,
         base: ClassBase,
-        out: &mut Vec<Diagnostic>,
     ) {
         let hir = self.hir(file);
         let class = &hir[c];
@@ -790,12 +491,10 @@ impl Checker<'_> {
                 let overrider = Overrider {
                     key: member.key,
                     flags: member.flags,
-                    start: member.name_pos,
-                    is_parameter: false,
                     member: m,
                     param: ParamId::NONE,
                 };
-                self.check_member_for_override_modifier(file, c, sym, base, overrider, out);
+                self.check_member_for_override_modifier(file, c, sym, base, overrider);
                 continue;
             }
             for p in hir[member.func].params.iter() {
@@ -810,12 +509,10 @@ impl Checker<'_> {
                 let overrider = Overrider {
                     key,
                     flags: param.flags,
-                    start: param.pos,
-                    is_parameter: true,
                     member: m,
                     param: p,
                 };
-                self.check_member_for_override_modifier(file, c, sym, base, overrider, out);
+                self.check_member_for_override_modifier(file, c, sym, base, overrider);
             }
         }
     }
@@ -828,29 +525,18 @@ impl Checker<'_> {
         sym: Sym,
         base: ClassBase,
         member: Overrider,
-        out: &mut Vec<Diagnostic>,
     ) {
-        let start = member.start;
+        let is_js = self.hir(file).is_js;
+        let code = |code: u32| if is_js { js_override_code(code) } else { code };
         let has_override = member.flags.contains(Flags::OVERRIDE);
         let no_implicit_override = self.p.files.options.no_implicit_override;
-        let is_js = self.hir(file).is_js;
-        // A member without `override` is only checked under `noImplicitOverride`.
-        if !has_override && !no_implicit_override {
-            return;
-        }
-        let mut report = |code: u32| {
-            out.push(Diagnostic {
-                start,
-                code: if is_js { js_override_code(code) } else { code },
-            })
-        };
         let (constructor, base) = match base {
             ClassBase::Unknown => return,
             ClassBase::Nothing => {
                 if has_override {
-                    report(4112);
                     let class_type = self.declared_type(sym);
-                    self.explain_override_modifier(file, member, 4112, Some(class_type), None);
+                    let at = self.place_of_overrider(file, member);
+                    self.error(at, code(4112), &[Arg::Type(class_type)]);
                 }
                 return;
             }
@@ -862,18 +548,21 @@ impl Checker<'_> {
                 None => return,
                 Some(false) => {
                     if has_override {
-                        report(4127);
-                        self.explain_override_modifier(file, member, 4127, None, None);
+                        let at = self.place_of_overrider(file, member);
+                        self.error(at, code(4127), &[]);
                     }
                     return;
                 }
                 Some(true) => {}
             }
         }
+        if !has_override && !no_implicit_override {
+            return;
+        }
         let Some(name) = self.member_name(file, member.key) else {
             return;
         };
-        let is_static = !member.is_parameter && member.flags.contains(Flags::STATIC);
+        let is_static = member.param.is_none() && member.flags.contains(Flags::STATIC);
         let this_type = if is_static {
             self.type_of_symbol(sym)
         } else {
@@ -890,71 +579,44 @@ impl Checker<'_> {
             self.property_of_base(base_type, name)
         };
         let Some(base_prop) = base_prop else {
-            if has_override && self.is_heritage_known(base_type, 0) {
-                let code = if self.suggested_member(base_type, name).is_some() {
-                    4117
-                } else {
-                    4113
-                };
-                report(code);
-                let misspelt = (code == 4117).then_some((base_type, name));
-                self.explain_override_modifier(file, member, code, Some(base), misspelt);
+            if has_override {
+                let at = self.place_of_overrider(file, member);
+                match self.suggested_member(base_type, name) {
+                    Some(suggestion) => {
+                        let suggestion = self.prop_to_string(&suggestion);
+                        let args = [Arg::Type(base), Arg::Text(&suggestion)];
+                        self.error(at, code(4117), &args);
+                    }
+                    None => {
+                        self.error(at, code(4113), &[Arg::Type(base)]);
+                    }
+                }
             }
             return;
         };
-        if has_override || !no_implicit_override || self.hir(file)[c].flags.contains(Flags::AMBIENT)
-        {
+        if has_override || self.hir(file)[c].flags.contains(Flags::AMBIENT) {
             return;
         }
-        let Some((is_declared, is_abstract)) = self.declarations_of_base_property(&base_prop)
-        else {
+        let Some((true, is_abstract)) = self.declarations_of_base_property(&base_prop) else {
             return;
         };
-        if !is_declared {
-            return;
-        }
+        let at = self.place_of_overrider(file, member);
         if !is_abstract {
-            let code = if member.is_parameter { 4115 } else { 4114 };
-            report(code);
-            self.explain_override_modifier(file, member, code, Some(base), None);
+            let must = if member.param.is_some() { 4115 } else { 4114 };
+            self.error(at, code(must), &[Arg::Type(base)]);
         } else if member.flags.contains(Flags::ABSTRACT) {
-            report(4116);
-            self.explain_override_modifier(file, member, 4116, Some(base), None);
+            self.error(at, 4116, &[Arg::Type(base)]);
         }
     }
 
-    /// The end and the arguments of what `checkMemberForOverrideModifier` says of `member`. `named`: the class itself or what it
-    /// extends. `misspelt`: where to look for what the name may have been meant to be.
-    fn explain_override_modifier(
-        &mut self,
-        file: FileId,
-        member: Overrider,
-        code: u32,
-        named: Option<TypeId>,
-        misspelt: Option<(TypeId, Atom)>,
-    ) {
-        let code = if self.hir(file).is_js {
-            js_override_code(code)
-        } else {
-            code
-        };
-        let end = if member.is_parameter {
-            self.end_of_param(file, member.param)
-        } else {
-            self.error_end_of_member(file, member.member)
-        };
-        self.explain_to(member.start, end, code, |c| {
-            let mut args = Vec::new();
-            if let Some(named) = named {
-                args.push(c.type_to_string(named));
-            }
-            if let Some((in_type, name)) = misspelt
-                && let Some(prop) = c.suggested_member(in_type, name)
-            {
-                args.push(c.prop_to_string(&prop));
-            }
-            args
-        });
+    /// `GetErrorRangeForNode`, of what `checkMemberForOverrideModifier` is given.
+    fn place_of_overrider(&self, file: FileId, member: Overrider) -> (FileId, u32, u32) {
+        if member.param.is_some() {
+            let start = self.hir(file)[member.param].pos;
+            return (file, start, self.end_of_param(file, member.param));
+        }
+        let (start, end) = self.error_range_of_member(file, member.member);
+        (file, start, end)
     }
 
     /// Whether the computed name `e` comes to a name that is known beforehand: not `isNonBindableDynamicName`.
@@ -1067,72 +729,6 @@ impl Checker<'_> {
             // The `prototype` of a class is made up.
             PropSource::Type(_) if prop.name == known::prototype => Some((false, false)),
             _ => None,
-        }
-    }
-
-    /// Whether all that `ty` inherits from could be worked out, and is what its members were put together from, so that what is
-    /// not found in it is not there.
-    fn is_heritage_known(&mut self, ty: TypeId, depth: u32) -> bool {
-        if !self.is_known(ty) || depth > 32 {
-            return false;
-        }
-        match self.data(ty) {
-            TypeData::Ref { target, .. } => {
-                let target = *target;
-                let bases = self.base_types(target);
-                for (f, decl) in self.files().decls(target) {
-                    let hir = self.hir(f);
-                    // A member that could not be made sense of is left out.
-                    if hir.has_errors || hir.syntax_errors > 0 {
-                        return false;
-                    }
-                    match decl {
-                        Decl::Class(c) if hir[c].extends.is_some() => {
-                            match self.resolve_base_of_class(f, c, target, &mut Vec::new()) {
-                                ClassBase::Unknown => return false,
-                                ClassBase::Nothing => {}
-                                // What a class gets from a type variable is whatever that stands for where the class is made, which
-                                // a reference to the class does not keep. `base_types` knows nothing of mixin constructors.
-                                ClassBase::Is { constructor, base } => {
-                                    if self.has_type_variables_except_this(f, c, constructor)
-                                        || !self.has_any_flag(base) && !bases.contains(&base)
-                                    {
-                                        return false;
-                                    }
-                                }
-                            }
-                        }
-                        Decl::Interface(i) => {
-                            for node in hir.ids(hir[i].extends) {
-                                let base = self.type_from_node(f, node);
-                                if !self.is_known(base) {
-                                    return false;
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                bases
-                    .iter()
-                    .all(|&base| self.is_heritage_known(base, depth + 1))
-            }
-            TypeData::Anon {
-                origin: Origin::ClassStatic(target),
-                ..
-            } => {
-                let instance = self.declared_type(*target);
-                self.is_heritage_known(instance, depth + 1)
-            }
-            TypeData::Intersection(parts) => parts
-                .iter()
-                .all(|&part| self.is_heritage_known(part, depth + 1)),
-            // It is looked up in what it is known to be at least.
-            _ if self.is_deferred(ty) => {
-                let apparent = self.apparent_type(ty);
-                apparent != ty && self.is_heritage_known(apparent, depth + 1)
-            }
-            _ => true,
         }
     }
 

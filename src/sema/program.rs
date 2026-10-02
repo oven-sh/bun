@@ -759,6 +759,7 @@ fn json_to_hir(text: &[u8], atoms: &Interner) -> hir::File {
             None => f.has_errors = true,
         },
     }
+    f.finish_nodes();
     f
 }
 

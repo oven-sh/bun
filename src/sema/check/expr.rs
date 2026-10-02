@@ -2548,14 +2548,7 @@ impl<'p> Checker<'p> {
                         {
                             return TypeId::ANY;
                         }
-                        let range = if hir[func].kind == FnKind::Expr {
-                            (
-                                self.error_start_inside_parentheses(file, owner),
-                                self.error_end_inside_parentheses(file, owner),
-                            )
-                        } else {
-                            self.error_range_of_fn(file, func)
-                        };
+                        let range = self.error_range_of_fn(file, func);
                         Some((bound.expr_parent[owner.idx()], owner, range))
                     }
                     FnOwner::Member(_) => None,

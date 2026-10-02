@@ -35,7 +35,8 @@ fn wait_for_stdin(global: &JSGlobalObject, has_input: impl Fn() -> bool) {
         }
         fds[0].revents = 0;
         fds[1].revents = 0;
-        if poll(&mut fds, -1).is_err() || fds[1].revents == 0 {
+        // Anything but POLL_IN on the pipe (no signal, or an error on that fd) leaves the wait to the read.
+        if poll(&mut fds, -1).is_err() || fds[1].revents & POLL_IN == 0 {
             return;
         }
         signals.drain();

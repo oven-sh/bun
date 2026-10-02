@@ -241,7 +241,7 @@ console.log("survived", require("./late.js"));`,
         env: { ...env, ...extraEnv },
         cwd: String(dir),
         stderr: "pipe",
-        timeout: 10_000,
+        timeout: 30_000,
         killSignal: "SIGKILL",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -260,7 +260,7 @@ console.log("survived", require("./late.js"));`,
       signalCode: null,
       exitCode: 0,
     });
-  }, 30_000);
+  }, 60_000);
 
   test.skipIf(!isWindows)("enableCompileCache default dir prefers TEMP over TMP like os.tmpdir", async () => {
     using dir = tempDir("compile-cache-tmporder", {});

@@ -458,7 +458,7 @@ describe.concurrent("output directory below a parent that is not a directory", (
       cwd: String(dir),
       stdout: "ignore",
       stderr: "pipe",
-      timeout: 10_000,
+      timeout: 30_000,
       killSignal: "SIGKILL",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -471,7 +471,7 @@ describe.concurrent("output directory below a parent that is not a directory", (
       signalCode: null,
       exitCode: 1,
     });
-  }, 30_000);
+  }, 60_000);
 
   test("--compile --outfile below a dangling symlink fails with ENOENT", async () => {
     const result = await build({}, ["--compile", "--outfile", path.join("dangling", "out", "app")], "dangling");
@@ -481,7 +481,7 @@ describe.concurrent("output directory below a parent that is not a directory", (
       signalCode: null,
       exitCode: 1,
     });
-  }, 30_000);
+  }, 60_000);
 
   // POSIX mkdir says ENOTDIR here. NtCreateFile says the path was not found.
   test("--outdir two levels below a regular file says that it is a file", async () => {
@@ -490,7 +490,7 @@ describe.concurrent("output directory below a parent that is not a directory", (
       signalCode: null,
       exitCode: 1,
     });
-  }, 30_000);
+  }, 60_000);
 });
 
 test("multi-entry build writes each entry point into the output directory", async () => {

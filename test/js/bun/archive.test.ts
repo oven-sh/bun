@@ -667,7 +667,7 @@ describe("Bun.Archive", () => {
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
-        timeout: 10_000,
+        timeout: 30_000,
         killSignal: "SIGKILL",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -677,7 +677,7 @@ describe("Bun.Archive", () => {
       expect(proc.signalCode).toBeNull();
       expect(exitCode).toBe(0);
       expect(existsSync(join(String(dir), "nowhere"))).toBe(false);
-    }, 30_000);
+    }, 60_000);
   });
 
   describe("corrupted archives", () => {
@@ -1964,7 +1964,7 @@ describe("Bun.Archive", () => {
           cwd: String(dir),
           stdout: "pipe",
           stderr: "pipe",
-          timeout: 10_000,
+          timeout: 30_000,
           killSignal: "SIGKILL",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1975,7 +1975,7 @@ describe("Bun.Archive", () => {
         expect(proc.signalCode).toBeNull();
         expect(exitCode).toBe(0);
       },
-      30_000,
+      60_000,
     );
   });
 

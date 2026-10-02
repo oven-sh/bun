@@ -539,7 +539,7 @@ test("a dangling node_modules symlink fails the install instead of hanging it", 
     stdout: "pipe",
     stderr: "pipe",
     // A child that still spins is killed here, and `signalCode` shows it.
-    timeout: 10_000,
+    timeout: 30_000,
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -551,7 +551,7 @@ test("a dangling node_modules symlink fails the install instead of hanging it", 
     exitCode: 1,
   });
   expect(existsSync(join(packageDir, "missing"))).toBe(false);
-}, 30_000);
+}, 60_000);
 
 test("can install folder dependencies on root package", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

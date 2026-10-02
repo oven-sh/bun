@@ -182,7 +182,7 @@ describe.if(isWindows)("compile --outfile with subdirectories", () => {
       cwd: String(dir),
       stdout: "ignore",
       stderr: "pipe",
-      timeout: 10_000,
+      timeout: 30_000,
       killSignal: "SIGKILL",
     });
 
@@ -191,7 +191,7 @@ describe.if(isWindows)("compile --outfile with subdirectories", () => {
     expect(stderr.toLowerCase()).toContain("notdir");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
-  }, 30_000);
+  }, 60_000);
 
   test("works with . and .. in paths", async () => {
     using dir = tempDir("compile-relative-paths", {

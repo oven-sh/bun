@@ -921,6 +921,205 @@ describe.concurrent("credentials in the registry url", () => {
     expect(mock.requests).toEqual([]);
     expect(exitCode).toBe(1);
   });
+
+  // A registry value that is not an http(s) URL must be refused, not sent as plaintext HTTP.
+  // The mock is a plain HTTP listener, so a downgraded request would show up in `mock.requests`.
+  type BadRegistrySetup = (port: number) => {
+    files: Record<string, string>;
+    name?: string;
+    received: string;
+  };
+  const badRegistries: [string, BadRegistrySetup][] = [
+    [
+      "bunfig registry with a typo in https",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "htps://localhost:${port}/", token = "secret-token" }\n`,
+        },
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+    [
+      "bunfig registry with an ftp scheme",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "ftp://localhost:${port}/", token = "secret-token" }\n`,
+        },
+        received: `ftp://localhost:${port}/`,
+      }),
+    ],
+    [
+      "bunfig scoped registry",
+      port => ({
+        name: "@corp/bad-scheme-pkg",
+        files: {
+          "bunfig.toml": `[install.scopes]\n"@corp" = { url = "htp://localhost:${port}/", token = "secret-token" }\n`,
+        },
+        received: `htp://localhost:${port}/`,
+      }),
+    ],
+    [
+      "bunfig registry with the token in the url",
+      port => ({
+        files: { "bunfig.toml": `[install]\nregistry = "htps://:secret-token@localhost:${port}/"\n` },
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+    [
+      "bunfig registry with an @ in the path",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "htps://localhost:${port}/org/_packaging/feed@Local/npm/registry/", token = "secret-token" }\n`,
+        },
+        received: `htps://localhost:${port}/org/_packaging/feed@Local/npm/registry/`,
+      }),
+    ],
+    [
+      "bunfig registry without a scheme",
+      port => ({
+        files: { "bunfig.toml": `[install]\nregistry = { url = "localhost:${port}/npm/", token = "secret-token" }\n` },
+        received: `localhost:${port}/npm/`,
+      }),
+    ],
+    [
+      "bunfig registry without a scheme, with userinfo",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "pubuser:secret-token@localhost:${port}/npm/", token = "secret-token" }\n`,
+        },
+        received: `localhost:${port}/npm/`,
+      }),
+    ],
+    [
+      "bunfig registry without a scheme, with the token in the path",
+      port => ({
+        files: { "bunfig.toml": `[install]\nregistry = "localhost:${port}/npm/:_authToken=secret-token"\n` },
+        received: `localhost:${port}/npm/`,
+      }),
+    ],
+    [
+      "bunfig registry with userinfo before the scheme",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "pubuser:secret-token@htps://localhost:${port}/", token = "secret-token" }\n`,
+        },
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+    [
+      "bunfig registry with a query",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "htps://localhost:${port}/npm/?t=secret-token", token = "secret-token" }\n`,
+        },
+        received: `htps://localhost:${port}/npm/`,
+      }),
+    ],
+    [
+      "bunfig registry that starts with http:// and is not a URL",
+      () => ({
+        files: { "bunfig.toml": `[install]\nregistry = { url = "http://localhost:demo/", token = "secret-token" }\n` },
+        received: `http://localhost:demo/`,
+      }),
+    ],
+    [
+      ".npmrc registry",
+      port => ({
+        files: { ".npmrc": `registry=htps://localhost:${port}/\n//localhost:${port}/:_authToken=secret-token\n` },
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+    [
+      ".npmrc scoped registry",
+      port => ({
+        name: "@corp/bad-scheme-pkg",
+        files: { ".npmrc": `@corp:registry=htps://localhost:${port}/\n//localhost:${port}/:_authToken=secret-token\n` },
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+  ];
+  async function badRegistryPackage(setup: BadRegistrySetup, port: number) {
+    const { files, name = "bad-scheme-pkg", received } = setup(port);
+    const packageDir = await packageDirFor(name);
+    for (const [file, contents] of Object.entries(files)) {
+      await write(join(packageDir, file), contents);
+    }
+    return { packageDir, received };
+  }
+
+  describe.each(badRegistries)("%s that is not an http(s) URL", (_, setup) => {
+    test("is refused before a request is sent, and no credential is printed", async () => {
+      using mock = registryMock();
+      const { packageDir, received } = await badRegistryPackage(setup, mock.port);
+
+      const { out, err, exitCode } = await publish(env, packageDir);
+      expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "${received}"\n`);
+      expect(out).not.toContain("secret-token");
+      expect(mock.requests).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("--tolerate-republish does not ask it whether the version exists", async () => {
+      using mock = registryMock();
+      const { packageDir, received } = await badRegistryPackage(setup, mock.port);
+
+      const { err, exitCode } = await publish(env, packageDir, "--tolerate-republish", "--dry-run");
+      expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "${received}"\n`);
+      expect(mock.requests).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("--dry-run sends nothing, so it still succeeds", async () => {
+      using mock = registryMock();
+      const { packageDir, received } = await badRegistryPackage(setup, mock.port);
+
+      const { out, err, exitCode } = await publish(env, packageDir, "--dry-run");
+      expect(err).not.toContain("error:");
+      expect(out).toContain(`Registry: ${received}\n`);
+      expect(out).not.toContain("secret-token");
+      expect(mock.requests).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("an upper-case HTTP:// registry url is accepted", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("upper-case-scheme-pkg");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\nregistry = { url = "HTTP://localhost:${mock.port}/", token = "secret-token" }\n`,
+    );
+
+    const { out, err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + upper-case-scheme-pkg@1.0.0");
+    expect(mock.requests).toEqual([
+      { method: "PUT", pathname: "/upper-case-scheme-pkg", authorization: "Bearer secret-token" },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["BUN_CONFIG_REGISTRY", "NPM_CONFIG_REGISTRY"])("%s with an upper-case scheme is used", async key => {
+    using mock = registryMock();
+    using lower = registryMock();
+    const packageDir = await packageDirFor("upper-case-env-pkg");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\nregistry = { url = "http://localhost:${lower.port}/", token = "secret-token" }\n`,
+    );
+
+    const { out, err, exitCode } = await publish(
+      { ...env, [key]: `HTTP://localhost:${mock.port}/`, BUN_CONFIG_TOKEN: "env-token" },
+      packageDir,
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + upper-case-env-pkg@1.0.0");
+    expect({ env: mock.requests, lower: lower.requests }).toEqual({
+      env: [{ method: "PUT", pathname: "/upper-case-env-pkg", authorization: "Bearer env-token" }],
+      lower: [],
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("lifecycle scripts", async () => {

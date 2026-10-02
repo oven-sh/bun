@@ -370,6 +370,36 @@ describe.concurrent("bun info", () => {
       `);
     });
   });
+
+  // A registry value that is not an http(s) URL must not be dialed as plaintext HTTP with the token attached.
+  // The mock is a plain HTTP listener, so a downgraded request shows up in `requests`.
+  describe.each(["info", "pm view"])("bun %s refuses a registry that is not an http(s) URL", cmd => {
+    it.each([
+      ["a misspelt scheme", (port: number) => `htps://localhost:${port}/`],
+      ["no scheme", (port: number) => `localhost:${port}/`],
+      ["http:// in front of something that is not a URL", () => `http://localhost:demo/`],
+    ])("%s", async (_, value) => {
+      const requests: string[] = [];
+      using mock = Bun.serve({
+        port: 0,
+        fetch(req) {
+          requests.push(`${req.method} ${req.url} ${req.headers.get("authorization")}`);
+          return Response.json({});
+        },
+      });
+      const url = value(mock.port);
+      const testDir = tempDirWithFiles("view-not-a-url", {
+        "package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+        "bunfig.toml": `[install]\nregistry = { url = "${url}", token = "secret-token" }\n`,
+      });
+
+      const { output, error, code } = await runCommand([bunExe(), ...cmd.split(" "), "is-number"], testDir);
+      expect(error).toBe(`error: Registry URL must be http:// or https://\nReceived: "${url}"\n`);
+      expect(output).toBe("");
+      expect(requests).toEqual([]);
+      expect(code).toBe(1);
+    });
+  });
 });
 
 // LSan's default conservative scan only flags the `send_sync` response-metadata

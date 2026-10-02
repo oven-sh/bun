@@ -382,27 +382,27 @@ const DEFAULT_HEADERS_BUF: &str = concat!(
 );
 const EXTENDED_HEADERS_BUF: &str = concat!("Accept", "application/json, */*");
 
-fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
+fn append_auth(header_builder: &mut HeaderBuilder, scope: npm::registry::CheckedScope<'_>) {
     // Routing through `format_args!`/`BStr` Display would be
     // lossy for non-UTF-8 tokens (U+FFFD expands 1→3 bytes) and overrun the
     // exact byte count reserved by `count_auth`. Use raw-byte append.
-    if !scope.token.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Bearer ", &scope.token);
-    } else if !scope.auth.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Basic ", &scope.auth);
+    if !scope.token().is_empty() {
+        header_builder.append_bytes_value("Authorization", b"Bearer ", scope.token());
+    } else if !scope.auth().is_empty() {
+        header_builder.append_bytes_value("Authorization", b"Basic ", scope.auth());
     } else {
         return;
     }
     header_builder.append("npm-auth-type", "legacy");
 }
 
-fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
-    if !scope.token.is_empty() {
+fn count_auth(header_builder: &mut HeaderBuilder, scope: npm::registry::CheckedScope<'_>) {
+    if !scope.token().is_empty() {
         header_builder.count("Authorization", "");
-        header_builder.content.cap += "Bearer ".len() + scope.token.len();
-    } else if !scope.auth.is_empty() {
+        header_builder.content.cap += "Bearer ".len() + scope.token().len();
+    } else if !scope.auth().is_empty() {
         header_builder.count("Authorization", "");
-        header_builder.content.cap += "Basic ".len() + scope.auth.len();
+        header_builder.content.cap += "Basic ".len() + scope.auth().len();
     } else {
         return;
     }
@@ -487,7 +487,7 @@ impl NetworkTask {
             };
 
             let tmp = bun_url::join(
-                &bun_core::String::borrow_utf8(scope.url.href()),
+                &bun_core::String::borrow_utf8(scope.href_unchecked()),
                 &bun_core::String::borrow_utf8(encoded_name),
             );
 
@@ -498,7 +498,7 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(scope.url.href()),
+                            quote(scope.href_unchecked()),
                             quote(name),
                         ),
                     );
@@ -508,7 +508,7 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(scope.url.href()),
+                            quote(scope.href_unchecked()),
                             quote(name),
                         ),
                     );
@@ -544,7 +544,7 @@ impl NetworkTask {
 
             {
                 let joined = URL::parse(&url_bytes);
-                let registry = scope.url.url();
+                let registry = URL::parse(scope.href_unchecked());
                 let registry_dir_end =
                     strings::last_index_of_char(registry.pathname, b'/').map_or(0, |i| i + 1);
                 let registry_dir = &registry.pathname[..registry_dir_end];
@@ -561,7 +561,7 @@ impl NetworkTask {
                                 "Invalid package name {}: manifest URL {} is not on registry {}",
                                 quote(name),
                                 quote(&url_bytes),
-                                quote(scope.url.href()),
+                                quote(scope.href_unchecked()),
                             ),
                         );
                     } else {
@@ -572,7 +572,7 @@ impl NetworkTask {
                                 "Invalid package name {}: manifest URL {} is not on registry {}",
                                 quote(name),
                                 quote(&url_bytes),
-                                quote(scope.url.href()),
+                                quote(scope.href_unchecked()),
                             ),
                         );
                     }
@@ -581,6 +581,18 @@ impl NetworkTask {
             }
 
             break 'blk url_bytes;
+        };
+
+        let scope = match scope.checked() {
+            Ok(scope) => scope,
+            Err(invalid) => {
+                if !is_optional {
+                    log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{invalid}"));
+                } else {
+                    log.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{invalid}"));
+                }
+                return Err(ForManifestError::InvalidURL);
+            }
         };
 
         let mut last_modified: &[u8] = b"";
@@ -775,13 +787,14 @@ impl NetworkTask {
         let pm = self.pm_mut();
 
         let tarball_url = tarball_.url.slice();
-        self.url_buf = if tarball_url.is_empty() {
+        let built_from_scope = tarball_url.is_empty();
+        self.url_buf = if built_from_scope {
             // SAFETY: `value` is the `Npm` variant on this code path —
             // `for_tarball` is only reached for npm tarball downloads
             // (callers gate on `resolution.tag == .npm`).
             let version = tarball_.resolution.npm().version;
             Box::from(extract_tarball::build_url(
-                scope.url.href(),
+                scope.href_unchecked(),
                 &tarball_.name,
                 version,
                 pm.lockfile.buffers.string_bytes.as_slice(),
@@ -811,6 +824,27 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
+        // A lockfile entry with no URL gets one built from the registry when the lockfile loads, so that URL counts as built from the scope too.
+        let registry = match scope.checked() {
+            Ok(registry) => Some(registry),
+            Err(invalid) => {
+                if built_from_scope
+                    || crate::lockfile::bun_lock::url_is_under_registry(
+                        &self.url_buf,
+                        scope.href_unchecked(),
+                    )
+                {
+                    pm.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!("{invalid}"),
+                    );
+                    return Err(ForTarballError::InvalidURL);
+                }
+                None
+            }
+        };
+
         // Userinfo becomes a header and leaves the URL: `bun_url` keeps it in `origin`, which the redirect same-origin check compares.
         let url_authorization: Option<Vec<u8>> = match split_url_userinfo(&self.url_buf) {
             Some((userinfo, url_without_userinfo)) => {
@@ -827,7 +861,7 @@ impl NetworkTask {
         // is registry-controlled, so a malicious registry could otherwise point
         // the tarball at an attacker-controlled host and receive the scope
         // credentials. The empty-`tarball_url` branch builds the URL from
-        // `scope.url.href()`, so its origin matches and authorized downloads
+        // the registry URL, so its origin matches and authorized downloads
         // keep working.
         // Compare (protocol, hostname, effective port) rather than the raw
         // `URL.origin` slice — `origin` is a borrowed prefix of the input
@@ -837,20 +871,21 @@ impl NetworkTask {
         // registries emit `dist.tarball` URLs with the default port spelled
         // out; without normalization those installs lose the `Authorization`
         // header and fail with 401.
-        let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
+        let authorized_registry = registry.filter(|registry| {
             let tarball = URL::parse(&self.url_buf);
-            let registry = scope.url.url();
-            tarball.protocol == registry.protocol
+            let registry = registry.url();
+            matches!(authorization, Authorization::AllowAuthorization)
+                && tarball.protocol == registry.protocol
                 && tarball.hostname == registry.hostname
                 && tarball.get_port_auto() == registry.get_port_auto()
-        };
+        });
 
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
 
-        if send_auth {
-            count_auth(&mut header_builder, scope);
+        if let Some(registry) = authorized_registry {
+            count_auth(&mut header_builder, registry);
         }
 
         // Registry credentials win over URL userinfo, as in npm.
@@ -864,9 +899,10 @@ impl NetworkTask {
 
         let header_buf: &'static [u8] = if header_builder.header_count > 0 {
             header_builder.allocate()?;
-            match &url_authorization {
-                Some(value) => header_builder.append("Authorization", value),
-                None => append_auth(&mut header_builder, scope),
+            match (&url_authorization, authorized_registry) {
+                (Some(value), _) => header_builder.append("Authorization", value),
+                (None, Some(registry)) => append_auth(&mut header_builder, registry),
+                (None, None) => {}
             }
             debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
             self.header_buf = header_builder.content.move_to_slice();

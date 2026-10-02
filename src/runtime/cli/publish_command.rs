@@ -738,10 +738,10 @@ impl PublishCommand {
     fn check_package_version_exists(
         package_name: &[u8],
         version: &[u8],
-        registry: &Npm::Registry::Scope,
+        registry: Npm::Registry::CheckedScope<'_>,
     ) -> bool {
         let mut url_buf: Vec<u8> = Vec::new();
-        let registry_url = strings::without_trailing_slash(registry.url.href());
+        let registry_url = strings::without_trailing_slash(registry.href());
         let encoded_name = bun_fmt::dependency_url(package_name);
 
         // Try to get package metadata to check if version exists
@@ -769,13 +769,19 @@ impl PublishCommand {
 
         let mut auth_buf: Vec<u8> = Vec::new();
 
-        if !registry.token.is_empty() {
-            if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
+        if !registry.token().is_empty() {
+            if write!(
+                &mut auth_buf,
+                "Bearer {}",
+                bstr::BStr::new(registry.token())
+            )
+            .is_err()
+            {
                 return false;
             }
             headers.count(b"authorization", &auth_buf);
-        } else if !registry.auth.is_empty() {
-            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
+        } else if !registry.auth().is_empty() {
+            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(registry.auth())).is_err() {
                 return false;
             }
             headers.count(b"authorization", &auth_buf);
@@ -786,15 +792,21 @@ impl PublishCommand {
         }
         headers.append(b"accept", b"application/json");
 
-        if !registry.token.is_empty() {
+        if !registry.token().is_empty() {
             auth_buf.clear();
-            if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
+            if write!(
+                &mut auth_buf,
+                "Bearer {}",
+                bstr::BStr::new(registry.token())
+            )
+            .is_err()
+            {
                 return false;
             }
             headers.append(b"authorization", &auth_buf);
-        } else if !registry.auth.is_empty() {
+        } else if !registry.auth().is_empty() {
             auth_buf.clear();
-            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
+            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(registry.auth())).is_err() {
                 return false;
             }
             headers.append(b"authorization", &auth_buf);
@@ -836,13 +848,9 @@ impl PublishCommand {
     }
 
     fn publish(ctx: &Context<'_>) -> Result<(), PublishError> {
-        let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
-        let registry_url = registry.url.url();
+        let scope = ctx.manager.scope_for_package_name(&ctx.package_name);
 
-        if registry.token.is_empty()
-            && registry.auth.is_empty()
-            && (registry_url.password.is_empty() || registry_url.username.is_empty())
-        {
+        if !scope.has_credentials() {
             return Err(PublishError::NeedAuth);
         }
 
@@ -852,7 +860,7 @@ impl PublishCommand {
             let package_exists = Self::check_package_version_exists(
                 &ctx.package_name,
                 version_without_build_tag,
-                registry,
+                scope.checked().map_err(PublishError::InvalidRegistryUrl)?,
             );
 
             if package_exists {
@@ -865,7 +873,10 @@ impl PublishCommand {
         }
 
         // continues from `printSummary`
-        let registry_href = registry_url.href_without_auth();
+        let registry_href = match scope.checked() {
+            Ok(registry) => registry.url().href_without_auth(),
+            Err(_) => Box::from(scope.href_unchecked()),
+        };
         bun_core::pretty!(
             "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
@@ -885,6 +896,8 @@ impl PublishCommand {
         if ctx.manager.options.dry_run {
             return Ok(());
         }
+
+        let registry = scope.checked().map_err(PublishError::InvalidRegistryUrl)?;
 
         // Note: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
         // request body. Single-shot CLI path — adopt the
@@ -913,7 +926,7 @@ impl PublishCommand {
         write!(
             &mut print_buf,
             "{}/{}",
-            bstr::BStr::new(strings::without_trailing_slash(registry.url.href())),
+            bstr::BStr::new(strings::without_trailing_slash(registry.href())),
             bun_fmt::dependency_url(&ctx.package_name),
         )
         .map_err(|_| AllocError)?;
@@ -1084,7 +1097,7 @@ impl PublishCommand {
 
     fn get_otp(
         ctx: &Context<'_>,
-        registry: &Npm::Registry::Scope,
+        registry: Npm::Registry::CheckedScope<'_>,
         response_buf: &mut MutableString,
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
@@ -1132,7 +1145,7 @@ impl PublishCommand {
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
                 {
-                    let registry_url = registry.url.url();
+                    let registry_url = registry.url();
                     if !(done_url.is_http() || done_url.is_https())
                         || done_url.protocol != registry_url.protocol
                         || done_url.hostname != registry_url.hostname
@@ -1461,7 +1474,7 @@ impl PublishCommand {
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         bstr::BStr::new(strings::without_trailing_slash(strings::without_prefix(
                             strings::without_prefix(
-                                &registry.url.url().href_without_auth(),
+                                &URL::parse(registry.href_unchecked()).href_without_auth(),
                                 b"https://"
                             ),
                             b"http://",
@@ -1855,7 +1868,7 @@ impl PublishCommand {
 
     fn construct_publish_headers(
         print_buf: &mut Vec<u8>,
-        registry: &Npm::Registry::Scope,
+        registry: Npm::Registry::CheckedScope<'_>,
         maybe_json_len: Option<usize>,
         maybe_otp: Option<&[u8]>,
         uses_workspaces: bool,
@@ -1877,12 +1890,12 @@ impl PublishCommand {
             headers.count(b"accept", b"*/*");
             headers.count(b"accept-encoding", b"gzip,deflate");
 
-            if !registry.token.is_empty() {
-                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
+            if !registry.token().is_empty() {
+                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(registry.token()));
                 headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
-            } else if !registry.auth.is_empty() {
-                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
+            } else if !registry.auth().is_empty() {
+                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(registry.auth()));
                 headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
             }
@@ -1913,7 +1926,7 @@ impl PublishCommand {
             print_buf.clear();
 
             headers.count(b"Connection", b"keep-alive");
-            headers.count(b"Host", registry.url.url().host);
+            headers.count(b"Host", registry.url().host);
 
             if let Some(json_len) = maybe_json_len {
                 let _ = write!(print_buf, "{}", json_len);
@@ -1928,12 +1941,12 @@ impl PublishCommand {
             headers.append(b"accept", b"*/*");
             headers.append(b"accept-encoding", b"gzip,deflate");
 
-            if !registry.token.is_empty() {
-                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
+            if !registry.token().is_empty() {
+                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(registry.token()));
                 headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
-            } else if !registry.auth.is_empty() {
-                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
+            } else if !registry.auth().is_empty() {
+                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(registry.auth()));
                 headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
             }
@@ -1964,7 +1977,7 @@ impl PublishCommand {
             print_buf.clear();
 
             headers.append(b"Connection", b"keep-alive");
-            headers.append(b"Host", registry.url.url().host);
+            headers.append(b"Host", registry.url().host);
 
             if let Some(json_len) = maybe_json_len {
                 let _ = write!(print_buf, "{}", json_len);
@@ -2062,6 +2075,8 @@ pub(crate) enum PublishError {
     OutOfMemory,
     #[error("NeedAuth")]
     NeedAuth,
+    #[error("InvalidRegistryUrl")]
+    InvalidRegistryUrl(Npm::Registry::InvalidRegistryUrl),
 }
 bun_core::oom_from_alloc!(PublishError);
 
@@ -2071,6 +2086,10 @@ impl PublishError {
             PublishError::OutOfMemory => bun_core::out_of_memory(),
             PublishError::NeedAuth => {
                 Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                Global::crash();
+            }
+            PublishError::InvalidRegistryUrl(err) => {
+                Output::err_generic("{}", (err,));
                 Global::crash();
             }
         }

@@ -408,6 +408,77 @@ diffme@1.0.0 → diffme@2.0.0
     expect(exitCode).toBe(0);
   });
 
+  // A registry value that is not an http(s) URL must not be dialed as plaintext HTTP with the token attached.
+  // The mock is a plain HTTP listener, so a downgraded request shows up in `requests`.
+  test.each([
+    ["a misspelt scheme", (port: number) => `htps://localhost:${port}/`],
+    ["no scheme", (port: number) => `localhost:${port}/`],
+    ["http:// in front of something that is not a URL", () => `http://localhost:demo/`],
+  ])("a registry that is not an http(s) URL is refused before any request: %s", async (_, value) => {
+    const requests: string[] = [];
+    using mock = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(`${req.method} ${req.url} ${req.headers.get("authorization")}`);
+        return Response.json({});
+      },
+    });
+    const url = value(mock.port);
+    using dir = tempDir("pm-diff-not-a-url", {
+      "bunfig.toml": `[install]\nregistry = { url = "${url}", token = "sekrit" }\n`,
+    });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0", "--name-only"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).toBe(`error: Registry URL must be http:// or https://\nReceived: "${url}"\n`);
+    expect(stdout).toBe("");
+    expect(requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a dist.tarball whose scheme is not http(s) is not fetched as plaintext HTTP", async () => {
+    const requests: string[] = [];
+    using mock = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        requests.push(url.pathname);
+        if (url.pathname === "/diffme") {
+          const tarball = (v: string) => `htps://localhost:${mock.port}/diffme/-/diffme-${v}.tgz`;
+          return Response.json({
+            name: "diffme",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": { name: "diffme", version: "1.0.0", dist: { tarball: tarball("1.0.0") } },
+              "2.0.0": { name: "diffme", version: "2.0.0", dist: { tarball: tarball("2.0.0") } },
+            },
+          });
+        }
+        return new Response(Bun.file(tarballs["1.0.0"]));
+      },
+    });
+    using dir = tempDir("pm-diff-tarball-scheme", {
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${mock.port}/"\n`,
+    });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0", "--name-only"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).toContain("UnsupportedProtocol");
+    expect(stdout).toBe("");
+    expect(requests).toEqual(["/diffme"]);
+    expect(exitCode).toBe(1);
+  });
+
   test("dist-tags, ranges and open-ended a.. spellings resolve like install would", async () => {
     // (a bare second word is only reused as a version when it is one; `next` alone would be the package "next")
     const tag = await diff(["diffme@legacy", "diffme@next", "--name-only"]);

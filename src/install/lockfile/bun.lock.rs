@@ -2665,7 +2665,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 if registry_str.is_empty() {
                     // Use scope-specific registry if available, otherwise fall back to default
                     let registry_url = if let Some(mgr) = manager.as_deref() {
-                        mgr.scope_for_package_name(name_str).url.href()
+                        mgr.scope_for_package_name(name_str).href_unchecked()
                     } else {
                         Npm::Registry::DEFAULT_URL.as_bytes()
                     };
@@ -2682,7 +2682,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     res.npm_mut().url = sbuf!(lockfile).append(url)?;
                 } else {
                     let configured_registry = if let Some(mgr) = manager.as_deref() {
-                        mgr.scope_for_package_name(name_str).url.href()
+                        mgr.scope_for_package_name(name_str).href_unchecked()
                     } else {
                         Npm::Registry::DEFAULT_URL.as_bytes()
                     };

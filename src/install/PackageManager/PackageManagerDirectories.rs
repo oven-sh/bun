@@ -638,7 +638,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
             .len();
     // reshaped for borrowck — resume the cursor at the basename's
     // tail instead of holding the returned `&ZStr` across the re-borrow.
-    let scope_url = scope.url.url();
+    let scope_url = bun_url::URL::parse(scope.href_unchecked());
     let mut w = ByteCursor {
         buf,
         at: spanned_len,

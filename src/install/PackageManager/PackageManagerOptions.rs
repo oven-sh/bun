@@ -629,23 +629,14 @@ impl Options {
 
             for registry_key in REGISTRY_KEYS {
                 if let Some(registry_) = env.get(registry_key) {
-                    // Any non-empty value is the registry, as it is for `registry=`
-                    // in .npmrc and `install.registry` in bunfig.toml, so an unusable
-                    // value surfaces as a request error instead of a silent fall
-                    // through to the next layer's registry.
                     let registry_ = strings::trim(registry_, b" \t\r\n");
                     if !registry_.is_empty() {
                         let mut api_registry = Api::NpmRegistry::from_url(registry_);
                         // Credentials in the URL win, as they do for `registry=` in .npmrc.
-                        if !api_registry.has_credentials() {
-                            let prev_url = self.scope.url.url();
-                            let new_url = bun_url::URL::parse(&api_registry.url);
-                            if bun_core::without_trailing_slash(new_url.host)
-                                == bun_core::without_trailing_slash(prev_url.host)
-                                && (new_url.is_https() || !prev_url.is_https())
-                            {
-                                api_registry.token = core::mem::take(&mut self.scope.token);
-                            }
+                        if !api_registry.has_credentials()
+                            && self.scope.credentials_apply_to(&api_registry.url)
+                        {
+                            api_registry.token = self.scope.take_token();
                         }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                         break;
@@ -660,17 +651,8 @@ impl Options {
                 if api_registry.has_credentials() {
                     self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                 } else {
-                    let new_url = bun_url::URL::parse(&api_registry.url);
-                    let same_origin = {
-                        let prev_url = self.scope.url.url();
-                        bun_core::without_trailing_slash(new_url.host)
-                            == bun_core::without_trailing_slash(prev_url.host)
-                            && (new_url.is_https() || !prev_url.is_https())
-                    };
-                    if !same_origin {
-                        self.scope.token = Box::default();
-                        self.scope.auth = Box::default();
-                        self.scope.user = Box::default();
+                    if !self.scope.credentials_apply_to(&api_registry.url) {
+                        self.scope.clear_credentials();
                     }
                     self.scope.set_url(api_registry.url);
                 }
@@ -687,7 +669,7 @@ impl Options {
             for token_key in TOKEN_KEYS {
                 if let Some(token) = env.get(token_key) {
                     if !token.is_empty() {
-                        self.scope.token = token.into();
+                        self.scope.set_token(token.into());
                         break;
                     }
                 }
@@ -742,7 +724,7 @@ impl Options {
             }
 
             if !cli.token.is_empty() {
-                self.scope.token = cli.token.into();
+                self.scope.set_token(cli.token.into());
             }
 
             if cli.no_save {

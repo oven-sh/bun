@@ -35,23 +35,22 @@ pub enum WhoamiError {
     NeedAuth,
     #[error("probably invalid auth")]
     ProbablyInvalidAuth,
+    #[error("{0}")]
+    InvalidRegistryUrl(registry::InvalidRegistryUrl),
 }
 bun_core::oom_from_alloc!(WhoamiError);
 
 pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
-    let registry = &manager.options.scope;
-    let registry_url = registry.url.url();
+    let scope = &manager.options.scope;
 
-    if !registry.user.is_empty() {
-        let sep = strings::index_of_char(&registry.user, b':').unwrap();
-        return Ok(registry.user[..sep as usize].to_vec());
+    if let Some(username) = scope.username() {
+        return Ok(username.to_vec());
     }
 
-    if !registry_url.username.is_empty() {
-        return Ok(registry_url.username.to_vec());
-    }
+    let registry = scope.checked().map_err(WhoamiError::InvalidRegistryUrl)?;
+    let registry_url = registry.url();
 
-    if registry.token.is_empty() {
+    if registry.token().is_empty() {
         return Err(WhoamiError::NeedAuth);
     }
 
@@ -72,7 +71,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         write!(
             &mut print_buf,
             "Bearer {}",
-            bstr::BStr::new(&registry.token)
+            bstr::BStr::new(registry.token())
         )
         .expect("infallible: in-memory write");
         headers.count("authorization", &print_buf);
@@ -108,7 +107,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         write!(
             &mut print_buf,
             "Bearer {}",
-            bstr::BStr::new(&registry.token)
+            bstr::BStr::new(registry.token())
         )
         .expect("infallible: in-memory write");
         headers.append("authorization", &print_buf);
@@ -298,23 +297,71 @@ pub mod registry {
     // `unreachable!()`.
     bun_collections::object_pool!(pub BodyPool: MutableString, threadsafe, 8);
 
+    /// The URL and the credentials are private: a request gets them from
+    /// `checked()`, which refuses a registry that is not an http(s) URL.
     #[derive(Default, Clone)]
     pub struct Scope {
         pub name: Box<[u8]>,
         // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96
         // base64("${username}:${password}")
-        pub auth: Box<[u8]>,
+        auth: Box<[u8]>,
         // URL may contain these special suffixes in the pathname:
         //  :_authToken
         //  :username
         //  :_password
         //  :_auth
-        pub url: OwnedURL,
+        url: OwnedURL,
         pub url_hash: u64,
-        pub token: Box<[u8]>,
+        token: Box<[u8]>,
 
         // username and password combo, `user:pass`
-        pub user: Box<[u8]>,
+        user: Box<[u8]>,
+        /// `url` is a WHATWG URL whose scheme is http or https. If not, `url`
+        /// holds the text as written, without credentials.
+        url_is_http: bool,
+    }
+
+    /// A registry whose URL is an http(s) URL.
+    #[derive(Clone, Copy)]
+    pub struct CheckedScope<'a>(&'a Scope);
+
+    impl<'a> CheckedScope<'a> {
+        /// The WHATWG serialization of the registry URL.
+        pub fn href(self) -> &'a [u8] {
+            self.0.url.href()
+        }
+
+        pub fn url(self) -> URL<'a> {
+            self.0.url.url()
+        }
+
+        pub fn token(self) -> &'a [u8] {
+            &self.0.token
+        }
+
+        /// base64("${username}:${password}")
+        pub fn auth(self) -> &'a [u8] {
+            &self.0.auth
+        }
+
+        pub fn scope(self) -> &'a Scope {
+            self.0
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct InvalidRegistryUrl {
+        href: Box<[u8]>,
+    }
+
+    impl core::fmt::Display for InvalidRegistryUrl {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(
+                f,
+                "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                bun_fmt::redacted_npm_url(&self.href),
+            )
+        }
     }
 
     impl Scope {
@@ -324,9 +371,135 @@ pub mod registry {
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
         pub fn set_url(&mut self, href: Box<[u8]>) {
-            self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
-                .unwrap_or_else(|_| OwnedURL::from_href(href));
+            match URL::from_string(&bun_core::String::borrow_utf8(&href)) {
+                Ok(url) if url.url().has_http_like_protocol() => {
+                    self.url_is_http = true;
+                    self.url = url;
+                }
+                // No request goes to it, so only text that is safe to print is kept.
+                _ => {
+                    self.url_is_http = false;
+                    self.url = OwnedURL::from_href(Self::without_secrets(&href));
+                }
+            }
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
+        }
+
+        /// `Ok` when `href` is an http(s) URL.
+        pub fn check_url(href: &[u8]) -> Result<(), InvalidRegistryUrl> {
+            let mut scope = Scope::default();
+            scope.set_url(Box::from(href));
+            scope.checked().map(|_| ())
+        }
+
+        /// The only way to the request base and the credentials.
+        pub fn checked(&self) -> Result<CheckedScope<'_>, InvalidRegistryUrl> {
+            if self.url_is_http {
+                return Ok(CheckedScope(self));
+            }
+            Err(InvalidRegistryUrl {
+                href: Box::from(self.url.href()),
+            })
+        }
+
+        /// The stored URL text. It is an http(s) URL only when `checked()`
+        /// succeeds, so use it for cache keys, lockfile comparisons and
+        /// nothing that sends a request.
+        pub fn href_unchecked(&self) -> &[u8] {
+            self.url.href()
+        }
+
+        /// Where the `:_authToken=` style credentials that `from_api` reads from the path start.
+        fn path_credentials_start(written: &[u8]) -> usize {
+            const KEYS: [&[u8]; 4] = [b"_authToken=", b"_auth=", b"username=", b"_password="];
+            let mut from = 0;
+            while let Some(i) = strings::index_of_any(&written[from..], b":/").map(|i| from + i) {
+                if KEYS.iter().any(|key| written[i + 1..].starts_with(key)) {
+                    return if written[i] == b':' { i } else { i + 1 };
+                }
+                from = i + 1;
+            }
+            written.len()
+        }
+
+        /// `written` without userinfo, path credentials, `?query`, `#fragment`
+        /// and more than one trailing slash.
+        fn without_secrets(written: &[u8]) -> Box<[u8]> {
+            fn after_last_at(s: &[u8]) -> &[u8] {
+                strings::last_index_of_char(s, b'@').map_or(s, |at| &s[at + 1..])
+            }
+
+            let written = &written[..Self::path_credentials_start(written)];
+            let url = URL::parse(written);
+            let authority_start = if !url.protocol.is_empty() {
+                (url.protocol.len() + b"://".len()).min(written.len())
+            } else if written.starts_with(b"//") {
+                2
+            } else {
+                0
+            };
+            let authority_end = authority_start
+                + strings::index_of_any(&written[authority_start..], b"/?#")
+                    .unwrap_or(written.len() - authority_start);
+            // `URL::parse` does not validate the scheme, so that slice can hold a `user:password@` too.
+            let scheme = after_last_at(&written[..authority_start]);
+            let host = after_last_at(&written[authority_start..authority_end]);
+            let rest = &written[authority_end..];
+            let rest = &rest[..strings::index_of_any(rest, b"?#").unwrap_or(rest.len())];
+            let path = strings::trim_right(rest, b"/");
+
+            let mut out = Vec::with_capacity(scheme.len() + host.len() + path.len() + 1);
+            out.extend_from_slice(scheme);
+            out.extend_from_slice(host);
+            out.extend_from_slice(path);
+            if path.len() < rest.len() {
+                out.push(b'/');
+            }
+            out.into_boxed_slice()
+        }
+
+        /// `true` when a request to this registry would carry credentials.
+        pub fn has_credentials(&self) -> bool {
+            if !self.token.is_empty() || !self.auth.is_empty() {
+                return true;
+            }
+            let url = self.url.url();
+            !url.username.is_empty() && !url.password.is_empty()
+        }
+
+        /// The user name that is known without a request.
+        pub fn username(&self) -> Option<&[u8]> {
+            if let Some(sep) = strings::index_of_char_usize(&self.user, b':') {
+                return Some(&self.user[..sep]);
+            }
+            let url = self.url.url();
+            (!url.username.is_empty()).then_some(url.username)
+        }
+
+        /// `true` when `href` names this registry's host and is not a downgrade
+        /// from https, so this registry's credentials can go to it.
+        pub(crate) fn credentials_apply_to(&self, href: &[u8]) -> bool {
+            let Ok(other) = URL::from_string(&bun_core::String::borrow_utf8(href)) else {
+                return false;
+            };
+            let (this, other) = (self.url.url(), other.url());
+            strings::without_trailing_slash(this.host)
+                == strings::without_trailing_slash(other.host)
+                && (other.is_https() || !this.is_https())
+        }
+
+        pub(crate) fn take_token(&mut self) -> Box<[u8]> {
+            core::mem::take(&mut self.token)
+        }
+
+        pub(crate) fn set_token(&mut self, token: Box<[u8]>) {
+            self.token = token;
+        }
+
+        pub(crate) fn clear_credentials(&mut self) {
+            self.token = Box::default();
+            self.auth = Box::default();
+            self.user = Box::default();
         }
 
         pub(crate) fn get_name(name: &[u8]) -> &[u8] {
@@ -505,7 +678,10 @@ pub mod registry {
             let user: Box<[u8]> = Box::from(&*user);
             drop(output_buf_owned);
 
-            let final_href: Box<[u8]> = if needs_normalize {
+            let final_href: Box<[u8]> = if url.protocol.is_empty() {
+                // `href_without_auth()` would invent a scheme and a host.
+                Box::from(&registry_url[..Self::path_credentials_start(&registry_url)])
+            } else if needs_normalize {
                 url.href_without_auth()
             } else {
                 // reshaped for borrowck — `url` (borrowing
@@ -1020,7 +1196,7 @@ pub mod package_manifest {
 
             writer.write_int_le::<u64>(scope.url_hash)?;
             writer.write_int_le::<u64>(
-                strings::without_trailing_slash(scope.url.href()).len() as u64
+                strings::without_trailing_slash(scope.href_unchecked()).len() as u64,
             )?;
 
             pos += 128 / 8;
@@ -1427,7 +1603,9 @@ pub mod package_manifest {
             }
 
             let registry_length = pkg_stream.read_int_le::<u64>()?;
-            if strings::without_trailing_slash(scope.url.href()).len() as u64 != registry_length {
+            if strings::without_trailing_slash(scope.href_unchecked()).len() as u64
+                != registry_length
+            {
                 return Ok(None);
             }
 

@@ -701,7 +701,14 @@ fn fetch_registry_tree(
     version: &[u8],
 ) -> Result<Tree, crate::Error> {
     let bump = Bump::new();
-    let scope = pm.scope_for_package_name(name);
+    let scope = match pm.scope_for_package_name(name).checked() {
+        Ok(scope) => scope,
+        Err(err) => {
+            Status::clear();
+            Output::err_generic("{}", (err,));
+            Global::exit(1);
+        }
+    };
 
     let mut url_buf = bun_paths::path_buffer_pool::get();
     let encoded_name = buf_print(
@@ -713,7 +720,7 @@ fn fetch_registry_tree(
         path_buf.0.as_mut_slice(),
         format_args!(
             "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
+            BStr::new(strings::without_trailing_slash(scope.href())),
             BStr::new(encoded_name)
         ),
     );
@@ -728,7 +735,7 @@ fn fetch_registry_tree(
 
     let mut log = bun_ast::Log::init();
     let manifest = match PackageManifest::parse(
-        scope,
+        scope.scope(),
         &mut log,
         body.list.as_slice(),
         name,
@@ -809,7 +816,7 @@ fn fetch_registry_tree(
     let mut tarball_url: Vec<u8> = found.tarball_url(&manifest);
     if tarball_url.is_empty() {
         tarball_url = bun_install::extract_tarball::build_url_with_printer(
-            scope.url.href(),
+            scope.href(),
             &StringOrTinyString::init_append_if_needed(name, &mut BumpAppender(&bump))?,
             found.version,
             &manifest.string_buf,
@@ -846,7 +853,7 @@ impl bun_core::strings::Appender for BumpAppender<'_> {
 
 fn registry_get(
     pm: &PackageManager,
-    scope: &npm::registry::Scope,
+    scope: npm::registry::CheckedScope<'_>,
     url: URL<'_>,
     accept: &[u8],
     for_error: Option<(&[u8], &[u8])>,
@@ -855,13 +862,13 @@ fn registry_get(
     headers.count(b"Accept", accept);
     // `dist.tarball` is registry-controlled; credentials only go back to the registry's own origin.
     let same_origin = {
-        let registry = scope.url.url();
+        let registry = scope.url();
         url.protocol == registry.protocol
             && url.hostname == registry.hostname
             && url.get_port_auto() == registry.get_port_auto()
     };
     let (token, auth): (&[u8], &[u8]) = if same_origin {
-        (&scope.token, &scope.auth)
+        (scope.token(), scope.auth())
     } else {
         (b"", b"")
     };

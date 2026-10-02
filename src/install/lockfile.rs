@@ -3384,8 +3384,7 @@ impl Lockfile {
         }
         let registry = PackageManager::get()
             .scope_for_package_name(pkg_name)
-            .url
-            .href();
+            .href_unchecked();
         let Ok(canonical_url) = crate::extract_tarball::build_url_with_printer(
             registry,
             &strings::StringOrTinyString::init(pkg_name),

@@ -997,6 +997,43 @@ test.each([
   expect(exitCode).toBe(0);
 });
 
+// A registry value that is not an http(s) URL must not be dialed as plaintext HTTP with the token attached.
+// The mock is a plain HTTP listener, so a downgraded request shows up in `requests`.
+test.each([
+  ["a misspelt scheme", (port: number) => `htps://localhost:${port}/`, `token = "secret-token"`],
+  ["no scheme", (port: number) => `localhost:${port}/`, `token = "secret-token"`],
+  ["http:// in front of something that is not a URL", () => `http://localhost:demo/`, `token = "secret-token"`],
+  // Without a token the answer used to be "missing authentication", which hid the bad URL.
+  ["a misspelt scheme and no token", (port: number) => `htps://localhost:${port}/`, `email = "a@b.c"`],
+])("bun pm whoami refuses a registry that is not an http(s) URL: %s", async (_, value, credential) => {
+  const requests: string[] = [];
+  using mock = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requests.push(`${req.method} ${req.url} ${req.headers.get("authorization")}`);
+      return Response.json({ username: "leaked" });
+    },
+  });
+  const url = value(mock.port);
+  using dir = tempDir("whoami-not-a-url", {
+    "package.json": JSON.stringify({ name: "whoami-not-a-url", version: "1.0.0" }),
+    "bunfig.toml": `[install]\nregistry = { url = "${url}", ${credential} }\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "whoami"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe(`error: Registry URL must be http:// or https://\nReceived: "${url}"\n`);
+  expect(stdout).toBe("");
+  expect(requests).toEqual([]);
+  expect(exitCode).toBe(1);
+});
+
 test("bun list --all shows full dependency tree", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

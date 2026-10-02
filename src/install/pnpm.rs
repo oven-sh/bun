@@ -1279,7 +1279,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
 
                 if res.tag == resolution::Tag::Npm {
-                    let scope_registry: &[u8] = manager.scope_for_package_name(name_str).url.href();
+                    let scope_registry: &[u8] =
+                        manager.scope_for_package_name(name_str).href_unchecked();
                     let registry: &[u8] = match registry_name {
                         None => scope_registry,
                         Some(registry_name) => {

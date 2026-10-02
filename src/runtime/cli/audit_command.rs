@@ -94,7 +94,7 @@ fn print_command_name(fix: bool) {
 }
 
 fn default_registry_href(pm: &PackageManager) -> &[u8] {
-    strings::without_trailing_slash(pm.options.scope.url.href())
+    strings::without_trailing_slash(pm.options.scope.href_unchecked())
 }
 
 fn report_non_json_response(registry: &[u8]) {
@@ -345,16 +345,29 @@ struct AuditRegistry {
     token: Box<[u8]>,
     auth: Box<[u8]>,
     is_default: bool,
+    /// Set when no request can go to this registry. `href` is then for messages only.
+    invalid_url: Option<bun_install::npm::registry::InvalidRegistryUrl>,
 }
 
 impl AuditRegistry {
     fn from_scope(scope: &bun_install::npm::registry::Scope, is_default: bool) -> AuditRegistry {
-        AuditRegistry {
-            href: Box::<[u8]>::from(strings::without_trailing_slash(scope.url.href())),
-            url_hash: scope.url_hash,
-            token: scope.token.clone(),
-            auth: scope.auth.clone(),
-            is_default,
+        match scope.checked() {
+            Ok(registry) => AuditRegistry {
+                href: Box::<[u8]>::from(strings::without_trailing_slash(registry.href())),
+                url_hash: scope.url_hash,
+                token: Box::<[u8]>::from(registry.token()),
+                auth: Box::<[u8]>::from(registry.auth()),
+                is_default,
+                invalid_url: None,
+            },
+            Err(invalid_url) => AuditRegistry {
+                href: Box::<[u8]>::from(strings::without_trailing_slash(scope.href_unchecked())),
+                url_hash: scope.url_hash,
+                token: Box::default(),
+                auth: Box::default(),
+                is_default,
+                invalid_url: Some(invalid_url),
+            },
         }
     }
 }
@@ -404,6 +417,7 @@ enum SkipReason {
     Status(u32),
     Send(&'static str),
     NotJson,
+    InvalidUrl,
 }
 
 impl core::fmt::Display for SkipReason {
@@ -412,6 +426,7 @@ impl core::fmt::Display for SkipReason {
             SkipReason::Status(status) => write!(f, "{status}"),
             SkipReason::Send(name) => f.write_str(name),
             SkipReason::NotJson => f.write_str("non-JSON response"),
+            SkipReason::InvalidUrl => f.write_str("not an http(s) URL"),
         }
     }
 }
@@ -419,7 +434,11 @@ impl core::fmt::Display for SkipReason {
 fn unaudited(request: &AuditRequest, reason: &SkipReason) -> audit_fix::UnauditedRegistry {
     let mut reason_text: Vec<u8> = Vec::new();
     write!(&mut reason_text, "{reason}").expect("unreachable");
-    let registry = URL::parse(&request.registry.href).href_without_auth();
+    let registry = if request.registry.invalid_url.is_some() {
+        request.registry.href.clone()
+    } else {
+        URL::parse(&request.registry.href).href_without_auth()
+    };
     audit_fix::UnauditedRegistry {
         registry: Box::from(strings::without_trailing_slash(&registry)),
         packages: request
@@ -694,6 +713,14 @@ fn send_audit_request(
     body: &[u8],
     echo_non_json: bool,
 ) -> Result<Result<Box<[u8]>, SkipReason>, bun_alloc::AllocError> {
+    if let Some(invalid_url) = &registry.invalid_url {
+        if !registry.is_default {
+            return Ok(Err(SkipReason::InvalidUrl));
+        }
+        Output::err_generic("{}", (invalid_url,));
+        Global::exit(1);
+    }
+
     libdeflate::load();
     let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 

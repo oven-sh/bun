@@ -10399,6 +10399,206 @@ describe("registry/token env var priority", () => {
     expect(err).toContain(`Received: "htp://localhost:${fromBunfig.port}/no-deps"`);
     expect(exitCode).toBe(1);
   });
+
+  test("whitespace-only BUN_CONFIG_REGISTRY falls through to NPM_CONFIG_REGISTRY", async () => {
+    let hits = 0;
+    await using next = Bun.serve({
+      port: 0,
+      fetch() {
+        hits++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(join(packageDir, "bunfig.toml"), `[install]\ncache = false\n`),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_CONFIG_REGISTRY: " \t",
+        NPM_CONFIG_REGISTRY: `http://localhost:${next.port}/`,
+        npm_config_registry: `http://localhost:${next.port}/`,
+      },
+    });
+    const [err, exitCode] = await Promise.all([stderr.text(), exited, stdout.text()]);
+
+    expect(err).toContain(`GET http://localhost:${next.port}/no-deps - 404`);
+    expect(hits).toBe(1);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a padded BUN_CONFIG_REGISTRY keeps the bunfig token of the same registry", async () => {
+    const received: (string | null)[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        received.push(req.headers.get("authorization"));
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const url = `http://localhost:${server.port}/`;
+
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: { url, token: "from-bunfig" } } }),
+      ),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_CONFIG_REGISTRY: ` ${url} ` },
+    });
+    const [err, exitCode] = await Promise.all([stderr.text(), exited, stdout.text()]);
+
+    expect(err).toContain(`GET ${url}no-deps - 404`);
+    expect(received).toEqual(["Bearer from-bunfig"]);
+    expect(exitCode).toBe(1);
+  });
+});
+
+// The HTTP client dials every scheme but https as plain HTTP. A request built
+// from a registry value that is not an http(s) URL (a misspelt scheme, no
+// scheme at all) would carry the token in cleartext, so none is sent.
+describe.concurrent("a registry that is not an http(s) URL", () => {
+  function recordingRegistry() {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(`${req.method} ${req.url} ${req.headers.get("authorization")}`);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    return { requests, port: server.port, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  async function install(dir: string, extraEnv: Record<string, string>, args: string[] = []) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".cache"), BUN_CONFIG_TOKEN: "secret-token", ...extraEnv },
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    return { err, exitCode };
+  }
+
+  const appPackageJson = JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } });
+
+  const values = [
+    {
+      name: "a misspelt scheme",
+      value: (port: number) => `htps://localhost:${port}/`,
+      error: (port: number) => `Registry URL must be http:// or https://\nReceived: "htps://localhost:${port}/no-deps"`,
+    },
+    {
+      name: "no scheme",
+      value: (port: number) => `localhost:${port}/`,
+      error: (port: number) => `Failed to join registry "localhost:${port}/" and package "no-deps" URLs`,
+    },
+    {
+      name: "no scheme and a token in the path",
+      value: (port: number) => `localhost:${port}/:_authToken=path-token`,
+      error: (port: number) => `Failed to join registry "localhost:${port}/" and package "no-deps" URLs`,
+    },
+    {
+      name: "no scheme after //",
+      value: (port: number) => `//localhost:${port}/`,
+      error: (port: number) => `Failed to join registry "//localhost:${port}/" and package "no-deps" URLs`,
+    },
+  ];
+
+  for (const source of ["bunfig.toml", ".npmrc", "BUN_CONFIG_REGISTRY"] as const) {
+    for (const { name, value, error } of values) {
+      test(`bun install sends nothing for ${name} in ${source}`, async () => {
+        using registry = recordingRegistry();
+        const junk = value(registry.port);
+        using dir = tempDir("registry-not-a-url", {
+          "package.json": appPackageJson,
+          "bunfig.toml": Bun.TOML.stringify({
+            install: {
+              cache: false,
+              ...(source === "bunfig.toml" ? { registry: junk } : {}),
+              // The layer below the environment is a registry that answers,
+              // so a dropped value shows up as a request.
+              ...(source === "BUN_CONFIG_REGISTRY" ? { registry: `http://localhost:${registry.port}/` } : {}),
+            },
+          }),
+          ...(source === ".npmrc" ? { ".npmrc": `registry=${junk}\n` } : {}),
+        });
+
+        const { err, exitCode } = await install(
+          String(dir),
+          source === "BUN_CONFIG_REGISTRY" ? { BUN_CONFIG_REGISTRY: junk } : {},
+        );
+
+        expect(err).toContain(error(registry.port));
+        expect(err).not.toContain("path-token");
+        expect(registry.requests).toEqual([]);
+        expect(exitCode).toBe(1);
+      });
+    }
+  }
+
+  test("bun install from a lockfile builds no tarball URL from it", async () => {
+    const tarball = await file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz")).bytes();
+    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
+    // `demo` is not a port, so this is not a URL. A lenient parser reads it as localhost on port 80.
+    const junk = "http://localhost:demo/";
+    using dir = tempDir("registry-not-a-url-lockfile", {
+      "package.json": appPackageJson,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: { url: junk, token: "secret-token" } } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies: { "no-deps": "1.0.0" } } },
+        packages: { "no-deps": ["no-deps@1.0.0", "", {}, integrity] },
+      }),
+    });
+
+    const { err, exitCode } = await install(String(dir), {});
+
+    expect(err).toContain(`Registry URL must be http:// or https://\nReceived: "${junk}"`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--registry accepts an http URL whatever the case of its scheme", async () => {
+    using registry = recordingRegistry();
+    using dir = tempDir("registry-flag-uppercase", {
+      "package.json": appPackageJson,
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false } }),
+    });
+
+    const { err, exitCode } = await install(String(dir), {}, ["--registry", `HTTP://localhost:${registry.port}/`]);
+
+    expect(err).toContain(`GET http://localhost:${registry.port}/no-deps - 404`);
+    expect(registry.requests).toEqual([`GET http://localhost:${registry.port}/no-deps Bearer secret-token`]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    ["htps://user:hunter2@localhost/npm/", "htps://localhost/npm/"],
+    ["http://localhost:demo/", "http://localhost:demo/"],
+  ])("--registry=%s is refused before anything runs", async (value, printed) => {
+    using dir = tempDir("registry-flag-not-a-url", { "package.json": appPackageJson });
+
+    const { err, exitCode } = await install(String(dir), {}, ["--registry", value]);
+
+    expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "${printed}"\n`);
+    expect(exitCode).toBe(1);
+  });
 });
 
 test("npm manifest cache entries with invalid package version records are treated as invalid", async () => {

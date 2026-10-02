@@ -76,7 +76,13 @@ pub(crate) fn view(
         break 'brk spec_;
     });
 
-    let scope = manager.scope_for_package_name(name);
+    let scope = match manager.scope_for_package_name(name).checked() {
+        Ok(scope) => scope,
+        Err(err) => {
+            Output::err_generic("{}", (err,));
+            Global::exit(1);
+        }
+    };
 
     let mut url_buf = bun_paths::path_buffer_pool::get();
     let encoded_name = buf_print(
@@ -89,7 +95,7 @@ pub(crate) fn view(
         path_buf.0.as_mut_slice(),
         format_args!(
             "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
+            BStr::new(strings::without_trailing_slash(scope.href())),
             BStr::new(encoded_name),
         ),
     );
@@ -97,24 +103,24 @@ pub(crate) fn view(
 
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", b"application/json");
-    if !scope.token.is_empty() {
+    if !scope.token().is_empty() {
         headers.count(b"Authorization", b"");
-        headers.content.cap += b"Bearer ".len() + scope.token.len();
-    } else if !scope.auth.is_empty() {
+        headers.content.cap += b"Bearer ".len() + scope.token().len();
+    } else if !scope.auth().is_empty() {
         headers.count(b"Authorization", b"");
-        headers.content.cap += b"Basic ".len() + scope.auth.len();
+        headers.content.cap += b"Basic ".len() + scope.auth().len();
     }
     headers.allocate()?;
     headers.append(b"Accept", b"application/json");
-    if !scope.token.is_empty() {
+    if !scope.token().is_empty() {
         headers.append_fmt(
             b"Authorization",
-            format_args!("Bearer {}", BStr::new(&*scope.token)),
+            format_args!("Bearer {}", BStr::new(scope.token())),
         );
-    } else if !scope.auth.is_empty() {
+    } else if !scope.auth().is_empty() {
         headers.append_fmt(
             b"Authorization",
-            format_args!("Basic {}", BStr::new(&*scope.auth)),
+            format_args!("Basic {}", BStr::new(scope.auth())),
         );
     }
 
@@ -160,7 +166,7 @@ pub(crate) fn view(
 
     // Parse the existing JSON response into a PackageManifest using the now-public parse function
     let parsed_manifest = match PackageManifest::parse(
-        scope,
+        scope.scope(),
         &mut log,
         response_buf.list.as_slice(),
         name,

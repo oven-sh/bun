@@ -357,7 +357,7 @@ impl<'a> Migrator<'a> {
         if res.tag == resolution::Tag::Npm {
             let buf = self.this.buffers.string_bytes.as_slice();
             let url = res.npm().url.slice(buf);
-            let configured_registry = self.manager.scope_for_package_name(name).url.href();
+            let configured_registry = self.manager.scope_for_package_name(name).href_unchecked();
             if !lockfile::bun_lock::url_is_under_registry(url, configured_registry)
                 && !lockfile::bun_lock::url_is_under_registry(
                     url,
@@ -553,7 +553,7 @@ impl<'a> Migrator<'a> {
         } else {
             name
         };
-        let href: &[u8] = self.manager.scope_for_package_name(name).url.href();
+        let href: &[u8] = self.manager.scope_for_package_name(name).href_unchecked();
         let url = &mut self.url;
         url.clear();
         url.reserve(

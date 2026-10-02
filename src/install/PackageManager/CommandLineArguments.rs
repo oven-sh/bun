@@ -1664,13 +1664,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(registry) = args.option(b"--registry") {
-            if !strings::has_prefix(registry, b"https://")
-                && !strings::has_prefix(registry, b"http://")
-            {
-                Output::err_generic(
-                    "Registry URL must start with 'https://' or 'http://': {}\n",
-                    (bun_core::fmt::quote(registry),),
-                );
+            if let Err(invalid) = Npm::registry::Scope::check_url(registry) {
+                Output::err_generic("{}", (invalid,));
                 Global::crash();
             }
             cli.registry = registry;

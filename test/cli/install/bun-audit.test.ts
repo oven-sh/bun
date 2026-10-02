@@ -599,6 +599,70 @@ describe("`bun audit`", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A registry value that is not an http(s) URL must not be dialed as plaintext HTTP with the token attached.
+  // The mock is a plain HTTP listener, so a downgraded request shows up in `requests`.
+  describe.each([
+    ["a misspelt scheme", (port: number) => `htps://localhost:${port}/`],
+    ["no scheme", (port: number) => `localhost:${port}/`],
+    ["http:// in front of something that is not a URL", () => `http://localhost:demo/`],
+  ])("a registry that is not an http(s) URL gets no audit request: %s", (_, value) => {
+    function requestLog() {
+      const requests: string[] = [];
+      const mock = Bun.serve({
+        port: 0,
+        fetch(req) {
+          requests.push(`${req.method} ${req.url} ${req.headers.get("authorization")}`);
+          return Response.json({});
+        },
+      });
+      return { requests, port: mock.port, [Symbol.dispose]: () => void mock.stop(true) };
+    }
+
+    test("the default registry is an error", async () => {
+      using mock = requestLog();
+      const url = value(mock.port);
+      using dir = tempDir("bun-test-audit-not-a-url", {
+        "package.json": JSON.stringify({ name: "test", version: "1.0.0", dependencies: { "@foo/bar": "1.0.0" } }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "test", dependencies: { "@foo/bar": "1.0.0" } } },
+          packages: { "@foo/bar": ["@foo/bar@1.0.0", "", {}, fakeIntegrity] },
+        }),
+        "bunfig.toml": `[install]\nregistry = { url = "${url}", token = "secret-token" }\n`,
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "audit"],
+        stdout: "pipe",
+        stderr: "pipe",
+        cwd: String(dir),
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe(`error: Registry URL must be http:// or https://\nReceived: "${url}"\n`);
+      expect(normalizeBunSnapshot(stdout)).toBe("bun audit <version> (<revision>)");
+      expect(mock.requests).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a scoped registry is skipped like one that does not answer", async () => {
+      using mock = requestLog();
+      const url = value(mock.port);
+      using dir = tempDir("bun-test-audit-scope-not-a-url", {
+        ...scopedRegistryProject({ url: { href: url } } as Registry),
+        "bunfig.toml": `[install.scopes]\nfoo = { url = "${url}", token = "secret-token" }\n`,
+      });
+
+      const { stdout, stderr, exitCode } = await auditWithDefaultRegistry(String(dir));
+      expect(normalizeBunSnapshot(stderr)).toBe(
+        skippedWarning(url.slice(0, -1), "not an http(s) URL", "@foo/bar", "@foo/baz"),
+      );
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(0, "2 skipped"));
+      expect(mock.requests).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   doAuditTest("workspaces print the path to the vulnerable package and include workspace:pkg in the name", {
     exitCode: 1,
     files: {

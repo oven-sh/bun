@@ -615,6 +615,11 @@ impl<'a> AsyncHTTP<'a> {
         &mut self,
         response_buffer: &mut MutableString,
     ) -> crate::Result<crate::HTTPResponseMetadata> {
+        // The client below dials every scheme but https as plain HTTP.
+        if !self.url.has_http_like_protocol() {
+            return Err(crate::Error::UnsupportedProtocol);
+        }
+
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);

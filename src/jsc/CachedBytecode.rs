@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 
 use bun_bundler::bytecode_order::CodeNamesRef;
 use bun_core::String as BunString;
+use bun_core::strings::EncodingNonAscii;
 use bun_options_types::Format;
 
 bun_opaque::opaque_ffi! {
@@ -220,9 +221,14 @@ impl CachedBytecode {
     // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
     // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
     // the handle and must call `deref()` (or drop via `allocator()`) to free.
+    //
+    // `input_encoding` says how the module loader decodes `input`: JSC accepts the bytecode only for a source string
+    // equal to the one it was generated from. `Utf8` is bundler output. `Latin1` and `Utf16` are text that is already
+    // in the width JSC holds it in (the runtime transpiler's output).
     pub(crate) fn generate(
         format: Format,
         input: &[u8],
+        input_encoding: EncodingNonAscii,
         source_provider_url: &BunString,
         depth: u32,
         optimize: bool,
@@ -233,12 +239,33 @@ impl CachedBytecode {
             Format::Cjs => generateCachedCommonJSProgramByteCodeFromSourceCode,
             _ => return None,
         };
-        // An executable stores the chunk as `encode_text_module` writes it (Latin-1, or UTF-16 when non-ASCII) and
-        // aliases it at runtime; a `.jsc` next to a bundle is keyed on the file's bytes read as Latin-1.
-        let source = match external_strings.and_then(|_| bun_core::strings::first_non_ascii(input))
-        {
-            Some(first_non_ascii) => utf16_source(input, first_non_ascii as usize),
-            None => BunString::clone_latin1(input),
+        let source = match input_encoding {
+            EncodingNonAscii::Utf8 => match bun_core::strings::first_non_ascii(input) {
+                None => BunString::clone_latin1(input),
+                // An executable stores the chunk as `encode_text_module` writes it (UTF-16 when non-ASCII) and
+                // aliases it at runtime.
+                Some(first_non_ascii) if external_strings.is_some() => {
+                    utf16_source(input, first_non_ascii as usize)
+                }
+                // A `.jsc` next to a bundle: the module loader decodes the file with `clone_utf8`.
+                Some(_) => BunString::clone_utf8(input),
+            },
+            EncodingNonAscii::Latin1 => BunString::clone_latin1(input),
+            EncodingNonAscii::Utf16 => {
+                let (string, units) = BunString::create_uninitialized_utf16(input.len() / 2);
+                if string.is_dead() {
+                    bun_alloc::out_of_memory();
+                }
+                // SAFETY: `units` holds `input.len() / 2` u16s, and `input` is that many native-endian code units.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        input.as_ptr(),
+                        units.as_mut_ptr().cast::<u8>(),
+                        units.len() * 2,
+                    )
+                };
+                string
+            }
         };
         let mut this: Option<NonNull<CachedBytecode>> = None;
         let mut out_size: usize = 0;
@@ -288,6 +315,7 @@ impl bun_alloc::Allocator for CachedBytecode {}
 pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
+    source_encoding: EncodingNonAscii,
     source_provider_url: &BunString,
     depth: u32,
     optimize: bool,
@@ -297,6 +325,7 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     let (bytes, handle) = CachedBytecode::generate(
         format,
         source,
+        source_encoding,
         source_provider_url,
         depth,
         optimize,

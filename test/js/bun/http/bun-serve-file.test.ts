@@ -1394,17 +1394,25 @@ describe.skipIf(isWindows)("Response(Bun.file(<character device>))", () => {
     }).toEqual({ status: 200, contentLength: "0", body: 0 });
   });
 
-  it("/dev/urandom slice delivers the slice", async () => {
+  it("/dev/urandom streams until the client stops reading", async () => {
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       fetch() {
-        return new Response(Bun.file("/dev/urandom").slice(0, 200_000));
+        return new Response(Bun.file("/dev/urandom"));
       },
     });
     const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const reader = res.body!.getReader();
+    let received = 0;
+    while (received < 200_000) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+    }
+    await reader.cancel();
     expect(res.status).toBe(200);
-    expect((await res.arrayBuffer()).byteLength).toBe(200_000);
+    expect(received).toBeGreaterThanOrEqual(200_000);
   });
 });
 

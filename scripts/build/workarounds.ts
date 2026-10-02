@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { BORINGSSL_COMMIT } from "./deps/boringssl.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
@@ -65,6 +66,22 @@ export interface Workaround {
 }
 
 export const workarounds: Workaround[] = [
+  {
+    id: "boringssl-self-signed-anchor-without-keycertsign",
+    issue: "https://github.com/oven-sh/bun/issues/44365",
+    description:
+      "BoringSSL's path builder requires keyCertSign on a candidate issuer, so a pinned self-signed " +
+      "certificate without it never anchors its own chain (OpenSSL 3 does not require it)",
+    applies: () => true,
+    // The patch is written against the pinned commit. The next bump must carry
+    // it into oven-sh/boringssl first, or re-validate it against the new tree.
+    expectedToBeFixed: () => BORINGSSL_COMMIT !== "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f",
+    cleanup:
+      "Land patches/boringssl/self-signed-anchor-without-keycertsign.patch in oven-sh/boringssl (it applies " +
+      "on top of 41bf9b59c2 and carries its own x509_test.cc cases), then remove the patch file, its entry " +
+      "in deps/boringssl.ts, and this check. If the change is not in the new pin, revalidate the patch and " +
+      "update this check's commit.",
+  },
   {
     id: "darwin-cross-stack-size",
     issue:

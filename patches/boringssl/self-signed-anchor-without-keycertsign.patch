@@ -1,0 +1,319 @@
+x509: trust a self-signed anchor whose keyUsage lacks keyCertSign
+
+Path building matched candidate issuers with X509_check_issued, which
+rejects any issuer whose keyUsage extension lacks keyCertSign. A
+self-signed end-entity certificate (keyUsage = digitalSignature,
+keyEncipherment, the shape of `dotnet dev-certs` and `openssl req -x509`
+server certificates) therefore never matched the copy of itself in the
+trust store, and did not get EXFLAG_SS either. Verification failed with
+X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY even though the operator
+pinned that exact certificate. OpenSSL 3 trusts it.
+
+Split X509_check_issued the way OpenSSL 3 does:
+
+- x509_likely_issued: subject/issuer name and authority key identifier.
+  Path building (x509_check_issued_with_callback, and so find_issuer,
+  X509_STORE_CTX_get1_issuer and the self-signed checks) uses this.
+- x509_signing_allowed: the keyCertSign check. internal_verify applies
+  it on every issuer edge of the final chain (RFC 5280, 6.1.4 (n)) and
+  reports X509_V_ERR_KEYUSAGE_NO_CERTSIGN with the issuer as the current
+  certificate. A self-signed certificate is its own issuer, not an edge,
+  so it is exempt, as in OpenSSL 3.
+- EXFLAG_SS no longer requires keyCertSign.
+- X509_check_issued keeps both checks for external callers.
+
+Visible changes: a pinned self-signed certificate without keyCertSign
+verifies. The unpinned one reports DEPTH_ZERO_SELF_SIGNED_CERT instead
+of UNABLE_TO_GET_ISSUER_CERT_LOCALLY. An untrusted intermediate without
+keyCertSign now reaches check_chain_extensions and fails with
+INVALID_CA. A trusted issuer without keyCertSign fails with
+KEYUSAGE_NO_CERTSIGN. All three match OpenSSL 3.
+
+Upstream: oven-sh/boringssl, on top of 41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f.
+
+--- a/crypto/x509/internal.h
++++ b/crypto/x509/internal.h
+@@ -572,7 +572,22 @@ int X509_policy_check(const STACK_OF(X509) *certs,
+                       const STACK_OF(ASN1_OBJECT) *user_policies,
+                       unsigned long flags, X509 **out_current_cert);
+ 
+-// x509_check_issued_with_callback calls `X509_check_issued`, but allows the
++// x509_likely_issued checks if `issuer` and `subject`'s name and authority key
++// identifier fields allow `issuer` to have issued `subject`. It returns
++// `X509_V_OK` on success and an `X509_V_ERR_*` value otherwise. Unlike
++// `X509_check_issued`, it does not look at `issuer`'s key usage. Path building
++// uses it to pick candidate issuers, so a self-signed certificate without the
++// keyCertSign bit still matches an exact copy of itself in the trust store, as
++// in OpenSSL 3. Whether `issuer` may sign is checked separately by
++// `x509_signing_allowed` on every issuer edge of the final chain.
++int x509_likely_issued(const X509 *issuer, const X509 *subject);
++
++// x509_signing_allowed returns `X509_V_OK` if `issuer`'s key usage extension,
++// when present, allows it to sign certificates, and
++// `X509_V_ERR_KEYUSAGE_NO_CERTSIGN` otherwise.
++int x509_signing_allowed(const X509 *issuer);
++
++// x509_check_issued_with_callback calls `x509_likely_issued`, but allows the
+ // verify callback to override the result. It returns one on success and zero on
+ // error.
+ //
+--- a/crypto/x509/v3_purp.cc
++++ b/crypto/x509/v3_purp.cc
+@@ -313,9 +313,13 @@ int bssl::x509v3_cache_extensions(X509 *x) {
+   // Does subject name match issuer ?
+   if (!X509_NAME_cmp(X509_get_subject_name(x), X509_get_issuer_name(x))) {
+     impl->ex_flags |= EXFLAG_SI;
+-    // If SKID matches AKID also indicate self signed
+-    if (X509_check_akid(x, impl->akid.get()) == X509_V_OK &&
+-        !ku_reject(x, X509v3_KU_KEY_CERT_SIGN)) {
++    // If SKID matches AKID also indicate self signed. As in OpenSSL 3, the key
++    // usage extension does not factor in: a self-signed end-entity certificate
++    // (keyUsage without keyCertSign) is still self-signed, so an exact copy of
++    // it in the trust store can anchor its own chain. Whether a certificate
++    // may sign another one is checked on each issuer edge by the path
++    // verifier, see `x509_signing_allowed`.
++    if (X509_check_akid(x, impl->akid.get()) == X509_V_OK) {
+       impl->ex_flags |= EXFLAG_SS;
+     }
+   }
+@@ -469,7 +473,7 @@ static int check_purpose_timestamp_sign(const X509_PURPOSE *xp, const X509 *x,
+ 
+ static int no_check(const X509_PURPOSE *xp, const X509 *x, int ca) { return 1; }
+ 
+-int X509_check_issued(const X509 *issuer, const X509 *subject) {
++int bssl::x509_likely_issued(const X509 *issuer, const X509 *subject) {
+   if (X509_NAME_cmp(X509_get_subject_name(issuer),
+                     X509_get_issuer_name(subject))) {
+     return X509_V_ERR_SUBJECT_ISSUER_MISMATCH;
+@@ -481,18 +485,29 @@ int X509_check_issued(const X509 *issuer, const X509 *subject) {
+ 
+   const auto *subject_impl = FromOpaque(subject);
+   if (subject_impl->akid) {
+-    int ret = X509_check_akid(issuer, subject_impl->akid.get());
+-    if (ret != X509_V_OK) {
+-      return ret;
+-    }
++    return X509_check_akid(issuer, subject_impl->akid.get());
+   }
++  return X509_V_OK;
++}
+ 
++int bssl::x509_signing_allowed(const X509 *issuer) {
++  if (!x509v3_cache_extensions(const_cast<X509 *>(issuer))) {
++    return X509_V_ERR_UNSPECIFIED;
++  }
+   if (ku_reject(issuer, X509v3_KU_KEY_CERT_SIGN)) {
+     return X509_V_ERR_KEYUSAGE_NO_CERTSIGN;
+   }
+   return X509_V_OK;
+ }
+ 
++int X509_check_issued(const X509 *issuer, const X509 *subject) {
++  int ret = x509_likely_issued(issuer, subject);
++  if (ret != X509_V_OK) {
++    return ret;
++  }
++  return x509_signing_allowed(issuer);
++}
++
+ int bssl::X509_check_akid(const X509 *issuer, const AUTHORITY_KEYID *akid) {
+   if (!akid) {
+     return X509_V_OK;
+--- a/crypto/x509/x509_test.cc
++++ b/crypto/x509/x509_test.cc
+@@ -8988,9 +8988,9 @@ TEST(X509Test, Purpose) {
+     ASSERT_TRUE(leaf);
+     ASSERT_TRUE(X509_sign(leaf.get(), key.get(), EVP_sha256()));
+ 
+-    // The intermediate must have the keyCertSign bit. This bit is checked in
+-    // multiple places. The first place that fails is in looking for candidate
+-    // issuers.
++    // The intermediate must have the keyCertSign bit. Candidate issuers are
++    // matched without it, so the chain is built and the intermediate then
++    // fails the CA check in `check_chain_extensions`.
+     intermediate =
+         MakeTestCert("Root", "Intermediate", key.get(), /*is_ca=*/true);
+     ASSERT_TRUE(intermediate);
+@@ -8999,7 +8999,7 @@ TEST(X509Test, Purpose) {
+       ASSERT_TRUE(AddExtendedKeyUsage(intermediate.get(), {t.eku_nid}));
+     }
+     ASSERT_TRUE(X509_sign(intermediate.get(), key.get(), EVP_sha256()));
+-    EXPECT_EQ(X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
++    EXPECT_EQ(X509_V_ERR_INVALID_CA,
+               Verify(leaf.get(), {root.get()}, {intermediate.get()}, {}, 0,
+                      configure_callback));
+ 
+@@ -11790,6 +11790,122 @@ static int VerifyWithStore(X509 *leaf, X509_STORE *store,
+   return X509_V_OK;
+ }
+ 
++// A self-signed certificate whose keyUsage lacks keyCertSign (the shape of a
++// `dotnet dev-certs` or `openssl req -x509` server certificate) verifies when
++// an exact copy of it is a trust anchor, as in OpenSSL 3. Key usage still
++// rejects it as the issuer of any other certificate.
++TEST(X509Test, SelfSignedAnchorWithoutKeyCertSign) {
++  UniquePtr<EVP_PKEY> key = PrivateKeyFromPEM(kP256Key);
++  ASSERT_TRUE(key);
++
++  auto set_server_purpose = [](X509_STORE_CTX *ctx) {
++    X509_STORE_CTX_set_purpose(ctx, X509_PURPOSE_SSL_SERVER);
++  };
++
++  auto make_self_signed = [&](bool is_ca,
++                              std::optional<std::vector<KeyUsage>> usages) {
++    UniquePtr<X509> cert = MakeTestCert("Leaf", "Leaf", key.get(), is_ca);
++    if (cert == nullptr ||
++        !AddExtendedKeyUsage(cert.get(), {NID_server_auth}) ||
++        (usages.has_value() && !AddKeyUsage(cert.get(), *usages)) ||
++        !X509_sign(cert.get(), key.get(), EVP_sha256())) {
++      return UniquePtr<X509>();
++    }
++    return cert;
++  };
++
++  const std::vector<KeyUsage> kNoCertSign = {KeyUsage::kDigitalSignature,
++                                             KeyUsage::kKeyEncipherment};
++  const std::vector<KeyUsage> kCertSign = {KeyUsage::kDigitalSignature,
++                                           KeyUsage::kKeyCertSign};
++  struct {
++    bool is_ca;
++    std::optional<std::vector<KeyUsage>> usages;
++  } kShapes[] = {
++      {false, std::nullopt}, {false, kCertSign}, {false, kNoCertSign},
++      {true, std::nullopt},  {true, kCertSign},  {true, kNoCertSign},
++  };
++  for (const auto &shape : kShapes) {
++    SCOPED_TRACE(shape.is_ca);
++    SCOPED_TRACE(shape.usages.has_value());
++    UniquePtr<X509> cert = make_self_signed(shape.is_ca, shape.usages);
++    ASSERT_TRUE(cert);
++    EXPECT_TRUE(X509_get_extension_flags(cert.get()) & EXFLAG_SS);
++
++    // Pinned as a trusted stack entry and as a store entry.
++    EXPECT_EQ(X509_V_OK, Verify(cert.get(), {cert.get()}, {}, {}, 0,
++                                set_server_purpose));
++    UniquePtr<X509_STORE> store(X509_STORE_new());
++    ASSERT_TRUE(store);
++    ASSERT_TRUE(X509_STORE_add_cert(store.get(), cert.get()));
++    EXPECT_EQ(X509_V_OK, VerifyWithStore(cert.get(), store.get(), {}));
++
++    // Not pinned, it is an untrusted self-signed certificate, not a
++    // certificate with no issuer.
++    EXPECT_EQ(X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT,
++              Verify(cert.get(), {}, {}, {}, 0, set_server_purpose));
++
++    // Only an exact copy anchors it. A second self-signed certificate with
++    // the same subject and key usage is not the pinned one.
++    UniquePtr<X509> other = make_self_signed(shape.is_ca, shape.usages);
++    ASSERT_TRUE(other);
++    ASSERT_TRUE(ASN1_INTEGER_set_uint64(X509_get_serialNumber(other.get()), 43));
++    ASSERT_TRUE(X509_sign(other.get(), key.get(), EVP_sha256()));
++    EXPECT_EQ(X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT,
++              Verify(cert.get(), {other.get()}, {}, {}, 0, set_server_purpose));
++  }
++
++  // A trusted root whose keyUsage lacks keyCertSign may not issue anything:
++  // the chain builds, then the issuer edge fails with the root as the current
++  // certificate.
++  UniquePtr<X509> root = MakeTestCert("Root", "Root", key.get(), /*is_ca=*/true);
++  ASSERT_TRUE(root);
++  ASSERT_TRUE(AddKeyUsage(root.get(), kNoCertSign));
++  ASSERT_TRUE(X509_sign(root.get(), key.get(), EVP_sha256()));
++  UniquePtr<X509> leaf = MakeTestCert("Root", "Leaf", key.get(), /*is_ca=*/false);
++  ASSERT_TRUE(leaf);
++  ASSERT_TRUE(X509_sign(leaf.get(), key.get(), EVP_sha256()));
++  int depth = -1;
++  auto record_depth = [&](X509_STORE_CTX *ctx) {
++    X509_STORE_CTX_set_verify_cb(ctx, [](int ok, X509_STORE_CTX *inner) -> int {
++      if (!ok) {
++        *static_cast<int *>(X509_STORE_CTX_get_app_data(inner)) =
++            X509_STORE_CTX_get_error_depth(inner);
++      }
++      return ok;
++    });
++    X509_STORE_CTX_set_app_data(ctx, &depth);
++  };
++  EXPECT_EQ(X509_V_ERR_KEYUSAGE_NO_CERTSIGN,
++            Verify(leaf.get(), {root.get()}, {}, {}, 0, record_depth));
++  EXPECT_EQ(1, depth);
++
++  // An untrusted intermediate without keyCertSign below a good root: the
++  // chain builds through it and its CA check fails first.
++  UniquePtr<X509> real_root =
++      MakeTestCert("Root", "Root", key.get(), /*is_ca=*/true);
++  ASSERT_TRUE(real_root);
++  ASSERT_TRUE(AddKeyUsage(real_root.get(), kCertSign));
++  ASSERT_TRUE(X509_sign(real_root.get(), key.get(), EVP_sha256()));
++  UniquePtr<X509> intermediate =
++      MakeTestCert("Root", "Intermediate", key.get(), /*is_ca=*/true);
++  ASSERT_TRUE(intermediate);
++  ASSERT_TRUE(AddKeyUsage(intermediate.get(), kNoCertSign));
++  ASSERT_TRUE(X509_sign(intermediate.get(), key.get(), EVP_sha256()));
++  UniquePtr<X509> leaf2 =
++      MakeTestCert("Intermediate", "Leaf", key.get(), /*is_ca=*/false);
++  ASSERT_TRUE(leaf2);
++  ASSERT_TRUE(X509_sign(leaf2.get(), key.get(), EVP_sha256()));
++  EXPECT_EQ(X509_V_ERR_INVALID_CA,
++            Verify(leaf2.get(), {real_root.get()}, {intermediate.get()}, {}));
++
++  // `X509_check_issued` keeps the key usage check for its callers.
++  UniquePtr<X509> no_certsign = make_self_signed(false, kNoCertSign);
++  ASSERT_TRUE(no_certsign);
++  EXPECT_EQ(X509_V_ERR_KEYUSAGE_NO_CERTSIGN,
++            X509_check_issued(no_certsign.get(), no_certsign.get()));
++}
++
+ TEST(X509Test, LazyCertSet) {
+   UniquePtr<X509> cross_signing_root(CertFromPEM(kCrossSigningRootPEM));
+   UniquePtr<X509> root(CertFromPEM(kRootCAPEM));
+--- a/crypto/x509/x509_vfy.cc
++++ b/crypto/x509/x509_vfy.cc
+@@ -435,7 +435,7 @@ static int untrusted_chain_error(const X509_STORE_CTX *ctx, int err) {
+ int bssl::x509_check_issued_with_callback(X509_STORE_CTX *ctx, const X509 *x,
+                                           const X509 *issuer) {
+   int ret;
+-  ret = X509_check_issued(issuer, x);
++  ret = x509_likely_issued(issuer, x);
+   if (ret == X509_V_OK) {
+     return 1;
+   }
+@@ -1331,6 +1331,24 @@ static int internal_verify(X509_STORE_CTX *ctx) {
+   while (n >= 0) {
+     ctx->error_depth = n;
+ 
++    // Candidate issuers are matched without looking at key usage (see
++    // `x509_likely_issued`), so RFC 5280, section 6.1.4, step (n) is applied
++    // here, on each issuer edge: an issuer whose keyUsage lacks keyCertSign
++    // may not have signed `xs`. A self-signed certificate is its own issuer
++    // and not an edge, so it is exempt, like an OpenSSL 3 anchor.
++    if (xs != xi) {
++      int err = x509_signing_allowed(xi);
++      if (err != X509_V_OK) {
++        ctx->error = err;
++        ctx->error_depth = n + 1;
++        ctx->current_cert = xi;
++        if (!call_verify_cb(0, ctx)) {
++          return 0;
++        }
++        ctx->error_depth = n;
++      }
++    }
++
+     // Skip signature check for self signed certificates unless
+     // explicitly asked for. It doesn't add any security and just wastes
+     // time.
+--- a/include/openssl/x509.h
++++ b/include/openssl/x509.h
+@@ -215,9 +215,9 @@ OPENSSL_EXPORT void X509_get0_uids(const X509 *x509,
+ // should not be accepted.
+ #define EXFLAG_CRITICAL 0x200
+ // EXFLAG_SS indicates the certificate is likely self-signed. That is, if it is
+-// self-issued, its authority key identifier (if any) matches itself, and its
+-// key usage extension (if any) allows certificate signatures. The signature
+-// itself is not checked in computing this bit.
++// self-issued and its authority key identifier (if any) matches itself. The key
++// usage extension and the signature itself are not checked in computing this
++// bit.
+ #define EXFLAG_SS 0x2000
+ 
+ // X509_get_extension_flags decodes a set of extensions from `x509` and returns

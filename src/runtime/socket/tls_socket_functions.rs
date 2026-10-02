@@ -267,10 +267,12 @@ pub(super) mod ffi {
             ctx: *mut X509_STORE_CTX,
             x: *mut X509,
         ) -> c_int;
-        // Returns X509_V_OK (0) when `issuer` could have issued `subject`.
-        pub(crate) fn X509_check_issued(issuer: *mut X509, subject: *mut X509) -> c_int;
+        // Returns the EXFLAG_* bits of `x509`; EXFLAG_SS marks a self-signed one.
+        pub(crate) fn X509_get_extension_flags(x509: *mut X509) -> u32;
     }
 }
+
+const EXFLAG_SS: u32 = 0x2000;
 use crate::node::StringOrBuffer;
 
 // The `#[bun_jsc::host_fn]` shims live on `NewSocket<SSL>` in `socket_body.rs`
@@ -571,7 +573,8 @@ pub(super) fn get_peer_certificate(
             {
                 let mut extras: Vec<*mut boringssl::X509> = Vec::new();
                 // Cap the walk so a cyclic store cannot loop forever.
-                while extras.len() < 16 && ffi::X509_check_issued(last_cert, last_cert) != 0 {
+                while extras.len() < 16 && ffi::X509_get_extension_flags(last_cert) & EXFLAG_SS == 0
+                {
                     let mut issuer: *mut boringssl::X509 = core::ptr::null_mut();
                     if ffi::X509_STORE_CTX_get1_issuer(&raw mut issuer, store_ctx, last_cert) <= 0
                         || issuer.is_null()
@@ -598,7 +601,7 @@ pub(super) fn get_peer_certificate(
                     extras.push(issuer);
                     last_cert = issuer;
                 }
-                last_is_self_issued = ffi::X509_check_issued(last_cert, last_cert) == 0;
+                last_is_self_issued = ffi::X509_get_extension_flags(last_cert) & EXFLAG_SS != 0;
                 for extra in extras {
                     boringssl::X509_free(extra);
                 }

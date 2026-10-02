@@ -256,6 +256,12 @@ pub(crate) trait Sink {
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
     /// `last_peer_stream_id` advanced. Store-only, like on_frame_counters.
     fn on_last_peer_stream_id(&self, _stream_id: u32) {}
+    /// The Last-Stream-ID for a GOAWAY that the engine is about to write. The embedder lowers
+    /// `wanted` to the id of an earlier GOAWAY of this session (§6.8) and records the result.
+    /// Store-only, like on_frame_counters.
+    fn clamp_goaway_last_stream_id(&self, wanted: u32) -> u32 {
+        wanted
+    }
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
     /// inbound frames for it are not treated as frames on an idle stream.
@@ -451,7 +457,7 @@ impl Connection {
     ) {
         self.going_away = true;
         self.terminated = true;
-        let last = self.last_peer_stream_id;
+        let last = sink.clamp_goaway_last_stream_id(self.last_peer_stream_id);
         let mut payload = Vec::with_capacity(8 + debug.len());
         payload.extend_from_slice(&last.to_be_bytes());
         payload.extend_from_slice(&code.as_u32().to_be_bytes());
@@ -2169,6 +2175,8 @@ mod tests {
         refuse_streams: Cell<bool>,
         /// What goaway_sent reports: the embedder wrote a GOAWAY of its own.
         embedder_goaway: Cell<bool>,
+        /// Last-Stream-ID of that GOAWAY: clamp_goaway_last_stream_id lowers the engine's id to it.
+        embedder_goaway_last_stream_id: Cell<Option<u32>>,
         opens: RefCell<Vec<u32>>,
         headers: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         headers_done: RefCell<Vec<(u32, bool)>>,
@@ -2197,6 +2205,11 @@ mod tests {
         }
         fn goaway_sent(&self) -> bool {
             self.embedder_goaway.get()
+        }
+        fn clamp_goaway_last_stream_id(&self, wanted: u32) -> u32 {
+            self.embedder_goaway_last_stream_id
+                .get()
+                .map_or(wanted, |sent| sent.min(wanted))
         }
         fn on_local_settings(&self, _s: &Settings) {}
         fn on_remote_settings(&self, _s: &Settings) {
@@ -2701,5 +2714,33 @@ mod tests {
             Some((0, ErrorCode::ProtocolError.as_u32()))
         );
         assert!(sink.peer_marks.borrow().is_empty());
+    }
+
+    #[test]
+    fn goaway_does_not_name_a_stream_above_an_earlier_goaway() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 1, &request_block()),
+        );
+        c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 3, &request_block()),
+        );
+        // session.goaway(code, 1): the embedder wrote a GOAWAY that names 1.
+        sink.embedder_goaway.set(true);
+        sink.embedder_goaway_last_stream_id.set(Some(1));
+
+        let fed = c.receive(&sink, &connection_error_frame());
+        assert!(fed.fatal);
+        assert_eq!(
+            goaway_sent(&sink),
+            Some((1, ErrorCode::ProtocolError.as_u32()))
+        );
+        assert_eq!(sink.local_error_last_stream_id.get(), Some(1));
+        assert_eq!(c.last_peer_stream_id, 3);
     }
 }

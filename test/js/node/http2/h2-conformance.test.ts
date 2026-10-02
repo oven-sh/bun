@@ -2045,6 +2045,91 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       raw.close();
     }
   });
+
+  // nghttp2 keeps the id of the last GOAWAY it sent and lowers the id of each later GOAWAY to it.
+  // node also closes the streams above that id (REFUSED_STREAM). bun leaves them open.
+  describe("after goaway(code, lastStreamID) with an id below the last stream", () => {
+    /** A server with requests on streams 1 and 3 open, after `session.goaway(NO_ERROR, 1)`. */
+    async function serverAfterGoaway() {
+      const server = http2.createServer();
+      server.on("session", s => s.on("error", () => {}));
+      server.on("stream", stream => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200 });
+        stream.write("a");
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const sessionEvent = once(server, "session");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        const [session] = (await sessionEvent) as [http2.ServerHttp2Session];
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+        await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 3);
+        expect(session.state.lastProcStreamID).toBe(3);
+        session.goaway(ErrorCode.NO_ERROR, 1);
+        const first = await c.waitForGoaway();
+        expect(goawayFields(first)).toEqual({ lastStreamId: 1, errorCode: ErrorCode.NO_ERROR });
+        return { server, session, c, first };
+      } catch (e) {
+        c.destroy();
+        server.close();
+        throw e;
+      }
+    }
+
+    test("the GOAWAY of a server's destroy() does not name a higher stream", async () => {
+      const { server, session, c } = await serverAfterGoaway();
+      try {
+        session.destroy();
+        await c.waitClosed();
+        const lastStreamIds = goawayLastStreamIds(c.frames);
+        expect(lastStreamIds.length).toBeGreaterThan(1);
+        expect(lastStreamIds.filter(id => id !== 1)).toEqual([]);
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    });
+
+    test("a server's connection-error GOAWAY does not name a higher stream", async () => {
+      const { server, session, c, first } = await serverAfterGoaway();
+      try {
+        c.sendFrame(FrameType.PING, 0, 0, BAD_PING);
+        const second = await c.waitFor(f => f.type === FrameType.GOAWAY && f !== first);
+        expect(goawayFields(second)).toEqual({ lastStreamId: 1, errorCode: ErrorCode.FRAME_SIZE_ERROR });
+      } finally {
+        session.destroy();
+        c.destroy();
+        server.close();
+      }
+    });
+
+    test("the GOAWAY of a client's close() does not name a higher pushed stream", async () => {
+      const raw = await RawH2Server.listen();
+      try {
+        const { client } = await connectClient(raw, 1);
+        raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, pushPromise(2));
+        raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, pushPromise(4));
+        // The PING ACK is behind the client's handling of both promises.
+        raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 0x70));
+        await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1);
+        expect(client.state.lastProcStreamID).toBe(4);
+        client.goaway(ErrorCode.NO_ERROR, 2);
+        const first = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+        expect(goawayFields(first)).toEqual({ lastStreamId: 2, errorCode: ErrorCode.NO_ERROR });
+        client.close();
+        const second = await raw.waitFor(f => f.type === FrameType.GOAWAY && f !== first);
+        expect(goawayFields(second)).toEqual({ lastStreamId: 2, errorCode: ErrorCode.NO_ERROR });
+        client.destroy();
+      } finally {
+        raw.close();
+      }
+    });
+  });
 });
 
 // A DATA frame that cannot be written right away (the peer's flow-control window is used up, the

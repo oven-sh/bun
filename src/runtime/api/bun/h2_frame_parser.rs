@@ -1127,6 +1127,9 @@ pub(crate) struct H2FrameParser {
     last_stream_id: Cell<u32>,
     /// Copy of `Connection::last_peer_stream_id` (GOAWAY last-stream-id, state.lastProcStreamID).
     last_peer_stream_id: Cell<u32>,
+    /// Last-Stream-ID of the last GOAWAY this session wrote, `MAX_STREAM_ID` before the first one
+    /// (nghttp2's local_last_stream_id).
+    sent_goaway_last_stream_id: Cell<u32>,
     is_server: Cell<bool>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
     left_exception: Cell<bool>,
@@ -2188,6 +2191,15 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
+    /// The Last-Stream-ID for the GOAWAY that is about to be written: `wanted`, lowered to the id
+    /// of an earlier GOAWAY (§6.8: the id must not increase). Every GOAWAY writer takes its id
+    /// from here.
+    fn next_goaway_last_stream_id(&self, wanted: u32) -> u32 {
+        let id = wanted.min(self.sent_goaway_last_stream_id.get());
+        self.sent_goaway_last_stream_id.set(id);
+        id
+    }
+
     /// `last_stream_id`: `None` names the last peer stream this session processed (§6.8). Only
     /// `session.goaway(code, lastStreamID)` chooses an id of its own.
     pub(crate) fn send_go_away(
@@ -2198,7 +2210,9 @@ impl H2FrameParser {
         last_stream_id: Option<u32>,
         emit_error: bool,
     ) {
-        let last_stream_id = last_stream_id.unwrap_or_else(|| self.last_peer_stream_id.get());
+        let last_stream_id = self.next_goaway_last_stream_id(
+            last_stream_id.unwrap_or_else(|| self.last_peer_stream_id.get()),
+        );
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_GOAWAY {} code {} debug_data {} emitError {}",
@@ -3718,6 +3732,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
 
     fn on_last_peer_stream_id(&self, stream_id: u32) {
         self.last_peer_stream_id.set(stream_id);
+    }
+
+    fn clamp_goaway_last_stream_id(&self, wanted: u32) -> u32 {
+        self.next_goaway_last_stream_id(wanted)
     }
 
     fn write(&self, bytes: &[u8]) -> crate::api::h2::connection::WriteResult {
@@ -7474,6 +7492,7 @@ impl H2FrameParser {
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
             last_peer_stream_id: Cell::new(0),
+            sent_goaway_last_stream_id: Cell::new(MAX_STREAM_ID),
             is_server: Cell::new(false),
             left_exception: Cell::new(false),
             write_buffer: JsCell::new(Vec::<u8>::default()),

@@ -158,6 +158,7 @@
 #include "streams/JSWritableStreamDefaultController.h"
 #include "streams/JSWritableStreamDefaultWriter.h"
 #include "libusockets.h"
+#include <bun-usockets/src/internal/fault_inject.h>
 #include "ModuleLoader.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
@@ -473,6 +474,27 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" size_t Bun__reported_memory_size;
 
+// No test input makes VM::tryCreate return null, so the "vm_create" fault rule returns it in its place.
+static RefPtr<JSC::VM> tryCreateVM(JSC::HeapType heapType)
+{
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    ssize_t injected = 0;
+    int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_VM_CREATE, -1, injected, unused))
+        return nullptr;
+#endif
+    return JSC::VM::tryCreate(heapType);
+}
+
+Ref<JSC::VM> Bun::createVM(JSC::HeapType heapType)
+{
+    RefPtr<JSC::VM> vm = tryCreateVM(heapType);
+    if (!vm) [[unlikely]] {
+        BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
+    }
+    return vm.releaseNonNull();
+}
+
 // executionContextId: -1 for main thread
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
@@ -488,12 +510,9 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
-    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
-    if (!vmPtr) [[unlikely]] {
-        BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
-    }
+    Ref<JSC::VM> vmPtr = Bun::createVM(heapSize);
     vmPtr->refSuppressingSaferCPPChecking();
-    JSC::VM& vm = *vmPtr;
+    JSC::VM& vm = vmPtr.get();
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);

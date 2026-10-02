@@ -1,7 +1,7 @@
 /*
- * Fault injection for the bsd_* syscall wrappers, plus the one allocation
- * whose failure path is otherwise unreachable on an overcommitting kernel
- * (US_FAULT_SSL_LOOP_BUFFER).
+ * Fault injection for the bsd_* syscall wrappers, plus the hooks that
+ * `enum us_fault_syscall` marks "Not a syscall": calls whose failure path no
+ * test input reaches.
  *
  * Compiled in only when LIBUS_SOCKET_FAULT_INJECTION is defined (controlled
  * by the `socketFaultInjection` Config field). When compiled out,
@@ -54,6 +54,11 @@ enum us_fault_syscall {
      * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
      * failure is a thrown JS out-of-memory error, not an errno. */
     US_FAULT_SESSION_BUFFER,
+    /* Not a syscall: JSC::VM::tryCreate in Bun::createVM. It returns null only
+     * when the VM constructor cannot allocate one of its BigInt constants,
+     * which no test input causes. Only US_FAULT_ERRNO applies, and the errno
+     * value is ignored: the simulated failure is a null VM. */
+    US_FAULT_VM_CREATE,
     US_FAULT_COUNT
 };
 

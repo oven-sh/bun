@@ -5181,11 +5181,13 @@ pub(crate) mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eq_ascii(b"session_buffer") {
                 fi::SESSION_BUFFER
+            } else if syscall_str.eq_ascii(b"vm_create") {
+                fi::VM_CREATE
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, vm_create"
                 )));
             };
 
@@ -5272,19 +5274,21 @@ pub(crate) mod testing_apis {
                 )));
             }
 
-            // ssl_loop_buffer/session_buffer are allocations, not socket
+            // The rules named below are allocations, not socket
             // operations: their hooks pass fd = -1, so a rule pinned to a
             // descriptor would arm and then silently never fire.
             let target_fd = get_i32("fd", -1)?;
-            if (syscall == fi::SSL_LOOP_BUFFER || syscall == fi::SESSION_BUFFER) && target_fd != -1
+            let syscall_without_fd = match syscall {
+                fi::SSL_LOOP_BUFFER => Some("ssl_loop_buffer"),
+                fi::SESSION_BUFFER => Some("session_buffer"),
+                fi::VM_CREATE => Some("vm_create"),
+                _ => None,
+            };
+            if let Some(name) = syscall_without_fd
+                && target_fd != -1
             {
                 return Err(global.throw(format_args!(
-                    "rule.fd is not supported for syscall \"{}\"",
-                    if syscall == fi::SSL_LOOP_BUFFER {
-                        "ssl_loop_buffer"
-                    } else {
-                        "session_buffer"
-                    }
+                    "rule.fd is not supported for syscall \"{name}\""
                 )));
             }
 

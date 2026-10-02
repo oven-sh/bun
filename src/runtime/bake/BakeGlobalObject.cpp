@@ -245,15 +245,12 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 // TODO: remove this entire method
 extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
 {
-    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(JSC::HeapType::Large);
-    if (!vmPtr) [[unlikely]] {
-        BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
-    }
+    Ref<JSC::VM> vmPtr = Bun::createVM(JSC::HeapType::Large);
     // We need to unsafely ref this so it stays alive, later in
     // `Zig__GlobalObject__destructOnExit` will call
     // `vm.derefSuppressingSaferCPPChecking()` to free it.
     vmPtr->refSuppressingSaferCPPChecking();
-    JSC::VM& vm = *vmPtr;
+    JSC::VM& vm = vmPtr.get();
 
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);

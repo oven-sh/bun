@@ -1099,8 +1099,8 @@ impl<'a> Checker<'a> {
                     }
                     return;
                 }
-                let mut start_length = 0;
-                let mut end_length = 0;
+                let mut start_length: isize = 0;
+                let mut end_length: isize = 0;
                 if is_tuple_type(self, source) {
                     start_length = self
                         .type_target_tuple_type(source)
